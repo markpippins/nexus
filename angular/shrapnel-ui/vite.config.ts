@@ -6,7 +6,20 @@
 // You can pass additional config via defineConfig({ vite: { ... }, etc... }) if needed.
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
+// The console iframe addresses this UI on a fixed port (unit env: PORT=4217;
+// default 3000 for mock mode). The config package's non-sandbox branch merges
+// a default server.port of 8080 and ignores the PORT env var, so we set it
+// explicitly here — 8080 collides with other host services.
+const devPort = Number(process.env.PORT) || 3000;
+
 export default defineConfig({
+  vite: {
+    server: {
+      port: devPort,
+      strictPort: true,
+      host: true,
+    },
+  },
   tanstackStart: {
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
     // nitro/vite builds from this
