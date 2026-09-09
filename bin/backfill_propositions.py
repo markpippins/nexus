@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""backfill_propositions.py — T24 Phase 2 (plan 0006).
+"""backfill_propositions.py — T24 Phase 2 (plan 0006, re-derived as plan 8261642).
 
 Mint resolution.proposition rows for existing concept_relationships that
 have evidence (statement_evidence type='concept_relationship') but no
 corresponding resolution_proposition link. Idempotent — safe to re-run.
+
+Schema authority (V134, plan 8261642): the ontology tables are canonical in
+resolution.* — semantics.concept_relationship / semantics.concept were retired
+by V134. fetch_candidates() queries resolution.concept_relationship +
+resolution.concept; semantics.statement_evidence (the evidence-link table) was
+NOT retired and is still the join target for evidence. Do NOT re-point at
+semantics.* ontology tables; they do not exist.
 
 Usage:  backfill_propositions.py [--dry-run]
 """
@@ -33,7 +40,7 @@ def fetch_candidates(cur):
                    cr.relationship_type, cr.notes,
                    se.evidence_item_id, se.strength AS ev_strength,
                    se.comment AS ev_comment
-            FROM semantics.concept_relationship cr
+            FROM resolution.concept_relationship cr
             JOIN semantics.statement_evidence se
               ON se.statement_id = cr.id
              AND se.statement_type = 'concept_relationship'
@@ -47,8 +54,8 @@ def fetch_candidates(cur):
         )
         SELECT e.*, fc.name AS from_name, tc.name AS to_name
         FROM edged e
-        LEFT JOIN semantics.concept fc ON fc.id = e.from_concept_id
-        LEFT JOIN semantics.concept tc ON tc.id = e.to_concept_id
+        LEFT JOIN resolution.concept fc ON fc.id = e.from_concept_id
+        LEFT JOIN resolution.concept tc ON tc.id = e.to_concept_id
         ORDER BY e.edge_id
     """)
     return [dict(r) for r in cur.fetchall()]
