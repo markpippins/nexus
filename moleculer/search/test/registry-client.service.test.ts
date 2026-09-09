@@ -12,11 +12,9 @@ describe("RegistryClientService", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    jest.useFakeTimers();
   });
 
   afterEach(async () => {
-    jest.useRealTimers();
     if (broker) {
       await broker.stop();
     }
@@ -25,15 +23,16 @@ describe("RegistryClientService", () => {
   describe("service initialization", () => {
     it("should have the correct service name", () => {
       broker = new ServiceBroker(testBrokerConfig);
-      registryClientService = new RegistryClientService(broker);
+      registryClientService = broker.createService(RegistryClientService) as RegistryClientService;
       expect(registryClientService.name).toBe("registry-client");
     });
   });
 
   describe("register action", () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       broker = new ServiceBroker(testBrokerConfig);
-      registryClientService = new RegistryClientService(broker);
+      registryClientService = broker.createService(RegistryClientService) as RegistryClientService;
+      await broker.start();
     });
 
     it("should send correct registration payload", async () => {
@@ -95,9 +94,10 @@ describe("RegistryClientService", () => {
   });
 
   describe("heartbeat action", () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       broker = new ServiceBroker(testBrokerConfig);
-      registryClientService = new RegistryClientService(broker);
+      registryClientService = broker.createService(RegistryClientService) as RegistryClientService;
+      await broker.start();
     });
 
     it("should send heartbeat to correct endpoint", async () => {
@@ -137,7 +137,8 @@ describe("RegistryClientService", () => {
       process.env.SERVICE_PORT = "5000";
 
       broker = new ServiceBroker(testBrokerConfig);
-      registryClientService = new RegistryClientService(broker);
+      registryClientService = broker.createService(RegistryClientService) as RegistryClientService;
+      await broker.start();
 
       mockedAxios.post.mockResolvedValue({ data: { message: "OK" } });
 
@@ -158,7 +159,7 @@ describe("RegistryClientService", () => {
   describe("service lifecycle", () => {
     it("should have register and heartbeat actions defined", () => {
       broker = new ServiceBroker(testBrokerConfig);
-      registryClientService = new RegistryClientService(broker);
+      registryClientService = broker.createService(RegistryClientService) as RegistryClientService;
 
       expect(registryClientService.actions).toHaveProperty("register");
       expect(registryClientService.actions).toHaveProperty("heartbeat");

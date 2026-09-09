@@ -6,10 +6,15 @@ describe("ApiService", () => {
   let broker: ServiceBroker;
   let apiService: ApiService;
 
-  beforeEach(async () => {
+  // NOTE: config/shape tests run WITHOUT broker.start(). Starting the broker
+  // boots the moleculer-web gateway (HTTP bind) which hangs the suite when
+  // the default port is taken. The health block below starts its own broker
+  // on a collision-free test port.
+  beforeEach(() => {
+    // Keep the gateway off the live :4050 while tests construct the service.
+    process.env.SERVICE_PORT = "45981";
     broker = new ServiceBroker(testBrokerConfig);
-    apiService = new ApiService(broker);
-    await broker.start();
+    apiService = broker.createService(ApiService) as ApiService;
   });
 
   afterEach(async () => {
@@ -63,16 +68,33 @@ describe("ApiService", () => {
     });
   });
 
+  // Health tests share ONE started gateway: each moleculer-web boot costs
+  // tens of seconds, so per-test start/stop makes the suite unusable as a
+  // gate. Config tests above never boot a broker.
   describe("health action", () => {
+    let healthBroker: ServiceBroker;
+
+    beforeAll(async () => {
+      healthBroker = new ServiceBroker(testBrokerConfig);
+      healthBroker.createService(ApiService);
+      await healthBroker.start();
+    }, 60000);
+
+    afterAll(async () => {
+      if (healthBroker) {
+        await healthBroker.stop();
+      }
+    });
+
     it("should return correct response structure", async () => {
-      const result = await broker.call("api.health");
+      const result = await healthBroker.call("api.health");
       expect(result).toHaveProperty("status", "ok");
       expect(result).toHaveProperty("timestamp");
       expect(result).toHaveProperty("service", "moleculer-search");
     });
 
     it("should return a valid ISO timestamp", async () => {
-      const result = await broker.call("api.health") as { timestamp: string };
+      const result = await healthBroker.call("api.health") as { timestamp: string };
       const timestamp = new Date(result.timestamp);
       expect(timestamp.toString()).not.toBe("Invalid Date");
     });

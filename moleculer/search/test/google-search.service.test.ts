@@ -28,23 +28,27 @@ describe("GoogleSearchService", () => {
   describe("service initialization", () => {
     it("should have the correct service name", () => {
       broker = new ServiceBroker(testBrokerConfig);
-      googleSearchService = new GoogleSearchService(broker);
+      googleSearchService = broker.createService(GoogleSearchService) as GoogleSearchService;
       expect(googleSearchService.name).toBe("google-search");
     });
 
-    it("should have version 1", () => {
+    it("should be unversioned (actions called as google-search.*)", () => {
       broker = new ServiceBroker(testBrokerConfig);
-      googleSearchService = new GoogleSearchService(broker);
-      expect(googleSearchService.version).toBe(1);
+      googleSearchService = broker.createService(GoogleSearchService) as GoogleSearchService;
+      // NOTE: the schema declares no `version`, so actions stay unversioned.
+      // Adding one would namespace them (v1.google-search.*) and break the
+      // api gateway whitelist — see api.service.ts. Assert the real contract.
+      expect(googleSearchService.version).toBeUndefined();
     });
   });
 
   describe("simpleSearch action - parameter validation", () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       process.env.GOOGLE_API_KEY = "test-api-key";
       process.env.GOOGLE_SEARCH_ENGINE_ID = "test-engine-id";
       broker = new ServiceBroker(testBrokerConfig);
-      googleSearchService = new GoogleSearchService(broker);
+      googleSearchService = broker.createService(GoogleSearchService) as GoogleSearchService;
+      await broker.start();
     });
 
     it("should require query parameter", async () => {
@@ -74,11 +78,12 @@ describe("GoogleSearchService", () => {
   });
 
   describe("simpleSearch action - Google API call", () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       process.env.GOOGLE_API_KEY = "test-api-key";
       process.env.GOOGLE_SEARCH_ENGINE_ID = "test-engine-id";
       broker = new ServiceBroker(testBrokerConfig);
-      googleSearchService = new GoogleSearchService(broker);
+      googleSearchService = broker.createService(GoogleSearchService) as GoogleSearchService;
+      await broker.start();
     });
 
     it("should call Google API with correct parameters", async () => {
@@ -133,11 +138,12 @@ describe("GoogleSearchService", () => {
   });
 
   describe("simpleSearch action - error handling", () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       process.env.GOOGLE_API_KEY = "test-api-key";
       process.env.GOOGLE_SEARCH_ENGINE_ID = "test-engine-id";
       broker = new ServiceBroker(testBrokerConfig);
-      googleSearchService = new GoogleSearchService(broker);
+      googleSearchService = broker.createService(GoogleSearchService) as GoogleSearchService;
+      await broker.start();
     });
 
     it("should handle API errors gracefully", async () => {
@@ -163,7 +169,7 @@ describe("GoogleSearchService", () => {
       process.env.GOOGLE_API_KEY = "";
       process.env.GOOGLE_SEARCH_ENGINE_ID = "test-engine-id";
       broker = new ServiceBroker(testBrokerConfig);
-      googleSearchService = new GoogleSearchService(broker);
+      googleSearchService = broker.createService(GoogleSearchService) as GoogleSearchService;
 
       await expect(
         googleSearchService.performSearch("test query")
@@ -174,7 +180,7 @@ describe("GoogleSearchService", () => {
       process.env.GOOGLE_API_KEY = "test-api-key";
       process.env.GOOGLE_SEARCH_ENGINE_ID = "";
       broker = new ServiceBroker(testBrokerConfig);
-      googleSearchService = new GoogleSearchService(broker);
+      googleSearchService = broker.createService(GoogleSearchService) as GoogleSearchService;
 
       await expect(
         googleSearchService.performSearch("test query")
@@ -185,7 +191,7 @@ describe("GoogleSearchService", () => {
       process.env.GOOGLE_API_KEY = "";
       process.env.GOOGLE_SEARCH_ENGINE_ID = "";
       broker = new ServiceBroker(testBrokerConfig);
-      googleSearchService = new GoogleSearchService(broker);
+      googleSearchService = broker.createService(GoogleSearchService) as GoogleSearchService;
 
       await expect(
         googleSearchService.performSearch("test query")
@@ -194,9 +200,10 @@ describe("GoogleSearchService", () => {
   });
 
   describe("health action", () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       broker = new ServiceBroker(testBrokerConfig);
-      googleSearchService = new GoogleSearchService(broker);
+      googleSearchService = broker.createService(GoogleSearchService) as GoogleSearchService;
+      await broker.start();
     });
 
     it("should return correct health response", async () => {
