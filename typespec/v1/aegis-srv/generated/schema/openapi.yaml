@@ -1030,6 +1030,75 @@ paths:
                     required:
                       - deleted
                   - $ref: '#/components/schemas/ErrorDetail'
+  /api/registries/{id}/revisions:
+    get:
+      operationId: listRegistryRevisions
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RegistryRevision'
+                required:
+                  - items
+    post:
+      operationId: createRegistryRevision
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: '#/components/schemas/RegistryRevision'
+                  - $ref: '#/components/schemas/ErrorDetail'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistryRevisionCreate'
+  /api/registries/{id}/revisions/{rid}:
+    get:
+      operationId: getRegistryRevision
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: rid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: '#/components/schemas/RegistryRevision'
+                  - $ref: '#/components/schemas/ErrorDetail'
   /api/registries/{id}/states:
     get:
       operationId: listStates
@@ -1567,6 +1636,75 @@ paths:
                     required:
                       - deleted
                   - $ref: '#/components/schemas/ErrorDetail'
+  /api/registries/{id}/wind-compilations:
+    get:
+      operationId: listWindCompilations
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WindCompilation'
+                required:
+                  - items
+    post:
+      operationId: compileRegistryToWind
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: '#/components/schemas/WindCompilationResponse'
+                  - $ref: '#/components/schemas/ErrorDetail'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WindCompilationCreate'
+  /api/registries/{id}/wind-compilations/{cid}:
+    get:
+      operationId: getWindCompilation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: cid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: '#/components/schemas/WindCompilation'
+                  - $ref: '#/components/schemas/ErrorDetail'
   /health:
     get:
       operationId: health
@@ -1645,6 +1783,77 @@ components:
         - one_to_one
         - one_to_many
         - many_to_one
+    CompilationStatus:
+      type: string
+      enum:
+        - succeeded
+        - failed
+        - stale
+        - invalid
+    CompiledEdge:
+      type: object
+      required:
+        - id
+        - compilation_id
+        - registry_id
+        - registry_revision_id
+        - transition_id
+        - wind_workflow_version_id
+        - wind_edge_id
+      properties:
+        id:
+          type: string
+          format: uuid
+        compilation_id:
+          type: string
+          format: uuid
+        registry_id:
+          type: string
+          format: uuid
+        registry_revision_id:
+          type: string
+          format: uuid
+        transition_id:
+          type: string
+          format: uuid
+        wind_workflow_version_id:
+          type: string
+          format: uuid
+        wind_edge_id:
+          type: string
+          format: uuid
+    CompiledNode:
+      type: object
+      required:
+        - id
+        - compilation_id
+        - registry_id
+        - registry_revision_id
+        - state_id
+        - wind_workflow_version_id
+        - wind_node_id
+      properties:
+        id:
+          type: string
+          format: uuid
+        compilation_id:
+          type: string
+          format: uuid
+        registry_id:
+          type: string
+          format: uuid
+        registry_revision_id:
+          type: string
+          format: uuid
+        state_id:
+          type: string
+          format: uuid
+        wind_workflow_version_id:
+          type: string
+          format: uuid
+        wind_node_id:
+          type: string
+          format: uuid
     ConceptMapping:
       type: object
       required:
@@ -1675,7 +1884,8 @@ components:
         mapping_expression:
           type: string
         cardinality:
-          $ref: '#/components/schemas/Cardinality'
+          allOf:
+            - $ref: '#/components/schemas/Cardinality'
           description: one_to_one | one_to_many | many_to_one
         createdAt:
           type: string
@@ -1942,8 +2152,20 @@ components:
       required:
         - id
         - registry_id
+        - registry_revision_id
         - status
         - checked_at
+        - engine
+        - engine_version
+        - checker_config_digest
+        - source_digest
+        - model_digest
+        - input_snapshot_digest
+        - result_digest
+        - safety_status
+        - liveness_status
+        - authority_level
+        - reason
       properties:
         id:
           type: string
@@ -1951,12 +2173,16 @@ components:
         registry_id:
           type: string
           format: uuid
+        registry_revision_id:
+          type: string
+          format: uuid
         property_id:
           type: string
           format: uuid
         status:
-          type: string
-          description: e.g. success | failure | unknown | running
+          allOf:
+            - $ref: '#/components/schemas/VerificationStatus'
+          description: Truthful outcome; verified requires verified safety from real TLC.
         trace:
           type: object
           unevaluatedProperties: {}
@@ -1974,26 +2200,51 @@ components:
         checked_by:
           type: string
           format: uuid
+        engine:
+          type: string
+        engine_version:
+          type: string
+        checker_config_digest:
+          type: string
+        source_digest:
+          type: string
+        model_digest:
+          type: string
+        input_snapshot_digest:
+          type: string
+        result_digest:
+          type: string
+        safety_status:
+          $ref: '#/components/schemas/VerificationStatus'
+        liveness_status:
+          allOf:
+            - $ref: '#/components/schemas/VerificationStatus'
+          description: Never verified at a bounded admission gate.
+        authority_level:
+          type: string
+          enum:
+            - advisory
+          description: Phase A permits advisory only.
+        reason:
+          type: string
     ModelCheckResultCreate:
       type: object
-      required:
-        - status
       properties:
         property_id:
           type: string
           format: uuid
-        status:
+        revision_id:
           type: string
-        trace:
+          format: uuid
+        input_snapshot:
           type: object
           unevaluatedProperties: {}
-        checked_properties:
-          type: array
-          items:
-            type: string
-        execution_time_ms:
-          type: integer
-          format: int32
+          description: Optional content-addressed subject/evidence snapshot.
+        input_snapshot_digest:
+          type: string
+        checker_config:
+          type: object
+          unevaluatedProperties: {}
         checked_by:
           type: string
           format: uuid
@@ -2018,7 +2269,8 @@ components:
           type: string
           description: Property name — unique within its registry
         type:
-          $ref: '#/components/schemas/PropertyType'
+          allOf:
+            - $ref: '#/components/schemas/PropertyType'
           description: safety | liveness | fairness
         expression:
           type: string
@@ -2172,6 +2424,49 @@ components:
         main_concept_id:
           type: string
           format: uuid
+    RegistryRevision:
+      type: object
+      required:
+        - id
+        - registry_id
+        - revision_number
+        - source
+        - source_digest
+        - model
+        - model_digest
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        registry_id:
+          type: string
+          format: uuid
+        revision_number:
+          type: integer
+          format: int64
+        source:
+          type: string
+        source_digest:
+          type: string
+        model:
+          type: object
+          unevaluatedProperties: {}
+        model_digest:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        created_by:
+          type: string
+        supersedes_revision_id:
+          type: string
+          format: uuid
+    RegistryRevisionCreate:
+      type: object
+      properties:
+        created_by:
+          type: string
     RegistryUpdate:
       type: object
       properties:
@@ -2385,7 +2680,8 @@ components:
           type: string
           description: Property name — unique within its registry
         operator:
-          $ref: '#/components/schemas/TemporalOperator'
+          allOf:
+            - $ref: '#/components/schemas/TemporalOperator'
           description: '[] always, <> eventually, -> eventually-leads-to, ~> leads-to, => implies'
         expression:
           type: string
@@ -2692,3 +2988,105 @@ components:
         attribute_id:
           type: string
           format: uuid
+    VerificationStatus:
+      type: string
+      enum:
+        - verified
+        - violated
+        - unknown
+        - stale
+        - invalid
+        - unavailable
+    WindCompilation:
+      type: object
+      required:
+        - id
+        - registry_id
+        - registry_revision_id
+        - wind_workflow_id
+        - wind_workflow_version_id
+        - wind_workflow_version_number
+        - source_digest
+        - model_digest
+        - wind_graph_digest
+        - compiler_version
+        - compiler_config_digest
+        - compiled_at
+        - status
+      properties:
+        id:
+          type: string
+          format: uuid
+        registry_id:
+          type: string
+          format: uuid
+        registry_revision_id:
+          type: string
+          format: uuid
+        wind_workflow_id:
+          type: string
+          format: uuid
+        wind_workflow_version_id:
+          type: string
+          format: uuid
+        wind_workflow_version_number:
+          type: integer
+          format: int32
+        source_digest:
+          type: string
+        model_digest:
+          type: string
+        wind_graph_digest:
+          type: string
+        compiler_version:
+          type: string
+        compiler_config_digest:
+          type: string
+        compiled_at:
+          type: string
+          format: date-time
+        compiled_by:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/CompilationStatus'
+    WindCompilationCreate:
+      type: object
+      required:
+        - wind_workflow_id
+      properties:
+        revision_id:
+          type: string
+          format: uuid
+        wind_workflow_id:
+          type: string
+          format: uuid
+        compiler_version:
+          type: string
+        compiler_config:
+          type: object
+          unevaluatedProperties: {}
+        compiled_by:
+          type: string
+          format: uuid
+    WindCompilationResponse:
+      type: object
+      required:
+        - compilation
+        - workflow_version
+        - nodes
+        - edges
+      properties:
+        compilation:
+          $ref: '#/components/schemas/WindCompilation'
+        workflow_version:
+          type: object
+          unevaluatedProperties: {}
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/CompiledNode'
+        edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/CompiledEdge'

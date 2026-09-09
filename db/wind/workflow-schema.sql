@@ -66,6 +66,8 @@ CREATE TABLE wind.tasks (
     description     TEXT,
     input_spec      JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    -- NULL means a workflow-only/check task; non-NULL links to an agent task.
+    tackle_task_id  UUID REFERENCES tackle.tasks(id) ON DELETE SET NULL,
     CONSTRAINT uq_office_task_name UNIQUE (office_id, name)
 );
 

@@ -48,7 +48,6 @@ CREATE TABLE aegis.registry (
     main_concept_id UUID,
     
     CONSTRAINT registry_pkey PRIMARY KEY (id),
-    CONSTRAINT registry_name_unique UNIQUE (name) WHERE (is_active = true),
     CONSTRAINT registry_main_concept_fkey FOREIGN KEY (main_concept_id)
         REFERENCES resolution.concept(id) ON DELETE SET NULL
 );
@@ -56,7 +55,8 @@ CREATE TABLE aegis.registry (
 COMMENT ON TABLE aegis.registry IS 'Main registry for TLA+ state machines';
 
 CREATE INDEX idx_registry_name ON aegis.registry USING btree (name);
-CREATE INDEX idx_registry_active ON aegis.registry USING btree (is_active) WHERE (is_active = true);
+CREATE UNIQUE INDEX registry_active_name_unique
+    ON aegis.registry USING btree (name) WHERE (is_active = true);
 CREATE INDEX idx_registry_updated ON aegis.registry USING btree (updated_at DESC);
 
 -- ============================================================

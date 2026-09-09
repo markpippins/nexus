@@ -256,10 +256,10 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   const testModelUnverified = !!testModelObj && !testModelObj.verified;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Top Banner & Quick Actions */}
-      <div className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-xl p-5 shadow-sm">
-        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      <div className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-xl p-4 shadow-sm">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-[var(--accent-color)]" />
@@ -353,19 +353,22 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
       </div>
 
       {/* ── Role Selector + Three Right Panels ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column: Role Selection */}
-        <div className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-xl p-4 flex flex-col justify-between">
-          <div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Left Column: Role Selection — sticky, height-capped so the role
+            list scrolls independently of the rest of the screen while the
+            right-hand content scrolls normally. */}
+        <div className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-xl p-4 flex flex-col lg:sticky lg:top-0 lg:self-start lg:max-h-[calc(100vh-6rem)]">
+          <div className="shrink-0">
             <h3 className="text-sm font-bold text-[var(--text-primary)] mb-1 flex items-center gap-2">
               <Shield className="w-4 h-4 text-[var(--accent-color)]" />
               <span>Select System Role</span>
             </h3>
-            <p className="text-sm text-[var(--text-secondary)] mb-4">
+            <p className="text-sm text-[var(--text-secondary)] mb-3">
               Select a role to manage its config bundles.
             </p>
+          </div>
 
-            <div className="space-y-2">
+          <div className="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1 -mr-1">
               {roles.map(r => {
                 const isSelected = selectedRole === r.name;
                 const roleActive = bundles.filter(b => b.role === r.name && b.is_active);
@@ -399,14 +402,13 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
                 );
               })}
             </div>
-          </div>
         </div>
 
         {/* Right Column (2 cols): three stacked panels */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className="lg:col-span-2 space-y-4">
           {/* Panel 1: Config Bundles */}
           <div className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-xl overflow-hidden shadow-sm">
-            <div className="bg-[var(--bg-tertiary)] px-5 py-3 border-b border-[var(--border-subtle)] flex items-center justify-between">
+            <div className="bg-[var(--bg-tertiary)] px-4 py-2.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Package className="w-4 h-4 text-[var(--accent-color)]" />
                 <span className="font-mono font-bold text-sm text-[var(--accent-color)]">
@@ -443,7 +445,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
             )}
 
             {roleBundles.length === 0 ? (
-              <div className="p-8 text-center text-sm text-[var(--text-muted)]">
+              <div className="p-6 text-center text-sm text-[var(--text-muted)]">
                 No bundles configured for role '{selectedRole}'. Click "Add bundle" to create one.
               </div>
             ) : (
@@ -456,7 +458,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
                   return (
                     <div
                       key={bundle.id}
-                      className={`p-4 transition flex flex-col md:flex-row items-start md:items-center justify-between gap-4 ${
+                      className={`p-3 transition flex flex-col md:flex-row items-start md:items-center justify-between gap-3 ${
                         bundle.is_active ? 'bg-[var(--bg-card)]' : 'bg-[var(--bg-secondary)] opacity-60'
                       }`}
                     >
@@ -514,8 +516,8 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
           </div>
 
           {/* Panel 2: Sandbox Controls */}
-          <div className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-xl p-5 space-y-4 shadow-sm">
-            <div className="flex items-center gap-2 pb-3 border-b border-[var(--border-subtle)]">
+          <div className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-xl p-4 space-y-4 shadow-sm">
+            <div className="flex items-center gap-2 pb-2.5 border-b border-[var(--border-subtle)]">
               <Zap className="w-5 h-5 text-emerald-400" />
               <div>
                 <h3 className="text-sm font-bold text-[var(--text-primary)]">Live Model Execution Sandbox</h3>
@@ -607,8 +609,8 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
           </div>
 
           {/* Panel 3: Inference Output & Trace */}
-          <div className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-xl p-5 shadow-sm">
-            <div className="flex items-center justify-between pb-3 border-b border-[var(--border-subtle)]">
+          <div className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-xl p-4 shadow-sm">
+            <div className="flex items-center justify-between pb-2.5 border-b border-[var(--border-subtle)]">
               <div className="flex items-center gap-2">
                 <Terminal className="w-5 h-5 text-cyan-400" />
                 <h3 className="text-sm font-bold text-[var(--text-primary)]">Inference Output & Trace</h3>

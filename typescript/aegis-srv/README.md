@@ -38,13 +38,17 @@ All routes are mounted under `/api`. Auth posture: **LAN-bound, no authenticatio
 
 - `GET/POST /api/registries`, `GET/PATCH/DELETE /api/registries/{id}`, `GET /api/registries/name/{name}`
 - Child resources (CRUD): `/api/registries/{id}/constants|variables|states|transitions|invariants|properties|temporal-properties|concept-mappings|attribute-mappings|relationship-mappings`
-- Actions: `POST /api/registries/{id}/validate`, `POST /api/registries/{id}/model-check`
+- Actions: `POST /api/registries/{id}/validate`, `POST /api/registries/{id}/model-check`, `GET/POST /api/registries/{id}/wind-compilations`, `GET /api/registries/{id}/wind-compilations/{cid}`
 - Read-only listings: `GET /api/registries/{id}/validation-results`, `.../model-check-results`
 - `GET/POST /api/registries/{id}/execution-log`
 - `GET /health`
 
 `DELETE /api/registries/{id}` is a **soft delete** (`is_active = false`); the schema's
 partial unique index on `(name) WHERE is_active = true` permits re-using an active name.
+
+## Wind compilation
+
+`POST /api/registries/{id}/wind-compilations` compiles a pinned immutable registry revision into a new Wind workflow version. The target workflow and revision-scoped task/outcome mappings must already exist. The compiler validates all mappings before creating any Wind or Aegis rows, then writes deterministic nodes, edges, graph digest, and immutable lineage. It never activates the version, runs a task, mutates Resolution/PEB, or treats a compilation as admission authority.
 
 ## Model-checking
 
@@ -65,6 +69,8 @@ partial unique index on `(name) WHERE is_active = true` permits re-using an acti
 
 The result row's `checked_properties` records `engine:tlc` or `engine:structural`
 so callers can distinguish the engine. Requires `java` on the PATH.
+
+Wind workflow versions, nodes, and edges referenced by `aegis.wind_compilation` are protected by V150 from update/delete mutation. Uncompiled Wind design-time artifacts retain their existing lifecycle.
 
 ## Develop
 

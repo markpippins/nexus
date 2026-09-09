@@ -29,14 +29,24 @@ namespace org.nexus.aegissrv {
   @route("/api/registries/{id}")         @patch op updateRegistry(@path id: string, @body body: RegistryUpdate): Registry | ErrorDetail;
   @route("/api/registries/{id}")         @delete op deleteRegistry(@path id: string): { deleted: string } | ErrorDetail;
 
+  // ── Registry: immutable Phase A revisions ─────────────────────
+  @route("/api/registries/{id}/revisions")       @get  op listRegistryRevisions(@path id: string): { items: RegistryRevision[] };
+  @route("/api/registries/{id}/revisions")       @post op createRegistryRevision(@path id: string, @body body: RegistryRevisionCreate): RegistryRevision | ErrorDetail;
+  @route("/api/registries/{id}/revisions/{rid}") @get  op getRegistryRevision(@path id: string, @path rid: string): RegistryRevision | ErrorDetail;
+
   // ── Registry: validate / model-check actions ─────────────────
   @route("/api/registries/{id}/validate")      @post op validateRegistry(@path id: string): ValidationResult | ErrorDetail;
   @route("/api/registries/{id}/model-check")   @post op modelCheckRegistry(@path id: string): ModelCheckResult | ErrorDetail;
 
+  // ── Registry: immutable revisions and Wind compilation ───────
+  @route("/api/registries/{id}/wind-compilations") @get op listWindCompilations(@path id: string): { items: WindCompilation[] };
+  @route("/api/registries/{id}/wind-compilations") @post op compileRegistryToWind(@path id: string, @body body: WindCompilationCreate): WindCompilationResponse | ErrorDetail;
+  @route("/api/registries/{id}/wind-compilations/{cid}") @get op getWindCompilation(@path id: string, @path cid: string): WindCompilation | ErrorDetail;
+
   // ── Registry: child collections ──────────────────────────────
   @route("/api/registries/{id}/validation-results")   @get op listValidationResults(@path id: string): { items: ValidationResult[] };
   @route("/api/registries/{id}/model-check-results")  @get op listModelCheckResults(@path id: string): { items: ModelCheckResult[] };
-@route("/api/registries/{id}/execution-log")        @get  op listExecutionLog(@path id: string): { items: ExecutionLog[] };
+  @route("/api/registries/{id}/execution-log")        @get  op listExecutionLog(@path id: string): { items: ExecutionLog[] };
   @route("/api/registries/{id}/execution-log")        @post op createExecutionLog(@path id: string, @body body: ExecutionLogCreate): ExecutionLog | ErrorDetail;
   @route("/api/registries/{id}/execution-log/{cid}")  @get  op getExecutionLog(@path id: string, @path cid: string): ExecutionLog | ErrorDetail;
   @route("/api/registries/{id}/execution-log/{cid}")  @patch op updateExecutionLog(@path id: string, @path cid: string, @body body: ExecutionLogCreate): ExecutionLog | ErrorDetail;
