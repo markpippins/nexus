@@ -81,6 +81,7 @@ ALL_SERVICES=(
     "tackle-prompt-sync-srv.service" # port 3501 — PG→Redis sync for prompt/task registry (feeds tackle-prompt-bridge + tackle-mcp /prompts/get)
     "knowledge-srv.service"    # port 3109 — knowledge REST API (graph_entities, graph_edges, xrefs, migrations)
     "peb-srv.service"          # port 3111 — PEB observability REST API
+    "aegis-srv.service"        # port 3116 — Aegis TLA+ state-machine registry REST API (aegis.* schema)
     "cpf-api.service"          # port 3108 — CPF funnel data API
     "atlas.service"            # port 8090 — graph views persistence
     "execution-srv.service"    # port 3110 — execution observability REST API
@@ -160,6 +161,7 @@ SERVICE_PORTS=(
     ["tackle-prompt-sync-srv.service"]="3501"
     ["knowledge-srv.service"]="3109"
     ["peb-srv.service"]="3111"
+    ["aegis-srv.service"]="3116"
     ["operator-svc.service"]="3018"
     ["pty-srv.service"]="3121"
 ["cpf-api.service"]="3108"

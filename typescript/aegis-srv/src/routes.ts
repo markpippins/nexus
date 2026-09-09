@@ -1,7 +1,9 @@
 import { Request, Response, Router } from 'express';
 import { query, withTransaction } from './db';
 import { checkModel, MCModel } from './model-checker';
-import { runTlc, stageSpec, TlcRunOpts, ParseOutcome, TlcResult } from './tlc-runner';
+import { runTlc, stageSpec, TlcRunOpts, TlcResult } from './tlc-runner';
+import { digestJson, mapCheckerOutcome } from './phase-a';
+import { buildWindCompilationPlan } from './wind-compiler';
 
 const router = Router();
 
@@ -70,6 +72,63 @@ function pgError(res: Response, err: any) {
   if (code === '22P02') return error(res, 400, `invalid value: ${err?.message || ''}`);
   console.error('[aegis-srv] DB error:', err?.message);
   return error(res, 500, 'internal server error');
+}
+
+interface RegistryRevisionRow {
+  id: string;
+  registry_id: string;
+  revision_number: number;
+  source: string;
+  source_digest: string;
+  model: Record<string, any>;
+  model_digest: string;
+}
+
+async function createRegistryRevision(registryId: string, createdBy: string | null): Promise<RegistryRevisionRow> {
+  const created = await query(
+    'SELECT aegis.create_registry_revision($1, $2) AS revision_id',
+    [registryId, createdBy],
+  );
+  const revisionId = created.rows[0]?.revision_id;
+  const revision = await query(
+    'SELECT * FROM aegis.registry_revision WHERE id = $1', [revisionId],
+  );
+  return revision.rows[0] as RegistryRevisionRow;
+}
+
+async function getRegistryRevision(
+  registryId: string,
+  requestedRevisionId?: unknown,
+  createdBy: string | null = null,
+): Promise<RegistryRevisionRow> {
+  if (requestedRevisionId !== undefined && requestedRevisionId !== null) {
+    const revisionId = String(requestedRevisionId);
+    if (!isUuid(revisionId)) throw Object.assign(new Error('invalid revision id'), { code: '22P02' });
+    const revision = await query(
+      'SELECT * FROM aegis.registry_revision WHERE id = $1 AND registry_id = $2',
+      [revisionId, registryId],
+    );
+    if (revision.rows.length === 0) throw Object.assign(new Error('revision not found'), { code: 'ENOENT' });
+    return revision.rows[0] as RegistryRevisionRow;
+  }
+  return createRegistryRevision(registryId, createdBy);
+}
+
+function modelFromRevision(snapshot: Record<string, any>): MCModel {
+  return {
+    states: snapshot.states || [],
+    transitions: (snapshot.transitions || []).map((t: any) => ({
+      ...t,
+      from_state_id: t.from_state_id || null,
+      to_state_id: t.to_state_id || null,
+      guard_expression: t.guard_expression || null,
+    })),
+    invariants: snapshot.invariants || [],
+    properties: snapshot.properties || [],
+    temporal_properties: snapshot.temporal_properties || [],
+    variables: (snapshot.variables || []).map((v: any) => v.name),
+    constants: (snapshot.constants || []).map((c: any) => c.name),
+  };
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -239,6 +298,42 @@ router.delete('/registries/:id', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════
+// Immutable registry revisions (Phase A)
+// ══════════════════════════════════════════════════════════════════
+router.get('/registries/:id/revisions', async (req, res) => {
+  try {
+    const registryId = await requireRegistry(req.params.id, res);
+    if (!registryId) return;
+    const { rows } = await query(
+      'SELECT * FROM aegis.registry_revision WHERE registry_id = $1 ORDER BY revision_number DESC',
+      [registryId],
+    );
+    res.json({ items: rows });
+  } catch (e) { pgError(res, e); }
+});
+
+router.post('/registries/:id/revisions', async (req, res) => {
+  try {
+    const registryId = await requireRegistry(req.params.id, res);
+    if (!registryId) return;
+    const revision = await createRegistryRevision(registryId, req.body?.created_by || null);
+    res.status(201).json(revision);
+  } catch (e) { pgError(res, e); }
+});
+
+router.get('/registries/:id/revisions/:rid', async (req, res) => {
+  try {
+    const registryId = await requireRegistry(req.params.id, res);
+    if (!registryId) return;
+    const revision = await getRegistryRevision(registryId, req.params.rid);
+    res.json(revision);
+  } catch (e: any) {
+    if (e?.code === 'ENOENT') { error(res, 404, 'revision not found'); return; }
+    pgError(res, e);
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════
 // Action endpoints
 // ══════════════════════════════════════════════════════════════════
 router.post('/registries/:id/validate', async (req, res) => {
@@ -278,75 +373,102 @@ router.post('/registries/:id/model-check', async (req, res) => {
     const registryId = await requireRegistry(req.params.id, res);
     if (!registryId) return;
     const started = Date.now();
-    const body = pick(req.body, ['property_id', 'checked_by']);
-
-    // Fetch the registry's TLA+ source + the invariant/property names for the cfg.
-    const [regRow, invRows, propRows] = await Promise.all([
-      query('SELECT tla_plus_source, tla_plus_module, name FROM aegis.registry WHERE id = $1', [registryId]),
-      query('SELECT name FROM aegis.invariant WHERE registry_id = $1', [registryId]),
-      query('SELECT name FROM aegis.property WHERE registry_id = $1', [registryId]),
+    const body = pick(req.body || {}, [
+      'property_id', 'checked_by', 'revision_id', 'input_snapshot', 'input_snapshot_digest', 'checker_config',
     ]);
-    const registry = regRow.rows[0];
-    const tlaSource: string | null = registry?.tla_plus_source || null;
-
-    let status: string;
-    let trace: any = null;
-    let checked_properties: string[] = [];
-    let warnings: string[] = [];
-
-    if (tlaSource && tlaSource.trim()) {
-      // ── Real TLC path ─────────────────────────────────────────────
-      const tlcOpts: TlcRunOpts = {
-        invariants: invRows.rows.map((r) => r.name),
-        properties: propRows.rows.map((r) => r.name),
-      };
-      const staged = stageSpec(tlaSource, tlcOpts);
-      let result: TlcResult;
-      try {
-        result = await runTlc(staged.specDir, staged.moduleName, tlcOpts);
-      } finally {
-        staged.cleanup();
-      }
-      status = result.status;
-      trace = result.trace ? { engine: 'tlc', steps: result.trace, violated: result.violated } : null;
-      for (const v of result.verdicts) {
-        checked_properties.push(`${v.kind}:${v.name}=${v.result}: ${v.detail}`);
-      }
-      if (result.violated) checked_properties.push(`violated:${result.violated}`);
-      warnings = result.warnings;
-    } else {
-      // ── Structural fallback path ──────────────────────────────────
-      const model: MCModel = await loadModel(registryId);
-      const report = checkModel(model);
-      status = report.status;
-      for (const v of report.verdicts) {
-        checked_properties.push(`${v.kind}:${v.name}=${v.result}${v.type ? `(${v.type})` : ''}: ${v.detail}`);
-      }
-      if (report.unreachableStates.length > 0) {
-        checked_properties.push(`unreachable:${report.unreachableStates.join(',')}`);
-      }
-      trace = report.deadlockTrace ? { engine: 'structural', deadlock: report.deadlockTrace, errors: report.errors } : null;
-      warnings = report.warnings;
+    const revision = await getRegistryRevision(registryId, body.revision_id, body.checked_by || null);
+    const snapshot = body.input_snapshot === undefined ? {} : body.input_snapshot;
+    const inputSnapshotDigest = digestJson(snapshot);
+    if (body.input_snapshot_digest !== undefined && body.input_snapshot_digest !== inputSnapshotDigest) {
+      error(res, 400, 'input_snapshot_digest does not match input_snapshot');
+      return;
     }
 
-    checked_properties.push(`engine:${tlaSource && tlaSource.trim() ? 'tlc' : 'structural'}`);
+    const model = modelFromRevision(revision.model);
+    const checkerConfig = body.checker_config || {
+      init: 'Init',
+      next: 'Next',
+      invariants: model.invariants.map((i: any) => i.name),
+      properties: model.properties.map((p: any) => p.name),
+    };
+    const tlaSource: string = revision.source || '';
+    const effectiveCheckerConfig = {
+      ...checkerConfig,
+      init: checkerConfig.init || 'Init',
+      next: checkerConfig.next || 'Next',
+      invariants: model.invariants.map((i: any) => i.name),
+      properties: model.properties.map((p: any) => p.name),
+    };
+    const checkerConfigDigest = digestJson(effectiveCheckerConfig);
+    const hasTlaSource = Boolean(tlaSource.trim());
+    const engine: 'tlc' | 'structural' = hasTlaSource ? 'tlc' : 'structural';
+    const engineVersion = hasTlaSource ? 'tla2tools.jar' : 'aegis-structural-checker-v1';
+    let trace: any = null;
+    let checkedProperties: string[] = [];
+    let checkerStatus: 'success' | 'failure' | 'error';
+    let reason: string;
+
+    if (hasTlaSource) {
+      const tlcOpts: TlcRunOpts = effectiveCheckerConfig as TlcRunOpts;
+      const staged = stageSpec(tlaSource, tlcOpts);
+      let result: TlcResult;
+      try { result = await runTlc(staged.specDir, staged.moduleName, tlcOpts); }
+      finally { staged.cleanup(); }
+      checkerStatus = result.status;
+      trace = result.trace ? { engine, steps: result.trace, violated: result.violated } : null;
+      checkedProperties = result.verdicts.map((v) => `${v.kind}:${v.name}=${v.result}: ${v.detail}`);
+      if (result.violated) checkedProperties.push(`violated:${result.violated}`);
+      reason = [...result.errors, ...result.warnings, result.violated || ''].filter(Boolean).join('; ') ||
+        (result.status === 'success' ? 'TLC completed without a safety violation' : 'TLC did not establish a verified result');
+    } else {
+      const report = checkModel(model);
+      checkerStatus = report.status === 'success' ? 'success' : 'failure';
+      checkedProperties = report.verdicts.map((v) => `${v.kind}:${v.name}=${v.result}${v.type ? `(${v.type})` : ''}: ${v.detail}`);
+      if (report.unreachableStates.length > 0) checkedProperties.push(`unreachable:${report.unreachableStates.join(',')}`);
+      trace = report.deadlockTrace ? { engine, deadlock: report.deadlockTrace, errors: report.errors } : null;
+      reason = [...report.errors, ...report.warnings].join('; ') || 'Structural analysis is not a formal proof';
+    }
+
+    const outcome = mapCheckerOutcome(engine, checkerStatus, reason);
+    checkedProperties.push(`engine:${engine}`);
+    checkedProperties.push(`truthful_status:${outcome.status}`);
+    checkedProperties.push(`liveness_status:${outcome.liveness_status}`);
+    const resultMaterial = {
+      registry_revision_id: revision.id,
+      engine,
+      engine_version: engineVersion,
+      checker_config_digest: checkerConfigDigest,
+      source_digest: revision.source_digest,
+      model_digest: revision.model_digest,
+      input_snapshot_digest: inputSnapshotDigest,
+      status: outcome.status,
+      safety_status: outcome.safety_status,
+      liveness_status: outcome.liveness_status,
+      trace,
+      checked_properties: checkedProperties,
+    };
+    const resultDigest = digestJson(resultMaterial);
+    const checkedBy = body.checked_by && isUuid(String(body.checked_by)) ? String(body.checked_by) : null;
 
     const { rows } = await query(
       `INSERT INTO aegis.model_check_result
-         (registry_id, property_id, status, trace, checked_properties, execution_time_ms, checked_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [
-        registryId,
-        body.property_id || null,
-        status,
-        trace ? JSON.stringify(trace) : null,
-        checked_properties,
-        Date.now() - started,
-        body.checked_by || null,
-      ],
+         (registry_id, registry_revision_id, property_id, status, trace, checked_properties,
+          execution_time_ms, checked_by, engine, engine_version, checker_config_digest,
+          source_digest, model_digest, input_snapshot_digest, result_digest,
+          safety_status, liveness_status, authority_level, reason)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+       RETURNING *`,
+      [registryId, revision.id, body.property_id || null, outcome.status,
+       trace ? JSON.stringify(trace) : null, checkedProperties, Date.now() - started, checkedBy,
+       engine, engineVersion, checkerConfigDigest, revision.source_digest, revision.model_digest,
+       inputSnapshotDigest, resultDigest, outcome.safety_status, outcome.liveness_status,
+       outcome.authority_level, outcome.reason],
     );
     res.status(201).json(rows[0]);
-  } catch (e) { pgError(res, e); }
+  } catch (e: any) {
+    if (e?.code === 'ENOENT') { error(res, 404, 'revision not found'); return; }
+    pgError(res, e);
+  }
 });
 
 /** Load the structured aegis model (states/transitions/invariants/properties/temporals + names) for a registry. */
@@ -386,17 +508,195 @@ router.get('/registries/:id/validation-results', async (req, res) => {
     );
     res.json({ items: rows });
   } catch (e) { pgError(res, e); }
-});
-
-router.get('/registries/:id/model-check-results', async (req, res) => {
+});router.get('/registries/:id/model-check-results', async (req, res) => {
   try {
     const registryId = await requireRegistry(req.params.id, res);
     if (!registryId) return;
     const { rows } = await query(
-      'SELECT * FROM aegis.model_check_result WHERE registry_id = $1 ORDER BY checked_at DESC', [registryId],
+      'SELECT * FROM aegis.model_check_result WHERE registry_id = $1 ORDER BY checked_at DESC',
+      [registryId],
     );
     res.json({ items: rows });
   } catch (e) { pgError(res, e); }
+});
+
+// ══════════════════════════════════════════════════════════════════
+// Aegis revision -> Wind compilation
+// ══════════════════════════════════════════════════════════════════
+router.get('/registries/:id/wind-compilations', async (req, res) => {
+  try {
+    const registryId = await requireRegistry(req.params.id, res);
+    if (!registryId) return;
+    const { rows } = await query(
+      `SELECT * FROM aegis.wind_compilation
+        WHERE registry_id = $1
+        ORDER BY compiled_at DESC`, [registryId],
+    );
+    res.json({ items: rows });
+  } catch (e) { pgError(res, e); }
+});
+
+router.get('/registries/:id/wind-compilations/:cid', async (req, res) => {
+  try {
+    const registryId = await requireRegistry(req.params.id, res);
+    if (!registryId) return;
+    if (!isUuid(String(req.params.cid))) { error(res, 400, 'invalid compilation id'); return; }
+    const { rows } = await query(
+      `SELECT * FROM aegis.wind_compilation
+        WHERE id = $1 AND registry_id = $2`, [String(req.params.cid), registryId],
+    );
+    if (rows.length === 0) { error(res, 404, 'Wind compilation not found'); return; }
+    res.json(rows[0]);
+  } catch (e) { pgError(res, e); }
+});
+
+router.post('/registries/:id/wind-compilations', async (req, res) => {
+  try {
+    const registryId = await requireRegistry(req.params.id, res);
+    if (!registryId) return;
+
+    const body = req.body || {};
+    const workflowId = String(body.wind_workflow_id || '');
+    if (!isUuid(workflowId)) { error(res, 400, 'wind_workflow_id is required and must be a UUID'); return; }
+    const compilerVersion = typeof body.compiler_version === 'string' && body.compiler_version.trim()
+      ? body.compiler_version.trim() : 'aegis-wind-compiler-v1';
+    const compilerConfig = body.compiler_config === undefined ? {} : body.compiler_config;
+    const compilerConfigDigest = digestJson(compilerConfig);
+    const compiledBy = body.compiled_by && isUuid(String(body.compiled_by)) ? String(body.compiled_by) : null;
+
+    const result = await withTransaction(async (client) => {
+      const revisionId = body.revision_id === undefined || body.revision_id === null
+        ? (await client.query('SELECT aegis.create_registry_revision($1, $2) AS revision_id', [registryId, compiledBy])).rows[0].revision_id
+        : String(body.revision_id);
+      if (!isUuid(revisionId)) throw Object.assign(new Error('invalid revision id'), { code: '22P02' });
+
+      const revisionResult = await client.query(
+        'SELECT id, registry_id, model, source_digest, model_digest FROM aegis.registry_revision WHERE id = $1 AND registry_id = $2',
+        [revisionId, registryId],
+      );
+      if (revisionResult.rows.length === 0) throw Object.assign(new Error('revision not found'), { code: 'ENOENT' });
+      const revision = revisionResult.rows[0];
+
+      const workflowResult = await client.query('SELECT id FROM wind.workflows WHERE id = $1', [workflowId]);
+      if (workflowResult.rows.length === 0) throw Object.assign(new Error('Wind workflow not found'), { code: 'WIND_NOT_FOUND' });
+
+      const [taskMappings, outcomeMappings, windTasks, windOutcomes] = await Promise.all([
+        client.query(
+          `SELECT state_id, wind_task_id, is_check_only
+             FROM aegis.wind_task_mapping
+            WHERE registry_id = $1 AND registry_revision_id = $2
+            ORDER BY state_id`, [registryId, revisionId],
+        ),
+        client.query(
+          `SELECT transition_id, wind_task_id, wind_outcome_id
+             FROM aegis.wind_outcome_mapping
+            WHERE registry_id = $1 AND registry_revision_id = $2
+            ORDER BY transition_id`, [registryId, revisionId],
+        ),
+        client.query('SELECT id, name, tackle_task_id FROM wind.tasks WHERE id IN (SELECT wind_task_id FROM aegis.wind_task_mapping WHERE registry_id = $1 AND registry_revision_id = $2 UNION SELECT wind_task_id FROM aegis.wind_outcome_mapping WHERE registry_id = $1 AND registry_revision_id = $2)', [registryId, revisionId]),
+        client.query('SELECT id, task_id, code FROM wind.task_outcomes WHERE id IN (SELECT wind_outcome_id FROM aegis.wind_outcome_mapping WHERE registry_id = $1 AND registry_revision_id = $2)', [registryId, revisionId]),
+      ]);
+
+      const plan = buildWindCompilationPlan(
+        revisionId, revision.model, taskMappings.rows, outcomeMappings.rows,
+        windTasks.rows, windOutcomes.rows,
+      );
+      if (plan.errors.length > 0) {
+        const validationError: any = new Error(`Wind compilation refused: ${plan.errors.join('; ')}`);
+        validationError.code = 'WIND_COMPILATION_INVALID';
+        validationError.details = plan.errors;
+        throw validationError;
+      }
+
+      // Serialize version allocation per workflow; MAX()+1 is otherwise
+      // vulnerable to two concurrent compilers selecting the same number.
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 150))', [workflowId]);
+      const versionResult = await client.query(
+        `INSERT INTO wind.workflow_versions (workflow_id, version_number)
+         SELECT $1, COALESCE(MAX(version_number), 0) + 1
+           FROM wind.workflow_versions
+         WHERE workflow_id = $1
+         RETURNING id, workflow_id, version_number`,
+        [workflowId],
+      );
+      const version = versionResult.rows[0];
+      const nodeIds = new Map<string, string>();
+      const nodeRows: any[] = [];
+      for (const node of plan.nodes) {
+        const inserted = await client.query(
+          `INSERT INTO wind.workflow_nodes
+             (workflow_version_id, task_id, name, is_entrypoint, is_terminal)
+           VALUES ($1, $2, $3, $4, $5)
+           RETURNING id, workflow_version_id, task_id, name, is_entrypoint, is_terminal`,
+          [version.id, node.wind_task_id, node.name, node.is_entrypoint, node.is_terminal],
+        );
+        nodeIds.set(node.state_id, inserted.rows[0].id);
+        nodeRows.push({ ...inserted.rows[0], state_id: node.state_id });
+      }
+
+      const edgeRows: any[] = [];
+      for (const edge of plan.edges) {
+        const inserted = await client.query(
+          `INSERT INTO wind.workflow_edges
+             (workflow_version_id, from_node_id, from_task_id, outcome_id, to_node_id)
+           VALUES ($1, $2, $3, $4, $5)
+           RETURNING id, workflow_version_id, from_node_id, from_task_id, outcome_id, to_node_id`,
+          [version.id, nodeIds.get(edge.from_node_state_id), edge.from_task_id, edge.outcome_id, nodeIds.get(edge.to_node_state_id)],
+        );
+        edgeRows.push({ ...inserted.rows[0], transition_id: edge.transition_id });
+      }
+
+      const compilationResult = await client.query(
+        `INSERT INTO aegis.wind_compilation
+           (registry_id, registry_revision_id, wind_workflow_id, wind_workflow_version_id,
+            wind_workflow_version_number, source_digest, model_digest, wind_graph_digest,
+            compiler_version, compiler_config_digest, compiled_by, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'succeeded')
+         RETURNING *`,
+        [registryId, revisionId, workflowId, version.id, version.version_number,
+          revision.source_digest, revision.model_digest, plan.graph_digest,
+          compilerVersion, compilerConfigDigest, compiledBy],
+      );
+      const compilation = compilationResult.rows[0];
+
+      const compiledNodes: any[] = [];
+      for (const node of nodeRows) {
+        const lineage = await client.query(
+          `INSERT INTO aegis.compiled_node
+             (compilation_id, registry_id, registry_revision_id, state_id,
+              wind_workflow_version_id, wind_node_id)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING *`,
+          [compilation.id, registryId, revisionId, node.state_id, version.id, node.id],
+        );
+        compiledNodes.push(lineage.rows[0]);
+      }
+      const compiledEdges: any[] = [];
+      for (const edge of edgeRows) {
+        const lineage = await client.query(
+          `INSERT INTO aegis.compiled_edge
+             (compilation_id, registry_id, registry_revision_id, transition_id,
+              wind_workflow_version_id, wind_edge_id)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING *`,
+          [compilation.id, registryId, revisionId, edge.transition_id, version.id, edge.id],
+        );
+        compiledEdges.push(lineage.rows[0]);
+      }
+
+      return { compilation, workflow_version: version, nodes: compiledNodes, edges: compiledEdges };
+    });
+
+    res.status(201).json(result);
+  } catch (e: any) {
+    if (e?.code === 'ENOENT') { error(res, 404, 'revision not found'); return; }
+    if (e?.code === 'WIND_NOT_FOUND') { error(res, 404, 'Wind workflow not found'); return; }
+    if (e?.code === 'WIND_COMPILATION_INVALID') {
+      res.status(422).json({ error: 'wind compilation refused', message: e.message, details: e.details });
+      return;
+    }
+    pgError(res, e);
+  }
 });
 
 // ══════════════════════════════════════════════════════════════════

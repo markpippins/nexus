@@ -128,12 +128,33 @@ Runs a lightweight structural validation of the registry and persists the outcom
 }
 ```
 
-### `POST /api/registries/:id/model-check`
-Runs the authoritative model check and persists the result to `aegis.model_check_result`. Uses the **real TLC** engine (`tla2tools.jar`) when the registry carries `tla_plus_source`; otherwise falls back to the deterministic **structural state-space checker** over the `aegis` graph. TLC is failure-isolated: a checker crash/timeout yields an `error` status, never a failed HTTP request.
+### `GET /api/registries/:id/revisions`
+Lists immutable Phase A registry revisions, newest first.
+
+### `POST /api/registries/:id/revisions`
+Creates an immutable content-addressed snapshot of the current mutable registry authoring state.
 
 **Request body (optional)**
 ```json
-{ "property_id": "uuid", "checked_by": "string" }
+{ "created_by": "string" }
+```
+
+### `GET /api/registries/:id/revisions/:rid`
+Gets one immutable registry revision. A revision contains the source digest, normalized structured model snapshot, model digest, revision number, and supersession lineage.
+
+### `POST /api/registries/:id/model-check`
+Runs a model check against an immutable registry revision and persists append-only advisory evidence to `aegis.model_check_result`. If `revision_id` is omitted, the service snapshots the current registry first. It uses the **real TLC** engine (`tla2tools.jar`) when the revision carries `source`; otherwise it runs the deterministic structural checker. Structural success is recorded as `unknown`, not `verified`, because it is not a formal proof. TLC success records `verified` safety only; liveness is always `unknown` at the gate. Checker failure/unavailability is recorded as `violated` or `unavailable`, never as `verified`.
+
+**Request body (optional)**
+```json
+{
+  "revision_id": "uuid",
+  "property_id": "uuid",
+  "checked_by": "string",
+  "input_snapshot": {},
+  "input_snapshot_digest": "sha256:<64 lowercase hex characters>",
+  "checker_config": {}
+}
 ```
 
 **Response `201`** — `model_check_result` row:
@@ -141,15 +162,49 @@ Runs the authoritative model check and persists the result to `aegis.model_check
 {
   "id": "uuid",
   "registry_id": "uuid",
+  "registry_revision_id": "uuid",
   "property_id": "uuid|null",
-  "status": "pass | fail | error | unknown",
+  "status": "verified | violated | unknown | stale | invalid | unavailable",
+  "safety_status": "verified | violated | unknown | stale | invalid | unavailable",
+  "liveness_status": "unknown",
+  "authority_level": "advisory",
+  "engine": "tlc | structural",
+  "engine_version": "string",
+  "checker_config_digest": "sha256:<64 lowercase hex characters>",
+  "source_digest": "sha256:<64 lowercase hex characters>",
+  "model_digest": "sha256:<64 lowercase hex characters>",
+  "input_snapshot_digest": "sha256:<64 lowercase hex characters>",
+  "result_digest": "sha256:<64 lowercase hex characters>",
+  "reason": "string",
   "trace": { "engine": "tlc|structural", ... } | null,
-  "checked_properties": ["invariant:<name>=pass: ...", "engine:tlc"],
+  "checked_properties": ["invariant:<name>=PASS: ...", "truthful_status:verified"],
   "execution_time_ms": 123,
   "checked_by": "string|null",
   "checked_at": "ISO-8601"
 }
 ```
+
+### `GET /api/registries/:id/wind-compilations`
+Lists Aegis-to-Wind compilation lineage for the registry, newest first.
+
+### `GET /api/registries/:id/wind-compilations/:cid`
+Gets one compilation lineage record by UUID.
+
+### `POST /api/registries/:id/wind-compilations`
+Compiles one immutable Aegis registry revision into a new Wind workflow version and persists the complete Aegis-to-Wind lineage. The target Wind workflow must already exist; the compiler uses revision-scoped task and outcome mappings and does not invent Wind task ownership or agent semantics.
+
+**Request body**
+```json
+{
+  "revision_id": "uuid (optional; current registry is snapshotted when omitted)",
+  "wind_workflow_id": "uuid",
+  "compiler_version": "aegis-wind-compiler-v1",
+  "compiler_config": {},
+  "compiled_by": "uuid"
+}
+```
+
+The operation is fail-closed: every revision state must have exactly one mapped Wind task, every transition must have a mapped outcome belonging to its source task, there must be exactly one initial state, and check-only mappings must agree with `wind.tasks.tackle_task_id IS NULL`. A failed validation creates no Wind version or Aegis lineage rows. Successful compilation creates a new Wind workflow version, nodes, edges, `aegis.wind_compilation`, `aegis.compiled_node`, and `aegis.compiled_edge` rows. The compilation is advisory and does not activate the Wind version or mutate Resolution/PEB.
 
 ### `GET /api/registries/:id/validation-results`
 List validation results for a registry (newest first).

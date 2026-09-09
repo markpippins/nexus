@@ -468,29 +468,75 @@ namespace org.nexus.aegissrv {
   }
 
   // ========================================================================
+  // Phase A immutable revisions and truthful verification evidence
+  // ========================================================================
+
+  model RegistryRevision {
+    @format("uuid") id: string;
+    @format("uuid") registry_id: string;
+    revision_number: int64;
+    source: string;
+    source_digest: string;
+    @encodedName("application/json", "model")
+    model_snapshot: Record<unknown>;
+    model_digest: string;
+    createdAt: utcDateTime;
+    created_by?: string;
+    @format("uuid") supersedes_revision_id?: string;
+  }
+
+  model RegistryRevisionCreate {
+    created_by?: string;
+  }
+
+  enum VerificationStatus {
+    verified,
+    violated,
+    unknown_status: "unknown",
+    stale,
+    invalid,
+    unavailable,
+  }
+
+  // ========================================================================
   // Model-check and validation results
   // ========================================================================
 
   model ModelCheckResult {
     @format("uuid") id: string;
     @format("uuid") registry_id: string;
+    @format("uuid") registry_revision_id: string;
     @format("uuid") property_id?: string;
-    /** e.g. success | failure | unknown | running */
-    status: string;
+    /** Truthful outcome; verified requires verified safety from real TLC. */
+    status: VerificationStatus;
     /** Counterexample / trace (JSONB) */
     trace?: Record<unknown>;
     checked_properties?: string[];
     execution_time_ms?: int32;
     checked_at: utcDateTime;
     @format("uuid") checked_by?: string;
+    engine: string;
+    engine_version: string;
+    checker_config_digest: string;
+    source_digest: string;
+    model_digest: string;
+    input_snapshot_digest: string;
+    result_digest: string;
+    safety_status: VerificationStatus;
+    /** Never verified at a bounded admission gate. */
+    liveness_status: VerificationStatus;
+    /** Phase A permits advisory only. */
+    authority_level: "advisory";
+    reason: string;
   }
 
   model ModelCheckResultCreate {
     @format("uuid") property_id?: string;
-    status: string;
-    trace?: Record<unknown>;
-    checked_properties?: string[];
-    execution_time_ms?: int32;
+    @format("uuid") revision_id?: string;
+    /** Optional content-addressed subject/evidence snapshot. */
+    input_snapshot?: Record<unknown>;
+    input_snapshot_digest?: string;
+    checker_config?: Record<unknown>;
     @format("uuid") checked_by?: string;
   }
 
@@ -539,6 +585,69 @@ namespace org.nexus.aegissrv {
     trigger_event?: string;
     @format("uuid") trigger_user?: string;
     context?: Record<unknown>;
+  }
+
+  // ========================================================================
+  // Aegis revision -> Wind compilation
+  // ========================================================================
+
+  model WindCompilation {
+    @format("uuid") id: string;
+    @format("uuid") registry_id: string;
+    @format("uuid") registry_revision_id: string;
+    @format("uuid") wind_workflow_id: string;
+    @format("uuid") wind_workflow_version_id: string;
+    wind_workflow_version_number: int32;
+    source_digest: string;
+    model_digest: string;
+    wind_graph_digest: string;
+    compiler_version: string;
+    compiler_config_digest: string;
+    compiled_at: utcDateTime;
+    @format("uuid") compiled_by?: string;
+    status: CompilationStatus;
+  }
+
+  model CompiledNode {
+    @format("uuid") id: string;
+    @format("uuid") compilation_id: string;
+    @format("uuid") registry_id: string;
+    @format("uuid") registry_revision_id: string;
+    @format("uuid") state_id: string;
+    @format("uuid") wind_workflow_version_id: string;
+    @format("uuid") wind_node_id: string;
+  }
+
+  model CompiledEdge {
+    @format("uuid") id: string;
+    @format("uuid") compilation_id: string;
+    @format("uuid") registry_id: string;
+    @format("uuid") registry_revision_id: string;
+    @format("uuid") transition_id: string;
+    @format("uuid") wind_workflow_version_id: string;
+    @format("uuid") wind_edge_id: string;
+  }
+
+  model WindCompilationCreate {
+    @format("uuid") revision_id?: string;
+    @format("uuid") wind_workflow_id: string;
+    compiler_version?: string;
+    compiler_config?: Record<unknown>;
+    @format("uuid") compiled_by?: string;
+  }
+
+  enum CompilationStatus {
+    succeeded,
+    failed,
+    stale,
+    invalid,
+  }
+
+  model WindCompilationResponse {
+    compilation: WindCompilation;
+    workflow_version: Record<unknown>;
+    nodes: CompiledNode[];
+    edges: CompiledEdge[];
   }
 
   // ========================================================================
