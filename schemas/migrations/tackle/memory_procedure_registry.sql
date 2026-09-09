@@ -283,3 +283,56 @@ BEGIN
 
     RAISE NOTICE 'Seeded % memory procedures and role assignments.', array_length(v_slugs, 1);
 END $$;
+
+-- ── 8. Worktree Development Workflow ───────────────────────────────
+-- Always runs (idempotent upsert on slug), even on an already-seeded DB,
+-- so this card propagates to live databases. Encodes the standing R8/R8.0
+-- doctrine: work in a linked worktree under /home/codex/dev/nexus-worktrees,
+-- commit+push+PR without asking permission, gated on tests passing.
+INSERT INTO tackle.memory (slug, title, summary, body_md, tags, triggers, mcp_tools)
+VALUES (
+    'worktree-development-workflow',
+    'Worktree Development Workflow',
+    'Work in a git worktree; commit, push, and raise a PR without asking, gated on passing tests.',
+    E'## Procedure\n\n'
+    '1. **Create a worktree** in the canonical root (full absolute path, a sibling of the repo, '
+    'NEVER inside the repo):\n'
+    '   - `git -C /home/codex/dev/nexus worktree add /home/codex/dev/nexus-worktrees/<topic> -b <topic>`\n'
+    '   - Example: `/home/codex/dev/nexus-worktrees/add-foo-endpoint` on branch `add-foo-endpoint`.\n'
+    '   - The canonical worktree root is `/home/codex/dev/nexus-worktrees`, not any shorthand, and '
+    'never `nexus/worktrees` inside the repo.\n\n'
+    '2. **Keep main clean.** Do the work on the worktree branch; never commit directly to `main`.\n\n'
+    '3. **Write tests** for the change. Tests are a non-negotiable condition for shipping.\n\n'
+    '4. **Commit, push, and open a PR — without asking permission** (R8). No confirmation gate.\n'
+    '   - Commit messages MUST align with the agent record (the record is the source of truth).\n'
+    '   - Every push to a shared branch MUST be accompanied by a PR with: what changed, why, '
+    'migration steps, agent record UUID, and verification.\n'
+    '   - Squash-merge preferred.\n\n'
+    '5. **The merge gate is the tests.** A PR may only be merged when the code has tests AND the '
+    'tests pass. If that is not met, raise the PR as a **draft** (do not request merge) and say so; '
+    'do not silently merge untested work.\n\n'
+    '6. **Track the PR** through the Assembly `github` forum until it merges or closes (R8.1).',
+    ARRAY['worktree', 'git', 'pr', 'pull-request', 'committing', 'shipping', 'development'],
+    ARRAY['worktree', 'create worktree', 'commit push', 'raise a pr', 'pull request', 'git', 'branch'],
+    ARRAY[]::TEXT[]
+)
+ON CONFLICT (slug) DO UPDATE
+    SET title = EXCLUDED.title,
+        summary = EXCLUDED.summary,
+        body_md = EXCLUDED.body_md,
+        tags = EXCLUDED.tags,
+        triggers = EXCLUDED.triggers,
+        updated_at = NOW();
+
+-- Assign the worktree-development-workflow card to every development role.
+INSERT INTO tackle.role_memory (memory_id, role, as_of_dt, expiration_dt)
+SELECT m.id, r.role, NOW(), NULL
+FROM tackle.memory m
+CROSS JOIN unnest(ARRAY['engineer','engineer-ii','devops','topologist','planner','architect',
+                        'builder','reviewer','critic','analyst']::TEXT[]) AS r(role)
+WHERE m.slug = 'worktree-development-workflow'
+  AND NOT EXISTS (
+      SELECT 1 FROM tackle.role_memory rm
+      WHERE rm.memory_id = m.id AND rm.role = r.role
+        AND rm.expiration_dt IS NULL
+  );
