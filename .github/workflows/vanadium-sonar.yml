@@ -18,6 +18,37 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate Python coverage (pytest-cov → lcov)
+        # Plan 8261643: produce coverage/python.lcov for sonar.python.coverage.reportPaths.
+        # Uses the mesh-test suite (proven in CI, no live DB, fast) plus the absorb
+        # emitter tests (also DB-free). Both run green without external services.
+        run: |
+          python3 -m pip install -r requirements-dev.txt
+          mkdir -p coverage
+          python3 -m pytest bin/tests/test_mesh_register_probe.py python/absorb/tests/test_emitter.py \
+            --cov=bin --cov=python/absorb/absorb \
+            --cov-report=lcov:coverage/python.lcov \
+            --cov-report=term-missing -q || echo "coverage/python.lcov generation attempted (see log)"
+
+      - name: Generate TypeScript coverage (vitest → lcov)
+        # Plan 8261643: produce coverage/ts.lcov for sonar.javascript.lcov.reportPaths.
+        # Runs the DB-free conduit-mcp unit tests (compile-verdict, compile-identity)
+        # with the v8 coverage provider. Requires node + the service's node_modules;
+        # installs @vitest/coverage-v8 in CI only (not committed to package.json)
+        # so the service's declared deps are untouched. Failures are non-fatal
+        # (the scanner skips absent reports; the gate measures 0 for that language).
+        run: |
+          mkdir -p coverage
+          cd typescript/conduit-mcp
+          if [ ! -d node_modules ]; then npm ci --no-audit --no-fund || npm install --no-audit --no-fund; fi
+          npm install --no-save --no-audit --no-fund @vitest/coverage-v8 || true
+          npx vitest run src/compile-verdict.test.ts src/compile-identity.test.ts \
+            --coverage.enabled --coverage.provider=v8 \
+            --coverage.reportsDirectory=../../coverage/ts-raw \
+            --coverage.reporter=lcovonly || echo "TS coverage generation attempted (see log)"
+          cd ../..
+          if [ -f coverage/ts-raw/lcov.info ]; then mv coverage/ts-raw/lcov.info coverage/ts.lcov; fi
+
       - name: Install sonar-scanner
         env:
           # Pinned digest for sonar-scanner-cli-8.1.0.6389-linux-x64.zip
