@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: aegis-srv — Aegis State-Machine Registry API
-  version: 1.0.9728dd0a
+  version: 1.0.540cd196
   description: 'REST API for the aegis schema: TLA+ state-machine registries (constants, variables, states, transitions, invariants,
     properties, temporal properties, resolution-schema mappings), validation and model-check results, and audited execution
     logs.
@@ -1176,44 +1176,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-      summary: 'Model-check: deterministic state-space model check over the structured aegis graph (reachability, deadlock,
-        invariant/property/temporal verd'
-      parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
-  /api/registries/{id}/model-check-results:
-    get:
-      tags:
-      - registries
-      operationId: get_registries_id_model_check_results
-      responses:
-        '200':
-          description: Success
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/JsonBody'
-        '400':
-          description: Bad request
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '500':
-          description: Server error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+      summary: the TLA+ module with invariants/properties as cfg checks. - Otherwise fall back to the deterministic structural
+        state-space checker (model-c
       parameters:
       - name: id
         in: path
@@ -1602,6 +1566,119 @@ paths:
         schema:
           type: string
       - name: cid
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/registries/{id}/revisions:
+    get:
+      tags:
+      - registries
+      operationId: get_registries_id_revisions
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      summary: Immutable registry revisions (Phase A)
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags:
+      - registries
+      operationId: post_registries_id_revisions
+      responses:
+        '201':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/registries/{id}/revisions/{rid}:
+    get:
+      tags:
+      - registries
+      operationId: get_registries_id_revisions_rid
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: rid
         in: path
         required: true
         schema:
@@ -2415,6 +2492,119 @@ paths:
       tags:
       - registries
       operationId: patch_registries_id_variables_cid
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: cid
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/registries/{id}/wind-compilations:
+    get:
+      tags:
+      - registries
+      operationId: get_registries_id_wind_compilations
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      summary: Aegis revision -> Wind compilation
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags:
+      - registries
+      operationId: post_registries_id_wind_compilations
+      responses:
+        '201':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/registries/{id}/wind-compilations/{cid}:
+    get:
+      tags:
+      - registries
+      operationId: get_registries_id_wind_compilations_cid
       responses:
         '200':
           description: Success
