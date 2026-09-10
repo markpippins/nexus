@@ -212,7 +212,106 @@ CREATE TABLE wind.receipts (
 );
 
 -- ============================================================================
--- 6. GENERIC GRAPH INTEGRITY VALIDATOR
+-- 6. EXECUTION REQUEST / ATTEMPT / RECEIPT EVIDENCE SEAM
+-- ============================================================================
+-- Phase B evidence projection. These rows are immutable and advisory-only;
+-- they do not invoke providers, activate workflows, mutate tickets, or admit
+-- lifecycle transitions. Corrections are represented by new rows.
+
+CREATE TABLE wind.execution_requests (
+    id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workflow_version_id         UUID,
+    node_id                     UUID,
+    artifact_type               TEXT NOT NULL,
+    artifact_ref                TEXT NOT NULL,
+    artifact_revision           TEXT NOT NULL,
+    artifact_fingerprint        TEXT NOT NULL,
+    read_set_digest             TEXT NOT NULL,
+    evaluator_contract_digest   TEXT NOT NULL,
+    causation_id                UUID,
+    correlation_id              UUID NOT NULL,
+    idempotency_key             TEXT NOT NULL UNIQUE,
+    provider_contract           JSONB NOT NULL DEFAULT '{}'::jsonb,
+    invocation_contract         JSONB NOT NULL DEFAULT '{}'::jsonb,
+    failure_policy              JSONB NOT NULL DEFAULT '{}'::jsonb,
+    request_digest              TEXT NOT NULL,
+    authority_level             TEXT NOT NULL DEFAULT 'advisory',
+    requested_at                TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT execution_request_authority_check CHECK (authority_level = 'advisory'),
+    CONSTRAINT execution_request_version_fkey FOREIGN KEY (workflow_version_id) REFERENCES wind.workflow_versions(id),
+    CONSTRAINT execution_request_node_fkey FOREIGN KEY (node_id) REFERENCES wind.workflow_nodes(id),
+    CONSTRAINT execution_request_node_version_fkey FOREIGN KEY (node_id, workflow_version_id)
+        REFERENCES wind.workflow_nodes(id, workflow_version_id)
+);
+
+CREATE TABLE wind.execution_attempts (
+    id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    request_id                  UUID NOT NULL,
+    parent_attempt_id           UUID,
+    attempt_number              INTEGER NOT NULL CHECK (attempt_number > 0),
+    attempt_idempotency_key     TEXT NOT NULL,
+    executor_id                 TEXT NOT NULL,
+    provider_invocation_ref    TEXT,
+    status                      TEXT NOT NULL CHECK (status IN ('SUCCEEDED', 'FAILED', 'UNAVAILABLE', 'STALE', 'INVALID')),
+    result                      JSONB NOT NULL DEFAULT '{}'::jsonb,
+    error                       TEXT,
+    result_digest               TEXT,
+    started_at                  TIMESTAMPTZ,
+    completed_at                TIMESTAMPTZ,
+    recorded_at                 TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT execution_attempt_request_fkey FOREIGN KEY (request_id) REFERENCES wind.execution_requests(id) ON DELETE RESTRICT,
+    CONSTRAINT execution_attempt_parent_fkey FOREIGN KEY (parent_attempt_id, request_id)
+        REFERENCES wind.execution_attempts(id, request_id) ON DELETE RESTRICT,
+    CONSTRAINT execution_attempt_request_number_unique UNIQUE (request_id, attempt_number),
+    CONSTRAINT execution_attempt_request_key_unique UNIQUE (request_id, attempt_idempotency_key),
+    CONSTRAINT execution_attempt_id_request_unique UNIQUE (id, request_id),
+    CONSTRAINT execution_attempt_time_check CHECK (completed_at IS NULL OR started_at IS NULL OR completed_at >= started_at)
+);
+
+CREATE TABLE wind.execution_receipts (
+    id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    request_id                  UUID NOT NULL,
+    attempt_id                  UUID NOT NULL,
+    outcome_status              TEXT NOT NULL CHECK (outcome_status IN ('SUCCEEDED', 'FAILED', 'UNAVAILABLE', 'STALE', 'INVALID')),
+    result_digest               TEXT NOT NULL,
+    evidence_refs               JSONB NOT NULL DEFAULT '[]'::jsonb,
+    lineage                     JSONB NOT NULL DEFAULT '{}'::jsonb,
+    authority_level             TEXT NOT NULL DEFAULT 'advisory',
+    issued_at                   TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT execution_receipt_request_fkey FOREIGN KEY (request_id) REFERENCES wind.execution_requests(id) ON DELETE RESTRICT,
+    CONSTRAINT execution_receipt_attempt_request_fkey FOREIGN KEY (attempt_id, request_id)
+        REFERENCES wind.execution_attempts(id, request_id) ON DELETE RESTRICT,
+    CONSTRAINT execution_receipt_authority_check CHECK (authority_level = 'advisory'),
+    CONSTRAINT execution_receipt_attempt_unique UNIQUE (attempt_id)
+);
+
+CREATE INDEX idx_wind_execution_requests_correlation ON wind.execution_requests (correlation_id, requested_at DESC);
+CREATE INDEX idx_wind_execution_requests_artifact ON wind.execution_requests (artifact_type, artifact_ref, artifact_revision);
+CREATE INDEX idx_wind_execution_attempts_request ON wind.execution_attempts (request_id, attempt_number DESC);
+CREATE INDEX idx_wind_execution_attempts_status ON wind.execution_attempts (status, recorded_at DESC);
+CREATE INDEX idx_wind_execution_receipts_request ON wind.execution_receipts (request_id, issued_at DESC);
+CREATE INDEX idx_wind_execution_receipts_status ON wind.execution_receipts (outcome_status, issued_at DESC);
+
+CREATE OR REPLACE FUNCTION wind.forbid_execution_evidence_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'wind.% is append-only: % blocked for evidence row %', TG_TABLE_NAME, TG_OP, OLD.id
+        USING ERRCODE = 'restrict_violation';
+END;
+$$;
+
+CREATE TRIGGER trg_wind_execution_requests_immutable
+    BEFORE UPDATE OR DELETE ON wind.execution_requests
+    FOR EACH ROW EXECUTE FUNCTION wind.forbid_execution_evidence_mutation();
+CREATE TRIGGER trg_wind_execution_attempts_immutable
+    BEFORE UPDATE OR DELETE ON wind.execution_attempts
+    FOR EACH ROW EXECUTE FUNCTION wind.forbid_execution_evidence_mutation();
+CREATE TRIGGER trg_wind_execution_receipts_immutable
+    BEFORE UPDATE OR DELETE ON wind.execution_receipts
+    FOR EACH ROW EXECUTE FUNCTION wind.forbid_execution_evidence_mutation();
+
+-- ============================================================================
+-- 7. GENERIC GRAPH INTEGRITY VALIDATOR
 -- ============================================================================
 
 CREATE OR REPLACE VIEW wind.v_workflow_graph_validation AS

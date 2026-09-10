@@ -5,7 +5,7 @@
 
 REST API for the wind workflow schema: offices, titles, tasks, workflow graphs, runtime instances, tickets, and receipts.
 
-**65 endpoints** — inventory generated from source route registrations (`nexus/tools/api-docs/`).
+**72 endpoints** — inventory generated from source route registrations (`nexus/tools/api-docs/`).
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -20,6 +20,13 @@ REST API for the wind workflow schema: offices, titles, tasks, workflow graphs, 
 | POST | `/api/events` | Create event |
 | GET | `/api/events/:id` | Get single event |
 | POST | `/api/events/poll` | Poll unconsumed events (FOR UPDATE SKIP LOCKED) |
+| GET | `/api/execution-requests` | List immutable execution requests. |
+| POST | `/api/execution-requests` | Create or replay an immutable request. Same idempotency key + same digest is a replay; same key + different material is a conflict, never an overwrite. |
+| GET | `/api/execution-requests/:id` |  |
+| GET | `/api/execution-requests/:id/attempts` | List attempts for one request. |
+| POST | `/api/execution-requests/:id/attempts` | Record one final provider outcome. The route never calls the provider. |
+| GET | `/api/execution-requests/:id/receipts` | Issue exactly one advisory receipt for an attempt; receipt status/digest must equal the immutable attempt, so malformed or contradictory results fail closed. |
+| POST | `/api/execution-requests/:id/receipts` |  |
 | GET | `/api/instances` | List instances (optionally filter by status or workflow_id) |
 | POST | `/api/instances` | Start a workflow instance Creates an instance and tickets for the entrypoint node(s) |
 | GET | `/api/instances/:id` | Get instance by ID (with tickets) |
@@ -83,6 +90,8 @@ python3 tools/api-docs/gen_openapi.py --inventory /tmp/api_inventory.json   # (v
 ```
 
 <!-- API-SPEC-BEGIN -->
+
+
 
 
 

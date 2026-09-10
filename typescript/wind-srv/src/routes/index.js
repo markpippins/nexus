@@ -14,6 +14,7 @@ import { validateRouter } from './validate.js';
 import { vRolesRouter } from './v-roles.js';
 import { eventsRouter } from './events.js';
 import { eventTypesRouter } from './event-types.js';
+import { executionRouter } from './execution.js';
 
 export const routes = Router();
 
@@ -32,3 +33,4 @@ routes.use('/validate', validateRouter);
 routes.use('/v-roles', vRolesRouter);
 routes.use('/events', eventsRouter);
 routes.use('/event-types', eventTypesRouter);
+routes.use('/execution-requests', executionRouter);
