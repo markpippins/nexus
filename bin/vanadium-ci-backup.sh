@@ -1,26 +1,28 @@
 #!/usr/bin/env bash
-# vanadium-ci-backup-to-barium.sh — CI-state backup from vanadium to barium.
+# vanadium-ci-backup.sh — CI-state backup from vanadium to vanadium (retargeted
+# 2026-09-10 from barium, which is offline for disk-full forensics; see record
+# e5cc1f06 and AGENTS.md R9).
 #
-# Extends the strontium-outage backup tier (see pg-backup-to-barium.sh) to
+# Extends the strontium-outage backup tier (see pg-backup-to-vanadium.sh) to
 # cover the vanadium CI stack, per admin approval 2026-08-22 (devops forum
 # thread 36a2f788, answer #5). Runs ON TITANIUM and orchestrates both remotes
 # over SSH: vanadium produces artifacts into its own /tmp, titanium pulls,
-# checksums, ships to barium, verifies there, applies GFS retention.
+# checksums, ships to vanadium, verifies there, applies GFS retention.
 #
 # What is covered:
 #   - vd-ci-jenkins      : /var/jenkins_home          (tar.gz via docker exec)
 #   - vd-ci-sonarqube    : /opt/sonarqube/data|extensions (tar.gz)
 #   - vd-ci-sonar-db     : pg_dump -Fc of the `sonar` database
 #
-# Schedule: user-level systemd timer backup-vanadium-ci-to-barium.timer,
+# Schedule: user-level systemd timer backup-vanadium-ci.timer,
 # daily 04:15 (after the 03:30 PG pipeline clears). Persistent=true.
 #
-# Usage: vanadium-ci-backup-to-barium.sh [--dry-run]
+# Usage: vanadium-ci-backup.sh [--dry-run]
 
 set -u -o pipefail
 
 VD_HOST="${VD_HOST:-vanadium}"
-BAR_HOST="${BAR_HOST:-barium}"
+BAR_HOST="${BAR_HOST:-vanadium}"
 REMOTE_DIR="${REMOTE_DIR:-pg-backups/vanadium-ci}"
 SPOOL_DIR="${SPOOL_DIR:-/home/codex/dev/pgsql/vdci-spool}"
 LOG_FILE="${LOG_FILE:-/home/codex/dev/pgsql/vanadium-ci-backup.log}"
@@ -41,7 +43,7 @@ DRY_RUN=0; [ "${1:-}" = "--dry-run" ] && DRY_RUN=1
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"; }
 incident() {
   curl -s --max-time 5 -X POST "$NEBULA_URL" -H 'Content-Type: application/json' \
-    -d "{\"recordType\":\"report\",\"role\":\"devops\",\"title\":\"vanadium-ci backup FAILED ($TS)\",\"content\":\"Vanadium CI backup to barium failed. See $LOG_FILE on titanium.\",\"tags\":[\"to:sysadmin\",\"type:incident\",\"status:open\",\"source:vdci-backup\"]}" \
+    -d "{\"recordType\":\"report\",\"role\":\"devops\",\"title\":\"vanadium-ci backup FAILED ($TS)\",\"content\":\"Vanadium CI backup to vanadium failed. See $LOG_FILE on titanium.\",\"tags\":[\"to:sysadmin\",\"type:incident\",\"status:open\",\"source:vdci-backup\"]}" \
     >/dev/null 2>&1 || true
 }
 
@@ -63,7 +65,13 @@ mk() {  # mk <remote-cmd-producing-tar-or-dump-on-stdout> <artifact-name>
 }
 
 FAIL=0
-mk "docker exec $JENKINS_C tar czf - -C /var/jenkins_home ." \
+# jenkins_home: exclude rebuildables (workspace/builds/caches per ruling V4,
+# vd-ci-backup.sh) and tolerate files changing under a live build — tar exit 1
+# on "file changed as we read it" was aborting the whole run (2026-09-10).
+mk "docker exec $JENKINS_C tar czf - --warning=no-file-changed \
+--exclude=workspace --exclude=builds --exclude=cache --exclude=caches \
+--exclude=.m2 --exclude=war --exclude=copy_reference_file.log \
+-C /var/jenkins_home ." \
    "jenkins_home__${TS}.tgz"                                   || FAIL=1
 mk "docker exec $SONAR_C tar czf - -C /opt/sonarqube/data ." \
    "sonar-data__${TS}.tgz"                                     || FAIL=1
@@ -84,7 +92,7 @@ ssh -o BatchMode=yes "$BAR_HOST" "cd $REMOTE_DIR && sha256sum -c manifest__${TS}
   || { log "FAIL remote verification"; incident; exit 1; }
 log "remote checksum verification OK"
 
-# GFS retention on barium (same policy as the PG tier)
+# GFS retention on vanadium (same policy as the PG tier)
 ssh -o BatchMode=yes "$BAR_HOST" bash -s <<REMOTE_EOF
 set -u
 cd "$REMOTE_DIR" || exit 0

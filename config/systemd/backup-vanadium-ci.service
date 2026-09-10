@@ -1,0 +1,19 @@
+[Unit]
+# Vanadium CI state -> vanadium: jenkins_home, sonar data/ext volumes, sonar-db.
+# Titanium orchestrates both remotes over SSH. Extends the strontium-outage
+# backup tier per admin approval (devops forum thread 36a2f788, 2026-08-22).
+# Retargeted 2026-09-10 barium -> vanadium (barium offline for disk-full
+# forensics; see record e5cc1f06 and AGENTS.md R9).
+Description=Vanadium CI backup to vanadium (jenkins/sonar/db)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/codex/dev/nexus
+# Explicit defaults (mirror the script): ship to vanadium, standard pg-backups
+# tree already in use by the PG tier on vanadium.
+Environment=BAR_HOST=vanadium
+Environment=REMOTE_DIR=pg-backups/vanadium-ci
+ExecStart=/home/codex/dev/nexus/bin/vanadium-ci-backup.sh
+TimeoutStartSec=2h
