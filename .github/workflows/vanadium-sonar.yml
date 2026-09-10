@@ -18,25 +18,27 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Generate Python coverage (pytest-cov → lcov)
-        # Plan 8261643: produce coverage/python.lcov for sonar.python.coverage.reportPaths.
-        # Uses the mesh-test suite (proven in CI, no live DB, fast) plus the absorb
-        # emitter tests (also DB-free). Both run green without external services.
-        # SCOPE (drive-by fix for PR #200 sonar FAILURE, plan 8261643 follow-up):
-        # --cov targets python/ ONLY. sonar.sources covers python/ + typescript/,
-        # NOT bin/. An lcov with SF:bin/* paths makes the Python coverage sensor
-        # throw EXECUTION FAILURE. The mesh-test still runs (for its test value)
-        # but only python/ code contributes coverage.
-        # NOTE: self-hosted runner is PEP 668 externally-managed — pip install needs
-        # --break-system-packages (ubuntu-latest runners used by mesh-pytest do not).
-        # Only installs if pytest-cov is missing; failures are non-fatal.
+      - name: Generate Python coverage (pytest-cov → Cobertura XML for Sonar)
+        # Plan 8261643 (fix 8261643-1 + scope fix for PR #200):
+        # - SonarQube 9.9 Community Python sensor expects Cobertura XML via
+        #   sonar.python.coverage.reportPaths, NOT LCOV. Previous step emitted
+        #   only coverage/python.lcov → EXECUTION FAILURE on every run since
+        #   2026-09-10 01:11 (runs 34424880392/34425643737/...). Emit both:
+        #     coverage/python.xml  → Cobertura XML for Sonar (required)
+        #     coverage/python.lcov → LCOV for humans/local debugging (kept)
+        # - SCOPE: sonar.sources covers python/ + typescript/, NOT bin/. An
+        #   lcov/xml with SF:bin/* made the sensor throw EXECUTION FAILURE
+        #   (PR #200 drive-by fix 3e213364). The mesh-test still runs for its
+        #   test value but only python/ contributes coverage.
+        # Both DB-free/fast suites. Failures non-fatal (scanner skips absent XML).
         run: |
           python3 -c "import pytest_cov" 2>/dev/null || python3 -m pip install --break-system-packages -r requirements-dev.txt || true
           mkdir -p coverage
           python3 -m pytest bin/tests/test_mesh_register_probe.py python/absorb/tests/test_emitter.py \
             --cov=python/absorb \
+            --cov-report=xml:coverage/python.xml \
             --cov-report=lcov:coverage/python.lcov \
-            --cov-report=term-missing -q || echo "coverage/python.lcov generation attempted (see log)"
+            --cov-report=term-missing -q || echo "coverage/python.xml/lcov generation attempted (see log)"
 
       - name: Generate TypeScript coverage (vitest → lcov)
         # Plan 8261643: produce coverage/ts.lcov for sonar.javascript.lcov.reportPaths.
