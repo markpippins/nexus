@@ -203,6 +203,25 @@ curl -s http://localhost:3300/api/instances/<instance-uuid>
 | GET | `/api/receipts` | List receipts (filter: `?ticket_id=`) |
 | GET | `/api/receipts/:id` | Get receipt |
 
+### Phase B execution-request / receipt seam
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/execution-requests` | List immutable advisory execution requests |
+| POST | `/api/execution-requests` | Create or idempotently replay a revision-pinned request |
+| GET | `/api/execution-requests/:id` | Request with attempts and receipts |
+| GET | `/api/execution-requests/:id/attempts` | List attempts |
+| POST | `/api/execution-requests/:id/attempts` | Record one truthful provider outcome; does not invoke a provider |
+| GET | `/api/execution-requests/:id/receipts` | List advisory receipts |
+| POST | `/api/execution-requests/:id/receipts` | Issue or replay one immutable receipt for an attempt |
+
+Outcome classes are `SUCCEEDED`, `FAILED`, `UNAVAILABLE`, `STALE`, and `INVALID`.
+Identical idempotency material replays; conflicting material returns `409`.
+Requests, attempts, and receipts are append-only and constrained to
+`authority_level = advisory`. This seam does not activate workflows, mutate
+instances/tickets, or admit lifecycle transitions; Resolution/PEB remains the
+only admission authority. See [`PHASE-B.md`](./PHASE-B.md).
+
 ### Validation
 
 | Method | Endpoint | Description |
