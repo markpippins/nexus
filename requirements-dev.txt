@@ -8,3 +8,9 @@
 # Local sanity: `python3 -m pytest --version` reports pytest-8.4.x.
 
 pytest>=8.4,<8.5
+
+# Coverage for SonarQube (plan 8261643): pytest-cov produces lcov reports
+# consumed via sonar.python.coverage.reportPaths. Pinned to the pytest-cov
+# line compatible with pytest 8.4 (pytest-cov 5.x/6.x both support it;
+# pin 6.x as the known-good current line).
+pytest-cov>=6.0,<7.0
