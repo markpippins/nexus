@@ -39,6 +39,21 @@ as admission.
 - A truthful failure/unavailable/stale/invalid outcome remains evidence; it is
   never normalized to success or verified.
 
+## Advisory provider invocation envelope
+
+The request's provider fields are validated by the pure
+`validateProviderInvocation()` contract validator before persistence. Version 1
+requires provider and adapter identity, input/output schema digests, an
+explicit invocation mode, a bounded timeout, cancellation mode, retry budget,
+evidence-reference policy, and explicit failure mappings. Failure mappings may
+never turn an unavailable, timeout, malformed, or stale result into
+`SUCCEEDED`.
+
+Validation performs no provider or harness I/O. It only normalizes the plan;
+actual adapter dispatch remains a future slice. Authority fields are
+fail-closed: only `advisory` is accepted and lifecycle admission/mutation
+fields are refused.
+
 The next slice can add a bounded provider adapter only after the architect
-ratifies its invocation contract and admission handoff. Resolution/PEB remains
-the only admission boundary.
+ratifies this invocation contract and the admission handoff. Resolution/PEB
+remains the only admission boundary.

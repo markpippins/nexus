@@ -3,6 +3,7 @@ import rateLimit from 'express-rate-limit';
 import { pool, query } from '../db.js';
 import { BadRequestError, NotFoundError } from '../errors.js';
 import { assertOutcome, canonicalJson, digest, DIGEST, requestMaterial } from '../execution-contract.js';
+import { validateProviderInvocation } from '../provider-contract.js';
 
 export const executionRouter = Router();
 
@@ -110,6 +111,16 @@ executionRouter.post('/', executionWriteLimiter, async (req, res, next) => {
     const providerContract = jsonObject(body.provider_contract, 'provider_contract', {});
     const invocationContract = jsonObject(body.invocation_contract, 'invocation_contract', {});
     const failurePolicy = jsonObject(body.failure_policy, 'failure_policy', {});
+    let normalizedInvocation;
+    try {
+      normalizedInvocation = validateProviderInvocation({
+        provider_contract: providerContract,
+        invocation_contract: invocationContract,
+        failure_policy: failurePolicy,
+      });
+    } catch (err) {
+      throw new BadRequestError(`invalid provider invocation contract: ${err.message}`);
+    }
     const material = requestMaterial({
       artifact_type: artifactType,
       artifact_ref: artifactRef,
@@ -121,9 +132,9 @@ executionRouter.post('/', executionWriteLimiter, async (req, res, next) => {
       workflow_version_id: workflowVersionId,
       node_id: nodeId,
       correlation_id: correlationId,
-      provider_contract: providerContract,
-      invocation_contract: invocationContract,
-      failure_policy: failurePolicy,
+      provider_contract: normalizedInvocation.provider_contract,
+      invocation_contract: normalizedInvocation.invocation_contract,
+      failure_policy: normalizedInvocation.failure_policy,
     });
     const requestDigest = digest(material);
     const client = await pool.connect();
@@ -140,7 +151,8 @@ executionRouter.post('/', executionWriteLimiter, async (req, res, next) => {
          RETURNING *`,
         [workflowVersionId, nodeId, artifactType, artifactRef, artifactRevision, artifactFingerprint, readSetDigest, evaluatorContractDigest,
           causationId, correlationId, idempotencyKey,
-          providerContract, invocationContract, failurePolicy, requestDigest],
+          normalizedInvocation.provider_contract, normalizedInvocation.invocation_contract,
+          normalizedInvocation.failure_policy, requestDigest],
       );
       if (inserted.rows.length === 0) {
         const existing = await client.query(

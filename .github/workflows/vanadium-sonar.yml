@@ -19,18 +19,23 @@ jobs:
           fetch-depth: 0
 
       - name: Generate Python coverage (pytest-cov → Cobertura XML for Sonar)
-        # Plan 8261643 (fix 8261643-1): SonarQube 9.9 Community Python sensor expects
-        # Cobertura XML via sonar.python.coverage.reportPaths, NOT LCOV. The previous
-        # step emitted only coverage/python.lcov → server died at "Parsing report"
-        # (EXECUTION FAILURE on every run since 2026-09-10 01:11). Emit both:
-        #   coverage/python.xml  → Cobertura XML for Sonar (required)
-        #   coverage/python.lcov → LCOV for humans/local debugging (kept)
+        # Plan 8261643 (fix 8261643-1 + scope fix for PR #200):
+        # - SonarQube 9.9 Community Python sensor expects Cobertura XML via
+        #   sonar.python.coverage.reportPaths, NOT LCOV. Previous step emitted
+        #   only coverage/python.lcov → EXECUTION FAILURE on every run since
+        #   2026-09-10 01:11 (runs 34424880392/34425643737/...). Emit both:
+        #     coverage/python.xml  → Cobertura XML for Sonar (required)
+        #     coverage/python.lcov → LCOV for humans/local debugging (kept)
+        # - SCOPE: sonar.sources covers python/ + typescript/, NOT bin/. An
+        #   lcov/xml with SF:bin/* made the sensor throw EXECUTION FAILURE
+        #   (PR #200 drive-by fix 3e213364). The mesh-test still runs for its
+        #   test value but only python/ contributes coverage.
         # Both DB-free/fast suites. Failures non-fatal (scanner skips absent XML).
         run: |
-          python3 -m pip install -r requirements-dev.txt || python3 -m pip install --break-system-packages -r requirements-dev.txt || true
+          python3 -c "import pytest_cov" 2>/dev/null || python3 -m pip install --break-system-packages -r requirements-dev.txt || true
           mkdir -p coverage
           python3 -m pytest bin/tests/test_mesh_register_probe.py python/absorb/tests/test_emitter.py \
-            --cov=bin --cov=python/absorb/absorb \
+            --cov=python/absorb \
             --cov-report=xml:coverage/python.xml \
             --cov-report=lcov:coverage/python.lcov \
             --cov-report=term-missing -q || echo "coverage/python.xml/lcov generation attempted (see log)"
@@ -45,14 +50,15 @@ jobs:
         run: |
           mkdir -p coverage
           cd typescript/conduit-mcp
-          if [ ! -d node_modules ]; then npm ci --no-audit --no-fund || npm install --no-audit --no-fund; fi
+          if [ ! -d node_modules ]; then npm ci --no-audit --no-fund || npm install --no-audit --no-fund || true; fi
           npm install --no-save --no-audit --no-fund @vitest/coverage-v8 || true
           npx vitest run src/compile-verdict.test.ts src/compile-identity.test.ts \
             --coverage.enabled --coverage.provider=v8 \
             --coverage.reportsDirectory=../../coverage/ts-raw \
             --coverage.reporter=lcovonly || echo "TS coverage generation attempted (see log)"
-          cd ../..
+          cd ../.. || true
           if [ -f coverage/ts-raw/lcov.info ]; then mv coverage/ts-raw/lcov.info coverage/ts.lcov; fi
+          true
 
       - name: Install sonar-scanner
         env:
