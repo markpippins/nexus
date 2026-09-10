@@ -236,6 +236,19 @@ terminal/no PENDING tickets. **200**:
 
 Ticket statuses: `PENDING`, `IN_PROGRESS`, `COMPLETED`, `CANCELLED`, `stale`, `expired`.
 
+## Advisory provider invocation contract
+
+Before an execution request is persisted, Wind validates the provider envelope.
+Version 1 requires provider and adapter identity, provider version, input and
+output schema SHA-256 digests, an explicit invocation mode (`CLI`, `HTTP`,
+`SDK`, or `MCP`), a timeout from 1 to 900000 ms, cancellation mode, retry
+budget from 0 to 10, and an evidence-reference policy. Unavailable, timeout,
+malformed-result, and stale cases must map to truthful non-success outcomes.
+
+The validator is pure and performs no provider or harness I/O. It refuses
+non-advisory authority and lifecycle admission/mutation fields. Dispatch is a
+future bounded slice; Resolution/PEB remains the sole admission boundary.
+
 ## Roles view
 
 `GET /api/v-roles` — **200** roles (from `nebula.roles` via `wind.v_roles`).
