@@ -23,16 +23,28 @@
 | Ownership | Engineer (execution) + Architect (gates) + Analyst (evidence) | same |
 | Standing | **PRE-CUTOVER — both authorities live** | — |
 
-### Search scope notes (frozen open questions — operator/architect)
-- **Parity boundary undecided:** `:4050` is google-simple-only; legacy is 4
-  providers + cache + rate limiting. Day 1 must declare google-simple-only
-  (defer rest) or full `search-service`.
-- **Google creds unset** in this environment (`GOOGLE_API_KEY` /
-  `GOOGLE_SEARCH_ENGINE_ID` absent). Missing-creds path verified live on
-  `:4050` (`500 "Google API credentials not configured"`); legacy null-key
-  failure envelope not yet captured.
-- **Test suite not runnable as-is:** `ts-jest` declared but not installed;
-  May `ISSUES.md` reports 24/32 failing. Triage pending (Day 1 prep).
+### Search scope — DECIDED 2026-09-09 (operator): A + cache + rate limit
+- **Parity boundary = google-simple + cache + rate limit.** YouTube /
+  Unsplash / Gemini / Academic delayed indefinitely.
+- **Rationale (operator):** the canonical search use case is NOT explicit
+  user-invoked search — it is nexus-console's **IdeaStream**: automatic,
+  magnet-folder-driven, active-path-triggered context search (client
+  `stream-cache.service.ts`, 30-min TTL matching the broker-side MongoDB
+  cache; `idea-stream.component.ts` re-runs on path change + manual Refresh
+  with `forceRefresh`). Throttler was the first app; context management is
+  the founding intent. Cache + rate limit are therefore load-bearing, the
+  other providers are not.
+- **Mini-wave slicing (operator-approved):**
+  - Slice 1 — google-simple parity (`:4050` vs `googlePublicSearch` op).
+  - Slice 2 — cache parity (broker Mongo cache semantics: TTL, key shape,
+    `forceRefresh` bypass).
+  - Slice 3 — rate-limit parity (Redis cooldown behavior + throttled
+    failure envelope).
+  - Slice 4 — IdeaStream-equivalent auto-search in throttler-ui
+    (magnet-driven, active-path-triggered). Answers the throttler-UX scope.
+- **Still open:** Google creds for live parity (Q2); console sequencing
+  (Q4). Suite triage DONE 2026-09-09 — 32/32 green in ~13s (commit
+  `db4ec2f0`).
 
 ## M2/M3 context — nexus-broker (NOT M1 cutover scope, frozen for reference)
 
