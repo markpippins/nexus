@@ -18,17 +18,22 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Generate Python coverage (pytest-cov → lcov)
-        # Plan 8261643: produce coverage/python.lcov for sonar.python.coverage.reportPaths.
-        # Uses the mesh-test suite (proven in CI, no live DB, fast) plus the absorb
-        # emitter tests (also DB-free). Both run green without external services.
+      - name: Generate Python coverage (pytest-cov → Cobertura XML for Sonar)
+        # Plan 8261643 (fix 8261643-1): SonarQube 9.9 Community Python sensor expects
+        # Cobertura XML via sonar.python.coverage.reportPaths, NOT LCOV. The previous
+        # step emitted only coverage/python.lcov → server died at "Parsing report"
+        # (EXECUTION FAILURE on every run since 2026-09-10 01:11). Emit both:
+        #   coverage/python.xml  → Cobertura XML for Sonar (required)
+        #   coverage/python.lcov → LCOV for humans/local debugging (kept)
+        # Both DB-free/fast suites. Failures non-fatal (scanner skips absent XML).
         run: |
-          python3 -m pip install -r requirements-dev.txt
+          python3 -m pip install -r requirements-dev.txt || python3 -m pip install --break-system-packages -r requirements-dev.txt || true
           mkdir -p coverage
           python3 -m pytest bin/tests/test_mesh_register_probe.py python/absorb/tests/test_emitter.py \
             --cov=bin --cov=python/absorb/absorb \
+            --cov-report=xml:coverage/python.xml \
             --cov-report=lcov:coverage/python.lcov \
-            --cov-report=term-missing -q || echo "coverage/python.lcov generation attempted (see log)"
+            --cov-report=term-missing -q || echo "coverage/python.xml/lcov generation attempted (see log)"
 
       - name: Generate TypeScript coverage (vitest → lcov)
         # Plan 8261643: produce coverage/ts.lcov for sonar.javascript.lcov.reportPaths.
