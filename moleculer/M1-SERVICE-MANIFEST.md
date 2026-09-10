@@ -42,9 +42,9 @@
     failure envelope).
   - Slice 4 — IdeaStream-equivalent auto-search in throttler-ui
     (magnet-driven, active-path-triggered). Answers the throttler-UX scope.
-- **Still open:** Google creds for live parity (Q2 — wiring DONE, validity
-  FAILED, see below); console sequencing (Q4). Suite triage DONE 2026-09-09
-  — 32/32 green in ~13s (commit `db4ec2f0`).
+- **Still open:** fresh Google keypair from operator (Q2 pending).
+  Suite triage DONE 2026-09-09 — 32/32 green in ~13s (commit `db4ec2f0`).
+  Console sequencing DECIDED (Q4, see below).
 
 ### Q2 status 2026-09-09/10 — creds wired, pair rejected, dead-creds parity captured
 - Sole Custom Search keypair lives in `moleculer/search/.env`; copied to
@@ -67,6 +67,24 @@
     `Failed to perform search: Request failed with status code 400`**.
   - DIVERGENCE CONFIRMED: identical failure, different envelopes. Slice 1
     must reconcile this (or bless one shape in the contract).
+
+### Q4 status 2026-09-10 — console retirement DEFERRED (operator), M1 scope contained
+- **Decision:** nexus-console retires only once `application-host` becomes
+  the daily driver. Until then it stays up AND remains the canonical "UI
+  that connects to the service broker."
+- **Split targets (already underway):** throttler-ui (+ an incoming new
+  throttler version), atlas-ui, nebula-operations-ui, barbie.
+- **Replacement bar (all must hold):** barbie is a 100% replacement for the
+  topology view, health view, deployments view, AND registry editor, plus
+  the next throttler-ui has dropped. Only then does the console go dark.
+- **application-host broker future (deferred design):** secure the Moleculer
+  layer via Redis; application-host implements service-broker-based login.
+  Undecided how — explicitly not M1 work.
+- **Priority directive (operator):** the application-host broker/login work
+  is LOWER priority than retiring TypeScript services in favor of Moleculer.
+  Driver: host runs ~60 services and is overloaded — Moleculer consolidation
+  (M1/M2/M3) outranks console retirement. M1 therefore owns "zero SEARCH
+  traffic," never "zero console traffic."
 
 ## M2/M3 context — nexus-broker (NOT M1 cutover scope, frozen for reference)
 
