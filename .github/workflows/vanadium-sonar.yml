@@ -27,6 +27,9 @@ jobs:
         # NOT bin/. An lcov with SF:bin/* paths makes the Python coverage sensor
         # throw EXECUTION FAILURE. The mesh-test still runs (for its test value)
         # but only python/ code contributes coverage.
+        # NOTE: self-hosted runner is PEP 668 externally-managed — pip install needs
+        # --break-system-packages (ubuntu-latest runners used by mesh-pytest do not).
+        # Only installs if pytest-cov is missing; failures are non-fatal.
         run: |
           python3 -c "import pytest_cov" 2>/dev/null || python3 -m pip install --break-system-packages -r requirements-dev.txt || true
           mkdir -p coverage
@@ -45,14 +48,15 @@ jobs:
         run: |
           mkdir -p coverage
           cd typescript/conduit-mcp
-          if [ ! -d node_modules ]; then npm ci --no-audit --no-fund || npm install --no-audit --no-fund; fi
+          if [ ! -d node_modules ]; then npm ci --no-audit --no-fund || npm install --no-audit --no-fund || true; fi
           npm install --no-save --no-audit --no-fund @vitest/coverage-v8 || true
           npx vitest run src/compile-verdict.test.ts src/compile-identity.test.ts \
             --coverage.enabled --coverage.provider=v8 \
             --coverage.reportsDirectory=../../coverage/ts-raw \
             --coverage.reporter=lcovonly || echo "TS coverage generation attempted (see log)"
-          cd ../..
+          cd ../.. || true
           if [ -f coverage/ts-raw/lcov.info ]; then mv coverage/ts-raw/lcov.info coverage/ts.lcov; fi
+          true
 
       - name: Install sonar-scanner
         env:
