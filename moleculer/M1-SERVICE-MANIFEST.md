@@ -42,9 +42,31 @@
     failure envelope).
   - Slice 4 — IdeaStream-equivalent auto-search in throttler-ui
     (magnet-driven, active-path-triggered). Answers the throttler-UX scope.
-- **Still open:** Google creds for live parity (Q2); console sequencing
-  (Q4). Suite triage DONE 2026-09-09 — 32/32 green in ~13s (commit
-  `db4ec2f0`).
+- **Still open:** Google creds for live parity (Q2 — wiring DONE, validity
+  FAILED, see below); console sequencing (Q4). Suite triage DONE 2026-09-09
+  — 32/32 green in ~13s (commit `db4ec2f0`).
+
+### Q2 status 2026-09-09/10 — creds wired, pair rejected, dead-creds parity captured
+- Sole Custom Search keypair lives in `moleculer/search/.env`; copied to
+  `nexus/.env` as `GOOGLE_API_KEY` (moleculer), `GOOGLE_SEARCH_API_KEY`
+  (Spring relaxed binding), `GOOGLE_SEARCH_ENGINE_ID` (both). Source file
+  preserved. Both units consume `nexus/.env` (`EnvironmentFile=`).
+  `/etc/environment` holds only OAuth client ID/secret (different credential
+  type — not usable for Custom Search). No other key copy exists repo-wide.
+- `moleculer-search` + `broker-gateway` restarted; both run on the same pair.
+- Google rejects the pair: `400 INVALID_ARGUMENT` (likely the dead
+  post-rotation values — cf. commit `0ef20043`). Operator fetching fresh
+  key + engine ID; on arrival: replace the 3 names in `nexus/.env`,
+  restart both units, re-probe.
+- **Dead-creds parity data point (same query, same dead creds):**
+  - Legacy `POST :8081/api/v1/broker/submitRequest`
+    (`googleSearchService/simpleSearch`) → **HTTP 200,
+    `ok:true, data:{items:null,rawResponse:null}, errors:null`**
+    (failure swallowed into null items).
+  - Moleculer `POST :4050/api/search/simple` → **HTTP 500,
+    `Failed to perform search: Request failed with status code 400`**.
+  - DIVERGENCE CONFIRMED: identical failure, different envelopes. Slice 1
+    must reconcile this (or bless one shape in the contract).
 
 ## M2/M3 context — nexus-broker (NOT M1 cutover scope, frozen for reference)
 
