@@ -1,9 +1,22 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { pool, query } from '../db.js';
 import { BadRequestError, NotFoundError } from '../errors.js';
 import { assertOutcome, canonicalJson, digest, DIGEST, requestMaterial } from '../execution-contract.js';
 
 export const executionRouter = Router();
+
+// Execution writes perform database transactions and are intentionally bounded
+// independently of the read APIs. This protects the request/attempt/receipt
+// evidence surface from resource-exhaustion floods while leaving normal Wind
+// reads available for operators.
+const executionWriteLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'execution write rate limit exceeded' },
+});
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -77,7 +90,7 @@ executionRouter.get('/', async (req, res, next) => {
 
 // Create or replay an immutable request. Same idempotency key + same digest is
 // a replay; same key + different material is a conflict, never an overwrite.
-executionRouter.post('/', async (req, res, next) => {
+executionRouter.post('/', executionWriteLimiter, async (req, res, next) => {
   try {
     const body = req.body || {};
     const idempotencyKey = requiredString(body, 'idempotency_key');
@@ -177,7 +190,7 @@ executionRouter.get('/:id/attempts', async (req, res, next) => {
 });
 
 // Record one final provider outcome. The route never calls the provider.
-executionRouter.post('/:id/attempts', async (req, res, next) => {
+executionRouter.post('/:id/attempts', executionWriteLimiter, async (req, res, next) => {
   try {
     const body = req.body || {};
     const request = await query('SELECT id FROM wind.execution_requests WHERE id = $1', [req.params.id]);
@@ -234,7 +247,7 @@ executionRouter.get('/:id/receipts', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-executionRouter.post('/:id/receipts', async (req, res, next) => {
+executionRouter.post('/:id/receipts', executionWriteLimiter, async (req, res, next) => {
   try {
     const body = req.body || {};
     const attemptId = requiredString(body, 'attempt_id');
