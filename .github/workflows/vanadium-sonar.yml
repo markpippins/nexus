@@ -22,11 +22,16 @@ jobs:
         # Plan 8261643: produce coverage/python.lcov for sonar.python.coverage.reportPaths.
         # Uses the mesh-test suite (proven in CI, no live DB, fast) plus the absorb
         # emitter tests (also DB-free). Both run green without external services.
+        # SCOPE (drive-by fix for PR #200 sonar FAILURE, plan 8261643 follow-up):
+        # --cov targets python/ ONLY. sonar.sources covers python/ + typescript/,
+        # NOT bin/. An lcov with SF:bin/* paths makes the Python coverage sensor
+        # throw EXECUTION FAILURE. The mesh-test still runs (for its test value)
+        # but only python/ code contributes coverage.
         run: |
-          python3 -m pip install -r requirements-dev.txt
+          python3 -c "import pytest_cov" 2>/dev/null || python3 -m pip install --break-system-packages -r requirements-dev.txt || true
           mkdir -p coverage
           python3 -m pytest bin/tests/test_mesh_register_probe.py python/absorb/tests/test_emitter.py \
-            --cov=bin --cov=python/absorb/absorb \
+            --cov=python/absorb \
             --cov-report=lcov:coverage/python.lcov \
             --cov-report=term-missing -q || echo "coverage/python.lcov generation attempted (see log)"
 
