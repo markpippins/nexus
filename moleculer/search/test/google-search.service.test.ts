@@ -114,7 +114,9 @@ describe("GoogleSearchService", () => {
       expect(result.items[0]).toEqual({
         title: "Test Result",
         link: "https://example.com",
-        snippet: "Test snippet"
+        snippet: "Test snippet",
+        // No displayLink in the Google payload → hostname fallback (slice-1 G1).
+        displayLink: "example.com",
       });
     });
 
@@ -212,6 +214,140 @@ describe("GoogleSearchService", () => {
         status: "ok",
         service: "google-search"
       });
+    });
+  });
+
+  describe("displayLink mapping (slice-1 G1)", () => {
+    beforeEach(async () => {
+      process.env.GOOGLE_API_KEY = "test-api-key";
+      process.env.GOOGLE_SEARCH_ENGINE_ID = "test-engine-id";
+      broker = new ServiceBroker(testBrokerConfig);
+      googleSearchService = broker.createService(GoogleSearchService) as GoogleSearchService;
+      await broker.start();
+    });
+
+    it("should pass through Google displayLink when present", async () => {
+      mockedAxios.get.mockResolvedValue({
+        data: { items: [{ title: "t", link: "https://www.example.com/x", snippet: "s", displayLink: "www.example.com" }] }
+      });
+
+      const result = await broker.call("google-search.simpleSearch", { query: "q" }) as { items: Array<{ displayLink: string }> };
+      expect(result.items[0].displayLink).toBe("www.example.com");
+    });
+
+    it("should fall back to the link hostname when displayLink is absent", async () => {
+      mockedAxios.get.mockResolvedValue({
+        data: { items: [{ title: "t", link: "https://sub.example.org/path?q=1", snippet: "s" }] }
+      });
+
+      const result = await broker.call("google-search.simpleSearch", { query: "q" }) as { items: Array<{ displayLink: string }> };
+      expect(result.items[0].displayLink).toBe("sub.example.org");
+    });
+
+    it("should fall back to the link itself when the URL is malformed", async () => {
+      mockedAxios.get.mockResolvedValue({
+        data: { items: [{ title: "t", link: "not-a-url", snippet: "s" }] }
+      });
+
+      const result = await broker.call("google-search.simpleSearch", { query: "q" }) as { items: Array<{ displayLink: string }> };
+      expect(result.items[0].displayLink).toBe("not-a-url");
+    });
+  });
+
+  describe("token echo (slice-1 D4)", () => {
+    beforeEach(async () => {
+      process.env.GOOGLE_API_KEY = "test-api-key";
+      process.env.GOOGLE_SEARCH_ENGINE_ID = "test-engine-id";
+      broker = new ServiceBroker(testBrokerConfig);
+      googleSearchService = broker.createService(GoogleSearchService) as GoogleSearchService;
+      await broker.start();
+    });
+
+    it("should echo the caller token in the response when supplied", async () => {
+      mockedAxios.get.mockResolvedValue({ data: { items: [] } });
+
+      const result = await broker.call("google-search.simpleSearch", {
+        query: "q",
+        token: "caller-token-123"
+      }) as { token?: string };
+      expect(result.token).toBe("caller-token-123");
+    });
+
+    it("should omit the token field when none is supplied", async () => {
+      mockedAxios.get.mockResolvedValue({ data: { items: [] } });
+
+      const result = await broker.call("google-search.simpleSearch", { query: "q" }) as { token?: string };
+      expect(result.token).toBeUndefined();
+    });
+
+    it("should accept planned page/size params but ignore them (D5)", async () => {
+      mockedAxios.get.mockResolvedValue({ data: { items: [] } });
+
+      const result = await broker.call("google-search.simpleSearch", {
+        query: "q",
+        page: 2,
+        size: 20,
+      }) as { items: unknown[] };
+      expect(result.items).toEqual([]);
+      // No start/count forwarded to Google: contract documents page/size
+      // as PLANNED, implementation must not pretend otherwise.
+      expect(mockedAxios.get).toHaveBeenCalledWith(
+        "https://www.googleapis.com/customsearch/v1",
+        { params: { key: "test-api-key", cx: "test-engine-id", q: "q" } }
+      );
+    });
+  });
+
+  describe("typed errors (slice-1 D3)", () => {
+    beforeEach(async () => {
+      process.env.GOOGLE_API_KEY = "test-api-key";
+      process.env.GOOGLE_SEARCH_ENGINE_ID = "test-engine-id";
+      broker = new ServiceBroker(testBrokerConfig);
+      googleSearchService = broker.createService(GoogleSearchService) as GoogleSearchService;
+      await broker.start();
+    });
+
+    it("should throw SEARCH_CREDENTIALS (no retry) when keys are missing", async () => {
+      process.env.GOOGLE_API_KEY = "";
+      const svcBroker = new ServiceBroker(testBrokerConfig);
+      svcBroker.createService(GoogleSearchService);
+      await svcBroker.start();
+      try {
+        const err: any = await svcBroker.call("google-search.simpleSearch", { query: "q" }).catch((e: any) => e);
+        expect(err.data).toMatchObject({ code: "SEARCH_CREDENTIALS", retryable: false, provider: "google" });
+      } finally {
+        await svcBroker.stop();
+      }
+    });
+
+    it("should throw retryable SEARCH_PROVIDER on Google 500", async () => {
+      const e500: any = new Error("Request failed with status code 500");
+      e500.response = { status: 500 };
+      mockedAxios.get.mockRejectedValue(e500);
+
+      const err: any = await broker.call("google-search.simpleSearch", { query: "q" }).catch((e: any) => e);
+      expect(err.data).toMatchObject({ code: "SEARCH_PROVIDER", retryable: true, status: 500 });
+    });
+
+    it("should throw non-retryable SEARCH_PROVIDER on Google 400", async () => {
+      const e400: any = new Error("Request failed with status code 400");
+      e400.response = { status: 400 };
+      mockedAxios.get.mockRejectedValue(e400);
+
+      const err: any = await broker.call("google-search.simpleSearch", { query: "q" }).catch((e: any) => e);
+      expect(err.data).toMatchObject({ code: "SEARCH_PROVIDER", retryable: false, status: 400 });
+    });
+
+    it("should throw retryable SEARCH_PROVIDER on network failure", async () => {
+      mockedAxios.get.mockRejectedValue(new Error("socket hang up"));
+
+      const err: any = await broker.call("google-search.simpleSearch", { query: "q" }).catch((e: any) => e);
+      expect(err.data).toMatchObject({ code: "SEARCH_PROVIDER", retryable: true });
+    });
+
+    it("should reject missing query with a ValidationError", async () => {
+      const err: any = await broker.call("google-search.simpleSearch", {} as any).catch((e: any) => e);
+      expect(err.name).toBe("ValidationError");
     });
   });
 });

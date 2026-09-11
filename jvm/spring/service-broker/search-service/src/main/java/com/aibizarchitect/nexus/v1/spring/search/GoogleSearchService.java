@@ -16,6 +16,7 @@ import org.springframework.web.client.RestTemplate;
 
 import com.aibizarchitect.nexus.v1.spring.broker.spi.BrokerOperation;
 import com.aibizarchitect.nexus.v1.spring.broker.spi.BrokerParam;
+import com.aibizarchitect.nexus.v1.broker.api.ServiceResponse;
 
 @Service("googleSearchService")
 public class GoogleSearchService {
@@ -47,16 +48,30 @@ public class GoogleSearchService {
     }
 
     @BrokerOperation("simpleSearch")
-    public SearchResult simpleSearch(@BrokerParam("token") String token, @BrokerParam("query") String query) {
+    public ServiceResponse<?> simpleSearch(@BrokerParam("token") String token, @BrokerParam("query") String query) {
         return simpleSearch(token, query, false);
     }
 
     @BrokerOperation("forceSearch")
-    public SearchResult forceSearch(@BrokerParam("token") String token, @BrokerParam("query") String query) {
+    public ServiceResponse<?> forceSearch(@BrokerParam("token") String token, @BrokerParam("query") String query) {
         return simpleSearch(token, query, true);
     }
 
-    private SearchResult simpleSearch(String token, String query, boolean forceRefresh) {
+    // Typed failure (slice-1 D3): same {code, message, retryable} shape as
+    // the moleculer SearchError. Transport stays HTTP 200 via
+    // BrokerController; ok:false + errors[] carry the failure (frozen
+    // compat — nexus-console null-guards to [] either way). The broker
+    // re-stamps requestId on unwrap, so null here is fine.
+    private static ServiceResponse<?> searchError(String code, String message, boolean retryable) {
+        java.util.Map<String, Object> err = new java.util.LinkedHashMap<>();
+        err.put("code", code);
+        err.put("message", message);
+        err.put("retryable", retryable);
+        err.put("provider", "google");
+        return ServiceResponse.error(java.util.List.of(err), null);
+    }
+
+    private ServiceResponse<?> simpleSearch(String token, String query, boolean forceRefresh) {
         log.info("Query Received: {} (forceRefresh={})", query, forceRefresh);
 
         // ── Rate-limit check (skip if force-refresh) ─────────────────
@@ -65,7 +80,7 @@ public class GoogleSearchService {
             SearchResultsCacheEntry cachedEntry = findAnyCacheEntry(query);
             if (cachedEntry != null) {
                 log.info("Rate-limited — returning MongoDB-cached result for query: {}", query);
-                return buildResult(cachedEntry);
+                return ServiceResponse.ok(buildResult(cachedEntry), null);
             }
             // No cached entry at all; must proceed with fresh search
             log.info("Rate-limited but no MongoDB cache entry — falling through to fresh search");
@@ -76,23 +91,17 @@ public class GoogleSearchService {
         if (cachedEntry != null) {
             log.info("Returning fresh MongoDB-cached result for query: {}", query);
             rateLimiter.markSearched(SERVICE_KEY, query);
-            return buildResult(cachedEntry);
+            return ServiceResponse.ok(buildResult(cachedEntry), null);
         }
 
         if (googleApiKey == null || googleApiKey.isEmpty()) {
             log.warn("Google API Key is not configured. Search functionality will fail.");
-            SearchResult result = new SearchResult();
-            result.setItems(null);
-            result.setRawResponse(null);
-            return result;
+            return searchError("SEARCH_CREDENTIALS", "Google API credentials not configured", false);
         }
 
         if (searchEngineId == null || searchEngineId.isEmpty()) {
             log.warn("Search Engine ID is not configured. Search functionality will fail.");
-            SearchResult result = new SearchResult();
-            result.setItems(null);
-            result.setRawResponse(null);
-            return result;
+            return searchError("SEARCH_CREDENTIALS", "Google API credentials not configured", false);
         }
 
         // Properly URL encode the query
@@ -145,40 +154,43 @@ public class GoogleSearchService {
                 result.setItems(items);
                 result.setRawResponse(data);
 
-                // Cache the result in MongoDB before returning
-                SearchResultsCacheEntry newCacheEntry = new SearchResultsCacheEntry(query, items, CACHE_TTL_MINUTES);
-                cacheRepository.save(newCacheEntry);
-                log.info("Cached result in MongoDB for query: {}", query);
+                // Cache the result in MongoDB before returning. A cache-write
+                // failure must NOT discard fresh results (failure-isolated):
+                // log it and return the live result uncached.
+                try {
+                    SearchResultsCacheEntry newCacheEntry = new SearchResultsCacheEntry(query, items, CACHE_TTL_MINUTES);
+                    cacheRepository.save(newCacheEntry);
+                    log.info("Cached result in MongoDB for query: {}", query);
+                } catch (Exception e) {
+                    log.warn("Cache write failed for query {} — returning live result uncached: {}", query, e.getMessage());
+                }
 
                 // Record rate-limit timestamp
                 rateLimiter.markSearched(SERVICE_KEY, query);
 
-                return result;
+                return ServiceResponse.ok(result, null);
             } else {
                 log.error("Google search API returned error: {}", response.getStatusCode());
-                // Return an empty result instead of throwing an exception to satisfy test
-                // expectations
-                SearchResult result = new SearchResult();
-                result.setItems(null);
-                result.setRawResponse(null);
-                return result;
+                int status = response.getStatusCode().value();
+                return searchError("SEARCH_PROVIDER",
+                        "Google search API returned error: " + response.getStatusCode(),
+                        status == 429 || status >= 500);
             }
         } catch (org.springframework.web.client.ResourceAccessException e) {
             log.error("Network error performing Google search: {}", e.getMessage());
-            // Return an empty result instead of throwing an exception to satisfy test
-            // expectations
-            SearchResult result = new SearchResult();
-            result.setItems(null);
-            result.setRawResponse(null);
-            return result;
+            return searchError("SEARCH_PROVIDER", "Network error performing Google search: " + e.getMessage(), true);
         } catch (Exception e) {
             log.error("Error performing Google search: {}", e.getMessage());
-            // Return an empty result instead of throwing an exception to satisfy test
-            // expectations
-            SearchResult result = new SearchResult();
-            result.setItems(null);
-            result.setRawResponse(null);
-            return result;
+            // restTemplate throws HttpStatusCodeException for 4xx/5xx (it never
+            // returns a non-2xx ResponseEntity with the default error handler),
+            // so classify here: retryable on 429/5xx, not on other 4xx.
+            if (e instanceof org.springframework.web.client.HttpStatusCodeException hse) {
+                int status = hse.getStatusCode().value();
+                return searchError("SEARCH_PROVIDER",
+                        "Google search API returned error: " + hse.getStatusCode(),
+                        status == 429 || status >= 500);
+            }
+            return searchError("SEARCH_PROVIDER", "Error performing Google search: " + e.getMessage(), false);
         }
     }
 
