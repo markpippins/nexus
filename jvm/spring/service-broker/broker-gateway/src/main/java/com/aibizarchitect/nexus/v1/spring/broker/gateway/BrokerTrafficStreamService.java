@@ -2,7 +2,9 @@ package com.aibizarchitect.nexus.v1.spring.broker.gateway;
 
 import java.io.IOException;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -10,6 +12,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,6 +35,15 @@ public class BrokerTrafficStreamService implements BrokerTrafficPublisher {
     private final ConcurrentMap<UUID, SseEmitter> emitters = new ConcurrentHashMap<>();
     private final ScheduledExecutorService heartbeatExecutor = Executors.newSingleThreadScheduledExecutor(
             new DaemonThreadFactory());
+
+    // M1 traffic canary: cumulative per-service/operation invocation counts.
+    // Counted on publish() — independent of SSE subscribers — so the
+    // zero-traffic observation window is queryable via
+    // GET /api/v1/broker/traffic/counts. In-memory by design: a restart
+    // resets all counters (startedAt marks the window); observation windows
+    // must not span restarts.
+    private final Instant startedAt = Instant.now();
+    private final ConcurrentMap<String, AtomicLong> invocationCounts = new ConcurrentHashMap<>();
 
     public BrokerTrafficStreamService() {
         heartbeatExecutor.scheduleAtFixedRate(this::sendHeartbeatSafely,
@@ -71,6 +83,7 @@ public class BrokerTrafficStreamService implements BrokerTrafficPublisher {
 
     @Override
     public void publish(BrokerTrafficEvent event) {
+        countInvocation(event);
         emitters.forEach((id, emitter) -> {
             try {
                 emitter.send(SseEmitter.event()
@@ -87,6 +100,41 @@ public class BrokerTrafficStreamService implements BrokerTrafficPublisher {
 
     int subscriberCount() {
         return emitters.size();
+    }
+
+    /**
+     * Point-in-time canary snapshot: window start, total invocations, and
+     * per-"service/operation" counts (sorted). Consumed by the M1
+     * zero-traffic observation (sign-off gate evidence).
+     */
+    public Map<String, Object> trafficSnapshot() {
+        Map<String, Long> counts = new TreeMap<>();
+        invocationCounts.forEach((key, counter) -> counts.put(key, counter.get()));
+        long total = counts.values().stream().mapToLong(Long::longValue).sum();
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("startedAt", startedAt.toString());
+        snapshot.put("total", total);
+        snapshot.put("counts", counts);
+        return snapshot;
+    }
+
+    /** Convenience read for a single service/operation pair (0 if unseen). */
+    public long invocationCount(String service, String operation) {
+        AtomicLong counter = invocationCounts.get(countKey(service, operation));
+        return counter == null ? 0L : counter.get();
+    }
+
+    public Instant trafficWindowStart() {
+        return startedAt;
+    }
+
+    private void countInvocation(BrokerTrafficEvent event) {
+        invocationCounts.computeIfAbsent(countKey(event.service(), event.operation()),
+                key -> new AtomicLong()).incrementAndGet();
+    }
+
+    private static String countKey(String service, String operation) {
+        return (service != null ? service : "unknown") + "/" + (operation != null ? operation : "unknown");
     }
 
     void sendHeartbeat() {
