@@ -7,6 +7,7 @@ const digest = (letter) => `sha256:${letter.repeat(64)}`;
 const valid = (overrides = {}) => ({
   provider_contract: {
     contract_version: 1,
+    registry_revision_number: 1,
     adapter_id: 'adapter.test',
     adapter_version: '1.2.3',
     provider_id: 'provider.test',

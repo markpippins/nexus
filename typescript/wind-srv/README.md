@@ -203,6 +203,14 @@ curl -s http://localhost:3300/api/instances/<instance-uuid>
 | GET | `/api/receipts` | List receipts (filter: `?ticket_id=`) |
 | GET | `/api/receipts/:id` | Get receipt |
 
+| GET | `/api/provider-contracts` | List the latest immutable lifecycle revision for each adapter |
+| POST | `/api/provider-contracts` | Register a new adapter (engineer request plus architect/operator acknowledgement) |
+| GET | `/api/provider-contracts/:adapterId` | Get current adapter revision and immutable lifecycle history |
+| POST | `/api/provider-contracts/:adapterId/deactivate` | Append a deactivation revision; requires approval and confirmation by different roles |
+| POST | `/api/provider-contracts/:adapterId/retire` | Append a retirement revision; requires approval and confirmation by different roles |
+| GET | `/api/provider-contracts/:adapterId/credential-rotations` | List credential rotation metadata (reference and fingerprint only) |
+| POST | `/api/provider-contracts/:adapterId/credential-rotations` | Record an environment-bound credential rotation after unit restart |
+
 ### Phase B execution-request / receipt seam
 
 | Method | Endpoint | Description |
@@ -226,6 +234,17 @@ columns contain environment-variable names only. Dispatch records an
 and receipt afterward. It does not activate workflows, mutate instances/tickets,
 or admit lifecycle transitions; Resolution/PEB remains the only admission
 authority. See [`PHASE-B.md`](./PHASE-B.md).
+
+Credential rotation is performed outside Wind at the systemd `EnvironmentFile`
+or equivalent secret boundary, followed by a Wind unit restart. The rotation
+endpoint records only the environment reference, SHA-256 fingerprint, and an
+approval/reference record; it never accepts or returns credential material.
+Terminal provider attempts and receipts carry the same reference/fingerprint
+metadata when a credential-backed adapter is invoked.
+
+The registry is immutable and temporal: lifecycle operations append revisions,
+and `v_active_provider_contracts` exposes only the latest revision per adapter.
+An adapter is dispatchable only when that latest revision is `ACTIVE`.
 
 ### Validation
 

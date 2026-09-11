@@ -26,8 +26,33 @@ export function resolveEnvironmentReference(reference, name, environment = proce
   return value;
 }
 
+export function resolveEnvironmentReferenceMetadata(reference, name, environment = process.env) {
+  const key = envRef(reference, name);
+  if (!key) return null;
+  const value = resolveEnvironmentReference(key, name, environment);
+  return {
+    reference: key,
+    fingerprint: `sha256:${createHash('sha256').update(value, 'utf8').digest('hex')}`,
+  };
+}
+
+export function dispatchReplay(attemptRows, receiptRows, dispatchKey) {
+  const reservationKey = `dispatch:${dispatchKey}`;
+  const terminalKey = `${reservationKey}:terminal`;
+  const reservation = attemptRows.find((row) => row.attempt_idempotency_key === reservationKey) || null;
+  const attempt = attemptRows.find((row) => row.attempt_idempotency_key === terminalKey) || null;
+  if (!attempt) return { inProgress: Boolean(reservation), reservation, attempt: null, receipt: null };
+  return {
+    inProgress: false,
+    reservation,
+    attempt,
+    receipt: receiptRows.find((row) => row.attempt_id === attempt.id) || null,
+  };
+}
+
 function sameContract(request, registered) {
-  return request?.adapter_id === registered.adapter_id
+  return request?.registry_revision_number === registered.revision_number
+    && request?.adapter_id === registered.adapter_id
     && request?.adapter_version === registered.adapter_version
     && request?.provider_id === registered.provider_id
     && request?.provider_version === registered.provider_version
@@ -45,7 +70,7 @@ function sameInvocation(request, registered) {
  * module, URL, provider, or credential value at dispatch time.
  */
 export function assertRegisteredContract(request, invocation, registered) {
-  if (!registered || registered.is_active !== true || registered.schema_verification !== 'verified') {
+  if (!registered || registered.lifecycle_state !== 'ACTIVE' || registered.schema_verification !== 'verified') {
     const error = new Error('provider adapter is not registered, active, and schema-verified');
     error.kind = 'UNAVAILABLE';
     throw error;
