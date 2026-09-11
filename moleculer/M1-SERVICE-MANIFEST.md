@@ -46,27 +46,35 @@
   Suite triage DONE 2026-09-09 — 32/32 green in ~13s (commit `db4ec2f0`).
   Console sequencing DECIDED (Q4, see below).
 
-### Q2 status 2026-09-09/10 — creds wired, pair rejected, dead-creds parity captured
-- Sole Custom Search keypair lives in `moleculer/search/.env`; copied to
-  `nexus/.env` as `GOOGLE_API_KEY` (moleculer), `GOOGLE_SEARCH_API_KEY`
-  (Spring relaxed binding), `GOOGLE_SEARCH_ENGINE_ID` (both). Source file
-  preserved. Both units consume `nexus/.env` (`EnvironmentFile=`).
-  `/etc/environment` holds only OAuth client ID/secret (different credential
-  type — not usable for Custom Search). No other key copy exists repo-wide.
-- `moleculer-search` + `broker-gateway` restarted; both run on the same pair.
-- Google rejects the pair: `400 INVALID_ARGUMENT` (likely the dead
-  post-rotation values — cf. commit `0ef20043`). Operator fetching fresh
-  key + engine ID; on arrival: replace the 3 names in `nexus/.env`,
-  restart both units, re-probe.
-- **Dead-creds parity data point (same query, same dead creds):**
-  - Legacy `POST :8081/api/v1/broker/submitRequest`
-    (`googleSearchService/simpleSearch`) → **HTTP 200,
-    `ok:true, data:{items:null,rawResponse:null}, errors:null`**
-    (failure swallowed into null items).
-  - Moleculer `POST :4050/api/search/simple` → **HTTP 500,
-    `Failed to perform search: Request failed with status code 400`**.
-  - DIVERGENCE CONFIRMED: identical failure, different envelopes. Slice 1
-    must reconcile this (or bless one shape in the contract).
+### Q2 status 2026-09-11 — RESOLVED: fresh engine ID live, success-path parity PROVEN
+- Operator supplied the current engine ID in `moleculer/search/.env`
+  (17 chars; the old 26-char value was the fault — key itself was good,
+  no rotation needed). Synced to `nexus/.env`; both units restarted.
+- **Bonus wiring fix:** legacy cache writes were failing — local mongod
+  requires auth but the gateway connected credentialess
+  (`Unauthorized ... localhost:27017`). Root cause of the post-restart
+  nulls (the Google call itself had succeeded; the Mongo INSERT threw and
+  discarded live results). Fixed via `SPRING_DATA_MONGODB_URI`
+  (credentialed, `authSource=admin`) in `nexus/.env` + gateway restart.
+  Follow-up: least-privilege mongo app user instead of root.
+- **Slice-1 success-path parity: PROVEN 2026-09-11.** Same query, live on
+  both sides (legacy via `forceSearch` to bypass its Mongo cache):
+  10 items, **same set AND same order**. Legacy envelope
+  `{ok, data:{items,...}, errors, requestId, ts, version, service,
+  operation}` vs moleculer `{items, searchInformation}` — envelope
+  reconciliation still open, item parity closed.
+- Key plumbing (unchanged): sole Custom Search keypair lives in
+  `moleculer/search/.env`, mirrored to `nexus/.env` as `GOOGLE_API_KEY`
+  (moleculer), `GOOGLE_SEARCH_API_KEY` (Spring relaxed binding),
+  `GOOGLE_SEARCH_ENGINE_ID` (both). Source file preserved. Both units
+  consume `nexus/.env` (`EnvironmentFile=`). `/etc/environment` holds
+  only OAuth client ID/secret (different credential type — not usable
+  for Custom Search). No other key copy exists repo-wide.
+- **Historical data point (dead-creds era, still valid for failure-envelope
+  reconciliation):** same query, same dead creds — legacy → HTTP 200,
+  `ok:true, data:{items:null,rawResponse:null}, errors:null` (failure
+  swallowed into null items); moleculer → HTTP 500 with message.
+  DIVERGENCE CONFIRMED: identical failure, different envelopes.
 
 ### Q4 status 2026-09-10 — console retirement DEFERRED (operator), M1 scope contained
 - **Decision:** nexus-console retires only once `application-host` becomes
