@@ -214,13 +214,18 @@ curl -s http://localhost:3300/api/instances/<instance-uuid>
 | POST | `/api/execution-requests/:id/attempts` | Record one truthful provider outcome; does not invoke a provider |
 | GET | `/api/execution-requests/:id/receipts` | List advisory receipts |
 | POST | `/api/execution-requests/:id/receipts` | Issue or replay one immutable receipt for an attempt |
+| POST | `/api/execution-requests/:id/dispatch` | Reserve, invoke one persisted schema-verified adapter, and append a truthful advisory outcome |
 
 Outcome classes are `SUCCEEDED`, `FAILED`, `UNAVAILABLE`, `STALE`, and `INVALID`.
 Identical idempotency material replays; conflicting material returns `409`.
 Requests, attempts, and receipts are append-only and constrained to
-`authority_level = advisory`. This seam does not activate workflows, mutate
-instances/tickets, or admit lifecycle transitions; Resolution/PEB remains the
-only admission authority. See [`PHASE-B.md`](./PHASE-B.md).
+`authority_level = advisory`. Provider dispatch is restricted to active,
+schema-verified rows in `wind.provider_contracts`; credential and endpoint
+columns contain environment-variable names only. Dispatch records an
+`IN_FLIGHT` reservation before acting and appends a terminal observed attempt
+and receipt afterward. It does not activate workflows, mutate instances/tickets,
+or admit lifecycle transitions; Resolution/PEB remains the only admission
+authority. See [`PHASE-B.md`](./PHASE-B.md).
 
 ### Validation
 

@@ -27,6 +27,7 @@ REST API for the wind workflow schema: offices, titles, tasks, workflow graphs, 
 | POST | `/api/execution-requests/:id/attempts` | Record one final provider outcome. The route never calls the provider. |
 | GET | `/api/execution-requests/:id/receipts` | Issue exactly one advisory receipt for an attempt; receipt status/digest must equal the immutable attempt, so malformed or contradictory results fail closed. |
 | POST | `/api/execution-requests/:id/receipts` |  |
+| POST | `/api/execution-requests/:id/dispatch` | Reserve an attempt, invoke one persisted schema-verified adapter, and append a truthful advisory outcome; never mutates lifecycle state. |
 | GET | `/api/instances` | List instances (optionally filter by status or workflow_id) |
 | POST | `/api/instances` | Start a workflow instance Creates an instance and tickets for the entrypoint node(s) |
 | GET | `/api/instances/:id` | Get instance by ID (with tickets) |
@@ -246,8 +247,13 @@ budget from 0 to 10, and an evidence-reference policy. Unavailable, timeout,
 malformed-result, and stale cases must map to truthful non-success outcomes.
 
 The validator is pure and performs no provider or harness I/O. It refuses
-non-advisory authority and lifecycle admission/mutation fields. Dispatch is a
-future bounded slice; Resolution/PEB remains the sole admission boundary.
+non-advisory authority and lifecycle admission/mutation fields. Dispatch uses
+only an active, schema-verified row from `wind.provider_contracts`; endpoint
+and credential fields are environment-variable names, never secret material.
+The dispatch path records an `IN_FLIGHT` reservation before acting, then appends
+an observed terminal attempt and receipt. Unknown, stale, unavailable,
+timeout, and malformed cases fail closed or map to truthful non-success
+outcomes. Resolution/PEB remains the sole admission boundary.
 
 ## Roles view
 
