@@ -1,10 +1,19 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { pool, query } from '../db.js';
 import { BadRequestError, NotFoundError } from '../errors.js';
 import { validateProviderInvocation } from '../provider-contract.js';
 import { resolveEnvironmentReferenceMetadata } from '../provider-dispatch.js';
 
 export const providerContractsRouter = Router();
+
+const registryWriteLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'provider registry write rate limit exceeded' },
+});
 
 function requiredString(body, name) {
   if (typeof body?.[name] !== 'string' || body[name].trim() === '') {
@@ -168,7 +177,7 @@ providerContractsRouter.get('/:adapterId', async (req, res, next) => {
 
 // Register a genuinely new adapter. Existing adapters require lifecycle
 // endpoints so the immutable revision stream and dual-control checks apply.
-providerContractsRouter.post('/', async (req, res, next) => {
+providerContractsRouter.post('/', registryWriteLimiter, async (req, res, next) => {
   const client = await pool.connect();
   try {
     const fields = registryFields(req.body || {});
@@ -202,12 +211,12 @@ providerContractsRouter.post('/', async (req, res, next) => {
   } finally { client.release(); }
 });
 
-providerContractsRouter.post('/:adapterId/deactivate', (req, res, next) => lifecycle(req, res, next, 'DEACTIVATE'));
-providerContractsRouter.post('/:adapterId/retire', (req, res, next) => lifecycle(req, res, next, 'RETIRE'));
+providerContractsRouter.post('/:adapterId/deactivate', registryWriteLimiter, (req, res, next) => lifecycle(req, res, next, 'DEACTIVATE'));
+providerContractsRouter.post('/:adapterId/retire', registryWriteLimiter, (req, res, next) => lifecycle(req, res, next, 'RETIRE'));
 
 // Record a rotation after the operator has rotated the environment boundary
 // and restarted the service. Wind stores only the env reference and digest.
-providerContractsRouter.post('/:adapterId/credential-rotations', async (req, res, next) => {
+providerContractsRouter.post('/:adapterId/credential-rotations', registryWriteLimiter, async (req, res, next) => {
   try {
     const adapterId = requiredString(req.params, 'adapterId');
     const rotationRecordRef = requiredString(req.body || {}, 'rotation_record_ref');
