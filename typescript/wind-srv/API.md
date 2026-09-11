@@ -5,7 +5,7 @@
 
 REST API for the wind workflow schema: offices, titles, tasks, workflow graphs, runtime instances, tickets, and receipts.
 
-**72 endpoints** — inventory generated from source route registrations (`nexus/tools/api-docs/`).
+**73 endpoints** — inventory generated from source route registrations (`nexus/tools/api-docs/`).
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -25,6 +25,7 @@ REST API for the wind workflow schema: offices, titles, tasks, workflow graphs, 
 | GET | `/api/execution-requests/:id` |  |
 | GET | `/api/execution-requests/:id/attempts` | List attempts for one request. |
 | POST | `/api/execution-requests/:id/attempts` | Record one final provider outcome. The route never calls the provider. |
+| POST | `/api/execution-requests/:id/dispatch` | Dispatch one persisted, schema-verified adapter contract. The reservation is recorded before any adapter call; the terminal child attempt and receipt are appended only after an observed result. This route never touches lifecycle, Resolution, or PEB state. |
 | GET | `/api/execution-requests/:id/receipts` | Issue exactly one advisory receipt for an attempt; receipt status/digest must equal the immutable attempt, so malformed or contradictory results fail closed. |
 | POST | `/api/execution-requests/:id/receipts` |  |
 | GET | `/api/instances` | List instances (optionally filter by status or workflow_id) |
@@ -90,6 +91,7 @@ python3 tools/api-docs/gen_openapi.py --inventory /tmp/api_inventory.json   # (v
 ```
 
 <!-- API-SPEC-BEGIN -->
+
 
 
 
@@ -246,8 +248,13 @@ budget from 0 to 10, and an evidence-reference policy. Unavailable, timeout,
 malformed-result, and stale cases must map to truthful non-success outcomes.
 
 The validator is pure and performs no provider or harness I/O. It refuses
-non-advisory authority and lifecycle admission/mutation fields. Dispatch is a
-future bounded slice; Resolution/PEB remains the sole admission boundary.
+non-advisory authority and lifecycle admission/mutation fields. Dispatch uses
+only an active, schema-verified row from `wind.provider_contracts`; endpoint
+and credential fields are environment-variable names, never secret material.
+The dispatch path records an `IN_FLIGHT` reservation before acting, then appends
+an observed terminal attempt and receipt. Unknown, stale, unavailable,
+timeout, and malformed cases fail closed or map to truthful non-success
+outcomes. Resolution/PEB remains the sole admission boundary.
 
 ## Roles view
 
