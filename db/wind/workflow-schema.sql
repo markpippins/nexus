@@ -252,7 +252,7 @@ CREATE TABLE wind.execution_attempts (
     attempt_idempotency_key     TEXT NOT NULL,
     executor_id                 TEXT NOT NULL,
     provider_invocation_ref    TEXT,
-    status                      TEXT NOT NULL CHECK (status IN ('SUCCEEDED', 'FAILED', 'UNAVAILABLE', 'STALE', 'INVALID')),
+    status                      TEXT NOT NULL CHECK (status IN ('IN_FLIGHT', 'ABORTED', 'SUCCEEDED', 'FAILED', 'UNAVAILABLE', 'STALE', 'INVALID')),
     result                      JSONB NOT NULL DEFAULT '{}'::jsonb,
     error                       TEXT,
     result_digest               TEXT,
@@ -291,6 +291,32 @@ CREATE INDEX idx_wind_execution_attempts_request ON wind.execution_attempts (req
 CREATE INDEX idx_wind_execution_attempts_status ON wind.execution_attempts (status, recorded_at DESC);
 CREATE INDEX idx_wind_execution_receipts_request ON wind.execution_receipts (request_id, issued_at DESC);
 CREATE INDEX idx_wind_execution_receipts_status ON wind.execution_receipts (outcome_status, issued_at DESC);
+
+CREATE TABLE wind.provider_contracts (
+    adapter_id              TEXT PRIMARY KEY,
+    adapter_version         TEXT NOT NULL,
+    provider_id             TEXT NOT NULL,
+    provider_version        TEXT NOT NULL,
+    invocation_mode         TEXT NOT NULL CHECK (invocation_mode IN ('CLI', 'HTTP', 'SDK', 'MCP')),
+    input_schema_digest     TEXT NOT NULL,
+    output_schema_digest    TEXT NOT NULL,
+    credential_env_ref      TEXT,
+    endpoint_env_ref        TEXT,
+    schema_verification     TEXT NOT NULL DEFAULT 'verified' CHECK (schema_verification = 'verified'),
+    is_active               BOOLEAN NOT NULL DEFAULT TRUE,
+    registered_at           TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT provider_contract_credential_ref_check
+        CHECK (credential_env_ref IS NULL OR credential_env_ref ~ '^[A-Z][A-Z0-9_]{0,127}$'),
+    CONSTRAINT provider_contract_endpoint_ref_check
+        CHECK (endpoint_env_ref IS NULL OR endpoint_env_ref ~ '^[A-Z][A-Z0-9_]{0,127}$'),
+    CONSTRAINT provider_contract_http_endpoint_check
+        CHECK (invocation_mode <> 'HTTP' OR endpoint_env_ref IS NOT NULL)
+);
+
+-- Provider contract rows are an explicit dispatch allow-list. References are
+-- environment-variable names only; secret material never belongs in wind.*.
+CREATE INDEX idx_wind_provider_contracts_active
+    ON wind.provider_contracts (is_active, adapter_id);
 
 CREATE OR REPLACE FUNCTION wind.forbid_execution_evidence_mutation()
 RETURNS trigger LANGUAGE plpgsql AS $$

@@ -8,5 +8,5 @@ test('execution write handlers use a bounded rate limiter', () => {
   assert.match(source, /rateLimit\(\{/);
   assert.match(source, /windowMs:\s*60 \* 1000/);
   assert.match(source, /max:\s*60/);
-  assert.equal((source.match(/executionWriteLimiter/g) || []).length, 4);
+  assert.equal((source.match(/executionWriteLimiter/g) || []).length, 5);
 });

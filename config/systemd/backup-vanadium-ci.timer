@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily vanadium CI backup to barium (04:15)
+Description=Daily vanadium CI backup to vanadium (04:15)
 
 [Timer]
 # 04:15 — after the 03:30 PG pipeline clears. Persistent=true catch-up.

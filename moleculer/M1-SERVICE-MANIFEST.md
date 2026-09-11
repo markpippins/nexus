@@ -23,16 +23,76 @@
 | Ownership | Engineer (execution) + Architect (gates) + Analyst (evidence) | same |
 | Standing | **PRE-CUTOVER — both authorities live** | — |
 
-### Search scope notes (frozen open questions — operator/architect)
-- **Parity boundary undecided:** `:4050` is google-simple-only; legacy is 4
-  providers + cache + rate limiting. Day 1 must declare google-simple-only
-  (defer rest) or full `search-service`.
-- **Google creds unset** in this environment (`GOOGLE_API_KEY` /
-  `GOOGLE_SEARCH_ENGINE_ID` absent). Missing-creds path verified live on
-  `:4050` (`500 "Google API credentials not configured"`); legacy null-key
-  failure envelope not yet captured.
-- **Test suite not runnable as-is:** `ts-jest` declared but not installed;
-  May `ISSUES.md` reports 24/32 failing. Triage pending (Day 1 prep).
+### Search scope — DECIDED 2026-09-09 (operator): A + cache + rate limit
+- **Parity boundary = google-simple + cache + rate limit.** YouTube /
+  Unsplash / Gemini / Academic delayed indefinitely.
+- **Rationale (operator):** the canonical search use case is NOT explicit
+  user-invoked search — it is nexus-console's **IdeaStream**: automatic,
+  magnet-folder-driven, active-path-triggered context search (client
+  `stream-cache.service.ts`, 30-min TTL matching the broker-side MongoDB
+  cache; `idea-stream.component.ts` re-runs on path change + manual Refresh
+  with `forceRefresh`). Throttler was the first app; context management is
+  the founding intent. Cache + rate limit are therefore load-bearing, the
+  other providers are not.
+- **Mini-wave slicing (operator-approved):**
+  - Slice 1 — google-simple parity (`:4050` vs `googlePublicSearch` op).
+  - Slice 2 — cache parity (broker Mongo cache semantics: TTL, key shape,
+    `forceRefresh` bypass).
+  - Slice 3 — rate-limit parity (Redis cooldown behavior + throttled
+    failure envelope).
+  - Slice 4 — IdeaStream-equivalent auto-search in throttler-ui
+    (magnet-driven, active-path-triggered). Answers the throttler-UX scope.
+- **Still open:** fresh Google keypair from operator (Q2 pending).
+  Suite triage DONE 2026-09-09 — 32/32 green in ~13s (commit `db4ec2f0`).
+  Console sequencing DECIDED (Q4, see below).
+
+### Q2 status 2026-09-11 — RESOLVED: fresh engine ID live, success-path parity PROVEN
+- Operator supplied the current engine ID in `moleculer/search/.env`
+  (17 chars; the old 26-char value was the fault — key itself was good,
+  no rotation needed). Synced to `nexus/.env`; both units restarted.
+- **Bonus wiring fix:** legacy cache writes were failing — local mongod
+  requires auth but the gateway connected credentialess
+  (`Unauthorized ... localhost:27017`). Root cause of the post-restart
+  nulls (the Google call itself had succeeded; the Mongo INSERT threw and
+  discarded live results). Fixed via `SPRING_DATA_MONGODB_URI`
+  (credentialed, `authSource=admin`) in `nexus/.env` + gateway restart.
+  Follow-up: least-privilege mongo app user instead of root.
+- **Slice-1 success-path parity: PROVEN 2026-09-11.** Same query, live on
+  both sides (legacy via `forceSearch` to bypass its Mongo cache):
+  10 items, **same set AND same order**. Legacy envelope
+  `{ok, data:{items,...}, errors, requestId, ts, version, service,
+  operation}` vs moleculer `{items, searchInformation}` — envelope
+  reconciliation still open, item parity closed.
+- Key plumbing (unchanged): sole Custom Search keypair lives in
+  `moleculer/search/.env`, mirrored to `nexus/.env` as `GOOGLE_API_KEY`
+  (moleculer), `GOOGLE_SEARCH_API_KEY` (Spring relaxed binding),
+  `GOOGLE_SEARCH_ENGINE_ID` (both). Source file preserved. Both units
+  consume `nexus/.env` (`EnvironmentFile=`). `/etc/environment` holds
+  only OAuth client ID/secret (different credential type — not usable
+  for Custom Search). No other key copy exists repo-wide.
+- **Historical data point (dead-creds era, still valid for failure-envelope
+  reconciliation):** same query, same dead creds — legacy → HTTP 200,
+  `ok:true, data:{items:null,rawResponse:null}, errors:null` (failure
+  swallowed into null items); moleculer → HTTP 500 with message.
+  DIVERGENCE CONFIRMED: identical failure, different envelopes.
+
+### Q4 status 2026-09-10 — console retirement DEFERRED (operator), M1 scope contained
+- **Decision:** nexus-console retires only once `application-host` becomes
+  the daily driver. Until then it stays up AND remains the canonical "UI
+  that connects to the service broker."
+- **Split targets (already underway):** throttler-ui (+ an incoming new
+  throttler version), atlas-ui, nebula-operations-ui, barbie.
+- **Replacement bar (all must hold):** barbie is a 100% replacement for the
+  topology view, health view, deployments view, AND registry editor, plus
+  the next throttler-ui has dropped. Only then does the console go dark.
+- **application-host broker future (deferred design):** secure the Moleculer
+  layer via Redis; application-host implements service-broker-based login.
+  Undecided how — explicitly not M1 work.
+- **Priority directive (operator):** the application-host broker/login work
+  is LOWER priority than retiring TypeScript services in favor of Moleculer.
+  Driver: host runs ~60 services and is overloaded — Moleculer consolidation
+  (M1/M2/M3) outranks console retirement. M1 therefore owns "zero SEARCH
+  traffic," never "zero console traffic."
 
 ## M2/M3 context — nexus-broker (NOT M1 cutover scope, frozen for reference)
 
