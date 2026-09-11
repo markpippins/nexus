@@ -1,5 +1,6 @@
 import { Service, ServiceBroker } from "moleculer";
 import ApiGateway from "moleculer-web";
+import { trafficSnapshot } from "./traffic-counter";
 
 export default class ApiService extends Service {
   constructor(broker: ServiceBroker) {
@@ -24,7 +25,8 @@ export default class ApiService extends Service {
 
             aliases: {
               "POST /search/simple": "google-search.simpleSearch",
-              "GET /health": "api.health"
+              "GET /health": "api.health",
+              "GET /traffic/counts": "api.trafficCounts"
             },
 
             bodyParsers: {
@@ -61,6 +63,18 @@ export default class ApiService extends Service {
               timestamp: new Date().toISOString(),
               service: "moleculer-search"
             };
+          }
+        },
+
+        // M1 traffic canary: cumulative per-action invocation counts since
+        // boot ({startedAt, total, counts}). The zero-traffic observation
+        // for cutover sign-off polls this alongside the gateway
+        // GET /api/v1/broker/traffic/counts: legacy search counts must stay
+        // flat while these carry the traffic. In-memory: a restart resets
+        // the window (see startedAt).
+        trafficCounts: {
+          async handler() {
+            return trafficSnapshot();
           }
         }
       }
