@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: wind-srv — Wind Workflow Schema API
-  version: 1.0.afde2a47
+  version: 1.0.f0883cd7
   description: 'REST API for the wind workflow schema: offices, titles, tasks, workflow graphs, runtime instances, tickets,
     and receipts.
 
@@ -20,6 +20,7 @@ tags:
 - name: nodes
 - name: offices
 - name: outcomes
+- name: provider-contracts
 - name: receipts
 - name: tasks
 - name: tickets
@@ -1462,6 +1463,249 @@ paths:
       summary: Get outcome by ID
       parameters:
       - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/provider-contracts:
+    get:
+      tags:
+      - provider-contracts
+      operationId: get_provider_contracts
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      summary: List the latest immutable lifecycle revision for each adapter.
+    post:
+      tags:
+      - provider-contracts
+      operationId: post_provider_contracts
+      responses:
+        '201':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      summary: Register a genuinely new adapter. Existing adapters require lifecycle endpoints so the immutable revision stream
+        and dual-control checks app
+  /api/provider-contracts/{adapterId}:
+    get:
+      tags:
+      - provider-contracts
+      operationId: get_provider_contracts_adapterId
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: adapterId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/provider-contracts/{adapterId}/credential-rotations:
+    get:
+      tags:
+      - provider-contracts
+      operationId: get_provider_contracts_adapterId_credential_rotations
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: adapterId
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags:
+      - provider-contracts
+      operationId: post_provider_contracts_adapterId_credential_rotations
+      responses:
+        '201':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      summary: 'Record a rotation after the operator has rotated the environment boundary and restarted the service. Wind
+        stores only the env reference and '
+      parameters:
+      - name: adapterId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/provider-contracts/{adapterId}/deactivate:
+    post:
+      tags:
+      - provider-contracts
+      operationId: post_provider_contracts_adapterId_deactivate
+      responses:
+        '201':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: adapterId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/provider-contracts/{adapterId}/retire:
+    post:
+      tags:
+      - provider-contracts
+      operationId: post_provider_contracts_adapterId_retire
+      responses:
+        '201':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: adapterId
         in: path
         required: true
         schema:

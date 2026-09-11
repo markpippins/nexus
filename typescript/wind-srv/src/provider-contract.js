@@ -63,6 +63,7 @@ export function validateProviderInvocation({ provider_contract, invocation_contr
 
   const provider = {
     contract_version: boundedInteger(provider_contract.contract_version, 'provider_contract.contract_version', 1, 1),
+    registry_revision_number: boundedInteger(provider_contract.registry_revision_number, 'provider_contract.registry_revision_number', 1, 2147483647),
     adapter_id: requiredString(provider_contract.adapter_id, 'provider_contract.adapter_id'),
     adapter_version: requiredString(provider_contract.adapter_version, 'provider_contract.adapter_version'),
     provider_id: requiredString(provider_contract.provider_id, 'provider_contract.provider_id'),

@@ -4,12 +4,15 @@ import {
   assertRegisteredContract,
   classifyDispatchFailure,
   dispatchInputDigest,
+  dispatchReplay,
   invokeRegisteredAdapter,
   resolveEnvironmentReference,
+  resolveEnvironmentReferenceMetadata,
 } from '../src/provider-dispatch.js';
 
 const digest = (letter) => `sha256:${letter.repeat(64)}`;
 const registered = {
+  revision_number: 1,
   adapter_id: 'wind.echo.v1',
   adapter_version: '1.0.0',
   provider_id: 'wind-local',
@@ -18,37 +21,86 @@ const registered = {
   input_schema_digest: digest('1'),
   output_schema_digest: digest('2'),
   schema_verification: 'verified',
-  is_active: true,
+  lifecycle_state: 'ACTIVE',
 };
 const request = {
   artifact_type: 'wind.task',
   artifact_ref: 'task-1',
   artifact_revision: 'r1',
   artifact_fingerprint: digest('a'),
-  provider_contract: { ...registered },
+  provider_contract: {
+    registry_revision_number: 1,
+    adapter_id: registered.adapter_id,
+    adapter_version: registered.adapter_version,
+    provider_id: registered.provider_id,
+    provider_version: registered.provider_version,
+    input_schema_digest: registered.input_schema_digest,
+    output_schema_digest: registered.output_schema_digest,
+  },
 };
 const invocation = { mode: 'SDK', timeout_ms: 1000 };
 
-test('accepts only an active schema-verified registered adapter', () => {
+test('rejects inactive, stale, and misconfigured registered contracts', () => {
   assert.equal(assertRegisteredContract(request.provider_contract, invocation, registered), registered);
   assert.throws(
-    () => assertRegisteredContract(request.provider_contract, invocation, { ...registered, is_active: false }),
+    () => assertRegisteredContract(request.provider_contract, invocation, { ...registered, lifecycle_state: 'DEACTIVATED' }),
     /not registered/,
   );
   assert.throws(
-    () => assertRegisteredContract(request.provider_contract, invocation, { ...registered, output_schema_digest: digest('9') }),
+    () => assertRegisteredContract({ ...request.provider_contract, registry_revision_number: 2 }, invocation, registered),
     /stale/,
+  );
+  assert.throws(
+    () => assertRegisteredContract(request.provider_contract, { mode: 'HTTP' }, {
+      ...registered,
+      invocation_mode: 'HTTP',
+      endpoint_env_ref: null,
+    }),
+    /endpoint environment reference/,
   );
 });
 
-test('resolves environment references without accepting material in the contract', () => {
-  assert.equal(resolveEnvironmentReference('TEST_PROVIDER_SECRET', 'credential_env_ref', { TEST_PROVIDER_SECRET: 'secret-value' }), 'secret-value');
+test('replay selects the terminal child and matching receipt without creating evidence', () => {
+  const reservation = { id: 'reservation-1', attempt_idempotency_key: 'dispatch:replay-1' };
+  const terminal = {
+    id: 'terminal-1',
+    parent_attempt_id: reservation.id,
+    attempt_idempotency_key: 'dispatch:replay-1:terminal',
+    status: 'SUCCEEDED',
+  };
+  const receipt = { id: 'receipt-1', attempt_id: terminal.id, outcome_status: 'SUCCEEDED' };
+  const replay = dispatchReplay([reservation, terminal], [receipt], 'replay-1');
+  assert.equal(replay.inProgress, false);
+  assert.equal(replay.reservation, reservation);
+  assert.equal(replay.attempt, terminal);
+  assert.equal(replay.receipt, receipt);
+});
+
+test('replay reports an unfinished reservation without fabricating a receipt', () => {
+  const reservation = { id: 'reservation-2', attempt_idempotency_key: 'dispatch:replay-2' };
+  const replay = dispatchReplay([reservation], [], 'replay-2');
+  assert.equal(replay.inProgress, true);
+  assert.equal(replay.attempt, null);
+  assert.equal(replay.receipt, null);
+});
+
+test('credential metadata returns only a reference and fingerprint', () => {
+  const metadata = resolveEnvironmentReferenceMetadata('TEST_PROVIDER_SECRET', 'credential_env_ref', {
+    TEST_PROVIDER_SECRET: 'never-persist-this-value',
+  });
+  assert.deepEqual(Object.keys(metadata).sort(), ['fingerprint', 'reference']);
+  assert.equal(metadata.reference, 'TEST_PROVIDER_SECRET');
+  assert.match(metadata.fingerprint, /^sha256:[0-9a-f]{64}$/);
+  assert.doesNotMatch(JSON.stringify(metadata), /never-persist-this-value/);
+});
+
+test('secret and endpoint references fail closed when the environment boundary is empty', () => {
   assert.throws(
     () => resolveEnvironmentReference('TEST_PROVIDER_SECRET', 'credential_env_ref', {}),
-    /not configured/,
+    /not configured in the secret boundary/,
   );
   assert.throws(
-    () => resolveEnvironmentReference('not-an-env-ref', 'credential_env_ref', {}),
+    () => resolveEnvironmentReference('not-an-env-ref', 'endpoint_env_ref', {}),
     /valid environment reference/,
   );
 });

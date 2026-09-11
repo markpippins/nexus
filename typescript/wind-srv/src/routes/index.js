@@ -15,6 +15,7 @@ import { vRolesRouter } from './v-roles.js';
 import { eventsRouter } from './events.js';
 import { eventTypesRouter } from './event-types.js';
 import { executionRouter } from './execution.js';
+import { providerContractsRouter } from './provider-contracts.js';
 
 export const routes = Router();
 
@@ -34,3 +35,4 @@ routes.use('/v-roles', vRolesRouter);
 routes.use('/events', eventsRouter);
 routes.use('/event-types', eventTypesRouter);
 routes.use('/execution-requests', executionRouter);
+routes.use('/provider-contracts', providerContractsRouter);

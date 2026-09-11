@@ -9,6 +9,7 @@ import {
   classifyDispatchFailure,
   dispatchInputDigest,
   invokeRegisteredAdapter,
+  resolveEnvironmentReferenceMetadata,
   resolveEnvironmentReference,
 } from '../provider-dispatch.js';
 
@@ -302,7 +303,7 @@ executionRouter.post('/:id/dispatch', executionWriteLimiter, async (req, res, ne
     }
 
     const registeredResult = await query(
-      'SELECT * FROM wind.provider_contracts WHERE adapter_id = $1',
+      'SELECT * FROM wind.v_active_provider_contracts WHERE adapter_id = $1',
       [request.provider_contract?.adapter_id],
     );
     const registered = registeredResult.rows[0] || null;
@@ -325,6 +326,7 @@ executionRouter.post('/:id/dispatch', executionWriteLimiter, async (req, res, ne
 
     let observed;
     let providerCalled = false;
+    let credentialMetadata = null;
     try {
       const validated = validateProviderInvocation({
         provider_contract: request.provider_contract,
@@ -336,7 +338,7 @@ executionRouter.post('/:id/dispatch', executionWriteLimiter, async (req, res, ne
       // boundary is configured. The value is passed to the adapter environment
       // but is never persisted or returned.
       if (registered.credential_env_ref) {
-        resolveEnvironmentReference(registered.credential_env_ref, 'credential_env_ref');
+        credentialMetadata = resolveEnvironmentReferenceMetadata(registered.credential_env_ref, 'credential_env_ref');
       }
       if (registered.endpoint_env_ref) {
         resolveEnvironmentReference(registered.endpoint_env_ref, 'endpoint_env_ref');
@@ -355,12 +357,14 @@ executionRouter.post('/:id/dispatch', executionWriteLimiter, async (req, res, ne
         `INSERT INTO wind.execution_attempts
            (request_id, parent_attempt_id, attempt_number, attempt_idempotency_key,
             executor_id, provider_invocation_ref, status, result, error,
-            result_digest, started_at, completed_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12)
-         RETURNING *`,
+           result_digest, started_at, completed_at, credential_env_ref,
+           credential_fingerprint)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14)
+       RETURNING *`,
         [request.id, reservation.id, attemptNumber + 1, `dispatch:${dispatchKey}:terminal`,
           'wind.provider-dispatch', null, mapped.outcome, JSON.stringify(failureResult), mapped.reason,
-          digest(failureResult), startedAt, new Date().toISOString()],
+          digest(failureResult), startedAt, new Date().toISOString(), credentialMetadata?.reference || null,
+          credentialMetadata?.fingerprint || null],
       );
       if (!providerCalled) {
         return res.status(mapped.outcome === 'INVALID' ? 400 : 409).json({
@@ -372,13 +376,14 @@ executionRouter.post('/:id/dispatch', executionWriteLimiter, async (req, res, ne
         });
       }
       const receipt = await query(
-        `INSERT INTO wind.execution_receipts
-           (request_id, attempt_id, outcome_status, result_digest, evidence_refs, lineage)
-         VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)
-         RETURNING *`,
+        `INSERT INTO wind.execution_receipts         (request_id, attempt_id, outcome_status, result_digest, evidence_refs, lineage,
+          credential_env_ref, credential_fingerprint)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)
+       RETURNING *`,
         [request.id, terminal.rows[0].id, mapped.outcome, digest(failureResult),
           JSON.stringify([{ type: 'dispatch-failure', reason: mapped.reason }]),
-          JSON.stringify({ request_id: request.id, reservation_id: reservation.id, advisory: true })],
+          JSON.stringify({ request_id: request.id, reservation_id: reservation.id, advisory: true }),
+          credentialMetadata?.reference || null, credentialMetadata?.fingerprint || null],
       );
       return res.status(201).json({ request, reservation, attempt: terminal.rows[0], receipt: receipt.rows[0], replay: false });
     }
@@ -387,21 +392,24 @@ executionRouter.post('/:id/dispatch', executionWriteLimiter, async (req, res, ne
       `INSERT INTO wind.execution_attempts
          (request_id, parent_attempt_id, attempt_number, attempt_idempotency_key,
           executor_id, provider_invocation_ref, status, result, result_digest,
-          started_at, completed_at)
-       VALUES ($1, $2, $3, $4, $5, $6, 'SUCCEEDED', $7::jsonb, $8, $9, $10)
+         started_at, completed_at, credential_env_ref, credential_fingerprint)
+       VALUES ($1, $2, $3, $4, $5, $6, 'SUCCEEDED', $7::jsonb, $8, $9, $10, $11, $12)
        RETURNING *`,
       [request.id, reservation.id, attemptNumber + 1, `dispatch:${dispatchKey}:terminal`,
         'wind.provider-dispatch', observed.provider_invocation_ref, JSON.stringify(observed.result),
-        observed.result_digest, startedAt, new Date().toISOString()],
+        observed.result_digest, startedAt, new Date().toISOString(), credentialMetadata?.reference || null,
+        credentialMetadata?.fingerprint || null],
     );
     const receipt = await query(
       `INSERT INTO wind.execution_receipts
-         (request_id, attempt_id, outcome_status, result_digest, evidence_refs, lineage)
-       VALUES ($1, $2, 'SUCCEEDED', $3, $4::jsonb, $5::jsonb)
+         (request_id, attempt_id, outcome_status, result_digest, evidence_refs, lineage,
+          credential_env_ref, credential_fingerprint)
+       VALUES ($1, $2, 'SUCCEEDED', $3, $4::jsonb, $5::jsonb, $6, $7)
        RETURNING *`,
       [request.id, terminal.rows[0].id, observed.result_digest,
         JSON.stringify([{ type: 'provider-result', digest: observed.result_digest, input_digest: dispatchInputDigest(input) }]),
-        JSON.stringify({ request_id: request.id, reservation_id: reservation.id, adapter_id: request.provider_contract.adapter_id, advisory: true })],
+        JSON.stringify({ request_id: request.id, reservation_id: reservation.id, adapter_id: request.provider_contract.adapter_id, advisory: true }),
+        credentialMetadata?.reference || null, credentialMetadata?.fingerprint || null],
     );
     return res.status(201).json({ request, reservation, attempt: terminal.rows[0], receipt: receipt.rows[0], replay: false });
   } catch (err) { pgConflict(err, res, next); }
