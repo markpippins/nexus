@@ -1,4 +1,4 @@
-import { Service, ServiceBroker, Context } from "moleculer";
+import { Service, ServiceBroker, Context, Errors } from "moleculer";
 import axios from "axios";
 
 interface GoogleSearchParams {
@@ -10,6 +10,9 @@ interface SearchResultItem {
   title: string;
   link: string;
   snippet: string;
+  // Canonical item contract (slice-1, Option C): displayLink is required.
+  // Legacy already carries it and IdeaStream renders it as `source`.
+  displayLink: string;
 }
 
 interface GoogleSearchResponse {
@@ -18,6 +21,48 @@ interface GoogleSearchResponse {
     totalResults: string;
     searchTime: number;
   };
+  // Echo of the caller's token when supplied (D4). Reserved for slice-3
+  // rate-limit accounting; echoing the caller's own correlation key back
+  // to the same caller is not a secret leak. Absent when not supplied.
+  token?: string;
+}
+
+// Typed search errors (D3: non-2xx is the permanent moleculer convention).
+// The {code, retryable} pair lives in `data` so it survives moleculer-web
+// JSON serialization; `retryable` is also set on the instance for broker
+// retry-policy consumers.
+export const SearchErrorCode = {
+  CREDENTIALS: "SEARCH_CREDENTIALS",
+  PROVIDER: "SEARCH_PROVIDER",
+} as const;
+
+function searchError(
+  code: keyof typeof SearchErrorCode,
+  message: string,
+  retryable: boolean,
+  extra: Record<string, unknown> = {}
+): Errors.MoleculerError {
+  const codeValue = SearchErrorCode[code];
+  const err = new Errors.MoleculerError(message, 500, codeValue, {
+    code: codeValue,
+    retryable,
+    provider: "google",
+    ...extra,
+  });
+  err.retryable = retryable;
+  return err;
+}
+
+// displayLink fallback: Google returns it per item; if absent, derive the
+// registrable hostname from the link so every item still satisfies the
+// canonical contract. Final fallback is the link itself (never undefined).
+function displayLinkOf(item: any): string {
+  if (item.displayLink) return item.displayLink;
+  try {
+    return new URL(item.link).hostname;
+  } catch {
+    return item.link;
+  }
 }
 
 export default class GoogleSearchService extends Service {
@@ -42,7 +87,7 @@ export default class GoogleSearchService extends Service {
             token: { type: "string", optional: true }
           },
           async handler(ctx: Context<GoogleSearchParams>): Promise<GoogleSearchResponse> {
-            return this.performSearch(ctx.params.query);
+            return this.performSearch(ctx.params.query, ctx.params.token);
           }
         },
 
@@ -72,13 +117,19 @@ export default class GoogleSearchService extends Service {
     this.searchEngineId = "";
   }
 
-  async performSearch(query: string): Promise<GoogleSearchResponse> {
+  // NOTE: several existing tests call performSearch(query) directly (token
+  // omitted). The token stays optional end-to-end: absent means unkeyed.
+  async performSearch(query: string, token?: string): Promise<GoogleSearchResponse> {
     if (!this.apiKey || !this.searchEngineId) {
-      throw new Error("Google API credentials not configured");
+      throw searchError(
+        "CREDENTIALS",
+        "Google API credentials not configured",
+        false
+      );
     }
 
     const url = `https://www.googleapis.com/customsearch/v1`;
-    
+
     try {
       const response = await axios.get(url, {
         params: {
@@ -92,11 +143,13 @@ export default class GoogleSearchService extends Service {
         title: item.title,
         link: item.link,
         snippet: item.snippet,
+        displayLink: displayLinkOf(item),
       })) || [];
 
       return {
         items,
-        searchInformation: response.data.searchInformation
+        searchInformation: response.data.searchInformation,
+        ...(token !== undefined ? { token } : {}),
       };
     } catch (error: any) {
       this.logger.error("Google Search API error:", error.message);
@@ -104,7 +157,16 @@ export default class GoogleSearchService extends Service {
         this.logger.error("Google API response status:", error.response.status);
         this.logger.error("Google API response data:", JSON.stringify(error.response.data));
       }
-      throw new Error(`Failed to perform search: ${error.message}`);
+      // Retryable on network failure (no status), 429, or 5xx. Other 4xx
+      // (e.g. 400 invalid argument / bad cx) will fail identically on retry.
+      const status: number | undefined = error.response?.status;
+      const retryable = status == null || status === 429 || status >= 500;
+      throw searchError(
+        "PROVIDER",
+        `Failed to perform search: ${error.message}`,
+        retryable,
+        status !== undefined ? { status } : {}
+      );
     }
   }
 }
