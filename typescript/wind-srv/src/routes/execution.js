@@ -338,6 +338,9 @@ executionRouter.post('/:id/dispatch', executionWriteLimiter, async (req, res, ne
       if (registered.credential_env_ref) {
         resolveEnvironmentReference(registered.credential_env_ref, 'credential_env_ref');
       }
+      if (registered.endpoint_env_ref) {
+        resolveEnvironmentReference(registered.endpoint_env_ref, 'endpoint_env_ref');
+      }
       providerCalled = true;
       observed = await invokeRegisteredAdapter({
         registered,
