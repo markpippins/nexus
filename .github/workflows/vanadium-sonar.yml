@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   sonar:
-    runs-on: self-hosted
+    runs-on: [self-hosted, vanadium]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -40,6 +40,13 @@ jobs:
             --cov-report=lcov:coverage/python.lcov \
             --cov-report=term-missing -q || echo "coverage/python.xml/lcov generation attempted (see log)"
 
+      - name: Setup Node (vanadium runner)
+        # vanadium ships nvm v25.8.1 in ~/.nvm but the runner's non-interactive PATH
+        # does not source nvm.sh; setup-node guarantees a Node on PATH (ARM64 compatible).
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
       - name: Generate TypeScript coverage (vitest → lcov)
         # Plan 8261643: produce coverage/ts.lcov for sonar.javascript.lcov.reportPaths.
         # Runs the DB-free conduit-mcp unit tests (compile-verdict, compile-identity)
@@ -61,20 +68,28 @@ jobs:
           true
 
       - name: Install sonar-scanner
-        env:
-          # Pinned digest for sonar-scanner-cli-8.1.0.6389-linux-x64.zip
-          # (published by SonarSource at the .sha256 sibling URL; verified by
-          # architect on 2026-08-27). If SonarSource republishes the artifact
-          # this fails loudly instead of executing unknown code on the
-          # self-hosted runner.
-          SONAR_SCANNER_ZIP_SHA256: bb8f709f9cb73352f8d1260a3b3c506c0f41146754bc630762c126d795499d0b
+        # Pinned digests for 8.1.0.6389 (verified by architect on 2026-08-27).
+        # aarch64 SHA fetched from https://binaries.sonarsource.com/.../sonar-scanner-cli-8.1.0.6389-linux-aarch64.zip.sha256
+        # and verified live on vanadium (aarch64) 2026-09-11: 5e1c93...14628ba5.
+        # linux-x64 SHA is the existing pin bb8f70...499d0b. The step is arch-aware
+        # so the ARM64 vanadium runner (and x64 titanium fallback) both get a matching JRE.
         run: |
+          ARCH="$(uname -m)"
+          if [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]]; then
+            SCANNER_ZIP="sonar-scanner-cli-8.1.0.6389-linux-aarch64.zip"
+            SCANNER_SHA="5e1c9328f4e261838de778c9e586ee608cca45ff7f0538108642219214628ba5"
+            SCANNER_DIR="sonar-scanner-8.1.0.6389-linux-aarch64"
+          else
+            SCANNER_ZIP="sonar-scanner-cli-8.1.0.6389-linux-x64.zip"
+            SCANNER_SHA="bb8f709f9cb73352f8d1260a3b3c506c0f41146754bc630762c126d795499d0b"
+            SCANNER_DIR="sonar-scanner-8.1.0.6389-linux-x64"
+          fi
           if [ ! -x "$HOME/bin/sonar-scanner" ]; then
-            curl -sL https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-8.1.0.6389-linux-x64.zip -o /tmp/sonar.zip
-            echo "$SONAR_SCANNER_ZIP_SHA256  /tmp/sonar.zip" | sha256sum -c -
+            curl -sL "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/${SCANNER_ZIP}" -o /tmp/sonar.zip
+            echo "${SCANNER_SHA}  /tmp/sonar.zip" | sha256sum -c -
             unzip -qo /tmp/sonar.zip -d "$HOME/sonar-scanner"
             mkdir -p "$HOME/bin"
-            ln -sf "$HOME/sonar-scanner/sonar-scanner-8.1.0.6389-linux-x64/bin/sonar-scanner" "$HOME/bin/sonar-scanner"
+            ln -sf "$HOME/sonar-scanner/${SCANNER_DIR}/bin/sonar-scanner" "$HOME/bin/sonar-scanner"
           fi
           "$HOME/bin/sonar-scanner" --version
 
