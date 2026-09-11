@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   sonar:
-    runs-on: self-hosted
+    runs-on: [self-hosted, vanadium]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -39,6 +39,13 @@ jobs:
             --cov-report=xml:coverage/python.xml \
             --cov-report=lcov:coverage/python.lcov \
             --cov-report=term-missing -q || echo "coverage/python.xml/lcov generation attempted (see log)"
+
+      - name: Setup Node (vanadium runner)
+        # vanadium ships nvm v25.8.1 in ~/.nvm but the runner's non-interactive PATH
+        # does not source nvm.sh; setup-node guarantees a Node on PATH (ARM64 compatible).
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
 
       - name: Generate TypeScript coverage (vitest → lcov)
         # Plan 8261643: produce coverage/ts.lcov for sonar.javascript.lcov.reportPaths.
