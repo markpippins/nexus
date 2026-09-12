@@ -36,11 +36,16 @@ namespace com.aibizarchitect.nexus.v1.spring.broker.gateway {
       Status: implemented.
       Generic op-dispatch entry point (served by the embedded broker-service
       BrokerController). Slice-1 search seam: service `googleSearchService`
-      with operation `simpleSearch` ({token, query}) or `forceSearch`
+      with operation       `simpleSearch` ({token, query}) or `forceSearch`
       (same params, bypasses the Mongo cache). Transport stays HTTP 200
       with `ok:false` + populated `errors[]` on failure (frozen compat for
       nexus-console's null-guard; NOT the target convention — see D3).
       rawResponse is legacy-only and out of the canonical contract (D2).
+      Cache (slice-2, read-side): normalized-query lookup
+      (`search:ratelimit`-style normalization) with raw-query fallback
+      (lazy-migration era); TTL 30m app-checked, expired rows deleted on
+      read; `forceSearch` bypasses BOTH limiter and fresh-cache read (G5);
+      cache hits omit searchInformation and re-mark the rate limiter.
       """)
     @post
     @route("/api/v1/broker/submitRequest")

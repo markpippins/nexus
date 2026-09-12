@@ -87,7 +87,9 @@ public class GoogleSearchService {
         }
 
         // ── Fresh cache check ────────────────────────────────────────
-        SearchResultsCacheEntry cachedEntry = findValidCacheEntry(query);
+        // forceRefresh bypasses the fresh-cache read as well as the rate
+        // limiter (slice-2 G5: Refresh means fresh results, not fresh cache).
+        SearchResultsCacheEntry cachedEntry = forceRefresh ? null : findValidCacheEntry(query);
         if (cachedEntry != null) {
             log.info("Returning fresh MongoDB-cached result for query: {}", query);
             rateLimiter.markSearched(SERVICE_KEY, query);
@@ -209,23 +211,39 @@ public class GoogleSearchService {
     }
 
     /**
-     * Find a valid (non-expired) cache entry. Deletes expired entries.
+     * Find a valid (non-expired) cache entry. Normalized-key first, raw-query
+     * fallback (slice-2 G2 lazy-migration era: old rows were written under
+     * raw keys). Deletes expired entries on read (unchanged).
      */
     private SearchResultsCacheEntry findValidCacheEntry(String query) {
+        SearchResultsCacheEntry entry = findValidByKey(SearchRateLimiter.normalize(query));
+        if (entry != null) {
+            return entry;
+        }
+        if (!SearchRateLimiter.normalize(query).equals(query)) {
+            return findValidByKey(query);
+        }
+        return null;
+    }
+
+    /**
+     * Find a valid (non-expired) cache entry under one exact key.
+     */
+    private SearchResultsCacheEntry findValidByKey(String key) {
         try {
-            var optionalEntry = cacheRepository.findByQuery(query);
+            var optionalEntry = cacheRepository.findByQuery(key);
             if (optionalEntry.isPresent()) {
                 SearchResultsCacheEntry entry = optionalEntry.get();
                 if (!entry.isExpired()) {
                     return entry;
                 } else {
                     cacheRepository.deleteById(entry.getId());
-                    log.info("Removed expired cache entry for query: {}", query);
+                    log.info("Removed expired cache entry for query: {}", key);
                 }
             }
             return null;
         } catch (Exception e) {
-            log.warn("Error accessing cache for query {}: {}", query, e.getMessage());
+            log.warn("Error accessing cache for query {}: {}", key, e.getMessage());
             return null;
         }
     }

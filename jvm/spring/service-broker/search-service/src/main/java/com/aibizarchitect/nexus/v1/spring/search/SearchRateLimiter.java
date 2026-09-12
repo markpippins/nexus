@@ -124,8 +124,10 @@ public class SearchRateLimiter {
     /**
      * Normalize a query for consistent cache/rate-limit keys:
      * lowercase, trim, collapse runs of whitespace.
+     * Package-visible: GoogleSearchService reuses the identical rule for
+     * cache lookups (slice-2 G2 — one normalization, not two).
      */
-    private static String normalize(String query) {
+    static String normalize(String query) {
         if (query == null) {
             return "";
         }

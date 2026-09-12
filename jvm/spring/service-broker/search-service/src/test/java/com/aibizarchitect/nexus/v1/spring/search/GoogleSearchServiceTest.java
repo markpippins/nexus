@@ -165,10 +165,9 @@ class GoogleSearchServiceTest {
     @Test
     @SuppressWarnings("unchecked")
     void testForceSearchReturnsLiveResult() {
-        // NOTE: forceSearch currently still serves a FRESH cache entry (only
-        // the rate-limiter is bypassed). Whether force must also bypass fresh
-        // cache is slice-2 (cache parity) scope — asserted here only that a
-        // force call with empty cache goes live and succeeds.
+        // forceSearch bypasses the fresh-cache read (slice-2 G5): with an
+        // empty cache it goes live and succeeds (covered below with a
+        // populated cache asserting the bypass explicitly).
         Map<String, Object> body = new HashMap<>();
         Map<String, Object> live = new HashMap<>();
         live.put("title", "LIVE");
@@ -182,5 +181,87 @@ class GoogleSearchServiceTest {
         assertTrue(forced.isOk());
         assertEquals("LIVE", ((SearchResult) forced.getData()).getItems().get(0).getTitle());
         verify(restTemplate).exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class));
+    }
+
+    // ── Slice-2 read-side: normalized lookup + raw fallback + force ──
+
+    private SearchResultsCacheEntry cachedEntry(String query, long ttlMinutes) {
+        SearchResultItem item = new SearchResultItem();
+        item.setTitle("CACHED");
+        item.setLink("https://cached.example/x");
+        item.setSnippet("C");
+        item.setDisplayLink("cached.example");
+        return new SearchResultsCacheEntry(query, List.of(item), ttlMinutes);
+    }
+
+    @Test
+    void testNormalizedCacheHitServesWithoutGoogleCall() {
+        when(cacheRepository.findByQuery(eq("angular signals")))
+                .thenReturn(Optional.of(cachedEntry("angular signals", 30)));
+
+        ServiceResponse<?> res = service.simpleSearch("tok", "  Angular   SIGNALS ");
+
+        assertTrue(res.isOk());
+        assertEquals("CACHED", ((SearchResult) res.getData()).getItems().get(0).getTitle());
+        verify(cacheRepository).findByQuery(eq("angular signals"));
+        verifyNoInteractions(restTemplate);
+    }
+
+    @Test
+    void testRawFallbackServesLegacyRows() {
+        when(cacheRepository.findByQuery(eq("angular signals"))).thenReturn(Optional.empty());
+        when(cacheRepository.findByQuery(eq("Angular Signals")))
+                .thenReturn(Optional.of(cachedEntry("Angular Signals", 30)));
+
+        ServiceResponse<?> res = service.simpleSearch("tok", "Angular Signals");
+
+        assertTrue(res.isOk());
+        assertEquals("CACHED", ((SearchResult) res.getData()).getItems().get(0).getTitle());
+        verifyNoInteractions(restTemplate);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void testForceBypassesFreshCache() {
+        // lenient: the stub exists to prove the bypass (findByQuery must
+        // NEVER be consulted on the force path — strict stubs would fail
+        // the test for exactly the behavior it asserts).
+        lenient().when(cacheRepository.findByQuery(anyString()))
+                .thenReturn(Optional.of(cachedEntry("q", 30)));
+        Map<String, Object> body = new HashMap<>();
+        Map<String, Object> live = new HashMap<>();
+        live.put("title", "LIVE");
+        live.put("link", "https://live.example/");
+        live.put("snippet", "S");
+        body.put("items", List.of(live));
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+                .thenReturn(ResponseEntity.ok(body));
+
+        ServiceResponse<?> forced = service.forceSearch("tok", "q");
+
+        assertTrue(forced.isOk());
+        assertEquals("LIVE", ((SearchResult) forced.getData()).getItems().get(0).getTitle());
+        verify(restTemplate).exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void testExpiredEntryFallsThroughToLive() {
+        SearchResultsCacheEntry expired = cachedEntry("q", -60);
+        when(cacheRepository.findByQuery(anyString())).thenReturn(Optional.of(expired));
+        Map<String, Object> body = new HashMap<>();
+        Map<String, Object> live = new HashMap<>();
+        live.put("title", "LIVE");
+        live.put("link", "https://live.example/");
+        live.put("snippet", "S");
+        body.put("items", List.of(live));
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+                .thenReturn(ResponseEntity.ok(body));
+
+        ServiceResponse<?> res = service.simpleSearch("tok", "q");
+
+        assertTrue(res.isOk());
+        assertEquals("LIVE", ((SearchResult) res.getData()).getItems().get(0).getTitle());
+        verify(cacheRepository).deleteById(expired.getId());
     }
 }
