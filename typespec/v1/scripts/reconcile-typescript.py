@@ -240,49 +240,83 @@ def ts_tools(service: str) -> set[str]:
     return out
 
 
-def tsp_rest_ops(service: str) -> set[str]:
-    """Extract `METHOD /path` operations from a REST TypeSpec contract."""
+def tsp_rest_ops(service: str) -> tuple[set[str], set[str]]:
+    """Extract `METHOD /path` operations from a REST TypeSpec contract.
+
+    Returns (ops, retired): ops are the live contract surface; retired are
+    ops explicitly tombstoned with @tag("retired") — kept in the contract
+    for lineage but excluded from MISSING/EXTRA drift accounting (the
+    implementation must NOT implement them).
+    """
     out: set[str] = set()
+    retired: set[str] = set()
     tsp_dir = os.path.join(TSP_DIR, service, "typescript")
     if not os.path.isdir(tsp_dir):
-        return out
+        return out, retired
     for fn in sorted(os.listdir(tsp_dir)):
         if not fn.endswith(".tsp"):
             continue
         with open(os.path.join(tsp_dir, fn), encoding="utf-8") as f:
             lines = f.read().splitlines()
         current_route = ""
+        current_verb = ""
+        pending_retired = False
+        # Bind to `op <name>(` — a signature, not prose: the parameter-list
+        # paren must follow the name on the same line (no templated ops exist
+        # in this repo, and no @doc text contains `op name(`). Guards against
+        # matching the word `op` in doc text or comments.
+        op_re = re.compile(r"\bop\s+(\w+)\s*\(")
         for line in lines:
+            if "@tag(\"retired\")" in line or "@tag('retired')" in line:
+                pending_retired = True
             rm = TSP_ROUTE_RE.search(line)
             if rm:
                 current_route = norm_path(rm.group(1))
-                # an operation-level route on the same line as a verb pairs directly
-                vm = TSP_VERB_RE.search(line)
-                if vm:
-                    out.add(f"{vm.group(1).upper()} {current_route}")
-                continue
             vm = TSP_VERB_RE.search(line)
-            if vm and current_route:
-                out.add(f"{vm.group(1).upper()} {current_route}")
-    return out
+            if vm:
+                current_verb = vm.group(1).upper()
+            # An operation closes at its `op` keyword — the line TypeSpec
+            # binds every decorator above it to. Emitting here (not at
+            # @verb/@route) means decorators like @doc and @tag are seen
+            # first, and the one-line `@route(...) @get op x(): ...;` style
+            # (aegis et al.) emits on its own line without a `continue`
+            # swallowing it.
+            om = op_re.search(line)
+            if om and current_route and current_verb:
+                op = f"{current_verb} {current_route}"
+                (retired if pending_retired else out).add(op)
+                pending_retired = False
+                current_route = ""
+                current_verb = ""
+    return out, retired
 
 
-def tsp_tool_ops(service: str) -> set[str]:
-    """Extract tool names from an MCP TypeSpec contract (`/tools/<name>` routes)."""
+def tsp_tool_ops(service: str) -> tuple[set[str], set[str]]:
+    """Extract tool names from an MCP TypeSpec contract (`/tools/<name>` routes).
+
+    Returns (ops, retired) — same retirement semantics as tsp_rest_ops.
+    """
     out: set[str] = set()
+    retired: set[str] = set()
     tsp_dir = os.path.join(TSP_DIR, service, "typescript")
     if not os.path.isdir(tsp_dir):
-        return out
+        return out, retired
     for fn in sorted(os.listdir(tsp_dir)):
         if not fn.endswith(".tsp"):
             continue
         with open(os.path.join(tsp_dir, fn), encoding="utf-8") as f:
             text = f.read()
-        for m in TSP_ROUTE_RE.finditer(text):
-            p = m.group(1)
-            if p.startswith("/tools/"):
-                out.add(p[len("/tools/"):])
-    return out
+        retired_pending = False
+        for line in text.splitlines():
+            if "@tag(\"retired\")" in line or "@tag('retired')" in line:
+                retired_pending = True
+            m = TSP_ROUTE_RE.search(line)
+            if m:
+                p = m.group(1)
+                if p.startswith("/tools/"):
+                    (retired if retired_pending else out).add(p[len("/tools/"):])
+                    retired_pending = False
+    return out, retired
 
 
 def reconcile(entry: dict) -> dict:
@@ -294,10 +328,10 @@ def reconcile(entry: dict) -> dict:
         return result
     if kind == "rest":
         src = ts_routes(entry, src_root_for(entry))
-        contract = tsp_rest_ops(name)
+        contract, retired = tsp_rest_ops(name)
     else:
         src = ts_tools(name)
-        contract = tsp_tool_ops(name)
+        contract, retired = tsp_tool_ops(name)
     # Wildcard-verb matching: a source `ALL /path` (Express app.all / AdonisJS
     # router.any catch-all) is covered when the contract declares ANY verb on
     # the same path — TypeSpec has no verb-neutral op. The matching contract
@@ -315,6 +349,11 @@ def reconcile(entry: dict) -> dict:
                 break
     result["missing"] = sorted(src_effective - contract_effective)
     result["extra"] = sorted(contract_effective - src_effective)
+    # Retired tombstones: reported separately, never as drift. A retired op
+    # that IS implemented in source is itself a finding (implementing a
+    # tombstone), surfaced via retired_implemented.
+    result["retired"] = sorted(retired)
+    result["retired_implemented"] = sorted(retired & src_effective)
     # Covered counts every declared source route that is NOT missing — including
     # wildcard-verb routes consumed above (e.g. ALL /{path} covered by a
     # concrete-verb contract op) — so adonisjs shows 2/2, not 1/2.
@@ -373,13 +412,19 @@ def main() -> int:
             print(f"  MISSING  {r['name']}: {m}")
         for x in r["extra"]:
             print(f"  EXTRA    {r['name']}: {x} (in contract, not in source)")
+        for x in r.get("retired", []):
+            print(f"  RETIRED  {r['name']}: {x} (tombstoned in contract — excluded from drift, do not implement)")
+        for x in r.get("retired_implemented", []):
+            any_gaps = True
+            print(f"  RETIRED-IMPL {r['name']}: {x} (tombstoned op implemented in source — remove it)")
 
     if not any_gaps and total_missing == 0:
         print("COVERAGE COMPLETE: every modeled route/tool has a matching contract operation.")
         return 0
     if args.service:
-        # single-service mode: nonzero on gaps so it can gate CI
-        return 1 if total_missing else 0
+        # single-service mode: nonzero on gaps (missing or implemented
+        # tombstones) so it can gate CI
+        return 1 if (total_missing or any(r.get("retired_implemented") for r in results)) else 0
     return 0
 
 
