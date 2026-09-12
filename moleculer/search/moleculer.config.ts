@@ -1,5 +1,18 @@
 import { BrokerOptions } from "moleculer";
 
+// NOTE (verified live 2026-09-11): moleculer-runner NEVER loads this file —
+// it auto-loads moleculer.config.js/.json only (boot logs prove it:
+// `Namespace: <not defined>`). This .ts governs jest (imported directly)
+// and `tsc` builds. The committed moleculer.config.js carries the ONLY
+// prod-effective settings (currently: request metrics for the traffic
+// canary).
+//
+// TOPOLOGY RULING (architect, 2026-09-12, PR #211): :4050 is STANDALONE.
+// `transporter: null` is pinned in moleculer.config.js — the ruling makes
+// the existing runner-default behavior explicit (boot logs: LocalDiscoverer,
+// no NATS attach) and deterministic. Keep the .js and this file's comments
+// in sync; do not attach a transporter without a new architect decision.
+
 const brokerConfig: BrokerOptions = {
   namespace: "search",
   nodeID: "search-node-1",
