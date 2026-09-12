@@ -178,6 +178,33 @@ async function findValidCacheEntry(query: string): Promise<CachedSearchRow | nul
   }
 }
 
+// ── Phase-2 write-side (GATED, default OFF) ──────────────────────────
+// Canonical rows: normalized `query` key + expiresAt. Safe only after the
+// DBA lands UNIQUE {query:1} + TTL {expiresAt:1} on nexus.search_results_cache
+// (request 4ddaae7b): the upsert relies on the unique index for race safety
+// (a concurrent identical query can win with E11000 — swallowed, a cache
+// only promises that A row exists), and the TTL index owns expiry so legacy
+// raw rows age out with no migration and no app-level janitor.
+//
+// SEARCH_CACHE_WRITE_MODE (read lazily so tests can flip it):
+//   "off"       (default) — phase-1 behavior: reads only, never writes.
+//   "legacy"    — reserved for the old append-a-raw-key-row shape.
+//   "canonical" — upsert-by-normalized-query (the phase-2 write shape).
+// Any other value degrades to "off": unknown modes must never write.
+// Writes happen on live-search success only — including forceSearch
+// (refreshing the cache is the point of force); fail-open throughout:
+// a cache write must never fail a search (mirrors the legacy posture).
+const SEARCH_CACHE_TTL_MS = 30 * 60 * 1000; // mirrors legacy CACHE_TTL_MINUTES = 30
+
+export type SearchCacheWriteMode = "off" | "legacy" | "canonical";
+
+export function searchCacheWriteMode(): SearchCacheWriteMode {
+  const raw = (process.env.SEARCH_CACHE_WRITE_MODE ?? "off").trim().toLowerCase();
+  if (raw === "canonical") return "canonical";
+  if (raw === "legacy") return "legacy";
+  return "off";
+}
+
 function mapCachedItems(items: any[] | null | undefined): SearchResultItem[] {
   return (items ?? []).map((item: any) => ({
     // Canonical contract: required strings (nulls normalize to "").
@@ -294,6 +321,11 @@ export default class GoogleSearchService extends Service {
         displayLink: displayLinkOf(item),
       })) || [];
 
+      // Phase-2 write-side (gated, default off): canonical normalized-key
+      // upsert when SEARCH_CACHE_WRITE_MODE=canonical. Never fails the
+      // search — see writeCanonicalCacheRow (fail-open).
+      await this.writeCanonicalCacheRow(query, items);
+
       return {
         items,
         searchInformation: response.data.searchInformation,
@@ -315,6 +347,44 @@ export default class GoogleSearchService extends Service {
         retryable,
         status !== undefined ? { status } : {}
       );
+    }
+  }
+
+  /**
+   * Upsert a canonical cache row keyed by the normalized query (phase-2
+   * write shape, GATED by SEARCH_CACHE_WRITE_MODE=canonical). Requires the
+   * DBA-approved UNIQUE {query:1} index: without it, concurrent identical
+   * queries append duplicates (the pre-phase-2 pile-up); with it, one of
+   * two racing writes may reject with E11000 — that is fine, a cache only
+   * promises that A row exists. The TTL index (with expiresAt set here)
+   * owns expiry, so legacy raw rows age out with no migration and no
+   * app-level janitor. Fail-open: any error is logged, never thrown —
+   * a cache write must never fail a live search.
+   */
+  async writeCanonicalCacheRow(query: string, items: SearchResultItem[]): Promise<void> {
+    if (searchCacheWriteMode() !== "canonical") return;
+    try {
+      const coll = await searchCacheCollection();
+      if (!coll) return;
+      const now = new Date();
+      // Filter equality fields are applied to the inserted doc on upsert,
+      // so the canonical (normalized) key lands in the row automatically.
+      await coll.updateOne(
+        { query: normalizeSearchQuery(query) },
+        {
+          $set: {
+            items,
+            timestamp: now,
+            expiresAt: new Date(now.getTime() + SEARCH_CACHE_TTL_MS),
+          },
+        },
+        { upsert: true }
+      );
+      this.logger.debug(`Canonical cache row upserted for query: ${query}`);
+    } catch (err: any) {
+      // E11000 (unique-index race) and any other cache error: fail open —
+      // the live result is already in hand and was returned regardless.
+      this.logger.warn(`Canonical cache write skipped for query "${query}": ${err?.message ?? err}`);
     }
   }
 }

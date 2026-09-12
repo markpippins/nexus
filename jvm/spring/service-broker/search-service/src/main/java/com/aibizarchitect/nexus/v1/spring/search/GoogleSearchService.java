@@ -199,13 +199,34 @@ public class GoogleSearchService {
     /**
      * Find any MongoDB cache entry for the query — even if expired.
      * Used during rate-limited cooldown to serve stale-but-valid results.
+     *
+     * Normalized-key first, raw-query fallback (slice-2 F1, re-review
+     * 8abdd093): once phase-2 writes normalized keys, a raw-key-only
+     * cooldown lookup would miss and fall through to live Google DURING
+     * cooldown — the exact cost the limiter exists to prevent. Mirrors the
+     * normalized-first + raw-fallback treatment findValidCacheEntry has.
      */
     private SearchResultsCacheEntry findAnyCacheEntry(String query) {
+        SearchResultsCacheEntry entry = findAnyByKey(SearchRateLimiter.normalize(query));
+        if (entry != null) {
+            return entry;
+        }
+        if (!SearchRateLimiter.normalize(query).equals(query)) {
+            return findAnyByKey(query);
+        }
+        return null;
+    }
+
+    /**
+     * Cooldown-path lookup under one exact key. Any age (stale-serve),
+     * never deletes — a cooldown read must not destroy data.
+     */
+    private SearchResultsCacheEntry findAnyByKey(String key) {
         try {
-            var optionalEntry = cacheRepository.findByQuery(query);
+            var optionalEntry = cacheRepository.findByQuery(key);
             return optionalEntry.orElse(null);
         } catch (Exception e) {
-            log.warn("Error accessing cache for query {}: {}", query, e.getMessage());
+            log.warn("Error accessing cache for query {}: {}", key, e.getMessage());
             return null;
         }
     }

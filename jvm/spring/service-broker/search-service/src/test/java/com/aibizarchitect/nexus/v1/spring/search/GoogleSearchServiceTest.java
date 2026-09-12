@@ -221,6 +221,40 @@ class GoogleSearchServiceTest {
     }
 
     @Test
+    void testCooldownStaleServeHitsNormalizedKey() {
+        // Slice-2 F1 (re-review 8abdd093): rate-limited + expired entry
+        // stored under the NORMALIZED key (the phase-2 write shape). The
+        // cooldown stale-serve must find it via normalized-first lookup
+        // instead of falling through to live Google during cooldown.
+        SearchResultsCacheEntry stale = cachedEntry("angular signals", -120);
+        when(rateLimiter.isRateLimited(eq("google"), eq("  Angular   SIGNALS "))).thenReturn(true);
+        when(cacheRepository.findByQuery(eq("angular signals"))).thenReturn(Optional.of(stale));
+
+        ServiceResponse<?> res = service.simpleSearch("tok", "  Angular   SIGNALS ");
+
+        assertTrue(res.isOk());
+        assertEquals("CACHED", ((SearchResult) res.getData()).getItems().get(0).getTitle());
+        verifyNoInteractions(restTemplate);
+        // Cooldown reads never delete — stale rows stay (TTL owns expiry).
+        verify(cacheRepository, never()).deleteById(anyString());
+    }
+
+    @Test
+    void testCooldownStaleServeFallsBackToRawKey() {
+        // Legacy rows live under the raw key; cooldown must still find them.
+        SearchResultsCacheEntry legacy = cachedEntry("Angular Signals", -120);
+        when(rateLimiter.isRateLimited(eq("google"), eq("Angular Signals"))).thenReturn(true);
+        when(cacheRepository.findByQuery(eq("angular signals"))).thenReturn(Optional.empty());
+        when(cacheRepository.findByQuery(eq("Angular Signals"))).thenReturn(Optional.of(legacy));
+
+        ServiceResponse<?> res = service.simpleSearch("tok", "Angular Signals");
+
+        assertTrue(res.isOk());
+        assertEquals("CACHED", ((SearchResult) res.getData()).getItems().get(0).getTitle());
+        verifyNoInteractions(restTemplate);
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     void testForceBypassesFreshCache() {
         // lenient: the stub exists to prove the bypass (findByQuery must
