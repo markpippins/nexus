@@ -34,17 +34,23 @@ namespace org.nexus.nexusbroker {
   op listWorkers(): Workers;
 
   // ========================================================================
-  // SOL IR (Wave 0.4)
+  // RETIRED (2026-09-02): SOL IR — renamed to Keychains per D-2026-08-31.
+  // sol_ir was the retired name for keychains; the implementation now serves
+  // the /api/keychain-snapshot/* surface below. These two ops are RETIRED,
+  // not planned: no source route exists and none is planned. Do not
+  // implement them — reconcile-typescript.py excludes them as retired.
   // ========================================================================
 
   @route("/api/solir/status")
   @get
-  @doc("SOL IR sync status: interval, latest snapshot version.")
+  @doc("[RETIRED 2026-09-02 — superseded by GET /api/keychain-snapshot/status. Do not implement: kept only as the tombstone for the retired solir name.]")
+  @tag("retired")
   op solirStatus(): SolIrStatus;
 
   @route("/api/solir/snapshot")
   @post
-  @doc("Trigger a SOL IR snapshot: PG canonical -> Mongo projection + drift re-evaluation.")
+  @doc("[RETIRED 2026-09-02 — superseded by POST /api/keychain-snapshot/snapshot. Do not implement: kept only as the tombstone for the retired solir name.]")
+  @tag("retired")
   op solirSnapshot(@body body: SolIrSnapshotRequest): SolIrSnapshotResult;
 
   // ========================================================================
