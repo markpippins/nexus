@@ -15,7 +15,8 @@
     "axios": "^1.7.0",
     "dotenv": "^16.4.0",
     "moleculer": "^0.14.34",
-    "moleculer-web": "^0.10.7"
+    "moleculer-web": "^0.10.7",
+    "nats": "^2.29.3"
   },
   "devDependencies": {
     "@types/jest": "^29.5.0",

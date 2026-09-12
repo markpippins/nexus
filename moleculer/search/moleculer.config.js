@@ -26,16 +26,23 @@
  * transport does NOT merge discovery domains — mesh = shared transport,
  * namespaces = shared isolation, so joining is safe and reversible.
  *
- * THIS FILE STAYS METRICS-ONLY: flipping `transporter` to NATS is a
- * separate, staged follow-up that must (a) add the `nats` npm dependency
- * (moleculer's NatsTransporter does `require("nats")` at boot and throws
- * "The 'nats' package is missing!" if absent — an uninstalled dep would
- * re-create the exact crash-loop we fixed in #210), (b) restart, (c)
- * verify a NATS-attached boot (`Discoverer: NATSDiscovery`) before
- * declaring the mesh join complete. Do not flip it in the metrics PR.
+ * MESH JOIN (executed per corrected ruling dee39674): transporter NATS +
+ * authored namespace/nodeID below. `nats` npm dep installed (boot throws
+ * without it — same crash-loop class as #210). Namespace "search" vs
+ * nexus-broker's "nexus": shared transport, isolated discovery.
  * Keep both files' comments in sync when touching either.
  */
 module.exports = {
+  namespace: "search",
+  nodeID: "search-node-1",
+
+  transporter: {
+    type: "NATS",
+    options: {
+      url: "nats://localhost:4222",
+    },
+  },
+
   metrics: {
     enabled: true,
   },
