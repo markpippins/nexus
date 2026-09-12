@@ -61,6 +61,12 @@ describe("ApiService", () => {
       expect(apiRoute.aliases["GET /health"]).toBe("api.health");
     });
 
+    it("should have the force alias configured (F2)", () => {
+      const routes = apiService.settings.routes;
+      const apiRoute = routes.find((r: any) => r.path === "/api");
+      expect(apiRoute.aliases["POST /search/force"]).toBe("google-search.forceSearch");
+    });
+
     it("should have CORS configured with wildcard origin", () => {
       const routes = apiService.settings.routes;
       const apiRoute = routes.find((r: any) => r.path === "/api");
