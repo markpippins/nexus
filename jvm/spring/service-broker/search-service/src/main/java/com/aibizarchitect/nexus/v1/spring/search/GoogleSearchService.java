@@ -160,8 +160,7 @@ public class GoogleSearchService {
                 // failure must NOT discard fresh results (failure-isolated):
                 // log it and return the live result uncached.
                 try {
-                    SearchResultsCacheEntry newCacheEntry = new SearchResultsCacheEntry(query, items, CACHE_TTL_MINUTES);
-                    cacheRepository.save(newCacheEntry);
+                    upsertCacheEntry(query, items, CACHE_TTL_MINUTES);
                     log.info("Cached result in MongoDB for query: {}", query);
                 } catch (Exception e) {
                     log.warn("Cache write failed for query {} — returning live result uncached: {}", query, e.getMessage());
@@ -267,6 +266,38 @@ public class GoogleSearchService {
             log.warn("Error accessing cache for query {}: {}", key, e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * Upsert a fresh cache row under the canonical (normalized) key.
+     *
+     * DBA audit 2026-09-12 (thread a3c1c685): UNIQUE {query:1} now enforces
+     * one row per key and the TTL monitor owns expiry (expireAfterSeconds:0
+     * on expiresAt). A blind save() of an existing key throws E11000, which
+     * would silently stop cache REFRESH until the old row ages out — so the
+     * writer must upsert by query and always stamp expiresAt (rows without
+     * it are immortal under the TTL index).
+     *
+     * Key rule (slice-2 G2 — one normalization, not two): the canonical key
+     * is SearchRateLimiter.normalize(query), the exact rule the limiter and
+     * both cache readers already use, and the same three-step rule the
+     * moleculer writer implements (PR #216). Legacy raw-key rows remain
+     * readable via the readers' raw fallback and age out via TTL.
+     *
+     * Fail-open: any error propagates to the caller's catch, which logs and
+     * returns the live result uncached — a cache write never fails a search.
+     */
+    private void upsertCacheEntry(String query, List<SearchResultItem> items, long ttlMinutes) {
+        String canonicalKey = SearchRateLimiter.normalize(query);
+        SearchResultsCacheEntry existing = findAnyByKey(canonicalKey);
+        if (existing == null) {
+            existing = new SearchResultsCacheEntry();
+            existing.setQuery(canonicalKey);
+        }
+        existing.setItems(items);
+        existing.setTimestamp(Instant.now());
+        existing.setExpiresAt(existing.getTimestamp().plusSeconds(ttlMinutes * 60));
+        cacheRepository.save(existing);
     }
 
     /**

@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
+import org.mockito.ArgumentCaptor;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -56,6 +57,50 @@ class GoogleSearchServiceTest {
         ReflectionTestUtils.setField(service, "searchEngineId", "test-cx");
         lenient().when(cacheRepository.findByQuery(anyString())).thenReturn(Optional.empty());
         lenient().when(rateLimiter.isRateLimited(anyString(), anyString())).thenReturn(false);
+    }
+
+    @Test
+    void testCacheWriteNormalizesKeyAndRefreshesExistingRow() {
+        // DBA audit 2026-09-12: UNIQUE {query:1} + TTL {expiresAt:1} era.
+        // Re-search of an existing key must UPDATE the row (refresh works,
+        // expiresAt re-stamped) — a blind save() would E11000 and silently
+        // stop refreshes until TTL cleanup.
+        SearchResultsCacheEntry existing = new SearchResultsCacheEntry();
+        existing.setId("existing-id");
+        existing.setQuery("angular signals");
+        // Expired so the fresh-cache reader deletes it and the live search
+        // (refresh path) proceeds to the upsert.
+        existing.setExpiresAt(java.time.Instant.now().minusSeconds(60));
+        when(cacheRepository.findByQuery(eq("angular signals"))).thenReturn(Optional.of(existing));
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+                .thenReturn(ResponseEntity.ok(new HashMap<>()));
+
+        ServiceResponse<?> res = service.simpleSearch("tok", "  Angular   SIGNALS ");
+
+        assertTrue(res.isOk());
+        ArgumentCaptor<SearchResultsCacheEntry> captor = ArgumentCaptor.forClass(SearchResultsCacheEntry.class);
+        verify(cacheRepository).save(captor.capture());
+        SearchResultsCacheEntry saved = captor.getValue();
+        assertEquals("existing-id", saved.getId()); // updated, not duplicated
+        assertEquals("angular signals", saved.getQuery()); // canonical normalized key
+        assertNotNull(saved.getExpiresAt());
+        assertTrue(saved.getExpiresAt().isAfter(java.time.Instant.now())); // TTL re-stamped → not immortal
+    }
+
+    @Test
+    void testCacheWriteCreatesCanonicalRowWhenAbsent() {
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+                .thenReturn(ResponseEntity.ok(new HashMap<>()));
+
+        ServiceResponse<?> res = service.simpleSearch("tok", "  Spring   BOOT ");
+
+        assertTrue(res.isOk());
+        ArgumentCaptor<SearchResultsCacheEntry> captor = ArgumentCaptor.forClass(SearchResultsCacheEntry.class);
+        verify(cacheRepository).save(captor.capture());
+        SearchResultsCacheEntry saved = captor.getValue();
+        assertEquals("spring boot", saved.getQuery());
+        assertNotNull(saved.getExpiresAt());
+        assertTrue(saved.getExpiresAt().isAfter(java.time.Instant.now()));
     }
 
     @Test
