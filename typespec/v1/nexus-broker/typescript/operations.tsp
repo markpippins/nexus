@@ -34,22 +34,24 @@ namespace org.nexus.nexusbroker {
   op listWorkers(): Workers;
 
   // ========================================================================
-  // RETIRED (2026-09-02): SOL IR — renamed to Keychains per D-2026-08-31.
-  // sol_ir was the retired name for keychains; the implementation now serves
-  // the /api/keychain-snapshot/* surface below. These two ops are RETIRED,
-  // not planned: no source route exists and none is planned. Do not
-  // implement them — reconcile-typescript.py excludes them as retired.
+  // RETIRED: SOL IR — the surface was renamed to keychain-snapshot when the
+  // candidate-state groundwork landed (PR #111, eb320db8, 2026-09-01); the
+  // implementation now serves the /api/keychain-snapshot/* surface below.
+  // Note the SolIr* model names in models.tsp still back the live keychain
+  // ops — renaming those types is a separate contract change. These two ops
+  // are RETIRED, not planned: no source route exists and none is planned.
+  // Do not implement them — reconcile-typescript.py excludes them as retired.
   // ========================================================================
 
   @route("/api/solir/status")
   @get
-  @doc("[RETIRED 2026-09-02 — superseded by GET /api/keychain-snapshot/status. Do not implement: kept only as the tombstone for the retired solir name.]")
+  @doc("[RETIRED 2026-09-12 — superseded by GET /api/keychain-snapshot/status (rename landed in PR #111, 2026-09-01). Do not implement: kept only as the tombstone for the retired solir name.]")
   @tag("retired")
   op solirStatus(): SolIrStatus;
 
   @route("/api/solir/snapshot")
   @post
-  @doc("[RETIRED 2026-09-02 — superseded by POST /api/keychain-snapshot/snapshot. Do not implement: kept only as the tombstone for the retired solir name.]")
+  @doc("[RETIRED 2026-09-12 — superseded by POST /api/keychain-snapshot/snapshot (rename landed in PR #111, 2026-09-01). Do not implement: kept only as the tombstone for the retired solir name.]")
   @tag("retired")
   op solirSnapshot(@body body: SolIrSnapshotRequest): SolIrSnapshotResult;
 
