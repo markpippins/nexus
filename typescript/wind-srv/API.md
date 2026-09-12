@@ -5,7 +5,7 @@
 
 REST API for the wind workflow schema: offices, titles, tasks, workflow graphs, runtime instances, tickets, and receipts.
 
-**73 endpoints** — inventory generated from source route registrations (`nexus/tools/api-docs/`).
+**80 endpoints** — inventory generated from source route registrations (`nexus/tools/api-docs/`).
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -51,6 +51,13 @@ REST API for the wind workflow schema: offices, titles, tasks, workflow graphs, 
 | POST | `/api/outcomes` | Create outcome |
 | DELETE | `/api/outcomes/:id` | Delete outcome |
 | GET | `/api/outcomes/:id` | Get outcome by ID |
+| GET | `/api/provider-contracts` | List the latest immutable lifecycle revision for each adapter. |
+| POST | `/api/provider-contracts` | Register a genuinely new adapter. Existing adapters require lifecycle endpoints so the immutable revision stream and dual-control checks apply. |
+| GET | `/api/provider-contracts/:adapterId` |  |
+| GET | `/api/provider-contracts/:adapterId/credential-rotations` |  |
+| POST | `/api/provider-contracts/:adapterId/credential-rotations` | Record a rotation after the operator has rotated the environment boundary and restarted the service. Wind stores only the env reference and digest. |
+| POST | `/api/provider-contracts/:adapterId/deactivate` |  |
+| POST | `/api/provider-contracts/:adapterId/retire` |  |
 | GET | `/api/receipts` | List receipts (optionally filter by ticket) |
 | GET | `/api/receipts/:id` | Get receipt by ID |
 | GET | `/api/tasks` | List tasks (optionally filter by office) |
@@ -91,6 +98,7 @@ python3 tools/api-docs/gen_openapi.py --inventory /tmp/api_inventory.json   # (v
 ```
 
 <!-- API-SPEC-BEGIN -->
+
 
 
 
@@ -255,6 +263,22 @@ The dispatch path records an `IN_FLIGHT` reservation before acting, then appends
 an observed terminal attempt and receipt. Unknown, stale, unavailable,
 timeout, and malformed cases fail closed or map to truthful non-success
 outcomes. Resolution/PEB remains the sole admission boundary.
+
+The registry lifecycle surface is append-only: registration creates revision 1,
+and deactivation or retirement appends a superseding row. `GET
+/api/provider-contracts` returns the latest revision per adapter; dispatch is
+allowed only when that revision is `ACTIVE`. New registration requires an
+engineer request plus architect/operator acknowledgement. Deactivation and
+retirement require an approval record and confirmation from a different role.
+No registry row is updated or deleted.
+
+Credential rotation is recorded through
+`POST /api/provider-contracts/:adapterId/credential-rotations` only after the
+secret boundary has been rotated and Wind restarted. The response and stored
+metadata contain the environment-variable reference and a SHA-256 fingerprint,
+never the resolved credential. Attempt and receipt evidence carries the same
+reference/fingerprint when a credential-backed adapter is invoked. Resolution
+and PEB remain the sole lifecycle admission authorities.
 
 ## Roles view
 
