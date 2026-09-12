@@ -1,5 +1,4 @@
 import { BrokerOptions } from "moleculer";
-import { trafficCounterMiddleware } from "./services/traffic-counter";
 
 const brokerConfig: BrokerOptions = {
   namespace: "search",
@@ -61,8 +60,11 @@ const brokerConfig: BrokerOptions = {
 
   validator: true,
 
+  // M1 traffic canary: built-in request metrics feed api.trafficCounts
+  // (GET /api/traffic/counts). Enabled explicitly (default off) — negligible
+  // overhead for this service, platform-maintained counters.
   metrics: {
-    enabled: false,
+    enabled: true,
   },
 
   tracing: {
@@ -71,10 +73,6 @@ const brokerConfig: BrokerOptions = {
 
   internalServices: true,
   internalMiddlewares: true,
-
-  // M1 traffic canary: count local action invocations per action name.
-  // Queryable at GET /api/traffic/counts (api.trafficCounts).
-  middlewares: [trafficCounterMiddleware()],
 
   hotReload: true,
 };
