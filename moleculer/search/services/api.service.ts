@@ -24,6 +24,7 @@ export default class ApiService extends Service {
 
             aliases: {
               "POST /search/simple": "google-search.simpleSearch",
+              "POST /search/force": "google-search.forceSearch",
               "GET /health": "api.health",
               "GET /traffic/counts": "api.trafficCounts"
             },

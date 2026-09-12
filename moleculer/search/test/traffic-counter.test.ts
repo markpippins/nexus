@@ -1,6 +1,7 @@
 import { ServiceBroker } from "moleculer";
 import ApiService from "../services/api.service";
 import GoogleSearchService from "../services/google-search.service";
+import { __useTestCacheCollection, __resetCacheState } from "../services/google-search.service";
 import { testBrokerConfig } from "./moleculer.config";
 
 // M1 traffic canary tests. NOTE: no GOOGLE_* keys are set in this file, so
@@ -13,6 +14,10 @@ describe("traffic canary", () => {
     // Off the live :4050; the gateway bind is required by the ApiGateway
     // mixin even though these tests only use in-process broker.call.
     process.env.SERVICE_PORT = "45982";
+    // Cache disabled here: this file proves counting, not caching (cache
+    // behavior lives in search-cache.test.ts). Without this, the Mongo
+    // lookup would burn the test timeout on connection failure.
+    __useTestCacheCollection(null);
     broker = new ServiceBroker(testBrokerConfig);
     broker.createService(ApiService);
     broker.createService(GoogleSearchService);
@@ -20,6 +25,7 @@ describe("traffic canary", () => {
   }, 60000);
 
   afterEach(async () => {
+    __resetCacheState();
     if (broker) {
       await broker.stop();
     }

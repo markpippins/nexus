@@ -1,5 +1,8 @@
 import { ServiceBroker } from "moleculer";
-import GoogleSearchService from "../services/google-search.service";
+import GoogleSearchService, {
+  __useTestCacheCollection,
+  __resetCacheState,
+} from "../services/google-search.service";
 import axios from "axios";
 import { testBrokerConfig } from "./moleculer.config";
 
@@ -16,10 +19,15 @@ describe("GoogleSearchService", () => {
     jest.resetModules();
     process.env = { ...originalEnv };
     jest.clearAllMocks();
+    // This suite proves LIVE-path behavior: cache fully disabled so no
+    // test can accidentally pass via a cache hit. Cache behavior lives in
+    // test/search-cache.test.ts (fake collections).
+    __useTestCacheCollection(null);
   });
 
   afterEach(async () => {
     process.env = originalEnv;
+    __resetCacheState();
     if (broker) {
       await broker.stop();
     }

@@ -1,5 +1,10 @@
 import { Service, ServiceBroker, Context, Errors } from "moleculer";
 import axios from "axios";
+import { MongoClient } from "mongodb";
+// NOTE: type-only import (erased at compile): native type-stripping has no
+// type phase, so named type imports from the CJS "mongodb" package fail at
+// runtime. MongoClient (a value) imports normally.
+import type { Collection, Document } from "mongodb";
 
 interface GoogleSearchParams {
   query: string;
@@ -65,6 +70,124 @@ function displayLinkOf(item: any): string {
   }
 }
 
+// ── Shared-cache reader (slice-2, phase 1: READS ONLY) ─────────────────
+// Reads legacy `nexus.search_results_cache` rows written by the broker.
+// Inlined here (not a separate module): prod runs .ts source directly
+// under Node native type-stripping, which cannot resolve relative TS
+// imports — see the #210 incident. Package imports ("mongodb") are fine.
+//
+// Key + TTL rules mirror the broker exactly:
+//   normalize() === SearchRateLimiter.normalize (lowercase/trim/collapse);
+//   a row is valid iff expiresAt is absent OR in the future (mirrors
+//   legacy isExpired()). Lookup is normalized-first with raw-query
+//   fallback (lazy migration era: old rows were written under raw keys).
+// Fail-open: ANY cache error (down/unreachable/malformed) yields null and
+// the caller proceeds to live search — same posture as the broker's
+// fail-open rate limiter. Phase 1 never writes: no upsert, no delete of
+// expired rows, no rewrite-normalized (all phase 2, post-DBA).
+
+const SEARCH_CACHE_COLLECTION = "search_results_cache";
+
+export function normalizeSearchQuery(query: string): string {
+  return (query ?? "").toLowerCase().trim().replace(/\s+/g, " ");
+}
+
+export interface CachedSearchRow extends Document {
+  query?: string;
+  items?: any[] | null;
+  timestamp?: Date | string;
+  expiresAt?: Date | string | null;
+}
+
+export function isCacheRowValid(row: CachedSearchRow | null | undefined): boolean {
+  if (!row) return false;
+  if (row.expiresAt == null) return true;
+  return new Date(row.expiresAt).getTime() > Date.now();
+}
+
+function searchCacheMongoUrl(): string {
+  return (
+    process.env.MONGO_URL ||
+    process.env.SPRING_DATA_MONGODB_URI ||
+    "mongodb://localhost:27017"
+  );
+}
+
+function searchCacheDbName(url: string): string {
+  try {
+    const path = new URL(url).pathname.replace(/^\/+/, "");
+    return path.length > 0 ? path : "nexus";
+  } catch {
+    return "nexus";
+  }
+}
+
+let liveClientPromise: Promise<MongoClient> | null = null;
+// Test seam: when set (including explicit null), live connection is skipped.
+let testCollection: Collection<Document> | null | undefined = undefined;
+
+/** Test-only hook: inject a fake collection (or null) for cache tests. */
+export function __useTestCacheCollection(coll: Collection<Document> | null): void {
+  testCollection = coll;
+}
+
+/** Test-only hook: restore the live connection path. */
+export function __resetCacheState(): void {
+  testCollection = undefined;
+  liveClientPromise = null;
+}
+
+async function searchCacheCollection(): Promise<Collection<Document> | null> {
+  if (testCollection !== undefined) return testCollection;
+  try {
+    if (!liveClientPromise) {
+      // Fail fast: a cache must never stall a search past a few seconds.
+      // (Live Google is the fallback, not the casualty.)
+      liveClientPromise = new MongoClient(searchCacheMongoUrl(), {
+        serverSelectionTimeoutMS: 5000,
+      }).connect();
+    }
+    const client = await liveClientPromise;
+    const url = searchCacheMongoUrl();
+    return client.db(searchCacheDbName(url)).collection(SEARCH_CACHE_COLLECTION);
+  } catch {
+    // Connect failure: drop the cached promise so the next call retries,
+    // and fail open to live search this time.
+    liveClientPromise = null;
+    return null;
+  }
+}
+
+async function findValidCacheEntry(query: string): Promise<CachedSearchRow | null> {
+  let coll: Collection<Document> | null;
+  try {
+    coll = await searchCacheCollection();
+  } catch {
+    return null;
+  }
+  if (!coll) return null;
+  try {
+    const normalized = normalizeSearchQuery(query);
+    let row = (await coll.findOne({ query: normalized })) as CachedSearchRow | null;
+    if (!row && normalized !== query) {
+      row = (await coll.findOne({ query })) as CachedSearchRow | null;
+    }
+    return isCacheRowValid(row) ? row : null;
+  } catch {
+    return null;
+  }
+}
+
+function mapCachedItems(items: any[] | null | undefined): SearchResultItem[] {
+  return (items ?? []).map((item: any) => ({
+    // Canonical contract: required strings (nulls normalize to "").
+    title: item?.title ?? "",
+    link: item?.link ?? "",
+    snippet: item?.snippet ?? "",
+    displayLink: displayLinkOf(item ?? {}),
+  }));
+}
+
 export default class GoogleSearchService extends Service {
   private apiKey: string;
   private searchEngineId: string;
@@ -87,7 +210,19 @@ export default class GoogleSearchService extends Service {
             token: { type: "string", optional: true }
           },
           async handler(ctx: Context<GoogleSearchParams>): Promise<GoogleSearchResponse> {
-            return this.performSearch(ctx.params.query, ctx.params.token);
+            return this.performSearch(ctx.params.query, ctx.params.token, false);
+          }
+        },
+
+        // Slice-2: force bypasses the shared cache (and, once slice 3 lands,
+        // the rate limiter). Same params/shape as simpleSearch.
+        forceSearch: {
+          params: {
+            query: "string",
+            token: { type: "string", optional: true }
+          },
+          async handler(ctx: Context<GoogleSearchParams>): Promise<GoogleSearchResponse> {
+            return this.performSearch(ctx.params.query, ctx.params.token, true);
           }
         },
 
@@ -119,7 +254,20 @@ export default class GoogleSearchService extends Service {
 
   // NOTE: several existing tests call performSearch(query) directly (token
   // omitted). The token stays optional end-to-end: absent means unkeyed.
-  async performSearch(query: string, token?: string): Promise<GoogleSearchResponse> {
+  // forceRefresh bypasses the shared-cache read (slice-2 G5).
+  async performSearch(query: string, token?: string, forceRefresh = false): Promise<GoogleSearchResponse> {
+    if (!forceRefresh) {
+      const cached = await findValidCacheEntry(query);
+      if (cached) {
+        // NOTE: no searchInformation on cache hits (mirrors legacy
+        // buildResult, which serves items without provider metadata).
+        return {
+          items: mapCachedItems(cached.items),
+          ...(token !== undefined ? { token } : {}),
+        };
+      }
+    }
+
     if (!this.apiKey || !this.searchEngineId) {
       throw searchError(
         "CREDENTIALS",
