@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { Service, ServiceBroker, Context } from "moleculer";
+import { Errors, Service, ServiceBroker, Context } from "moleculer";
 import { Pool } from "pg";
 
 /**
@@ -10,18 +10,34 @@ import { Pool } from "pg";
  * names resolve via search_path=execution, matching the original pool).
  */
 
+// moleculer-web delivers query params as strings, but the legacy routes
+// parseInt() whatever arrives — so limit/offset are declared `any` here and
+// normalized by clamp() (which handles "3" and 3 alike). Strict "number"
+// params would 422 on the exact requests the legacy surface accepted.
 interface ListParams {
   status?: string;
   type?: string;
   search?: string;
-  limit?: number;
-  offset?: number;
+  limit?: any;
+  offset?: any;
 }
 
 function clamp(v: unknown, min: number, max: number, dflt: number): number {
   const n = parseInt(String(v ?? ""), 10);
   if (Number.isNaN(n)) return dflt;
   return Math.min(Math.max(n, min), max);
+}
+
+// UUID guard matching the legacy route's requireUuid(): the pg UUID type
+// rejects malformed input with a 500 and a stack trace in the logs; the
+// legacy surface answers a clean 400 instead. Moleculer maps the thrown
+// MoleculerError(400) to the same status the legacy service produced.
+const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+function requireUuid(id: string, label = "id"): string {
+  if (typeof id !== "string" || !UUID_RE.test(id)) {
+    throw new Errors.MoleculerError(`${label} must be a UUID`, 400, "BAD_REQUEST");
+  }
+  return id;
 }
 
 export default class ExecutionWorker extends Service {
@@ -38,8 +54,8 @@ export default class ExecutionWorker extends Service {
           params: {
             status: { type: "string", optional: true },
             search: { type: "string", optional: true },
-            limit: { type: "number", optional: true },
-            offset: { type: "number", optional: true },
+            limit: { type: "any", optional: true },
+            offset: { type: "any", optional: true },
           },
           handler: (ctx: Context<ListParams>) => this.paginated(ctx, "requests", "status", ["business_key", "title", "objective", "id::text", "inputs::text"], "created_at DESC"),
         },
@@ -48,8 +64,8 @@ export default class ExecutionWorker extends Service {
           params: {
             status: { type: "string", optional: true },
             search: { type: "string", optional: true },
-            limit: { type: "number", optional: true },
-            offset: { type: "number", optional: true },
+            limit: { type: "any", optional: true },
+            offset: { type: "any", optional: true },
           },
           handler: (ctx: Context<ListParams>) => this.paginated(ctx, "leases", "status", ["executor_id", "request_id::text", "id::text"], "created_at DESC"),
         },
@@ -58,8 +74,8 @@ export default class ExecutionWorker extends Service {
           params: {
             status: { type: "string", optional: true },
             search: { type: "string", optional: true },
-            limit: { type: "number", optional: true },
-            offset: { type: "number", optional: true },
+            limit: { type: "any", optional: true },
+            offset: { type: "any", optional: true },
           },
           handler: (ctx: Context<ListParams>) => this.paginated(ctx, "attempts", "status", ["executor_id", "error", "request_id::text", "lease_id::text", "id::text"], "created_at DESC"),
         },
@@ -68,15 +84,15 @@ export default class ExecutionWorker extends Service {
           params: {
             type: { type: "string", optional: true },
             search: { type: "string", optional: true },
-            limit: { type: "number", optional: true },
-            offset: { type: "number", optional: true },
+            limit: { type: "any", optional: true },
+            offset: { type: "any", optional: true },
           },
           handler: (ctx: Context<ListParams>) => this.paginated(ctx, "receipts", "type", ["agent_role", "summary", "request_id::text", "attempt_id::text", "id::text"], "issued_at DESC"),
         },
 
         requestState: {
           params: { id: "string" },
-          handler: (ctx: Context<{ id: string }>) => this.requestState(ctx.params.id),
+          handler: (ctx: Context<{ id: string }>) => this.requestState(requireUuid(ctx.params.id)),
         },
 
         staleLeases: {
@@ -85,7 +101,7 @@ export default class ExecutionWorker extends Service {
 
         leaseLifecycle: {
           params: { id: "string" },
-          handler: (ctx: Context<{ id: string }>) => this.leaseLifecycle(ctx.params.id),
+          handler: (ctx: Context<{ id: string }>) => this.leaseLifecycle(requireUuid(ctx.params.id)),
         },
 
         integrityScan: {
@@ -94,12 +110,12 @@ export default class ExecutionWorker extends Service {
 
         requestAttempts: {
           params: { id: "string" },
-          handler: (ctx: Context<{ id: string }>) => this.requestAttempts(ctx.params.id),
+          handler: (ctx: Context<{ id: string }>) => this.requestAttempts(requireUuid(ctx.params.id)),
         },
 
         receiptsLineage: {
           params: { id: "string" },
-          handler: (ctx: Context<{ id: string }>) => this.receiptsLineage(ctx.params.id),
+          handler: (ctx: Context<{ id: string }>) => this.receiptsLineage(requireUuid(ctx.params.id)),
         },
 
         byExecutor: {
@@ -115,7 +131,7 @@ export default class ExecutionWorker extends Service {
 
         pipelineOrigin: {
           params: { id: "string" },
-          handler: (ctx: Context<{ id: string }>) => this.pipelineOrigin(ctx.params.id),
+          handler: (ctx: Context<{ id: string }>) => this.pipelineOrigin(requireUuid(ctx.params.id)),
         },
 
         health: {
@@ -186,7 +202,7 @@ export default class ExecutionWorker extends Service {
   private async requestState(id: string): Promise<any> {
     const pool = await this.getPool();
     const requestQ = await pool.query("SELECT * FROM requests WHERE id = $1", [id]);
-    if (requestQ.rowCount === 0) throw new Error("request not found");
+    if (requestQ.rowCount === 0) throw new Errors.MoleculerError("request not found", 404, "NOT_FOUND");
     const request = requestQ.rows[0];
 
     const leaseQ = await pool.query(
@@ -270,7 +286,7 @@ export default class ExecutionWorker extends Service {
        WHERE id = $1`,
       [id],
     );
-    if (rows.length === 0) throw new Error("lease not found");
+    if (rows.length === 0) throw new Errors.MoleculerError("lease not found", 404, "NOT_FOUND");
     return rows[0];
   }
 
@@ -320,10 +336,15 @@ export default class ExecutionWorker extends Service {
       },
       {
         kind: "receipt_attempt_mismatch",
-        sql: `SELECT rc.id AS entity_id, rc.attempt_id, NULL AS detail
+        // Backfilled pipeline receipts intentionally have no execution
+        // attempt. Only native execution receipts are eligible for this
+        // invariant; legacy vision/conduit lineage is reported separately.
+        sql: `SELECT rc.id AS entity_id, rc.attempt_id, rc.lineage_source AS detail
                 FROM receipts rc
            LEFT JOIN attempts a ON a.id = rc.attempt_id
-               WHERE a.id IS NULL`,
+               WHERE rc.lineage_source IS NULL
+                 AND rc.attempt_id IS NOT NULL
+                 AND a.id IS NULL`,
       },
       {
         kind: "unreleased_lease_for_terminal_request",
@@ -366,7 +387,7 @@ export default class ExecutionWorker extends Service {
   private async requestAttempts(id: string): Promise<any> {
     const pool = await this.getPool();
     const requestQ = await pool.query("SELECT id, business_key, title, status FROM requests WHERE id = $1", [id]);
-    if (requestQ.rowCount === 0) throw new Error("request not found");
+    if (requestQ.rowCount === 0) throw new Errors.MoleculerError("request not found", 404, "NOT_FOUND");
 
     const { rows } = await pool.query(
       `SELECT
@@ -384,7 +405,7 @@ export default class ExecutionWorker extends Service {
   private async receiptsLineage(id: string): Promise<any> {
     const pool = await this.getPool();
     const requestQ = await pool.query("SELECT id, business_key, title FROM requests WHERE id = $1", [id]);
-    if (requestQ.rowCount === 0) throw new Error("request not found");
+    if (requestQ.rowCount === 0) throw new Errors.MoleculerError("request not found", 404, "NOT_FOUND");
 
     const { rows } = await pool.query(
       `SELECT * FROM receipts WHERE request_id = $1 ORDER BY issued_at ASC`,
@@ -495,7 +516,7 @@ export default class ExecutionWorker extends Service {
   private async pipelineOrigin(id: string): Promise<any> {
     const pool = await this.getPool();
     const localQ = await pool.query(`SELECT * FROM receipts WHERE id = $1`, [id]);
-    if (localQ.rowCount === 0) throw new Error("execution.receipt not found");
+    if (localQ.rowCount === 0) throw new Errors.MoleculerError("execution.receipt not found", 404, "NOT_FOUND");
     const local = localQ.rows[0];
 
     let vision: any = null;

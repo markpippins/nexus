@@ -24,6 +24,55 @@ export default class ApiService extends Service {
 
         routes: [
           {
+            // ── Execution read catalog (M2) — dedicated route so error
+            // formatting is legacy-exact without changing the error
+            // contract the other workers' consumers already rely on.
+            // Legacy execution-srv answers { error: message } with the
+            // handler's status (400 bad UUID, 404 unknown id, 500 SQL
+            // failure); moleculer's default error shape differs, so this
+            // route overrides onError. Declared BEFORE /api so prefix
+            // matching picks the specific route first. Read-only:
+            // SELECTs only.
+            path: "/api/workers/execution",
+
+            whitelist: ["worker.execution.**"],
+
+            aliases: {
+              "GET /": "worker.execution.health",
+              // Legacy mounts the router at /api/execution; the worker
+              // surface lives here. All 18 legacy routes map 1:1.
+              "GET /requests": "worker.execution.listRequests",
+              "GET /leases": "worker.execution.listLeases",
+              "GET /attempts": "worker.execution.listAttempts",
+              "GET /receipts": "worker.execution.listReceipts",
+              "GET /requests/:id/state": "worker.execution.requestState",
+              "GET /leases/stale": "worker.execution.staleLeases",
+              "GET /leases/:id/lifecycle": "worker.execution.leaseLifecycle",
+              "GET /health/integrity-scan": "worker.execution.integrityScan",
+              "GET /requests/:id/attempts": "worker.execution.requestAttempts",
+              "GET /requests/:id/receipts/lineage": "worker.execution.receiptsLineage",
+              "GET /health/by-executor": "worker.execution.byExecutor",
+              "GET /health/status-distribution": "worker.execution.statusDistribution",
+              "GET /receipts/:id/pipeline-origin": "worker.execution.pipelineOrigin",
+              "GET /witnessed-runs": "worker.execution.witnessed-runs.witnessedRuns",
+              "GET /witnessed-runs/diagnostics": "worker.execution.witnessed-runs.witnessedRunDiagnostics",
+              "GET /projections/witnessed-runs": "worker.execution.witnessed-runs.witnessedRunProjection",
+              "GET /metrics": "worker.execution.witnessed-runs.governanceMetrics",
+            },
+
+            onError(req: any, res: any, err: any) {
+              // Legacy shape: { error: message }, status from the thrown
+              // MoleculerError code (400/404); anything else is 500 — the
+              // legacy handlers' sendError() also surfaced the raw SQL
+              // message for operator debugging.
+              const code = (err as any)?.code;
+              const status = Number.isInteger(code) && code >= 400 && code < 600 ? code : 500;
+              res.setHeader("Content-Type", "application/json; charset=utf-8");
+              res.statusCode = status;
+              res.end(JSON.stringify({ error: (err as any)?.message ?? String(err) }));
+            },
+          },
+          {
             path: "/api",
 
             whitelist: ["api.*", "worker.**", "keychain-snapshot.**"],
@@ -31,7 +80,8 @@ export default class ApiService extends Service {
             aliases: {
               "GET /health": "api.health",
               "GET /workers": "worker.list",
-              "GET /workers/execution": "worker.execution.health",
+              // (the execution read catalog moved to its own route above —
+              // legacy-exact error formatting — see /api/workers/execution)
               "GET /workers/pty": "worker.pty.list",
               "POST /workers/pty": "worker.pty.spawn",
               "DELETE /workers/pty/:id": "worker.pty.kill",

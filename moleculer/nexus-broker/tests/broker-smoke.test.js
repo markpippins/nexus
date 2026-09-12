@@ -760,3 +760,109 @@ test('SOL outbox events are delivered into Keychains and replayed idempotently',
     await pool.end()
   }
 })
+
+// ═══════════════════════════════════════════════════════════════════════
+// M2 — execution read-catalog parity: the full legacy execution-srv
+// surface, aliased 1:1 under /api/workers/execution. Differential parity
+// vs the legacy service (:3110) is asserted by running the same probe
+// against both surfaces.
+// ═══════════════════════════════════════════════════════════════════════
+
+const LEGACY_BASE = process.env.LEGACY_EXECUTION_URL || 'http://localhost:3110'
+
+async function jsonOr404(url) {
+  const res = await fetch(url)
+  if (res.status === 404) return { __status: 404 }
+  assert.equal(res.status, 200, `expected 200 from ${url}, got ${res.status}`)
+  return res.json()
+}
+
+test('GET /api/workers/execution/requests shape matches legacy list contract', async () => {
+  const ours = await jsonOr404(`${BASE}/workers/execution/requests?limit=3`)
+  const theirs = await jsonOr404(`${LEGACY_BASE}/api/execution/requests?limit=3`)
+  if (theirs.__status === 404 && ours.__status === 404) return // both empty DBs
+  assert.equal(ours.total, theirs.total)
+  assert.equal(ours.limit, theirs.limit)
+  assert.equal(ours.offset, theirs.offset)
+  assert.equal(ours.items.length, theirs.items.length)
+  if (theirs.items.length > 0) {
+    // DB-native field names must be identical — no mapping layer.
+    assert.deepEqual(Object.keys(ours.items[0]).sort(), Object.keys(theirs.items[0]).sort())
+  }
+})
+
+test('receipts list filters by type identically to legacy', async () => {
+  const theirs = await jsonOr404(`${LEGACY_BASE}/api/execution/receipts?limit=5`)
+  if (theirs.__status === 404) return
+  const q = theirs.items.length > 0 && theirs.items[0].type ? `&type=${encodeURIComponent(theirs.items[0].type)}` : ''
+  const ours = await jsonOr404(`${BASE}/workers/execution/receipts?limit=5${q}`)
+  assert.equal(ours.items.length, theirs.items.length)
+})
+
+test('malformed UUID returns the legacy 400, not a 500', async () => {
+  const res = await fetch(`${BASE}/workers/execution/requests/not-a-uuid/state`)
+  assert.equal(res.status, 400)
+  const body = await res.json()
+  assert.match(body.error || body.message || '', /UUID/)
+})
+
+test('unknown UUID returns the legacy 404', async () => {
+  const res = await fetch(`${BASE}/workers/execution/requests/00000000-0000-0000-0000-000000000000/state`)
+  assert.equal(res.status, 404)
+})
+
+test('stale leases and status distribution match legacy shapes', async () => {
+  const oursStale = await jsonOr404(`${BASE}/workers/execution/leases/stale`)
+  const theirsStale = await jsonOr404(`${LEGACY_BASE}/api/execution/leases/stale`)
+  if (theirsStale.__status !== 404 && oursStale.__status !== 404) {
+    assert.equal(oursStale.count, theirsStale.count)
+    assert.ok(Array.isArray(oursStale.stale_leases))
+  }
+  const oursDist = await jsonOr404(`${BASE}/workers/execution/health/status-distribution`)
+  const theirsDist = await jsonOr404(`${LEGACY_BASE}/api/execution/health/status-distribution`)
+  if (theirsDist.__status !== 404) {
+    assert.deepEqual(oursDist.requests, theirsDist.requests)
+    assert.deepEqual(oursDist.receipts_by_type, theirsDist.receipts_by_type)
+  }
+})
+
+test('witnessed-runs requires both query params (legacy 400 parity)', async () => {
+  const res = await fetch(`${BASE}/workers/execution/witnessed-runs`)
+  assert.equal(res.status, 400)
+  const body = await res.json()
+  assert.match(body.error || body.message || '', /workflow_instance_id and node_id are required/)
+})
+
+test('witnessed-runs mirrors the legacy surface exactly — including its schema failure', async () => {
+  // KNOWN SCHEMA GAP (flagged to the architect, M2): the witnessed-run family
+  // queries execution.requests.metadata, which does not exist in the canonical
+  // schema (ci-bootstrap has no such column, and the receipts type enum lacks
+  // PEB_ADMISSION/CONDUIT_TRANSITION). The legacy service 500s on this route
+  // TODAY. Parity here means bug-compatible: identical status AND identical
+  // error body — the failure is mirrored, not papered over. If the schema is
+  // fixed forward, this test keeps passing (both sides succeed identically).
+  const q = '?workflow_instance_id=broker-smoke-none&node_id=broker-smoke-none'
+  const ours = await fetch(`${BASE}/workers/execution/witnessed-runs${q}`)
+  const theirs = await fetch(`${LEGACY_BASE}/api/execution/witnessed-runs${q}`)
+  assert.equal(ours.status, theirs.status)
+  const oursBody = await ours.json()
+  const theirsBody = await theirs.json()
+  assert.equal(oursBody.error, theirsBody.error)
+})
+
+test('governance metrics snapshot has the registry shape', async () => {
+  const body = await jsonOr404(`${BASE}/workers/execution/metrics`)
+  if (body.__status === 404) return
+  assert.ok('counters' in body)
+  assert.ok('latencies' in body)
+  assert.ok('generatedAt' in body)
+})
+
+test('integrity scan returns named pathology kinds', async () => {
+  const body = await jsonOr404(`${BASE}/workers/execution/health/integrity-scan`)
+  if (body.__status === 404) return
+  assert.equal(body.schema, 'execution')
+  const kinds = body.scans.map((s) => s.kind)
+  assert.ok(kinds.includes('orphan_lease_request_mismatch'))
+  assert.ok(kinds.includes('receipt_attempt_mismatch'))
+})
