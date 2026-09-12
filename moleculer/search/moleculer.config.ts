@@ -7,11 +7,19 @@ import { BrokerOptions } from "moleculer";
 // prod-effective settings (currently: request metrics for the traffic
 // canary).
 //
-// TOPOLOGY RULING (architect, 2026-09-12, PR #211): :4050 is STANDALONE.
-// `transporter: null` is pinned in moleculer.config.js — the ruling makes
-// the existing runner-default behavior explicit (boot logs: LocalDiscoverer,
-// no NATS attach) and deterministic. Keep the .js and this file's comments
-// in sync; do not attach a transporter without a new architect decision.
+// TOPOLOGY RULING (architect, CORRECTED 2026-09-12; supersedes commit
+// 806eac5b and decision record 087e495b): :4050 BELONGS ON THE NATS MESH.
+// The fleet is already a NATS meshed substrate (:4222 live; address-tts,
+// cascade bridges, absorb-bus-mirror, voyager-adapter all subscribe;
+// nexus-mesh-register/reconcile timers). nexus-broker's config/README
+// document "when the worker tier outgrows one process, switch to a
+// NATS/Redis transporter" — the tier now has two brokers (:4080, :4050).
+// This .ts stays airborne `transporter: null` for dev/tests; the prod
+// moleculer.config.js carries the flip as a SEPARATE staged follow-up
+// (adds `nats` npm dep → restart → verify NATSDiscovery before declaring
+// join). Namespace "search" isolates discovery from nexus-broker's "nexus"
+// on the shared bus — transport joins, domains stay isolated.
+// Keep the .js and this file's comments in sync when touching either.
 
 const brokerConfig: BrokerOptions = {
   namespace: "search",
@@ -28,7 +36,7 @@ const brokerConfig: BrokerOptions = {
     }
   },
 
-  transporter: null, // No external transporter for now (standalone mode)
+  transporter: null, // dev/test only — prod flip is staged separately (see header ruling)
 
   requestTimeout: 10 * 1000,
   retryPolicy: {
