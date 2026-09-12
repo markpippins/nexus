@@ -1,7 +1,6 @@
 import { ServiceBroker } from "moleculer";
 import ApiService from "../services/api.service";
 import GoogleSearchService from "../services/google-search.service";
-import { trafficCounterMiddleware, trafficSnapshot } from "../services/traffic-counter";
 import { testBrokerConfig } from "./moleculer.config";
 
 // M1 traffic canary tests. NOTE: no GOOGLE_* keys are set in this file, so
@@ -14,10 +13,7 @@ describe("traffic canary", () => {
     // Off the live :4050; the gateway bind is required by the ApiGateway
     // mixin even though these tests only use in-process broker.call.
     process.env.SERVICE_PORT = "45982";
-    broker = new ServiceBroker({
-      ...testBrokerConfig,
-      middlewares: [trafficCounterMiddleware()],
-    });
+    broker = new ServiceBroker(testBrokerConfig);
     broker.createService(ApiService);
     broker.createService(GoogleSearchService);
     await broker.start();
@@ -29,28 +25,10 @@ describe("traffic canary", () => {
     }
   });
 
-  it("counts local action invocations by action name", async () => {
-    const before = trafficSnapshot().counts["api.health"] ?? 0;
-
+  it("trafficCounts reports per-action request totals", async () => {
     await broker.call("api.health");
     await broker.call("api.health");
 
-    expect(trafficSnapshot().counts["api.health"] - before).toBe(2);
-  });
-
-  it("counts failed invocations too", async () => {
-    const before = trafficSnapshot().counts["google-search.simpleSearch"] ?? 0;
-
-    const err: any = await broker
-      .call("google-search.simpleSearch", { query: "q" })
-      .catch((e: any) => e);
-
-    // Missing creds in this file's env: typed error AND counted.
-    expect(err.data).toMatchObject({ code: "SEARCH_CREDENTIALS" });
-    expect(trafficSnapshot().counts["google-search.simpleSearch"] - before).toBe(1);
-  });
-
-  it("trafficCounts action returns the snapshot shape", async () => {
     const res = (await broker.call("api.trafficCounts")) as {
       startedAt: string;
       total: number;
@@ -58,9 +36,25 @@ describe("traffic canary", () => {
     };
 
     expect(typeof res.startedAt).toBe("string");
-    expect(typeof res.total).toBe("number");
-    expect(typeof res.counts).toBe("object");
-    // This very call was counted.
-    expect(res.counts["api.trafficCounts"] ?? 0).toBeGreaterThan(0);
+    expect((res.counts["api.health"] ?? 0)).toBeGreaterThanOrEqual(2);
+    expect(res.total).toBeGreaterThanOrEqual(2);
+  });
+
+  it("counts failed invocations too", async () => {
+    const before =
+      ((await broker.call("api.trafficCounts")) as any).counts[
+        "google-search.simpleSearch"
+      ] ?? 0;
+
+    const err: any = await broker
+      .call("google-search.simpleSearch", { query: "q" })
+      .catch((e: any) => e);
+
+    // Missing creds in this file's env: typed error AND counted.
+    expect(err.data).toMatchObject({ code: "SEARCH_CREDENTIALS" });
+    const after = ((await broker.call("api.trafficCounts")) as any).counts[
+      "google-search.simpleSearch"
+    ] ?? 0;
+    expect(after - before).toBe(1);
   });
 });

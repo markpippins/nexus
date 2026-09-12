@@ -20,5 +20,11 @@ export const testBrokerConfig: BrokerOptions = {
   // (any rejection satisfies rejects.toThrow). Suite must prove what
   // production enforces.
   internalMiddlewares: true,
-  internalServices: false,
+  // $node actions + request metrics ON for the traffic-canary tests only.
+  // (Prod enables both in moleculer.config.ts; other suites never touch
+  // $node, so this is additive and invisible to them.)
+  internalServices: true,
+  metrics: {
+    enabled: true,
+  },
 };
