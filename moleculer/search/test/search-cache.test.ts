@@ -2,9 +2,15 @@ import { ServiceBroker } from "moleculer";
 import GoogleSearchService, {
   __useTestCacheCollection,
   __resetCacheState,
+  __useTestRedis,
+  __resetRedisState,
   normalizeSearchQuery,
   isCacheRowValid,
   searchCacheWriteMode,
+  isRateLimited,
+  markSearched,
+  ratelimitEnabled,
+  ratelimitCooldownHours,
 } from "../services/google-search.service";
 import axios from "axios";
 import { testBrokerConfig } from "./moleculer.config";
@@ -47,6 +53,9 @@ describe("search cache reads", () => {
     };
     findOne = jest.fn().mockResolvedValue(null);
     __useTestCacheCollection({ findOne } as any);
+    // Slice-3 isolation: unit tests must not touch real Redis (the
+    // limiter would otherwise write cooldown keys to localhost:6379).
+    __useTestRedis(null);
     broker = new ServiceBroker(testBrokerConfig);
     broker.createService(GoogleSearchService);
     await broker.start();
@@ -55,6 +64,7 @@ describe("search cache reads", () => {
   afterEach(async () => {
     process.env = originalEnv;
     __resetCacheState();
+    __resetRedisState();
     if (broker) {
       await broker.stop();
     }
@@ -194,6 +204,7 @@ describe("phase-2 cache writes (gated)", () => {
   afterEach(async () => {
     process.env = originalEnv;
     __resetCacheState();
+    __resetRedisState();
     if (broker) {
       await broker.stop();
     }
@@ -254,6 +265,205 @@ describe("phase-2 cache writes (gated)", () => {
     expect(searchCacheWriteMode()).toBe("canonical");
     delete process.env.SEARCH_CACHE_WRITE_MODE;
     expect(searchCacheWriteMode()).toBe("off");
+  });
+
+});
+
+// Slice-3: Redis rate limiter — bug-compatible mirror of the broker's
+// SearchRateLimiter (Option A POC, operator-authorized 23f3e002).
+// Redis is faked at the command boundary (get/set), Mongo at the collection
+// boundary — no live infra in tests.
+describe("slice-3 rate limiter (Option A mirror)", () => {
+  let broker: ServiceBroker;
+  let findOne: jest.Mock;
+  let updateOne: jest.Mock;
+  let redisGet: jest.Mock;
+  let redisSet: jest.Mock;
+
+  const originalEnv = process.env;
+
+  const googlePayload = {
+    data: {
+      items: [{ title: "Live", link: "https://live.example/x", snippet: "S" }],
+      searchInformation: { totalResults: "1", searchTime: 0.1 },
+    },
+  };
+
+  function cachedRow(query: string, ageMinutes: number) {
+    return {
+      query,
+      items: [{ title: "Cached", link: "https://cached.example/x", snippet: "C", displayLink: "cached.example" }],
+      timestamp: new Date(Date.now() - ageMinutes * 60000),
+      expiresAt: new Date(Date.now() + (30 - ageMinutes) * 60000),
+    };
+  }
+
+  function staleRow(query: string) {
+    // Expired 30+ minutes ago: fresh-cache read must reject it; the
+    // cooldown path must still serve it.
+    return {
+      query,
+      items: [{ title: "Stale", link: "https://stale.example/x", snippet: "S", displayLink: "stale.example" }],
+      timestamp: new Date(Date.now() - 120 * 60000),
+      expiresAt: new Date(Date.now() - 60 * 60000),
+    };
+  }
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    process.env = {
+      ...originalEnv,
+      GOOGLE_API_KEY: "test-api-key",
+      GOOGLE_SEARCH_ENGINE_ID: "test-engine-id",
+      SEARCH_CACHE_WRITE_MODE: undefined,
+      SEARCH_RATELIMIT_ENABLED: undefined,
+      SEARCH_RATELIMIT_COOLDOWN_HOURS: undefined,
+    } as any;
+    findOne = jest.fn().mockResolvedValue(null);
+    updateOne = jest.fn().mockResolvedValue({ acknowledged: true });
+    redisGet = jest.fn().mockResolvedValue(null); // default: never searched
+    redisSet = jest.fn().mockResolvedValue("OK");
+    __useTestCacheCollection({ findOne, updateOne } as any);
+    __useTestRedis({ get: redisGet, set: redisSet } as any);
+    broker = new ServiceBroker(testBrokerConfig);
+    broker.createService(GoogleSearchService);
+    await broker.start();
+    mockedAxios.get.mockResolvedValue(googlePayload);
+  });
+
+  afterEach(async () => {
+    process.env = originalEnv;
+    __resetCacheState();
+    __resetRedisState();
+    if (broker) {
+      await broker.stop();
+    }
+  });
+
+  it("live success marks searched: key + ISO instant + EX cooldown TTL (broker parity)", async () => {
+    await broker.call("google-search.simpleSearch", { query: "  Angular   SIGNALS " });
+
+    expect(redisSet).toHaveBeenCalledTimes(1);
+    const [key, value, ex, seconds] = redisSet.mock.calls[0];
+    expect(key).toBe("search:ratelimit:google:angular signals"); // normalized key, google service
+    expect(() => new Date(value as string).toISOString()).not.toThrow(); // ISO instant
+    expect(ex).toBe("EX");
+    expect(seconds).toBe(4 * 3600); // 4h default cooldown, TTL = cooldown
+  });
+
+  it("rate-limited query serves a stale cache row (the cooldown stale-serve path)", async () => {
+    redisGet.mockResolvedValue(new Date().toISOString()); // searched just now
+    findOne.mockImplementation(async (filter: any) =>
+      filter.query === "angular signals" ? staleRow("angular signals") : null
+    );
+
+    const result = (await broker.call("google-search.simpleSearch", { query: "Angular Signals" })) as any;
+
+    expect(result.items[0].title).toBe("Stale"); // served even though expired
+    expect(mockedAxios.get).not.toHaveBeenCalled(); // no Google call during cooldown
+  });
+
+  it("rate-limited with NO cache row falls through to live (fail-open parity)", async () => {
+    redisGet.mockResolvedValue(new Date().toISOString());
+    findOne.mockResolvedValue(null);
+
+    const result = (await broker.call("google-search.simpleSearch", { query: "q" })) as any;
+
+    expect(result.items[0].title).toBe("Live");
+    expect(mockedAxios.get).toHaveBeenCalled();
+  });
+
+  it("fresh-cache hit extends the cooldown (G6, declared intended)", async () => {
+    findOne.mockResolvedValue(cachedRow("q", 5)); // fresh row
+
+    await broker.call("google-search.simpleSearch", { query: "q" });
+
+    expect(redisSet).toHaveBeenCalledTimes(1); // markSearched on the hit
+    expect(mockedAxios.get).not.toHaveBeenCalled();
+  });
+
+  it("forceSearch bypasses the limiter check but still marks on live success (broker L171 parity)", async () => {
+    redisGet.mockResolvedValue(new Date().toISOString()); // would be limited
+
+    await broker.call("google-search.forceSearch", { query: "q" });
+
+    expect(redisGet).not.toHaveBeenCalled(); // check bypassed
+    expect(redisSet).toHaveBeenCalledTimes(1); // still marked
+  });
+
+  it("isRateLimited fails open when Redis throws", async () => {
+    redisGet.mockRejectedValue(new Error("connection refused"));
+
+    await expect(isRateLimited("q")).resolves.toBe(false);
+
+    const result = (await broker.call("google-search.simpleSearch", { query: "q" })) as any;
+    expect(result.items[0].title).toBe("Live");
+  });
+
+  it("markSearched fails silently when Redis throws", async () => {
+    redisSet.mockRejectedValue(new Error("connection refused"));
+
+    const result = (await broker.call("google-search.simpleSearch", { query: "q" })) as any;
+
+    expect(result.items[0].title).toBe("Live"); // search unaffected
+  });
+
+  it("kill-switch SEARCH_RATELIMIT_ENABLED=false short-circuits check and mark", async () => {
+    process.env.SEARCH_RATELIMIT_ENABLED = "false";
+    redisGet.mockResolvedValue(new Date().toISOString()); // would be limited
+
+    await broker.call("google-search.simpleSearch", { query: "q" });
+
+    expect(redisGet).not.toHaveBeenCalled();
+    expect(redisSet).not.toHaveBeenCalled();
+  });
+
+  it("hour-floor semantics pinned: floor(elapsed) < cooldown (broker byte-faith)", async () => {
+    // 3h59m ago with a 4h cooldown: floor(3.98) = 3 < 4 → limited.
+    // (For integer cooldowns this equals a millis comparison; the floor
+    // form diverges only for fractional cooldowns — see the next test.)
+    redisGet.mockResolvedValue(new Date(Date.now() - (3 * 3600 + 59 * 60) * 1000).toISOString());
+    await expect(isRateLimited("q")).resolves.toBe(true);
+
+    // 2h ago: limited.
+    redisGet.mockResolvedValue(new Date(Date.now() - 2 * 3600 * 1000).toISOString());
+    await expect(isRateLimited("q")).resolves.toBe(true);
+  });
+
+  it("floor semantics observable with a fractional cooldown: 0.5h", async () => {
+    // 30m01s ago with a 0.5h (30 min) cooldown: floor(0.5003) = 0 < 0.5
+    // → limited. A millis comparison would agree here, but at 61m ago:
+    // floor(1.016) = 1 < 0.5 is false → NOT limited — while a raw millis
+    // comparison would also say not-limited. The distinguishing case:
+    // floor never limits beyond whole-hour boundaries for cooldowns ≥ 1,
+    // and for cooldowns < 1 it limits only within the first whole hour.
+    process.env.SEARCH_RATELIMIT_COOLDOWN_HOURS = "0.5";
+    redisGet.mockResolvedValue(new Date(Date.now() - 20 * 60 * 1000).toISOString());
+    await expect(isRateLimited("q")).resolves.toBe(true); // 0 < 0.5
+
+    redisGet.mockResolvedValue(new Date(Date.now() - 61 * 60 * 1000).toISOString());
+    await expect(isRateLimited("q")).resolves.toBe(false); // 1 < 0.5 is false
+    delete process.env.SEARCH_RATELIMIT_COOLDOWN_HOURS;
+  });
+
+  it("cooldown hours + kill-switch env parsing", () => {
+    expect(ratelimitCooldownHours()).toBe(4); // default
+    process.env.SEARCH_RATELIMIT_COOLDOWN_HOURS = "0.5";
+    expect(ratelimitCooldownHours()).toBe(0.5);
+    process.env.SEARCH_RATELIMIT_COOLDOWN_HOURS = "bogus";
+    expect(ratelimitCooldownHours()).toBe(4); // malformed → default
+    delete process.env.SEARCH_RATELIMIT_COOLDOWN_HOURS;
+
+    expect(ratelimitEnabled()).toBe(true);
+    process.env.SEARCH_RATELIMIT_ENABLED = "0";
+    expect(ratelimitEnabled()).toBe(false);
+    delete process.env.SEARCH_RATELIMIT_ENABLED;
+  });
+
+  it("malformed stored instant fails open (not limited)", async () => {
+    redisGet.mockResolvedValue("not-a-timestamp");
+
+    await expect(isRateLimited("q")).resolves.toBe(false);
   });
 
 });

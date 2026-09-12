@@ -1,6 +1,7 @@
 import { Service, ServiceBroker, Context, Errors } from "moleculer";
 import axios from "axios";
 import { MongoClient } from "mongodb";
+import Redis from "ioredis";
 // NOTE: type-only import (erased at compile): native type-stripping has no
 // type phase, so named type imports from the CJS "mongodb" package fail at
 // runtime. MongoClient (a value) imports normally.
@@ -178,6 +179,29 @@ async function findValidCacheEntry(query: string): Promise<CachedSearchRow | nul
   }
 }
 
+// Cooldown-path lookup (slice 3): any age, never deletes — mirrors the
+// broker's findAnyCacheEntry (post-#216 normalized-first + raw fallback).
+// A cooldown read must not destroy data.
+async function findAnyCacheEntry(query: string): Promise<CachedSearchRow | null> {
+  let coll: Collection<Document> | null;
+  try {
+    coll = await searchCacheCollection();
+  } catch {
+    return null;
+  }
+  if (!coll) return null;
+  try {
+    const normalized = normalizeSearchQuery(query);
+    let row = (await coll.findOne({ query: normalized })) as CachedSearchRow | null;
+    if (!row && normalized !== query) {
+      row = (await coll.findOne({ query })) as CachedSearchRow | null;
+    }
+    return row; // any age — stale-serve is the point
+  } catch {
+    return null;
+  }
+}
+
 // ── Phase-2 write-side (GATED, default OFF) ──────────────────────────
 // Canonical rows: normalized `query` key + expiresAt. Safe only after the
 // DBA lands UNIQUE {query:1} + TTL {expiresAt:1} on nexus.search_results_cache
@@ -203,6 +227,111 @@ export function searchCacheWriteMode(): SearchCacheWriteMode {
   if (raw === "canonical") return "canonical";
   if (raw === "legacy") return "legacy";
   return "off";
+}
+
+// ── Slice-3: Redis rate limiter — bug-compatible mirror (Option A POC) ──
+// Operator-authorized POC (record 23f3e002) of the architect proposal
+// SLICE-3-RATELIMIT-PROPOSAL.md: mirror the broker's SearchRateLimiter
+// exactly, quirks included, against the SHARED Redis instance so cooldown
+// buckets are continuous across the cutover. Architect reviews results.
+//
+// Broker reference semantics (SearchRateLimiter.java, verified 2026-09-12):
+//   key    = "search:ratelimit:google:" + normalize(query)
+//   value  = ISO-8601 instant of the last live search
+//   TTL    = cooldown window (keys auto-expire — no janitor)
+//   check  = limited iff elapsed.toHours() < cooldown  (hour truncation
+//            quirk preserved on purpose — see proposal G5)
+//   posture= fail-open reads, fail-silent writes, enabled kill-switch.
+// Inlined here per the #210 constraint (prod runs .ts under Node type-
+// stripping; relative imports cannot be resolved at runtime).
+
+const RATELIMIT_KEY_PREFIX = "search:ratelimit:google:";
+const RATELIMIT_DEFAULT_COOLDOWN_HOURS = 4;
+
+export function ratelimitEnabled(): boolean {
+  const raw = (process.env.SEARCH_RATELIMIT_ENABLED ?? "true").trim().toLowerCase();
+  return raw !== "false" && raw !== "0" && raw !== "off";
+}
+
+export function ratelimitCooldownHours(): number {
+  const parsed = Number(process.env.SEARCH_RATELIMIT_COOLDOWN_HOURS ?? RATELIMIT_DEFAULT_COOLDOWN_HOURS);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : RATELIMIT_DEFAULT_COOLDOWN_HOURS;
+}
+
+function ratelimitRedisUrl(): string {
+  return process.env.REDIS_URL || "redis://localhost:6379";
+}
+
+let liveRedis: Redis | null = null;
+// Test seam: when set (including explicit null), live connection is skipped.
+let testRedis: Redis | null | undefined = undefined;
+
+/** Test-only hook: inject a fake Redis (or null to force fail-open). */
+export function __useTestRedis(client: Redis | null): void {
+  testRedis = client;
+}
+
+/** Test-only hook: restore the live connection path. */
+export function __resetRedisState(): void {
+  testRedis = undefined;
+  if (liveRedis) {
+    liveRedis.disconnect();
+    liveRedis = null;
+  }
+}
+
+function rateLimitRedis(): Redis | null {
+  if (!ratelimitEnabled()) return null;
+  if (testRedis !== undefined) return testRedis;
+  if (!liveRedis) {
+    // Lazy, retry-less connection: ioredis retries in the background, but
+    // every command on a down connection rejects — the callers fail open.
+    liveRedis = new Redis(ratelimitRedisUrl(), {
+      lazyConnect: false,
+      maxRetriesPerRequest: 1,
+      enableOfflineQueue: false,
+    });
+    liveRedis.on("error", () => {
+      // ioredis emits 'error' on connection loss; swallow here — the
+      // command-level try/catch owns fail-open behavior.
+    });
+  }
+  return liveRedis;
+}
+
+/** Mirrors SearchRateLimiter.isRateLimited: true = within cooldown. */
+export async function isRateLimited(query: string): Promise<boolean> {
+  if (!ratelimitEnabled()) return false;
+  const redis = rateLimitRedis();
+  if (!redis) return false; // disabled or test null → limiter off
+  try {
+    const val = await redis.get(RATELIMIT_KEY_PREFIX + normalizeSearchQuery(query));
+    if (val == null) return false; // never searched
+    const elapsedMs = Date.now() - new Date(val).getTime();
+    // Floor-of-hours comparison, byte-faithful to the broker's
+    // elapsed.toHours() < cooldown. For integer cooldowns this is
+    // behaviorally identical to a millis comparison (floor(e) < n ⟺ e < n);
+    // it diverges only for fractional cooldown values (which the broker's
+    // long cannot express but our env allows) — pinned by test.
+    const elapsedHours = Math.floor(elapsedMs / 3_600_000);
+    return elapsedHours < ratelimitCooldownHours();
+  } catch {
+    return false; // fail open — if Redis is down, allow the search
+  }
+}
+
+/** Mirrors SearchRateLimiter.markSearched: sets instant + cooldown TTL. */
+export async function markSearched(query: string): Promise<void> {
+  if (!ratelimitEnabled()) return;
+  const redis = rateLimitRedis();
+  if (!redis) return;
+  try {
+    const key = RATELIMIT_KEY_PREFIX + normalizeSearchQuery(query);
+    const seconds = Math.max(1, Math.round(ratelimitCooldownHours() * 3600));
+    await redis.set(key, new Date().toISOString(), "EX", seconds);
+  } catch {
+    // fail-silent, like the broker: the search already succeeded
+  }
 }
 
 function mapCachedItems(items: any[] | null | undefined): SearchResultItem[] {
@@ -283,9 +412,26 @@ export default class GoogleSearchService extends Service {
   // omitted). The token stays optional end-to-end: absent means unkeyed.
   // forceRefresh bypasses the shared-cache read (slice-2 G5).
   async performSearch(query: string, token?: string, forceRefresh = false): Promise<GoogleSearchResponse> {
+    // Slice-3: call order mirrors the broker exactly.
+    // ① Rate-limited (unless force) → serve ANY cache row, even expired
+    //    (stale-serve is the cooldown's whole purpose); no row → fall
+    //    through to live (fail-open parity with SearchRateLimiter).
+    if (!forceRefresh && (await isRateLimited(query))) {
+      const stale = await findAnyCacheEntry(query);
+      if (stale) {
+        return {
+          items: mapCachedItems(stale.items),
+          ...(token !== undefined ? { token } : {}),
+        };
+      }
+    }
+    // ② Fresh cache (unless force). A hit EXTENDS the cooldown via
+    //    markSearched — slice-2 G6, declared intended: cache service
+    //    extends provider cooldown.
     if (!forceRefresh) {
       const cached = await findValidCacheEntry(query);
       if (cached) {
+        await markSearched(query);
         // NOTE: no searchInformation on cache hits (mirrors legacy
         // buildResult, which serves items without provider metadata).
         return {
@@ -325,6 +471,10 @@ export default class GoogleSearchService extends Service {
       // upsert when SEARCH_CACHE_WRITE_MODE=canonical. Never fails the
       // search — see writeCanonicalCacheRow (fail-open).
       await this.writeCanonicalCacheRow(query, items);
+
+      // ③ Slice-3: record the cooldown stamp on live success — the broker
+      // marks on EVERY live search, force or not (GoogleSearchService L171).
+      await markSearched(query);
 
       return {
         items,
