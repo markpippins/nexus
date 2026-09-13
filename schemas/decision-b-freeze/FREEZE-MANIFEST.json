@@ -1,0 +1,21 @@
+{
+  "package": "Decision B v2 freeze package",
+  "assembled_at": "2026-09-13T16:15:01.368048+00:00",
+  "assembled_by": "ontologist",
+  "threads": {
+    "v1": "053c6e59",
+    "v2": "6f3baf54"
+  },
+  "artifacts": {
+    "collision-dispositions.json": "5236964923fcabccd4a88701cb00335bb52d10365aa88067ceec4a0713c6e4a6",
+    "decision-a-input-manifest.txt": "58e6a1d6c24d7725afaba25fa5a4258def3d1d401908dfd78d14ce01dc5c8ddb",
+    "decision-a-pin.json": "da3a0f6e5245ec1808d20cc77d245aa81bd5e03402188c99c45674f88e806296",
+    "deny-slice-artifact.json": "2d799cc85dc6057b890f3942f81b43ee8eca7a0d58d3ee62593105087f3f1d64",
+    "deny_slice_proof.py": "be7bfa25f2f992c1dc33fe33ffa42b9eadbb7420efab0d92b60d70f5de70b0ef",
+    "jsonb_contract_test.py": "cf64fb68ef0d68cadae9ebbdbb58c4028a07017e34a786594d00119de7f9b2a0",
+    "level_fixtures.py": "276fcfc36e37b2d761be3aca60fde7c705193690084f90bd9e4f0c65837a96d3",
+    "supersession.json": "2f58f66e742d5145062488a9801fd9f6be53835b2be93c8f96159c23ae9e3a81",
+    "../TYPESPEC_RESOLUTION_MAPPING.md": "293a0c8221ff0e715f1b388f87ccbadb3702a71fecb1096b9eac300c5545c366"
+  },
+  "fingerprint": "9a073a105050d7e2a8c7e618265fbb6fad92fdccecbc042a8fa12ad6374685d8"
+}
