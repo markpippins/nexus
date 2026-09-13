@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: assembly-srv — Assembly Forum REST API
-  version: 1.0.108bc0c1
+  version: 1.0.1f9740c7
   description: 'Assembly forum service: forums, threads, comments, users, harvests, work requests, agent records, agendas,
     plans, specifications, assessments, observations, search, counts, and stats refresh.
 
@@ -1878,6 +1878,43 @@ paths:
         schema:
           type: string
   /api/forums/threads/{threadId}/comments:
+    delete:
+      tags:
+      - forums
+      operationId: delete_forums_threads_threadId_comments
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      summary: 'DELETE /threads/:threadId/comments — soft-delete ALL comments on a thread (bulk refresh support: re-emitting
+        per-turn transcript comments af'
+      parameters:
+      - name: threadId
+        in: path
+        required: true
+        schema:
+          type: string
     post:
       tags:
       - forums
