@@ -123,6 +123,20 @@ forumsRouter.get('/:slug/threads', async (req, res, next) => {
       reply_count, last_reply_at, last_reply_user_alias, rating`;
     const cols = includeBody ? `${baseCols}, text` : baseCols;
 
+    // Do not silently return 200 [] for unknown or expired forums.
+    // Distinguish "forum missing" from "forum exists but has no threads".
+    {
+      const forumCheck = await pool.query(
+        `SELECT id FROM assembly.forums WHERE slug = $1
+         AND (expiration_dt = 'infinity'::timestamptz OR expiration_dt > now())
+         LIMIT 1`,
+        [req.params.slug]
+      );
+      if (forumCheck.rows.length === 0) {
+        throw new NotFoundError('Forum not found');
+      }
+    }
+
     let result;
     let total = null;
     if (paginate) {
@@ -246,6 +260,20 @@ forumsRouter.post('/by-id/:forumId/threads', async (req, res, next) => {
 
 forumsRouter.get('/by-id/:forumId/threads', async (req, res, next) => {
   try {
+    // Do not silently return 200 [] for unknown or expired forums.
+    // Distinguish "forum missing" from "forum exists but has no threads".
+    {
+      const forumCheck = await pool.query(
+        `SELECT id FROM assembly.forums WHERE id = $1
+         AND (expiration_dt = 'infinity'::timestamptz OR expiration_dt > now())
+         LIMIT 1`,
+        [req.params.forumId]
+      );
+      if (forumCheck.rows.length === 0) {
+        throw new NotFoundError('Forum not found');
+      }
+    }
+
     const result = await pool.query(
       `SELECT p.id, p.title, p.created, p.text, p.source_url, p.role, p.model, p.rating,
               u.id AS user_id, u.alias, u.avatar_url,

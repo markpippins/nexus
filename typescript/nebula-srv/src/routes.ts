@@ -2671,7 +2671,7 @@ export function createRoutes(pool: Pool): Router {
         code_blocks:      "COALESCE((h.docklang #>> '{stats,by_type,code}')\n::int, 0)",
         turns:            'COALESCE(jsonb_array_length(h.docklang -> \'discourse_units\'), 0)',
         block_density:    "CASE WHEN jsonb_array_length(h.docklang -> 'discourse_units') > 0 THEN (h.docklang #>> '{stats,total_blocks}')::numeric / jsonb_array_length(h.docklang -> 'discourse_units') ELSE 0 END",
-        collaboration:    "(SELECT count(*) FROM jsonb_array_elements(h.docklang -> 'discourse_units') du WHERE du #>> '{heading}' ILIKE '%— user%' OR du #>> '{heading}' ILIKE '%- user%')",
+        collaboration:    "(SELECT count(*) FROM jsonb_array_elements(h.docklang -> 'discourse_units') du WHERE du #>> '{provenance,role}' = 'user')",
         created_at:       'h.created_at',
         tag_frequency:    `(SELECT COALESCE(sum(f.tc), 0)
            FROM unnest(h.tags) tg
@@ -2742,7 +2742,7 @@ export function createRoutes(pool: Pool): Router {
                     THEN (s.docklang #>> '{stats,total_blocks}')::numeric / jsonb_array_length(s.docklang -> 'discourse_units')
                     ELSE 0 END AS blocks_per_turn,
                (SELECT count(*) FROM jsonb_array_elements(s.docklang -> 'discourse_units') du
-                WHERE du #>> '{heading}' ILIKE '%— user%' OR du #>> '{heading}' ILIKE '%- user%') AS user_turns,
+                WHERE du #>> '{provenance,role}' = 'user') AS user_turns,
                ${sort === 'keyword_hits' ? "(SELECT count(*) FROM jsonb_array_elements(s.docklang -> 'discourse_units') du WHERE du #>> '{body}' ILIKE '%' || $1 || '%') AS keyword_hits" : '0::bigint AS keyword_hits'},
                ${sort === 'tag_frequency' ? "(SELECT COALESCE(sum(freq), 0) FROM (SELECT count(*) AS freq FROM nebula.harvests h2, unnest(h2.tags) AS t WHERE t = ANY(s.tags) GROUP BY t) sub) AS tag_frequency" : '0::bigint AS tag_frequency'}
         FROM (
