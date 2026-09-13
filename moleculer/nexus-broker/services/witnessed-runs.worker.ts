@@ -18,6 +18,12 @@ import { Pool } from "pg";
  * (W3.05 AC4: no client-side reconstruction), so both surfaces must agree
  * to the byte. All queries are SELECT-only (read-only observability).
  *
+ * TOMBSTONE (ruling e62992f0 R1, draft pending the join-key ruling): the
+ * receipts correlation lane is retired — peb_admission/conduit_transition are
+ * NULL literals in both surfaces. The resolution.* re-point (R2) is deferred
+ * until a request/attempt → resolution join key is ruled (stop-and-report
+ * 44825733).
+ *
  * Metrics note: the registry below is worker-local (per process). The legacy
  * service's registry lives in the execution-srv process; counters are
  * therefore not shared across surfaces — same as the search limiter's
@@ -202,8 +208,14 @@ export default class WitnessedRunsWorker extends Service {
          r.metadata->'evidence' AS evidence,
          r.metadata->'replay' AS replay,
          ${withProjection ? "r.updated_at AS updated_at," : ""}
-         (SELECT rc.metadata->>'peb_transaction_id' FROM receipts rc WHERE rc.request_id = r.id AND rc.type IN ('PEB_ADMISSION','ADMISSION') ORDER BY rc.issued_at DESC LIMIT 1) AS peb_admission,
-         (SELECT rc.metadata->>'conduit_transition_id' FROM receipts rc WHERE rc.request_id = r.id AND rc.type IN ('CONDUIT_TRANSITION','TRANSITION') ORDER BY rc.issued_at DESC LIMIT 1) AS conduit_transition
+         -- TOMBSTONED per ruling e62992f0 R1: the execution.receipts correlation lane is
+         -- retired — chk_execution_receipts_type permits none of the receipt types these
+         -- subqueries filter on and no writer inserts them, so they were structurally
+         -- unsatisfiable (always NULL). The canonical resolution.* re-point (R2) is
+         -- deferred: no request/attempt → resolution join key exists yet (empirically
+         -- verified; stop-and-report 44825733). The wind seam (V151) is the eventual carrier.
+         NULL::text AS peb_admission,
+         NULL::text AS conduit_transition
        FROM requests r
        LEFT JOIN LATERAL (
          SELECT * FROM attempts a0 WHERE a0.request_id = r.id ORDER BY a0.created_at DESC LIMIT 1
