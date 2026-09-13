@@ -1,0 +1,367 @@
+{
+  "contract": "Decision B v2, analyst condition 1: collision dispositions as queryable data",
+  "review_ref": "6f3baf54 (v2), f074610e (correction), cbac135b/d2627976 (reviews)",
+  "owner": "architect",
+  "rule": "resolved-or-explicitly-shelved before type identities freeze; shelving is queryable and blocks accidental name-merge",
+  "dispositions": [
+    {
+      "name": "Cer",
+      "services": [
+        "ccnf-ref",
+        "ccnf-verifier"
+      ],
+      "disposition": "merged",
+      "rationale": "Same CCNF event model in Go vs Rust; single concept, two language representations.",
+      "owner": "architect"
+    },
+    {
+      "name": "ReplayEvent",
+      "services": [
+        "ccnf-ref",
+        "ccnf-verifier"
+      ],
+      "disposition": "merged",
+      "rationale": "Same replay-event concept across CCNF implementations.",
+      "owner": "architect"
+    },
+    {
+      "name": "RuntimeState",
+      "services": [
+        "ccnf-ref",
+        "ccnf-verifier"
+      ],
+      "disposition": "merged",
+      "rationale": "Same runtime-state concept across CCNF implementations.",
+      "owner": "architect"
+    },
+    {
+      "name": "Link",
+      "services": [
+        "control-edge",
+        "ui-tools"
+      ],
+      "disposition": "merged",
+      "rationale": "Identical nav link/separator shape (address/imagename/text/type/sortOrder).",
+      "owner": "architect"
+    },
+    {
+      "name": "FsItem",
+      "services": [
+        "file-system-server",
+        "service-broker"
+      ],
+      "disposition": "merged",
+      "rationale": "Same filesystem-item concept.",
+      "owner": "architect"
+    },
+    {
+      "name": "ReorderItem",
+      "services": [
+        "control-edge",
+        "ui-tools"
+      ],
+      "disposition": "merged",
+      "rationale": "Same reorder-entry concept for nav/links.",
+      "owner": "architect"
+    },
+    {
+      "name": "SearchResultItem",
+      "services": [
+        "moleculer",
+        "service-broker"
+      ],
+      "disposition": "merged",
+      "rationale": "Same search-hit concept.",
+      "owner": "architect"
+    },
+    {
+      "name": "User",
+      "services": [
+        "service-broker"
+      ],
+      "disposition": "merged",
+      "rationale": "Same-service duplicate; dedupe.",
+      "owner": "architect"
+    },
+    {
+      "name": "BrokerTrafficEvent",
+      "services": [
+        "service-broker"
+      ],
+      "disposition": "merged",
+      "rationale": "Same-service duplicate; dedupe.",
+      "owner": "architect"
+    },
+    {
+      "name": "DBDataSource",
+      "services": [
+        "service-broker"
+      ],
+      "disposition": "merged",
+      "rationale": "Same-service duplicate; dedupe.",
+      "owner": "architect"
+    },
+    {
+      "name": "DBFieldType",
+      "services": [
+        "service-broker"
+      ],
+      "disposition": "merged",
+      "rationale": "Same-service duplicate; dedupe.",
+      "owner": "architect"
+    },
+    {
+      "name": "DBField",
+      "services": [
+        "service-broker"
+      ],
+      "disposition": "merged",
+      "rationale": "Same-service duplicate; dedupe.",
+      "owner": "architect"
+    },
+    {
+      "name": "FsItemReference",
+      "services": [
+        "service-broker"
+      ],
+      "disposition": "merged",
+      "rationale": "Same-service duplicate; dedupe.",
+      "owner": "architect"
+    },
+    {
+      "name": "FsListResponse",
+      "services": [
+        "service-broker"
+      ],
+      "disposition": "merged",
+      "rationale": "Same-service duplicate envelope; dedupe.",
+      "owner": "architect"
+    },
+    {
+      "name": "FsOperationResponse",
+      "services": [
+        "service-broker"
+      ],
+      "disposition": "merged",
+      "rationale": "Same-service duplicate envelope; dedupe.",
+      "owner": "architect"
+    },
+    {
+      "name": "Forum",
+      "services": [
+        "assembly-srv",
+        "service-broker"
+      ],
+      "disposition": "distinct",
+      "rationale": "Governance discussion forum (threads/roles) vs social-media forum; different domains, must not merge.",
+      "owner": "architect"
+    },
+    {
+      "name": "Workflow",
+      "services": [
+        "nexus-tools",
+        "wind-srv"
+      ],
+      "disposition": "distinct",
+      "rationale": "Tool-capability graph vs executable Wind workflow; different lifecycle/authority.",
+      "owner": "architect"
+    },
+    {
+      "name": "Library",
+      "services": [
+        "fs-crawler",
+        "service-registry"
+      ],
+      "disposition": "distinct",
+      "rationale": "Filesystem scan target (path/rules) vs package registry entity (version/license); different domains.",
+      "owner": "architect"
+    },
+    {
+      "name": "ServiceType",
+      "services": [
+        "service-registry",
+        "terrain"
+      ],
+      "disposition": "distinct",
+      "rationale": "Catalog classification vs infrastructure topology; linked by mapping edge, never merged.",
+      "owner": "architect"
+    },
+    {
+      "name": "Server",
+      "services": [
+        "service-registry",
+        "terrain"
+      ],
+      "disposition": "distinct",
+      "rationale": "Catalog server vs topology server; linked, never merged.",
+      "owner": "architect"
+    },
+    {
+      "name": "ServiceDependency",
+      "services": [
+        "service-registry",
+        "terrain"
+      ],
+      "disposition": "distinct",
+      "rationale": "Catalog dependency vs topology dependency; linked, never merged.",
+      "owner": "architect"
+    },
+    {
+      "name": "ErrorDetail",
+      "services": [
+        "assembly-srv",
+        "cascade-srv",
+        "execution-srv",
+        "file-system-server",
+        "nebula-srv",
+        "wind-srv"
+      ],
+      "disposition": "shelved",
+      "rationale": "Transport error shape per service; not a concept; no type identity to freeze. Shelving queryable.",
+      "owner": "architect"
+    },
+    {
+      "name": "HealthResponse",
+      "services": [
+        "assembly-srv",
+        "cascade-srv",
+        "execution-srv",
+        "file-system-server",
+        "harness-srv",
+        "nebula-srv",
+        "tools-aggregator",
+        "ui-event-bus",
+        "ui-tools",
+        "wind-srv"
+      ],
+      "disposition": "shelved",
+      "rationale": "Per-service health envelope; not a concept.",
+      "owner": "architect"
+    },
+    {
+      "name": "ErrorResponse",
+      "services": [
+        "control-edge",
+        "tackle-registry",
+        "tools-aggregator",
+        "ui-event-bus",
+        "ui-tools"
+      ],
+      "disposition": "shelved",
+      "rationale": "Transport error envelope per service; not a concept.",
+      "owner": "architect"
+    },
+    {
+      "name": "Health",
+      "services": [
+        "control-edge",
+        "nexus-broker"
+      ],
+      "disposition": "shelved",
+      "rationale": "Per-service health status shape; not a concept.",
+      "owner": "architect"
+    },
+    {
+      "name": "FsRequest",
+      "services": [
+        "file-system-server",
+        "service-broker"
+      ],
+      "disposition": "shelved",
+      "rationale": "Request envelope; not a concept.",
+      "owner": "architect"
+    },
+    {
+      "name": "WorkRequestResponse",
+      "services": [
+        "losm-host",
+        "vision-srv"
+      ],
+      "disposition": "shelved",
+      "rationale": "Response envelope; not a concept.",
+      "owner": "architect"
+    },
+    {
+      "name": "BranchResponse",
+      "services": [
+        "losm-host",
+        "vision-srv"
+      ],
+      "disposition": "shelved",
+      "rationale": "Response envelope; not a concept.",
+      "owner": "architect"
+    },
+    {
+      "name": "PebTransactionRequest",
+      "services": [
+        "peb-kernel"
+      ],
+      "disposition": "shelved",
+      "rationale": "Request envelope; not a concept.",
+      "owner": "architect"
+    },
+    {
+      "name": "AdmissionResponse",
+      "services": [
+        "peb-kernel"
+      ],
+      "disposition": "shelved",
+      "rationale": "Response envelope; not a concept.",
+      "owner": "architect"
+    },
+    {
+      "name": "PebHealthResponse",
+      "services": [
+        "peb-kernel"
+      ],
+      "disposition": "shelved",
+      "rationale": "Response envelope; not a concept.",
+      "owner": "architect"
+    },
+    {
+      "name": "CanonicalEnvelope",
+      "services": [
+        "nats-envelope"
+      ],
+      "disposition": "shelved",
+      "rationale": "NATS transport envelope for cascade/voyager/vision/conduit events; eventId/eventType are transport identity for routing/dedup, not domain-concept identity; event payloads are the domain concepts. Explicit per architect correction d2627976.",
+      "owner": "architect"
+    },
+    {
+      "name": "QuarantineEnvelope",
+      "services": [
+        "nexus-tools"
+      ],
+      "disposition": "shelved",
+      "rationale": "Quarantine wrapping shape, transport; not a concept.",
+      "owner": "architect"
+    },
+    {
+      "name": "CompressionEnvelope",
+      "services": [
+        "ccnf-verifier"
+      ],
+      "disposition": "shelved",
+      "rationale": "Verifier-internal wrapping shape, transport; not a concept.",
+      "owner": "architect"
+    },
+    {
+      "name": "CausalityEnvelope",
+      "services": [
+        "ccnf-verifier"
+      ],
+      "disposition": "shelved",
+      "rationale": "Verifier-internal wrapping shape, transport; not a concept.",
+      "owner": "architect"
+    },
+    {
+      "name": "GovernanceEnvelope",
+      "services": [
+        "governance-envelope"
+      ],
+      "disposition": "distinct",
+      "rationale": "The governed contract itself (contract/semantic/workflow/law/evaluation), not transport. DOMAIN concept.",
+      "owner": "architect"
+    }
+  ]
+}

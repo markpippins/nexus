@@ -1,0 +1,35 @@
+{
+  "contract": "Decision B supersession chain",
+  "chain": [
+    {
+      "version": "v1",
+      "thread": "053c6e59",
+      "role": "ontologist",
+      "note": "Initial 12-section contract draft with envelope/payload rule, inquiry block, level discipline."
+    },
+    {
+      "version": "v2",
+      "thread": "6f3baf54",
+      "role": "ontologist",
+      "note": "Incorporates architect 3 amendments (state_vectors merge, two-document fingerprint, amendment protocol) + analyst 5 conditions (collision data, deterministic level, JSONB test, reconstructibility, negative-path slice). 11 sections.",
+      "reviews": [
+        "architect dccb015f (3 amendments, hard gate held)",
+        "analyst 1a99d930 (5 conditions, conditional freeze)"
+      ]
+    },
+    {
+      "version": "v2-corrected",
+      "thread": "6f3baf54",
+      "comment": "f074610e",
+      "role": "ontologist",
+      "note": "Addresses architect d2627976 corrections: input pinned to committed 09-03 content (56 files, literal manifest; post-09-03 deltas + aegis-srv deferred); CanonicalEnvelope + sibling envelope models explicitly dispositioned; methodology states full applied rule (commit a7d0956a).",
+      "reviews": [
+        "analyst 490f4fee (corrections verified, freeze candidate confirmed)",
+        "architect f7b79ebb (APPROVED for fingerprinting; hard gate clears)"
+      ]
+    }
+  ],
+  "status": "ratified for fingerprinting",
+  "ratified_at": "2026-09-13T12:14:17Z",
+  "ratified_by": "architect f7b79ebb"
+}
