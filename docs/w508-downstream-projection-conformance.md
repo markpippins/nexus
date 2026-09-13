@@ -9,9 +9,16 @@ governed projection.
 
 - Route: `GET /api/execution/projections/witnessed-runs?workflow_instance_id=&node_id=`
 - Implementation: `typescript/execution-srv/src/routes.ts` (W3.08, merged PR #95)
-- Version: `WITNESSED_RUN_PROJECTION_VERSION = 2` — bumped only on breaking
-  shape changes. v2 (ruling 6677c394 R3): receipt slots re-pointed to live
-  sources — `peb_admission` = PEB admission receipt
+- Version: `WITNESSED_RUN_PROJECTION_VERSION = 3` — bumped only on breaking
+  shape changes. v3 (ruling ffa4ffc5): the phantom `metadata` legs are gone —
+  `requests`/`attempts` never had `metadata` columns (canonical DDL and the
+  live DB agree), so the family 500'd at plan time. Identity now matches
+  `business_key`; the `node_id` predicate is dropped (output-echo only);
+  `evidence`/`assessment` are sourced from `resolution.execution_evidence` /
+  `execution_admission_receipt` via the attempt's latest admission receipt;
+  `envelope`/`manifest`/`law`/`replay` render **null** until the producer
+  contract (6677c394 R2) backs them. v2 (ruling 6677c394 R3): receipt slots
+  re-pointed to live sources — `peb_admission` = PEB admission receipt
   (`resolution.execution_admission_receipt`, written by the git-claim
   producer), `conduit_transition` = native `EXECUTION_COMPLETE` receipts
   (`execution.receipts`). v1's slots were structurally unsatisfiable
@@ -66,8 +73,8 @@ does not export. The registry remains fail-closed for incomplete sets.
 | `status` | authoritative join state (server-classified) |
 | `missingLineage` | enumerated missing elements: `envelope_id`, `evaluation_fingerprint`, `manifest_id`, `peb_admission_receipt`, `conduit_transition_receipt`, `evidence_ids` |
 | `identities` | envelope/fingerprint/manifest/receipt/evidence correlation ids |
-| `assessment` | disposition + status (server-held, echoed) |
-| `replay` | fixture id + status |
+| `assessment` | disposition (admitted t/f) + derived status + reason/source/policy hash, from the attempt's admission receipt |
+| `replay` | fixture id + status (null until producer contract backs it) |
 | `projectionVersion` | contract version consumers pin to |
 
 ## Consumer checklist (for UI implementers)
@@ -83,6 +90,10 @@ does not export. The registry remains fail-closed for incomplete sets.
 ## Evidence baseline
 
 - W3.08 projection (PR #95) + witnessed-run conformance (11 suites green).
+- v3 re-point (ruling ffa4ffc5): witnessed-run family executes live on both
+  surfaces; two-surface byte-parity asserted with a seeded business_key
+  fixture (broker-smoke shared-200 test); standing rule — no query may
+  reference a column absent from canonical DDL in the same commit.
 - W5.03 admission-boundary verification (PR #102, fingerprint `sha256:178e269c…`).
 - W5.04 canary (PR #103, fingerprint `sha256:dc0fe075…`).
 - W5.05 drill operations (PR #104, fingerprint in `docs/w505-evidence/`).
