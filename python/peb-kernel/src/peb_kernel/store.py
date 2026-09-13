@@ -16,6 +16,7 @@ from typing import Any, Iterator
 from uuid import UUID, uuid4
 
 from .domain import (
+    AdmissionResult,
     DecisionStatus,
     EntropyClass,
     PebCapability,
@@ -69,6 +70,12 @@ class InMemoryPebStore:
             raise ValueError(f"duplicate idempotency key: {transaction.idempotency_key}")
         self._transactions[transaction.id] = transaction
         return transaction
+
+    def find_by_idempotency_key(self, key: str) -> PebTransaction | None:
+        return next(
+            (item for item in self._transactions.values() if item.idempotency_key == key),
+            None,
+        )
 
     def save_violation(self, violation: PebViolation) -> PebViolation:
         if violation.id is None:
@@ -231,6 +238,42 @@ class PostgresPebStore:
             ),
         )
         return violation
+
+    def find_by_idempotency_key(self, key: str) -> PebTransaction | None:
+        """Idempotent-replay lookup (JVM kernel ``findByIdempotencyKey`` parity).
+
+        Returns the transaction recorded under *key*, or None. Runs in its own
+        transaction scope so callers outside an engine boundary (the HTTP
+        controller's replay short-circuit) can use it directly.
+        """
+        with self.transaction():
+            cursor = self._connection().cursor()
+            cursor.execute(
+                """SELECT id, idempotency_key, entity_id, admission_result, tool_name,
+                          input, output, before_hash, after_hash, state_delta,
+                          created_at, committed_at, kernel_event_id, kernel_event_type
+                   FROM peb.transactions WHERE idempotency_key = %s LIMIT 1""",
+                (key,),
+            )
+            row = cursor.fetchone()
+        if row is None:
+            return None
+        return PebTransaction(
+            id=row[0],
+            idempotency_key=row[1],
+            entity_id=row[2],
+            admission_result=AdmissionResult(row[3]) if row[3] else None,
+            tool_name=row[4],
+            input=row[5],
+            output=row[6],
+            before_hash=row[7],
+            after_hash=row[8],
+            state_delta=row[9],
+            created_at=row[10],
+            committed_at=row[11],
+            kernel_event_id=row[12],
+            kernel_event_type=row[13],
+        )
 
     def save_state(self, state: PebState) -> PebState:
         if state.id is None:

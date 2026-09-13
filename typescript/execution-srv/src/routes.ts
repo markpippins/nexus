@@ -805,14 +805,26 @@ export function witnessedRunHandler(pool: Pool) {
            r.metadata->'assessment' AS assessment,
            r.metadata->'evidence' AS evidence,
            r.metadata->'replay' AS replay,
-           -- TOMBSTONED per ruling e62992f0 R1: the execution.receipts correlation lane is
-           -- retired — chk_execution_receipts_type permits none of the receipt types these
-           -- subqueries filter on and no writer inserts them, so they were structurally
-           -- unsatisfiable (always NULL). The canonical resolution.* re-point (R2) is
-           -- deferred: no request/attempt → resolution join key exists yet (empirically
-           -- verified; stop-and-report 44825733). The wind seam (V151) is the eventual carrier.
-           NULL::text AS peb_admission,
-           NULL::text AS conduit_transition
+           -- RE-POINTED per ruling 6677c394 R2/R3 (supersedes the e62992f0 R1 tombstone):
+           -- the join key now exists — the git-claim producer (python/nexus_core/wrp/
+           -- git_claim_producer.py) writes resolution.execution_admission_receipt rows
+           -- keyed on real execution.attempts UUIDs (first live rows verified in PR #225).
+           -- Two-leg correlation from the latest attempt:
+           --   peb_admission: the attempt's PEB admission receipt transaction id
+           --   conduit_transition: the attempt's latest native EXECUTION_COMPLETE receipt
+           --     (a live lane under chk_execution_receipts_type; the retired conduit
+           --     types stay gone per R1 — the wind seam V151 is the eventual carrier)
+           (SELECT ar.peb_transaction_id::text
+              FROM resolution.execution_admission_receipt ar
+             WHERE ar.attempt_id = a.id::text
+             ORDER BY ar.created_at DESC
+             LIMIT 1) AS peb_admission,
+           (SELECT rec.id::text
+              FROM receipts rec
+             WHERE rec.attempt_id = a.id
+               AND rec.type = 'EXECUTION_COMPLETE'
+             ORDER BY rec.issued_at DESC
+             LIMIT 1) AS conduit_transition
          FROM requests r
          LEFT JOIN LATERAL (
            SELECT * FROM attempts a0 WHERE a0.request_id = r.id ORDER BY a0.created_at DESC LIMIT 1
@@ -906,14 +918,26 @@ export function witnessedRunDiagnosticsHandler(pool: Pool) {
            r.metadata->'assessment' AS assessment,
            r.metadata->'evidence' AS evidence,
            r.metadata->'replay' AS replay,
-           -- TOMBSTONED per ruling e62992f0 R1: the execution.receipts correlation lane is
-           -- retired — chk_execution_receipts_type permits none of the receipt types these
-           -- subqueries filter on and no writer inserts them, so they were structurally
-           -- unsatisfiable (always NULL). The canonical resolution.* re-point (R2) is
-           -- deferred: no request/attempt → resolution join key exists yet (empirically
-           -- verified; stop-and-report 44825733). The wind seam (V151) is the eventual carrier.
-           NULL::text AS peb_admission,
-           NULL::text AS conduit_transition
+           -- RE-POINTED per ruling 6677c394 R2/R3 (supersedes the e62992f0 R1 tombstone):
+           -- the join key now exists — the git-claim producer (python/nexus_core/wrp/
+           -- git_claim_producer.py) writes resolution.execution_admission_receipt rows
+           -- keyed on real execution.attempts UUIDs (first live rows verified in PR #225).
+           -- Two-leg correlation from the latest attempt:
+           --   peb_admission: the attempt's PEB admission receipt transaction id
+           --   conduit_transition: the attempt's latest native EXECUTION_COMPLETE receipt
+           --     (a live lane under chk_execution_receipts_type; the retired conduit
+           --     types stay gone per R1 — the wind seam V151 is the eventual carrier)
+           (SELECT ar.peb_transaction_id::text
+              FROM resolution.execution_admission_receipt ar
+             WHERE ar.attempt_id = a.id::text
+             ORDER BY ar.created_at DESC
+             LIMIT 1) AS peb_admission,
+           (SELECT rec.id::text
+              FROM receipts rec
+             WHERE rec.attempt_id = a.id
+               AND rec.type = 'EXECUTION_COMPLETE'
+             ORDER BY rec.issued_at DESC
+             LIMIT 1) AS conduit_transition
          FROM requests r
          LEFT JOIN LATERAL (
            SELECT * FROM attempts a0 WHERE a0.request_id = r.id ORDER BY a0.created_at DESC LIMIT 1
@@ -994,7 +1018,12 @@ export function witnessedRunDiagnosticsHandler(pool: Pool) {
  *  - Read-only: SELECTs only, no write path.
  */
 // Bump only on breaking shape changes to the projection payload (W3.08).
-export const WITNESSED_RUN_PROJECTION_VERSION = 1;
+// v2 (ruling 6677c394 R3): receipt slots re-pointed from structurally-dead
+// subqueries to live sources — peb_admission = PEB admission receipt
+// (resolution.execution_admission_receipt via the git-claim producer),
+// conduit_transition = native EXECUTION_COMPLETE receipts. Shape is unchanged
+// but the values' meaning and availability change, so consumers must re-pin.
+export const WITNESSED_RUN_PROJECTION_VERSION = 2;
 
 export function witnessedRunProjectionHandler(pool: Pool) {
   return async (req: Request, res: Response) => {
@@ -1014,14 +1043,26 @@ export function witnessedRunProjectionHandler(pool: Pool) {
            r.metadata->'evidence' AS evidence,
            r.metadata->'replay' AS replay,
            r.updated_at AS updated_at,
-           -- TOMBSTONED per ruling e62992f0 R1: the execution.receipts correlation lane is
-           -- retired — chk_execution_receipts_type permits none of the receipt types these
-           -- subqueries filter on and no writer inserts them, so they were structurally
-           -- unsatisfiable (always NULL). The canonical resolution.* re-point (R2) is
-           -- deferred: no request/attempt → resolution join key exists yet (empirically
-           -- verified; stop-and-report 44825733). The wind seam (V151) is the eventual carrier.
-           NULL::text AS peb_admission,
-           NULL::text AS conduit_transition
+           -- RE-POINTED per ruling 6677c394 R2/R3 (supersedes the e62992f0 R1 tombstone):
+           -- the join key now exists — the git-claim producer (python/nexus_core/wrp/
+           -- git_claim_producer.py) writes resolution.execution_admission_receipt rows
+           -- keyed on real execution.attempts UUIDs (first live rows verified in PR #225).
+           -- Two-leg correlation from the latest attempt:
+           --   peb_admission: the attempt's PEB admission receipt transaction id
+           --   conduit_transition: the attempt's latest native EXECUTION_COMPLETE receipt
+           --     (a live lane under chk_execution_receipts_type; the retired conduit
+           --     types stay gone per R1 — the wind seam V151 is the eventual carrier)
+           (SELECT ar.peb_transaction_id::text
+              FROM resolution.execution_admission_receipt ar
+             WHERE ar.attempt_id = a.id::text
+             ORDER BY ar.created_at DESC
+             LIMIT 1) AS peb_admission,
+           (SELECT rec.id::text
+              FROM receipts rec
+             WHERE rec.attempt_id = a.id
+               AND rec.type = 'EXECUTION_COMPLETE'
+             ORDER BY rec.issued_at DESC
+             LIMIT 1) AS conduit_transition
          FROM requests r
          LEFT JOIN LATERAL (
            SELECT * FROM attempts a0 WHERE a0.request_id = r.id ORDER BY a0.created_at DESC LIMIT 1

@@ -9,8 +9,13 @@ governed projection.
 
 - Route: `GET /api/execution/projections/witnessed-runs?workflow_instance_id=&node_id=`
 - Implementation: `typescript/execution-srv/src/routes.ts` (W3.08, merged PR #95)
-- Version: `WITNESSED_RUN_PROJECTION_VERSION = 1` — bumped only on breaking
-  shape changes
+- Version: `WITNESSED_RUN_PROJECTION_VERSION = 2` — bumped only on breaking
+  shape changes. v2 (ruling 6677c394 R3): receipt slots re-pointed to live
+  sources — `peb_admission` = PEB admission receipt
+  (`resolution.execution_admission_receipt`, written by the git-claim
+  producer), `conduit_transition` = native `EXECUTION_COMPLETE` receipts
+  (`execution.receipts`). v1's slots were structurally unsatisfiable
+  (always NULL; tombstone under ruling e62992f0 R1)
 - Read-only: SELECTs only, no write path
 - Identity correlation only: governance payloads are never included
 
