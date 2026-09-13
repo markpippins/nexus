@@ -37,6 +37,45 @@ class AdmissionController:
 
         transaction = PebTransaction.from_payload(payload)
         path = AdmissionPath.from_tool_name(transaction.tool_name)
+
+        # Idempotent replay (JVM kernel parity; ruling 6677c394): a replayed
+        # submission under the same idempotency key returns the RECORDED
+        # outcome instead of a raw UniqueViolation (500). A different payload
+        # under the same key is a conflicting replay and is refused.
+        store = self.governance_engine.store
+        finder = getattr(store, "find_by_idempotency_key", None)
+        if callable(finder):
+            existing = finder(transaction.idempotency_key)
+            if existing is not None:
+                same_payload = existing.input == transaction.input
+                if same_payload:
+                    # Return the RECORDED outcome: a violation report replay is
+                    # endpoint-admitted (the violation exists); anything else
+                    # replays its recorded admission_result.
+                    if existing.tool_name == "peb_report_violation":
+                        replay_admitted = True
+                        message = "Idempotent replay: violation already recorded"
+                    else:
+                        recorded = existing.admission_result
+                        replay_admitted = recorded is not None and recorded.value == "ALLOWED"
+                        message = (
+                            "Idempotent replay: recorded admission result "
+                            + (recorded.value if recorded else "UNKNOWN")
+                        )
+                    result = PebAdmissionResult.from_transaction(
+                        existing,
+                        message,
+                        admitted=replay_admitted,
+                    )
+                    return ApiResult(200 if replay_admitted else 422, result.to_dict())
+                return ApiResult(
+                    409,
+                    {
+                        "message": "Conflicting replay: idempotency key already used with a different payload",
+                        "transaction_id": str(existing.id),
+                    },
+                )
+
         try:
             response = self.governance_engine.process_for_path(transaction, path)
         except MalformedAdmissionRequest as exc:
@@ -203,10 +242,24 @@ def create_app(store: PebStore | None = None, controller: AdmissionController | 
         raise RuntimeError("create_app requires fastapi") from exc
 
     if controller is None:
+        from .adapters import ResolutionExecutionClaimAdapter
         from .engine import PebGovernanceEngine
         from .store import store_from_environment
         store = store or store_from_environment()
-        controller = AdmissionController(PebGovernanceEngine(store))
+        # Ruling 6677c394 R2: wire the resolution admission adapter so the
+        # producer path (git-claim admission) is reachable over HTTP at all.
+        # Previously the engine was built without it, so any transaction
+        # carrying an execution_claim envelope failed closed with
+        # RESOLUTION_ADMISSION_UNAVAILABLE — the write side of the witnessed-
+        # runs correlation was structurally unreachable.
+        controller = AdmissionController(
+            PebGovernanceEngine(
+                store,
+                resolution_claim_adapter=ResolutionExecutionClaimAdapter(
+                    dsn=getattr(store, "dsn", None)
+                ),
+            )
+        )
 
     app = FastAPI(title="Nexus PEB Kernel", version="0.1.0")
 

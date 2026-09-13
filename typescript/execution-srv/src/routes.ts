@@ -781,6 +781,11 @@ export function createRoutes(pool: Pool): Router {
  * GET /api/execution/witnessed-runs handler — extracted so the conformance
  * test (src/routes.test.ts) can drive it with a mocked pg Pool without
  * faking the whole Express Router.
+ *
+ * Ruling e62992f0 R1 (draft pending the join-key ruling): the receipts
+ * correlation lane is tombstoned — peb_admission/conduit_transition are NULL
+ * literals. The resolution.* re-point (R2) is deferred until a request/attempt
+ * → resolution join key is ruled (stop-and-report 44825733).
  */
 export function witnessedRunHandler(pool: Pool) {
   return async (req: Request, res: Response) => {
@@ -800,8 +805,26 @@ export function witnessedRunHandler(pool: Pool) {
            r.metadata->'assessment' AS assessment,
            r.metadata->'evidence' AS evidence,
            r.metadata->'replay' AS replay,
-           (SELECT rc.metadata->>'peb_transaction_id' FROM receipts rc WHERE rc.request_id = r.id AND rc.type IN ('PEB_ADMISSION','ADMISSION') ORDER BY rc.issued_at DESC LIMIT 1) AS peb_admission,
-           (SELECT rc.metadata->>'conduit_transition_id' FROM receipts rc WHERE rc.request_id = r.id AND rc.type IN ('CONDUIT_TRANSITION','TRANSITION') ORDER BY rc.issued_at DESC LIMIT 1) AS conduit_transition
+           -- RE-POINTED per ruling 6677c394 R2/R3 (supersedes the e62992f0 R1 tombstone):
+           -- the join key now exists — the git-claim producer (python/nexus_core/wrp/
+           -- git_claim_producer.py) writes resolution.execution_admission_receipt rows
+           -- keyed on real execution.attempts UUIDs (first live rows verified in PR #225).
+           -- Two-leg correlation from the latest attempt:
+           --   peb_admission: the attempt's PEB admission receipt transaction id
+           --   conduit_transition: the attempt's latest native EXECUTION_COMPLETE receipt
+           --     (a live lane under chk_execution_receipts_type; the retired conduit
+           --     types stay gone per R1 — the wind seam V151 is the eventual carrier)
+           (SELECT ar.peb_transaction_id::text
+              FROM resolution.execution_admission_receipt ar
+             WHERE ar.attempt_id = a.id::text
+             ORDER BY ar.created_at DESC
+             LIMIT 1) AS peb_admission,
+           (SELECT rec.id::text
+              FROM receipts rec
+             WHERE rec.attempt_id = a.id
+               AND rec.type = 'EXECUTION_COMPLETE'
+             ORDER BY rec.issued_at DESC
+             LIMIT 1) AS conduit_transition
          FROM requests r
          LEFT JOIN LATERAL (
            SELECT * FROM attempts a0 WHERE a0.request_id = r.id ORDER BY a0.created_at DESC LIMIT 1
@@ -895,8 +918,26 @@ export function witnessedRunDiagnosticsHandler(pool: Pool) {
            r.metadata->'assessment' AS assessment,
            r.metadata->'evidence' AS evidence,
            r.metadata->'replay' AS replay,
-           (SELECT rc.metadata->>'peb_transaction_id' FROM receipts rc WHERE rc.request_id = r.id AND rc.type IN ('PEB_ADMISSION','ADMISSION') ORDER BY rc.issued_at DESC LIMIT 1) AS peb_admission,
-           (SELECT rc.metadata->>'conduit_transition_id' FROM receipts rc WHERE rc.request_id = r.id AND rc.type IN ('CONDUIT_TRANSITION','TRANSITION') ORDER BY rc.issued_at DESC LIMIT 1) AS conduit_transition
+           -- RE-POINTED per ruling 6677c394 R2/R3 (supersedes the e62992f0 R1 tombstone):
+           -- the join key now exists — the git-claim producer (python/nexus_core/wrp/
+           -- git_claim_producer.py) writes resolution.execution_admission_receipt rows
+           -- keyed on real execution.attempts UUIDs (first live rows verified in PR #225).
+           -- Two-leg correlation from the latest attempt:
+           --   peb_admission: the attempt's PEB admission receipt transaction id
+           --   conduit_transition: the attempt's latest native EXECUTION_COMPLETE receipt
+           --     (a live lane under chk_execution_receipts_type; the retired conduit
+           --     types stay gone per R1 — the wind seam V151 is the eventual carrier)
+           (SELECT ar.peb_transaction_id::text
+              FROM resolution.execution_admission_receipt ar
+             WHERE ar.attempt_id = a.id::text
+             ORDER BY ar.created_at DESC
+             LIMIT 1) AS peb_admission,
+           (SELECT rec.id::text
+              FROM receipts rec
+             WHERE rec.attempt_id = a.id
+               AND rec.type = 'EXECUTION_COMPLETE'
+             ORDER BY rec.issued_at DESC
+             LIMIT 1) AS conduit_transition
          FROM requests r
          LEFT JOIN LATERAL (
            SELECT * FROM attempts a0 WHERE a0.request_id = r.id ORDER BY a0.created_at DESC LIMIT 1
@@ -977,7 +1018,12 @@ export function witnessedRunDiagnosticsHandler(pool: Pool) {
  *  - Read-only: SELECTs only, no write path.
  */
 // Bump only on breaking shape changes to the projection payload (W3.08).
-export const WITNESSED_RUN_PROJECTION_VERSION = 1;
+// v2 (ruling 6677c394 R3): receipt slots re-pointed from structurally-dead
+// subqueries to live sources — peb_admission = PEB admission receipt
+// (resolution.execution_admission_receipt via the git-claim producer),
+// conduit_transition = native EXECUTION_COMPLETE receipts. Shape is unchanged
+// but the values' meaning and availability change, so consumers must re-pin.
+export const WITNESSED_RUN_PROJECTION_VERSION = 2;
 
 export function witnessedRunProjectionHandler(pool: Pool) {
   return async (req: Request, res: Response) => {
@@ -997,8 +1043,26 @@ export function witnessedRunProjectionHandler(pool: Pool) {
            r.metadata->'evidence' AS evidence,
            r.metadata->'replay' AS replay,
            r.updated_at AS updated_at,
-           (SELECT rc.metadata->>'peb_transaction_id' FROM receipts rc WHERE rc.request_id = r.id AND rc.type IN ('PEB_ADMISSION','ADMISSION') ORDER BY rc.issued_at DESC LIMIT 1) AS peb_admission,
-           (SELECT rc.metadata->>'conduit_transition_id' FROM receipts rc WHERE rc.request_id = r.id AND rc.type IN ('CONDUIT_TRANSITION','TRANSITION') ORDER BY rc.issued_at DESC LIMIT 1) AS conduit_transition
+           -- RE-POINTED per ruling 6677c394 R2/R3 (supersedes the e62992f0 R1 tombstone):
+           -- the join key now exists — the git-claim producer (python/nexus_core/wrp/
+           -- git_claim_producer.py) writes resolution.execution_admission_receipt rows
+           -- keyed on real execution.attempts UUIDs (first live rows verified in PR #225).
+           -- Two-leg correlation from the latest attempt:
+           --   peb_admission: the attempt's PEB admission receipt transaction id
+           --   conduit_transition: the attempt's latest native EXECUTION_COMPLETE receipt
+           --     (a live lane under chk_execution_receipts_type; the retired conduit
+           --     types stay gone per R1 — the wind seam V151 is the eventual carrier)
+           (SELECT ar.peb_transaction_id::text
+              FROM resolution.execution_admission_receipt ar
+             WHERE ar.attempt_id = a.id::text
+             ORDER BY ar.created_at DESC
+             LIMIT 1) AS peb_admission,
+           (SELECT rec.id::text
+              FROM receipts rec
+             WHERE rec.attempt_id = a.id
+               AND rec.type = 'EXECUTION_COMPLETE'
+             ORDER BY rec.issued_at DESC
+             LIMIT 1) AS conduit_transition
          FROM requests r
          LEFT JOIN LATERAL (
            SELECT * FROM attempts a0 WHERE a0.request_id = r.id ORDER BY a0.created_at DESC LIMIT 1
