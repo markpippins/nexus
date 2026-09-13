@@ -42,6 +42,7 @@ const {
   ATTEMPT_TERMINAL_UPDATE_SQL,
   LEASE_RELEASE_SQL,
   REQUEST_GET_OR_CREATE_SQL,
+  REQUEST_ADOPT_MARKER_SQL,
   RECEIPT_INSERT_SQL,
   ATTEMPT_RECOVER_SQL,
   RECOVERED_LEASE_EXPIRE_SQL,
@@ -304,6 +305,35 @@ describe('lifecycle SQL against live schema (rolled back)', { skip: !mod }, () =
       const marker = extractGitVerificationMarker(after.rows[0].inputs)
       assert.ok(marker, 'marker is extractable from the stored inputs')
       assert.equal(marker.repository_root, REPO_ROOT)
+
+      // Q1 adoption: fill-if-absent from the wind task's input_spec
+      const adopt = await client.query(REQUEST_ADOPT_MARKER_SQL, [
+        requestId,
+        JSON.stringify({ repository_root: '/tmp/adopt-repo', base_ref: 'refs/heads/main', declared_paths: ['src/x.py'] }),
+      ])
+      assert.equal(adopt.rowCount, 0, 'no adoption when the request already carries the marker')
+
+      // fresh request without a marker → adoption fills it
+      const req2 = await client.query(REQUEST_GET_OR_CREATE_SQL, [
+        businessKey + ':adopt', 'adoption probe', 'no marker yet',
+      ])
+      const adopt2 = await client.query(REQUEST_ADOPT_MARKER_SQL, [
+        req2.rows[0].id,
+        JSON.stringify({ repository_root: '/tmp/adopt-repo', base_ref: 'refs/heads/main', declared_paths: ['src/x.py'] }),
+      ])
+      assert.equal(adopt2.rowCount, 1, 'adoption fills an absent marker')
+      assert.equal(adopt2.rows[0].adopted_marker.repository_root, '/tmp/adopt-repo')
+      // inputs merge is preserved (existing keys untouched)
+      const inputs2 = await client.query('SELECT inputs FROM execution.requests WHERE id = $1', [req2.rows[0].id])
+      await client.query("UPDATE execution.requests SET inputs = inputs || '{\"keepme\": \"yes\"}'::jsonb WHERE id = $1", [req2.rows[0].id])
+      const adopt3 = await client.query(REQUEST_ADOPT_MARKER_SQL, [
+        req2.rows[0].id,
+        JSON.stringify({ repository_root: '/tmp/other', base_ref: 'refs/heads/main', declared_paths: [] }),
+      ])
+      assert.equal(adopt3.rowCount, 0, 'second adoption is a no-op (never overwrite adopters)')
+      const inputs3 = await client.query('SELECT inputs FROM execution.requests WHERE id = $1', [req2.rows[0].id])
+      assert.equal(inputs3.rows[0].inputs.keepme, 'yes', 'adoption preserves sibling inputs keys')
+      assert.equal(inputs3.rows[0].inputs.git_verification.repository_root, '/tmp/adopt-repo', 'first adopter wins')
     } finally {
       await client.query('ROLLBACK').catch(() => {})
       client.release()
