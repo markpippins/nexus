@@ -1,7 +1,6 @@
 const NEBULA_BASE = process.env.NEBULA_SRV_URL || 'http://localhost:3101';
 
-export async function fetchNebula(endpoint, query = {}) {
-  const url = new URL(`${NEBULA_BASE}/api${endpoint}`);
+export async function fetchNebula(endpoint, query = {}) {    const url = new URL(`${NEBULA_BASE}/api${endpoint}`);
   Object.entries(query).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== '') {
       url.searchParams.set(key, String(value));

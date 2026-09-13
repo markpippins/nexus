@@ -2866,27 +2866,26 @@ export function createRoutes(pool: Pool): Router {
       );
       if (!harvest) return res.status(404).json({ error: 'Harvest not found' });
 
+      // One row per BLOCK (the real turn source), ordered by block_index.
+      // Each block carries its own provenance.role (user|assistant) — the
+      // unit-level role is the arc owner (always 'user' for user-led arcs)
+      // and must NOT be used for turn styling. Segment boundaries survive as
+      // seg_heading/seg_role context on the first block of each unit.
       const { rows: units } = await pool.query(`
         SELECT
-          (du_elem #>> '{provenance,turn_index}')::int AS turn_index,
-          du_elem #>> '{heading}' AS heading,
-          du_elem #>> '{provenance,role}' AS role,
-          du_elem #>> '{body}' AS body,
-          (du_elem #>> '{provenance,block_count}')::int AS block_count,
-          jsonb_agg(
-            jsonb_build_object(
-              'index', (b #>> '{provenance,block_index}')::int,
-              'type', b #>> '{type}',
-              'content', CASE WHEN b ? 'content' THEN b #>> '{content}' ELSE NULL END,
-              'items', CASE WHEN b ? 'items' THEN b -> 'items' ELSE NULL END
-            ) ORDER BY (b #>> '{provenance,block_index}')::int
-          ) AS blocks
+          (b #>> '{provenance,block_index}')::int AS turn_index,
+          b #>> '{provenance,role}' AS role,
+          b #>> '{type}' AS block_type,
+          CASE WHEN b ? 'content' THEN b #>> '{content}' ELSE NULL END AS content,
+          CASE WHEN b ? 'items' THEN b -> 'items' ELSE NULL END AS items,
+          du_elem #>> '{heading}' AS seg_heading,
+          du_elem #>> '{provenance,role}' AS seg_role,
+          (du_elem #>> '{provenance,segment_index}')::int AS seg_index
         FROM nebula.harvests h,
              LATERAL jsonb_array_elements(h.docklang -> 'discourse_units') AS du_elem,
              LATERAL jsonb_array_elements(du_elem -> 'blocks') AS b
         WHERE h.id = $1 AND h.docklang IS NOT NULL AND h.docklang ? 'discourse_units'
-        GROUP BY turn_index, heading, role, body, block_count
-        ORDER BY turn_index
+        ORDER BY (b #>> '{provenance,block_index}')::int
       `, [id]);
 
       // Count block types

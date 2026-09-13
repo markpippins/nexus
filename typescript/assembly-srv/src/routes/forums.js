@@ -643,6 +643,27 @@ forumsRouter.put('/comments/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// DELETE /threads/:threadId/comments — soft-delete ALL comments on a thread
+// (bulk refresh support: re-emitting per-turn transcript comments after a
+// format change). Same expiration semantics as the single-comment delete.
+forumsRouter.delete('/threads/:threadId/comments', async (req, res, next) => {
+  try {
+    const result = await pool.query(
+      `UPDATE assembly.comments
+       SET expiration_dt = now()
+       WHERE post_id = $1
+         AND (expiration_dt = 'infinity'::timestamptz OR expiration_dt > now())`,
+      [req.params.threadId]
+    );
+    invalidateThreadListCache();
+    res.json({ deleted: result.rowCount, expired: true, thread_id: req.params.threadId });
+  } catch (err) {
+    // invalid uuid in path
+    if (err.code === '22P02') return next(new BadRequestError('Invalid thread id'));
+    next(err);
+  }
+});
+
 forumsRouter.delete('/comments/:id', async (req, res, next) => {
   try {
     const result = await pool.query(

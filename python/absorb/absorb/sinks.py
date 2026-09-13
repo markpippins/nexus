@@ -258,24 +258,43 @@ def _sink_assembly_forum(cfg: dict, ctx: dict, timeout: int) -> dict:
     comments_skipped_existing = 0
     if granularity == "segment":
         # Idempotency: fetch existing comment bodies on this thread and skip
-        # any segment already posted (protects re-runs after watermark loss).
+        # any turn already posted (protects re-runs after watermark loss).
         existing = _get_json(f"{ASSEMBLY_API}/forums/threads/{thread_id}", timeout)
         seen_bodies = {(c.get("body") or "").strip() for c in existing.get("comments", [])}
         units = ctx["docklang"].get("discourse_units") or []
+        # One comment per TURN (block), not per arc: each block carries its own
+        # provenance.role (user|assistant); the unit-level role is the arc owner
+        # (user-led arcs are all 'user') and must not drive turn labels.
         for u in units:
-            header = u.get("heading") or f"Segment {u['provenance']['segment_index']}"
-            body_text = f"**[{header}]({'user arc' if u['provenance']['role']=='user' else 'assistant arc'})**\n\n{u['body']}"
-            if len(body_text) > 100_000:
-                body_text = body_text[:100_000] + "\n\n…(truncated)"
-            if body_text.strip() in seen_bodies:
-                comments_skipped_existing += 1
-                continue
-            _post_json(
-                f"{ASSEMBLY_API}/forums/threads/{thread_id}/comments",
-                {"body": body_text, "postedById": user_id, "role": alias, "model": "absorb"},
-                timeout,
-            )
-            comments_posted += 1
+            seg_idx = (u.get("provenance") or {}).get("segment_index")
+            seg_heading = u.get("heading") or f"Segment {seg_idx}"
+            seg_label = f"seg {seg_idx + 1}: {seg_heading}" if seg_idx is not None else seg_heading
+            for b in u.get("blocks") or []:
+                role = (b.get("provenance") or {}).get("role") or "unknown"
+                role_label = "User" if role == "user" else "Assistant" if role == "assistant" else "Turn"
+                btype = b.get("type") or "paragraph"
+                text = ""
+                if btype == "list" and b.get("items"):
+                    text = "\n".join(str(i) for i in b["items"])
+                elif btype == "separator":
+                    text = "---"
+                elif isinstance(b.get("content"), str):
+                    text = b["content"]
+                if not text.strip():
+                    continue
+                header = f"**[{role_label} · {seg_label}]**"
+                body_text = f"{header}\n\n{text}"
+                if len(body_text) > 100_000:
+                    body_text = body_text[:100_000] + "\n\n…(truncated)"
+                if body_text.strip() in seen_bodies:
+                    comments_skipped_existing += 1
+                    continue
+                _post_json(
+                    f"{ASSEMBLY_API}/forums/threads/{thread_id}/comments",
+                    {"body": body_text, "postedById": user_id, "role": alias, "model": "absorb"},
+                    timeout,
+                )
+                comments_posted += 1
 
     return {"forum_slug": slug, "thread_id": thread_id,
             "comments_posted": comments_posted,
