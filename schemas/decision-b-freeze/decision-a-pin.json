@@ -1,0 +1,31 @@
+{
+  "decision": "B-v2 freeze package, Decision A pin",
+  "decision_a": {
+    "document": "schemas/TYPESPEC_RESOLUTION_MAPPING.md",
+    "commit": "a7d0956a",
+    "sha256": "293a0c8221ff0e715f1b388f87ccbadb3702a71fecb1096b9eac300c5545c366",
+    "prior_commit": "cb46ec55",
+    "prior_sha256": "27053698cb46f9c4be47d906e09e552207ec983784e0696a0e1f326cde3d8bb8"
+  },
+  "generator": {
+    "version": "ontologist-extraction-v1",
+    "methodology": "DOMAIN vs ENVELOPE + reference-edge + collision-preservation (stated in mapping doc methodology, amended a7d0956a)",
+    "input_manifest": "decision-b-freeze/decision-a-input-manifest.txt",
+    "input_manifest_sha256": "58e6a1d6c24d7725afaba25fa5a4258def3d1d401908dfd78d14ce01dc5c8ddb",
+    "input_counts": {
+      "models_tsp_files": 56,
+      "models": 485,
+      "service_namespaces": 37
+    },
+    "excluded_post_boundary": [
+      "typespec/v1/aegis-srv/** (entered 09-05)",
+      "moleculer/nexus-broker/broker-gateway models.tsp deltas (+180 lines post-09-03)"
+    ],
+    "exclusion_rule": "deferred to later amendment bump per Amendment 3 protocol"
+  },
+  "epistemologist_extraction": {
+    "file": "audit/epistemologist/epistemologist-extraction-rebuilding-the-knowledge-graph.json",
+    "extraction_id": "ad978f44-35ff-400b-a198-5f4447ccbfad",
+    "role": "independent concept/relationship/evidence extraction grounding the rebuild claims; cited as supporting evidence, not authority"
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "slice": "deny_contract_promotion",
+  "binding_authority": {
+    "wave": "W8.08",
+    "wave_ref": "6a80b2c4",
+    "gate": "G1",
+    "gate_ref": "986ec482",
+    "decision": "W1.10",
+    "decision_ref": "05d0fe54",
+    "matrix": "ec3b00ed"
+  },
+  "request_envelope": {
+    "canonical_asset_id": "asset:nexus:test:deny-001",
+    "source_system": "test-harness",
+    "source_record_id": "deny-req-001",
+    "logical_instance_id": "contract-promotion:deny-001",
+    "projection_generation": "deny-slice-v1",
+    "valid_from": "2026-09-13T00:00:00Z",
+    "recorded_at": "2026-09-13T16:14:52.547660+00:00",
+    "abstraction_level": "L3",
+    "level_status": "assigned",
+    "visibility_scope": "all",
+    "assertion_status": "proposal",
+    "source_authority": "resolution",
+    "ontology_type": "ContractPromotionRequest",
+    "payload": {
+      "contract": "deny_contract_promotion",
+      "requested_version": "v999-unknown",
+      "authority_grant": null
+    }
+  },
+  "read_set": {
+    "available": true,
+    "record_type_count": 9,
+    "record_types": [
+      "analysis",
+      "architecture_note",
+      "assessment",
+      "decision",
+      "engineering_log",
+      "inspection",
+      "prompt",
+      "report",
+      "response"
+    ],
+    "latest_snapshot_version": 227,
+    "latest_snapshot_at": "2026-09-13T07:12:25.492Z"
+  },
+  "evaluation": {
+    "disposition": "Refused",
+    "evidence": [
+      "requested contract version v999-unknown is not a known binding authority version",
+      "no authority grant present; PEB admission requires a grant reference",
+      "read-set pinned at keychains snapshot v227 (9 record types); refusal evaluated against this read-set"
+    ],
+    "mutated_authority": false,
+    "mutated_lifecycle": false
+  },
+  "proof": "explicit refusal with evidenced reasons; no silent drop; no authority mutation",
+  "fingerprint": "845033c09f81743f5902de1aee4645f0639edb79ce2de1eb2aded47309467526"
+}
