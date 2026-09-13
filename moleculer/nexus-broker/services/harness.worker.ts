@@ -306,12 +306,29 @@ export const RECOVERED_LEASE_EXPIRE_SQL = `UPDATE execution.leases
    SET status = 'EXPIRED', released_at = NOW()
    WHERE request_id = $1 AND status = 'ACTIVE' AND expires_at < NOW()`;
 
-// Advance the request's status at terminal — guarded so a DRAFT legacy row
-// never regresses out of a terminal state it already reached.
+// Request-status advance at terminal — guarded so a DRAFT legacy row never
+// regresses out of a terminal state it already reached.
 export const REQUEST_STATUS_UPDATE_SQL = `UPDATE execution.requests
    SET status = $2, updated_at = NOW()
    WHERE id = $1
      AND status IN ('DRAFT', 'COMPILED', 'VALIDATED', 'ADMITTED', 'READY')`;
+
+// Marker adoption (ac38fa9b Q1): a wind task declares git_verification in its
+// input_spec; at request creation the declaration is adopted into the
+// request's canonical `inputs` (fill-if-absent). Existing adopters are never
+// overwritten; adopters declaring the marker themselves win over the wind
+// task's input_spec (their declaration is more specific).
+export const REQUEST_ADOPT_MARKER_SQL = `UPDATE execution.requests
+   SET inputs = jsonb_set(
+         inputs,
+         '{git_verification}',
+         $2::jsonb,
+         true
+       ),
+       updated_at = NOW()
+   WHERE id = $1
+     AND NOT (inputs ? 'git_verification')
+   RETURNING inputs->'git_verification' AS adopted_marker`;
 
 // Lease TTL for harness-run attempts (seconds). The watchdog already bounds
 // runaway sessions at 15 min; the lease TTL is the durable bound for the
@@ -823,6 +840,7 @@ export default class HarnessWorker extends Service {
     objective: string;
     executorId: string;
     markerOverride: GitVerificationMarker | null;
+    windInputSpec?: unknown;
   }): Promise<AttemptContext> {
     const pool = await this.getPool();
     const client = await pool.connect();
@@ -835,6 +853,24 @@ export default class HarnessWorker extends Service {
         params.objective,
       ]);
       const requestId: string = req.rows[0].id;
+
+      // Q1 adoption (ac38fa9b): a wind task may declare git_verification in
+      // its input_spec; on first sight the declaration is adopted into the
+      // request's canonical inputs (fill-if-absent — existing adopters are
+      // never overwritten). This is what makes the ruled contract actually
+      // reachable from real work orders.
+      const windMarker = params.markerOverride ?? extractGitVerificationMarker(params.windInputSpec);
+      let adoptedMarker: GitVerificationMarker | null = null;
+      if (windMarker) {
+        const ad = await client.query(REQUEST_ADOPT_MARKER_SQL, [
+          requestId,
+          JSON.stringify(windMarker),
+        ]);
+        if ((ad.rowCount ?? 0) > 0) {
+          adoptedMarker = extractGitVerificationMarker({ git_verification: ad.rows[0].adopted_marker });
+          this.logger.info(`[attempt] adopted git_verification marker from wind task input_spec (request ${params.businessKey})`);
+        }
+      }
 
       // Recover previous orphans on THIS request (their lease is expired or
       // released — unreachable by any active run). A still-ACTIVE unexpired
@@ -867,7 +903,10 @@ export default class HarnessWorker extends Service {
         attemptId,
         executorId: params.executorId,
         businessKey: params.businessKey,
-        marker: params.markerOverride ?? extractGitVerificationMarker(req.rows[0].inputs),
+        marker:
+          params.markerOverride ??
+          adoptedMarker ??
+          extractGitVerificationMarker(req.rows[0].inputs),
       };
     } catch (err) {
       await client.query("ROLLBACK").catch(() => {});
@@ -1142,6 +1181,7 @@ export default class HarnessWorker extends Service {
             objective: resolved.task.wind_task_description || "",
             executorId: effectiveAgent,
             markerOverride: null,
+            windInputSpec: resolved.task.input_spec,
           });
         } catch (err: any) {
           this.logger.warn(`[attempt] ensure failed for wind_task=${wind_task_id} (continuing without ledger): ${err?.message || err}`);

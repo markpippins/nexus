@@ -795,8 +795,16 @@ test('receipts list filters by type identically to legacy', async () => {
   const theirs = await jsonOr404(`${LEGACY_BASE}/api/execution/receipts?limit=5`)
   if (theirs.__status === 404) return
   const q = theirs.items.length > 0 && theirs.items[0].type ? `&type=${encodeURIComponent(theirs.items[0].type)}` : ''
+  // Compare filtered-vs-filtered on both surfaces. (The previous form compared
+  // the broker's FILTERED count against legacy's UNFILTERED count — it only
+  // passed while the head type had >=5 rows, which the first live
+  // EXECUTION_COMPLETE receipts exposed. Data-sensitivity, not parity drift.)
+  const theirsFiltered = await jsonOr404(`${LEGACY_BASE}/api/execution/receipts?limit=5${q}`)
   const ours = await jsonOr404(`${BASE}/workers/execution/receipts?limit=5${q}`)
-  assert.equal(ours.items.length, theirs.items.length)
+  assert.equal(ours.items.length, theirsFiltered.items.length)
+  if (theirsFiltered.items.length > 0 && ours.items.length > 0) {
+    assert.deepEqual(Object.keys(ours.items[0]).sort(), Object.keys(theirsFiltered.items[0]).sort())
+  }
 })
 
 test('malformed UUID returns the legacy 400, not a 500', async () => {
