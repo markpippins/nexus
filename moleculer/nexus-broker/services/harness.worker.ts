@@ -41,6 +41,50 @@ function decideConfigAdmission(bundles: any[]): { valid: boolean; outcome?: stri
   return { valid: true };
 }
 
+/**
+ * D-2026-08-16-009 (R6): governance-side role snapshot — port of harness-srv
+ * admission.ts. The DB layer resolves a role to one of four states.
+ */
+type RoleGovernanceInput =
+  | { kind: "current"; owns_domains: string[] | null }
+  | { kind: "expired" }
+  | { kind: "runtime_persona" }
+  | { kind: "missing" };
+
+type RoleGovernanceAdmission =
+  | { valid: true }
+  | { valid: false; outcome: string; message: string };
+
+function decideRoleGovernance(input: RoleGovernanceInput): RoleGovernanceAdmission {
+  if (input.kind === "missing") {
+    return {
+      valid: false,
+      outcome: "ROLE_MISSING",
+      message: "role has no canonical key — not a governance role or runtime persona",
+    };
+  }
+  if (input.kind === "expired") {
+    return {
+      valid: false,
+      outcome: "ROLE_EXPIRED",
+      message: "role validity window expired or not yet active",
+    };
+  }
+  if (input.kind === "runtime_persona") {
+    return { valid: true };
+  }
+  if (!input.owns_domains || input.owns_domains.length === 0) {
+    return {
+      valid: false,
+      outcome: "CAPABILITY_INSUFFICIENT",
+      message: "role has no owned capabilities (owns_domains empty)",
+    };
+  }
+  return { valid: true };
+}
+
+type LeaseDerivedState = "NEVER_LEASED" | "ACTIVE" | "REVOKED" | "EXPIRED";
+
 const OPENCODE_PROVIDER_BY_TACKLE: Record<string, string> = {
   "prov-1783906359513": "nvidia",
   "prov-1782144397043": "openrouter",
@@ -502,6 +546,104 @@ export default class HarnessWorker extends Service {
     return r.rows[0]?.event_id ?? null;
   }
 
+  /**
+   * D-2026-08-16-009 (R6): resolve a role to its governance snapshot and
+   * decide capability-proof admission. Port of harness-srv checkRoleGovernance.
+   */
+  private async checkRoleGovernance(
+    pool: Pool,
+    role: string,
+  ): Promise<RoleGovernanceAdmission> {
+    const current = await pool.query(
+      `SELECT owns_domains FROM nebula.roles WHERE name = $1`,
+      [role],
+    );
+    if (current.rows.length > 0) {
+      return decideRoleGovernance({
+        kind: "current",
+        owns_domains: current.rows[0].owns_domains,
+      });
+    }
+    const history = await pool.query(
+      `SELECT 1 FROM nebula.roles_history WHERE name = $1 LIMIT 1`,
+      [role],
+    );
+    if (history.rows.length > 0) {
+      return decideRoleGovernance({ kind: "expired" });
+    }
+    const persona = await pool.query(
+      `SELECT 1 FROM tackle.roles WHERE name = $1 LIMIT 1`,
+      [role],
+    );
+    return decideRoleGovernance(
+      persona.rows.length > 0 ? { kind: "runtime_persona" } : { kind: "missing" },
+    );
+  }
+
+  /**
+   * D-2026-08-16-008 (R1): derived lease state for a role from
+   * tackle.role_leases — NEVER_LEASED / ACTIVE / REVOKED / EXPIRED.
+   * Port of harness-srv checkRoleLeaseState.
+   */
+  private async checkRoleLeaseState(pool: Pool, role: string): Promise<LeaseDerivedState> {
+    const result = await pool.query(
+      `SELECT status, released_at, window_end, expires_at
+       FROM tackle.role_leases
+       WHERE role = $1
+       ORDER BY created_at DESC LIMIT 1`,
+      [role],
+    );
+    if (result.rows.length === 0) return "NEVER_LEASED";
+    const last = result.rows[0];
+    if (last.status === "ACTIVE") {
+      const pastWindow = new Date(last.expires_at || last.window_end) < new Date();
+      return pastWindow ? "EXPIRED" : "ACTIVE";
+    }
+    if (last.status === "RELEASED" && last.released_at) return "REVOKED";
+    return "EXPIRED";
+  }
+
+  /**
+   * The legacy three-gate admission (harness-srv checkConfigAdmission):
+   * (1) governance capability-proof, (2) runtime config bundle,
+   * (3) lease-derived revocation (D-2026-08-16-008 R2). The worker
+   * previously implemented only gate 2 — the parity probe before the
+   * harness repoint (PR #226) caught legacy denying on gate 3 while the
+   * broker admitted.
+   */
+  private async checkAdmission(
+    pool: Pool,
+    role: string,
+  ): Promise<{ valid: boolean; outcome?: string; message?: string }> {
+    const governance = await this.checkRoleGovernance(pool, role);
+    if (!governance.valid) return governance;
+
+    const result = await pool.query(
+      `SELECT is_active,
+              (valid_from IS NOT NULL AND valid_from > NOW()) AS not_yet_valid,
+              (valid_to IS NOT NULL AND valid_to <= NOW()) AS expired
+       FROM tackle.config_bundle
+       WHERE role = $1`,
+      [role],
+    );
+    const config = decideConfigAdmission(result.rows as any[]);
+    if (!config.valid) return config;
+
+    const leaseState = await this.checkRoleLeaseState(pool, role);
+    if (leaseState === "REVOKED") {
+      return {
+        valid: false,
+        outcome: "ROLE_REVOKED",
+        message: "role lease revoked — issue a new lease to resume work",
+      };
+    }
+    if (leaseState === "NEVER_LEASED") {
+      // Advisory only (warn-and-proceed), matching the legacy surface.
+      this.logger.warn(`[admission] role ${role} is NEVER_LEASED — advisory (warn-and-proceed)`);
+    }
+    return { valid: true };
+  }
+
   private async run(ctx: Context<any>): Promise<any> {
     const jobId = uuidv4();
     const startTime = Date.now();
@@ -532,16 +674,10 @@ export default class HarnessWorker extends Service {
         };
       }
 
-      // Admission gate (T20)
-      const admissionRes = await pool.query(
-        `SELECT is_active,
-                (valid_from IS NOT NULL AND valid_from > NOW()) AS not_yet_valid,
-                (valid_to IS NOT NULL AND valid_to <= NOW()) AS expired
-         FROM tackle.config_bundle
-         WHERE role = $1`,
-        [resolved.role],
-      );
-      const configAdmission = decideConfigAdmission(admissionRes.rows as any[]);
+      // Admission gate (T20) — legacy three-gate admission, ported for
+      // parity (see checkAdmission; the lease-revocation gate and the
+      // governance capability-proof were missing before PR #226).
+      const configAdmission = await this.checkAdmission(pool, resolved.role);
       if (!configAdmission.valid) {
         await this.emitEvent({
           event_type: "admission.denied",
