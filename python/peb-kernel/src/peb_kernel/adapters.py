@@ -92,7 +92,6 @@ class ResolutionExecutionClaimAdapter:
 
     def __init__(self, dsn: str | None = None) -> None:
         self.dsn = dsn
-
     def _connect(self):
         import os
 
@@ -161,6 +160,12 @@ class ResolutionExecutionClaimAdapter:
                     ),
                 )
                 row = cursor.fetchone()
+                # Persist the admission receipt: psycopg2 defaults to a
+                # transaction, and close() without commit ROLLS BACK the
+                # INSERT inside admit_verified_execution_claim — the receipt
+                # row silently vanished (ruling 6677c394: R6 unreachable by
+                # construction without this commit).
+                connection.commit()
             finally:
                 connection.close()
         except Exception:

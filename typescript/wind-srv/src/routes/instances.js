@@ -6,14 +6,33 @@ export const instancesRouter = Router();
 
 // ── Harness integration ─────────────────────────────────────────────
 
-const HARNESS_URL = process.env.HARNESS_URL || 'http://127.0.0.1:3420';
+// M2 repoint: default execution surface is the broker gateway's worker.harness
+// port (POST /api/workers/harness/run) — same request/response contract as the
+// legacy direct call (wind_task_id in, job_id/role/exit_code/stdout/stderr/
+// duration_ms/outcome(s) out; admission denials come back as 200 with an
+// `error` field on both surfaces).
+// Rollback: set HARNESS_SURFACE=legacy to call harness-srv directly again
+// (base :3420, path /run). An explicit HARNESS_URL always wins as the base
+// URL for the selected surface.
+const HARNESS_SURFACE = (process.env.HARNESS_SURFACE || 'broker').toLowerCase();
+const HARNESS_URL = process.env.HARNESS_URL ||
+  (HARNESS_SURFACE === 'legacy' ? 'http://127.0.0.1:3420' : 'http://127.0.0.1:4080');
+const HARNESS_RUN_PATH = HARNESS_SURFACE === 'legacy' ? '/run' : '/api/workers/harness/run';
+
+/** Which execution surface this process is wired to (ops introspection + tests). */
+export const harnessEndpoint = {
+  surface: HARNESS_SURFACE,
+  baseUrl: HARNESS_URL,
+  runPath: HARNESS_RUN_PATH,
+};
 
 /**
- * Call harness-srv to execute a task.
- * Returns the harness result (exit_code, stdout, stderr, role, task).
+ * Call the harness execution surface (broker worker.harness by default) to
+ * execute a task. Returns the harness result (exit_code, stdout, stderr,
+ * role, task).
  */
 async function callHarness(windTaskId, overrides) {
-  const resp = await fetch(`${HARNESS_URL}/run`, {
+  const resp = await fetch(`${HARNESS_URL}${HARNESS_RUN_PATH}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ wind_task_id: windTaskId, ...overrides }),

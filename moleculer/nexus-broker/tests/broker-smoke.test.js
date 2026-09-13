@@ -833,21 +833,108 @@ test('witnessed-runs requires both query params (legacy 400 parity)', async () =
   assert.match(body.error || body.message || '', /workflow_instance_id and node_id are required/)
 })
 
-test('witnessed-runs mirrors the legacy surface exactly — including its schema failure', async () => {
-  // KNOWN SCHEMA GAP (flagged to the architect, M2): the witnessed-run family
-  // queries execution.requests.metadata, which does not exist in the canonical
-  // schema (ci-bootstrap has no such column, and the receipts type enum lacks
-  // PEB_ADMISSION/CONDUIT_TRANSITION). The legacy service 500s on this route
-  // TODAY. Parity here means bug-compatible: identical status AND identical
-  // error body — the failure is mirrored, not papered over. If the schema is
-  // fixed forward, this test keeps passing (both sides succeed identically).
-  const q = '?workflow_instance_id=broker-smoke-none&node_id=broker-smoke-none'
-  const ours = await fetch(`${BASE}/workers/execution/witnessed-runs${q}`)
-  const theirs = await fetch(`${LEGACY_BASE}/api/execution/witnessed-runs${q}`)
-  assert.equal(ours.status, theirs.status)
-  const oursBody = await ours.json()
-  const theirsBody = await theirs.json()
-  assert.equal(oursBody.error, theirsBody.error)
+test('witnessed-runs parity — shared 200 with identical projection JSON (ruling ffa4ffc5)', async () => {
+  // v3 (ruling ffa4ffc5): the phantom metadata legs are gone — the family no
+  // longer 500s. Parity now means: with a seeded business_key match, BOTH
+  // surfaces return 200 and byte-identical projection JSON (W3.05 AC4), with
+  // assessment/evidence sourced from resolution.* and envelope/manifest/law/
+  // replay rendering null. The 404 path (no such business_key) is also
+  // asserted for parity.
+  const key = `witnessed-v3-smoke-${randomUUID()}`
+  const pool = new Pool({
+    host: process.env.PG_HOST,
+    port: Number(process.env.PG_PORT || 5432),
+    user: process.env.PG_USER,
+    password: process.env.PG_PASSWORD,
+    database: process.env.PG_DB_NAME || 'nexus',
+  })
+  const uuid = () => randomUUID()
+  const attemptId = uuid()
+  const evidenceId = uuid()
+  const claimId = uuid()
+  const receiptId = uuid()
+  const leaseId = uuid()
+  let requestId = null
+  try {
+    await pool.query('BEGIN')
+    await pool.query("SET LOCAL search_path TO execution, resolution, public")
+    const req = await pool.query(
+      "INSERT INTO execution.requests (business_key, status) VALUES ($1, 'COMPILED') RETURNING id",
+      [key],
+    )
+    requestId = req.rows[0].id
+    await pool.query(
+      "INSERT INTO execution.leases (id, request_id, executor_id, status, ttl_seconds, acquired_at, expires_at) VALUES ($1, $2, 'smoke', 'ACTIVE', 3600, now(), now() + interval '1 hour')",
+      [leaseId, requestId],
+    )
+    await pool.query(
+      "INSERT INTO execution.attempts (id, request_id, lease_id, executor_id, status) VALUES ($1, $2, $3, 'smoke', 'RUNNING')",
+      [attemptId, requestId, leaseId],
+    )
+    // resolution.evidence is append-only (immutable trigger) with a
+    // content-unique index (source_system, evidence_kind, source_hash):
+    // seed idempotently by CONTENT — reuse the persisted row across runs.
+    let seededEvidenceId = evidenceId
+    const ev = await pool.query(
+      "SELECT id FROM resolution.execution_evidence WHERE source_system = 'git-verifier' AND evidence_kind = 'git_commit' AND source_hash = 'smoke-hash'",
+    )
+    if (ev.rows.length > 0) {
+      seededEvidenceId = ev.rows[0].id
+    } else {
+      await pool.query(
+        "INSERT INTO resolution.execution_evidence (id, evidence_key, evidence_kind, source_system, source_hash, captured_at, captured_by) VALUES ($1, $2, 'git_commit', 'git-verifier', 'smoke-hash', now(), 'broker-smoke')",
+        [evidenceId, `witnessed-v3-smoke:${key}`],
+      )
+    }
+    await pool.query(
+      "INSERT INTO resolution.execution_claim (id, claim_key, subject_kind, predicate, disposition, declared_by, attempt_id) VALUES ($1, $2, 'execution_attempt', 'witnessed-run-smoke', 'Proposed', 'broker-smoke', $3)",
+      [claimId, `witnessed-v3-smoke:${key}`, attemptId],
+    )
+    await pool.query(
+      "INSERT INTO resolution.execution_admission_receipt (id, peb_transaction_id, claim_id, evidence_id, evidence_kind, source_system, policy_version_hash, lease_id, grant_id, attempt_id, admitted, reason) VALUES ($1, $2, $3, $4, 'git_commit', 'git-verifier', 'smoke-policy', $5, 'smoke-grant', $6, true, 'smoke fixture: admitted')",
+      [receiptId, uuid(), claimId, seededEvidenceId, leaseId, attemptId],
+    )
+    await pool.query('COMMIT')
+
+    const q = `?workflow_instance_id=${encodeURIComponent(key)}&node_id=smoke`
+    const ours = await fetch(`${BASE}/workers/execution/witnessed-runs${q}`)
+    const theirs = await fetch(`${LEGACY_BASE}/api/execution/witnessed-runs${q}`)
+    assert.equal(ours.status, 200, `broker witnessed-runs should 200, got ${ours.status}`)
+    assert.equal(theirs.status, 200, `legacy witnessed-runs should 200, got ${theirs.status}`)
+    const oursBody = await ours.json()
+    const theirsBody = await theirs.json()
+    assert.deepEqual(oursBody, theirsBody)
+    const proj = oursBody.projection
+    assert.equal(proj.receipts.pebAdmission != null, true, 'peb admission correlated')
+    assert.equal(proj.assessment.disposition, true, 'assessment from admission receipt')
+    assert.equal(proj.assessment.status, 'admitted', 'assessment status derived')
+    assert.equal(proj.evidence.ids.length > 0, true, 'evidence id from resolution.execution_evidence')
+    assert.equal(proj.envelope.id, null, 'envelope renders null (v3)')
+    assert.equal(proj.manifest.id, null, 'manifest renders null (v3)')
+    assert.equal(proj.status, 'missing_lineage', 'status honest: envelope/manifest not produced yet')
+
+    const qMiss = `?workflow_instance_id=witnessed-v3-smoke-absent-${randomUUID()}&node_id=smoke`
+    const oursMiss = await fetch(`${BASE}/workers/execution/witnessed-runs${qMiss}`)
+    const theirsMiss = await fetch(`${LEGACY_BASE}/api/execution/witnessed-runs${qMiss}`)
+    assert.equal(oursMiss.status, 404)
+    assert.equal(theirsMiss.status, 404)
+  } finally {
+    // Teardown in FK-safe order (claim → receipt → attempt → lease → request).
+    // The immutable evidence row persists by design; inert without its receipt.
+    try {
+      await pool.query('BEGIN')
+      await pool.query("SET LOCAL search_path TO execution, resolution, public")
+      await pool.query('DELETE FROM resolution.execution_admission_receipt WHERE id = $1', [receiptId])
+      await pool.query('DELETE FROM resolution.execution_claim WHERE id = $1', [claimId])
+      await pool.query('DELETE FROM execution.attempts WHERE id = $1', [attemptId])
+      await pool.query('DELETE FROM execution.leases WHERE id = $1', [leaseId])
+      if (requestId) await pool.query('DELETE FROM execution.requests WHERE id = $1', [requestId])
+      await pool.query('COMMIT')
+    } catch {
+      await pool.query('ROLLBACK').catch(() => {})
+    }
+    await pool.end().catch(() => {})
+  }
 })
 
 test('governance metrics snapshot has the registry shape', async () => {

@@ -66,6 +66,15 @@ class AdmissionPath(str, Enum):
             "peb_extension_proposal",
         }:
             return cls.MUTATE
+        # Git-verifier execution-claim admission (ruling 6677c394 R2): the
+        # producer path that correlates a verified execution attempt with a
+        # PEB transaction. The engine routes any transaction carrying an
+        # execution_claim envelope through admit_verified_execution_claim;
+        # this mapping makes the dedicated producer toolName a known path so
+        # the validator accepts it and admission defaults to ALLOWED (the
+        # resolution-side gate still decides admitted/rejected independently).
+        if tool_name == "peb_admit_git_execution_claim":
+            return cls.MUTATE
         if tool_name == "peb_report_violation":
             return cls.REPORT_VIOLATION
         return cls.UNKNOWN
