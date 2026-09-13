@@ -38,7 +38,11 @@ export default class ApiService extends Service {
             whitelist: ["worker.execution.**"],
 
             aliases: {
-              "GET /": "worker.execution.health",
+              "GET /": "worker.execution.healthSimple",
+              // Legacy GET /api/execution/health — the rich per-status probe
+              // (scanned_at + per-status counts). Distinct from the simple
+              // server health aliased at "/".
+              "GET /health": "worker.execution.richHealth",
               // Legacy mounts the router at /api/execution; the worker
               // surface lives here. All 18 legacy routes map 1:1.
               "GET /requests": "worker.execution.listRequests",

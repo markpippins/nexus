@@ -98,6 +98,11 @@ namespace org.nexus.nexusbroker {
   @doc("Execution worker health: DB connectivity + schema counts (read-only observability).")
   op executionHealth(): WorkerHealth;
 
+  @route("/api/workers/execution/health")
+  @get
+  @doc("Legacy GET /api/execution/health: scanned_at + per-status request counts (READY/COMPLETED), stale active leases, running attempts. Missing from the initial catalog; added in post-deploy live parity (2026-09-12).")
+  op executionRichHealth(): Record<unknown>;
+
   // ── Execution read catalog (M2): the full legacy execution-srv surface
   // (/api/execution/*), mapped 1:1 under /api/workers/execution. Read-only:
   // SELECTs only, no write path. Payloads mirror the legacy routes' JSON
