@@ -23,6 +23,13 @@ import { Pool } from "pg";
  * admission receipts (via the git-claim producer's resolution.* rows) and
  * native EXECUTION_COMPLETE receipts. Projection version bumped 1→2.
  *
+ * v3 (ruling ffa4ffc5): the phantom metadata legs are gone — identity matches
+ * business_key (the only real workflow identity column), assessment/evidence
+ * read the attempt's admission receipt + its resolution.execution_evidence
+ * row, and envelope/manifest/law/replay render null until the producer
+ * contract (6677c394 R2) backs them. Standing rule: no query references a
+ * column absent from canonical DDL.
+ *
  * Metrics note: the registry below is worker-local (per process). The legacy
  * service's registry lives in the execution-srv process; counters are
  * therefore not shared across surfaces — same as the search limiter's
@@ -113,10 +120,53 @@ function classifyWitnessedRunStatus(input: {
   return "complete";
 }
 
+// ── v3 assessment/evidence assembly (ruling ffa4ffc5) ─────────────────
+// Identical port of execution-srv routes.ts helpers — byte-parity (W3.05
+// AC4). Assessment derives from the admission receipt: disposition is
+// ar.admitted verbatim (t/f); status renders 'admitted'/'rejected' (never
+// 'refused' — that classifier state is reserved for governance decisions);
+// reason/source/policy hash carry through. No receipt → all null.
+function buildAssessmentFromRow(row: Record<string, unknown>): Record<string, unknown> {
+  const admitted = row.assessment_admitted;
+  if (typeof admitted !== "boolean") {
+    return { disposition: null, status: null, reason: null, sourceSystem: null, policyVersionHash: null };
+  }
+  return {
+    disposition: admitted,
+    status: admitted ? "admitted" : "rejected",
+    reason: (row.assessment_reason as string | null) ?? null,
+    sourceSystem: (row.assessment_source_system as string | null) ?? null,
+    policyVersionHash: (row.assessment_policy_hash as string | null) ?? null,
+  };
+}
+
+// Evidence identity (id + source_hash fingerprint) from resolution.
+// execution_evidence via the receipt's evidence_id; the verification payload
+// rides the provenance surface only (/witnessed-runs), never the governed
+// projection.
+interface WitnessedEvidence {
+  ids: string[];
+  fingerprint: string | null;
+  payload: Record<string, unknown> | null;
+}
+
+function buildEvidenceFromRow(row: Record<string, unknown>): WitnessedEvidence {
+  const id = row.evidence_id;
+  if (typeof id !== "string" || id.length === 0) return { ids: [], fingerprint: null, payload: null };
+  return {
+    ids: [id],
+    fingerprint: (row.evidence_fingerprint as string | null) ?? null,
+    payload: (row.evidence_payload as Record<string, unknown> | null) ?? null,
+  };
+}
+
 // W3.08 — bump only on breaking shape changes to the projection payload.
-// v2 (ruling 6677c394 R3): receipt slots re-pointed to live sources — must
-// match execution-srv routes.ts exactly (W3.05 AC4 byte-equality).
-const WITNESSED_RUN_PROJECTION_VERSION = 2;
+// v3 (ruling ffa4ffc5): phantom metadata legs removed — identity matches
+// business_key, evidence/assessment re-pointed at resolution.*, and
+// envelope/manifest/law/replay render null until the producer contract backs
+// them. v2 (6677c394 R3) re-pointed the receipt slots; that mapping stays.
+// Must match execution-srv routes.ts exactly (W3.05 AC4 byte-equality).
+const WITNESSED_RUN_PROJECTION_VERSION = 3;
 
 interface WitnessedRunParams {
   workflow_instance_id: string;
@@ -200,28 +250,32 @@ export default class WitnessedRunsWorker extends Service {
     const { rows } = await pool.query(
       `SELECT
          r.id AS request_id,
-         COALESCE(r.metadata->>'workflow_instance_id', r.business_key) AS workflow_instance_id,
-         COALESCE(a.metadata->>'node_id', r.metadata->>'node_id') AS node_id,
-         r.metadata->'envelope' AS envelope,
-         r.metadata->'manifest' AS manifest,
-         r.metadata->'law' AS law,
-         r.metadata->'assessment' AS assessment,
-         r.metadata->'evidence' AS evidence,
-         r.metadata->'replay' AS replay,
+         r.business_key AS workflow_instance_id,
+         -- v3 (ruling ffa4ffc5): the metadata legs are gone — requests/attempts
+         -- never had metadata columns (canonical DDL and the live DB agree; the
+         -- family 500'd at plan time). Standing rule: no query references a
+         -- column absent from canonical DDL. envelope/manifest/law/replay
+         -- render null until the producer contract (6677c394 R2) backs them.
+         NULL::jsonb AS envelope,
+         NULL::jsonb AS manifest,
+         NULL::jsonb AS law,
+         ar.admitted AS assessment_admitted,
+         ar.reason AS assessment_reason,
+         ar.source_system AS assessment_source_system,
+         ar.policy_version_hash AS assessment_policy_hash,
+         ev.id::text AS evidence_id,
+         ev.source_hash AS evidence_fingerprint,
+         ev.payload AS evidence_payload,
          ${withProjection ? "r.updated_at AS updated_at," : ""}
-         -- RE-POINTED per ruling 6677c394 R2/R3 (supersedes the e62992f0 R1 tombstone):
-         -- the join key now exists — the git-claim producer (python/nexus_core/wrp/
-         -- git_claim_producer.py) writes resolution.execution_admission_receipt rows
-         -- keyed on real execution.attempts UUIDs (first live rows verified in PR #225).
-         -- Two-leg correlation from the latest attempt:
+         -- Receipt correlation legs kept per ffa4ffc5 (mapping from 6677c394 R2/R3):
          --   peb_admission: the attempt's PEB admission receipt transaction id
          --   conduit_transition: the attempt's latest native EXECUTION_COMPLETE receipt
          --     (a live lane under chk_execution_receipts_type; the retired conduit
          --     types stay gone per R1 — the wind seam V151 is the eventual carrier)
-         (SELECT ar.peb_transaction_id::text
-            FROM resolution.execution_admission_receipt ar
-           WHERE ar.attempt_id = a.id::text
-           ORDER BY ar.created_at DESC
+         (SELECT ar2.peb_transaction_id::text
+            FROM resolution.execution_admission_receipt ar2
+           WHERE ar2.attempt_id = a.id::text
+           ORDER BY ar2.created_at DESC
            LIMIT 1) AS peb_admission,
          (SELECT rec.id::text
             FROM receipts rec
@@ -233,10 +287,20 @@ export default class WitnessedRunsWorker extends Service {
        LEFT JOIN LATERAL (
          SELECT * FROM attempts a0 WHERE a0.request_id = r.id ORDER BY a0.created_at DESC LIMIT 1
        ) a ON true
-       WHERE COALESCE(r.metadata->>'workflow_instance_id', r.business_key) = $1
-         AND COALESCE(a.metadata->>'node_id', r.metadata->>'node_id') = $2
+       -- v3 (ruling ffa4ffc5): assessment + evidence come from the attempt's
+       -- latest admission receipt joined to its immutable evidence row.
+       LEFT JOIN LATERAL (
+         SELECT ar0.* FROM resolution.execution_admission_receipt ar0
+         WHERE ar0.attempt_id = a.id::text
+         ORDER BY ar0.created_at DESC
+         LIMIT 1
+       ) ar ON true
+       LEFT JOIN resolution.execution_evidence ev ON ev.id = ar.evidence_id
+       WHERE r.business_key = $1
        LIMIT 1`,
-      [workflowInstanceId, nodeId],
+      // v3 (ffa4ffc5): node_id is output-echo only — it is no longer a query
+      // parameter (the only SQL parameter is the business_key match).
+      [workflowInstanceId],
     );
     return rows[0] ?? null;
   }
@@ -250,14 +314,16 @@ export default class WitnessedRunsWorker extends Service {
     const row = await this.fetchRunRow(params, false);
     if (!row) throw new Errors.MoleculerError("witnessed run not found", 404, "NOT_FOUND");
 
-    const envelope = row.envelope ?? {};
-    const manifest = row.manifest ?? {};
-    const law = row.law ?? {};
-    const assessment = row.assessment ?? {};
-    const evidence = row.evidence ?? {};
-    const replay = row.replay ?? {};
+    // v3 (ffa4ffc5): envelope/manifest/law/replay are null at the source —
+    // `{}` keeps the response shape stable with every field rendering null.
+    const envelope = {} as Record<string, unknown>;
+    const manifest = {} as Record<string, unknown>;
+    const law = {} as Record<string, unknown>;
+    const assessment = buildAssessmentFromRow(row);
+    const evidence = buildEvidenceFromRow(row);
+    const replay = {} as Record<string, unknown>;
     const status = classifyWitnessedRunStatus({
-      envelope, manifest, assessment, replay, row,
+      envelope, manifest, assessment, replay, row: { ...row, evidence } as Record<string, unknown>,
     });
     governanceMetrics.inc(METRIC_WITNESSED_RUN_STATUS, { status });
     for (const rid of [row.peb_admission, row.conduit_transition]) {
@@ -284,13 +350,9 @@ export default class WitnessedRunsWorker extends Service {
           doctrineIds: law.doctrineIds ?? law.doctrine_ids ?? [],
           evaluatorId: law.evaluatorId ?? law.evaluator_id ?? null,
         },
-        assessment: {
-          disposition: assessment.disposition ?? null,
-          status: assessment.status ?? null,
-          reason: assessment.reason ?? null,
-        },
+        assessment,
         receipts: { pebAdmission: row.peb_admission, conduitTransition: row.conduit_transition },
-        evidence: { ids: evidence.ids ?? evidence.evidence_ids ?? [], fingerprint: evidence.fingerprint ?? evidence.evidence_fingerprint ?? null },
+        evidence: { ids: evidence.ids, fingerprint: evidence.fingerprint, payload: evidence.payload },
         replay: { fixtureId: replay.fixtureId ?? replay.fixture_id ?? null, status: replay.status ?? null },
         status,
       },
@@ -307,19 +369,21 @@ export default class WitnessedRunsWorker extends Service {
     const row = await this.fetchRunRow(params, false);
     if (!row) throw new Errors.MoleculerError("witnessed run not found", 404, "NOT_FOUND");
 
-    const envelope = (row.envelope ?? {}) as Record<string, unknown>;
-    const manifest = (row.manifest ?? {}) as Record<string, unknown>;
-    const assessment = (row.assessment ?? {}) as Record<string, unknown>;
-    const evidence = (row.evidence ?? {}) as Record<string, unknown>;
-    const replay = (row.replay ?? {}) as Record<string, unknown>;
+    const envelope = {} as Record<string, unknown>;
+    const manifest = {} as Record<string, unknown>;
+    const assessment = buildAssessmentFromRow(row);
+    const evidence = buildEvidenceFromRow(row);
+    const replay = {} as Record<string, unknown>;
 
-    const status = classifyWitnessedRunStatus({ envelope, manifest, assessment, replay, row });
+    const status = classifyWitnessedRunStatus({
+      envelope, manifest, assessment, replay, row: { ...row, evidence } as Record<string, unknown>,
+    });
     governanceMetrics.inc(METRIC_WITNESSED_RUN_STATUS, { status });
 
     const envelopeId = (envelope.id ?? envelope.envelope_id) as string | undefined;
     const fingerprint = envelope.evaluationFingerprint ?? envelope.evaluation_fingerprint;
     const manifestId = (manifest.id ?? manifest.artifact_id ?? manifest.artifactId) as string | undefined;
-    const evidenceIds = (evidence?.ids ?? evidence?.evidence_ids) as string[] | undefined;
+    const evidenceIds = evidence.ids;
     const missing: string[] = [];
     if (!(envelopeId && fingerprint)) missing.push("envelope");
     if (!manifestId) missing.push("manifest");
@@ -361,20 +425,22 @@ export default class WitnessedRunsWorker extends Service {
     const row = await this.fetchRunRow(params, true);
     if (!row) throw new Errors.MoleculerError("witnessed run not found", 404, "NOT_FOUND");
 
-    const envelope = (row.envelope ?? {}) as Record<string, unknown>;
-    const manifest = (row.manifest ?? {}) as Record<string, unknown>;
-    const assessment = (row.assessment ?? {}) as Record<string, unknown>;
-    const evidence = (row.evidence ?? {}) as Record<string, unknown>;
-    const replay = (row.replay ?? {}) as Record<string, unknown>;
+    const envelope = {} as Record<string, unknown>;
+    const manifest = {} as Record<string, unknown>;
+    const assessment = buildAssessmentFromRow(row);
+    const evidence = buildEvidenceFromRow(row);
+    const replay = {} as Record<string, unknown>;
 
     const envelopeId = (envelope.id ?? envelope.envelope_id ?? null) as string | null;
     const evaluationFingerprint = (envelope.evaluationFingerprint ?? envelope.evaluation_fingerprint ?? null) as string | null;
     const manifestId = (manifest.id ?? manifest.artifactId ?? manifest.artifact_id ?? null) as string | null;
-    const evidenceIds = (evidence.ids ?? evidence.evidence_ids ?? []) as string[];
+    const evidenceIds = evidence.ids;
     const pebAdmission = row.peb_admission ?? null;
     const conduitTransition = row.conduit_transition ?? null;
 
-    const status = classifyWitnessedRunStatus({ envelope, manifest, assessment, replay, row });
+    const status = classifyWitnessedRunStatus({
+      envelope, manifest, assessment, replay, row: { ...row, evidence } as Record<string, unknown>,
+    });
 
     const missingLineage: string[] = [];
     if (!envelopeId) missingLineage.push("envelope_id");
