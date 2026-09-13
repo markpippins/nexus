@@ -866,3 +866,14 @@ test('integrity scan returns named pathology kinds', async () => {
   assert.ok(kinds.includes('orphan_lease_request_mismatch'))
   assert.ok(kinds.includes('receipt_attempt_mismatch'))
 })
+
+test('rich health (legacy GET /health) matches legacy per-status shape', async () => {
+  // Post-deploy parity fix: the initial catalog aliased only the simple
+  // health; the legacy router's rich probe (scanned_at + per-status counts)
+  // was missing. Normalized diff on scanned_at (clock skew between surfaces).
+  const norm = (b) => JSON.stringify({ ...b, scanned_at: '<TS>' })
+  const ours = await jsonOr404(`${BASE}/workers/execution/health`)
+  const theirs = await jsonOr404(`${LEGACY_BASE}/api/execution/health`)
+  if (theirs.__status === 404 || ours.__status === 404) return
+  assert.equal(norm(ours), norm(theirs))
+})

@@ -134,8 +134,12 @@ export default class ExecutionWorker extends Service {
           handler: (ctx: Context<{ id: string }>) => this.pipelineOrigin(requireUuid(ctx.params.id)),
         },
 
-        health: {
+        healthSimple: {
           handler: () => this.health(),
+        },
+
+        richHealth: {
+          handler: () => this.richHealth(),
         },
       },
     });
@@ -553,5 +557,30 @@ export default class ExecutionWorker extends Service {
          (SELECT count(*) FROM receipts)   AS receipts`,
     );
     return { status: "ok", db: true, schema: "execution", counts: rows[0] };
+  }
+
+  /**
+   * Legacy GET /api/execution/health — per-status request counts plus the
+   * attempt/lease states the simple probe misses (scanned_at + flat count
+   * row). Missing alias discovered in post-deploy live parity (2026-09-12):
+   * the catalog shipped 18 aliases but the legacy router has 19 routes.
+   */
+  private async richHealth(): Promise<any> {
+    const pool = await this.getPool();
+    const { rows } = await pool.query(
+      `SELECT
+          (SELECT count(*) FROM requests)                                                  AS requests,
+          (SELECT count(*) FROM requests WHERE status = 'READY')                            AS ready_requests,
+          (SELECT count(*) FROM requests WHERE status = 'COMPLETED')                         AS completed_requests,
+          (SELECT count(*) FROM leases)                                                     AS leases,
+          (SELECT count(*) FROM leases    WHERE status = 'ACTIVE' AND expires_at < NOW())   AS stale_active_leases,
+          (SELECT count(*) FROM attempts)                                                   AS attempts,
+          (SELECT count(*) FROM attempts  WHERE status = 'RUNNING')                          AS running_attempts,
+          (SELECT count(*) FROM receipts)                                                   AS receipts`
+    );
+    return {
+      scanned_at: new Date().toISOString(),
+      ...rows[0],
+    };
   }
 }
