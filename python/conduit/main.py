@@ -862,7 +862,11 @@ def _dispatch_one(
                         tokens_used=tokens_used,
                     )
                     # ── Execution Authority (ADR-006): complete attempt + receipt ──
-                    db.complete_attempt(attempt_id, "FATAL_ERROR", exit_code=exit_code,
+                    # 4-path status consistency (ruling ac38fa9b Q4): the attempts
+                    # CHECK constraint allows only CREATED/RUNNING/SUCCEEDED/FAILED/
+                    # TIMED_OUT — 'FATAL_ERROR' violated it and would crash this
+                    # terminal path on revival.
+                    db.complete_attempt(attempt_id, "FAILED", exit_code=exit_code,
                                        error=error_summary)
                     db.issue_execution_receipt(
                         attempt_id=attempt_id, request_id=request_id,

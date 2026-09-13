@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from "uuid";
 import { execFile, spawn } from "child_process";
 import { promisify } from "util";
 import { writeFile, readFile, unlink, mkdir } from "fs/promises";
+import { existsSync } from "fs";
 import { join } from "path";
 
 const execFileAsync = promisify(execFile);
@@ -172,6 +173,164 @@ async function emitGovernanceReceipt(params: {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// ── Attempt lifecycle (ruling ac38fa9b — phase B) ────────────────────
+// Q1-Q5 approved with 3 amendments. One attempt row per run: lease + RUNNING
+// attempt on start; terminal status + lease release + EXECUTION_COMPLETE
+// receipt + request status on end. When the request declares an
+// `inputs.git_verification` marker (Q1 — zero live adopters today; absence
+// skips silently), completion also invokes the git-claim producer via the
+// python bridge (python/nexus_core/wrp/harness_bridge.py): the bridge derives
+// claimed_ref/claimed_commit via `git rev-parse` inside repository_root (Q2)
+// and every failure is non-blocking (Q3) — surfaced as a
+// git_claim.produce_requested cascade event plus attempt.git_claim in the
+// run response. Kill-switch: HARNESS_ATTEMPT_LIFECYCLE=off disables the
+// whole block; HARNESS_CLAIM_* envs retarget the bridge/python/timeout.
+
+export interface GitVerificationMarker {
+  repository_root: string;
+  base_ref: string;
+  declared_paths: string[];
+}
+
+export function extractGitVerificationMarker(requestInputs: unknown): GitVerificationMarker | null {
+  if (!requestInputs || typeof requestInputs !== "object") return null;
+  const raw = (requestInputs as Record<string, unknown>).git_verification;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const m = raw as Record<string, unknown>;
+  if (typeof m.repository_root !== "string" || m.repository_root.length === 0) return null;
+  if (!m.repository_root.startsWith("/")) return null; // absolute by contract
+  if (typeof m.base_ref !== "string" || m.base_ref.length === 0) return null;
+  // Q1 amendment (ac38fa9b): declared_paths are repository-root-relative.
+  // Reject absolute paths, traversal (..), backslashes, and empties —
+  // mirroring git_verifier._normalize_relative_path (defense-in-depth).
+  const paths = Array.isArray(m.declared_paths) ? m.declared_paths : [];
+  const declared_paths: string[] = [];
+  for (const p of paths) {
+    if (typeof p !== "string" || p.length === 0) return null;
+    if (p.includes("\\") || p.startsWith("/") || p.includes("\x00")) return null;
+    const parts = p.split("/");
+    if (parts.some((part) => part === "" || part === "." || part === "..")) return null;
+    declared_paths.push(parts.join("/"));
+  }
+  return { repository_root: m.repository_root, base_ref: m.base_ref, declared_paths };
+}
+
+export function attemptStatusFromExitCode(exitCode: number): "SUCCEEDED" | "FAILED" | "TIMED_OUT" {
+  // 124 is the harness watchdog's timeout signal (executeOpencode maps the
+  // SIGTERM kill to exit code 124, matching GNU timeout convention).
+  if (exitCode === 124) return "TIMED_OUT";
+  return exitCode === 0 ? "SUCCEEDED" : "FAILED";
+}
+
+export interface GitClaimRequestSummary {
+  requested: boolean;
+  reason?: string;
+  outcome?: string;
+  claim_id?: string;
+  evidence_id?: string;
+  admitted?: boolean;
+  peb_transaction_id?: string | null;
+  resolved_commit?: string;
+}
+
+export interface AttemptContext {
+  requestId: string;
+  leaseId: string;
+  attemptId: string;
+  executorId: string;
+  businessKey: string;
+  marker: GitVerificationMarker | null;
+}
+
+export interface AttemptLifecycleSummary {
+  attemptId: string;
+  requestId: string;
+  terminalStatus: string;
+  leaseReleased: boolean;
+  claimRequest: GitClaimRequestSummary;
+}
+
+// SQL shared with tests/attempt-lifecycle.test.js — the test executes these
+// exact statements against live PG inside a rolled-back transaction, so the
+// shapes cannot drift from the schema.
+export const ATTEMPT_LEASE_INSERT_SQL = `INSERT INTO execution.leases
+   (id, request_id, executor_id, status, ttl_seconds, acquired_at, expires_at)
+   VALUES (gen_random_uuid(), $1, $2, 'ACTIVE', $3::int, now(), now() + $3::int * INTERVAL '1 second')
+   RETURNING id`;
+
+export const ATTEMPT_INSERT_SQL = `INSERT INTO execution.attempts
+   (id, request_id, lease_id, executor_id, status, started_at)
+   VALUES (gen_random_uuid(), $1, $2, $3, 'RUNNING', NOW())
+   RETURNING id`;
+
+export const ATTEMPT_TERMINAL_UPDATE_SQL = `UPDATE execution.attempts
+   SET status = $2, completed_at = NOW(), exit_code = $3, result = $4::jsonb, error = $5
+   WHERE id = $1 AND status = 'RUNNING'
+   RETURNING lease_id`;
+
+export const LEASE_RELEASE_SQL = `UPDATE execution.leases
+   SET status = 'RELEASED', released_at = NOW()
+   WHERE id = $1 AND status = 'ACTIVE'`;
+
+// Get-or-create the execution request for a wind task (mirrors conduit's
+// get_or_create_execution_request, keyed by business_key instead of plan).
+export const REQUEST_GET_OR_CREATE_SQL = `INSERT INTO execution.requests
+   (business_key, title, objective, status)
+   VALUES ($1, $2, $3, 'DRAFT')
+   ON CONFLICT (business_key) DO UPDATE SET title = EXCLUDED.title
+   RETURNING id, inputs, status`;
+
+// Native terminal receipt (chk_execution_receipts_type lane) — the leg the
+// witnessed-runs v3 projection reads as conduit_transition (ffa4ffc5).
+export const RECEIPT_INSERT_SQL = `INSERT INTO execution.receipts
+   (attempt_id, request_id, type, agent_role, summary, metadata)
+   VALUES ($1, $2, 'EXECUTION_COMPLETE', $3, $4, $5::jsonb)
+   RETURNING id`;
+
+// Recover my previous orphans on THIS request only (crashed run between
+// create and complete): an attempt whose lease already expired/released is
+// unreachable by any active run. A still-ACTIVE unexpired lease (concurrent
+// run of the same task) is protected and left alone.
+export const ATTEMPT_RECOVER_SQL = `UPDATE execution.attempts a
+   SET status = 'FAILED', completed_at = NOW(), exit_code = 1, error = $2
+   WHERE a.request_id = $1 AND a.status = 'RUNNING'
+     AND EXISTS (
+       SELECT 1 FROM execution.leases l
+       WHERE l.id = a.lease_id
+         AND (l.status IN ('EXPIRED', 'RELEASED') OR l.expires_at < NOW())
+     )`;
+
+export const RECOVERED_LEASE_EXPIRE_SQL = `UPDATE execution.leases
+   SET status = 'EXPIRED', released_at = NOW()
+   WHERE request_id = $1 AND status = 'ACTIVE' AND expires_at < NOW()`;
+
+// Advance the request's status at terminal — guarded so a DRAFT legacy row
+// never regresses out of a terminal state it already reached.
+export const REQUEST_STATUS_UPDATE_SQL = `UPDATE execution.requests
+   SET status = $2, updated_at = NOW()
+   WHERE id = $1
+     AND status IN ('DRAFT', 'COMPILED', 'VALIDATED', 'ADMITTED', 'READY')`;
+
+// Lease TTL for harness-run attempts (seconds). The watchdog already bounds
+// runaway sessions at 15 min; the lease TTL is the durable bound for the
+// attempt ledger (expired leases make RUNNING attempts recoverable).
+export const ATTEMPT_LEASE_TTL_SECONDS = Number(process.env.HARNESS_ATTEMPT_LEASE_TTL || 1800);
+
+/**
+ * Locate the repository root that carries python/nexus_core (the bridge).
+ * Env override first; then walk up from __dirname (works from dist/services,
+ * services/, and the worktree layouts).
+ */
+export function resolveRepoRoot(): string {
+  if (process.env.NEXUS_REPO_ROOT) return process.env.NEXUS_REPO_ROOT;
+  let dir = __dirname;
+  for (let i = 0; i < 6; i++) {
+    if (existsSync(join(dir, "python", "nexus_core", "wrp", "harness_bridge.py"))) return dir;
+    dir = join(dir, "..");
+  }
+  return join(__dirname, "..", "..", "..", "..");
 }
 
 // ── Watchdog (runaway session guard, T16) ─────────────────────────────
@@ -644,6 +803,251 @@ export default class HarnessWorker extends Service {
     return { valid: true };
   }
 
+  // ── Attempt lifecycle (ruling ac38fa9b — phase B) ────────────────────
+
+  private attemptsEnabled(): boolean {
+    return (process.env.HARNESS_ATTEMPT_LIFECYCLE || "on").toLowerCase() !== "off";
+  }
+
+  /**
+   * Ensure the execution request + lease + RUNNING attempt exist for this
+   * run. Creates the request by business_key when missing (conduit
+   * convention), recovers this request's own orphaned RUNNING attempts
+   * (crashed prior run whose lease expired), then inserts one ACTIVE lease
+   * and its RUNNING attempt atomically.
+   */
+  private async ensureAttemptForRun(params: {
+    windTaskId: string;
+    businessKey: string;
+    title: string;
+    objective: string;
+    executorId: string;
+    markerOverride: GitVerificationMarker | null;
+  }): Promise<AttemptContext> {
+    const pool = await this.getPool();
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const req = await client.query(REQUEST_GET_OR_CREATE_SQL, [
+        params.businessKey,
+        params.title,
+        params.objective,
+      ]);
+      const requestId: string = req.rows[0].id;
+
+      // Recover previous orphans on THIS request (their lease is expired or
+      // released — unreachable by any active run). A still-ACTIVE unexpired
+      // lease (concurrent run of the same task) is protected and left alone.
+      await client.query(RECOVERED_LEASE_EXPIRE_SQL, [requestId]);
+      const recovered = await client.query(ATTEMPT_RECOVER_SQL, [
+        requestId,
+        `recovered at run start (${new Date().toISOString()}): superseded by a new run of the same task`,
+      ]);
+      if ((recovered.rowCount ?? 0) > 0) {
+        this.logger.warn(
+          `[attempt] recovered ${recovered.rowCount} orphaned RUNNING attempt(s) on request ${params.businessKey}`,
+        );
+      }
+
+      const lease = await client.query(ATTEMPT_LEASE_INSERT_SQL, [
+        requestId,
+        params.executorId,
+        ATTEMPT_LEASE_TTL_SECONDS,
+      ]);
+      const leaseId: string = lease.rows[0].id;
+
+      const attempt = await client.query(ATTEMPT_INSERT_SQL, [requestId, leaseId, params.executorId]);
+      const attemptId: string = attempt.rows[0].id;
+
+      await client.query("COMMIT");
+      return {
+        requestId,
+        leaseId,
+        attemptId,
+        executorId: params.executorId,
+        businessKey: params.businessKey,
+        marker: params.markerOverride ?? extractGitVerificationMarker(req.rows[0].inputs),
+      };
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Terminal the attempt: status/exit/result, lease release, native
+   * EXECUTION_COMPLETE receipt (the witnessed-runs conduit_transition leg),
+   * request status advance, then git-claim production when the request
+   * declares a marker. Never throws — completion is best-effort and must
+   * not mask the run's own result (Q3 direction).
+   */
+  private async completeAttemptForRun(params: {
+    attempt: AttemptContext;
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+    startedAt: number;
+    resolveOnly: boolean;
+  }): Promise<AttemptLifecycleSummary> {
+    const { attempt, exitCode, stdout, stderr, startedAt, resolveOnly } = params;
+    const terminalStatus = attemptStatusFromExitCode(exitCode);
+    const pool = await this.getPool();
+
+    let leaseReleased = false;
+    let receiptId: string | null = null;
+    try {
+      const upd = await pool.query(ATTEMPT_TERMINAL_UPDATE_SQL, [
+        attempt.attemptId,
+        terminalStatus,
+        exitCode,
+        JSON.stringify({
+          stdout_preview: stdout.slice(0, 2000),
+          stderr_preview: stderr.slice(0, 2000),
+        }),
+        stderr ? stderr.slice(0, 2000) : null,
+      ]);
+      const wasRunning = (upd.rowCount ?? 0) > 0;
+      if (wasRunning && upd.rows[0]?.lease_id) {
+        const rel = await pool.query(LEASE_RELEASE_SQL, [upd.rows[0].lease_id]);
+        leaseReleased = (rel.rowCount ?? 0) > 0;
+      }
+      if (wasRunning) {
+        const rec = await pool.query(RECEIPT_INSERT_SQL, [
+          attempt.attemptId,
+          attempt.requestId,
+          attempt.executorId,
+          `worker.harness ${terminalStatus} exit=${exitCode}`,
+          JSON.stringify({
+            exit_code: exitCode,
+            status: terminalStatus,
+            duration_ms: Date.now() - startedAt,
+            stdout_preview: stdout.slice(0, 300),
+            stderr_preview: stderr.slice(0, 300),
+          }),
+        ]);
+        receiptId = rec.rows[0]?.id ?? null;
+        if (!resolveOnly) {
+          await pool.query(REQUEST_STATUS_UPDATE_SQL, [
+            attempt.requestId,
+            exitCode === 0 ? "COMPLETED" : "FAILED",
+          ]);
+        }
+      }
+    } catch (err: any) {
+      this.logger.warn(`[attempt] terminal persistence failed for ${attempt.attemptId}: ${err?.message || err}`);
+    }
+
+    const claimRequest = await this.maybeRequestGitClaimProduction(attempt, resolveOnly);
+
+    await this.emitEvent({
+      event_type: "attempt.completed",
+      source: "worker.harness.run",
+      aggregate_type: "execution_attempt",
+      aggregate_id: attempt.attemptId,
+      payload: {
+        request_id: attempt.requestId,
+        business_key: attempt.businessKey,
+        status: terminalStatus,
+        exit_code: exitCode,
+        lease_released: leaseReleased,
+        receipt_id: receiptId,
+        claim_request: claimRequest,
+      },
+      actor_type: "system",
+    }).catch(() => {});
+
+    return {
+      attemptId: attempt.attemptId,
+      requestId: attempt.requestId,
+      terminalStatus,
+      leaseReleased,
+      claimRequest,
+    };
+  }
+
+  /**
+   * Q1/Q2/Q3 (ac38fa9b): when the request declares
+   * inputs.git_verification, invoke the git-claim producer via the python
+   * bridge. Everything is derived from the repository inside the bridge
+   * (git rev-parse — Q2) and every failure is non-blocking (Q3): the
+   * outcome rides a git_claim.produce_requested cascade event + the run
+   * response only. resolve_only never produces.
+   */
+  private async maybeRequestGitClaimProduction(
+    attempt: AttemptContext,
+    resolveOnly: boolean,
+  ): Promise<GitClaimRequestSummary> {
+    if (resolveOnly || !attempt.marker) return { requested: false };
+    const started = Date.now();
+    const pythonBin = process.env.HARNESS_CLAIM_PYTHON || "python3";
+    const repoRoot = resolveRepoRoot();
+    const scriptPath = join(repoRoot, "python", "nexus_core", "wrp", "harness_bridge.py");
+    const timeoutMs = Number(process.env.HARNESS_CLAIM_TIMEOUT_MS || 30_000);
+
+    const payload = JSON.stringify({
+      attempt_id: attempt.attemptId,
+      lease_id: attempt.leaseId,
+      repository_root: attempt.marker.repository_root,
+      base_ref: attempt.marker.base_ref,
+      declared_paths: attempt.marker.declared_paths,
+    });
+
+    try {
+      const stdout = await new Promise<string>((resolve, reject) => {
+        const child = spawn(pythonBin, [scriptPath], { cwd: repoRoot });
+        let out = "";
+        let errBuf = "";
+        const timer = setTimeout(() => {
+          try { child.kill("SIGKILL"); } catch { /* gone */ }
+          reject(new Error(`bridge timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+        child.stdout.on("data", (d) => { out += d; });
+        child.stderr.on("data", (d) => { errBuf += d; });
+        child.on("error", (e) => { clearTimeout(timer); reject(e); });
+        child.on("close", (code) => {
+          clearTimeout(timer);
+          if (code === 0) resolve(out);
+          else reject(new Error(`bridge exit ${code}: ${errBuf.slice(-400) || out.slice(-400)}`));
+        });
+        child.stdin.on("error", () => { /* EPIPE if the bridge exits early */ });
+        child.stdin.end(payload);
+      });
+      const parsed = JSON.parse(stdout) as GitClaimRequestSummary;
+      await this.emitEvent({
+        event_type: "git_claim.produce_requested",
+        source: "worker.harness.run",
+        aggregate_type: "execution_attempt",
+        aggregate_id: attempt.attemptId,
+        payload: { ...parsed, duration_ms: Date.now() - started },
+        actor_type: "system",
+      });
+      if (!parsed.requested) {
+        this.logger.warn(`[git-claim] not produced for ${attempt.attemptId}: ${parsed.reason ?? "(no reason)"}`);
+      } else {
+        this.logger.info(
+          `[git-claim] produced for ${attempt.attemptId}: outcome=${parsed.outcome} admitted=${parsed.admitted} tx=${parsed.peb_transaction_id ?? "-"}`,
+        );
+      }
+      return parsed;
+    } catch (err: any) {
+      const tail = err?.stderr ? ` :: ${String(err.stderr).slice(-200)}` : "";
+      const reason = `bridge failed: ${err?.message || err}${tail}`;
+      await this.emitEvent({
+        event_type: "git_claim.produce_requested",
+        source: "worker.harness.run",
+        aggregate_type: "execution_attempt",
+        aggregate_id: attempt.attemptId,
+        payload: { requested: false, reason, outcome: "unavailable", duration_ms: Date.now() - started },
+        actor_type: "system",
+      }).catch(() => {});
+      this.logger.warn(`[git-claim] bridge failed for ${attempt.attemptId}: ${reason}`);
+      return { requested: false, reason, outcome: "unavailable" };
+    }
+  }
+
   private async run(ctx: Context<any>): Promise<any> {
     const jobId = uuidv4();
     const startTime = Date.now();
@@ -725,6 +1129,26 @@ export default class HarnessWorker extends Service {
         });
       }
 
+      // Attempt ledger (ac38fa9b phase B): one attempt row per run.
+      // resolve_only is a read-only preview — no ledger rows. Non-fatal on
+      // failure — a ledger outage must not block execution.
+      let attempt: AttemptContext | null = null;
+      if (this.attemptsEnabled() && !resolveOnly) {
+        try {
+          attempt = await this.ensureAttemptForRun({
+            windTaskId: wind_task_id,
+            businessKey: wind_task_id,
+            title: resolved.task.wind_task_name || resolved.task.task_slug || wind_task_id,
+            objective: resolved.task.wind_task_description || "",
+            executorId: effectiveAgent,
+            markerOverride: null,
+          });
+        } catch (err: any) {
+          this.logger.warn(`[attempt] ensure failed for wind_task=${wind_task_id} (continuing without ledger): ${err?.message || err}`);
+          attempt = null;
+        }
+      }
+
       const fullPrompt = resolved.prompt;
       await mkdir(PROMPT_DIR, { recursive: true });
       const promptFile = join(PROMPT_DIR, `${jobId}.md`);
@@ -795,6 +1219,20 @@ export default class HarnessWorker extends Service {
         caused_by_event_type: "harness.started",
       });
 
+      // Terminal the attempt (ruling ac38fa9b phase B): status + lease +
+      // receipt + request status + git-claim production. Best-effort.
+      let lifecycle: AttemptLifecycleSummary | null = null;
+      if (attempt) {
+        lifecycle = await this.completeAttemptForRun({
+          attempt,
+          exitCode,
+          stdout,
+          stderr,
+          startedAt: startTime,
+          resolveOnly,
+        });
+      }
+
       if (!resolveOnly) {
         const completedMetadata = {
           stage: "run_complete",
@@ -840,6 +1278,14 @@ export default class HarnessWorker extends Service {
         stderr,
         duration_ms: Date.now() - startTime,
         events: { started: startedEventId },
+        attempt: lifecycle
+          ? {
+              attempt_id: lifecycle.attemptId,
+              terminal_status: lifecycle.terminalStatus,
+              lease_released: lifecycle.leaseReleased,
+              git_claim: lifecycle.claimRequest,
+            }
+          : undefined,
       };
     } catch (error: any) {
       await this.emitEvent({
