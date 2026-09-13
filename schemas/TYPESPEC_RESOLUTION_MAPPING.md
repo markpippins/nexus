@@ -2,13 +2,21 @@
 
 Generated from `typespec/v1/**/models.tsp` (485 models, 56 files, 37 service namespaces).
 
+**Input pin (architect correction d2627976):** exactly the 56 `models.tsp` files committed at `cb46ec55` (2026-09-03). `aegis-srv` (entered tree 09-05) is explicitly excluded from this render; its vocabulary waits for a later amendment bump per the Amendment 3 protocol. Full literal file list is recorded in the freeze package alongside this document's hash.
+
 ## Methodology
 
 - **DOMAIN** models → `resolution.concept` (the vocabulary).
-- **ENVELOPE** models (transport/DTO wrappers: `*Response`, `*Request`, `*Result`, `Paged*`, `Error*`, `Health*`, `*Meta`, generic `PagedResponse<T>`) → `resolution.representation` / comparison targets, NOT concepts.
+- **ENVELOPE** models → `resolution.representation` / comparison targets, NOT concepts. ENVELOPE = transport/DTO wrappers matching: `*Response`, `*Request`, `*Result`, `*Counts`, `*Info`, `*Envelope` (transport only — see explicit dispositions below), `*List`, `*Status`, `Paged*`, `Error*`, `Health*`, `*Meta`, generic `PagedResponse<T>`, plus the named set {ErrorResponse, PagedMeta, PagedResponse, BinaryData, PaginatedResult, Counts, HealthResponse, ErrorDetail, GraphEdge, AuditGraph, PlanStatus, CpfItem}.
+- **Explicit envelope-named dispositions** (architect correction d2627976 — these share the `*Envelope` suffix but differ in status, so each is dispositioned, not silently dropped):
+  - `GovernanceEnvelope` (governance-envelope) → **DOMAIN** (the governed contract itself, not transport; carries contract/semantic/workflow/law/evaluation).
+  - `CanonicalEnvelope` (nats-envelope) → **ENVELOPE** (NATS transport envelope for cascade/voyager/vision/conduit events; its eventId/eventType are transport identity for routing/dedup, not domain-concept identity; the event *payloads* are the domain concepts).
+  - `QuarantineEnvelope` (nexus-tools) → **ENVELOPE** (quarantine wrapping shape, transport).
+  - `CompressionEnvelope`, `CausalityEnvelope` (ccnf-verifier) → **ENVELOPE** (verifier-internal wrapping shapes, transport).
+- **DOMAIN exceptions** (curated set of operation/contract-adjacent names kept as DOMAIN because they name governed entities, not transport): ExecutionLease/Attempt/Receipt/Request, CascadeEvent, ReplayEvent, Snapshot, RuntimeState, StateDelta, Session, Workspace, Requirement, System, Subsystem, Feature, AgentRecord, HarvestCandidate, OpenQuestion, Role, Observation, Assessment, ImplementationPlan, FrameValue, LawSnapshot, GovernanceContract, InputSnapshot, GovernanceEvaluation, AssertionResult, Violation, GateResult, AuthorityEntry, WorkflowEdge, ProjectionProposition, ApiEndpoint, PebAdmissionResult, AdmissionResult, ThreadComment, VectorExpected, StateDeltaWrites, IdentityResponse, TaskSummary, RunEvents, ActiveSession, SearchResultItem, WorkerEntry, KeychainTriggerEvent, KeychainActiveInstance, PtySession, HarnessSession, WorkflowContext, SemanticIdentity, TableInfo/ColumnInfo/IndexInfo/ViewInfo/TriggerInfo/ProcedureInfo (schema-introspection entities), FsItem/FsEntry/FsListItem/FsItemReference.
 - Reference-typed fields (a model field whose type is another model) → `resolution.concept_relationship` (146 edges), not inline attributes.
 - Scalar fields → `resolution.concept_attribute` with `value_type` mapping: string→text, int32/int64→integer, float64→numeric, boolean→boolean, utcDateTime→timestamp, unknown/Record→jsonb.
-- Cross-service name collisions are preserved as **explicit findings**, not silently merged (analyst contract e450a8a7).
+- Cross-service name collisions are preserved as **explicit findings**, not silently merged (analyst contract e450a8a7). The 28 models classified by the extended suffixes (`*Counts/*Info/*Envelope/*List/*Status`) contribute zero DOMAIN collisions — verified: none appear in the collision inventory.
 
 ## Classification totals
 
