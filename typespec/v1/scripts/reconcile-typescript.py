@@ -212,11 +212,20 @@ def ts_routes(entry: dict, src_root: str) -> set[str]:
             # Moleculer-web: aliases under a routes block with a path prefix.
             #   path: "/api"  +  aliases: { "POST /search/simple": ... }
             #   → POST /api/search/simple
-            for pm in MOLEQ_PATH_RE.finditer(text):
+            # A gateway may declare MULTIPLE route blocks (e.g. a dedicated
+            # block with its own onError). Each path declaration owns the
+            # aliases up to the NEXT path declaration — a fixed window would
+            # bleed into the following block and mis-prefix its aliases.
+            pms = list(MOLEQ_PATH_RE.finditer(text))
+            for i, pm in enumerate(pms):
                 prefix = pm.group(1).rstrip("/")
-                window = text[pm.end() : pm.end() + 4000]
+                block_end = pms[i + 1].start() if i + 1 < len(pms) else pm.end() + 4000
+                window = text[pm.end() : min(block_end, pm.end() + 4000)]
                 for am in MOLEQ_ALIAS_RE.finditer(window):
-                    out.add(f"{am.group(1).upper()} {prefix}{norm_path(am.group(2))}")
+                    # Normalize the composite (prefix + alias) as a whole so
+                    # root aliases ("GET /" under a prefix) don't leave a
+                    # trailing slash that can't match the contract path.
+                    out.add(f"{am.group(1).upper()} {norm_path(prefix + norm_path(am.group(2)))}")
     return out
 
 

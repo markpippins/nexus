@@ -98,6 +98,96 @@ namespace org.nexus.nexusbroker {
   @doc("Execution worker health: DB connectivity + schema counts (read-only observability).")
   op executionHealth(): WorkerHealth;
 
+  // ── Execution read catalog (M2): the full legacy execution-srv surface
+  // (/api/execution/*), mapped 1:1 under /api/workers/execution. Read-only:
+  // SELECTs only, no write path. Payloads mirror the legacy routes' JSON
+  // shapes (DB-native column names); see execution-srv `REST API.md`.
+
+  @route("/api/workers/execution/requests")
+  @get
+  @doc("Paginated request list. Filters: status, search (ILIKE across business_key/title/objective/ids); limit 1-100, offset. Shape: {total, limit, offset, items}.")
+  op executionListRequests(@query status?: string, @query search?: string, @query limit?: int32, @query offset?: int32): Record<unknown>;
+
+  @route("/api/workers/execution/leases")
+  @get
+  @doc("Paginated lease list. Filters: status, search (executor_id/request ids). Shape: {total, limit, offset, items}.")
+  op executionListLeases(@query status?: string, @query search?: string, @query limit?: int32, @query offset?: int32): Record<unknown>;
+
+  @route("/api/workers/execution/attempts")
+  @get
+  @doc("Paginated attempt list. Filters: status, search. Shape: {total, limit, offset, items}.")
+  op executionListAttempts(@query status?: string, @query search?: string, @query limit?: int32, @query offset?: int32): Record<unknown>;
+
+  @route("/api/workers/execution/receipts")
+  @get
+  @doc("Paginated receipt list. Filters: type, search (agent_role/summary/ids), ordered by issued_at DESC. Shape: {total, limit, offset, items}.")
+  op executionListReceipts(@query type?: string, @query search?: string, @query limit?: int32, @query offset?: int32): Record<unknown>;
+
+  @route("/api/workers/execution/requests/{id}/state")
+  @get
+  @doc("Lifecycle state for one request: request + current lease + latest attempt + all receipts (the aggregate-root view). 404 if unknown id; 400 if id is not a UUID.")
+  op executionRequestState(@path id: string): Record<unknown>;
+
+  @route("/api/workers/execution/leases/stale")
+  @get
+  @doc("Active leases whose expires_at < now(), joined to their requests — the lease-expiry enforcement gap made queryable.")
+  op executionStaleLeases(): Record<unknown>;
+
+  @route("/api/workers/execution/leases/{id}/lifecycle")
+  @get
+  @doc("Lease lifecycle: promised vs actually-held TTL, overdue seconds, derived lifecycle_state.")
+  op executionLeaseLifecycle(@path id: string): Record<unknown>;
+
+  @route("/api/workers/execution/health/integrity-scan")
+  @get
+  @doc("Cross-table consistency scan: named pathology kinds, each {kind, count, samples}; totals summarize.")
+  op executionIntegrityScan(): Record<unknown>;
+
+  @route("/api/workers/execution/requests/{id}/attempts")
+  @get
+  @doc("Attempt/lease tree for one request, chronological, each attempt joined to its lease.")
+  op executionRequestAttempts(@path id: string): Record<unknown>;
+
+  @route("/api/workers/execution/requests/{id}/receipts/lineage")
+  @get
+  @doc("Receipt lineage buckets for one request: native / backfilled (vision.receipts) / unknown.")
+  op executionReceiptsLineage(@path id: string): Record<unknown>;
+
+  @route("/api/workers/execution/health/by-executor")
+  @get
+  @doc("Fleet view: lease counts per executor; with executor_id, that executor's active leases and in-progress attempts.")
+  op executionByExecutor(@query executor_id?: string): Record<unknown>;
+
+  @route("/api/workers/execution/health/status-distribution")
+  @get
+  @doc("Status distributions across requests/leases/attempts + receipts-by-type + stale-active-lease count.")
+  op executionStatusDistribution(): Record<unknown>;
+
+  @route("/api/workers/execution/receipts/{id}/pipeline-origin")
+  @get
+  @doc("Follows lineage_original_id to vision.receipts and returns both records side by side, labeled by audit trail.")
+  op executionPipelineOrigin(@path id: string): Record<unknown>;
+
+  @route("/api/workers/execution/witnessed-runs")
+  @get
+  @doc("Witnessed-run provenance projection for (workflow_instance_id, node_id): envelope/manifest/law/assessment/evidence/replay identities + authoritative classifier status. Nullable lineage fields are deliberate.")
+  op executionWitnessedRuns(@query workflow_instance_id: string, @query node_id: string): Record<unknown>;
+
+  @route("/api/workers/execution/witnessed-runs/diagnostics")
+  @get
+  @doc("Per-run health: authoritative status, enumerated missing lineage elements, receipt-correlation validity (W3.05).")
+  op executionWitnessedRunDiagnostics(@query workflow_instance_id: string, @query node_id: string): Record<unknown>;
+
+  @route("/api/workers/execution/projections/witnessed-runs")
+  @get
+  @doc("W3.08 versioned governed projection (projectionVersion pinned by consumers, fail-closed). Identity correlation only; no governance payloads.")
+  op executionWitnessedRunProjection(@query workflow_instance_id: string, @query node_id: string): Record<unknown>;
+
+  @route("/api/workers/execution/metrics")
+  @get
+  @doc("Governance metric families snapshot (counters + latency aggregates; worker-local registry, not shared with the legacy process).")
+  op executionGovernanceMetrics(): Record<unknown>;
+
   @route("/api/workers/pty")
   @get
   @doc("List live pty sessions.")
