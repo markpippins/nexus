@@ -26,6 +26,9 @@ here is protocol-portable, so surface the gap and let the operator decide.
 Exit codes: 0 = ok (degraded allowed), 1 = strict mode or a requested mutation
 failed, 2 = usage error.
 
+Full documentation: docs/freebuff-boot.md (flags, boot phases, degraded mode,
+service preconditions, known caveats).
+
 Usage:
     freebuff-boot.py --role <role> [--model <model>] [--channel <channel>]
                      [--ttl <seconds>] [--budget <units>]
