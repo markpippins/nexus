@@ -1,0 +1,30 @@
+{
+ "contract": "Phase 1 DB-only absorption divergences",
+ "review_ref": "phase1:db-absorption-divergences:001 (graph proposition)",
+ "dispositions": [
+  {
+   "pair": "wind-Ticket-shape vs vision.tickets (744)",
+   "disposition": "distinct",
+   "rationale": "Workflow-node vs builder-work tickets; different lifecycle/authority/fields.",
+   "owner": "architect"
+  },
+  {
+   "pair": "ExecutionReceipt-shape vs vision.receipts (1893)",
+   "disposition": "distinct-with-mapping",
+   "rationale": "Execution-attempt vs builder-run receipts; overlapping evidence fields, divergent anchors.",
+   "owner": "architect"
+  },
+  {
+   "pair": "resolution.ticket/ticket_transition (0 rows)",
+   "disposition": "canonical-target",
+   "rationale": "Lilac post-soak canonical destination; migration awaits post-soak + DBA.",
+   "owner": "dba"
+  },
+  {
+   "pair": "dbg2_080885d2.ticket/ticket_transition (0 rows)",
+   "disposition": "shelved-excluded",
+   "rationale": "Empty debug tables; excluded from ingest.",
+   "owner": "architect"
+  }
+ ]
+}
