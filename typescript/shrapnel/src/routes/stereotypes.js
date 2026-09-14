@@ -1,16 +1,12 @@
 import { Router } from 'express';
-import rateLimit from 'express-rate-limit';
 import { pool, withTransaction } from '../db.js';
 import { badRequest, notFound, conflict } from '../errors.js';
+import { writeLimiter } from '../lib/rate-limit.js';
 
 export const stereotypesRouter = Router();
 
-const stereotypesReadLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  standardHeaders: true,
-  legacyHeaders: false
-});
+// Reads are covered by the app-wide apiLimiter (src/index.js); mutating
+// routes get the stricter writeLimiter below.
 
 // ── helpers (exported for unit tests) ───────────────────────────────────
 
@@ -82,7 +78,7 @@ stereotypesRouter.get('/', async (_req, res, next) => {
 });
 
 // GET /api/stereotypes/:name — head revision detail
-stereotypesRouter.get('/:name', stereotypesReadLimiter, async (req, res, next) => {
+stereotypesRouter.get('/:name', async (req, res, next) => {
   try {
     const head = await resolveHeadRevision(pool, req.params.name);
     const d = await pool.query(
@@ -138,7 +134,7 @@ stereotypesRouter.get('/:name/contract', async (req, res, next) => {
 
 // POST /api/stereotypes/revisions — create a revision (root or child)
 // Body: { name, extends_revision?, rationale?, required_fields[], optional_fields? }
-stereotypesRouter.post('/revisions', async (req, res, next) => {
+stereotypesRouter.post('/revisions', writeLimiter, async (req, res, next) => {
   try {
     const body = req.body ?? {};
     const name = typeof body.name === 'string' ? body.name.trim() : '';

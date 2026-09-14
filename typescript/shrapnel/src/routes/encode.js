@@ -3,6 +3,7 @@ import { withTransaction } from '../db.js';
 import { encodePayload } from '../lib/encode.js';
 import { decodeObject } from '../lib/encode.js';
 import { pool } from '../db.js';
+import { writeLimiter } from '../lib/rate-limit.js';
 
 export const encodeRouter = Router();
 
@@ -10,7 +11,7 @@ export const encodeRouter = Router();
 // Generic encode: takes any JSON payload, infers fields if not provided,
 // creates object + values, returns object_id plus the decoded snapshot used
 // to verify the round-trip.
-encodeRouter.post('/', async (req, res, next) => {
+encodeRouter.post('/', writeLimiter, async (req, res, next) => {
   try {
     const result = await withTransaction(async (client) => {
       return encodePayload(client, req.body);

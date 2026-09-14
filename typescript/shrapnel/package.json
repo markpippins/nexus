@@ -14,10 +14,11 @@
     "dbcheck": "psql \"${SHRAPNEL_PG_DSN:-postgresql://pguser:pgpass@localhost:5432/postgres}\" -v ON_ERROR_STOP=1 -f negative_path_check.sql"
   },
   "dependencies": {
-    "heartbeat-client": "file:../heartbeat-client",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
+    "express-rate-limit": "^8.7.0",
+    "heartbeat-client": "file:../heartbeat-client",
     "pg": "^8.13.0"
   },
   "devDependencies": {

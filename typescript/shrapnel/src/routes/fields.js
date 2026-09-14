@@ -3,6 +3,7 @@ import { pool } from '../db.js';
 import { assertKnownTypeName } from '../lib/types.js';
 import { normaliseFieldSpec } from '../lib/encode.js';
 import { badRequest } from '../errors.js';
+import { writeLimiter } from '../lib/rate-limit.js';
 
 export const fieldsRouter = Router();
 
@@ -46,7 +47,7 @@ fieldsRouter.get('/:id', async (req, res, next) => {
 // Body: { "is_calculated": false, "field_index": 1, "label": "Full Name",
 //         "name": "Name", "property_name": "name",
 //         "type": "String" | "field_type_code": 2 }
-fieldsRouter.post('/', async (req, res, next) => {
+fieldsRouter.post('/', writeLimiter, async (req, res, next) => {
   try {
     const spec = normaliseFieldSpec(req.body);
     const r = await pool.query(
