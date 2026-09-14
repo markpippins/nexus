@@ -1096,6 +1096,19 @@ export function witnessedRunProjectionHandler(pool: Pool) {
            r.id AS request_id,
            r.business_key AS workflow_instance_id,
            r.updated_at AS updated_at,
+           -- v3 (ffa4ffc5): assessment + evidence columns — the projection
+           -- renders them from the attempt's latest admission receipt joined to
+           -- its immutable evidence row. These were omitted from this handler's
+           -- SELECT in #226 (the other two witnessed-run handlers carry them),
+           -- so assessment/evidenceIds rendered null for every receipt-bearing
+           -- run. Exposed by the first marker adoption (#229 E2E).
+           ar.admitted AS assessment_admitted,
+           ar.reason AS assessment_reason,
+           ar.source_system AS assessment_source_system,
+           ar.policy_version_hash AS assessment_policy_hash,
+           ev.id::text AS evidence_id,
+           ev.source_hash AS evidence_fingerprint,
+           ev.payload AS evidence_payload,
            -- Receipt correlation legs kept per ffa4ffc5 (mapping from 6677c394 R2/R3):
            --   peb_admission: the attempt's PEB admission receipt transaction id
            --   conduit_transition: the attempt's latest native EXECUTION_COMPLETE receipt

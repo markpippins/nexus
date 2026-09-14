@@ -926,6 +926,31 @@ test('witnessed-runs parity — shared 200 with identical projection JSON (rulin
     const theirsMiss = await fetch(`${LEGACY_BASE}/api/execution/witnessed-runs${qMiss}`)
     assert.equal(oursMiss.status, 404)
     assert.equal(theirsMiss.status, 404)
+
+    // Governed projection surface (/projections/witnessed-runs) — parity on
+    // the SAME receipt-bearing fixture. Regression guard: the projection
+    // handler's SELECT omitted the v3 assessment/evidence columns in #226,
+    // which rendered assessment null on legacy for every receipt-bearing run
+    // (exposed by the first marker adoption, #229). generatedAt is stripped
+    // before comparison — it is a per-request timestamp, not projection data.
+    const oursP = await fetch(`${BASE}/workers/execution/projections/witnessed-runs${q}`)
+    const theirsP = await fetch(`${LEGACY_BASE}/api/execution/projections/witnessed-runs${q}`)
+    assert.equal(oursP.status, 200, `broker projections/witnessed-runs should 200, got ${oursP.status}`)
+    assert.equal(theirsP.status, 200, `legacy projections/witnessed-runs should 200, got ${theirsP.status}`)
+    const oursPBody = await oursP.json()
+    const theirsPBody = await theirsP.json()
+    delete oursPBody.generatedAt
+    delete theirsPBody.generatedAt
+    assert.deepEqual(oursPBody, theirsPBody, 'projection parity on receipt-bearing fixture')
+    assert.equal(oursPBody.projectionVersion, 3)
+    assert.equal(oursPBody.assessment.status, 'admitted', 'projection assessment from admission receipt')
+    assert.equal(oursPBody.identities.evidenceIds.length > 0, true, 'projection evidenceIds populated')
+    assert.equal(oursPBody.status, 'missing_lineage', 'projection status honest')
+    assert.equal(oursPBody.missingLineage.includes('evidence_ids'), false, 'evidence not missing when receipt joined')
+    const oursPMiss = await fetch(`${BASE}/workers/execution/projections/witnessed-runs${qMiss}`)
+    const theirsPMiss = await fetch(`${LEGACY_BASE}/api/execution/projections/witnessed-runs${qMiss}`)
+    assert.equal(oursPMiss.status, 404)
+    assert.equal(theirsPMiss.status, 404)
   } finally {
     // Teardown in FK-safe order (claim → receipt → attempt → lease → request).
     // The immutable evidence row persists by design; inert without its receipt.
