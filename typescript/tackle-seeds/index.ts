@@ -3205,6 +3205,197 @@ BEGIN
             VALUES (v_memory_id, v_role, NOW(), NULL);
         END LOOP;
     END IF;
+    -- ──────────────────────────────────────────────────────────
+    -- 49. DBA Change-Review Workflow
+    -- ──────────────────────────────────────────────────────────
+    v_memory_id := NULL;
+    INSERT INTO ${SQL}.memory (slug, title, summary, body_md, tags, triggers, mcp_tools)
+    VALUES (
+        'dba-change-review-workflow',
+        'DBA Change-Review Workflow',
+        'Review loop for to:dba / type:db-change records: verify against LIVE state before approving, apply only on explicit user approval, prefer service endpoints over direct data surgery, and close the loop with evidence.',
+        '## Procedure\n'
+        '\n'
+        'Handles records tagged \`to:dba\` + \`type:db-change\` + \`status:open\` (via \`nebula_get_inbox\` or \`bin/check-inbox.sh --role DBA\`).\n'
+        '\n'
+        '1. **Read the full record** — \`GET /api/agent-records\` on nebula-srv (:3101) or the MCP tool; never review from a summary.\n'
+        '2. **Verify against LIVE state, not docs** — connect with the deployment''s actual credentials and confirm: object exists and matches the spec (columns, indexes, collations, row counts, \`information_schema\`/\`pg_indexes\`/\`EXPLAIN\` as appropriate). R15 applies: "data not loading" is usually a URL/config mismatch, not corruption.\n'
+        '3. **Review for correctness in the target engine''s dialect** — a spec written for one engine (e.g. partial indexes, TTL semantics) must be translated, not assumed, when the live store is another (e.g. MongoDB TTL monitors, Postgres partial+functional indexes). Flag every translation explicitly in the review.\n'
+        '4. **Apply only on explicit user approval** — "go ahead" / "let''s proceed" from the user, captured in the audit trail. Never apply on a role''s request alone.\n'
+        '5. **Prefer service endpoints over data surgery** — use the owning service''s designed endpoints (e.g. timeclock \`/timeout-cleanup\`, conduit receipts) before any direct UPDATE/DELETE. Direct DDL/DML is last resort and gets an R1 record first.\n'
+        '6. **Close the loop with evidence** — reply on the record/thread with what was applied and verification output; post completion to the requesting role (\`type:status-update\`, \`to:<requester>\`); write R2 summary.\n'
+        '\n'
+        'Triggers: any \`to:dba\`/\`type:db-change\` inbox record; user asks to review/apply a database change.',
+        ARRAY['dba', 'change-review', 'workflow', 'inbox'],
+        ARRAY['a db-change record arrives in the DBA inbox', 'user asks to review a database change', 'user asks to apply an approved change'],
+        ARRAY['nebula_get_inbox', 'nebula_create_agent_record']
+    )
+    ON CONFLICT (slug) DO NOTHING
+    RETURNING id INTO v_memory_id;
+    IF v_memory_id IS NOT NULL THEN
+        v_roles := ARRAY['DBA'];
+        FOREACH v_role IN ARRAY v_roles LOOP
+            INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
+            VALUES (v_memory_id, v_role, NOW(), NULL);
+        END LOOP;
+    END IF;
+    -- ──────────────────────────────────────────────────────────
+    -- 50. DBA Replication Protocol (R9)
+    -- ──────────────────────────────────────────────────────────
+    v_memory_id := NULL;
+    INSERT INTO ${SQL}.memory (slug, title, summary, body_md, tags, triggers, mcp_tools)
+    VALUES (
+        'dba-replication-protocol',
+        'DBA Replication Protocol (R9)',
+        'After any schema change or migration, confirm replication to the canonical off-machine backup target (currently vanadium) with the user — never assume; verify last backup health before claiming safety.',
+        '## Procedure\n'
+        '\n'
+        'Implements R9. Replication target history: strontium (down 2026-08) → barium (2026-08-25; disk-full forensics unresolved, \`ssh barium\` does not resolve) → **vanadium** (since 2026-09-05 per \`pg-backup.env\`, \`REMOTE_HOST=vanadium\`).\n'
+        '\n'
+        '1. **After any schema change or migration** (DDL, new table/index, view change): ask the user whether to replicate. Never assume; the user confirms target and timing.\n'
+        '2. **Before claiming a change is safe**, check the backup chain''s last verified run: timers run daily (last verified healthy run 2026-09-10 03:48, checksums OK). A change made after the last verified run is not yet protected.\n'
+        '3. **CI tier**: \`vanadium-ci-backup.{sh,service,timer}\` also targets vanadium since 2026-09-10 (retargeted from barium per ruling V4; fetch fixed, live green run verified — PR #203, records \`05f677f7\`/\`6f6a7f6c\`).\n'
+        '4. **If barium returns** after forensics, revisit the target with the user before switching anything.\n'
+        '\n'
+        'Triggers: any DDL or migration just applied; user asks about backup/replication state.',
+        ARRAY['dba', 'replication', 'backup', 'r9', 'vanadium'],
+        ARRAY['a schema change or migration was applied', 'user asks whether data is backed up', 'replication target question'],
+        ARRAY['nebula_create_agent_record']
+    )
+    ON CONFLICT (slug) DO NOTHING
+    RETURNING id INTO v_memory_id;
+    IF v_memory_id IS NOT NULL THEN
+        v_roles := ARRAY['DBA'];
+        FOREACH v_role IN ARRAY v_roles LOOP
+            INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
+            VALUES (v_memory_id, v_role, NOW(), NULL);
+        END LOOP;
+    END IF;
+    -- ──────────────────────────────────────────────────────────
+    -- 51. Nexus Data-Store Schema Map (DBA Orientation)
+    -- ──────────────────────────────────────────────────────────
+    v_memory_id := NULL;
+    INSERT INTO ${SQL}.memory (slug, title, summary, body_md, tags, triggers, mcp_tools)
+    VALUES (
+        'dba-schema-map',
+        'Nexus Data-Store Schema Map (DBA Orientation)',
+        'Orientation map of nexus data stores and their services: which service owns which port/store, where the canonical tables live, and the known gotchas (views, JSONB analytics, role-case, retired files).',
+        '## Orientation Map (verified 2026-09-14)\n'
+        '\n'
+        '| Store | Owner/service | Notes |\n'
+        '|---|---|---|\n'
+        '| \`nexus\` PG DB | nebula-srv :3101 (REST), nebula-mcp :3102 (MCP) | \`nebula\` schema: agent_records, harvests (VIEW — base tables underneath), implementation_plans |\n'
+        '| \`nexus\` PG DB \`tackle\` schema | tackle-srv :3410 (REST), tackle-mcp :3400 (MCP), role-memory-srv :3500 (sync) | \`tackle.memory\`, \`tackle.role_memory\`, \`tackle.role_leases\` (ACTIVE lease per role), \`tackle.agent_timeclock\` |\n'
+        '| Redis :6379 | role-memory-srv writes, tackle-mcp reads | \`mem:proc:{slug}\`, \`mem:idx:{role}\` (case = as-registered), \`mem:meta:last_updated\` |\n'
+        '| Assembly | assembly-srv :3107 (REST) | forums/threads/comments; roles posted as (role, model); user list at \`/api/users\` |\n'
+        '| Timeclock | :3600 | \`/clock-in\`, \`/clock-out\`, \`/active\`, \`/timeout-cleanup?maxAgeHours=\` (janitor for zombie rows) |\n'
+        '| Conduit | :3100 | WorkRequest pipeline state; \`create_plan\` tool REMOVED — use nebula_create_plan |\n'
+        '| MongoDB | live, separate engine | harvest/transcript documents; TTL monitors + unique indexes per engine dialect |\n'
+        '\n'
+        '**Known gotchas (all verified this deployment):**\n'
+        '- \`nebula.harvests\` is a VIEW; analytics (\`userTurns\`, \`keywordHits\`, \`tagFrequency\`) are computed in nebula-srv routes.ts — \`keywordHits\`/\`tagFrequency\` only under their own sort params (lazy, by design).\n'
+        '- Role case: \`DBA\` and \`dba\` are distinct registry keys; indices sync under as-registered case only.\n'
+        '- \`memory_get_procedures\` via tackle-mcp :3400 proxies to tackle-srv :3410 — \`fetch failed\` means tackle-srv is down (R15 lesson).\n'
+        '- \`nexus/.conduit-data\` is retired (posterity mirror: \`nexus/audit/CONDUIT_DATA\`); conduit state lives in PG.\n'
+        '- DSNs default to \`postgresql://pguser:pgpass@localhost:5432/nexus\` across services (env: \`CONDUIT_PG_DSN\`, \`MEMORY_PG_DSN\`).\n'
+        '\n'
+        'Use with dba-schema-migration-path for where to change things; this card is for where things ARE.\n'
+        '\n'
+        'Triggers: first DBA session on a new machine; "where does X live"; debugging a service/store mismatch.',
+        ARRAY['dba', 'reference', 'orientation', 'schema-map', 'appendix'],
+        ARRAY['new DBA session', 'which service owns this store', 'where is this table'],
+        ARRAY['memory_get_procedures']
+    )
+    ON CONFLICT (slug) DO NOTHING
+    RETURNING id INTO v_memory_id;
+    IF v_memory_id IS NOT NULL THEN
+        v_roles := ARRAY['DBA'];
+        FOREACH v_role IN ARRAY v_roles LOOP
+            INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
+            VALUES (v_memory_id, v_role, NOW(), NULL);
+        END LOOP;
+    END IF;
+    -- ──────────────────────────────────────────────────────────
+    -- 52. DBA Schema Migration Path
+    -- ──────────────────────────────────────────────────────────
+    v_memory_id := NULL;
+    INSERT INTO ${SQL}.memory (slug, title, summary, body_md, tags, triggers, mcp_tools)
+    VALUES (
+        'dba-schema-migration-path',
+        'DBA Schema Migration Path',
+        'Where nexus schema truth lives per store, and the conformant order of operations for schema work: find the owning migration source, change through it, ask R9, then propagate seeds.',
+        '## Procedure\n'
+        '\n'
+        '**Schema truth by store (verified layout):**\n'
+        '- \`nexus\` DB, \`nebula\` schema — canonical agent/harvest/plan store. \`nebula.harvests\` and similar list targets are VIEWS over base tables (check before "adding a column to a view"). Compute-heavy analytics may live server-side in \`typescript/nebula-srv/src/routes.ts\` (JSONB subqueries), not in the DB.\n'
+        '- \`nexus\` DB, \`tackle\` schema — procedure registry. Cards: \`tackle.memory\` + \`tackle.role_memory\` (source of truth). Repo seed: \`typescript/tackle-seeds/index.ts\`, REGENERATED ONLY via \`python3 nexus/bin/regenerate_memory_seed.py\` (never hand-edit; \`--verify\` does a shadow-seed byte-compare). Role-case is significant: roles are stored as-registered (\`DBA\` ≠ \`dba\`).\n'
+        '- \`tackle.schema_version\` — schema version tracking.\n'
+        '- MongoDB (live, separate engine) — harvest/transcript document stores; TTL + unique indexes specified per engine dialect.\n'
+        '- Promotion identity tables under \`promotion_schema_version\` (v7 as of 2026-08-31).\n'
+        '\n'
+        '**Order of operations for schema work:**\n'
+        '1. R1 record stating intent, target objects, and risk.\n'
+        '2. Reality-check connectivity (R15) — is the service even pointed at the store you''re about to change?\n'
+        '3. Apply via the owning service''s migration path where one exists; direct DDL only with explicit user approval.\n'
+        '4. R9 replication question (see dba-replication-protocol).\n'
+        '5. If \`tackle.memory\` changed: regenerate seed file, worktree PR it so fresh bootstraps match the live DB.\n'
+        '6. R2 record + change-log post with before/after evidence.\n'
+        '\n'
+        'Triggers: adding/altering tables, views, or indexes; seeding or editing procedure cards; any "can you change the schema" request.',
+        ARRAY['dba', 'schema', 'migrations', 'workflow', 'reference'],
+        ARRAY['schema change requested', 'procedure card work', 'where does this table live'],
+        ARRAY['nebula_create_agent_record']
+    )
+    ON CONFLICT (slug) DO NOTHING
+    RETURNING id INTO v_memory_id;
+    IF v_memory_id IS NOT NULL THEN
+        v_roles := ARRAY['DBA'];
+        FOREACH v_role IN ARRAY v_roles LOOP
+            INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
+            VALUES (v_memory_id, v_role, NOW(), NULL);
+        END LOOP;
+    END IF;
+    -- ──────────────────────────────────────────────────────────
+    -- 53. Worktree Development Workflow
+    -- ──────────────────────────────────────────────────────────
+    v_memory_id := NULL;
+    INSERT INTO ${SQL}.memory (slug, title, summary, body_md, tags, triggers, mcp_tools)
+    VALUES (
+        'worktree-development-workflow',
+        'Worktree Development Workflow',
+        'Work in a git worktree; commit, push, and raise a PR without asking, gated on passing tests.',
+        '## Procedure\n'
+        '\n'
+        '1. **Create a worktree** in the canonical root (full absolute path, a sibling of the repo, NEVER inside the repo):\n'
+        '   - \`git -C /home/codex/dev/nexus worktree add /home/codex/dev/nexus-worktrees/<topic> -b <topic>\`\n'
+        '   - Example: \`/home/codex/dev/nexus-worktrees/add-foo-endpoint\` on branch \`add-foo-endpoint\`.\n'
+        '   - The canonical worktree root is \`/home/codex/dev/nexus-worktrees\`, not any shorthand, and never \`nexus/worktrees\` inside the repo.\n'
+        '\n'
+        '2. **Keep main clean.** Do the work on the worktree branch; never commit directly to \`main\`.\n'
+        '\n'
+        '3. **Write tests** for the change. Tests are a non-negotiable condition for shipping.\n'
+        '\n'
+        '4. **Commit, push, and open a PR — without asking permission** (R8). No confirmation gate.\n'
+        '   - Commit messages MUST align with the agent record (the record is the source of truth).\n'
+        '   - Every push to a shared branch MUST be accompanied by a PR with: what changed, why, migration steps, agent record UUID, and verification.\n'
+        '   - Squash-merge preferred.\n'
+        '\n'
+        '5. **The merge gate is the tests.** A PR may only be merged when the code has tests AND the tests pass. If that is not met, raise the PR as a **draft** (do not request merge) and say so; do not silently merge untested work.\n'
+        '\n'
+        '6. **Track the PR** through the Assembly \`github\` forum until it merges or closes (R8.1).',
+        ARRAY['worktree', 'git', 'pr', 'pull-request', 'committing', 'shipping', 'development'],
+        ARRAY['worktree', 'create worktree', 'commit push', 'raise a pr', 'pull request', 'git', 'branch'],
+        '{}'
+    )
+    ON CONFLICT (slug) DO NOTHING
+    RETURNING id INTO v_memory_id;
+    IF v_memory_id IS NOT NULL THEN
+        v_roles := ARRAY['analyst', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'planner', 'reviewer', 'topologist'];
+        FOREACH v_role IN ARRAY v_roles LOOP
+            INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
+            VALUES (v_memory_id, v_role, NOW(), NULL);
+        END LOOP;
+    END IF;
     RAISE NOTICE 'Memory procedures seeded.';
 END $$;`;
 }
