@@ -1,0 +1,115 @@
+{
+ "Ticket": {
+  "source": [
+   "wind-srv Ticket (TypeSpec)",
+   "wind.tickets (DDL)"
+  ],
+  "required": [
+   "id",
+   "workflow_instance_id",
+   "node_id",
+   "status"
+  ],
+  "optional": [
+   "workflow_version_id",
+   "node_task_id",
+   "assigned_title_id",
+   "input_artifact_type",
+   "input_artifact_id",
+   "assignedTo",
+   "created_at",
+   "updated_at"
+  ],
+  "notes": "TypeSpec DTO omits workflow_version_id/node_task_id/input_artifact refs present in DDL; shape follows DDL (richer), DTO maps onto it."
+ },
+ "ExecutionRequest": {
+  "source": [
+   "execution-srv ExecutionRequest (TypeSpec)",
+   "execution.requests (DDL)"
+  ],
+  "required": [
+   "id",
+   "business_key",
+   "title",
+   "intent_type",
+   "objective",
+   "status"
+  ],
+  "optional": [
+   "inputs(jsonb)",
+   "deterministic",
+   "max_retries",
+   "timeout_policy",
+   "resource_hints",
+   "op_trace(jsonb)",
+   "source_plan_id",
+   "source_wr_id",
+   "created_at",
+   "updated_at"
+  ],
+  "notes": "inputs/op_trace stay JSONB interior (typed payload); source_plan_id/source_wr_id are lineage links (relational)."
+ },
+ "ExecutionLease": {
+  "source": [
+   "execution-srv ExecutionLease (TypeSpec)",
+   "execution.leases (DDL)"
+  ],
+  "required": [
+   "id",
+   "request_id",
+   "executor_id",
+   "status",
+   "ttl_seconds",
+   "acquired_at",
+   "expires_at"
+  ],
+  "optional": [
+   "released_at",
+   "created_at"
+  ],
+  "notes": "request_id is the lifecycle link to ExecutionRequest (relationship, not inline)."
+ },
+ "ExecutionAttempt": {
+  "source": [
+   "execution-srv ExecutionAttempt (TypeSpec)",
+   "execution.attempts (DDL)"
+  ],
+  "required": [
+   "id",
+   "lease_id",
+   "request_id",
+   "status"
+  ],
+  "optional": [
+   "executor_id",
+   "started_at",
+   "completed_at",
+   "result",
+   "error",
+   "exit_code",
+   "created_at"
+  ],
+  "notes": "result/error are evidence payload; lease_id/request_id are relational links."
+ },
+ "ExecutionReceipt": {
+  "source": [
+   "execution-srv ExecutionReceipt (TypeSpec)",
+   "execution.receipts (DDL)"
+  ],
+  "required": [
+   "id",
+   "request_id",
+   "type",
+   "summary"
+  ],
+  "optional": [
+   "attempt_id",
+   "agent_role",
+   "metadata",
+   "lineage_source",
+   "lineage_original_id",
+   "issued_at"
+  ],
+  "notes": "metadata stays JSONB; lineage_* fields are provenance links."
+ }
+}
