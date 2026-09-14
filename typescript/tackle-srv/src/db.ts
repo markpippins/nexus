@@ -3166,7 +3166,15 @@ export async function queryLogs(params: {
 }
 
 export async function clearLogs(): Promise<void> {
-  await qRun(`DELETE FROM system_logs`);
+  // V157: audit rows (REGISTRY_AUDIT / NEBULA_AUDIT — the V155/V156
+  // statement-level audit trail) are erase-guarded at the DB level and
+  // deliberately EXCLUDED here: routine log clearing must never wipe the
+  // audit trail. Removing audit rows requires direct DB access inside a
+  // transaction that sets tackle.allow_audit_erase = 'on' (the V157
+  // escape hatch), so erasure is always a conscious, all-or-nothing act.
+  await qRun(
+    `DELETE FROM system_logs WHERE category NOT IN ('REGISTRY_AUDIT','NEBULA_AUDIT')`
+  );
 }
 
 // ── Projection Configs (ACP v1, plan 1280) ────────────────────────

@@ -1,6 +1,14 @@
 import { Router } from "express";
 import { insertLog, queryLogs, clearLogs } from "../db";
 
+// Audit-trail retention note: tackle.system_logs rows in the
+// REGISTRY_AUDIT / NEBULA_AUDIT categories are the statement-level audit
+// trail (V155/V156) and are erase-guarded at the DB level (V157):
+// clearLogs() ignores them unless the process sets
+// tackle.allow_audit_erase for its connections BEFORE issuing the DELETE
+// (the deliberate, opt-in escape hatch). Regular log rotation/clearing is
+// unaffected.
+
 export const logsRouter = Router();
 
 // GET /logs — query with optional filters

@@ -9,6 +9,7 @@ import { CircuitSchedulerTab } from './components/CircuitSchedulerTab';
 import { TasksTab } from './components/TasksTab';
 import { SessionsPlaygroundTab } from './components/SessionsPlaygroundTab';
 import { SystemLogsTab } from './components/SystemLogsTab';
+import { AuditTrailTab } from './components/AuditTrailTab';
 import { SystemInsightsTab } from './components/SystemInsightsTab';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ToastContainer } from './components/Toast';
@@ -602,6 +603,10 @@ export default function App() {
 
             {currentTab === 'system-logs' && (
               <SystemLogsTab />
+            )}
+
+            {currentTab === 'audit-trail' && (
+              <AuditTrailTab />
             )}
 
             {currentTab === 'system-insights' && (

@@ -46,6 +46,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         { id: 'tasks', label: 'Task Registry', icon: FileText },
         { id: 'sessions-playground', label: 'Sessions & Playground', icon: Play },
         { id: 'system-logs', label: 'System Logs', icon: FileText },
+        { id: 'audit-trail', label: 'Audit Trail', icon: FileText },
         { id: 'system-insights', label: 'System Insights (D3)', icon: Activity },
       ]
     }
