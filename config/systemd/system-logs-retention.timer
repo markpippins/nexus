@@ -1,0 +1,13 @@
+[Unit]
+Description=System Logs Retention timer — prune tackle.system_logs daily at 04:20
+Documentation=https://github.com/markpippins/nexus/wiki/system-logs-retention
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Timer]
+OnCalendar=*-*-* 04:20:00
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target
