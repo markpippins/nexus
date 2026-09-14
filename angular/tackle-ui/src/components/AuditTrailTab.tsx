@@ -32,7 +32,7 @@ export interface AuditTrailEntry {
   message: string;
 }
 
-const AUDIT_CATEGORIES = ['REGISTRY_AUDIT', 'NEBULA_AUDIT'];
+const AUDIT_CATEGORIES = ['REGISTRY_AUDIT', 'NEBULA_AUDIT', 'KG_AUDIT'];
 
 const OP_STYLES: Record<string, string> = {
   INSERT: 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30',
@@ -42,7 +42,8 @@ const OP_STYLES: Record<string, string> = {
 
 const CATEGORY_STYLES: Record<string, string> = {
   REGISTRY_AUDIT: 'bg-violet-500/15 text-violet-300 border border-violet-500/30',
-  NEBULA_AUDIT: 'bg-sky-500/15 text-sky-300 border border-sky-500/30'
+  NEBULA_AUDIT: 'bg-sky-500/15 text-sky-300 border border-sky-500/30',
+  KG_AUDIT: 'bg-teal-500/15 text-teal-300 border border-teal-500/30'
 };
 
 export const AuditTrailTab: React.FC = () => {
