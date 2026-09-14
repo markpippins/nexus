@@ -27,6 +27,27 @@ SHRAPNEL_SRV_PORT=3110 npm run dev
 Default DSN: `postgresql://pguser:pgpass@localhost:5432/postgres` — overridable
 via `SHRAPNEL_PG_DSN`. Port is `SHRAPNEL_SRV_PORT` (default `3110`).
 
+### Rate limiting
+
+All `/api` routes pass through a global rate limiter (`src/lib/rate-limit.js`);
+mutating endpoints additionally get a stricter write budget. Both respond
+`429` with `{"error":{"message":"too_many_requests"}}` and emit standard
+`RateLimit-*` headers (draft-7).
+
+| Limiter | Env overrides | Default |
+|---------|---------------|---------|
+| Global (`apiLimiter`) | `SHRAPNEL_RATE_WINDOW_MS`, `SHRAPNEL_RATE_LIMIT` | 300 req / 60s / IP |
+| Writes (`writeLimiter`) | `SHRAPNEL_WRITE_RATE_WINDOW_MS`, `SHRAPNEL_WRITE_RATE_LIMIT` | 60 req / 60s / IP |
+
+Write-limited endpoints: `POST /api/objects`, `POST /api/encode`,
+`POST /api/fields`, `DELETE /api/objects/:id`, `POST /api/objects/:id/classify`,
+`POST /api/stereotypes/revisions`.
+
+Counters are per-process memory — correct for the single-instance systemd
+deployment this service runs under. If the service is ever put behind a
+reverse proxy, set Express `trust proxy` appropriately so client IPs are
+resolved from `X-Forwarded-For` (left **off** by default: direct LAN clients).
+
 ---
 
 ## REST Endpoints

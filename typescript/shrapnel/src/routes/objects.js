@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { pool, withTransaction } from '../db.js';
 import { encodePayload, decodeObject } from '../lib/encode.js';
 import { badRequest, notFound } from '../errors.js';
+import { writeLimiter } from '../lib/rate-limit.js';
 
 export const objectsRouter = Router();
 
@@ -59,7 +60,7 @@ objectsRouter.get('/:id', async (req, res, next) => {
 // POST /api/objects
 // Body: { fields: [...], values: { ... } } OR just { ...values... } (values-only form)
 // Returns: { object_id, fields }
-objectsRouter.post('/', async (req, res, next) => {
+objectsRouter.post('/', writeLimiter, async (req, res, next) => {
   try {
     const result = await withTransaction(async (client) => {
       return encodePayload(client, req.body);
@@ -71,7 +72,7 @@ objectsRouter.post('/', async (req, res, next) => {
 });
 
 // DELETE /api/objects/:id  -> cascade-deletes object + values + bindings
-objectsRouter.delete('/:id', async (req, res, next) => {
+objectsRouter.delete('/:id', writeLimiter, async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id)) return res.status(400).json({ error: { message: 'id must be integer' } });
@@ -109,7 +110,7 @@ objectsRouter.get('/:id/conformance', async (req, res, next) => {
 // POST /api/objects/:id/classify — classify the object into a revision
 // Body: { revision_id, disposition? } — atomic; rejected unless the object
 // carries all required members (conformance is evaluable data, no defaults)
-objectsRouter.post('/:id/classify', async (req, res, next) => {
+objectsRouter.post('/:id/classify', writeLimiter, async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id)) throw badRequest('id must be integer');
