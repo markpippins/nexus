@@ -125,6 +125,56 @@
   "lease": "references; lease pointer per execution vocabulary."
  },
  "rule": "Original field name preserved in properties.relation_payload on every remapped edge. No information loss; vocabulary bounded to 10 terms (6 frozen + 4 governed).",
+ "exceptions": {
+  "policy": "Permanent documented exceptions per ratified ruling c0345945 (architect, ratifying ontologist 1a1084d0): collision groups where remapping onto the canonical term would force uq_graph_edges to merge semantically distinct governed edges. The non-representative member(s) of each group retain their original field-name relation_type, carry properties.relation_payload AND properties.exception, and are NOT remapped. This section is part of the pinned Decision B artifact; the PC6 contract fingerprint includes this file's sha256.",
+  "note": "source/target are concept-name tails of graph_edges.source_id/target_id (store prefix e.g. resolution:concept: stripped); source_section/target_section are the graph_edges section columns.",
+  "groups": [
+   {
+    "source_section": "concepts",
+    "target_section": "concepts",
+    "source": "KeychainDecisionContext",
+    "canonical": "references",
+    "target": "KeychainVersionedReference",
+    "originals": ["evaluator", "contract", "law", "bridge"],
+    "held": ["contract", "law", "bridge"],
+    "representative": "evaluator",
+    "rationale": "Four role-distinct governance relationships (who evaluates, what contract, which law, what bridge); merging collapses the authority-binding distinctions the model exists to preserve."
+   },
+   {
+    "source_section": "concepts",
+    "target_section": "concepts",
+    "source": "EventLineage",
+    "canonical": "contains",
+    "target": "CascadeEvent",
+    "originals": ["event", "children"],
+    "held": ["children"],
+    "representative": "event",
+    "rationale": "Subject (the lineage's event) vs members (its children); merging confuses a lineage with its own subject."
+   },
+   {
+    "source_section": "concepts",
+    "target_section": "concepts",
+    "source": "Join",
+    "canonical": "references",
+    "target": "Column",
+    "originals": ["joinColumnA", "joinColumnB"],
+    "held": ["joinColumnB"],
+    "representative": "joinColumnA",
+    "rationale": "A-side vs B-side of a join; an undifferentiated join edge is worse than no edge because it asserts a relationship whose semantics it erased."
+   },
+   {
+    "source_section": "concepts",
+    "target_section": "concepts",
+    "source": "Post",
+    "canonical": "references",
+    "target": "User",
+    "originals": ["postedBy", "postedTo"],
+    "held": ["postedTo"],
+    "representative": "postedBy",
+    "rationale": "Author vs recipient — opposite directions; directionality (who wrote it vs who received it) must remain queryable."
+   }
+   ]
+  },
  "analyst_constraints_honored": [
   "store-agnostic terms (no store names)",
   "no parallel hierarchy (specializes unused pending evidence)",
