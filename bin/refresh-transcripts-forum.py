@@ -66,13 +66,14 @@ def delete_json(url: str) -> dict:
 
 
 def turn_comment_body(unit: dict, block: dict) -> str | None:
-    """One comment body per block (turn). Mirrors absorb/absorb/sinks.py."""
+    """One comment body per block (turn). Mirrors absorb/absorb/sinks.py.
+
+    Header carries only the turn role — the auto-generated arc heading was
+    dropped: it repeated across many comments and never matched content
+    reliably.
+    """
     role = ((block.get("provenance") or {}).get("role")) or "unknown"
     role_label = "User" if role == "user" else "Assistant" if role == "assistant" else "Turn"
-    seg = unit.get("provenance") or {}
-    seg_idx = seg.get("segment_index")
-    seg_heading = unit.get("heading") or f"Segment {seg_idx}"
-    seg_label = f"seg {seg_idx + 1}: {seg_heading}" if seg_idx is not None else seg_heading
     btype = block.get("type") or "paragraph"
     text = ""
     if btype == "list" and block.get("items"):
@@ -83,7 +84,7 @@ def turn_comment_body(unit: dict, block: dict) -> str | None:
         text = block["content"]
     if not text.strip():
         return None
-    body = f"**[{role_label} · {seg_label}]**\n\n{text}"
+    body = f"**[{role_label}]**\n\n{text}"
     if len(body) > 100_000:
         body = body[:100_000] + "\n\n…(truncated)"
     return body

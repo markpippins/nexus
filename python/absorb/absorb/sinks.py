@@ -266,9 +266,6 @@ def _sink_assembly_forum(cfg: dict, ctx: dict, timeout: int) -> dict:
         # provenance.role (user|assistant); the unit-level role is the arc owner
         # (user-led arcs are all 'user') and must not drive turn labels.
         for u in units:
-            seg_idx = (u.get("provenance") or {}).get("segment_index")
-            seg_heading = u.get("heading") or f"Segment {seg_idx}"
-            seg_label = f"seg {seg_idx + 1}: {seg_heading}" if seg_idx is not None else seg_heading
             for b in u.get("blocks") or []:
                 role = (b.get("provenance") or {}).get("role") or "unknown"
                 role_label = "User" if role == "user" else "Assistant" if role == "assistant" else "Turn"
@@ -282,8 +279,7 @@ def _sink_assembly_forum(cfg: dict, ctx: dict, timeout: int) -> dict:
                     text = b["content"]
                 if not text.strip():
                     continue
-                header = f"**[{role_label} · {seg_label}]**"
-                body_text = f"{header}\n\n{text}"
+                body_text = f"**[{role_label}]**\n\n{text}"
                 if len(body_text) > 100_000:
                     body_text = body_text[:100_000] + "\n\n…(truncated)"
                 if body_text.strip() in seen_bodies:

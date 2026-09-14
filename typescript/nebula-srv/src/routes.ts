@@ -2869,8 +2869,9 @@ export function createRoutes(pool: Pool): Router {
       // One row per BLOCK (the real turn source), ordered by block_index.
       // Each block carries its own provenance.role (user|assistant) — the
       // unit-level role is the arc owner (always 'user' for user-led arcs)
-      // and must NOT be used for turn styling. Segment boundaries survive as
-      // seg_heading/seg_role context on the first block of each unit.
+      // and must NOT be used for turn styling. The auto-generated arc
+      // heading is dropped as a label — it repeated across many comments
+      // and never matched content reliably.
       const { rows: units } = await pool.query(`
         SELECT
           (b #>> '{provenance,block_index}')::int AS turn_index,
@@ -2878,8 +2879,6 @@ export function createRoutes(pool: Pool): Router {
           b #>> '{type}' AS block_type,
           CASE WHEN b ? 'content' THEN b #>> '{content}' ELSE NULL END AS content,
           CASE WHEN b ? 'items' THEN b -> 'items' ELSE NULL END AS items,
-          du_elem #>> '{heading}' AS seg_heading,
-          du_elem #>> '{provenance,role}' AS seg_role,
           (du_elem #>> '{provenance,segment_index}')::int AS seg_index
         FROM nebula.harvests h,
              LATERAL jsonb_array_elements(h.docklang -> 'discourse_units') AS du_elem,
