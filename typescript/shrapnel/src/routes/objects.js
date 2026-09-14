@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { pool, withTransaction } from '../db.js';
 import { encodePayload, decodeObject } from '../lib/encode.js';
+import { badRequest, notFound } from '../errors.js';
 
 export const objectsRouter = Router();
 
@@ -81,6 +82,58 @@ objectsRouter.delete('/:id', async (req, res, next) => {
     if (r.rowCount === 0) return res.status(404).json({ error: { message: 'not_found' } });
     res.json({ deleted: r.rows[0].id });
   } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/objects/:id/conformance — StereoType conformance (read-only,
+// evaluable on demand via shrapnel.object_conformance; distinct from the
+// stored stereotype_conformance evidence fact, which is the write gate)
+objectsRouter.get('/:id/conformance', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) throw badRequest('id must be integer');
+    const chk = await pool.query(
+      `SELECT id FROM shrapnel.object_instance WHERE id = $1`, [id]
+    );
+    if (chk.rowCount === 0) return res.status(404).json({ error: { message: 'not_found' } });
+    const r = await pool.query(
+      `SELECT shrapnel.object_conformance($1) AS conformance`, [id]
+    );
+    res.json(r.rows[0].conformance);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/objects/:id/classify — classify the object into a revision
+// Body: { revision_id, disposition? } — atomic; rejected unless the object
+// carries all required members (conformance is evaluable data, no defaults)
+objectsRouter.post('/:id/classify', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) throw badRequest('id must be integer');
+    const revisionId = req.body?.revision_id;
+    if (!Number.isInteger(Number(revisionId))) throw badRequest('revision_id must be an integer');
+    const disposition = typeof req.body?.disposition === 'string' ? req.body.disposition : null;
+
+    const result = await withTransaction(async (client) => {
+      const chk = await client.query(
+        `SELECT id FROM shrapnel.object_instance WHERE id = $1`, [id]
+      );
+      if (chk.rowCount === 0) throw notFound(`object ${id} not found`);
+      const r = await client.query(
+        `SELECT shrapnel.object_classify($1, $2, $3) AS result`,
+        [id, Number(revisionId), disposition]
+      );
+      return r.rows[0].result;
+    });
+    res.json(result);
+  } catch (err) {
+    // stereotype functions raise 23514 (check_violation) / P0001 (rule) — 409
+    if (err && (err.code === '23514' || err.code === 'P0001')) {
+      return res.status(409).json({ error: { message: err.message } });
+    }
     next(err);
   }
 });

@@ -450,6 +450,154 @@ structure without decoding to JSON.
 
 ---
 
+### `GET /api/objects/:id/conformance`
+
+StereoType conformance for an object, **evaluated on demand** via the
+`shrapnel.object_conformance()` database function (migration 0005). Read-only
+and distinct from the stored `stereotype_conformance` evidence fact, which is
+the write gate for classification.
+
+**Response** `200`
+
+```json
+{
+  "object_id": 4105,
+  "classified": true,
+  "conformant": true,
+  "stereotype": "concept_import_state",
+  "revision_id": 1,
+  "missing": []
+}
+```
+
+**Errors** — `404` object not found.
+
+---
+
+### `POST /api/objects/:id/classify`
+
+Classify an object into a stereotype revision — a single atomic transaction
+over the `shrapnel.object_classify()` database function. Rejected with `409`
+unless the object already carries every required member field (conformance is
+evaluable data, never an implicit default) and, per the 0004 evidence gate,
+carries-or-receives the `stereotype_conformance = 'conformant'` OAV fact.
+
+**Request body**
+
+```json
+{ "revision_id": 1, "disposition": "seeded-by-import" }
+```
+
+`disposition` is optional; when present it is recorded as the
+`stereotype_conformance_disposition` OAV fact for auditability.
+
+**Response** `200`
+
+```json
+{
+  "object_id": 4105,
+  "stereotype": "concept_import_state",
+  "revision_id": 1,
+  "disposition": "seeded-by-import",
+  "classified": true
+}
+```
+
+**Errors** — `400` bad ids/body, `404` unknown object, `409` missing required
+members, unevidenced classification, or unknown revision.
+
+---
+
+### `GET /api/stereotypes`
+
+All stereotype identities with their head revision (highest version).
+
+**Response** `200`
+
+```json
+{
+  "stereotypes": [
+    {
+      "stereotype_id": 1,
+      "name": "concept_import_state",
+      "description": "Import-state contract over resolution-concept ingest metadata…",
+      "head_revision_id": 1,
+      "version": 1,
+      "depth": 0,
+      "contract_fingerprint": "sha256:…",
+      "created_at": "2026-09-14T12:00:00.000Z"
+    }
+  ]
+}
+```
+
+---
+
+### `GET /api/stereotypes/:name`
+
+Head revision detail for one stereotype. `404` when unknown.
+
+---
+
+### `GET /api/stereotypes/:name/chain`
+
+Lineage of the head revision via `shrapnel.stereotype_chain()`: pinned parent
+revisions from root to head, each with `name`, `version`, `hop`.
+
+---
+
+### `GET /api/stereotypes/:name/contract`
+
+Compiled **effective contract** of the head revision via
+`shrapnel.stereotype_effective_contract()`: parent ∪ child required-field set,
+flattened, with per-field origin provenance
+(`property_name, required, origin_revision, origin_stereotype, origin_version`).
+
+Ordered `required DESC, property_name`.
+
+---
+
+### `POST /api/stereotypes/revisions`
+
+Create a revision (root or child) through the
+`shrapnel.stereotype_create_revision()` constructor — one atomic call: identity
+get-or-create, `version = max+1`, server-computed contract fingerprint,
+deferred superset/acyclicity/depth verification at COMMIT.
+
+**Request body**
+
+```json
+{
+  "name": "shape_child",
+  "extends_revision": 1,
+  "rationale": "adds color to the base shape contract",
+  "required_fields": ["shape", "color"],
+  "optional_fields": ["label"]
+}
+```
+
+`extends_revision` omitted → root revision (`rationale` must be omitted too).
+`rationale` is **mandatory** for child revisions (architect constraint).
+`required_fields` must be a superset of the parent's required set (monotonic
+upgrade — downgrades rejected at COMMIT).
+
+**Response** `201`
+
+```json
+{
+  "revision_id": 27,
+  "name": "shape_child",
+  "version": 1,
+  "depth": 1,
+  "contract_fingerprint": "sha256:…"
+}
+```
+
+**Errors** — `400` validation, `409` fingerprint mismatch, non-superset child,
+rationale-less extends, depth > 3, or append-only mutation attempts.
+
+---
+
 ### `POST /api/encode`
 
 Generic encode endpoint. Identical behaviour to `POST /api/objects` but also
