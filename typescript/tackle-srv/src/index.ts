@@ -14,6 +14,7 @@ import { toolAccessRouter } from "./routes/tool-access";
 import { failureRecoveryRouter } from "./routes/failure-recovery";
 import { tasksRouter } from "./routes/tasks";
 import { logsRouter } from "./routes/logs";
+import { auditRouter } from "./routes/audit";
 import { healthRouter } from "./routes/health";
 import { projectionsRouter } from "./routes/projections";
 import { insertLog } from "./db";
@@ -157,6 +158,7 @@ app.use("/config/ai/tool-access", toolAccessRouter);
 app.use("/config/failure-recovery", failureRecoveryRouter);
 app.use("/tasks", tasksRouter);
 app.use("/logs", logsRouter);
+app.use("/audit-trail", auditRouter);
 app.use("/projections", projectionsRouter);
 app.use("/health", healthRouter);
 
