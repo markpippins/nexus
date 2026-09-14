@@ -115,6 +115,32 @@ async function main() {
     console.log(`[smoke] GET /api/objects/${objectId} after delete -> 404 ok`);
   }
 
+  // StereoType API surface (read-only: 0005 functions exist and answer)
+  {
+    const s = await req('GET', '/api/stereotypes');
+    assert.equal(s.status, 200, `stereotypes list: ${s.status} ${JSON.stringify(s.json)}`);
+    assert.ok(Array.isArray(s.json.stereotypes), 'stereotypes should be an array');
+    const firstName = s.json.stereotypes[0]?.name;
+    console.log(`[smoke] GET /api/stereotypes -> ${s.json.stereotypes.length} stereotype(s)`);
+
+    if (firstName) {
+      const c = await req('GET', `/api/stereotypes/${encodeURIComponent(firstName)}/contract`);
+      assert.equal(c.status, 200, `contract: ${c.status} ${JSON.stringify(c.json)}`);
+      assert.ok(Array.isArray(c.json.contract), 'contract should be an array');
+      console.log(`[smoke] GET /api/stereotypes/${firstName}/contract -> ${c.json.contract.length} field(s)`);
+
+      const ch = await req('GET', `/api/stereotypes/${encodeURIComponent(firstName)}/chain`);
+      assert.equal(ch.status, 200, `chain: ${ch.status} ${JSON.stringify(ch.json)}`);
+      assert.ok(Array.isArray(ch.json.chain) && ch.json.chain.length >= 1, 'chain should have >= 1 hop');
+      console.log(`[smoke] GET /api/stereotypes/${firstName}/chain -> ${ch.json.chain.length} hop(s)`);
+    }
+
+    // Unknown name must 404 through stereotype_resolve
+    const nf = await req('GET', '/api/stereotypes/definitely_not_a_stereotype_zz/contract');
+    assert.equal(nf.status, 404, `unknown stereotype should 404, got ${nf.status}`);
+    console.log('[smoke] unknown stereotype -> 404 ok');
+  }
+
   console.log('\n[smoke] ALL CHECKS PASSED');
 }
 
