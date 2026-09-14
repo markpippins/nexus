@@ -2665,13 +2665,18 @@ export function createRoutes(pool: Pool): Router {
       // was stale (only 75/1566 candidate-bearing harvests had it set).
       const liveCandidateCount = `(SELECT count(*) FROM nebula.harvest_candidates c WHERE c.harvest_id = h.id)`;
 
-      // Compute analytics via docklang for sortable metrics
+      // Analytics sorts read the generated STORED columns (stats_turns,
+      // stats_user_turns, stats_code_blocks, stats_block_density on
+      // harvests_history, exposed through the harvests view — migration 015 /
+      // PR #237) instead of decoding docklang per row in ORDER BY. The paired
+      // (col DESC NULLS LAST, id DESC) indexes turn these into index scans
+      // (~0.35 ms vs ~1.2 s full decode at current volume).
       const sortExpr: Record<string, string> = {
         candidate_count: liveCandidateCount,
-        code_blocks:      "COALESCE((h.docklang #>> '{stats,by_type,code}')\n::int, 0)",
-        turns:            'COALESCE(jsonb_array_length(h.docklang -> \'discourse_units\'), 0)',
-        block_density:    "CASE WHEN jsonb_array_length(h.docklang -> 'discourse_units') > 0 THEN (h.docklang #>> '{stats,total_blocks}')::numeric / jsonb_array_length(h.docklang -> 'discourse_units') ELSE 0 END",
-        collaboration:    "(SELECT count(*) FROM jsonb_array_elements(h.docklang -> 'discourse_units') du WHERE du #>> '{provenance,role}' = 'user')",
+        code_blocks:      'h.stats_code_blocks',
+        turns:            'h.stats_turns',
+        block_density:    'h.stats_block_density',
+        collaboration:    'h.stats_user_turns',
         created_at:       'h.created_at',
         tag_frequency:    `(SELECT COALESCE(sum(f.tc), 0)
            FROM unnest(h.tags) tg
@@ -2736,13 +2741,10 @@ export function createRoutes(pool: Pool): Router {
                s.total_candidates, s.tags, s.metadata, s.created_at,
                s.level, s.visibility_scope,
                s.source_hash, s.file_size, s.version, s.run_metadata,
-               COALESCE((s.docklang #>> '{stats,by_type,code}')::int, 0) AS code_blocks,
-               COALESCE(jsonb_array_length(s.docklang -> 'discourse_units'), 0) AS turns,
-               CASE WHEN jsonb_array_length(s.docklang -> 'discourse_units') > 0
-                    THEN (s.docklang #>> '{stats,total_blocks}')::numeric / jsonb_array_length(s.docklang -> 'discourse_units')
-                    ELSE 0 END AS blocks_per_turn,
-               (SELECT count(*) FROM jsonb_array_elements(s.docklang -> 'discourse_units') du
-                WHERE du #>> '{provenance,role}' = 'user') AS user_turns,
+               s.stats_code_blocks AS code_blocks,
+               s.stats_turns AS turns,
+               s.stats_block_density AS blocks_per_turn,
+               s.stats_user_turns AS user_turns,
                ${sort === 'keyword_hits' ? "(SELECT count(*) FROM jsonb_array_elements(s.docklang -> 'discourse_units') du WHERE du #>> '{body}' ILIKE '%' || $1 || '%') AS keyword_hits" : '0::bigint AS keyword_hits'},
                ${sort === 'tag_frequency' ? "(SELECT COALESCE(sum(freq), 0) FROM (SELECT count(*) AS freq FROM nebula.harvests h2, unnest(h2.tags) AS t WHERE t = ANY(s.tags) GROUP BY t) sub) AS tag_frequency" : '0::bigint AS tag_frequency'}
         FROM (
@@ -2750,7 +2752,8 @@ export function createRoutes(pool: Pool): Router {
                  ${liveCandidateCount} AS total_candidates, h.tags, h.metadata, h.created_at,
                  h.level, h.visibility_scope,
                  h.source_hash, h.file_size, h.version, h.run_metadata,
-                 h.docklang
+                 h.stats_turns, h.stats_user_turns,
+                 h.stats_code_blocks, h.stats_block_density
           FROM nebula.harvests h
           ${where}
           ORDER BY ${sort === 'created_at' ? `h.created_at ${sortDir} NULLS LAST, h.id ${sortDir}` : `${sortExpr[sort]} ${sortDir} NULLS LAST`}
