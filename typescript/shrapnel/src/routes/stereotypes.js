@@ -1,8 +1,16 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { pool, withTransaction } from '../db.js';
 import { badRequest, notFound, conflict } from '../errors.js';
 
 export const stereotypesRouter = Router();
+
+const stereotypesReadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false
+});
 
 // ── helpers (exported for unit tests) ───────────────────────────────────
 
@@ -74,7 +82,7 @@ stereotypesRouter.get('/', async (_req, res, next) => {
 });
 
 // GET /api/stereotypes/:name — head revision detail
-stereotypesRouter.get('/:name', async (req, res, next) => {
+stereotypesRouter.get('/:name', stereotypesReadLimiter, async (req, res, next) => {
   try {
     const head = await resolveHeadRevision(pool, req.params.name);
     const d = await pool.query(
