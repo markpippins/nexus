@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: tackle-srv — Tackle Role Memory + Agent Orchestration
-  version: 1.0.698cea61
+  version: 1.0.b03fdca4
   description: 'Tackle role memory and orchestration: AI config, sessions, roles, scheduler, memory, prompts, tool access,
     failure recovery, tasks, and logs.
 
@@ -11,6 +11,7 @@ info:
 servers:
 - url: http://localhost:3410
 tags:
+- name: audit-trail
 - name: config
 - name: health
 - name: log
@@ -23,6 +24,69 @@ tags:
 - name: sessions
 - name: tasks
 paths:
+  /audit-trail:
+    get:
+      tags:
+      - audit-trail
+      operationId: get_audit_trail
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      summary: Browsable surface over the V155/V156 statement-level audit categories (REGISTRY_AUDIT, NEBULA_AUDIT) stored
+        in tackle.system_logs. Every rou
+  /audit-trail/recent:
+    get:
+      tags:
+      - audit-trail
+      operationId: get_audit_trail_recent
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      summary: GET /audit-trail/recent — convenience window (default last 24h, max 500)
   /config/ai:
     get:
       tags:
