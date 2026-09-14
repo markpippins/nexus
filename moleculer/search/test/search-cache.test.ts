@@ -184,6 +184,15 @@ describe("phase-2 cache writes (gated)", () => {
     },
   };
 
+  function cachedRow(query: string, ageMinutes: number) {
+    return {
+      query,
+      items: [{ title: "Cached", link: "https://cached.example/x", snippet: "C", displayLink: "cached.example" }],
+      timestamp: new Date(Date.now() - ageMinutes * 60000),
+      expiresAt: new Date(Date.now() + (30 - ageMinutes) * 60000),
+    };
+  }
+
   beforeEach(async () => {
     jest.clearAllMocks();
     process.env = {
@@ -256,6 +265,79 @@ describe("phase-2 cache writes (gated)", () => {
 
     expect(result.items[0].title).toBe("Live");
     expect(result.searchInformation).toBeDefined();
+  });
+
+  // DBA binding condition (sign-off 08cde4fb): with UNIQUE {query:1} live,
+  // E11000 (lost unique-index race) must be handled by retry-with-re-read —
+  // NOT swallow-and-continue. The loser re-reads the winning row.
+  // Mock choreography: the phase-2 write path runs AFTER a cache read, so
+  // findOne serves the read (miss) first, then the E11000 re-read.
+  it("E11000 race loser re-reads the winning canonical row (retry-with-re-read)", async () => {
+    process.env.SEARCH_CACHE_WRITE_MODE = "canonical";
+    updateOne.mockRejectedValue(
+      Object.assign(new Error("E11000 duplicate key error collection: nexus.search_results_cache index: uq_query"), {
+        code: 11000,
+      })
+    );
+    const winningRow = cachedRow("q", 1);
+    findOne.mockResolvedValueOnce(null) // cache read: miss
+      .mockResolvedValueOnce(winningRow); // E11000 re-read: the winner's row
+
+    const result = (await broker.call("google-search.simpleSearch", { query: "q" })) as any;
+
+    expect(result.items[0].title).toBe("Live"); // search result unaffected
+    expect(mockedAxios.get).toHaveBeenCalledTimes(1); // live ran (cache missed)
+    // Both the read and the re-read key on the canonical normalized query…
+    expect(findOne).toHaveBeenNthCalledWith(1, { query: "q" });
+    expect(findOne).toHaveBeenNthCalledWith(2, { query: "q" });
+    // …and no second write attempt is made (the winner's row stands).
+    expect(updateOne).toHaveBeenCalledTimes(1);
+  });
+
+  it("E11000 re-read failure still never fails the search (cache posture)", async () => {
+    process.env.SEARCH_CACHE_WRITE_MODE = "canonical";
+    updateOne.mockRejectedValue(
+      Object.assign(new Error("E11000 duplicate key error collection: nexus.search_results_cache"), {
+        code: 11000,
+      })
+    );
+    findOne.mockResolvedValueOnce(null) // cache read: miss
+      .mockRejectedValueOnce(new Error("topology closed")); // re-read throws
+
+    const result = (await broker.call("google-search.simpleSearch", { query: "q" })) as any;
+
+    expect(result.items[0].title).toBe("Live");
+    expect(result.searchInformation).toBeDefined();
+    expect(updateOne).toHaveBeenCalledTimes(1);
+  });
+
+  it("E11000 with no readable winning row degrades to a logged skip, never a throw", async () => {
+    process.env.SEARCH_CACHE_WRITE_MODE = "canonical";
+    updateOne.mockRejectedValue(
+      Object.assign(new Error("E11000 duplicate key error"), { code: 11000 })
+    );
+    findOne.mockResolvedValue(null); // read misses AND re-read finds nothing
+
+    const result = (await broker.call("google-search.simpleSearch", { query: "q" })) as any;
+
+    expect(result.items[0].title).toBe("Live");
+    expect(findOne).toHaveBeenCalledTimes(2); // read + re-read
+    expect(updateOne).toHaveBeenCalledTimes(1);
+  });
+
+  it("matches E11000 by message when the driver omits the numeric code", async () => {
+    process.env.SEARCH_CACHE_WRITE_MODE = "canonical";
+    // Pathological driver wrapping: no `.code`, but the E11000 marker in
+    // the message — must still be classified as a duplicate-key race and
+    // re-read (two findOne calls) instead of failing open with no read.
+    updateOne.mockRejectedValue(new Error("writeError: E11000 duplicate key error on index uq_query"));
+    findOne.mockResolvedValueOnce(null) // cache read: miss
+      .mockResolvedValueOnce(cachedRow("q", 1)); // E11000 re-read
+
+    const result = (await broker.call("google-search.simpleSearch", { query: "q" })) as any;
+
+    expect(result.items[0].title).toBe("Live");
+    expect(findOne).toHaveBeenCalledTimes(2); // re-read happened (vs fail-open skip)
   });
 
   it("unknown or malformed mode values degrade to off", () => {

@@ -206,8 +206,8 @@ async function findAnyCacheEntry(query: string): Promise<CachedSearchRow | null>
 // Canonical rows: normalized `query` key + expiresAt. Safe only after the
 // DBA lands UNIQUE {query:1} + TTL {expiresAt:1} on nexus.search_results_cache
 // (request 4ddaae7b): the upsert relies on the unique index for race safety
-// (a concurrent identical query can win with E11000 — swallowed, a cache
-// only promises that A row exists), and the TTL index owns expiry so legacy
+// (a concurrent identical query can lose with E11000 — retry-with-re-read,
+// a cache only promises that A row exists), and the TTL index owns expiry so legacy
 // raw rows age out with no migration and no app-level janitor.
 //
 // SEARCH_CACHE_WRITE_MODE (read lazily so tests can flip it):
@@ -227,6 +227,16 @@ export function searchCacheWriteMode(): SearchCacheWriteMode {
   if (raw === "canonical") return "canonical";
   if (raw === "legacy") return "legacy";
   return "off";
+}
+
+// Mongo duplicate-key error: the unique-index race loser (DBA sign-off
+// 08cde4fb binding condition — E11000 must be handled by retry-with-re-read,
+// never swallow-and-continue). Match the numeric code, falling back to the
+// canonical message text for driver versions that wrap it.
+export function isDuplicateKeyError(err: unknown): boolean {
+  const e = err as { code?: unknown; message?: unknown } | null | undefined;
+  if (e?.code === 11000) return true;
+  return typeof e?.message === "string" && e.message.includes("E11000");
 }
 
 // ── Slice-3: Redis rate limiter — bug-compatible mirror (Option A POC) ──
@@ -505,8 +515,10 @@ export default class GoogleSearchService extends Service {
    * write shape, GATED by SEARCH_CACHE_WRITE_MODE=canonical). Requires the
    * DBA-approved UNIQUE {query:1} index: without it, concurrent identical
    * queries append duplicates (the pre-phase-2 pile-up); with it, one of
-   * two racing writes may reject with E11000 — that is fine, a cache only
-   * promises that A row exists. The TTL index (with expiresAt set here)
+   * two racing writes may reject with E11000 — the loser then re-reads the
+   * winner's row (retry-with-re-read, per the DBA binding condition in
+   * sign-off 08cde4fb: never swallow-and-continue). The TTL index (with
+   * expiresAt set here)
    * owns expiry, so legacy raw rows age out with no migration and no
    * app-level janitor. Fail-open: any error is logged, never thrown —
    * a cache write must never fail a live search.
@@ -532,8 +544,36 @@ export default class GoogleSearchService extends Service {
       );
       this.logger.debug(`Canonical cache row upserted for query: ${query}`);
     } catch (err: any) {
-      // E11000 (unique-index race) and any other cache error: fail open —
-      // the live result is already in hand and was returned regardless.
+      if (isDuplicateKeyError(err)) {
+        // Unique-index race: a concurrent identical query won the upsert.
+        // DBA binding condition (sign-off 08cde4fb): retry-with-re-read —
+        // re-read the canonical row by normalized query — NOT
+        // swallow-and-continue. The live result is already in hand and is
+        // returned regardless either way; a cache only promises that A row
+        // exists.
+        try {
+          const coll = await searchCacheCollection();
+          const row = coll
+            ? ((await coll.findOne({ query: normalizeSearchQuery(query) })) as CachedSearchRow | null)
+            : null;
+          if (row) {
+            this.logger.debug(
+              `Canonical cache write lost the unique-index race for query "${query}" — serving the winning row`
+            );
+          } else {
+            this.logger.warn(
+              `Canonical cache write hit E11000 for query "${query}" but the winning row was not readable on re-read`
+            );
+          }
+        } catch (readErr: any) {
+          this.logger.warn(
+            `Canonical cache E11000 re-read failed for query "${query}": ${readErr?.message ?? readErr}`
+          );
+        }
+        return;
+      }
+      // Any other cache error: fail open — the live result is already in
+      // hand and was returned regardless.
       this.logger.warn(`Canonical cache write skipped for query "${query}": ${err?.message ?? err}`);
     }
   }
