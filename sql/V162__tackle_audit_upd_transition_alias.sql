@@ -1,5 +1,16 @@
--- V160: Fix tackle audit UPDATE triggers — transition-table alias collides
+-- V162: Fix tackle audit UPDATE triggers — transition-table alias collides
 -- with the plpgsql NEW record.
+--
+-- NOTE (renumbering): this migration was originally filed as V160 and was
+-- applied to the live database on 2026-09-15 01:30:03Z under the ledger label
+-- 'V160__tackle_audit_upd_transition_alias' (resolution.migration_ledger).
+-- It is renumbered V162 (first free slot after V161) per the DBA merge-safety
+-- ruling, agent record c173e33c: the accidental merge of PR #250 placed a
+-- different V160 (lilac_stage_d_revoke_pre_stage) on main, and the revert
+-- (PR #253) has since removed it. Re-application of this file is idempotent
+-- (CREATE OR REPLACE + ON CONFLICT DO NOTHING); a re-run appends a new ledger
+-- row under the V162 label, preserving the append-only history of both
+-- application events.
 --
 -- Motivation (2026-09-15): the engineer's nexus-boot-procedure card fix
 -- (stale .agents/ paths, quarantined by 4f176f04) required an UPDATE on
@@ -49,6 +60,6 @@ END; $fn$;
 
 -- Ledger entry (idempotent).
 INSERT INTO resolution.migration_ledger (schema_name, migration_label, description)
-VALUES ('tackle', 'V160__tackle_audit_upd_transition_alias',
-        'Fix fn_audit_memory_upd/fn_audit_rm_upd: transition-table alias NEW collided with plpgsql NEW record, blocking all UPDATEs on tackle.memory and tackle.role_memory since V155.')
+VALUES ('tackle', 'V162__tackle_audit_upd_transition_alias',
+        'Fix fn_audit_memory_upd/fn_audit_rm_upd: transition-table alias NEW collided with plpgsql NEW record, blocking all UPDATEs on tackle.memory and tackle.role_memory since V155. Originally applied live 2026-09-15 01:30:03Z under the V160 label; renumbered V162 per DBA ruling (agent record c173e33c).')
 ON CONFLICT (schema_name, migration_label) DO NOTHING;
