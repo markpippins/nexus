@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Canonical WorkRequest Shape v0.1",
+  "version": "v0.1",
+  "status": "proposed",
+  "provenance": {
+    "synthesized_from": [
+      "execution-srv ExecutionRequest (primary TypeSpec model)",
+      "DCO JSON-LD work_request.jsonld (primary definition)",
+      "Mongo conduit_work_requests DCO evidence (1,890 docs)",
+      "wind WorkflowInstance (execution-side view, distinct)"
+    ],
+    "synthesis_record": "architect 5cb95b2f (WP1 baseline endorsed, v0.1)",
+    "spec_thread": "ed7f49c9 (Phase 2 work product 1)",
+    "lineage": "Decision B inquiry block + ExecutionContext transition envelope (thread 38b84810)"
+  },
+  "identity": {
+    "id": {
+      "type": "string",
+      "required": true,
+      "description": "Stable WR identifier"
+    },
+    "version": {
+      "type": "integer",
+      "required": true,
+      "description": "Shape-meaning version, not row version"
+    },
+    "businessKey": {
+      "type": "string",
+      "required": true,
+      "description": "Stable external key; execution domain keys on it (rover/execution-srv); reconciliation join key to Mongo DCOs"
+    }
+  },
+  "intent": {
+    "problem_statement": {
+      "type": "string",
+      "required": true
+    },
+    "desired_outcome": {
+      "type": "string",
+      "required": true
+    },
+    "priority": {
+      "type": "string",
+      "required": false,
+      "allowed": [
+        "low",
+        "medium",
+        "high"
+      ]
+    }
+  },
+  "lineage": {
+    "derived_from": {
+      "type": "array",
+      "required": false,
+      "description": "Prior WR/plan references; ag:spawns_plan precedent"
+    },
+    "plan": {
+      "type": "string",
+      "required": false
+    }
+  },
+  "decomposition": {
+    "steps": {
+      "type": "array",
+      "required": false,
+      "description": "Ordered step descriptors; step execution state lives in execution stores, not here"
+    }
+  },
+  "execution_linkage": {
+    "lease_ref": {
+      "type": "string",
+      "required": false
+    },
+    "attempt_refs": {
+      "type": "array",
+      "required": false
+    },
+    "receipt_refs": {
+      "type": "array",
+      "required": false
+    },
+    "constraint": "REFS ONLY \u2014 embedded execution state is refused. No-megatable principle."
+  },
+  "evidence_obligations": {
+    "type": "array",
+    "required": false,
+    "description": "Evidence items the WR must produce (Decision B ev_requirements)"
+  },
+  "inquiry": {
+    "required": false,
+    "description": "Optional inquiry contract (Decision B four-field block, pinned lineage)",
+    "read_set_scope": {
+      "type": "object",
+      "required": true,
+      "if_present": true
+    },
+    "evaluator_ref": {
+      "type": "string",
+      "required": true,
+      "if_present": true
+    },
+    "expected_outcome_type": {
+      "type": "string",
+      "required": true,
+      "if_present": true
+    },
+    "evidence_requirements": {
+      "type": "array",
+      "required": true,
+      "if_present": true
+    },
+    "constraint": "Exactly these four fields when present; no fifth field without proof (WorkRequest-gravity guard)."
+  },
+  "excluded_by_design": {
+    "execution_state": "Lives in execution stores (leases/attempts/receipts); referenced, never embedded.",
+    "transport_envelopes": "WorkRequestResponse/BranchResponse/SpecIR are projections, not the entity.",
+    "conduit_kernel_responses": "Views only; shelved as non-defining."
+  }
+}
