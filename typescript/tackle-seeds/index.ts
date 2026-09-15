@@ -616,14 +616,15 @@ BEGIN
         'Minimum startup read set before making changes in nexus/.',
         '## Procedure\n'
         '\n'
-        'Load at minimum:\n'
+        'Load at minimum (paths verified 2026-09-15):\n'
         '1. \`nexus/CLAUDE.md\`\n'
-        '2. \`nexus/.agents/pipeline-mode.json\`\n'
-        '3. \`nexus/.agents/OPERATING_MODEL.md\`\n'
-        '4. \`nexus/.agents/skills/mode-router/SKILL.md\`\n'
-        '5. Current conduit-mcp pipeline state (query via GET /state)\n'
+        '2. \`/home/codex/dev/AGENTS.md\` — governing doctrine; nexus/CLAUDE.md defers routing to it\n'
+        '3. \`nexus/ARCHITECTURE.md\` — service architecture (repo root; NOT docs/ARCHITECTURE.md)\n'
+        '4. Current conduit-mcp pipeline state: \`curl http://localhost:3100/state\`\n'
         '\n'
-        'Additional .agents/ documents as needed, not indiscriminately.',
+        'Additional docs as needed, not indiscriminately.\n'
+        '\n'
+        '**History:** the original card pointed at \`nexus/.agents/{pipeline-mode.json,OPERATING_MODEL.md,skills/mode-router/SKILL.md}\`. That tree was classified GOVERNANCE-ASPIRATIONAL and deliberately removed (commit 4f176f04, 2026-08-16) — do not treat it as live authority and do not restore it. \`nexus/CLAUDE.md\`''s own reference to \`docs/ARCHITECTURE.md\` is likewise stale; the architecture doc lives at the repo root.',
         ARRAY['bootstrap', 'startup', 'initialization'],
         ARRAY['start session', 'activate', 'boot', 'nexus'],
         '{}'
