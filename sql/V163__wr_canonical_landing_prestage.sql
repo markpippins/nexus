@@ -1,5 +1,5 @@
 -- =============================================================================
--- V162 (WP6 migration-guidance pre-stage — DBA): governed landing envelope for
+-- V163 (WP6 migration-guidance pre-stage — DBA): governed landing envelope for
 -- canonical WorkRequest rows on vision.work_requests.
 --
 -- ⚠️  DRAFT — NOT APPLIED TO LIVE. ⚠️
@@ -301,12 +301,12 @@ BEGIN
                           'lineage','decomposition','execution_linkage',
                           'evidence_obligations','inquiry','shape_version');
     IF n <> 9 THEN
-        RAISE EXCEPTION 'V162 postcondition failed: expected 9 new envelope columns, found %', n;
+        RAISE EXCEPTION 'V163 postcondition failed: expected 9 new envelope columns, found %', n;
     END IF;
 
     IF NOT EXISTS (SELECT 1 FROM information_schema.tables
                    WHERE table_schema='vision' AND table_name='work_request_shape_registry') THEN
-        RAISE EXCEPTION 'V162 postcondition failed: shape registry missing';
+        RAISE EXCEPTION 'V163 postcondition failed: shape registry missing';
     END IF;
 
     SELECT count(*) INTO n FROM pg_proc p
@@ -317,7 +317,7 @@ BEGIN
                         'trg_work_request_shape_registry_single_ratified',
                         'refuse_wr_struct_drop');
     IF n <> 4 THEN
-        RAISE EXCEPTION 'V162 postcondition failed: expected 4 functions, found %', n;
+        RAISE EXCEPTION 'V163 postcondition failed: expected 4 functions, found %', n;
     END IF;
 
     SELECT count(*) INTO n FROM pg_trigger
@@ -325,21 +325,21 @@ BEGIN
       AND tgrelid = 'vision.work_requests'::regclass
       AND tgname = 'trg_canonical_wr_landing_guard';
     IF n <> 1 THEN
-        RAISE EXCEPTION 'V162 postcondition failed: landing guard trigger missing';
+        RAISE EXCEPTION 'V163 postcondition failed: landing guard trigger missing';
     END IF;
 
     IF EXISTS (SELECT 1 FROM vision.work_request_shape_registry) THEN
-        RAISE EXCEPTION 'V162 postcondition failed: registry must ship EMPTY (no seeding — the v0.1 row belongs to the artifact filing)';
+        RAISE EXCEPTION 'V163 postcondition failed: registry must ship EMPTY (no seeding — the v0.1 row belongs to the artifact filing)';
     END IF;
 
     IF NOT EXISTS (SELECT 1 FROM pg_constraint
                    WHERE conrelid = 'vision.work_requests'::regclass
                      AND contype = 'f'
                      AND confrelid = 'semantics.canonical_asset'::regclass) THEN
-        RAISE EXCEPTION 'V162 postcondition failed: asset FK (work_requests_asset_id_fkey) missing — landing surface must stay asset-wired';
+        RAISE EXCEPTION 'V163 postcondition failed: asset FK (work_requests_asset_id_fkey) missing — landing surface must stay asset-wired';
     END IF;
 
-    RAISE NOTICE 'V162 postconditions: all passed';
+    RAISE NOTICE 'V163 postconditions: all passed';
 END;
 $$;
 
