@@ -1,5 +1,5 @@
 {
-  "name": "§10-core",
+  "name": "\u00a710-core",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -20,6 +20,6 @@
     "tsx": "^4.7.0"
   },
   "dependencies": {
-    "@hotmoka/§10-core": "file:../§10-core-3p"
+    "@nexus/solscript": "file:../solscript"
   }
 }
