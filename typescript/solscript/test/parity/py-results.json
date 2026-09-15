@@ -1,0 +1,111 @@
+{
+ "digests": [
+  {
+   "digest": "a7d20b41ec203440112a627ae3bd7299447862a75079f72f9c78255f7674a308",
+   "id": "dg-1"
+  },
+  {
+   "digest": "23a795be32d4de43d2c5fe75d892e172f2732f50a9016da1e3b740d0a7830c12",
+   "id": "dg-2"
+  }
+ ],
+ "evaluations": [
+  {
+   "context_status": "not_scoped",
+   "disposition": "Asserted",
+   "id": "ev-1"
+  },
+  {
+   "context_status": "not_scoped",
+   "disposition": "Rejected",
+   "id": "ev-2"
+  },
+  {
+   "context_status": "context_required",
+   "disposition": null,
+   "id": "ev-3"
+  },
+  {
+   "context_status": "context_mismatch",
+   "disposition": null,
+   "id": "ev-4"
+  },
+  {
+   "context_status": "scoped",
+   "disposition": "Asserted",
+   "id": "ev-5"
+  },
+  {
+   "error": "evaluate_proposition: context key 'unknown_dim' names no known frame_dimension",
+   "id": "ev-6"
+  }
+ ],
+ "function_calls": [
+  {
+   "id": "fc-sum",
+   "result": 10.0
+  },
+  {
+   "id": "fc-coalesce",
+   "result": "x"
+  },
+  {
+   "id": "fc-contains",
+   "result": true
+  },
+  {
+   "id": "fc-count",
+   "result": 2
+  }
+ ],
+ "queries": [
+  {
+   "id": "q-1",
+   "rows": [
+    {
+     "id": "ent-ok",
+     "size": 10
+    }
+   ]
+  },
+  {
+   "id": "q-2",
+   "rows": [
+    {
+     "external_id": "ext-ok",
+     "title": "parity"
+    }
+   ]
+  }
+ ],
+ "transitions": [
+  {
+   "committed": true,
+   "event_kind": "resolution.transition.committed",
+   "id": "tc-1",
+   "results": [
+    {
+     "passed": true,
+     "reason": "Rule 'title non-empty' passed",
+     "rule_id": "r-title-nonempty",
+     "rule_name": "title non-empty"
+    }
+   ],
+   "state_after": "reviewed"
+  },
+  {
+   "committed": false,
+   "event_kind": "resolution.transition.refused",
+   "id": "tc-2",
+   "results": [
+    {
+     "passed": false,
+     "reason": "Rule 'title non-empty' failed",
+     "rule_id": "r-title-nonempty",
+     "rule_name": "title non-empty"
+    }
+   ],
+   "state_after": "draft"
+  }
+ ]
+}

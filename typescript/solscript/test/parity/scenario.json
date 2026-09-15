@@ -1,0 +1,156 @@
+{
+  "description": "Deterministic parity scenario for the SOLScript TS port (P3). Both runners must emit identical canonical JSON (modulo scrubbed wall-clock fields).",
+  "concepts": [
+    {
+      "id": "c-doc",
+      "name": "Document",
+      "description": "Parity fixture concept",
+      "attributes": [
+        { "id": "a-status", "concept_id": "c-doc", "name": "status", "value_type": "text", "is_state_attribute": true, "allowed_values": ["draft", "reviewed"] },
+        { "id": "a-size", "concept_id": "c-doc", "name": "size", "value_type": "integer", "is_state_attribute": false, "allowed_values": [] },
+        { "id": "a-title", "concept_id": "c-doc", "name": "title", "value_type": "text", "is_state_attribute": false, "allowed_values": [] }
+      ],
+      "relationships": [],
+      "invariants": [],
+      "derivations": [],
+      "state_transitions": [],
+      "rules": []
+    }
+  ],
+  "state_transitions": [
+    {
+      "id": "t-review",
+      "concept_id": "c-doc",
+      "from_value": "draft",
+      "to_value": "reviewed",
+      "name": "review",
+      "guards": [
+        {
+          "id": "r-title-nonempty",
+          "name": "title non-empty",
+          "rule_type": "guard",
+          "severity": "hard",
+          "is_relational_check": false,
+          "expression": {
+            "id": "e-title-neq", "kind": "operator", "return_type": "boolean", "operator": "<>",
+            "operands": [
+              { "id": "e-title-ref", "kind": "attribute_ref", "return_type": "text", "attribute_id": "a-title", "operands": [] },
+              { "id": "e-title-lit", "kind": "literal", "return_type": "text", "literal_value": "", "operands": [] }
+            ]
+          },
+          "conditions": []
+        }
+      ]
+    }
+  ],
+  "entities": [
+    { "id": "ent-ok", "concept_id": "c-doc", "attributes": { "status": "draft", "size": 10, "title": "parity" }, "external_id": "ext-ok" },
+    { "id": "ent-bad", "concept_id": "c-doc", "attributes": { "status": "draft", "size": 3, "title": "" }, "external_id": "ext-bad" }
+  ],
+  "propositions": [
+    {
+      "id": "p-big",
+      "title": "size over threshold",
+      "asset_concept_id": "c-doc",
+      "subject_entity_id": "ent-ok",
+      "disposition": "Pending",
+      "assertions": [
+        {
+          "id": "r-big", "name": "size > 5", "rule_type": "invariant", "severity": "hard",
+          "is_relational_check": false,
+          "expression": {
+            "id": "e-big", "kind": "operator", "return_type": "boolean", "operator": ">",
+            "operands": [
+              { "id": "e-size", "kind": "attribute_ref", "return_type": "integer", "attribute_id": "a-size", "operands": [] },
+              { "id": "e-five", "kind": "literal", "return_type": "integer", "literal_value": "5", "operands": [] }
+            ]
+          },
+          "conditions": []
+        }
+      ],
+      "comparisons": [],
+      "frame_values": []
+    },
+    {
+      "id": "p-small",
+      "title": "size over threshold (small entity)",
+      "asset_concept_id": "c-doc",
+      "subject_entity_id": "ent-bad",
+      "disposition": "Pending",
+      "assertions": [
+        {
+          "id": "r-big2", "name": "size > 5", "rule_type": "invariant", "severity": "hard",
+          "is_relational_check": false,
+          "expression": {
+            "id": "e-big2", "kind": "operator", "return_type": "boolean", "operator": ">",
+            "operands": [
+              { "id": "e-size2", "kind": "attribute_ref", "return_type": "integer", "attribute_id": "a-size", "operands": [] },
+              { "id": "e-five2", "kind": "literal", "return_type": "integer", "literal_value": "5", "operands": [] }
+            ]
+          },
+          "conditions": []
+        }
+      ],
+      "comparisons": [],
+      "frame_values": []
+    },
+    {
+      "id": "p-framed",
+      "title": "framed parity proposition",
+      "asset_concept_id": "c-doc",
+      "subject_entity_id": "ent-ok",
+      "disposition": "Pending",
+      "assertions": [
+        {
+          "id": "r-big3", "name": "size > 5", "rule_type": "invariant", "severity": "hard",
+          "is_relational_check": false,
+          "expression": {
+            "id": "e-big3", "kind": "operator", "return_type": "boolean", "operator": ">",
+            "operands": [
+              { "id": "e-size3", "kind": "attribute_ref", "return_type": "integer", "attribute_id": "a-size", "operands": [] },
+              { "id": "e-five3", "kind": "literal", "return_type": "integer", "literal_value": "5", "operands": [] }
+            ]
+          },
+          "conditions": []
+        }
+      ],
+      "comparisons": [],
+      "frame_values": [
+        { "id": "pfv-1", "proposition_id": "p-framed", "dimension_id": "d-env", "reference_value_id": "fdv-prod" }
+      ]
+    }
+  ],
+  "frame_dimensions": [
+    { "id": "d-env", "name": "env", "value_kind": "governed_reference" }
+  ],
+  "frame_dimension_values": [
+    { "id": "fdv-prod", "dimension_id": "d-env", "value": "prod" },
+    { "id": "fdv-dev", "dimension_id": "d-env", "value": "dev" }
+  ],
+  "function_calls": [
+    { "id": "fc-sum", "function": "sum", "args": [2, 3, null, 5], "expected": 10 },
+    { "id": "fc-coalesce", "function": "coalesce", "args": [null, "x", "y"], "expected": "x" },
+    { "id": "fc-contains", "function": "contains", "args": ["solscript parity", "parity"], "expected": true },
+    { "id": "fc-count", "function": "count", "args": [1, null, 2], "expected": 2 }
+  ],
+  "digest_cases": [
+    { "id": "dg-1", "value": { "b": "x", "a": 1, "nested": { "z": [3, 1], "y": null } } },
+    { "id": "dg-2", "value": { "k": "v with, colons: and \"quotes\"" } }
+  ],
+  "queries": [
+    { "id": "q-1", "concept": "Document", "where": ["size", ">", "5"], "order_by": ["size", "DESC"], "select_fields": ["id", "size"] },
+    { "id": "q-2", "concept": "Document", "where": ["title", "=", "parity"], "order_by": null, "select_fields": ["title", "external_id"] }
+  ],
+  "transition_checks": [
+    { "id": "tc-1", "entity_id": "ent-ok", "transition_id": "t-review", "expect_committed": true, "expect_state_after": "reviewed" },
+    { "id": "tc-2", "entity_id": "ent-bad", "transition_id": "t-review", "expect_committed": false }
+  ],
+  "evaluation_checks": [
+    { "id": "ev-1", "proposition_id": "p-big", "context": null, "expect_disposition": "Asserted" },
+    { "id": "ev-2", "proposition_id": "p-small", "context": null, "expect_disposition": "Rejected" },
+    { "id": "ev-3", "proposition_id": "p-framed", "context": null, "expect_context_status": "context_required" },
+    { "id": "ev-4", "proposition_id": "p-framed", "context": { "env": "dev" }, "expect_context_status": "context_mismatch" },
+    { "id": "ev-5", "proposition_id": "p-framed", "context": { "env": "prod" }, "expect_disposition": "Asserted", "expect_context_status": "scoped" },
+    { "id": "ev-6", "proposition_id": "p-framed", "context": { "unknown_dim": "x" }, "expect_error": "no known frame_dimension" }
+  ]
+}

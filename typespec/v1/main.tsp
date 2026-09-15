@@ -38,3 +38,8 @@ import "./peb-kernel/spring/main.tsp";
 
 // Governance Admission Envelope — canonical wire boundary (W1.05)
 import "./governance-envelope/spring/main.tsp";
+
+// SOLScript — in-memory resolution-schema interpreter; model-only contract
+// (route-free; nats-envelope precedent). The Moleculer REST facade declares
+// its own operations over these models.
+import "./solscript/python/main.tsp";
