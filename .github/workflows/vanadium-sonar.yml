@@ -18,7 +18,27 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Pre-flight — is the SonarQube server reachable?
+        id: sonar-preflight
+        # DBA resilience fix (record f8b7f689): the job runs on label
+        # [self-hosted, vanadium]; when the vanadium runner is offline
+        # (laptop off the home network) a titanium runner may pick it up,
+        # and sonar-scanner then fails against the unreachable server —
+        # a network condition masquerading as a code failure, red on every
+        # PR and on main. The probe checks DNS, TCP, and the SonarQube
+        # liveness endpoint. NOT READY -> ::warning:: annotation and every
+        # scan step below is skipped (job green). Reachable -> proceed
+        # exactly as before; the quality gate still fails real problems.
+        run: |
+          set -e
+          if python3 bin/ci/sonar_preflight.py; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Generate Python coverage (pytest-cov → Cobertura XML for Sonar)
+        if: steps.sonar-preflight.outputs.ready == 'true'
         # Plan 8261643 (fix 8261643-1 + scope fix for PR #200):
         # - SonarQube 9.9 Community Python sensor expects Cobertura XML via
         #   sonar.python.coverage.reportPaths, NOT LCOV. Previous step emitted
@@ -41,6 +61,7 @@ jobs:
             --cov-report=term-missing -q || echo "coverage/python.xml/lcov generation attempted (see log)"
 
       - name: Setup Node (vanadium runner)
+        if: steps.sonar-preflight.outputs.ready == 'true'
         # vanadium ships nvm v25.8.1 in ~/.nvm but the runner's non-interactive PATH
         # does not source nvm.sh; setup-node guarantees a Node on PATH (ARM64 compatible).
         uses: actions/setup-node@v4
@@ -48,6 +69,7 @@ jobs:
           node-version: '24'
 
       - name: Generate TypeScript coverage (vitest → lcov)
+        if: steps.sonar-preflight.outputs.ready == 'true'
         # Plan 8261643: produce coverage/ts.lcov for sonar.javascript.lcov.reportPaths.
         # Runs the DB-free conduit-mcp unit tests (compile-verdict, compile-identity)
         # with the v8 coverage provider. Requires node + the service's node_modules;
@@ -68,6 +90,7 @@ jobs:
           true
 
       - name: Install sonar-scanner
+        if: steps.sonar-preflight.outputs.ready == 'true'
         # Pinned digests for 8.1.0.6389 (verified by architect on 2026-08-27).
         # aarch64 SHA fetched from https://binaries.sonarsource.com/.../sonar-scanner-cli-8.1.0.6389-linux-aarch64.zip.sha256
         # and verified live on vanadium (aarch64) 2026-09-11: 5e1c93...14628ba5.
@@ -94,6 +117,7 @@ jobs:
           "$HOME/bin/sonar-scanner" --version
 
       - name: SonarQube scan (vanadium CI)
+        if: steps.sonar-preflight.outputs.ready == 'true'
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
@@ -116,3 +140,12 @@ jobs:
             -Dsonar.projectBaseDir="$GITHUB_WORKSPACE" \
             -Dsonar.qualitygate.wait=true \
             -Dsonar.qualitygate.timeout=600
+
+      - name: Skip notice (server unreachable)
+        if: steps.sonar-preflight.outputs.ready != 'true'
+        # The pre-flight script also emits its own ::warning:: with the
+        # specific reason (DNS/TCP/HTTP); this step adds the uniform,
+        # greppable skip marker so the job's log states plainly that the
+        # check was skipped for reachability, not failed on code.
+        run: |
+          echo "::warning::vanadium-sonar skipped — SonarQube server unreachable from this runner (pre-flight). Not a code failure."

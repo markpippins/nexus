@@ -198,7 +198,11 @@ mcp-watch:
 
 mesh-test:
 	@echo "[mesh-test] running mesh-register probe tests..."
-	@python3 -m pytest bin/tests/test_mesh_register_probe.py -v
+	@python3 -m pytest bin/tests/test_mesh_register_probe.py bin/tests/test_sonar_preflight.py -v
+
+sonar-preflight-test:
+	@echo "[sonar-preflight-test] running sonar pre-flight gate tests..."
+	@python3 -m pytest bin/tests/test_sonar_preflight.py -v
 
 # ─── Seed drift guard (wr-conf-006) ─────────────────────────────────────────
 # Backed by nexus/.github/workflows/seed-guard.yml — same commands locally and
