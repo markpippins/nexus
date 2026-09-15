@@ -749,7 +749,7 @@
       ]
     },
     {
-      "body_md": "## Procedure\n\nLoad at minimum:\n1. `nexus/CLAUDE.md`\n2. `nexus/.agents/pipeline-mode.json`\n3. `nexus/.agents/OPERATING_MODEL.md`\n4. `nexus/.agents/skills/mode-router/SKILL.md`\n5. Current conduit-mcp pipeline state (query via GET /state)\n\nAdditional .agents/ documents as needed, not indiscriminately.",
+      "body_md": "## Procedure\n\nLoad at minimum (paths verified 2026-09-15):\n1. `nexus/CLAUDE.md`\n2. `/home/codex/dev/AGENTS.md` \u2014 governing doctrine; nexus/CLAUDE.md defers routing to it\n3. `nexus/ARCHITECTURE.md` \u2014 service architecture (repo root; NOT docs/ARCHITECTURE.md)\n4. Current conduit-mcp pipeline state: `curl http://localhost:3100/state`\n\nAdditional docs as needed, not indiscriminately.\n\n**History:** the original card pointed at `nexus/.agents/{pipeline-mode.json,OPERATING_MODEL.md,skills/mode-router/SKILL.md}`. That tree was classified GOVERNANCE-ASPIRATIONAL and deliberately removed (commit 4f176f04, 2026-08-16) \u2014 do not treat it as live authority and do not restore it. `nexus/CLAUDE.md`'s own reference to `docs/ARCHITECTURE.md` is likewise stale; the architecture doc lives at the repo root.",
       "mcp_tools": [],
       "roles": [
         "architect",
@@ -767,7 +767,7 @@
         "reviewer",
         "topologist"
       ],
-      "sha256": "6b66a16af3b9b62e6569f9e1a5a55ca97c79b49e7029bdf65f7102817fbeb89b",
+      "sha256": "d7000694b392869257c891ff6cec9708add46289d69ac751328969da6fae96fd",
       "slug": "nexus-boot-procedure",
       "summary": "Minimum startup read set before making changes in nexus/.",
       "tags": [

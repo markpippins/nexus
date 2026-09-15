@@ -32,4 +32,4 @@ See `/home/codex/dev/AGENTS.md` for the full routing specification.
 See: .agents/OPERATING_MODEL.md
 
 ## Service Architecture
-See: docs/ARCHITECTURE.md
+See: ARCHITECTURE.md (repo root)
