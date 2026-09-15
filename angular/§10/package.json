@@ -1,8 +1,15 @@
 {
-  "name": "tanstack_start_ts",
+  "name": "@nexus/s10-core",
   "private": true,
   "sideEffects": false,
   "type": "module",
+  "types": "./src/core/index.ts",
+  "exports": {
+    ".": "./src/core/index.ts",
+    "./core": "./src/core/index.ts",
+    "./core/*": "./src/core/*",
+    "./package.json": "./package.json"
+  },
   "scripts": {
     "dev": "vite dev --host 0.0.0.0 --port 4298",
     "build": "vite build",
