@@ -1,0 +1,21 @@
+[Unit]
+Description=System Logs Retention — prune routine categories of tackle.system_logs (audit categories excepted, V161)
+Documentation=https://github.com/markpippins/nexus/wiki/system-logs-retention
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=oneshot
+# Runtime copy lives in ~/.local/bin (deployed out-of-tree so a later `git
+# pull` of the repo checkout never hits an untracked-file conflict with the
+# tracked bin/system-logs-retention.sh this PR adds).
+ExecStart=/home/codex/.local/bin/system-logs-retention.sh
+User=codex
+Group=codex
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
