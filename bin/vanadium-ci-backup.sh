@@ -37,19 +37,37 @@ RETAIN_DAILY=14; RETAIN_WEEKLY=5; RETAIN_MONTHLY=3; MAX_AGE_DAYS=180
 LOCAL_KEEP_DAYS=2
 NEBULA_URL="${NEBULA_URL:-http://localhost:3101/api/agent-records}"
 
+# Drive guard (audit f74eb976): the spool is scratch space on a removable
+# drive (vdci-spool -> /mnt/SiP1TB/...). See bin/lib/drive-guard.sh.
+# shellcheck source=bin/lib/drive-guard.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/drive-guard.sh" \
+  || { echo "drive-guard: FATAL: lib load failed" >&2; exit 1; }
+
 TS="$(date +%Y%m%d_%H%M%S)"
 DRY_RUN=0; [ "${1:-}" = "--dry-run" ] && DRY_RUN=1
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"; }
 incident() {
+  local title="${1:-vanadium-ci backup FAILED ($TS)}"
+  local detail="${2:-Vanadium CI backup to vanadium failed. See $LOG_FILE on titanium.}"
   curl -s --max-time 5 -X POST "$NEBULA_URL" -H 'Content-Type: application/json' \
-    -d "{\"recordType\":\"report\",\"role\":\"devops\",\"title\":\"vanadium-ci backup FAILED ($TS)\",\"content\":\"Vanadium CI backup to vanadium failed. See $LOG_FILE on titanium.\",\"tags\":[\"to:sysadmin\",\"type:incident\",\"status:open\",\"source:vdci-backup\"]}" \
+    -d "{\"recordType\":\"report\",\"role\":\"devops\",\"title\":\"$title\",\"content\":\"$detail\",\"tags\":[\"to:sysadmin\",\"type:incident\",\"status:open\",\"source:vdci-backup\"]}" \
     >/dev/null 2>&1 || true
 }
 
 exec 200>"$LOCK_FILE"
 flock -n 200 || { log "SKIP: lock held"; exit 0; }
 
+# Drive guard (audit f74eb976, finding #4 — silent no-op): the spool lives
+# on a removable drive. When the drive is absent the OLD code failed here
+# with the misleading "mkdir: File exists" and, on some paths, could reach
+# "complete (ok)" having fetched nothing. Drive absence is an environment
+# state, not a backup failure: SKIP without touching remote state.
+if ! drive_guard_skip_if_absent "$SPOOL_DIR" "spool directory"; then
+  log "=== vanadium-ci backup skipped (drive absent) ==="
+  log "$DRIVE_GUARD_REASON"
+  exit 0
+fi
 mkdir -p "$SPOOL_DIR"
 log "=== vanadium-ci backup start (dry_run=$DRY_RUN) ==="
 
@@ -80,7 +98,7 @@ mk "docker exec $SONAR_C tar czf - -C /opt/sonarqube/extensions ." \
 mk "docker exec $SONAR_DB_C pg_dump -U $SONAR_DB_USER -Fc sonar" \
    "sonar-db__${TS}.dump"                                      || FAIL=1
 
-if [ "$FAIL" = 1 ]; then log "ABORT: fetch failures present"; incident; exit 1; fi
+if [ "$FAIL" = 1 ]; then log "ABORT: fetch failures present"; incident "vanadium-ci backup ABORT (fetch failures)" "One or more artifact fetches failed; nothing was shipped. See $LOG_FILE on titanium."; exit 1; fi
 [ "$DRY_RUN" = 1 ] && { log "=== dry run complete ==="; exit 0; }
 
 ( cd "$SPOOL_DIR" && sha256sum *__"${TS}".* > "manifest__${TS}.txt" )
