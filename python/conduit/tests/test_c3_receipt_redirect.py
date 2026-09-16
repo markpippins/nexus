@@ -4,9 +4,11 @@ Exercises DBAdapter.insert_receipt under CONDUIT_RECEIPT_REDIRECT:
 
   off      (default) legacy write only — behavior byte-identical to pre-flag
   shadow   legacy write + canonical record forced on (no LILAC_SHADOW flip)
-  enforce  canonical write FIRST (R4 outcomes gate the write); legacy
-           becomes a best-effort courtesy copy; conflict/grant-refusal
-           FAILS CLOSED (no legacy-only fork)
+  enforce  canonical write FIRST (R4 outcomes gate the write); the legacy
+           synthetic courtesy copy is SKIPPED for in-scope producers once
+           the canonical write commits (R2, To Do ca5941ca — Stage D freeze
+           requires zero direct writers); conflict/grant-refusal FAILS
+           CLOSED (no legacy-only fork)
 
 Isolation (repo convention):
 - Legacy surface: vision.receipts is shared-live (test_lifecycle pattern);
@@ -288,26 +290,6 @@ class RedirectTestBase(unittest.TestCase):
         )
         return rid
 
-    def _fail_legacy_write(self):
-        """Make exactly the THIRD connection open inside insert_receipt fail
-        (canonical write = 1, request resolve = 2, legacy courtesy copy = 3)
-        so the canonical write succeeds while the legacy copy fails — the
-        precise Q-B enforce-mode scenario, without touching live surfaces."""
-        import contextlib
-        orig = self.db._get_connection
-        calls = {"n": 0}
-
-        @contextlib.contextmanager
-        def fake(*a, **k):
-            calls["n"] += 1
-            if calls["n"] == 3:
-                raise RuntimeError(
-                    "simulated legacy courtesy-copy failure (Q-B/F2 test)")
-            with orig(*a, **k) as c:
-                yield c
-
-        self.db._get_connection = fake
-        self.addCleanup(lambda: self.db.__dict__.pop("_get_connection", None))
 
 
 class TestModeParser(unittest.TestCase):
@@ -362,22 +344,26 @@ class TestRedirectEnforce(RedirectTestBase):
         super().setUp()
         self._set_env("CONDUIT_RECEIPT_REDIRECT", "enforce")
 
-    def test_enforce_writes_canonical_first_legacy_courtesy(self):
+    def test_enforce_writes_canonical_only_skips_legacy_courtesy(self):
+        """R2 (To Do ca5941ca): enforce + in-scope producer writes the
+        canonical twin and SKIPS the legacy courtesy copy — the freeze
+        gate observes zero direct writers on vision.receipts."""
         rid = self._insert()
         self.assertEqual(self._canonical_count(rid), 1)
-        self.assertEqual(self._legacy_count(rid), 1,
-                         "legacy courtesy copy expected on success")
+        self.assertEqual(self._legacy_count(rid), 0,
+                         "no legacy courtesy copy in enforce mode")
 
     def test_enforce_conflict_fails_closed_no_legacy_fork(self):
         rid = self._insert(summary="original payload")
         self.assertEqual(self._canonical_count(rid), 1)
-        # Replay: same source id, different payload → R4 conflict. The
-        # legacy write would otherwise succeed (fresh session id), so a
-        # second legacy row would prove the fork happened. It must not.
+        self.assertEqual(self._legacy_count(rid), 0,
+                         "enforce writes canonical only — no legacy row at all")
+        # Replay: same source id, different payload → R4 conflict. It must
+        # raise without writing anything anywhere.
         with self.assertRaises(Exception):
             self._insert(receipt_id=rid, summary="DIVERGENT payload")
         self.assertEqual(self._canonical_count(rid), 1)
-        self.assertEqual(self._legacy_count(rid), 1,
+        self.assertEqual(self._legacy_count(rid), 0,
                          "conflict must fail closed — no legacy-only write")
 
     def test_enforce_grant_refusal_fails_closed(self):
@@ -408,12 +394,16 @@ class TestRedirectEnforce(RedirectTestBase):
                       "conduit-mcp,nexus-conduit-python")
         rid = self._insert()
         self.assertEqual(self._canonical_count(rid), 1)
+        self.assertEqual(self._legacy_count(rid), 0,
+                         "listed producer in enforce mode skips legacy")
 
 
-class TestEnforceLegacyShadowFailed(RedirectTestBase):
-    """Q-B observability (review F2): a failed legacy courtesy copy under
-    enforce is recorded as the DISTINCT class legacy_shadow_failed —
-    never silent, never a conflict/refused."""
+class TestEnforceSkipsLegacyCourtesy(RedirectTestBase):
+    """R2 (To Do ca5941ca): the enforce-mode legacy courtesy copy is gone —
+    canonical success means NO legacy attempt at all (the freeze gate
+    observes zero direct writers). The legacy_shadow_failed observability
+    class remains for historical rows; the drift checker coverage below
+    seeds it directly."""
 
     def setUp(self):
         super().setUp()
@@ -421,40 +411,41 @@ class TestEnforceLegacyShadowFailed(RedirectTestBase):
         # V141 soak surface inside the throwaway schema (schema-rewritten).
         _apply_sql_reschema(self._raw_conn, _V141_SQL, self.canon_schema)
 
-    def _soak_row(self):
+    def test_enforce_success_writes_no_legacy_and_records_nothing(self):
+        rid = self._insert()
+        self.assertEqual(self._canonical_count(rid), 1)
+        self.assertEqual(self._legacy_count(rid), 0)
         cur = self._raw_conn.cursor()
         cur.execute(
-            f"SELECT green, report->'legacy_shadow_failed' "
+            f"SELECT report->'legacy_shadow_failed' "
             f"FROM {self.canon_schema}.soak_evidence "
             f"WHERE evidence_date = CURRENT_DATE")
         row = cur.fetchone()
         self._raw_conn.commit()
-        return row
-
-    def test_legacy_failure_succeeds_operation_and_records_class(self):
-        self._fail_legacy_write()
-        rid = self._insert()
-        # Q-B asymmetry: operation SUCCEEDS (no raise) — canonical committed.
-        self.assertEqual(self._canonical_count(rid), 1)
-        self.assertEqual(self._legacy_count(rid), 0,
-                         "legacy courtesy copy failed (simulated)")
-        row = self._soak_row()
-        self.assertIsNotNone(row, "legacy_shadow_failed event must be recorded")
-        green, events = row
-        self.assertFalse(green, "soak day carrying a shadow failure is not green")
-        self.assertTrue(isinstance(events, (list, str)))
-        if isinstance(events, str):
+        events = []
+        if row is not None and row[0] is not None:
             import json as _json
-            events = _json.loads(events)
-        self.assertTrue(any(e.get("source_receipt_id") == rid for e in events),
-                         f"event for {rid} missing in {events}")
+            events = _json.loads(row[0]) if isinstance(row[0], str) else row[0]
+        self.assertFalse(any(e.get("source_receipt_id") == rid for e in events),
+                         "skipped legacy write must not record a shadow failure")
 
     def test_drift_report_surfaces_class(self):
         """F2 end-to-end: the drift checker surfaces legacy_shadow_failed
-        from the soak surface — a clean legacy scan must not mask it."""
+        from the soak surface — a clean legacy scan must not mask it.
+        (Seeded directly: the courtesy-copy failure mode that used to
+        record these events no longer exists.)"""
+        import json as _json
         import lilac_drift
-        self._fail_legacy_write()
-        rid = self._insert()
+        rid = RECEIPT_ID_PREFIX + uuid.uuid4().hex[:12]
+        cur = self._raw_conn.cursor()
+        cur.execute(
+            f"INSERT INTO {self.canon_schema}.soak_evidence "
+            f"(evidence_date, report, green, recorded_by) VALUES "
+            f"(CURRENT_DATE, %s, false, 'redirect-test') "
+            f"ON CONFLICT (evidence_date) DO UPDATE SET report = EXCLUDED.report",
+            (_json.dumps({"legacy_shadow_failed": [
+                {"source_receipt_id": rid}]}),))
+        self._raw_conn.commit()
         report = lilac_drift.check_legacy_surface(self._raw_conn,
                                                   schema=self.canon_schema)
         self.assertEqual(report["classes"].get("legacy_shadow_failed"), 1,
@@ -485,9 +476,10 @@ class TestEnforceFanOutOnCanonical(RedirectTestBase):
         self._raw_conn.commit()
         return types
 
-    def test_canonical_row_surfaces_unified_when_legacy_fails(self):
-        # Canonical write succeeds; legacy courtesy copy fails (simulated).
-        self._fail_legacy_write()
+    def test_canonical_row_surfaces_unified_when_legacy_skipped(self):
+        # Canonical write succeeds; no legacy row is attempted (R2) — the
+        # V140 unified view (the fan-out's source) surfaces the canonical
+        # row despite the missing legacy twin.
         rid = self._insert()
         self.assertEqual(self._canonical_count(rid), 1)
         self.assertEqual(self._legacy_count(rid), 0)
