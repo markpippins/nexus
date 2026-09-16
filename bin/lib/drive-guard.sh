@@ -55,6 +55,10 @@ _drive_guard_diag() {
 }
 
 # Internal: is <path> a mounted filesystem root? (test-seam aware)
+# findmnt(8) is preferred — it reads /proc/self/mountinfo directly (no
+# stat st_dev aliasing, no setuid attr, distro-standard); `mountpoint`
+# (util-linux) is the fallback; coreutils-only hosts fall back to a
+# st_dev comparison on the parent directory.
 _drive_guard_is_mount() {
   if [ -n "${DRIVE_GUARD_FAKE_MOUNTS:-}" ]; then
     case " ${DRIVE_GUARD_FAKE_MOUNTS} " in
@@ -62,7 +66,28 @@ _drive_guard_is_mount() {
     esac
     return 1
   fi
-  mountpoint -q "$1" 2>/dev/null
+  if command -v findmnt >/dev/null 2>&1; then
+    # Exact-target match: $1 must itself BE a mountpoint. (--target would
+    # report the CONTAINING mount — a plain root-fs dir would falsely
+    # report as mounted via the / entry.)
+    findmnt -rno TARGET 2>/dev/null | grep -qxF "$1"
+    return $?
+  fi
+  if command -v mountpoint >/dev/null 2>&1; then
+    mountpoint -q "$1" 2>/dev/null
+    return $?
+  fi
+  # Last resort (no findmnt, no mountpoint): st_dev comparison.
+  local dev dir parent
+  dev="$(stat -Lc %d "$1" 2>/dev/null)" || return 1
+  dir="$(dirname "$1")"
+  while [ "$dir" != "/" ]; do
+    parent="$(dirname "$dir")"
+    [ "$(stat -Lc %d "$dir" 2>/dev/null)" != "$(stat -Lc %d "$parent" 2>/dev/null)" ] \
+      && return 0
+    dir="$parent"
+  done
+  return 1
 }
 
 # Internal: if <path> points into a removable-drive base, echo the drive root

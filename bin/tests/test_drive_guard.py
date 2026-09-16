@@ -338,6 +338,20 @@ class GuardErrorIsolationTest(unittest.TestCase):
             self.assertIn("lib load failed", body,
                           f"{os.path.basename(script)} lacks fail-closed load")
 
+    def test_mount_probe_prefers_findmnt(self):
+        # Hardening pass (2026-09-16): the mount probe must try findmnt
+        # first (reads /proc/self/mountinfo directly) and keep util-linux
+        # `mountpoint` as fallback. Pins the probe chain textually.
+        with open(LIB) as fh:
+            body = fh.read()
+        self.assertLess(body.index("command -v findmnt"),
+                        body.index("command -v mountpoint"),
+                        "findmnt must be tried before mountpoint")
+        self.assertIn("grep -qxF", body,
+                      "findmnt match must be EXACT target (not --target)")
+        self.assertIn("st_dev", body,
+                      "coreutils-only fallback (st_dev comparison) present")
+
 
 if __name__ == "__main__":
     unittest.main()
