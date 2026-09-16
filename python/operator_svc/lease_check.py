@@ -130,6 +130,7 @@ def check_adoption(
         lease, error = None, str(e)
 
     if error is not None:
+        _log.warning("lease-check role=%s mode=%s outcome=error error=%r", role, mode, error)
         if mode == "enforce":
             return {"allowed": False, "mode": mode, "adopted": False,
                     "reason": f"lease resolution failed (fail-closed in enforce): {error}",
@@ -139,14 +140,18 @@ def check_adoption(
                 "lease": None, "error": error}
 
     if lease is not None:
+        _log.info("lease-check role=%s mode=%s outcome=adopted lease_ref=%s",
+                  role, mode, lease.get("id"))
         return {"allowed": True, "mode": mode, "adopted": True,
                 "reason": f"live lease for role ({mode})",
                 "lease": lease, "error": None}
 
     if mode == "enforce":
+        _log.warning("lease-check role=%s mode=enforce outcome=refused", role)
         return {"allowed": False, "mode": mode, "adopted": False,
                 "reason": "no live lease for role (enforce mode)",
                 "lease": None, "error": None}
+    _log.warning("lease-check role=%s mode=%s outcome=unadopted", role, mode)
     return {"allowed": True, "mode": mode, "adopted": False,
             "reason": "no live lease for role (warn mode)",
             "lease": None, "error": None}
