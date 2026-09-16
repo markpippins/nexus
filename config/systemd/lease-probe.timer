@@ -1,0 +1,13 @@
+[Unit]
+Description=daily synthetic lease-check probe timer (enforce-flip soak evidence)
+# Decision-grade soak accumulation at low real-traffic volume — the soak
+# review (thread 65fe85a8, comment 42a11672) set this as the alternative
+# to a multi-week passive wait.
+
+[Timer]
+OnCalendar=*-*-* 13:05:00 UTC
+Persistent=true
+Unit=lease-probe.service
+
+[Install]
+WantedBy=timers.target

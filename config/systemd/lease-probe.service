@@ -1,0 +1,13 @@
+[Unit]
+Description=nexus daily synthetic lease-check probe (DBA, soak evidence — thread 65fe85a8)
+# Oneshot runner: POSTs probe=true per observed role to operator /chat.
+# Exits 0 on completed runs by design — probe failures are data (journal
+# lines carry the outcome), not unit failures.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/lease-probe.py
+# Pin the endpoint explicitly (explicit config, not a default accident).
+Environment=OPERATOR_BASE=http://127.0.0.1:3018
+# Role list: unset = live discovery from operator.prompts_responses + operator.
+# Override with LEASE_PROBE_ROLES=role1,role2 to pin a fixed set.
