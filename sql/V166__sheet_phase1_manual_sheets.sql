@@ -102,6 +102,10 @@ CREATE INDEX IF NOT EXISTS idx_sheet_column_sheet
     ON shrapnel.sheet_column (sheet_id);
 CREATE INDEX IF NOT EXISTS idx_sheet_column_order
     ON shrapnel.sheet_column (sheet_id, column_index);
+-- Reverse lookups: FK RESTRICT enforcement (field DELETE probes this table
+-- by field_id) and "which sheets project this field" queries.
+CREATE INDEX IF NOT EXISTS idx_sheet_column_field
+    ON shrapnel.sheet_column (field_id);
 
 COMMENT ON TABLE  shrapnel.sheet_column IS
 'Sheet phase 1 (V166): per-sheet projection of a shared shrapnel field — column identity stays the field; two sheets can expose the same field without duplicating data.';
@@ -130,6 +134,10 @@ CREATE INDEX IF NOT EXISTS idx_sheet_row_sheet
     ON shrapnel.sheet_row (sheet_id);
 CREATE INDEX IF NOT EXISTS idx_sheet_row_order
     ON shrapnel.sheet_row (sheet_id, row_index);
+-- Reverse lookup: object-deletion CASCADE probes this table by row_object_id;
+-- also serves "which sheets is this object a row of".
+CREATE INDEX IF NOT EXISTS idx_sheet_row_object
+    ON shrapnel.sheet_row (row_object_id);
 
 COMMENT ON TABLE  shrapnel.sheet_row IS
 'Sheet phase 1 (V166): row membership of an (existing) shrapnel object in a sheet, with fractional-rank ordering. Deleting the OBJECT cascades the junction only — object and its cells survive everywhere else.';
@@ -245,6 +253,7 @@ DECLARE
     v_oav_id      bigint;
     v_value_id    bigint;
     v_cur_type    smallint;
+    v_bindings    integer;
 BEGIN
     -- (1) the cell must be inside the window: column projected AND row member.
     SELECT EXISTS (SELECT 1 FROM shrapnel.sheet_column
@@ -279,6 +288,20 @@ BEGIN
     IF FOUND THEN
         IF v_cur_type <> p_type_code THEN
             RAISE EXCEPTION 'SHEETS-004: cell (%,%) holds type %; retype refused — clear the cell first (shrapnel.sheet_clear_cell)', p_object_id, p_field_id, v_cur_type;
+        END IF;
+        -- Copy-on-write guard: in-place UPDATE is only safe while values are
+        -- private to one binding. Live data has zero shared values (15,382
+        -- bindings / 15,382 distinct, verified 2026-09-16) — but if sharing
+        -- ever emerges ("one fact cited by many objects"), an in-place write
+        -- would mutate OTHER objects' cells. Copy-on-write keeps the write
+        -- local no matter what later writers do.
+        SELECT count(*) INTO v_bindings
+          FROM shrapnel.object_attribute_value WHERE value_id = v_value_id;
+        IF v_bindings > 1 THEN
+            v_value_id := shrapnel.sheet_encode_value(p_type_code, p_value, p_json);
+            UPDATE shrapnel.object_attribute_value
+               SET value_id = v_value_id WHERE id = v_oav_id;
+            RETURN v_oav_id;
         END IF;
         CASE p_type_code
             WHEN 1 THEN UPDATE shrapnel.value_long      SET value = p_value::bigint          WHERE id = v_value_id;

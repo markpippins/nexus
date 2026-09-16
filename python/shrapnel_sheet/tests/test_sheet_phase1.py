@@ -471,6 +471,39 @@ class SheetPhase1Tests(unittest.TestCase):
         idx = db.one("SELECT count(*) FROM pg_indexes WHERE schemaname='shrapnel' AND indexname IN ('idx_sheet_column_sheet','idx_sheet_column_order','idx_sheet_row_sheet','idx_sheet_row_order')")
         assert idx == 4
 
+    # ── AC17: copy-on-write — a shared value is never mutated in place ──────
+
+    def test_ac17_copy_on_write_for_shared_values(self):
+        """Live data has zero shared values today (15,382 bindings / 15,382
+        distinct, verified 2026-09-16) — the stress test demanded the write
+        path stay local even if sharing ever emerges. Two objects bound to one
+        value; updating through one must NOT change the other's cell."""
+        db = self.db
+        sid, f_long, f_str, f_bool, o1, o2 = self._setup_sheet(db)
+        # one value bound by two objects (out-of-band sharing, as a future
+        # writer could create)
+        val = db.one("INSERT INTO shrapnel.value (value_type_code) VALUES (2) RETURNING id")
+        db.exec_("INSERT INTO shrapnel.value_string (id, value) VALUES (%s, 'original')", (val,))
+        db.exec_("INSERT INTO shrapnel.object_attribute_value (object_id, field_id, value_id) VALUES (%s,%s,%s)", (o1, f_str, val))
+        db.exec_("INSERT INTO shrapnel.object_attribute_value (object_id, field_id, value_id) VALUES (%s,%s,%s)", (o2, f_str, val))
+        db.conn.commit()
+        # update through o1's binding
+        db.exec_(F_SET, (sid, o1, f_str, 2, "changed"))
+        db.conn.commit()
+        # o1's cell now shows the new text...
+        assert db.one(
+            "SELECT vs.value FROM shrapnel.object_attribute_value oav"
+            " JOIN shrapnel.value_string vs ON vs.id=oav.value_id"
+            " WHERE oav.object_id=%s AND oav.field_id=%s", (o1, f_str)) == "changed"
+        # ...the OLD value row is untouched (o2 still sees 'original')...
+        assert db.one(
+            "SELECT vs.value FROM shrapnel.object_attribute_value oav"
+            " JOIN shrapnel.value_string vs ON vs.id=oav.value_id"
+            " WHERE oav.object_id=%s AND oav.field_id=%s", (o2, f_str)) == "original"
+        # ...and the o1 binding points at a NEW value row (copy-on-write).
+        v1 = db.one("SELECT value_id FROM shrapnel.object_attribute_value WHERE object_id=%s AND field_id=%s", (o1, f_str))
+        assert v1 != val
+
     # ── AC16: no shadow write path — sheet tables hold references only ───────
 
     def test_ac16_no_shadow_write_path(self):
