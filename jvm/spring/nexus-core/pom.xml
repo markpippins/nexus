@@ -44,6 +44,7 @@
     <modules>
         <module>nexus-core-search</module>
         <module>nexus-core-broker</module>
+        <module>nexus-core-solscript</module>
         <module>nexus-core-app</module>
     </modules>
 
@@ -63,6 +64,11 @@
             <dependency>
                 <groupId>org.nexus.core</groupId>
                 <artifactId>nexus-core-broker</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.nexus.core</groupId>
+                <artifactId>nexus-core-solscript</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

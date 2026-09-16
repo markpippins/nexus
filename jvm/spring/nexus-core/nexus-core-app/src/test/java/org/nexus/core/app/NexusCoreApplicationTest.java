@@ -55,6 +55,21 @@ class NexusCoreApplicationTest {
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.METHOD_NOT_ALLOWED);
     }
 
+    @Test
+    void solscriptHealthAnswers() {
+        ResponseEntity<String> resp = rest.getForEntity("/api/solscript/health", String.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resp.getBody()).contains("solscript-java");
+    }
+
+    @Test
+    void solscriptTransitionIsReadOnly405() {
+        ResponseEntity<String> resp = rest.postForEntity(
+            "/api/solscript/transition-entity",
+            new HttpEntity<>("{}", jsonHeaders()), String.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.METHOD_NOT_ALLOWED);
+    }
+
     private static org.springframework.http.HttpHeaders jsonHeaders() {
         var h = new org.springframework.http.HttpHeaders();
         h.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
