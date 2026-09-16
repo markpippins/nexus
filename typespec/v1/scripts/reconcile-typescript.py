@@ -73,6 +73,8 @@ MANIFEST = [
     # extraction regexes run: express (default), adonisjs, or moleculer.
     {"name": "adonisjs", "type": "rest", "src_root": "adonisjs/broker-gateway-proxy", "framework": "adonisjs"},
     {"name": "moleculer", "type": "rest", "src_root": "moleculer/search", "framework": "moleculer"},
+    # SOLScript read-only facade (Wave 0.4) — same Moleculer alias extraction.
+    {"name": "solscript", "type": "rest", "src_root": "moleculer/solscript", "framework": "moleculer"},
     # Worker-tier broker (Wave 0.3) — same Moleculer alias extraction.
     {"name": "nexus-broker", "type": "rest", "src_root": "moleculer/nexus-broker", "framework": "moleculer"},
     # Consolidated control-plane edge (Wave 0.2) — AdonisJS route extraction.
