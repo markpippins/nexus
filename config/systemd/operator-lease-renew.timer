@@ -1,0 +1,14 @@
+[Unit]
+# 30-min renewal cadence vs 3600s default TTL: always renews well inside
+# the window, so the operator lease is effectively standing. Persistent=
+# catches up a missed fire (e.g. machine asleep) on wake.
+Description=Renew standing operator lease every 30 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=30min
+Persistent=true
+Unit=operator-lease-renew.service
+
+[Install]
+WantedBy=timers.target

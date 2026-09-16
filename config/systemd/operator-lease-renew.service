@@ -1,0 +1,11 @@
+[Unit]
+# Standing operator-role lease renewal (enforce-flip prerequisite, soak
+# review 42a11672 / continuity thread 65fe85a8). Keeps an ACTIVE
+# operator@ui-fleet lease alive so UI-origin /chat calls survive a future
+# OPERATOR_LEASE_CHECK=enforce flip. Honest degradation: nebula-srv
+# unreachable => logged degraded, exit 0, next fire retries.
+Description=Renew standing operator role lease (ui-fleet channel)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env python3 /home/codex/dev/nexus/bin/operator-lease.py ensure
