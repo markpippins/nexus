@@ -36,6 +36,7 @@ if _PARENT not in sys.path:
 from operator_svc.operator import respond
 from operator_svc.api_proxy import proxy_request
 from operator_svc.chat_store import get_recent_sessions
+from operator_svc.lease_check import check_adoption
 
 # ── Configuration ─────────────────────────────────────────────────
 PORT = int(os.environ.get("OPERATOR_PORT", "3018"))
@@ -159,6 +160,20 @@ class OperatorHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "message is required"})
             return
 
+        # ── Lease liveness check (continuity prerequisite, 65fe85a8) ──────
+        # Resolve the requested role against tackle.role_leases BEFORE any
+        # role-scoped context is assembled (model config, procedure cards,
+        # future continuity digests). Modes: off / warn (default) / enforce.
+        adoption = check_adoption(role)
+        if not adoption["allowed"]:
+            self._send_json(403, {
+                "error": "role adoption refused (lease check)",
+                "role": role,
+                "mode": adoption["mode"],
+                "reason": adoption["reason"],
+            })
+            return
+
         session_id = _get_or_create_session(session_id)
 
         # Run inference in a background thread, stream via queue
@@ -202,6 +217,12 @@ class OperatorHandler(BaseHTTPRequestHandler):
                     "response": result["data"]["response"],
                     "model_identifier": result["data"].get("model_identifier", ""),
                     "latency_ms": result["data"].get("latency_ms", 0),
+                    "lease_check": {
+                        "mode": adoption["mode"],
+                        "adopted": adoption["adopted"],
+                        "lease_ref": (adoption["lease"] or {}).get("id"),
+                        "reason": adoption["reason"],
+                    },
                 })
             elif result["type"] == "error":
                 self._send_json(500, {
