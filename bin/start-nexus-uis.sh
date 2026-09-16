@@ -84,6 +84,15 @@ port_is_listening() {
 cmd_start_all() {
     echo "=== Starting Nexus UIs (via systemd) ==="
 
+    # ── Standing operator lease (enforce-flip prerequisite, 65fe85a8) ──────
+    # UI-origin /chat calls need an ACTIVE operator@ui-fleet lease when the
+    # lease check flips to enforce. Non-fatal: fleet start must never fail
+    # because lease infrastructure is down (script exits 0 + warns; the
+    # operator-lease-renew.timer retries every 30 min).
+    if command -v python3 >/dev/null 2>&1; then
+        echo "  operator standing lease: $(python3 "$NEXUS_ROOT/bin/operator-lease.py" ensure 2>/dev/null || echo 'degraded (will retry via timer)')"
+    fi
+
     systemctl --user daemon-reload 2>/dev/null || true
 
     echo
