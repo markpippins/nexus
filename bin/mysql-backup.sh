@@ -37,6 +37,12 @@ LOCK_FILE="/tmp/mysql-backup.lock"
 KEEP_DAYS="${KEEP_DAYS:-14}"
 NEBULA_URL="${NEBULA_URL:-http://localhost:3101/api/agent-records}"
 
+# Drive guard (audit f74eb976): honest absent-drive failures for the backup
+# script family. See bin/lib/drive-guard.sh for the semantics.
+# shellcheck source=bin/lib/drive-guard.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/drive-guard.sh" \
+  || { echo "drive-guard: FATAL: lib load failed" >&2; exit 1; }
+
 TS="$(date +%Y%m%d_%H%M%S)"
 DRY_RUN=0
 [ "${1:-}" = "--dry-run" ] && DRY_RUN=1
@@ -44,9 +50,18 @@ DRY_RUN=0
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"; }
 
 incident() {  # best-effort alert; NEVER lets a notification failure kill us
+  local title="${1:-mysql-backup FAILED ($TS)}"
+  local detail="${2:-}"
+  if [ -z "$detail" ]; then
+    # Stamp is itself JSON; strip quotes/newlines so the incident payload
+    # stays valid JSON (raw embedding used to break it silently).
+    local stamp
+    stamp="$(cat "${BACKUP_DIR}/last-backup.json" 2>/dev/null | tr -d '\"\n' || echo none)"
+    detail="Nightly MySQL (kodi) backup failed. See $LOG_FILE for detail. Last good stamp: ${stamp}."
+  fi
   curl -s --max-time 5 -X POST "$NEBULA_URL" \
     -H 'Content-Type: application/json' \
-    -d "{\"recordType\":\"report\",\"role\":\"devops\",\"title\":\"mysql-backup FAILED ($TS)\",\"content\":\"Nightly MySQL (kodi) backup failed. See $LOG_FILE for detail. Last good stamp: \$(cat ${BACKUP_DIR}/last-backup.json 2>/dev/null || echo none).\",\"tags\":[\"to:sysadmin\",\"type:incident\",\"status:open\",\"source:mysql-backup\"]}" \
+    -d "{\"recordType\":\"report\",\"role\":\"devops\",\"title\":\"$title\",\"content\":\"$detail\",\"tags\":[\"to:sysadmin\",\"type:incident\",\"status:open\",\"source:mysql-backup\"]}" \
     >/dev/null 2>&1 || true
 }
 
@@ -54,7 +69,17 @@ incident() {  # best-effort alert; NEVER lets a notification failure kill us
 exec 200>"$LOCK_FILE"
 flock -n 200 || { log "SKIP: another backup run holds the lock"; exit 0; }
 
-mkdir -p "$BACKUP_DIR"
+# Drive guard (audit f74eb976): BACKUP_DIR must be usable BEFORE anything
+# runs. A dangling symlink to an absent removable drive used to fail later
+# with the misleading "mysqldump pipeline failed" (records 0abb6df5 ->
+# cd776865). A primary backup destination being unavailable is a FAIL, not
+# a skip — silently skipping would hide a coverage gap.
+if ! drive_guard_require_dir "$BACKUP_DIR" "backup directory"; then
+  log "$DRIVE_GUARD_REASON"
+  incident "mysql-backup: backup destination unavailable" \
+    "No dump was attempted. $DRIVE_GUARD_REASON"
+  exit 1
+fi
 
 # ---------------------------------------------------------------- dump -----
 OUT="$BACKUP_DIR/all__${TS}.sql.gz"

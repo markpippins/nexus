@@ -32,6 +32,12 @@ STALE_HOURS="${STALE_HOURS:-28}"          # daily backup at ~03:45; 28h headroom
 CONTAINER="${CONTAINER:-my-mysql}"
 NEBULA_URL="${NEBULA_URL:-http://localhost:3101/api/agent-records}"
 
+# Drive guard (audit f74eb976): name the actual backup-dir state in alerts
+# (dangling symlink -> absent removable drive vs. genuinely stale backups).
+# shellcheck source=bin/lib/drive-guard.sh
+. "$BIN_DIR/lib/drive-guard.sh" \
+  || { echo "drive-guard: FATAL: lib load failed" >&2; exit 1; }
+
 _log() {
   local level="$1"; shift
   echo "[mysql-health-monitor] $(date '+%Y-%m-%d %H:%M:%S') [$level] $*"
@@ -136,10 +142,12 @@ main() {
   # ── Backup freshness (success/failure alert side) ──
   local age
   age=$(_backup_age_hours)
+  local drive_state
+  drive_state="$(drive_guard_describe "$BACKUP_DIR")"
   if [[ "$age" -gt "$STALE_HOURS" ]] && [[ "$stale_alerted" != "true" ]]; then
-    _log "WARN" "No successful MySQL backup in ${age}h (> ${STALE_HOURS}h)"
+    _log "WARN" "No successful MySQL backup in ${age}h (> ${STALE_HOURS}h) [backup dir: $drive_state]"
     incident "mysql-backup: STALE (no success in ${age}h)" "mysql-backup" "open" \
-      "No successful MySQL backup stamp in ${age}h (threshold ${STALE_HOURS}h). Last stamp: $(cat "$BACKUP_STAMP" 2>/dev/null | tr -d '\n' || echo none). Check mysql-backup.service / $BACKUP_DIR/mysql-backup.log."
+      "No successful MySQL backup stamp in ${age}h (threshold ${STALE_HOURS}h). Backup dir state: $drive_state. Last stamp: $(cat "$BACKUP_STAMP" 2>/dev/null | tr -d '\n' || echo none). Check mysql-backup.service / $BACKUP_DIR/mysql-backup.log."
     stale_alerted=true
   elif [[ "$age" -le "$STALE_HOURS" ]]; then
     # fresh success present — re-arm the stale flag for the next episode
@@ -152,7 +160,7 @@ main() {
   fi
 
   if [[ "$mysql_is_up" == "true" ]]; then
-    _log "DEBUG" "MySQL healthy (backup age ${age}h)"
+    _log "DEBUG" "MySQL healthy (backup age ${age}h, backup dir: $drive_state)"
   else
     _log "DEBUG" "MySQL is DOWN"
   fi
