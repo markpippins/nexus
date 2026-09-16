@@ -69,4 +69,20 @@ namespace org.nexus.moleculer {
     Health check for the Moleculer API gateway.
     """)
   op health(): MoleculerHealthResponse;
+
+  // ========================================================================
+  // Traffic canary (M1)
+  // ========================================================================
+
+  @route("/api/traffic/counts")
+  @get
+  @doc("""
+    Status: implemented.
+    M1 traffic canary: cumulative per-action request counts since boot,
+    derived from the built-in metrics registry (moleculer.request.total).
+    In-memory by design — a restart resets the window (see startedAt).
+    Pairs with the legacy gateway GET /api/v1/broker/traffic/counts for the
+    zero-traffic observation. Shape: {startedAt, total, counts}.
+    """)
+  op trafficCounts(): TrafficCounts;
 }

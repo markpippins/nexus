@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+        nexus-core — read-only JVM projection monolith (distribution POC).
+
+        Intent: this laptop is the primary nexus DB host. When away from the
+        home network the system degrades to READ-ONLY local status; writes
+        queue to JetStream and reconcile on return. nexus-core is the
+        read-only local projection, assembled from per-service Spring Boot
+        application modules via Maven into one monolith.
+
+        Standalone parent (mirrors the peb-kernel parent style). Deliberately
+        NOT wired into the service-broker aggregator (jvm/spring/pom.xml): it
+        is an independent multi-module project with its own lifecycle.
+
+        Modules:
+          - nexus-core-search   projects the `moleculer` TypeSpec surface (4 ops)
+          - nexus-core-broker   projects the `nexus-broker` surface (34 ops)
+          - nexus-core-app      runnable bootstrap assembling the monolith (:8090)
+
+        Reuse rules (no duplication):
+          - peb-kernel consumed, never re-implemented
+          - shared canonical core + adapters.spring reused (BinaryData/ResponseError/PagedResponse)
+          - readonly-by-default: GETs real, POST/DELETE -> 405 until write path emits JetStream
+    -->
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.4.0</version>
+        <relativePath/> <!-- lookup parent from repository -->
+    </parent>
+
+    <groupId>org.nexus.core</groupId>
+    <artifactId>nexus-core</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>nexus-core</name>
+    <description>Nexus read-only JVM projection monolith (distribution/failover POC)</description>
+
+    <modules>
+        <module>nexus-core-search</module>
+        <module>nexus-core-broker</module>
+        <module>nexus-core-solscript</module>
+        <module>nexus-core-app</module>
+    </modules>
+
+    <properties>
+        <java.version>21</java.version>
+        <springdoc.version>2.5.0</springdoc.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Local nexus-core modules -->
+            <dependency>
+                <groupId>org.nexus.core</groupId>
+                <artifactId>nexus-core-search</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.nexus.core</groupId>
+                <artifactId>nexus-core-broker</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.nexus.core</groupId>
+                <artifactId>nexus-core-solscript</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.springdoc</groupId>
+                <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+                <version>${springdoc.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <configuration>
+                        <systemPropertyVariables>
+                            <!-- Byte Buddy (Mockito) vs Java 25 runtime — see peb-kernel -->
+                            <net.bytebuddy.experimental>true</net.bytebuddy.experimental>
+                        </systemPropertyVariables>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>

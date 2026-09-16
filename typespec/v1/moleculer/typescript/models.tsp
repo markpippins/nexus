@@ -73,4 +73,14 @@ namespace org.nexus.moleculer {
     /** Service name. */
     service: string;
   }
+
+  /** Per-action cumulative request count (M1 traffic canary). */
+  model TrafficCounts {
+    /** ISO-8601 boot timestamp — the start of the observation window. */
+    startedAt: string;
+    /** Sum of all counted action requests since boot. */
+    total: int32;
+    /** Per-action request counts (action name → count). */
+    counts: Record<int32>;
+  }
 }
