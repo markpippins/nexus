@@ -33,23 +33,52 @@ freebuff_boot = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(freebuff_boot)
 
 
-def _install_fake_continuity(assemble=None, fetchers=None):
-    """Inject a fake continuity.digest module; returns a cleanup callable."""
+def _install_fake_continuity(assemble=None, fetchers=None, arity=4):
+    """Inject a fake continuity.digest module; returns a cleanup callable.
+
+    arity=4 → _live_fetchers returns the pre-v0.1 4-tuple;
+    arity=5 → the v0.1+ 5-tuple ending in the lease fetcher.
+    The captured dict records assemble_digest kwargs for wiring assertions.
+    """
+    captured = {}
     pkg = types.ModuleType("continuity")
     pkg.__path__ = []  # mark as package
     mod = types.ModuleType("continuity.digest")
-    mod._live_fetchers = fetchers or (lambda role: (lambda: [], lambda: [], lambda: [], "level <= 4"))
-    mod.assemble_digest = assemble or (lambda role, model, fi, ft, fr, ceiling: {
-        "digest_version": "v0", "disposition": "context-only", "role": role,
-        "assembled_for_model": model, "as_of": "2026-09-16T00:00:00+00:00",
-        "level_provenance": {"level_filter_allowed": ceiling,
-                             "applied_at": "source-query"},
-        "open_inbox": fi(), "open_threads": ft(), "recent_records_metadata": fr(),
-        "sources_degraded": [], "counts": {"open_inbox": 0, "open_threads": 0,
-                                           "recent_records": 0},
-    })
+    if arity == 5:
+        lf = fetchers or (lambda role: {"lease_ref": "l-1", "lease_role": role,
+                                        "lease_model": "m", "expires_at": None})
+        mod._live_fetchers = lambda role: (lambda: [], lambda: [], lambda: [],
+                                           "level <= 4", lf)
+    else:
+        mod._live_fetchers = fetchers or (
+            lambda role: (lambda: [], lambda: [], lambda: [], "level <= 4"))
+
+    if arity == 5:
+        # v0.1-shaped assembler: accepts the fetch_lease kwarg (named, so the
+        # shim's signature inspection finds it)
+        def _assemble(role, model, fi, ft, fr, ceiling, fetch_lease=None):
+            captured.update({"fetch_lease": fetch_lease})
+            return _payload(role, model, fi, ft, fr, ceiling)
+    else:
+        # v0-shaped assembler: no fetch_lease parameter at all
+        def _assemble(role, model, fi, ft, fr, ceiling):
+            return _payload(role, model, fi, ft, fr, ceiling)
+
+    def _payload(role, model, fi, ft, fr, ceiling):
+        return {
+            "digest_version": "v0", "disposition": "context-only", "role": role,
+            "assembled_for_model": model, "as_of": "2026-09-16T00:00:00+00:00",
+            "level_provenance": {"level_filter_allowed": ceiling,
+                                 "applied_at": "source-query"},
+            "open_inbox": fi(), "open_threads": ft(), "recent_records_metadata": fr(),
+            "sources_degraded": [], "counts": {"open_inbox": 0, "open_threads": 0,
+                                               "recent_records": 0},
+        }
+
+    mod.assemble_digest = assemble or _assemble
     sys.modules["continuity"] = pkg
     sys.modules["continuity.digest"] = mod
+    mod._captured = captured
 
     def cleanup():
         sys.modules.pop("continuity", None)
@@ -161,6 +190,43 @@ class TestDigestStep(unittest.TestCase):
                                side_effect=lambda: calls.append("digest")):
             boot.run()
         self.assertEqual(calls, ["digest", "clock", "forums", "procs"])
+
+
+class TestLeaseFetcherWiring(unittest.TestCase):
+    """v0.1 digest (5-tuple _live_fetchers): the lease fetcher rides through."""
+
+    def _boot(self):
+        return freebuff_boot.Boot(role="dba", model="freebuff/buffy",
+                                  channel="interactive", ttl=3600, budget=10,
+                                  lease_policy="auto", update_pointer=False,
+                                  limit=10, dry_run=False, strict=False,
+                                  want_digest=True)
+
+    def test_5tuple_passes_lease_fetcher(self):
+        cleanup = _install_fake_continuity(arity=5)
+        self.addCleanup(cleanup)
+        import sys as _sys
+        boot = self._boot()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            boot.digest_preview()
+        step = [s for s in boot.steps if s["step"] == "digest"][0]
+        self.assertEqual(step["status"], "ok")
+        captured = _sys.modules["continuity.digest"]._captured
+        self.assertIsNotNone(captured.get("fetch_lease"))  # rides through
+
+    def test_4tuple_assembles_unbound(self):
+        cleanup = _install_fake_continuity(arity=4)
+        self.addCleanup(cleanup)
+        import sys as _sys
+        boot = self._boot()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            boot.digest_preview()
+        step = [s for s in boot.steps if s["step"] == "digest"][0]
+        self.assertEqual(step["status"], "ok")  # pre-v0.1 digest still previews
+        captured = _sys.modules["continuity.digest"]._captured
+        self.assertIsNone(captured.get("fetch_lease"))
 
 
 if __name__ == "__main__":

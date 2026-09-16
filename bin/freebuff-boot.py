@@ -328,11 +328,21 @@ class Boot:
         except Exception as e:  # noqa: BLE001 — absence is a skip, not a failure
             self.record("digest", "skipped",
                         f"continuity package not importable ({e.__class__.__name__}) "
-                        "— digest v0 (PR #274) not merged yet?")
+                        "— digest (PR #274) not merged yet?")
             return
         try:
-            fin, fth, frec, ceiling = _live_fetchers(self.role)
-            digest = assemble_digest(self.role, self.model, fin, fth, frec, ceiling)
+            fetched = _live_fetchers(self.role)
+            flease = fetched[4] if len(fetched) == 5 else None  # v0.1+: lease binding
+            fin, fth, frec, ceiling = fetched[:4]
+            import inspect
+            if flease is not None and "fetch_lease" in inspect.signature(
+                    assemble_digest).parameters:
+                # v0.1+ assembler: pass the lease fetcher (adoption-time binding)
+                digest = assemble_digest(self.role, self.model, fin, fth, frec,
+                                         ceiling, fetch_lease=flease)
+            else:
+                # pre-v0.1 assembler: assemble unbound (still a valid v0 preview)
+                digest = assemble_digest(self.role, self.model, fin, fth, frec, ceiling)
             c = digest.get("counts", {})
             self.record("digest", "ok",
                         f"preview assembled: inbox={c.get('open_inbox', 0)} "
