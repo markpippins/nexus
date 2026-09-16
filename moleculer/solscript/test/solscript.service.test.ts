@@ -127,29 +127,58 @@ describe("SolScriptService", () => {
     expect(r.count).toBe(1);
     expect(r.rows[0].id).toBe("ent-ok");
   });
+
+  it("transition-entity commits for a valid entity", async () => {
+    const r = await call(broker, "solscript.transitionEntity", {
+      entityId: "ent-ok", transitionId: "t-review",
+    });
+    expect(r.outcome).toBe("committed");
+    expect(r.event.kind).toBe("resolution.transition.committed");
+  });
+
+  it("transition-entity refuses when the guard fails", async () => {
+    const r = await call(broker, "solscript.transitionEntity", {
+      entityId: "ent-bad", transitionId: "t-review",
+    });
+    expect(r.outcome).toBe("refused");
+    expect(r.event.kind).toBe("resolution.transition.refused");
+  });
+
+  it("transition-entity rejects unknown entity with a durable event", async () => {
+    const r = await call(broker, "solscript.transitionEntity", {
+      entityId: "missing", transitionId: "t-review",
+    });
+    expect(r.outcome).toBe("rejected");
+    expect(r.event.kind).toBe("resolution.transition.rejected");
+  });
 });
 
 /**
- * Gateway write-posture test: transition-entity → 405.
+ * Gateway test: the transition-entity alias resolves to the LIVE service
+ * action (no 405 on this deployment — the JVM mobile projection holds that).
  */
-describe("SolScriptGateway 405 posture", () => {
+describe("SolScriptGateway live transition alias", () => {
   let broker: ServiceBroker;
-  let api: any;
 
   beforeEach(async () => {
     process.env.SERVICE_PORT = "45982"; // off live :4060
     broker = new ServiceBroker(testBrokerConfig);
-    api = broker.createService(ApiService) as any;
+    broker.createService(ApiService);
+    const svc = broker.createService(SolScriptService) as any;
     await broker.start();
+    // Minimal entity so the aliased transition has something to refuse.
+    svc.interpreter.addEntity({
+      id: "gw-ent", conceptId: "c-doc",
+      attributes: { status: "draft", size: 1, title: "" },
+    } as any);
+    svc.interpreter.addConcept({
+      id: "c-doc", name: "Document", attributes: {}, relationships: {},
+      invariants: [], derivations: [], stateTransitions: [], rules: [],
+    } as any);
   });
 
   afterEach(async () => {
     await broker.stop();
-  });
-
-  it("transition-entity routes to a 405 write posture", async () => {
-    await expect(call(broker, "api.transitionReadOnly405", {}))
-      .rejects.toMatchObject({ code: 405, type: "METHOD_NOT_ALLOWED" });
   });
 
   it("health is live", async () => {

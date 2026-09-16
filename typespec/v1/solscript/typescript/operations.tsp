@@ -11,9 +11,8 @@
  *     (../python/models.tsp)
  *
  * All ops are `Status: implemented`: the Moleculer service exists
- * (moleculer/solscript). Read actions are live; transition-entity returns
- * 405 at the REST tier — the readonly-by-default distribution posture
- * (the interpreter library fully supports transitions).
+ * (moleculer/solscript — the distributed deployment, fully live including
+ * transition-entity). The JVM mobile projection stays read-only (405).
  */
 import "@typespec/http";
 import "./models.tsp";
@@ -68,10 +67,9 @@ namespace org.nexus.solscriptfacade {
     returns 200 with outcome=refused/rejected and the durable
     KeychainEvent — negative governed outcomes are evidence. Only
     infrastructure faults produce 5xx.
-    REST-tier posture: the Moleculer facade (moleculer/solscript) DISALLOWS
-    this at the HTTP layer (405 — readonly-by-default). The interpreter
-    library fully supports transitions; the 405 unlocks to a JetStream write
-    when the write path lands.
+    LIVE on the Moleculer facade (moleculer/solscript — the distributed
+    deployment). The JVM mobile projection (nexus-core-solscript) disallows
+    this at its REST tier (405, readonly-by-default).
   """)
   op transitionEntity(@body body: TransitionRequest): TransitionResponse | SolScriptError;
 

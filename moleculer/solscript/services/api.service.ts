@@ -1,14 +1,14 @@
-import { Service, ServiceBroker, Errors } from "moleculer";
+import { Service, ServiceBroker } from "moleculer";
 import ApiGateway from "moleculer-web";
 
 /**
  * Broker HTTP gateway (moleculer-web) for the SOLScript facade.
  *
- * Exposes the read surface at /api/solscript/* (contract
- * typespec/v1/solscript/typescript/operations.tsp). Read actions proxy to the
- * solscript service. The WRITE action (transition-entity) is deliberately NOT
- * aliased to a live action — it is answered with 405 by this gateway's onError
- * handler, preserving the readonly-by-default posture at the REST tier.
+ * Exposes the FULL surface at /api/solscript/* (contract
+ * typespec/v1/solscript/typescript/operations.tsp): reads AND the
+ * transition-entity write, which commits/refuses/rejects through the
+ * interpreter. This is the DISTRIBUTED deployment (DB lives elsewhere).
+ * The JVM mobile projection (nexus-core-solscript) stays read-only (405).
  */
 export default class ApiService extends Service {
   constructor(broker: ServiceBroker) {
@@ -38,12 +38,11 @@ export default class ApiService extends Service {
               "POST /solscript/check-transition-guard": "solscript.checkTransitionGuard",
               "POST /solscript/execute-query": "solscript.executeQuery",
               "GET /solscript/health": "solscript.health",
-              // ── Write surface (read-only posture → 405) ─────────
-              // transition-entity is a WRITE (mutates entity state). The
-              // readonly-by-default posture disallows it at the REST tier: it
-              // routes to a gateway action that throws 405 (never reaches the
-              // interpreter, which fully supports transitions in the library).
-              "POST /solscript/transition-entity": "api.transitionReadOnly405",
+              // ── Write surface (FULLY LIVE on this deployment) ────
+              // transition-entity commits/refuses/rejects through the
+              // interpreter. This is the distributed deployment (DB lives
+              // elsewhere); the JVM mobile projection stays read-only (405).
+              "POST /solscript/transition-entity": "solscript.transitionEntity",
             },
 
             onError(req: any, res: any, err: any) {
@@ -70,19 +69,6 @@ export default class ApiService extends Service {
               namespace: "solscript",
               timestamp: new Date().toISOString(),
             };
-          },
-        },
-
-        // Readonly-by-default write posture: mutating surface → 405.
-        transitionReadOnly405: {
-          params: {
-            "**": { type: "any", optional: true },
-          },
-          async handler() {
-            throw new Errors.MoleculerError(
-              "nexus-core is read-only: POST /api/solscript/transition-entity mutates entity state. "
-              + "Disallowed in the read-only projection; write path (JetStream) not yet implemented.",
-              405, "METHOD_NOT_ALLOWED");
           },
         },
       },

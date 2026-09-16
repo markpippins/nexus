@@ -107,6 +107,45 @@ export default class SolScriptService extends Service {
           },
         },
 
+        transitionEntity: {
+          params: {
+            entityId: "string",
+            transitionId: "string",
+            actor: { type: "string", optional: true },
+            sourceEventId: { type: "string", optional: true },
+            correlationId: { type: "string", optional: true },
+          },
+          async handler(ctx: Context<{
+            entityId: string;
+            transitionId: string;
+            actor?: string;
+            sourceEventId?: string;
+            correlationId?: string;
+          }>) {
+            // FULLY LIVE (distributed deployment): the interpreter commits,
+            // refuses, or rejects — never throws on guard failure. Only
+            // infrastructure faults produce 5xx. Unknown entity/transition
+            // surface as outcome=rejected with a durable KeychainEvent.
+            const outcome = this.interpreter.transitionEntity(
+              ctx.params.entityId,
+              ctx.params.transitionId,
+              {
+                ...(ctx.params.sourceEventId ? { sourceEventId: ctx.params.sourceEventId } : {}),
+                ...(ctx.params.correlationId ? { correlationId: ctx.params.correlationId } : {}),
+                ...(ctx.params.actor ? { actor: ctx.params.actor } : {}),
+              },
+            );
+            return {
+              entityId: ctx.params.entityId,
+              transitionId: ctx.params.transitionId,
+              outcome: outcome.event.outcome,
+              stateAfter: (outcome.event.readSet as any)?.state_after ?? null,
+              results: outcome.results,
+              event: outcome.event,
+            };
+          },
+        },
+
         executeQuery: {
           params: {
             query: "object",
