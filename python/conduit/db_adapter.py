@@ -871,7 +871,11 @@ class DBAdapter:
           off     legacy write; canonical only via CONDUIT_LILAC_SHADOW seam
           shadow  legacy write + canonical record forced on for this write
           enforce canonical write FIRST (R4 outcomes gate the write);
-                  legacy becomes a best-effort courtesy copy
+                  the legacy synthetic courtesy copy is SKIPPED for
+                  in-scope producers once the canonical write commits
+                  (R2, To Do ca5941ca: legacy stays flat so the Stage D
+                  freeze gate observes zero direct writers); unmapped
+                  kinds stay legacy-only by contract
         """
         raw_mode = os.environ.get("CONDUIT_RECEIPT_REDIRECT", "off").strip().lower()
         if raw_mode not in ("off", "shadow", "enforce"):
@@ -968,6 +972,12 @@ class DBAdapter:
 
         if redirect_mode == "enforce":
             kind = receipt_type_to_kind(receipt_type)
+            # R2 (To Do ca5941ca): once the canonical write commits for an
+            # in-scope producer, the legacy synthetic courtesy copy is
+            # skipped — the Stage D freeze gate requires zero direct
+            # writers on vision.receipts. Unmapped kinds and out-of-scope
+            # producers keep the legacy path (see branches below).
+            canonical_redirect_written = False
             if kind is None:
                 # Unmapped legacy type (e.g. PROPOSED): no ratified canonical
                 # kind exists — legacy-only by contract (drift fixture class
@@ -1019,6 +1029,7 @@ class DBAdapter:
                         "nebula.receipts_unified (V140 canonical branch "
                         "surfaces rows with no legacy twin)",
                         kind, outcome, canonical_id)
+                    canonical_redirect_written = True
                 except LilacPersistenceError as lex:
                     # R4 fail-closed: conflict / grant refusal must NOT fall
                     # back to a legacy-only write — that would fork the
@@ -1064,6 +1075,18 @@ class DBAdapter:
                 # C1 gate 3: fail-closed canary enforcement on the synthetic
                 # surface (env-gated; no-op by default until C2 ratification).
                 self._enforce_canary_policy(plan_id, fallback=True, metadata=metadata)
+                # R2 (To Do ca5941ca): enforce-mode canonical success for an
+                # in-scope producer skips the legacy courtesy copy — the
+                # freeze gate observes zero direct writers. The canary
+                # policy above still runs, so policy refusal keeps failing
+                # closed even though no legacy row is attempted.
+                if redirect_mode == "enforce" and canonical_redirect_written:
+                    _log.info(
+                        "redirect=enforce: canonical already committed — "
+                        "skipping legacy courtesy copy id=%s plan=%s producer=%s",
+                        receipt_id, plan_id, provenance["producer_id"],
+                    )
+                    return
                 # Test/synthetic plan (no execution.requests + no nebula.plans row).
                 # Preserve the legacy write surface — frozen read-only in D-T19-2(d).
                 meta_json = json.dumps(metadata)
