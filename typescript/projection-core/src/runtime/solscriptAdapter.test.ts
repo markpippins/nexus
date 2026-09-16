@@ -1,5 +1,5 @@
 /**
- * F-0 — §10 core ↔ @nexus/solscript adapter conformance tests
+ * F-0 — projection-core ↔ @nexus/solscript adapter conformance tests
  * (dependency-free, tsx-runnable).
  *
  * Verifies:
@@ -7,7 +7,7 @@
  *    a passing rule evaluates true, a failing rule false, a rule with no
  *    expression fails closed (false)
  *  - resolveDispositionViaSolscript maps the canonical Disposition enum to
- *    §10 witness labels (Asserted/Disputed/Rejected) and returns null for
+ *    projection witness labels (Asserted/Disputed/Rejected) and returns null for
  *    non-decisive dispositions and undefined propositions
  */
 import {

@@ -263,7 +263,7 @@ def gate5_negative_states() -> list[dict[str, Any]]:
 
 def gate6_rollback() -> dict[str, Any]:
     return {
-        "drill_harness": "typescript/§10 core/scripts/run-rollback-replay-drills.ts (PR #98, D1-D4)",
+        "drill_harness": "typescript/projection-core/scripts/run-rollback-replay-drills.ts (PR #98, D1-D4)",
         "last_verified": "2026-08-30 wt-w404-drills: 'D1-D4 passed (no history rewrite, recovery achieved, evidence append-only)' exit 0",
         "append_only": True,
         "no_history_rewrite": True,

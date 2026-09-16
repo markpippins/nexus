@@ -2,7 +2,7 @@
 
 **Status:** Engineer-side evidence for W5.08 (co-owned with design-synthesist).
 Cites only merged, verified artifacts. Scope: the consumer contract for
-downstream consumers (including §10 core and governed UIs) of the W3.08
+downstream consumers (including projection-core and governed UIs) of the W3.08
 governed projection.
 
 ## The projection surface
@@ -28,7 +28,7 @@ governed projection.
 
 ## Consumer contract (C1–C5)
 
-Verified at runtime by `typescript/§10 core/scripts/run-w508-conformance.ts`
+Verified at runtime by `typescript/projection-core/scripts/run-w508-conformance.ts`
 (evidence in `docs/w508-evidence/w508-conformance.json`):
 
 ### C1 — Versioned contract
@@ -40,7 +40,7 @@ name, `generatedAt`, and `sourceUpdatedAt` for staleness checks.
 The authoritative status (`complete`, `missing_lineage`, `unknown`, `stale`,
 `refusal`, `drift`, `duplicate_retry`) is computed SERVER-side by
 `classifyWitnessedRunStatus`. Consumers display or branch on the result —
-they never re-derive the witnessed-run join locally. Verified: the §10 core
+they never re-derive the witnessed-run join locally. Verified: the projection-core
 consumer (`witnessedRun.ts` `normalizeProjection`) consumes the server status
 verbatim for all 7 states; local classification is only a fallback for
 unclassified payloads.
@@ -61,7 +61,7 @@ with `PROJECTION_IDENTITY_MISMATCH`; non-server sources are rejected with
 projection.
 
 ### C5 — No UI admission path
-The §10 core runtime exposes no API that lets a UI/browser submit admissions
+The projection-core runtime exposes no API that lets a UI/browser submit admissions
 or flip blocking authority. Admission is only reachable via
 `ContractAdmissionRegistry.admit` (W4.06, PR #99), which the governed adapter
 does not export. The registry remains fail-closed for incomplete sets.
@@ -97,4 +97,4 @@ does not export. The registry remains fail-closed for incomplete sets.
 - W5.03 admission-boundary verification (PR #102, fingerprint `sha256:178e269c…`).
 - W5.04 canary (PR #103, fingerprint `sha256:dc0fe075…`).
 - W5.05 drill operations (PR #104, fingerprint in `docs/w505-evidence/`).
-- Full §10 core conformance suites exit 0; pytest 101 passed / 30 skipped.
+- Full projection-core conformance suites exit 0; pytest 101 passed / 30 skipped.

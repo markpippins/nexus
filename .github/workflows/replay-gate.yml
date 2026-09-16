@@ -53,7 +53,7 @@ jobs:
           if-no-files-found: error
 
   typescript-conformance:
-    name: TypeScript §10 core conformance
+    name: TypeScript projection-core conformance
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -62,8 +62,8 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Run §10 core replay conformance
-        working-directory: typescript/§10 core
+      - name: Run projection-core replay conformance
+        working-directory: typescript/projection-core
         run: |
           npm install --no-audit --no-fund
           npx tsx scripts/run-replay-conformance.ts

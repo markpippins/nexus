@@ -35,7 +35,7 @@
 | **AUD** (Audit Non-Influence) | AUD-01..03 (§7) | Audit must not influence outcome; no reverse projection | `LEDGER`, `STATE_MACHINE` | CER audit records append-only; no CER → state mutation |
 | **CAUSAL** (Causal Integrity) | CAUSAL-CORE, -01, -02 (§8) | Parent-requirement rule, no upstream injection | `LEDGER`, `DATA` | CER `parent_event_ids` must resolve; no causal edges that inject upstream |
 | **VEL** (Verification Execution Ledger) | VEL-01..CORE (§9) | Ledger append-only, non-influence | `LEDGER` | CER event log append-only (directly maps to conduit.work_request_events) |
-| **MED** (Merkle Integrity) | MED-01 (§10) | Cryptographic non-influence | `LEDGER`, `DATA` | entity_key/hash binding (wr-conf-010 guards the derivation) |
+| **MED** (Merkle Integrity) | MED-01 (Projection) | Cryptographic non-influence | `LEDGER`, `DATA` | entity_key/hash binding (wr-conf-010 guards the derivation) |
 | **SPoE** (Proof Integrity) | SPoE-01 (§11) | Proof non-influence | `DATA` | Proof payloads in CER have no execution authority |
 | **PAL** (Proof Access Layer) | PAL-01 (§12) | Query non-influence | `CODE`, `DATA` | Query path cannot write CER |
 | **CTS** (Causal Type System) | CTS-01 (§13) | Query non-epistemic | `SCHEMA`, `STATE_MACHINE` | WRP transition legality (already guarded by cross-language contract + wr-conf-001) |

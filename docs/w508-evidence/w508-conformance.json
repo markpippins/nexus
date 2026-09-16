@@ -4,9 +4,9 @@
   "generatedAt": "2026-08-30T20:05:45.366Z",
   "basis": {
     "projectionSurface": "typescript/execution-srv/src/routes.ts (W3.08, merged PR #95)",
-    "consumer": "typescript/§10 core/src/runtime/witnessedRun.ts + witnessedRunSource.ts",
-    "governedAdapter": "typescript/§10 core/src/adapter/governed.ts",
-    "admissionBoundary": "typescript/§10 core/src/runtime/contractAdmission.ts (W4.06, PR #99)",
+    "consumer": "typescript/projection-core/src/runtime/witnessedRun.ts + witnessedRunSource.ts",
+    "governedAdapter": "typescript/projection-core/src/adapter/governed.ts",
+    "admissionBoundary": "typescript/projection-core/src/runtime/contractAdmission.ts (W4.06, PR #99)",
     "decision": "05d0fe54 + amendments v1-v4 (f61d94e6 / 41d30b44 / 3a30651a)"
   },
   "results": {

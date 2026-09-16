@@ -1068,9 +1068,9 @@ export function witnessedRunDiagnosticsHandler(pool: Pool) {
  * GET /api/execution/projections/witnessed-runs?workflow_instance_id=&node_id=
  *
  * A STABLE, VERSIONED projection surface for downstream consumers (including
- * §10 core). Contract:
+ * projection-core). Contract:
  *  - `projectionVersion` is bumped only on breaking shape changes; consumers
- *    pin to it and fail closed on mismatch (see §10 projection client).
+ *    pin to it and fail closed on mismatch (see projection client).
  *  - Everything is SERVER-DERIVED: authoritative status via
  *    `classifyWitnessedRunStatus`, enumerated missing lineage elements,
  *    receipt correlation ids. No client-side authority reconstruction.
@@ -1207,11 +1207,11 @@ export function witnessedRunProjectionHandler(pool: Pool) {
 }
 
 /**
- * Canonical witnessed-run state vocabulary, shared with the §10 core
- * (typescript/§10 core/src/runtime/witnessedRun.ts — `WitnessedRunStatus`).
+ * Canonical witnessed-run state vocabulary, shared with the projection-core
+ * (typescript/projection-core/src/runtime/witnessedRun.ts — `WitnessedRunStatus`).
  *
  * This classifier is the AUTHORITATIVE join-state derivation for the read-only
- * projection: the route calls it server-side and the §10 Manual Mode/provenance
+ * projection: the route calls it server-side and the Projection Manual Mode/provenance
  * consumers rely on its output rather than re-deriving the join in the browser
  * (AC4 — no browser-owned reconstruction).
  *
@@ -1255,7 +1255,7 @@ export function classifyWitnessedRunStatus(input: {
   // Three-way distinction (PR #70 review finding: `unknown` was unreachable):
   //   - none of the lineage elements are present  -> 'unknown' (indeterminate:
   //     we cannot tell a blank row apart from a partial witnessed run, and the
-  //     §10 vocabulary reserves `unknown` for exactly this case)
+  //     projection vocabulary reserves `unknown` for exactly this case)
   //   - some elements present but a required one is absent -> 'missing_lineage'
   //   - all elements present -> 'complete'
   const envelopeId = (envelope.id ?? envelope.envelope_id) as string | undefined;

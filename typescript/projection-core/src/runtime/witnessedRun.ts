@@ -14,7 +14,7 @@ import type { Proposition } from "@nexus/solscript";
  * Apply a solscript-derived disposition to a witnessed-run projection's
  * assessment (F-0 / option A). The disposition label comes from the canonical
  * @nexus/solscript Disposition enum via resolveDispositionViaSolscript — the
- * reference implementation — never re-derived by §10. When the proposition
+ * reference implementation — never re-derived by Projection. When the proposition
  * carries no decisive disposition, the existing assessment disposition is kept.
  */
 export function applySolscriptDisposition(
@@ -119,7 +119,7 @@ export function emptyProjection(
 
 /**
  * States the server-side classifier (execution-srv) may emit. The authoritative
- * join state is derived ON THE SERVER — the §10 consumer must never re-derive it
+ * join state is derived ON THE SERVER — the projection consumer must never re-derive it
  * from raw metadata in the browser (AC4: no browser-owned reconstruction).
  */
 const SERVER_STATUSES: ReadonlySet<WitnessedRunStatus> = new Set<WitnessedRunStatus>([

@@ -107,7 +107,7 @@ query surface, this becomes the push signal.
 Channel already wired: harness-srv writes `cascade.events` directly; the
 vocabulary `harness.started|failed|completed` already exists (measured).
 
-| # | Raw occurrence (v2 §10) | Canonical event type | Publish? | Payload keys |
+| # | Raw occurrence (v2 Projection) | Canonical event type | Publish? | Payload keys |
 |---|---|---|---|---|
 | 1 | `/run` accepted, spawn started (child PID tracked) | `harness.run.started` | **Yes** (exists — keep) | session_id, bundle_id, pid, role |
 | 2 | Run completed (+ governance receipt) | `harness.run.completed` | **Yes** (exists — keep) | session_id, receipt, summary |

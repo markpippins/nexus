@@ -3,7 +3,7 @@
   "title": "deny_contract_promotion admission-boundary verification",
   "generatedAt": "2026-08-30T15:37:16.354Z",
   "basis": {
-    "implementation": "typescript/§10 core/src/runtime/contractAdmission.ts",
+    "implementation": "typescript/projection-core/src/runtime/contractAdmission.ts",
     "mergedCommit": "e814fbc2 (W4.06, PR #99)",
     "decision": "05d0fe54 + amendments v1-v4 (41d30b44 scope, 3a30651a triplet)"
   },
