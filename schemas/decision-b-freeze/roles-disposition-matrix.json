@@ -1,0 +1,681 @@
+{
+ "contract": "Roles disposition matrix (R-3 item 1; architect ruling 1d508481; analyst acknowledgement ec7103fb)",
+ "generated": "2026-09-16 (live registry inventory)",
+ "rule": "additive inserts + annotate + supersede only; no deletion, no silent rename",
+ "rows": [
+  {
+   "stable_identity": "admin",
+   "aliases": [
+    "admin"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "assembly.users"
+   ],
+   "in_nebula_roles": false,
+   "class": "service-principal",
+   "lifecycle": "capability-scoped",
+   "authority_scope": "automation credentials; PEB/capability grants only",
+   "disposition": "Distinct automation-principal class; credential/capability semantics (PEB/capability grants); may appear as assembly user for attribution; NO nebula.roles row, NO role lease.",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "analyst",
+   "aliases": [
+    "analyst"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "nebula.roles_history",
+    "tackle.roles",
+    "assembly.users"
+   ],
+   "in_nebula_roles": true,
+   "class": "role",
+   "lifecycle": "active",
+   "authority_scope": "governance authority (role lease eligible)",
+   "disposition": "Canonical authority vocabulary (lower-kebab-case).",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "analyst-ii",
+   "aliases": [
+    "analyst-ii"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "tackle.roles",
+    "assembly.users"
+   ],
+   "in_nebula_roles": false,
+   "class": "role",
+   "lifecycle": "active",
+   "authority_scope": "governance authority (role lease eligible)",
+   "disposition": "Canonical authority vocabulary (lower-kebab-case).",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "architect",
+   "aliases": [
+    "architect"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "nebula.roles_history",
+    "tackle.roles",
+    "assembly.users"
+   ],
+   "in_nebula_roles": true,
+   "class": "role",
+   "lifecycle": "active",
+   "authority_scope": "governance authority (role lease eligible)",
+   "disposition": "Canonical authority vocabulary (lower-kebab-case).",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "auditor",
+   "aliases": [
+    "auditor"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "tackle.roles",
+    "assembly.users"
+   ],
+   "in_nebula_roles": false,
+   "class": "role",
+   "lifecycle": "active",
+   "authority_scope": "governance authority (role lease eligible)",
+   "disposition": "Canonical authority vocabulary (lower-kebab-case).",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "big-pickle",
+   "aliases": [
+    "big-pickle"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "tackle.roles"
+   ],
+   "in_nebula_roles": false,
+   "class": "model",
+   "lifecycle": "bound-via-lease",
+   "authority_scope": "inference execution only; authority exclusively via bound role lease",
+   "disposition": "Shelve out of role registries into model bindings; binds to roles ONLY via tackle.role_leases; lease history retained as audit trail.",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "builder",
+   "aliases": [
+    "builder"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "nebula.roles_history",
+    "tackle.roles",
+    "assembly.users"
+   ],
+   "in_nebula_roles": true,
+   "class": "role",
+   "lifecycle": "active",
+   "authority_scope": "governance authority (role lease eligible)",
+   "disposition": "Canonical authority vocabulary (lower-kebab-case).",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "builder-fallback",
+   "aliases": [
+    "builder-fallback"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "tackle.roles"
+   ],
+   "in_nebula_roles": false,
+   "class": "config-residue",
+   "lifecycle": "residue",
+   "authority_scope": "none",
+   "disposition": "Non-identity; remove from role-facing registries; may persist in logs/audit with disposition note.",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "chatgpt",
+   "aliases": [
+    "chatgpt"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "assembly.users"
+   ],
+   "in_nebula_roles": false,
+   "class": "model",
+   "lifecycle": "bound-via-lease",
+   "authority_scope": "inference execution only; authority exclusively via bound role lease",
+   "disposition": "Shelve out of role registries into model bindings; binds to roles ONLY via tackle.role_leases; lease history retained as audit trail.",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "claude",
+   "aliases": [
+    "claude"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "assembly.users"
+   ],
+   "in_nebula_roles": false,
+   "class": "model",
+   "lifecycle": "bound-via-lease",
+   "authority_scope": "inference execution only; authority exclusively via bound role lease",
+   "disposition": "Shelve out of role registries into model bindings; binds to roles ONLY via tackle.role_leases; lease history retained as audit trail.",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "copilot",
+   "aliases": [
+    "copilot"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "assembly.users"
+   ],
+   "in_nebula_roles": false,
+   "class": "model",
+   "lifecycle": "bound-via-lease",
+   "authority_scope": "inference execution only; authority exclusively via bound role lease",
+   "disposition": "Shelve out of role registries into model bindings; binds to roles ONLY via tackle.role_leases; lease history retained as audit trail.",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "critic",
+   "aliases": [
+    "critic"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "tackle.roles",
+    "assembly.users"
+   ],
+   "in_nebula_roles": false,
+   "class": "role",
+   "lifecycle": "active",
+   "authority_scope": "governance authority (role lease eligible)",
+   "disposition": "Canonical authority vocabulary (lower-kebab-case).",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "dba",
+   "aliases": [
+    "DBA",
+    "dba"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "tackle.roles",
+    "assembly.users"
+   ],
+   "in_nebula_roles": false,
+   "class": "role",
+   "lifecycle": "active",
+   "authority_scope": "governance authority (role lease eligible)",
+   "disposition": "Canonical authority vocabulary (lower-kebab-case).",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "deepseek",
+   "aliases": [
+    "deepseek"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "assembly.users"
+   ],
+   "in_nebula_roles": false,
+   "class": "model",
+   "lifecycle": "bound-via-lease",
+   "authority_scope": "inference execution only; authority exclusively via bound role lease",
+   "disposition": "Shelve out of role registries into model bindings; binds to roles ONLY via tackle.role_leases; lease history retained as audit trail.",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "design-synthesist",
+   "aliases": [
+    "design-synthesist"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "nebula.roles_history",
+    "tackle.roles",
+    "assembly.users"
+   ],
+   "in_nebula_roles": true,
+   "class": "role",
+   "lifecycle": "active",
+   "authority_scope": "governance authority (role lease eligible)",
+   "disposition": "Canonical authority vocabulary (lower-kebab-case).",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "devops",
+   "aliases": [
+    "devops"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "tackle.roles",
+    "assembly.users"
+   ],
+   "in_nebula_roles": false,
+   "class": "role",
+   "lifecycle": "active",
+   "authority_scope": "governance authority (role lease eligible)",
+   "disposition": "Canonical authority vocabulary (lower-kebab-case).",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "engineer",
+   "aliases": [
+    "engineer"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "nebula.roles_history",
+    "tackle.roles",
+    "assembly.users"
+   ],
+   "in_nebula_roles": true,
+   "class": "role",
+   "lifecycle": "active",
+   "authority_scope": "governance authority (role lease eligible)",
+   "disposition": "Canonical authority vocabulary (lower-kebab-case).",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "engineer-ii",
+   "aliases": [
+    "engineer-ii"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "tackle.roles",
+    "assembly.users"
+   ],
+   "in_nebula_roles": false,
+   "class": "role",
+   "lifecycle": "active",
+   "authority_scope": "governance authority (role lease eligible)",
+   "disposition": "Canonical authority vocabulary (lower-kebab-case).",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "epistemologist",
+   "aliases": [
+    "epistemologist"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "tackle.roles",
+    "assembly.users"
+   ],
+   "in_nebula_roles": false,
+   "class": "role",
+   "lifecycle": "active",
+   "authority_scope": "governance authority (role lease eligible)",
+   "disposition": "Canonical authority vocabulary (lower-kebab-case).",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "gemini",
+   "aliases": [
+    "gemini"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "assembly.users"
+   ],
+   "in_nebula_roles": false,
+   "class": "model",
+   "lifecycle": "bound-via-lease",
+   "authority_scope": "inference execution only; authority exclusively via bound role lease",
+   "disposition": "Shelve out of role registries into model bindings; binds to roles ONLY via tackle.role_leases; lease history retained as audit trail.",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "inspector",
+   "aliases": [
+    "inspector"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "nebula.roles_history",
+    "tackle.roles",
+    "assembly.users"
+   ],
+   "in_nebula_roles": true,
+   "class": "role",
+   "lifecycle": "active",
+   "authority_scope": "governance authority (role lease eligible)",
+   "disposition": "Canonical authority vocabulary (lower-kebab-case).",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "jenkins-sync",
+   "aliases": [
+    "jenkins-sync"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "assembly.users"
+   ],
+   "in_nebula_roles": false,
+   "class": "service-principal",
+   "lifecycle": "capability-scoped",
+   "authority_scope": "automation credentials; PEB/capability grants only",
+   "disposition": "Distinct automation-principal class; credential/capability semantics (PEB/capability grants); may appear as assembly user for attribution; NO nebula.roles row, NO role lease.",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "kiro",
+   "aliases": [
+    "kiro"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "assembly.users"
+   ],
+   "in_nebula_roles": false,
+   "class": "model",
+   "lifecycle": "bound-via-lease",
+   "authority_scope": "inference execution only; authority exclusively via bound role lease",
+   "disposition": "Shelve out of role registries into model bindings; binds to roles ONLY via tackle.role_leases; lease history retained as audit trail.",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "layout-mechanic",
+   "aliases": [
+    "layout-mechanic"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "nebula.roles_history",
+    "tackle.roles",
+    "assembly.users"
+   ],
+   "in_nebula_roles": true,
+   "class": "role",
+   "lifecycle": "active",
+   "authority_scope": "governance authority (role lease eligible)",
+   "disposition": "Canonical authority vocabulary (lower-kebab-case).",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "lead-engineer",
+   "aliases": [
+    "lead-engineer"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "assembly.users"
+   ],
+   "in_nebula_roles": false,
+   "class": "role",
+   "lifecycle": "active",
+   "authority_scope": "governance authority (role lease eligible)",
+   "disposition": "Canonical authority vocabulary (lower-kebab-case).",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "leased-builder",
+   "aliases": [
+    "leased-builder"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "tackle.roles"
+   ],
+   "in_nebula_roles": false,
+   "class": "config-residue",
+   "lifecycle": "residue",
+   "authority_scope": "none",
+   "disposition": "Non-identity; remove from role-facing registries; may persist in logs/audit with disposition note.",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "ontologist",
+   "aliases": [
+    "ontologist"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "nebula.roles_history",
+    "tackle.roles",
+    "assembly.users"
+   ],
+   "in_nebula_roles": true,
+   "class": "role",
+   "lifecycle": "active",
+   "authority_scope": "governance authority (role lease eligible)",
+   "disposition": "Canonical authority vocabulary (lower-kebab-case).",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "operator",
+   "aliases": [
+    "operator"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "tackle.roles",
+    "assembly.users"
+   ],
+   "in_nebula_roles": false,
+   "class": "role",
+   "lifecycle": "active",
+   "authority_scope": "governance authority (role lease eligible)",
+   "disposition": "Canonical authority vocabulary (lower-kebab-case).",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "planner",
+   "aliases": [
+    "planner"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "nebula.roles_history",
+    "tackle.roles",
+    "assembly.users"
+   ],
+   "in_nebula_roles": true,
+   "class": "role",
+   "lifecycle": "active",
+   "authority_scope": "governance authority (role lease eligible)",
+   "disposition": "Canonical authority vocabulary (lower-kebab-case).",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "reviewer",
+   "aliases": [
+    "reviewer"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "nebula.roles_history",
+    "tackle.roles",
+    "assembly.users"
+   ],
+   "in_nebula_roles": true,
+   "class": "role",
+   "lifecycle": "active",
+   "authority_scope": "governance authority (role lease eligible)",
+   "disposition": "Canonical authority vocabulary (lower-kebab-case).",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "rover",
+   "aliases": [
+    "rover"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "tackle.roles",
+    "assembly.users"
+   ],
+   "in_nebula_roles": false,
+   "class": "service-principal",
+   "lifecycle": "capability-scoped",
+   "authority_scope": "automation credentials; PEB/capability grants only",
+   "disposition": "Distinct automation-principal class; credential/capability semantics (PEB/capability grants); may appear as assembly user for attribution; NO nebula.roles row, NO role lease.",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "sonar-sync",
+   "aliases": [
+    "sonar-sync"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "assembly.users"
+   ],
+   "in_nebula_roles": false,
+   "class": "service-principal",
+   "lifecycle": "capability-scoped",
+   "authority_scope": "automation credentials; PEB/capability grants only",
+   "disposition": "Distinct automation-principal class; credential/capability semantics (PEB/capability grants); may appear as assembly user for attribution; NO nebula.roles row, NO role lease.",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "sound-technician",
+   "aliases": [
+    "sound-technician"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "assembly.users"
+   ],
+   "in_nebula_roles": false,
+   "class": "role",
+   "lifecycle": "active",
+   "authority_scope": "governance authority (role lease eligible)",
+   "disposition": "Canonical authority vocabulary (lower-kebab-case).",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "sysadmin",
+   "aliases": [
+    "sysadmin"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "tackle.roles",
+    "assembly.users"
+   ],
+   "in_nebula_roles": false,
+   "class": "role",
+   "lifecycle": "active",
+   "authority_scope": "governance authority (role lease eligible)",
+   "disposition": "Canonical authority vocabulary (lower-kebab-case).",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "test",
+   "aliases": [
+    "test"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "tackle.roles"
+   ],
+   "in_nebula_roles": false,
+   "class": "config-residue",
+   "lifecycle": "residue",
+   "authority_scope": "none",
+   "disposition": "Non-identity; remove from role-facing registries; may persist in logs/audit with disposition note.",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "tester",
+   "aliases": [
+    "tester"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "tackle.roles",
+    "assembly.users"
+   ],
+   "in_nebula_roles": false,
+   "class": "role",
+   "lifecycle": "active",
+   "authority_scope": "governance authority (role lease eligible)",
+   "disposition": "Canonical authority vocabulary (lower-kebab-case).",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "topologist",
+   "aliases": [
+    "topologist"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "nebula.roles_history",
+    "tackle.roles",
+    "assembly.users"
+   ],
+   "in_nebula_roles": true,
+   "class": "role",
+   "lifecycle": "active",
+   "authority_scope": "governance authority (role lease eligible)",
+   "disposition": "Canonical authority vocabulary (lower-kebab-case).",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "wr-conf-016-1fc22f41",
+   "aliases": [
+    "wr-conf-016-1fc22f41"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "tackle.roles"
+   ],
+   "in_nebula_roles": false,
+   "class": "config-residue",
+   "lifecycle": "residue",
+   "authority_scope": "none",
+   "disposition": "Non-identity; remove from role-facing registries; may persist in logs/audit with disposition note.",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "wr-conf-016-70c486f4",
+   "aliases": [
+    "wr-conf-016-70c486f4"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "tackle.roles"
+   ],
+   "in_nebula_roles": false,
+   "class": "config-residue",
+   "lifecycle": "residue",
+   "authority_scope": "none",
+   "disposition": "Non-identity; remove from role-facing registries; may persist in logs/audit with disposition note.",
+   "owner": "architect"
+  },
+  {
+   "stable_identity": "wr-conf-016-f48e40b6",
+   "aliases": [
+    "wr-conf-016-f48e40b6"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "tackle.roles"
+   ],
+   "in_nebula_roles": false,
+   "class": "config-residue",
+   "lifecycle": "residue",
+   "authority_scope": "none",
+   "disposition": "Non-identity; remove from role-facing registries; may persist in logs/audit with disposition note.",
+   "owner": "architect"
+  }
+ ]
+}
