@@ -25,6 +25,11 @@ Semantics
                lease exists for the role. Flip after warn-mode soak.
 * Fail-open on infrastructure error in off/warn; enforce is fail-closed
   (an unresolved lease is a refusal, with the error surfaced in the reason).
+* Synthetic probes (soak evidence, thread 65fe85a8 comment 42a11672): the
+  daily lease-probe timer drives /chat with probe=true. Probe resolutions
+  log the standard lease-check line plus probe=synthetic so soak analysis
+  can separate scheduled evidence from real traffic. Real-traffic lines are
+  byte-identical to the pre-probe format.
 """
 
 import logging
@@ -109,6 +114,7 @@ def check_adoption(
     role: str,
     now: Optional[datetime] = None,
     query: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None,
+    probe: bool = False,
 ) -> Dict[str, Any]:
     """Resolve role adoption at the boundary.
 
@@ -116,6 +122,9 @@ def check_adoption(
     `adopted` is None only in off mode (check not performed).
     `query` is injectable for tests; defaults to the docker-psql resolver.
     `now` is accepted for signature symmetry (liveness is evaluated in SQL).
+    `probe=True` marks the observation as synthetic (scheduled probe): the
+    journal line gains a trailing probe=synthetic field; real-traffic lines
+    are unchanged.
     """
     mode = _mode()
     if mode == "off":
@@ -130,7 +139,11 @@ def check_adoption(
         lease, error = None, str(e)
 
     if error is not None:
-        _log.warning("lease-check role=%s mode=%s outcome=error error=%r", role, mode, error)
+        if probe:
+            _log.warning("lease-check role=%s mode=%s outcome=error probe=synthetic error=%r",
+                         role, mode, error)
+        else:
+            _log.warning("lease-check role=%s mode=%s outcome=error error=%r", role, mode, error)
         if mode == "enforce":
             return {"allowed": False, "mode": mode, "adopted": False,
                     "reason": f"lease resolution failed (fail-closed in enforce): {error}",
@@ -140,18 +153,49 @@ def check_adoption(
                 "lease": None, "error": error}
 
     if lease is not None:
-        _log.info("lease-check role=%s mode=%s outcome=adopted lease_ref=%s",
-                  role, mode, lease.get("id"))
+        if probe:
+            _log.info("lease-check role=%s mode=%s outcome=adopted lease_ref=%s probe=synthetic",
+                      role, mode, lease.get("id"))
+        else:
+            _log.info("lease-check role=%s mode=%s outcome=adopted lease_ref=%s",
+                      role, mode, lease.get("id"))
         return {"allowed": True, "mode": mode, "adopted": True,
                 "reason": f"live lease for role ({mode})",
                 "lease": lease, "error": None}
 
     if mode == "enforce":
-        _log.warning("lease-check role=%s mode=enforce outcome=refused", role)
+        if probe:
+            _log.warning("lease-check role=%s mode=enforce outcome=refused probe=synthetic", role)
+        else:
+            _log.warning("lease-check role=%s mode=enforce outcome=refused", role)
         return {"allowed": False, "mode": mode, "adopted": False,
                 "reason": "no live lease for role (enforce mode)",
                 "lease": None, "error": None}
-    _log.warning("lease-check role=%s mode=%s outcome=unadopted", role, mode)
+    if probe:
+        _log.warning("lease-check role=%s mode=%s outcome=unadopted probe=synthetic", role, mode)
+    else:
+        _log.warning("lease-check role=%s mode=%s outcome=unadopted", role, mode)
     return {"allowed": True, "mode": mode, "adopted": False,
             "reason": "no live lease for role (warn mode)",
             "lease": None, "error": None}
+
+
+def probe_adoption(
+    role: str,
+    query: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None,
+) -> Dict[str, Any]:
+    """Run a synthetic probe resolution — never raises.
+
+    Identical to check_adoption(role, probe=True) with infrastructure
+    failures converted into an outcome dict (outcome=error path). The
+    scheduled probe runner uses this so a broken resolver is DATA (an
+    error outcome in the journal) rather than a failed systemd unit.
+    """
+    try:
+        return check_adoption(role, query=query, probe=True)
+    except Exception as e:  # noqa: BLE001 — probes are data, not unit failures
+        _log.warning("lease-check role=%s probe=synthetic outcome=error error=%r", role, e)
+        mode = _mode()
+        return {"allowed": mode != "enforce", "mode": mode, "adopted": False,
+                "reason": f"probe raised (fail-{'closed' if mode == 'enforce' else 'open'}): {e}",
+                "lease": None, "error": str(e)}

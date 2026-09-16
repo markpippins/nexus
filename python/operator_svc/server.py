@@ -156,6 +156,32 @@ class OperatorHandler(BaseHTTPRequestHandler):
         session_id = body.get("session_id")
         log_level = body.get("log_level", "ERROR")
 
+        # ── Synthetic probe short-circuit (soak evidence, 42a11672) ──────
+        # The daily lease-probe timer drives this endpoint with probe=true:
+        # run the lease resolution, log the journal line (probe=synthetic),
+        # and return — no LLM call, no session, no chat_store write. Probes
+        # are free and leave canonical chat history untouched (which the
+        # continuity digest reads). In enforce mode the probe path exercises
+        # and records the refusal (403) exactly like real traffic would see.
+        if body.get("probe") is True:
+            adoption = check_adoption(role, probe=True)
+            payload = {
+                "probe": True,
+                "role": role,
+                "lease_check": {
+                    "mode": adoption["mode"],
+                    "adopted": adoption["adopted"],
+                    "lease_ref": (adoption["lease"] or {}).get("id"),
+                    "reason": adoption["reason"],
+                },
+            }
+            if not adoption["allowed"]:
+                payload["error"] = "role adoption refused (lease check)"
+                self._send_json(403, payload)
+            else:
+                self._send_json(200, payload)
+            return
+
         if not user_message:
             self._send_json(400, {"error": "message is required"})
             return
