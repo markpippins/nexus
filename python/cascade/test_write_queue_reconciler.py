@@ -24,6 +24,8 @@ class FakeDb:
 
     def __init__(self):
         self.applied = []
+        self.outbox = []
+        self.updates = []
 
     def cursor(self):
         return FakeCursor(self)
@@ -45,6 +47,10 @@ class FakeCursor:
     def execute(self, sql, params=None):
         if "INSERT INTO" in sql and "write_queue_applied" in sql:
             self.db.applied.append(params)
+        if "INSERT INTO" in sql and "keychain_event_outbox" in sql:
+            self.db.outbox.append(params)
+        if "UPDATE" in sql and "write_queue_applied" in sql:
+            self.db.updates.append(params)
 
     def fetchone(self):
         return ("0",)
@@ -139,15 +145,58 @@ class TestClassify(unittest.TestCase):
 
 class TestApply(unittest.TestCase):
 
-    def test_apply_records_and_is_idempotent(self):
+    def test_generic_intent_stages_and_applies(self):
         with _Ctx():
             db = FakeDb()
-            ok, detail = wqr._apply(dict(BASE_INTENT), db)
+            # Generic target/verb → staging-only path (safe no-op apply)
+            intent = dict(BASE_INTENT)
+            intent["target"] = "some.other.surface"
+            intent["verb"] = "upsert"
+            ok, detail = wqr._apply(intent, db)
             self.assertTrue(ok)
-            self.assertEqual(len(db.applied), 1)
-            # ON CONFLICT DO NOTHING — re-apply is a no-op at the DB level
-            ok2, _ = wqr._apply(dict(BASE_INTENT), db)
+            self.assertEqual(len(db.applied), 1, "staging row recorded")
+            self.assertIn("staged", detail)
+            # idempotent: re-apply is a no-op at the DB level (ON CONFLICT)
+            ok2, _ = wqr._apply(intent, db)
             self.assertTrue(ok2)
+
+    def test_transition_entity_requires_entity_and_transition(self):
+        with _Ctx():
+            db = FakeDb()
+            # BASE_INTENT targets transition-entity but lacks entityId/transitionId
+            ok, detail = wqr._apply(dict(BASE_INTENT), db)
+            self.assertFalse(ok)
+            self.assertIn("missing entityId/transitionId", detail)
+
+    def test_transition_entity_applies_real_mutation(self):
+        with _Ctx():
+            db = FakeDb()
+            intent = dict(BASE_INTENT)
+            intent["writeId"] = "tr-e2e"
+            intent["correlationId"] = "corr-e2e"
+            intent["payload"] = {
+                "entityId": "ent-1",
+                "transitionId": "trans-1",
+            }
+
+            # Patch the interpreter to a committed outcome
+            import types
+            class _FakeInterp:
+                last_transition_event = {"event_id": "evt-x"}
+                def transition_entity(self, entity_id, transition_id, **kw):
+                    return True, [{"rule_id": "r1", "passed": True}]
+
+            import unittest.mock as um
+            with um.patch("SOLScript.solscript.interpreter.ResolutionInterpreter",
+                          return_value=_FakeInterp()):
+                ok, detail = wqr._apply(intent, db)
+            self.assertTrue(ok)
+            self.assertIn("committed", detail)
+            self.assertEqual(len(db.outbox), 1, "KeychainEvent recorded to outbox")
+            # outbox outcome = committed
+            self.assertEqual(db.outbox[0][3], "committed")
+            # audit staging updated
+            self.assertTrue(db.updates)
 
 
 if __name__ == "__main__":
