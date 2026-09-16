@@ -43,3 +43,9 @@ import "./governance-envelope/spring/main.tsp";
 // (route-free; nats-envelope precedent). The Moleculer REST facade declares
 // its own operations over these models.
 import "./solscript/python/main.tsp";
+
+// Write-Queue — mobile/disconnected reconciliation-intent protocol surface.
+// Reuses the nats-envelope CanonicalEnvelope; model-only. The Java mobile
+// write-queue produces entries; the Python cascade reconciler consumes them
+// and emits canonical events on nexus.events.
+import "./write-queue/main.tsp";
