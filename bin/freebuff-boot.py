@@ -124,7 +124,7 @@ def probe(url: str, timeout: float = 3.0) -> tuple[bool, str]:
 class Boot:
     def __init__(self, role: str, model: str, channel: str, ttl: int, budget: int,
                  lease_policy: str, update_pointer: bool, limit: int,
-                 dry_run: bool, strict: bool):
+                 dry_run: bool, strict: bool, want_digest: bool = False):
         self.role = role
         self.model = model
         self.channel = channel
@@ -135,6 +135,7 @@ class Boot:
         self.limit = limit
         self.dry_run = dry_run
         self.strict = strict
+        self.want_digest = want_digest
         self.steps: list[dict] = []
 
     def record(self, name: str, status: str, detail: str) -> None:
@@ -297,6 +298,52 @@ class Boot:
             exit_code = 1
         return exit_code
 
+    # 6 ─ continuity digest preview (optional, --digest) -------------------
+    def digest_preview(self) -> None:
+        """Print the role continuity digest preview (v0, read-only).
+
+        Continuity thread 65fe85a8: at session start, an adopted role gets a
+        compacted view assembled from canonical surfaces (open inbox, open
+        to-do threads, recent record metadata — metadata-only, no LLM, no
+        chat recycling). Runs AFTER the lease step so the preview is shown
+        precisely when the role is (or just became) adopted. Persistence
+        into session_context_snapshots is continuity step 4, gated on the
+        roundtable's Q1/Q2 — this step only PREVIEWS.
+
+        Degrades, never fails the boot:
+        - digest mode off        → [skip]
+        - continuity package absent (PR #274 not merged yet) → [skip]
+        - assembly error         → [degraded]
+        - --dry-run              → [skip] (preview is a read, but honor
+                                   dry-run's zero-surprise stance)
+        """
+        if not self.want_digest:
+            return
+        if self.dry_run:
+            self.record("digest", "skipped", "dry-run: preview not assembled (zero-mutation stance)")
+            return
+        try:
+            sys.path.insert(0, os.path.join(SCRIPT_DIR, "..", "python"))
+            from continuity.digest import _live_fetchers, assemble_digest  # noqa: I252
+        except Exception as e:  # noqa: BLE001 — absence is a skip, not a failure
+            self.record("digest", "skipped",
+                        f"continuity package not importable ({e.__class__.__name__}) "
+                        "— digest v0 (PR #274) not merged yet?")
+            return
+        try:
+            fin, fth, frec, ceiling = _live_fetchers(self.role)
+            digest = assemble_digest(self.role, self.model, fin, fth, frec, ceiling)
+            c = digest.get("counts", {})
+            self.record("digest", "ok",
+                        f"preview assembled: inbox={c.get('open_inbox', 0)} "
+                        f"threads={c.get('open_threads', 0)} "
+                        f"records={c.get('recent_records', 0)} "
+                        f"degraded={len(digest.get('sources_degraded', []))} "
+                        f"disposition={digest.get('disposition')}")
+            print(json.dumps(digest, indent=2, default=str))
+        except Exception as e:  # noqa: BLE001 — surface as degraded, keep booting
+            self.record("digest", "degraded", f"assembly error: {e}")
+
     def run(self) -> int:
         state = self.preflight()
         print()
@@ -306,6 +353,7 @@ class Boot:
         else:
             self.lease()
             self.inbox()
+        self.digest_preview()
         self.clock_in()
         self.forums()
         self.procedures()
@@ -335,6 +383,9 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--strict", action="store_true",
                     help="exit 1 if any step is degraded/failed (default: degraded is reported, exit 0)")
     ap.add_argument("--json", action="store_true", help="append a machine-readable JSON report")
+    ap.add_argument("--digest", action="store_true",
+                    help="print the role continuity digest preview (v0, read-only) after "
+                         "the lease step — adoption-gated continuity, thread 65fe85a8")
     args = ap.parse_args(argv)
 
     if McpClient is None:
@@ -346,7 +397,8 @@ def main(argv: list[str]) -> int:
 
     boot = Boot(role=args.role, model=args.model, channel=args.channel, ttl=args.ttl,
                 budget=args.budget, lease_policy=args.lease, update_pointer=args.update_pointer,
-                limit=args.limit, dry_run=args.dry_run, strict=args.strict)
+                limit=args.limit, dry_run=args.dry_run, strict=args.strict,
+                want_digest=args.digest)
     code = boot.run()
     if args.json:
         print(json.dumps({"role": args.role, "model": args.model, "channel": args.channel,
