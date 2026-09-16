@@ -36,7 +36,7 @@ class TestAssembleDigest(unittest.TestCase):
             fetch_records=lambda: [{"record_id": "r2", "title": "M"}],
             level_ceiling="level <= 4",
             now=datetime(2026, 9, 16, 12, 0, tzinfo=timezone.utc))
-        self.assertEqual(d["digest_version"], "v0")
+        self.assertEqual(d["digest_version"], "v0.1")
         self.assertEqual(d["disposition"], "context-only")  # I2 marker
         self.assertEqual(d["role"], "dba")
         self.assertEqual(d["assembled_for_model"], "freebuff/buffy")  # R-1..R-3
@@ -141,6 +141,8 @@ class TestCLI(unittest.TestCase):
             if "/roles" in url:
                 return {"items": [{"name": "dba",
                                    "level_filter_allowed": "level <= 4"}]}
+            if "/role-leases" in url:
+                return {"items": []}  # no live lease — unbound digest
             raise AssertionError(url)
 
         orig = dg._get_json
@@ -160,7 +162,127 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(d["counts"]["open_inbox"], 1)
         self.assertEqual(d["counts"]["open_threads"], 1)
         self.assertEqual(d["level_provenance"]["level_filter_allowed"], "level <= 4")
+        self.assertIsNone(d["lease_binding"]["lease_ref"])  # v0.1: explicit unbound
+        self.assertTrue(any("/api/role-leases" in u for u in calls))
         self.assertTrue(any("/api/agent-records" in u for u in calls))
+
+class TestLeaseBinding(unittest.TestCase):
+    """v0.1 lease_binding: the V167 lease_ref binding (nullable-but-explicit)."""
+
+    def _lease(self, rid="c5510fcd-10dc-4940-8665-9a66e52ab1bc", role="dba",
+               model="ui-fleet-standing", expires="2026-09-16T17:17:28Z"):
+        return {"lease_ref": rid, "lease_role": role, "lease_model": model,
+                "expires_at": expires}
+
+    def test_unbound_digest_is_explicit(self):
+        d = dg.assemble_digest("dba", "m", fetch_lease=lambda r: None,
+                               now=datetime(2026, 9, 16, 12, 0, tzinfo=timezone.utc))
+        b = d["lease_binding"]
+        self.assertIsNone(b["lease_ref"])
+        self.assertIsNone(b["role_agreement"])  # no lease: neither agree nor disagree
+        self.assertIn("unbound", b["reason"])
+        self.assertEqual(b["lease_role"], "dba")
+
+    def test_bound_digest_carries_ref_and_agreement(self):
+        d = dg.assemble_digest("dba", "m", fetch_lease=lambda r: self._lease(),
+                               now=datetime(2026, 9, 16, 12, 0, tzinfo=timezone.utc))
+        b = d["lease_binding"]
+        self.assertEqual(b["lease_ref"], "c5510fcd-10dc-4940-8665-9a66e52ab1bc")
+        self.assertEqual(b["lease_model"], "ui-fleet-standing")
+        self.assertTrue(b["role_agreement"])
+        self.assertNotIn("reason", b)
+        self.assertEqual(d["as_of"], b["bound_at"])  # binding stamped at assembly time
+
+    def test_role_mismatch_refuses_to_bind(self):
+        """SNAP002 mirror: a lease is a scope artifact, not an authority grant."""
+        d = dg.assemble_digest("dba", "m",
+                               fetch_lease=lambda r: self._lease(role="engineer"),
+                               now=datetime(2026, 9, 16, 12, 0, tzinfo=timezone.utc))
+        b = d["lease_binding"]
+        self.assertIsNone(b["lease_ref"])          # refused
+        self.assertFalse(b["role_agreement"])
+        self.assertIn("refused", b["reason"])
+        self.assertEqual(b["lease_role"], "engineer")  # the mismatch is visible
+
+    def test_case_insensitive_role_agreement(self):
+        d = dg.assemble_digest("DBA", "m", fetch_lease=lambda r: self._lease(role="dba"))
+        self.assertTrue(d["lease_binding"]["role_agreement"])
+
+    def test_lease_source_failure_degrades_not_fails(self):
+        def boom(role):
+            raise RuntimeError("nebula down")
+        d = dg.assemble_digest("dba", "m", fetch_lease=boom)
+        b = d["lease_binding"]
+        self.assertIsNone(b["lease_ref"])
+        self.assertTrue(any(s.startswith("lease:") for s in d["sources_degraded"]))
+        self.assertIn("disposition", d)  # still a valid digest
+
+    def test_no_fetcher_states_caller_gap(self):
+        d = dg.assemble_digest("dba", "m")
+        self.assertIsNone(d["lease_binding"]["lease_ref"])
+        self.assertIn("no lease fetcher", d["lease_binding"]["reason"])
+
+    def test_positional_callers_unchanged(self):
+        """fetch_lease is keyword-only-usable: old positional arity still works."""
+        d = dg.assemble_digest("dba", "m", lambda: [], lambda: [], lambda: [], "level <= 4")
+        self.assertIn("lease_binding", d)
+        self.assertEqual(d["level_provenance"]["level_filter_allowed"], "level <= 4")
+
+
+class TestFetchLiveLease(unittest.TestCase):
+    """REST fetcher: liveness predicate pinned to match operator_svc.lease_check
+    and nebula-srv /api/role-leases/stale (one definition, three implementations)."""
+
+    def setUp(self):
+        self._orig = dg._get_json
+
+    def tearDown(self):
+        dg._get_json = self._orig
+
+    def _row(self, rid="l1", role="dba", status="ACTIVE",
+             expires="2099-01-01T00:00:00Z", budget=None, consumed=None):
+        return {"id": rid, "role": role, "status": status, "model": "m",
+                "expires_at": expires, "budget_units": budget,
+                "consumed_units": consumed}
+
+    def _patch(self, items):
+        dg._get_json = lambda url, timeout=8: {"items": items}
+
+    def test_selects_newest_live(self):
+        # REST orders created_at DESC: the FIRST row is the newest lease.
+        self._patch([self._row(rid="new"), self._row(rid="old")])
+        lease = dg.fetch_live_lease("dba")
+        self.assertEqual(lease["lease_ref"], "new")
+
+    def test_expired_not_live(self):
+        self._patch([self._row(expires="2020-01-01T00:00:00Z")])
+        self.assertIsNone(dg.fetch_live_lease("dba"))
+
+    def test_budget_exhausted_not_live(self):
+        self._patch([self._row(budget=10, consumed=10)])
+        self.assertIsNone(dg.fetch_live_lease("dba"))
+
+    def test_budget_available_is_live(self):
+        self._patch([self._row(budget=10, consumed=9)])
+        self.assertIsNotNone(dg.fetch_live_lease("dba"))
+
+    def test_null_expiry_budget_is_live(self):
+        self._patch([self._row(expires=None, budget=None)])
+        self.assertIsNotNone(dg.fetch_live_lease("dba"))
+
+    def test_empty_items_returns_none(self):
+        self._patch([])
+        self.assertIsNone(dg.fetch_live_lease("dba"))
+
+    def test_url_carries_role_and_status_filters(self):
+        urls = []
+        def fake(url, timeout=8):
+            urls.append(url)
+            return {"items": []}
+        dg._get_json = fake
+        dg.fetch_live_lease("engineer")
+        self.assertIn("role=engineer", urls[0])
+        self.assertIn("status=ACTIVE", urls[0])
 
 
 if __name__ == "__main__":
