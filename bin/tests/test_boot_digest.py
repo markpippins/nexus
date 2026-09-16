@@ -142,9 +142,10 @@ class TestDigestStep(unittest.TestCase):
         step = [s for s in boot.steps if s["step"] == "digest"][0]
         self.assertEqual(step["status"], "ok")
         self.assertIn("disposition=context-only", step["detail"])
-        # the JSON block starts at the first '{' printed after the step line
+        # the JSON block sits between the step line and the (post-step-4)
+        # snapshot line — parse by outermost braces
         out = buf.getvalue()
-        payload = json.loads(out[out.index("{"):])
+        payload = json.loads(out[out.index("{"): out.rindex("}") + 1])
         self.assertEqual(payload["disposition"], "context-only")
         self.assertEqual(payload["role"], "dba")
         self.assertEqual(payload["assembled_for_model"], "freebuff/buffy")
