@@ -142,16 +142,20 @@ class TestDigestStep(unittest.TestCase):
         step = [s for s in boot.steps if s["step"] == "digest"][0]
         self.assertEqual(step["status"], "ok")
         self.assertIn("disposition=context-only", step["detail"])
-        # the JSON block starts at the first '{' printed after the step line
+        # the JSON block sits between the step line and the (post-step-4)
+        # snapshot line — parse by outermost braces
         out = buf.getvalue()
-        payload = json.loads(out[out.index("{"):])
+        payload = json.loads(out[out.index("{"): out.rindex("}") + 1])
         self.assertEqual(payload["disposition"], "context-only")
         self.assertEqual(payload["role"], "dba")
         self.assertEqual(payload["assembled_for_model"], "freebuff/buffy")
 
     def test_package_absent_is_skip_with_hint(self):
-        cleanup = _install_fake_continuity()
-        cleanup()  # ensure absent
+        # Since #274/#279/#280 merged, python/continuity EXISTS in the repo —
+        # simulate absence with the sys.modules=None import block (makes the
+        # import raise ImportError without touching the real package).
+        sys.modules["continuity"] = None
+        self.addCleanup(sys.modules.pop, "continuity", None)
         boot = self._boot()
         boot.digest_preview()
         step = [s for s in boot.steps if s["step"] == "digest"][0]
