@@ -7,6 +7,28 @@ export type WitnessedRunStatus =
   | "drift"
   | "duplicate_retry";
 
+import { resolveDispositionViaSolscript } from "./solscriptAdapter.js";
+import type { Proposition } from "@nexus/solscript";
+
+/**
+ * Apply a solscript-derived disposition to a witnessed-run projection's
+ * assessment (F-0 / option A). The disposition label comes from the canonical
+ * @nexus/solscript Disposition enum via resolveDispositionViaSolscript — the
+ * reference implementation — never re-derived by §10. When the proposition
+ * carries no decisive disposition, the existing assessment disposition is kept.
+ */
+export function applySolscriptDisposition(
+  projection: WitnessedRunProjection,
+  proposition: Proposition | undefined,
+): WitnessedRunProjection {
+  const disposition = resolveDispositionViaSolscript(proposition);
+  if (!disposition) return projection;
+  return {
+    ...projection,
+    assessment: { ...projection.assessment, disposition },
+  };
+}
+
 export interface WitnessedRunQuery {
   workflowInstanceId: string;
   nodeId: string;

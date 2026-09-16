@@ -15,6 +15,8 @@
  * narrowly blocking. This module IS the advisory rung.
  */
 import type { DoctrineLookup, DoctrineLookupRequest, DoctrineLookupResult } from './doctrineLookup.js';
+import { createSolscriptRuleEvaluator } from './solscriptAdapter.js';
+import type { ResolutionInterpreter, Rule, Entity } from "@nexus/solscript";
 
 export type AdvisoryVerdict = 'advisory_pass' | 'advisory_fail' | 'advisory_unknown';
 
@@ -121,4 +123,36 @@ export async function evaluateAdvisory(
 
 function elapsed(started: number): number {
   return Math.max(0, Math.round((performance.now() - started) * 1000) / 1000);
+}
+
+/**
+ * Solscript-backed advisory evaluation (F-0 / option A).
+ *
+ * Runs the advisory path against a @nexus/solscript Rule + Entity via the
+ * canonical ResolutionInterpreter (the reference implementation), instead of
+ * a caller-hand-rolled evaluate callback. Keeps §10's doctrine verdicts
+ * solscript-derived. Fail-closed: any lookup/evaluate error → advisory_unknown.
+ *
+ * @param lookup the doctrine lookup the governed path depends on.
+ * @param input the advisory input; its `evaluate` is IGNORED in favor of the
+ *        solscript rule check (solscript is authoritative for the verdict).
+ * @param interpreter a seeded ResolutionInterpreter (rules/entities loaded).
+ * @param rule the solscript Rule to evaluate.
+ * @param entity the solscript Entity to evaluate against.
+ * @param policy sampling policy (default: sample all).
+ */
+export async function evaluateAdvisoryViaSolscript(
+  lookup: DoctrineLookup,
+  input: Omit<AdvisoryEvaluationInput, "evaluate">,
+  interpreter: ResolutionInterpreter,
+  rule: Rule,
+  entity: Entity,
+  policy: AdvisoryPolicy = DEFAULT_ADVISORY_POLICY,
+): Promise<AdvisoryEvaluationResult> {
+  const evaluate = createSolscriptRuleEvaluator(interpreter, rule, entity);
+  return evaluateAdvisory(
+    lookup,
+    { ...input, evaluate },
+    policy,
+  );
 }
