@@ -1,0 +1,13 @@
+[Unit]
+Description=Daily local nexus PG escape-hatch backup (03:10)
+
+[Timer]
+# 03:10 — layered BEFORE the canonical off-machine tier (pg-backup-to-
+# vanadium 03:42, sync 02:51): local-first, then ship. Persistent=true
+# catches up after boot/outage (decision 13600407).
+OnCalendar=*-*-* 03:10:00
+Persistent=true
+RandomizedDelaySec=15min
+
+[Install]
+WantedBy=timers.target
