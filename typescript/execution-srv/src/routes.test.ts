@@ -1,7 +1,7 @@
 /**
  * W2.06 witnessed-runs conformance test — execution-srv.
  *
- * Dependency-free, `tsx`-driven (same convention as the §10 core
+ * Dependency-free, `tsx`-driven (same convention as the projection-core
  * `scripts/run-*-conformance.ts`). Drives the exported `witnessedRunHandler`
  * with a mocked pg `Pool` + a minimal Express req/res shim, covering:
  *

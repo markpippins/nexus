@@ -77,7 +77,7 @@ row carries no lineage elements at all).
 
 ## Consumer contract (fail-closed)
 
-Downstream consumers (§10 core client, UIs, future tooling) must:
+Downstream consumers (projection-core client, UIs, future tooling) must:
 
 1. Pin `projectionVersion` — reject the payload on mismatch.
 2. Treat any unrecognized `status` as `unknown` **and refuse to act on it**

@@ -31,7 +31,7 @@
  * writes to peb.decisions, no global blocking toggle (prohibition stands
  * until a new gate-12 decision).
  *
- * Run:  npx tsx scripts/run-w504-bounded-canary.ts   (from "typescript/§10 core")
+ * Run:  npx tsx scripts/run-w504-bounded-canary.ts   (from "typescript/Projection core")
  */
 
 import { createHash } from "node:crypto";
@@ -430,7 +430,7 @@ const summary = {
 };
 
 // Resolve the worktree root from this file's location:
-//   typescript/§10 core/scripts/ -> <worktree-root>/docs/w504-evidence
+//   typescript/Projection core/scripts/ -> <worktree-root>/docs/w504-evidence
 const outDir = resolve(import.meta.dirname ?? ".", "..", "..", "..", "docs", "w504-evidence");
 mkdirSync(outDir, { recursive: true });
 writeFileSync(join(outDir, "w504-canary-summary.json"), JSON.stringify(summary, null, 2) + "\n");

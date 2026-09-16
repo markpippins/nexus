@@ -1,9 +1,9 @@
 /**
- * §10 core ↔ @nexus/solscript integration adapter (F-0 / option A).
+ * projection-core ↔ @nexus/solscript integration adapter (F-0 / option A).
  *
  * Establishes @nexus/solscript (typescript/solscript, PR #254) as the
- * canonical resolution-domain evaluation library for the §10 core. Per the
- * operator directive, §10 consumes solscript rather than hand-rolling
+ * canonical resolution-domain evaluation library for the Projection core. Per the
+ * operator directive, Projection consumes solscript rather than hand-rolling
  * resolution evaluation:
  *
  *   - Advisory evaluation (advisoryEvaluation.ts) delegates the doctrine
@@ -14,7 +14,7 @@
  *     enum), never a hand-rolled copy.
  *
  * Solscript is the reference implementation for upstream UI work; this
- * adapter is the seam that keeps §10's resolution semantics in the library.
+ * adapter is the seam that keeps Projection's resolution semantics in the library.
  */
 import {
   ResolutionInterpreter,
@@ -51,9 +51,9 @@ export function createSolscriptRuleEvaluator(
 /**
  * Resolve a witnessed-run assessment disposition from a solscript Proposition.
  *
- * Maps the canonical `Disposition` enum to the §10 witness assessment label,
+ * Maps the canonical `Disposition` enum to the projection witness assessment label,
  * so the disposition value is solscript-derived (reference implementation),
- * not re-derived by §10. Returns null when the proposition carries no
+ * not re-derived by Projection. Returns null when the proposition carries no
  * decisive disposition (pending/proposed/stale/retracted → not decided).
  */
 export function resolveDispositionViaSolscript(

@@ -48,16 +48,16 @@ CONTRACT_FILES = [
 EVALUATOR_NAME = "governed-admission-evaluator"
 EVALUATOR_VERSION = "w4.06+advisory"
 EVALUATOR_FILES = [
-    "typescript/§10 core/src/runtime/contractAdmission.ts",
-    "typescript/§10 core/src/runtime/advisoryEvaluation.ts",
+    "typescript/projection-core/src/runtime/contractAdmission.ts",
+    "typescript/projection-core/src/runtime/advisoryEvaluation.ts",
 ]
 
 LAW_NAME = "doctrine-corpus+witnessed-run-classifier"
 LAW_VERSION = "w3.06+advisory"
 LAW_FILES = [
-    "typescript/§10 core/src/runtime/doctrineLookup.registry.ts",
-    "typescript/§10 core/src/runtime/witnessedRun.ts",
-    "typescript/§10 core/src/runtime/witnessedRunSource.ts",
+    "typescript/projection-core/src/runtime/doctrineLookup.registry.ts",
+    "typescript/projection-core/src/runtime/witnessedRun.ts",
+    "typescript/projection-core/src/runtime/witnessedRunSource.ts",
 ]
 
 

@@ -130,7 +130,7 @@ function elapsed(started: number): number {
  *
  * Runs the advisory path against a @nexus/solscript Rule + Entity via the
  * canonical ResolutionInterpreter (the reference implementation), instead of
- * a caller-hand-rolled evaluate callback. Keeps §10's doctrine verdicts
+ * a caller-hand-rolled evaluate callback. Keeps Projection's doctrine verdicts
  * solscript-derived. Fail-closed: any lookup/evaluate error → advisory_unknown.
  *
  * @param lookup the doctrine lookup the governed path depends on.

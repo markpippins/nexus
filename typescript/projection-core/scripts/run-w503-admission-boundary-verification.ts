@@ -25,7 +25,7 @@
  * DB rows).
  *
  * Run:  npx tsx "scripts/run-w503-admission-boundary-verification.ts"
- *   (from "typescript/§10 core")
+ *   (from "typescript/Projection core")
  */
 
 import { createHash } from "node:crypto";
@@ -343,7 +343,7 @@ const evidence = {
   title: "deny_contract_promotion admission-boundary verification",
   generatedAt: new Date().toISOString(),
   basis: {
-    implementation: "typescript/§10 core/src/runtime/contractAdmission.ts",
+    implementation: "typescript/Projection core/src/runtime/contractAdmission.ts",
     mergedCommit: "e814fbc2 (W4.06, PR #99)",
     decision: "05d0fe54 + amendments v1-v4 (41d30b44 scope, 3a30651a triplet)",
   },
