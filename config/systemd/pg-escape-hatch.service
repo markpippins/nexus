@@ -1,0 +1,13 @@
+[Unit]
+# Local nightly nexus PG backup (travel tier): pg_dump -Fc of nexus ->
+# verified, manifest, retention, stamp. Closes the audit-f74eb976
+# zero-coverage finding (vanadium unreachable off-network). Per architect
+# decision 13600407: systemd user timers are the single OS-level substrate.
+Description=nexus PG local escape-hatch backup (verified, local disk)
+
+[Service]
+Type=oneshot
+ExecStart=/home/codex/dev/nexus/bin/pg-escape-hatch.sh
+User=codex
+Group=codex
+TimeoutStartSec=1h
