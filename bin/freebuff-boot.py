@@ -351,6 +351,22 @@ class Boot:
                         f"degraded={len(digest.get('sources_degraded', []))} "
                         f"disposition={digest.get('disposition')}")
             print(json.dumps(digest, indent=2, default=str))
+            # ── Step-4 pre-stage: attempt snapshot persistence ───────────
+            # persist_digest is adoption-gated (bound digests only) and inert
+            # by table detection until V167 is applied (roundtable Q1/Q2).
+            # Import-guarded: pre-step-4 continuity modules simply skip.
+            try:
+                from continuity.persist import persist_digest
+                result = persist_digest(digest)
+                status = "ok" if result.get("persisted") else "skipped"
+                self.record("snapshot", status, result.get("reason", ""))
+            except ImportError:
+                self.record("snapshot", "skipped",
+                            "persistence hook not present in this continuity module "
+                            "(pre-step-4)")
+            except Exception as e:  # noqa: BLE001 — persist hook must not fail the boot
+                self.record("snapshot", "degraded",
+                            f"persist hook error: {e.__class__.__name__}")
         except Exception as e:  # noqa: BLE001 — surface as degraded, keep booting
             self.record("digest", "degraded", f"assembly error: {e}")
 
