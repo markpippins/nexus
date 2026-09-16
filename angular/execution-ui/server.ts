@@ -7,13 +7,22 @@ async function startServer() {
   const app = express();
   const PORT = parseInt(process.env.PORT || '4205', 10);
 
-  // Environment-selected mode: live (proxy execution-srv:3110) is the default
+  // Environment-selected mode: live (proxy execution surface) is the default
   // for the installed unit. Mock routes are served only when mock mode is
   // explicitly selected via EXECUTION_MOCK_MODE=true (or the client-side
   // VITE_EXECUTION_USE_MOCK build flag, which routes the browser to the same
   // in-memory store through the mock server below).
   const MOCK_MODE = process.env.EXECUTION_MOCK_MODE === 'true';
-  const EXECUTION_SRV_URL = process.env.EXECUTION_SRV_URL || 'http://localhost:3110';
+  // M2 cutover: default execution surface is the broker gateway's
+  // worker.execution catalog — the same 18-route contract as legacy
+  // execution-srv, mounted at /api/workers/execution instead of
+  // /api/execution (prefix rewritten in proxyToExecution below; the
+  // broker's GET / serves the legacy-exact server health shape).
+  // Rollback: EXECUTION_SURFACE=legacy restores full-path passthrough
+  // to execution-srv:3110 (explicit EXECUTION_SRV_URL always wins).
+  const EXECUTION_SURFACE = (process.env.EXECUTION_SURFACE || 'broker').toLowerCase();
+  const EXECUTION_SRV_URL = process.env.EXECUTION_SRV_URL ||
+    (EXECUTION_SURFACE === 'legacy' ? 'http://localhost:3110' : 'http://localhost:4080/api/workers/execution');
 
   app.use(express.json());
 
@@ -96,13 +105,22 @@ async function startServer() {
       res.json(origin);
     });
   } else {
-    // --- LIVE MODE: proxy every observability route to execution-srv:3110 ---
-    // Upstream failures are returned as explicit errors — the client never
-    // receives mock/seed data in live mode.
+    // --- LIVE MODE: proxy every observability route to the execution surface ---
+    // Broker (default): /api/execution/* is rewritten onto the worker.execution
+    // catalog (/api/workers/execution/*); /health maps to the catalog root,
+    // which serves the legacy-exact server health shape. Legacy: full-path
+    // passthrough to execution-srv:3110. Upstream failures are returned as
+    // explicit errors — the client never receives mock/seed data in live mode.
+
+    const toUpstreamPath = (p: string): string => {
+      if (EXECUTION_SURFACE === 'legacy') return p;
+      if (p === '/health') return '/';
+      return p.replace(/^\/api\/execution/, '') || '/';
+    };
 
     const proxyToExecutionSrv = async (req: express.Request, res: express.Response) => {
       const qs = req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : '';
-      const targetUrl = `${EXECUTION_SRV_URL}${req.path}${qs}`;
+      const targetUrl = `${EXECUTION_SRV_URL}${toUpstreamPath(req.path)}${qs}`;
       try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 5000);
@@ -125,7 +143,7 @@ async function startServer() {
         return res.status(upstream.status).json(data);
       } catch (err: any) {
         return res.status(502).json({
-          error: `execution-srv unreachable at ${EXECUTION_SRV_URL}`,
+          error: `execution surface unreachable at ${EXECUTION_SRV_URL} (surface: ${EXECUTION_SURFACE})`,
           detail: err?.message || 'timeout',
         });
       }
