@@ -124,7 +124,8 @@ def probe(url: str, timeout: float = 3.0) -> tuple[bool, str]:
 class Boot:
     def __init__(self, role: str, model: str, channel: str, ttl: int, budget: int,
                  lease_policy: str, update_pointer: bool, limit: int,
-                 dry_run: bool, strict: bool, want_digest: bool = False):
+                 dry_run: bool, strict: bool, want_digest: bool = False,
+                 want_conn: bool = False):
         self.role = role
         self.model = model
         self.channel = channel
@@ -136,6 +137,9 @@ class Boot:
         self.dry_run = dry_run
         self.strict = strict
         self.want_digest = want_digest
+        self.want_conn = want_conn
+        self.lease_id = None        # captured by the lease step (census provenance)
+        self.digest_summary = None  # captured by the digest step (handoff affordance)
         self.steps: list[dict] = []
 
     def record(self, name: str, status: str, detail: str) -> None:
@@ -186,11 +190,13 @@ class Boot:
                 client.call("role_lease_renew", {
                     "id": lease_id, "ttlSeconds": self.ttl, "budgetUnits": self.budget})
                 self.record("lease", "ok", f"renewed {lease_id} (ttl={self.ttl}s, budget={self.budget})")
+                self.lease_id = lease_id
             else:
                 res = parse_json(text_of(client.call("role_lease_issue", {
                     "role": self.role, "channel": self.channel, "model": self.model,
                     "ttlSeconds": self.ttl, "budgetUnits": self.budget}))) or {}
                 self.record("lease", "ok", f"issued {res.get('id', '?')} for {self.role}@{self.channel} (ttl={self.ttl}s)")
+                self.lease_id = res.get("id")
         except Exception as e:
             self.record("lease", "degraded", f"nebula-mcp lease tools unavailable: {type(e).__name__}: {str(e)[:120]}")
 
@@ -212,6 +218,41 @@ class Boot:
             self.record("clock-in", "ok" if ok else "degraded", detail)
         except Exception as e:
             self.record("clock-in", "degraded", f"timeclock unavailable: {type(e).__name__}: {str(e)[:120]}")
+
+    # 3b ─ connection record (V169 affordance census) -----------------------
+    def connection_record(self) -> None:
+        print("== connection record (affordance census) ==")
+        if not self.want_conn:
+            return
+        if self.dry_run:
+            self.record("conn-record", "skipped",
+                        "dry-run: census not recorded (zero-mutation stance)")
+            return
+        try:
+            # the digest step adds python/ to sys.path; --conn-record must not
+            # depend on --digest having run first
+            if os.path.join(SCRIPT_DIR, "..", "python") not in sys.path:
+                sys.path.insert(0, os.path.join(SCRIPT_DIR, "..", "python"))
+            from continuity.census import collect_census, record_connection
+        except Exception as e:  # noqa: BLE001 — absence is a skip, not a failure
+            self.record("conn-record", "skipped",
+                        f"continuity census not importable ({e.__class__.__name__})")
+            return
+        try:
+            row = collect_census(
+                self.role, self.model, self.channel,
+                session_id=os.environ.get("FREEBUFF_SESSION_ID"),
+                lease_ref=self.lease_id,
+                digest_result=self.digest_summary)
+            result = record_connection(row)
+            status = "ok" if result.get("recorded") else "skipped"
+            detail = result.get("reason", "")
+            if result.get("conn_id"):
+                detail += f" ({str(result['conn_id'])[:8]})"
+            self.record("conn-record", status, detail)
+        except Exception as e:  # noqa: BLE001 — census must not fail the boot
+            self.record("conn-record", "degraded",
+                        f"census error: {e.__class__.__name__}: {str(e)[:120]}")
 
     # 4 ─ inbox ------------------------------------------------------------
     def inbox(self) -> None:
@@ -344,6 +385,9 @@ class Boot:
                 # pre-v0.1 assembler: assemble unbound (still a valid v0 preview)
                 digest = assemble_digest(self.role, self.model, fin, fth, frec, ceiling)
             c = digest.get("counts", {})
+            self.digest_summary = {"counts": c,
+                                   "digest_version": digest.get("digest_version"),
+                                   "sources_degraded": digest.get("sources_degraded")}
             self.record("digest", "ok",
                         f"preview assembled: inbox={c.get('open_inbox', 0)} "
                         f"threads={c.get('open_threads', 0)} "
@@ -380,6 +424,7 @@ class Boot:
             self.lease()
             self.inbox()
         self.digest_preview()
+        self.connection_record()
         self.clock_in()
         self.forums()
         self.procedures()
@@ -412,6 +457,10 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--digest", action="store_true",
                     help="print the role continuity digest preview (v0, read-only) after "
                          "the lease step — adoption-gated continuity, thread 65fe85a8")
+    ap.add_argument("--conn-record", action="store_true",
+                    help="record the session affordance census (nebula.agent_connections, "
+                         "V169): MCP tools, procedure cards, inbox, handoff, keychains "
+                         "— inert until V169 is applied")
     args = ap.parse_args(argv)
 
     if McpClient is None:
@@ -424,7 +473,7 @@ def main(argv: list[str]) -> int:
     boot = Boot(role=args.role, model=args.model, channel=args.channel, ttl=args.ttl,
                 budget=args.budget, lease_policy=args.lease, update_pointer=args.update_pointer,
                 limit=args.limit, dry_run=args.dry_run, strict=args.strict,
-                want_digest=args.digest)
+                want_digest=args.digest, want_conn=args.conn_record)
     code = boot.run()
     if args.json:
         print(json.dumps({"role": args.role, "model": args.model, "channel": args.channel,
