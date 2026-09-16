@@ -158,29 +158,113 @@ def _current_target_version(db, target: str) -> str | None:
 def _apply(intent: dict[str, Any], db) -> tuple[bool, str]:
     """Apply the intended mutation. Returns (applied, detail).
 
-    This is the integration seam: the actual canonical mutation. In this
-    slice it records the write as an applied reconciliation row so the
-    flow is testable end-to-end; the real mutation (e.g. a resolved
-    transition-entity) plugs in here.
+    Dispatch by (target, verb) to the real canonical mutation:
+      - solscript.proposition / transition-entity → run the deterministic
+        ResolutionInterpreter.transition_entity to decide the governed
+        outcome, then record the durable KeychainEvent to
+        resolution.keychain_event_outbox (the canonical transition-event
+        surface). The staging row is the audit record.
+      - anything else → staging-only (safe no-op for unmapped targets).
+
+    Never throws into the caller; returns (applied, detail).
     """
+    try:
+        _stage_applied(intent, db)
+    except Exception as e:
+        db.rollback()
+        return False, f"stage failed: {e}"
+
+    target = str(intent.get("target") or "")
+    verb = str(intent.get("verb") or "")
+
+    if target == "solscript.proposition" and verb == "transition-entity":
+        return _apply_transition_entity(intent, db)
+
+    return True, "applied (staged; unmapped target)"
+
+
+def _stage_applied(intent: dict[str, Any], db) -> None:
+    """Record the write in the audit staging row (idempotent)."""
+    cur = db.cursor()
+    cur.execute(
+        "CREATE TABLE IF NOT EXISTS resolution.write_queue_applied ("
+        " write_id TEXT PRIMARY KEY, target TEXT, verb TEXT, "
+        " payload JSONB, outcome TEXT, applied_at TIMESTAMPTZ DEFAULT now())"
+    )
+    cur.execute(
+        "INSERT INTO resolution.write_queue_applied (write_id, target, verb, payload, outcome) "
+        "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (write_id) DO NOTHING",
+        (intent.get("writeId"), intent.get("target"), intent.get("verb"),
+         json.dumps(intent.get("payload", {})), "pending"),
+    )
+    db.commit()
+
+
+def _apply_transition_entity(intent: dict[str, Any], db) -> tuple[bool, str]:
+    """Real governed transition via the deterministic interpreter.
+
+    Runs ResolutionInterpreter.transition_entity to decide the outcome
+    (committed / refused / rejected) and records the durable KeychainEvent
+    to resolution.keychain_event_outbox — the canonical transition-event
+    surface. The interpreter is the decision authority; the DB is the
+    canonical fact store.
+    """
+    try:
+        from SOLScript.solscript.interpreter import ResolutionInterpreter
+        from SOLScript.solscript.events import build_transition_event
+    except Exception as e:
+        return False, f"interpreter unavailable: {e}"
+
+    payload = intent.get("payload") or {}
+    entity_id = str(payload.get("entityId") or payload.get("entity_id") or "")
+    transition_id = str(payload.get("transitionId") or payload.get("transition_id") or "")
+    if not entity_id or not transition_id:
+        return False, "transition-entity intent missing entityId/transitionId"
+
+    interpreter = ResolutionInterpreter()
+    passed, results = interpreter.transition_entity(
+        entity_id, transition_id,
+        source_event_id=intent.get("writeId"),
+        correlation_id=intent.get("correlationId"),
+        actor=str((intent.get("actor") or {}).get("role", "")),
+        source_namespace="write-queue",
+    )
+
+    event = getattr(interpreter, "last_transition_event", None)
+    outcome = "committed" if passed else "refused"
+
+    # Record the durable KeychainEvent to the canonical outbox surface.
     try:
         cur = db.cursor()
         cur.execute(
-            "CREATE TABLE IF NOT EXISTS resolution.write_queue_applied ("
-            " write_id TEXT PRIMARY KEY, target TEXT, verb TEXT, "
-            " payload JSONB, applied_at TIMESTAMPTZ DEFAULT now())"
+            "INSERT INTO resolution.keychain_event_outbox ("
+            " source_namespace, source_event_id, event_kind, outcome, "
+            " schema_version, aggregate_id, causation_id, correlation_id, "
+            " actor, effective_at, read_set, payload) "
+            "VALUES (%s,%s,%s,%s,1,%s,%s,%s,%s,now(),%s,%s)",
+            (
+                "write-queue",
+                intent.get("writeId"),
+                "transition_entity",
+                outcome,
+                entity_id,
+                None,
+                intent.get("correlationId"),
+                str((intent.get("actor") or {}).get("role", "")),
+                json.dumps(results),
+                json.dumps(event or {}),
+            ),
         )
         cur.execute(
-            "INSERT INTO resolution.write_queue_applied (write_id, target, verb, payload) "
-            "VALUES (%s, %s, %s, %s) ON CONFLICT (write_id) DO NOTHING",
-            (intent.get("writeId"), intent.get("target"), intent.get("verb"),
-             json.dumps(intent.get("payload", {}))),
+            "UPDATE resolution.write_queue_applied SET outcome=%s WHERE write_id=%s",
+            (outcome, intent.get("writeId")),
         )
         db.commit()
-        return True, "applied"
     except Exception as e:
         db.rollback()
-        return False, f"apply failed: {e}"
+        return False, f"outbox write failed: {e}"
+
+    return passed, f"{outcome}: {results}"
 
 
 async def _emit_reconciled(nc, entry: dict[str, Any], outcome: str, write_id: str,
