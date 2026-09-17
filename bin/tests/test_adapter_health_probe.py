@@ -468,9 +468,14 @@ class MysqlCheckTests(unittest.TestCase):
 
 
 class RunResilienceTests(unittest.TestCase):
+    """Runs everywhere — resilience is a mock-based property, not a DB one.
+    A fake psycopg2 module (create=True) stands in where the real one is
+    absent (mesh CI), so the exit-0-on-error pin never gets skipped."""
+
     def test_broken_run_yields_error_row_not_raise(self):
-        with mock.patch.object(probe.psycopg2, "connect",
-                               side_effect=RuntimeError("db down")):
+        fake = mock.Mock()
+        fake.connect.side_effect = RuntimeError("db down")
+        with mock.patch.object(probe, "psycopg2", fake, create=True):
             results = probe.run_probe()
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["kind"], "error")
