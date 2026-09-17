@@ -91,6 +91,7 @@ ALL_SERVICES=(
     "service-broker-mcp.service" # port 3112 — service-broker MCP over SSE (auth/token tools)
     "substance.service"        # port 3115 — Segment Sets API (FastAPI)
     "moleculer-search.service"  # port 4050 — Moleculer Search API (Google, registry)
+    "moleculer-solscript.service" # port 4060 — Moleculer SOLScript facade (resolution-domain evaluation, NATS ns solscript)
     "ui-tools.service"          # port 3125 — UI Tools CRUD API (statusbar links)
     "ui-tools-mcp.service"       # port 3136 — UI Tools MCP (agent-facing link management)
     "semantics-srv.service"      # port 3160 — semantics REST API (semantics.* schema — type-level legend)
@@ -179,6 +180,7 @@ SERVICE_PORTS=(
     # voyager.service — no HTTP health endpoint (NATS-based)
     ["substance.service"]="3115"
     ["moleculer-search.service"]="4050"
+    ["moleculer-solscript.service"]="4060"
     ["ui-tools.service"]="3125"
     ["ui-tools-mcp.service"]="3136"
     ["semantics-srv.service"]="3160"
