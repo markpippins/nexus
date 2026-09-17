@@ -312,3 +312,6 @@ attestations-e2e-test:
 lead-engineer-grant-e2e-test:
 	@echo "[lead-engineer-grant-e2e-test] Wave-3 grant E2E (greenlight authority, ratified separation; throwaway DB)..."
 	@python3 -m pytest python/nexus_core/wrp/tests/test_lead_engineer_grant_e2e.py -v
+applied-grants-preflight-e2e-test:
+	@echo "[applied-grants-preflight-e2e-test] V180 rediff-gate E2E (apply / refuse-reapply / changed-spec; throwaway DB)..."
+	python3 -m pytest python/nexus_core/wrp/tests/test_v180_applied_grants_e2e.py -v

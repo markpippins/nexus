@@ -25,6 +25,7 @@ import psycopg2
 _REPO_ROOT = os.path.abspath(os.path.join(
     os.path.dirname(__file__), "..", "..", "..", ".."))
 V175_PATH = os.path.join(_REPO_ROOT, "sql", "V175__roles_history_close_then_insert_repair.sql")
+V180_PATH = os.path.join(_REPO_ROOT, "sql", "V180__applied_grants_preflight.sql")
 GRANT_PATH = os.path.join(_REPO_ROOT, "sql", "grants", "tester-grant-v0.1.sql")
 
 DSN = os.environ.get("CONDUIT_PG_DSN",
@@ -157,6 +158,7 @@ class TesterGrantE2E(unittest.TestCase):
         self.addCleanup(self.db.__exit__)
         self.db.seed_role()
         self.db.apply_file(V175_PATH)  # grant requires the V175 shape
+        self.db.apply_file(V180_PATH)  # rediff gate (GRANT-APPLIED)
 
     def _open_row(self):
         rows = self.db.sql("""
@@ -224,15 +226,27 @@ WHERE name='tester'
         self.assertEqual(list(rows[0][0]), ["test-verification"])
         self.assertTrue(rows[0][1])
 
-    def test_grant_is_repeatable_grant_event(self):
+    def test_reapply_same_spec_refuses_GRANT_APPLIED(self):
+        """V180 rediff gate: identical re-apply = loud no-op (self-idempotence)."""
         self.db.apply_file(GRANT_PATH)
-        self.db.apply_file(GRANT_PATH)  # second grant event
+        refused = ""
+        try:
+            self.db.apply_file(GRANT_PATH)
+        except psycopg2.Error as exc:
+            refused = str(exc).splitlines()[0]
+            try:
+                self.db.sql("ROLLBACK")
+            except psycopg2.Error:
+                pass
+        else:
+            self.fail("identical re-apply must refuse with GRANT-APPLIED")
+        self.assertIn("GRANT-APPLIED", refused)
         chain = self.db.sql("""
 SELECT count(*) FILTER (WHERE valid_until = %s::timestamptz) AS open,
        count(*) FILTER (WHERE valid_until <> %s::timestamptz) AS closed
 FROM nebula.roles_history WHERE name='tester'
 """, (SENTINEL, SENTINEL))
-        self.assertEqual(tuple(chain[0]), (1, 2))
+        self.assertEqual(tuple(chain[0]), (1, 1))
         # handoff stays exact across events
         handoff = self.db.sql("""
 SELECT o.valid_from = c.valid_until FROM nebula.roles_history o
@@ -251,6 +265,7 @@ WHERE o.name='tester' AND o.valid_until = %s::timestamptz
         db2 = ThrowawayDB().__enter__()
         self.addCleanup(db2.__exit__)
         db2.apply_file(V175_PATH)  # right shape, but no tester row
+        db2.apply_file(V180_PATH)  # pre-flight is universal
         with open(GRANT_PATH) as fh:
             err = db2.expect_error(fh.read())
         self.assertIn("no OPEN snapshot", err)
@@ -259,6 +274,7 @@ WHERE o.name='tester' AND o.valid_until = %s::timestamptz
         db2 = ThrowawayDB().__enter__()
         self.addCleanup(db2.__exit__)
         db2.seed_role()  # NO V175 — full UNIQUE(name) still in place
+        db2.apply_file(V180_PATH)  # pre-flight is universal; tested refusal is the SHAPE trap
         with open(GRANT_PATH) as fh:
             err = db2.expect_error(fh.read())
         self.assertIn("roles_name_key", err)

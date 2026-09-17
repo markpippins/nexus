@@ -22,6 +22,7 @@ import psycopg2
 
 _REPO_ROOT = os.path.abspath(os.path.join(
     os.path.dirname(__file__), "..", "..", "..", ".."))
+V180_PATH = os.path.join(_REPO_ROOT, "sql", "V180__applied_grants_preflight.sql")
 GRANT_PATH = os.path.join(_REPO_ROOT, "sql", "grants",
                           "lead-engineer-grant-v0.1.sql")
 
@@ -121,6 +122,10 @@ class ThrowawayDB:
         with open(GRANT_PATH) as fh:
             self.sql(fh.read())
 
+    def apply_file(self, path):
+        with open(path) as fh:
+            self.sql(fh.read())
+
     def open_row(self):
         rows = self.sql(
             "SELECT owns_domains, can_greenlight, can_verify_work_requests, "
@@ -135,6 +140,7 @@ class LeadEngineerGrantE2E(unittest.TestCase):
     def setUp(self):
         self.db = ThrowawayDB().__enter__()
         self.addCleanup(self.db.__exit__, None, None, None)
+        self.db.apply_file(V180_PATH)  # rediff gate (GRANT-APPLIED)
 
     def test_grant_event_shape(self):
         self.db.apply_grant()
@@ -176,15 +182,27 @@ class LeadEngineerGrantE2E(unittest.TestCase):
             self.assertEqual((1, 0), (total, granted))
         fresh.close()
 
-    def test_repeatability_second_grant_event(self):
+    def test_reapply_same_spec_refuses_GRANT_APPLIED(self):
+        """V180 rediff gate: identical re-apply = loud no-op (self-idempotence)."""
         self.db.apply_grant()
         first_from = self.db.open_row()[7]
-        self.db.apply_grant()             # a second lawful grant event
+        refused = ""
+        try:
+            self.db.apply_grant()
+        except psycopg2.Error as exc:
+            refused = str(exc).splitlines()[0]
+            try:
+                self.db.sql("ROLLBACK")
+            except psycopg2.Error:
+                pass
+        else:
+            self.fail("identical re-apply must refuse with GRANT-APPLIED")
+        self.assertIn("GRANT-APPLIED", refused)
         closed = self.db.sql(
             "SELECT count(*) FROM nebula.roles_history "
             "WHERE name='lead-engineer' AND valid_until < '9999-12-31'")
-        self.assertEqual(2, closed)
-        self.assertGreater(self.db.open_row()[7], first_from)
+        self.assertEqual(1, closed, "no redundant event minted")
+        self.assertEqual(self.db.open_row()[7], first_from)
 
     def test_no_open_snapshot_refused(self):
         self.db.apply_grant()

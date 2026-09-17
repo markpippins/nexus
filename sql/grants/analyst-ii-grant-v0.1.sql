@@ -61,6 +61,27 @@ DECLARE
     v_closed  nebula.roles_history%ROWTYPE;
     v_updated int;
 BEGIN
+
+    -- ── SELF-IDEMPOTENCE PRE-FLIGHT (V180 rediff gate) ──────────────────
+    -- Same role + same granted spec already open => this grant event is
+    -- already live: refuse BEFORE any close/insert, so a replayed apply is
+    -- a loud no-op (GRANT-APPLIED) instead of a redundant grant event.
+    -- Different spec => a NEW lawful grant event; proceeds.
+    IF nebula.grant_is_applied(v_role, jsonb_build_object(
+           'owns_domains',             to_jsonb(v_owns_domains),
+           'can_greenlight',           to_jsonb(v_can_greenlight),
+           'can_create_questions',     to_jsonb(v_can_create_questions),
+           'can_create_agendas',       to_jsonb(v_can_create_agendas),
+           'can_resolve_questions',    to_jsonb(v_can_resolve_questions),
+           'can_verify_work_requests', to_jsonb(v_can_verify_wrs),
+           'max_open_questions',       to_jsonb(v_max_open_questions),
+           'requires_approval_from',   to_jsonb(v_requires_approval),
+           'escalates_to',             to_jsonb(v_escalates_to),
+           'escalation_triggers',      to_jsonb(v_escalation_triggers),
+           'visibility_scope',         to_jsonb(v_visibility))) THEN
+        RAISE EXCEPTION 'GRANT-APPLIED: role % already holds this exact granted spec — self-idempotent no-op, refusing to mint a redundant grant event (see nebula.applied_grants)', v_role
+            USING ERRCODE = 'P0001';
+    END IF;
     -- 1. CLOSE the current open snapshot (history table; never the view)
     UPDATE nebula.roles_history
        SET valid_until       = v_now,
