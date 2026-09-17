@@ -218,6 +218,10 @@ tester-grant-e2e-test:
 	@echo "[tester-grant-e2e-test] tester capability grant v0.1 E2E (grant event on V175 shape, throwaway DB)..."
 	@python3 -m pytest python/nexus_core/wrp/tests/test_tester_grant_e2e.py -v
 
+roles-audit-e2e-test:
+	@echo "[roles-audit-e2e-test] V177 E2E (roles_history joins the V156 NEBULA_AUDIT family; grant events leave an attributable trail, throwaway DB)..."
+	@python3 -m pytest python/nexus_core/wrp/tests/test_v177_roles_audit_e2e.py -v
+
 sonar-preflight-test:
 	@echo "[sonar-preflight-test] running sonar pre-flight gate tests..."
 	@python3 -m pytest bin/tests/test_sonar_preflight.py -v
