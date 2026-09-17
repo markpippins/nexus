@@ -1,0 +1,42 @@
+[Unit]
+Description=Moleculer SOLScript Service — resolution-domain evaluation facade (port 4060, NATS namespace solscript)
+Documentation=https://github.com/nexus/moleculer/solscript
+# NATS (:4222) is a bare daemon (no systemd unit — see terrain topology), so we
+# order after network.target only, mirroring moleculer-search.service. The prod
+# moleculer.config.js carries the NATS transporter; the service registers in
+# namespace "solscript" on the shared mesh.
+After=network.target
+
+[Service]
+Type=simple
+User=codex
+Group=codex
+WorkingDirectory=/home/codex/dev/nexus/moleculer/solscript
+
+# ── Environment ────────────────────────────────────────────────────────
+Environment=NODE_ENV=production
+Environment=SERVICE_PORT=4060
+Environment=NATS_URL=nats://localhost:4222
+Environment=PATH=/home/codex/.nvm/versions/node/v24.15.0/bin:/usr/local/bin:/usr/bin:/bin
+
+# Shared secrets (if any) — gitignored .env; may be absent (facade is stateless)
+EnvironmentFile=-/home/codex/dev/nexus/.env
+
+# ── Executable ─────────────────────────────────────────────────────────
+# Source-run via moleculer-runner's TS loader (mirrors moleculer-search).
+ExecStart=/home/codex/.nvm/versions/node/v24.15.0/bin/npx moleculer-runner services/**/*.service.ts
+ExecReload=/bin/kill -HUP $MAINPID
+
+# ── Restart behavior ───────────────────────────────────────────────────
+Restart=on-failure
+RestartSec=3
+
+# ── Hardening ──────────────────────────────────────────────────────────
+NoNewPrivileges=true
+ProtectSystem=strict
+PrivateTmp=true
+ProtectHome=read-only
+ReadWritePaths=/home/codex/dev/nexus/moleculer/solscript
+
+[Install]
+WantedBy=default.target
