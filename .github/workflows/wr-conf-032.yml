@@ -1,0 +1,58 @@
+name: WR Conf 032 — V179 Attestations Lineage (staged inert)
+
+# Runs the V179 E2E suite: the REAL attestations migration applying over a
+# throwaway database (minimal pre-V179 skeleton: nebula.roles_history +
+# nebula.roles view), then the full write-path contract — the four #308
+# gate-contract refusals (G1-G4) plus ATP0005 chain linkage, happy chain
+# with lineage depths, txid pairing, append-only/freeze semantics,
+# idempotency, and the alien-shape gate proven rolled back server-side.
+#
+# The suite creates and drops its own throwaway databases
+# (nexus_v179_test_<pid>_<hex>); no production database is touched.
+#
+# Service pinned to postgres:17 for consistency with live (see the
+# wr-conf-025 PG17 lesson in PR #300).
+
+on:
+  push:
+    branches: [main, master, feature/*, dev]
+  pull_request:
+    branches: [main, master, feature/*]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  attestations-e2e:
+    name: "wr-conf-032: V179 attestations E2E (gate contract as DDL, throwaway DB)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: pguser
+          POSTGRES_PASSWORD: pgpass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pguser"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install psycopg2-binary pytest
+      - name: Run wr-conf-032 suite
+        env:
+          CONDUIT_PG_DSN: postgresql://pguser:pgpass@localhost:5432/postgres
+        run: |
+          python3 -m pytest python/nexus_core/wrp/tests/test_v179_attestations_e2e.py -v

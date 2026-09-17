@@ -301,3 +301,7 @@ install-hooks:
 attestation-chain-test:
 	@echo "[attestation-chain-test] running attestation-chain gate contract suite (hermetic)..."
 	@python3 -m pytest python/nexus_core/wrp/tests/test_attestation_chain.py -v
+
+attestations-e2e-test:
+	@echo "[attestations-e2e-test] V179 E2E (real gate-contract DDL, throwaway DB)..."
+	@python3 -m pytest python/nexus_core/wrp/tests/test_v179_attestations_e2e.py -v
