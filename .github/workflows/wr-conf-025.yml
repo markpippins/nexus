@@ -29,8 +29,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:
+#      postgres:17 — the ci-bootstrap dump is generated from the live PG17
+#      database and carries PG17-only statements (SET transaction_timeout),
+#      so the born-repaired path requires a PG17 service. (First CI run of
+#      PR #300 failed exactly here on postgres:16.)
       postgres:
-        image: postgres:16
+        image: postgres:17
         env:
           POSTGRES_DB: postgres
           POSTGRES_USER: pguser
