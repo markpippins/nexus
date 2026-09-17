@@ -1,6 +1,11 @@
 import { CapabilityId, PriorityLevel, HierarchySetting, DensitySetting } from "./designIR";
 import { CapabilityContract, SurfaceContextContract } from "./capabilities";
 
+/**
+ * ArtifactIdentity — governance provenance applied to compiled artifacts.
+ * Serializable, versioned, content-addressed (sha256). Emitted by the
+ * governed projection path; validated by validateViewSpec / validateProjectionManifest.
+ */
 export interface ArtifactIdentity {
   artifactId: string;
   artifactVersion: number;
@@ -10,7 +15,7 @@ export interface ArtifactIdentity {
 export interface Widget {
   id: string;
   type: string;
-  props?: Record<string, any>;
+  props?: Record<string, unknown>;
   contract: CapabilityId;
 }
 
@@ -21,21 +26,12 @@ export interface WidgetInstance {
   role?: string;
 }
 
-export interface LayoutSpec {
-  x?: number;
-  y?: number;
-  width?: number;
-  height?: number;
-  flex?: number;
-  order?: number;
-}
-
 export interface LayoutNode {
   id: string;
   widgetId: string;
   region: "main" | "sidebar" | "footer" | "header" | "overlay";
-  layout: LayoutSpec;
   priority?: PriorityLevel;
+  density?: DensitySetting;
 }
 
 export interface LayoutGraph {
@@ -49,27 +45,45 @@ export type PayloadSourceType = "rest" | "sse" | "mock" | "file" | "agent" | "se
 export interface PayloadSource {
   type: PayloadSourceType;
   url?: string;
-  mock?: any;
+  mock?: unknown;
   agentId?: string;
   manifest?: import("../adapter/governed").ProjectionManifest;
 }
 
-export interface AdapterBinding {
-  widgetId: string;
-  adapterId: string;
-  source: PayloadSource;
-  outputContract: CapabilityId;
+export interface AdapterStub {
+  steps: Array<{
+    op: string;
+    args?: Record<string, unknown>;
+  }>;
 }
 
+/**
+ * AdapterBinding — a widget's projection from a payload source into a
+ * capability contract. `source` is present on governed/server bindings
+ * (see adapter/governed); stub-based bindings (studio authoring) may omit it.
+ */
+export interface AdapterBinding {
+  widgetId: string;
+  adapterId?: string;
+  outputContract: CapabilityId;
+  stub?: AdapterStub;
+  source?: PayloadSource;
+}
+
+/**
+ * Abstract ViewSpec action identifiers emitted by compiler
+ */
 export type ViewSpecAction =
-  | { type: "navigate"; target: string }
-  | { type: "inspect"; widgetId: string }
-  | { type: "drilldown"; widgetId: string }
-  | { type: "filter"; widgetId: string; filter: Record<string, any> }
-  | { type: "sort"; widgetId: string; sort: { key: string; direction: "asc" | "desc" } }
-  | { type: "acknowledge"; widgetId: string }
-  | { type: "dismiss"; widgetId: string }
-  | { type: "compare"; widgetId: string; targetId: string };
+  | { type: "navigate"; target?: string }
+  | { type: "inspect"; targetWidgetId?: string }
+  | { type: "drilldown"; targetWidgetId?: string }
+  | { type: "filter"; targetWidgetId?: string }
+  | { type: "sort"; targetWidgetId?: string }
+  | { type: "acknowledge"; targetWidgetId?: string }
+  | { type: "dismiss"; targetWidgetId?: string }
+  | { type: "compare"; targetWidgetId?: string }
+  | { type: "select"; targetWidgetId?: string }
+  | { type: "custom"; actionId: string };
 
 export interface EventRoute {
   fromWidget: string;
@@ -82,32 +96,74 @@ export interface EventRoutingMatrix {
   defaultAction?: ViewSpecAction;
 }
 
+/**
+ * Structural Fixture declaration emitted by compiler (no mock payload data)
+ */
+export interface StructuralFixtureSpec {
+  scenario: "nominal" | "empty" | "overflow" | "fuzz";
+  contract: CapabilityId;
+}
+
 export interface FixtureOverrides {
-  [widgetId: string]: {
-    data: any;
-    scenario: "nominal" | "empty" | "overflow" | "fuzz";
+  [widgetId: string]: StructuralFixtureSpec;
+}
+
+export interface AbstractWorkflowStep {
+  id: string;
+  name?: string;
+  surfaceId: string;
+  focusRoleId?: string;
+  focusWidgetId?: string;
+  contextScope?: string;
+}
+
+export interface WorkflowRoutingTable {
+  [workflowId: string]: {
+    name?: string;
+    description?: string;
+    steps: AbstractWorkflowStep[];
   };
 }
 
-/** Serializable, versioned artifact. Runtime state must not be persisted here. */
+/**
+ * ViewSpec: Compiled Executable Program AST
+ * Canonical Invariant: ViewSpec is always treated as a compiled program AST,
+ * not just a static node configuration. It specifies spatial layout execution,
+ * contract bindings, adapter projections, and event routing state graphs.
+ * Governed projections extend it with ArtifactIdentity provenance.
+ */
 export interface ViewSpec extends Partial<ArtifactIdentity> {
-  schemaVersion?: 1;
   id: string;
+  name?: string;
+  description?: string;
+  surfaceId?: string;
+  schemaVersion?: 1;
   layout: LayoutGraph;
   widgets: WidgetInstance[];
   adapters: AdapterBinding[];
   events: EventRoute[];
   fixtures?: FixtureOverrides;
   context?: SurfaceContextContract;
+}
+
+/**
+ * MultiSurfaceViewSpec: Orchestrates multiple surfaces, shared context, and workflows
+ */
+export interface MultiSurfaceViewSpec {
+  id: string;
   name?: string;
+  description?: string;
+  surfaces: Record<string, ViewSpec>;
+  globalContext?: Record<string, unknown>;
+  workflows?: WorkflowRoutingTable;
+  activeSurfaceId?: string;
 }
 
-export interface ViewRuntimeState {
-  mounted: boolean;
-  selectedWidgetIds: string[];
-  adapterStatuses: Record<string, "idle" | "loading" | "success" | "error">;
-}
-
+/**
+ * Structural + provenance validation for a compiled ViewSpec.
+ * Guards the canonical Invariant that a ViewSpec is a well-formed program AST
+ * with optional ArtifactIdentity provenance attached.
+ */
 export function validateViewSpec(spec: unknown): spec is ViewSpec {
   if (!spec || typeof spec !== "object") return false;
   const value = spec as Partial<ViewSpec>;

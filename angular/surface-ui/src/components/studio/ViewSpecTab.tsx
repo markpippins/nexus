@@ -1,7 +1,7 @@
 import * as React from "react";
 import { Link } from "@tanstack/react-router";
-import { CapabilityId } from "@/core/types/designIR";
-import { Region } from "@/core/types/viewSpec";
+import { CapabilityId } from "@nexus/projection-core";
+import { Region } from "@nexus/projection-core";
 import { CAPABILITY_REGISTRY } from "@/lib/capabilities-registry";
 import type { Widget } from "@/lib/widget-types";
 import { Layers, LayoutGrid, ExternalLink, Sliders, Sparkles, Zap, ArrowRight } from "lucide-react";

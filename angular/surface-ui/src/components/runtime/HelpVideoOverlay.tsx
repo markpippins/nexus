@@ -1,6 +1,6 @@
 import * as React from "react";
 import { X, Play, Pause, RotateCcw, Volume2, Sparkles, CheckCircle2 } from "lucide-react";
-import { DocumentationEntry } from "@/core/runtime/documentationRegistry";
+import { DocumentationEntry } from "@nexus/projection-core";
 
 interface HelpVideoOverlayProps {
   isOpen: boolean;

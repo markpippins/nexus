@@ -13,8 +13,8 @@ import {
   Database,
   Crosshair,
 } from "lucide-react";
-import { InteractionContext, InteractionContextStoreAPI } from "@/core/runtime/interactionContext";
-import { OperatorPersonaAPI } from "@/core/runtime/operatorPersona";
+import { InteractionContext, InteractionContextStoreAPI } from "@nexus/projection-core";
+import { OperatorPersonaAPI } from "@nexus/projection-core";
 import { toast } from "sonner";
 
 interface ContextTabProps {

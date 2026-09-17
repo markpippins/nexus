@@ -1,5 +1,5 @@
-import { Adapter, AdapterOp, TransformStep } from "@/core/adapter/types";
-import { CapabilityId } from "@/core/types/designIR";
+import { Adapter, AdapterOp, TransformStep } from "@nexus/projection-core";
+import { CapabilityId } from "@nexus/projection-core";
 
 export interface EndpointPreset {
   name: string;

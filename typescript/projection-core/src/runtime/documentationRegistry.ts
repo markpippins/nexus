@@ -417,8 +417,9 @@ export function resolveDocumentation(target: {
   roleId?: string;
   workflowId?: string;
 }): DocumentationEntry {
-  if (target.capabilityId && CANONICAL_DOCUMENTATION_REGISTRY[target.capabilityId]) {
-    return CANONICAL_DOCUMENTATION_REGISTRY[target.capabilityId];
+  if (target.capabilityId) {
+    const entry = CANONICAL_DOCUMENTATION_REGISTRY[target.capabilityId];
+    if (entry) return entry;
   }
 
   // Check matching by widget contract / capability

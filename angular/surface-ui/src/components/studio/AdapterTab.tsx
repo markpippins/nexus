@@ -1,7 +1,7 @@
 import * as React from "react";
-import { CapabilityId } from "@/core/types/designIR";
-import { Adapter, AdapterOp, TransformStep } from "@/core/adapter/types";
-import { AdapterRuntime } from "@/core/adapter/runtime";
+import { CapabilityId } from "@nexus/projection-core";
+import { Adapter, AdapterOp, TransformStep } from "@nexus/projection-core";
+import { AdapterRuntime } from "@nexus/projection-core";
 import { ENDPOINT_PRESETS, AVAILABLE_OPS, EndpointPreset } from "@/lib/adapter-presets";
 import { CAPABILITY_REGISTRY } from "@/lib/capabilities-registry";
 import type { Widget } from "@/lib/widget-types";

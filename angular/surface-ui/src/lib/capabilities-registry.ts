@@ -1,6 +1,6 @@
-import { CapabilityId } from "@/core/types/designIR";
+import { CapabilityId } from "@nexus/projection-core";
 import type { WidgetType, SchemaNode, ApiEndpoint } from "./widget-types";
-import type { Adapter } from "@/core/adapter/types";
+import type { Adapter } from "@nexus/projection-core";
 
 export interface WidgetContractMeta {
   id: CapabilityId;

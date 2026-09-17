@@ -2,12 +2,22 @@ import { RuntimeView } from "./types";
 import { ViewSpecAction } from "../types/viewSpec";
 
 export interface ActionInterpreter {
-  execute(action: ViewSpecAction, runtime: RuntimeView): Promise<void>;
+  execute(action: ViewSpecAction, runtime: RuntimeView, eventPayload?: unknown): Promise<void>;
   registerHandler(type: string, handler: ActionHandler): void;
 }
 
-export type ActionHandler = (action: ViewSpecAction, runtime: RuntimeView) => Promise<void>;
+export type ActionHandler = (
+  action: ViewSpecAction,
+  runtime: RuntimeView,
+  eventPayload?: unknown,
+) => Promise<void>;
 
+/**
+ * ActionInterpreter
+ *
+ * Canonical Invariant: Route all event-driven state changes strictly through
+ * ContractStateStore or runtime EventBus, never mutating AST nodes directly.
+ */
 export class DefaultActionInterpreter implements ActionInterpreter {
   private customHandlers: Map<string, ActionHandler> = new Map();
 
@@ -20,29 +30,42 @@ export class DefaultActionInterpreter implements ActionInterpreter {
     this.registerHandler("acknowledge", this.handleAcknowledge.bind(this));
     this.registerHandler("dismiss", this.handleDismiss.bind(this));
     this.registerHandler("compare", this.handleCompare.bind(this));
+    this.registerHandler("select", this.handleSelect.bind(this));
   }
 
   registerHandler(type: string, handler: ActionHandler): void {
     this.customHandlers.set(type, handler);
   }
 
-  async execute(action: ViewSpecAction, runtime: RuntimeView): Promise<void> {
+  async execute(
+    action: ViewSpecAction,
+    runtime: RuntimeView,
+    eventPayload?: unknown,
+  ): Promise<void> {
     const handler = this.customHandlers.get(action.type);
     if (!handler) {
-      throw new Error(`Unsupported action type: ${action.type}`);
+      console.warn(`No handler registered for action type: ${action.type}`);
+      return;
     }
 
     try {
-      await handler(action, runtime);
+      await handler(action, runtime, eventPayload);
     } catch (error) {
       console.error(`Action execution failed (${action.type}):`, error);
       throw error;
     }
   }
 
-  private async handleNavigate(action: ViewSpecAction, runtime: RuntimeView): Promise<void> {
+  private async handleNavigate(
+    action: ViewSpecAction,
+    runtime: RuntimeView,
+    _eventPayload?: unknown,
+  ): Promise<void> {
     if (action.type !== "navigate") return;
-    console.log(`Navigating to: ${action.target}`);
+
+    if (action.target) {
+      runtime.interactionContext?.onSurfaceNavigate(action.target);
+    }
 
     runtime.eventBus.emit({
       type: "navigation",
@@ -52,71 +75,154 @@ export class DefaultActionInterpreter implements ActionInterpreter {
     });
   }
 
-  private async handleInspect(action: ViewSpecAction, runtime: RuntimeView): Promise<void> {
+  private async handleInspect(
+    action: ViewSpecAction,
+    runtime: RuntimeView,
+    eventPayload?: unknown,
+  ): Promise<void> {
     if (action.type !== "inspect") return;
-    const targetWidgetId = action.widgetId;
+    const targetWidgetId = action.targetWidgetId;
     if (!targetWidgetId) return;
 
-    const widget = Array.from(runtime.widgets.values()).find((w) => w.id === targetWidgetId);
-    if (!widget) throw new Error(`Widget not found: ${targetWidgetId}`);
-    widget.props.selected = true;
-  }
+    runtime.interactionContext?.onWidgetClick(targetWidgetId);
 
-  private async handleDrilldown(action: ViewSpecAction, runtime: RuntimeView): Promise<void> {
-    if (action.type !== "drilldown") return;
-    console.log("Drilldown:", action.widgetId);
-
-    const widget = runtime.widgets.get(action.widgetId);
-    if (widget) {
-      widget.props.depth = ((widget.props.depth as number) || 0) + 1;
+    const store = runtime.contractStores.get(targetWidgetId);
+    if (store) {
+      const current = (store.get() || {}) as Record<string, unknown>;
+      // Route state change through ContractStateStore
+      store.set({
+        ...current,
+        target: eventPayload ?? current.target,
+        selected: true,
+        inspectedAt: Date.now(),
+      });
     }
   }
 
-  private async handleFilter(action: ViewSpecAction, runtime: RuntimeView): Promise<void> {
-    if (action.type !== "filter") return;
-    const widget = runtime.widgets.get(action.widgetId);
-    if (widget) {
-      widget.props.filter = {
-        ...(widget.props.filter as Record<string, any>),
-        ...action.filter,
-      };
+  private async handleDrilldown(
+    action: ViewSpecAction,
+    runtime: RuntimeView,
+    _eventPayload?: unknown,
+  ): Promise<void> {
+    if (action.type !== "drilldown" || !action.targetWidgetId) return;
+    const store = runtime.contractStores.get(action.targetWidgetId);
+    if (store) {
+      const current = (store.get() || {}) as Record<string, unknown>;
+      const currentDepth = typeof current.depth === "number" ? current.depth : 0;
+      store.set({
+        ...current,
+        depth: currentDepth + 1,
+      });
     }
   }
 
-  private async handleSort(action: ViewSpecAction, runtime: RuntimeView): Promise<void> {
-    if (action.type !== "sort") return;
-    const widget = runtime.widgets.get(action.widgetId);
-    if (widget) {
-      widget.props.sort = action.sort;
+  private async handleFilter(
+    action: ViewSpecAction,
+    runtime: RuntimeView,
+    eventPayload?: unknown,
+  ): Promise<void> {
+    if (action.type !== "filter" || !action.targetWidgetId) return;
+    const store = runtime.contractStores.get(action.targetWidgetId);
+    if (store) {
+      const current = (store.get() || {}) as Record<string, unknown>;
+      const currentFilter = (current.filter as Record<string, unknown>) || {};
+      const filterPatch = (eventPayload as Record<string, unknown>) || {};
+      store.set({
+        ...current,
+        filter: {
+          ...currentFilter,
+          ...filterPatch,
+        },
+      });
     }
   }
 
-  private async handleAcknowledge(action: ViewSpecAction, runtime: RuntimeView): Promise<void> {
-    if (action.type !== "acknowledge") return;
-    console.log("Acknowledge:", action.widgetId);
-    const widget = runtime.widgets.get(action.widgetId);
-    if (widget) {
-      widget.props.acknowledged = true;
+  private async handleSort(
+    action: ViewSpecAction,
+    runtime: RuntimeView,
+    eventPayload?: unknown,
+  ): Promise<void> {
+    if (action.type !== "sort" || !action.targetWidgetId) return;
+    const store = runtime.contractStores.get(action.targetWidgetId);
+    if (store) {
+      const current = (store.get() || {}) as Record<string, unknown>;
+      store.set({
+        ...current,
+        sort: eventPayload,
+      });
     }
   }
 
-  private async handleDismiss(action: ViewSpecAction, runtime: RuntimeView): Promise<void> {
-    if (action.type !== "dismiss") return;
-    console.log("Dismiss:", action.widgetId);
-    const node = Array.from(runtime.layout.nodes.values()).find(
-      (n) => n.widgetId === action.widgetId,
-    );
-    if (node?.element) {
-      node.element.style.display = "none";
+  private async handleAcknowledge(
+    action: ViewSpecAction,
+    runtime: RuntimeView,
+    _eventPayload?: unknown,
+  ): Promise<void> {
+    if (action.type !== "acknowledge" || !action.targetWidgetId) return;
+    const store = runtime.contractStores.get(action.targetWidgetId);
+    if (store) {
+      const current = (store.get() || {}) as Record<string, unknown>;
+      store.set({
+        ...current,
+        acknowledged: true,
+        acknowledgedAt: Date.now(),
+      });
     }
   }
 
-  private async handleCompare(action: ViewSpecAction, runtime: RuntimeView): Promise<void> {
-    if (action.type !== "compare") return;
-    console.log("Compare:", action.widgetId);
-    const widget = runtime.widgets.get(action.widgetId);
-    if (widget) {
-      widget.props.compareWith = action.targetId || null;
+  private async handleDismiss(
+    action: ViewSpecAction,
+    runtime: RuntimeView,
+    _eventPayload?: unknown,
+  ): Promise<void> {
+    if (action.type !== "dismiss" || !action.targetWidgetId) return;
+    const store = runtime.contractStores.get(action.targetWidgetId);
+    if (store) {
+      const current = (store.get() || {}) as Record<string, unknown>;
+      store.set({
+        ...current,
+        dismissed: true,
+      });
+    }
+  }
+
+  private async handleCompare(
+    action: ViewSpecAction,
+    runtime: RuntimeView,
+    eventPayload?: unknown,
+  ): Promise<void> {
+    if (action.type !== "compare" || !action.targetWidgetId) return;
+    const store = runtime.contractStores.get(action.targetWidgetId);
+    if (store) {
+      const current = (store.get() || {}) as Record<string, unknown>;
+      store.set({
+        ...current,
+        compareWith: eventPayload,
+      });
+    }
+  }
+
+  private async handleSelect(
+    action: ViewSpecAction,
+    runtime: RuntimeView,
+    eventPayload?: unknown,
+  ): Promise<void> {
+    if (action.type !== "select" || !action.targetWidgetId) return;
+
+    if (eventPayload && typeof eventPayload === "object") {
+      const payloadObj = eventPayload as Record<string, unknown>;
+      const entityId = String(payloadObj.id || payloadObj.entityId || "selected");
+      const rowIndex = typeof payloadObj.index === "number" ? payloadObj.index : undefined;
+      runtime.interactionContext?.onRowSelect(action.targetWidgetId, entityId, rowIndex);
+    }
+
+    const store = runtime.contractStores.get(action.targetWidgetId);
+    if (store) {
+      const current = (store.get() || {}) as Record<string, unknown>;
+      store.set({
+        ...current,
+        selectedItem: eventPayload,
+      });
     }
   }
 }

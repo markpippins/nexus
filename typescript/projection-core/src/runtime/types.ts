@@ -1,8 +1,10 @@
-import { ViewSpec, LayoutSpec, AdapterBinding } from "../types/viewSpec";
+import { ViewSpec, AdapterBinding } from "../types/viewSpec";
+import { PriorityLevel, DensitySetting } from "../types/designIR";
 import { CapabilityContract } from "../types/capabilities";
 import { Adapter } from "../adapter/types";
+import { ContractStateStore } from "./contractState";
+import { InteractionContextStoreAPI } from "./interactionContext";
 import type { ActionHandler } from "./actionInterpreter";
-import type { ViewRuntimeMode } from "./modes";
 
 export interface RuntimeWidget {
   id: string;
@@ -29,7 +31,8 @@ export interface RuntimeLayoutNode {
   id: string;
   widgetId: string;
   region: "main" | "sidebar" | "header" | "footer" | "overlay";
-  layout: LayoutSpec;
+  priority?: PriorityLevel;
+  density?: DensitySetting;
   element?: HTMLElement;
 }
 
@@ -47,9 +50,10 @@ export interface RuntimeLayoutGraph {
 
 export interface RuntimeView {
   spec: ViewSpec;
-  mode?: ViewRuntimeMode;
   widgets: Map<string, RuntimeWidget>;
   adapters: Map<string, RuntimeAdapter>;
+  contractStores: Map<string, ContractStateStore>;
+  interactionContext: InteractionContextStoreAPI;
   layout: RuntimeLayoutGraph;
   eventBus: EventBus;
   container: HTMLElement;
@@ -80,9 +84,7 @@ export interface WidgetImplementation {
   events?: string[];
 }
 
-
 export interface RuntimeOptions {
-  mode?: ViewRuntimeMode;
   useFixtures?: boolean;
   refreshInterval?: number;
   actionHandlers?: Record<string, ActionHandler>;
@@ -90,5 +92,3 @@ export interface RuntimeOptions {
     navigate: (to: string, replace?: boolean) => Promise<void>;
   };
 }
-
-

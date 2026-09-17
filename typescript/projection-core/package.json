@@ -1,10 +1,28 @@
 {
   "name": "@nexus/projection-core",
-  "version": "0.1.0",
+  "version": "0.2.0",
+  "description": "Projection core — governance/redistributable SOL/ViewSpec surface compiler + runtime (multi-surface, incremental, deterministic). Library-first: no server coupling.",
   "private": true,
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./dist": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "example:compile": "tsx example/usage.ts",
     "example:adapter": "tsx example/adapter-example.ts",
@@ -17,7 +35,8 @@
   },
   "devDependencies": {
     "typescript": "^5.5.0",
-    "tsx": "^4.7.0"
+    "tsx": "^4.7.0",
+    "@types/node": "^22.0.0"
   },
   "dependencies": {
     "@nexus/solscript": "file:../solscript"

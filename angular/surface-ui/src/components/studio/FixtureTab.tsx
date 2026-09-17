@@ -1,5 +1,5 @@
 import * as React from "react";
-import { CapabilityId } from "@/core/types/designIR";
+import { CapabilityId } from "@nexus/projection-core";
 import { FIXTURE_PRESETS, FixtureScenario, generateCapabilityFixture } from "@/lib/fixtures-engine";
 import { WidgetSandbox } from "@/components/WidgetSandbox";
 import type { Widget } from "@/lib/widget-types";

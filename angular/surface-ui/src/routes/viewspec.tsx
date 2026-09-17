@@ -20,20 +20,20 @@ import {
   Eye,
   SlidersHorizontal,
 } from "lucide-react";
-import { DesignIR } from "@/core/types/designIR";
-import { compileDesignIR } from "@/core/compiler/compiler";
-import { ViewSpec, MultiSurfaceViewSpec, LayoutNode, WidgetInstance } from "@/core/types/viewSpec";
-import { InMemoryContractStateStore, ContractStateStore } from "@/core/runtime/contractState";
-import { DefaultActionInterpreter } from "@/core/runtime/actionInterpreter";
-import { SimpleEventBus } from "@/core/runtime/eventBus";
-import { RuntimeView } from "@/core/runtime/types";
-import { generateRuntimeMockData } from "@/core/runtime/mockData";
+import { DesignIR } from "@nexus/projection-core";
+import { compileDesignIR } from "@nexus/projection-core";
+import { ViewSpec, MultiSurfaceViewSpec, LayoutNode, WidgetInstance } from "@nexus/projection-core";
+import { InMemoryContractStateStore, ContractStateStore } from "@nexus/projection-core";
+import { DefaultActionInterpreter } from "@nexus/projection-core";
+import { SimpleEventBus } from "@nexus/projection-core";
+import { RuntimeView } from "@nexus/projection-core";
+import { generateRuntimeMockData } from "@nexus/projection-core";
 import {
   DefaultInteractionContextStore,
   InteractionContext,
-} from "@/core/runtime/interactionContext";
-import { DefaultOperatorPersona, OperatorPersonaAPI } from "@/core/runtime/operatorPersona";
-import { resolveDocumentation, DocumentationEntry } from "@/core/runtime/documentationRegistry";
+} from "@nexus/projection-core";
+import { DefaultOperatorPersona, OperatorPersonaAPI } from "@nexus/projection-core";
+import { resolveDocumentation, DocumentationEntry } from "@nexus/projection-core";
 import { OperatorPanel } from "@/components/runtime/OperatorPanel";
 import { HelpDrawer } from "@/components/runtime/HelpDrawer";
 import { HelpVideoOverlay } from "@/components/runtime/HelpVideoOverlay";
