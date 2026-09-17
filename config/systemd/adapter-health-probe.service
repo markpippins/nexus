@@ -1,0 +1,18 @@
+[Unit]
+Description=nexus adapter registry health probe (DBA, evidence-refresh — R1 d849ff31)
+# Oneshot runner: re-observes every live nebula.adapters row, appends the
+# observation to the evidence history (V173 array shape), and applies the
+# transition law (promote on depth / degrade on fail / recover on pass;
+# retirement never automatic; CAS against operator writes).
+# Exits 0 on completed runs by design — probe failures are data (evidence +
+# output carry the outcome), not unit failures.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/adapter-health-probe.py
+# Pin the DSN explicitly (explicit config, not a default accident).
+Environment=CONDUIT_PG_DSN=postgresql://pguser:pgpass@localhost:5432/nexus
+# Roundtable-tunable constants (defaults live in the script):
+#   ADAPTER_PROBE_PROMOTE_DEPTH=2   consecutive passes to promote declared->active
+#   ADAPTER_PROBE_HISTORY=10        observations retained per adapter
+#   ADAPTER_STALENESS_THRESHOLD=7 days (view constant, V173)

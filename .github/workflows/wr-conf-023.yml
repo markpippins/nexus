@@ -1,0 +1,71 @@
+name: WR Conf 023 — Adapter Evidence History + Health Probe
+
+# Runs the wr-conf-023 E2E suite (V173 evidence-array normalization +
+# satisfaction staleness, applied over the real V172) plus the hermetic
+# transition-law suite for bin/adapter-health-probe.py. The E2E creates and
+# drops its own throwaway databases (nexus_v173_test_<pid>_<hex>); no
+# production database is touched. The probe suite is hermetic (fakes only).
+
+on:
+  push:
+    branches: [main, master, feature/*, dev]
+  pull_request:
+    branches: [main, master, feature/*]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evidence-history-e2e:
+    name: "wr-conf-023: evidence history E2E (real V172+V173)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: pguser
+          POSTGRES_PASSWORD: pgpass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pguser"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install psycopg2-binary pytest
+      - name: Run wr-conf-023 suite
+        env:
+          CONDUIT_PG_DSN: postgresql://pguser:pgpass@localhost:5432/postgres
+        run: |
+          python3 -m pytest python/nexus_core/wrp/tests/test_v173_evidence_e2e.py -v
+
+  probe-transition-law:
+    name: "probe transition law (hermetic)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install test deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install psycopg2-binary pytest
+      - name: Run probe suite
+        run: |
+          python3 -m pytest bin/tests/test_adapter_health_probe.py -v
