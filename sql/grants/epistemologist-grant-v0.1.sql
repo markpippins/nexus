@@ -35,8 +35,8 @@ DECLARE
     v_requires_approval     text[]  := ARRAY['architect'];
     v_escalates_to          text[]  := ARRAY['architect'];
     v_escalation_triggers   text[]  := ARRAY['out_of_domain_resolution'];
-    v_level_primary         text    := NULL;   -- untouched by Wave 2
-    v_level_allowed         text    := NULL;   -- untouched by Wave 2
+    v_level_primary         text;   -- carry-forward: assigned after v_closed is loaded
+    v_level_allowed         text;   -- (live columns are NOT NULL; DECLARE defaults run before that)
     v_visibility            text[]  := ARRAY['all'];
     -- ─────────────────────────────────────────────────────────────────────
     v_now     timestamptz := now();
@@ -59,6 +59,10 @@ BEGIN
 
     SELECT * INTO v_closed FROM nebula.roles_history
      WHERE name = v_role AND valid_until = v_now AND recorded_until_dt = v_now;
+
+    -- carry forward the untouched columns BEFORE building the successor
+    v_level_primary := v_closed.level_filter_primary;
+    v_level_allowed := v_closed.level_filter_allowed;
 
     INSERT INTO nebula.roles_history (
         id, name, display_name, description,
