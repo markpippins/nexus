@@ -172,6 +172,37 @@ def _adapter(status="declared", evidence=None):
 
 
 @_db_skip
+class _Row(dict):
+    """Dict row that also tolerates numeric access, mirroring how RealDictRow
+    is NOT a tuple — the regression this pins: _resolve_operator_lease must
+    dispatch on row shape, never assume tuple or dict."""
+    pass
+
+
+class ResolveLeaseTests(unittest.TestCase):
+    def _cur_with(self, row):
+        class Cur:
+            def execute(self, stmt, params=None):
+                pass
+            def fetchone(self):
+                return row
+        return Cur()
+
+    def test_tuple_row_resolved_by_index(self):
+        self.assertEqual(
+            probe._resolve_operator_lease(self._cur_with(("uuid-1",))),
+            "uuid-1")
+
+    def test_dict_row_resolved_by_key(self):
+        self.assertEqual(
+            probe._resolve_operator_lease(self._cur_with({"id": "uuid-2"})),
+            "uuid-2")
+
+    def test_none_row_is_leaseless(self):
+        self.assertIsNone(
+            probe._resolve_operator_lease(self._cur_with(None)))
+
+
 class TransitionAdapterTests(unittest.TestCase):
     def test_no_transition_still_records_observation(self):
         cur = FakeCursor()

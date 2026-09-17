@@ -104,13 +104,17 @@ def _now_iso():
 
 
 def _resolve_operator_lease(cur):
-    """Freshest ACTIVE operator lease id, or None (leaseless fallback)."""
+    """Freshest ACTIVE operator lease id, or None (leaseless fallback).
+    Cursor-agnostic row access: RealDictCursor yields dict rows, plain
+    cursors yield tuples — never assume either shape."""
     cur.execute(
         "SELECT id FROM tackle.role_leases "
         "WHERE role ILIKE 'operator' AND status = 'ACTIVE' "
         "ORDER BY created_at DESC LIMIT 1")
     row = cur.fetchone()
-    return row[0] if row else None
+    if row is None:
+        return None
+    return row[0] if isinstance(row, tuple) else row["id"]
 
 
 def _append_observation(evidence, obs):
