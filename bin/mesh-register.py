@@ -556,6 +556,20 @@ CANDIDATES: tuple[Candidate, ...] = (
         startup="systemd: systemctl --user start semantics-mcp.service",
         workspace_path="nexus/typescript/semantics-mcp",
     ),
+    Candidate(
+        name="moleculer-solscript",
+        port=4060,
+        kind="runnable_service",
+        service_type="Express",
+        health_url="http://localhost:4060/health",
+        description=(
+            "Moleculer SOLScript facade — resolution-domain evaluation API "
+            "(REST via moleculer-web). Registers on the NATS mesh in "
+            "namespace 'solscript'. Systemd-managed (moleculer-solscript.service)."
+        ),
+        startup="systemd: systemctl --user start moleculer-solscript.service",
+        workspace_path="nexus/moleculer/solscript",
+    ),
 )
 
 
