@@ -17667,6 +17667,22 @@ ALTER TABLE ONLY tackle.role_leases
 ALTER TABLE ONLY tackle.role_memory
     ADD CONSTRAINT role_memory_pkey PRIMARY KEY (id);
 
+--
+-- Name: role_memory uq_role_memory_validity; Type: CONSTRAINT; Schema: tackle; Owner: -
+--
+
+-- V178-born shape: no overlapping validity intervals per (memory_id, role).
+-- Subsumes the former partial unique (uq_role_memory_active); permits
+-- close-then-reassign history. (btree_gist is created at the top of this
+-- bootstrap.)
+ALTER TABLE ONLY tackle.role_memory
+    ADD CONSTRAINT uq_role_memory_validity
+    EXCLUDE USING gist (
+        memory_id WITH =,
+        role      WITH =,
+        tstzrange(as_of_dt, COALESCE(expiration_dt, 'infinity'::timestamptz), '[)') WITH &&
+    );
+
 
 --
 -- Name: role_tool_access role_tool_access_pkey; Type: CONSTRAINT; Schema: tackle; Owner: -
