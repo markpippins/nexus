@@ -28,6 +28,28 @@ namespace org.nexus.windsrv {
   @route("/nodes")     @get op listNodes(): { items: WorkflowNode[] };
   @route("/nodes/{id}") @get op getNode(@path id: string): WorkflowNode | ErrorDetail;
 
+  // ── Node requirements + capability resolution (staged inert) ──────
+  //
+  // STAGED INERT: contract-first. The resolver consults the LIVE V172/V174
+  // capability/adapter/satisfaction surfaces via their own APIs; until the
+  // operator enforce flip, resolution runs warn-mode (verdicts recorded,
+  // entry never blocked). No wind-srv runtime change in this PR.
+  @route("/nodes/{id}/requirements")
+  @get op listNodeRequirements(@path id: string): { items: NodeRequirement[] };
+
+  @route("/nodes/{id}/requirements")
+  @post op setNodeRequirements(@path id: string, @body body: NodeRequirement[]): { items: NodeRequirement[] };
+
+  /** Resolve every requirement on the node: capability satisfaction via
+   *  V172/V174 adapters + probes, role credential via the open
+   *  roles_history snapshot, context bundle as resolved references. */
+  @route("/nodes/{id}/resolve")
+  @post op resolveNode(@path id: string): ResolvedContextBundle | ErrorDetail;
+
+  /** Lease-bound ticket assignment (liveness via the lease machinery). */
+  @route("/tickets/{id}/binding")
+  @put op bindTicket(@path id: string, @body body: LeaseBinding): Ticket | ErrorDetail;
+
   // ── Event Types ───────────────────────────────────────────────
   @route("/event-types")           @get  op listEventTypes(): { items: EventType[] };
   @route("/event-types")           @post op createEventType(@body body: EventType): EventType;
