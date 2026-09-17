@@ -79,7 +79,7 @@ def provider_check(name):
 
 
 @provider_check("postgresql")
-def check_postgresql(conn, capability_name):
+def check_postgresql(conn, capability_name, endpoint):
     """Connect (the probe's own conn IS the connect check) + per-capability
     inventory re-observation. Outcome PASS/FAIL, never raises."""
     try:
@@ -97,6 +97,100 @@ def check_postgresql(conn, capability_name):
                              "object_instance_rows": count})
     except Exception as exc:  # noqa: BLE001 — failures are data, not crashes
         return ("FAIL", {"check": "connect+inventory", "error": str(exc)[:300]})
+
+
+@provider_check("mysql")
+def check_mysql(conn, capability_name, endpoint):
+    """MySQL provider check: connect to the MySQL server referenced by the
+    adapter's endpoint (DSN from ADAPTER_PROBE_MYSQL_DSN — credentials live
+    in env/keychains, never in the registry), then probe the configured
+    protocol surface. Dispatch convention: absent DSN or absent driver is a
+    SKIP with the specific reason (the check path exists but has nothing to
+    observe yet), a refused/timed-out connect is FAIL, an observed surface
+    with a row count is PASS. Never raises."""
+    dsn = os.environ.get("ADAPTER_PROBE_MYSQL_DSN", "").strip()
+    if not dsn:
+        return ("SKIP", {"reason": "ADAPTER_PROBE_MYSQL_DSN not configured — "
+                                   "no mysql backend to observe yet"})
+    driver, import_error = _import_driver()
+    if driver is None:
+        return ("SKIP", {"reason": "no mysql driver installed "
+                                   "(mysql-connector-python / PyMySQL / MySQLdb)",
+                         "detail": str(import_error)[:200]})
+    surface = os.environ.get("ADAPTER_PROBE_MYSQL_SURFACE", "")
+    try:
+        with _mysql_connection(driver, dsn) as mcur:
+            mcur.execute("SELECT 1")
+            if not surface:
+                return ("PASS", {"check": "mysql-connect",
+                                 "detail": "SELECT 1 ok (no surface configured)"})
+            db, _, table = surface.rpartition(".")
+            if not db:
+                db = mcur.connection.db if hasattr(mcur.connection, "db") else None
+            mcur.execute(
+                "SELECT table_rows FROM information_schema.tables "
+                "WHERE table_schema = %s AND table_name = %s", (db, table))
+            row = mcur.fetchone()
+            if row is None:
+                return ("FAIL", {"check": "mysql-surface",
+                                 "error": f"surface {surface} absent on the "
+                                          "mysql backend"})
+            return ("PASS", {"check": "mysql-connect+surface",
+                             "surface": surface,
+                             "approx_rows": row[0]})
+    except Exception as exc:  # noqa: BLE001 — failures are data
+        return ("FAIL", {"check": "mysql-connect", "error": str(exc)[:300]})
+
+
+def _import_driver():
+    """First available mysql driver module, or (None, last ImportError).
+    Split into its own seam so hermetic tests can pin the no-driver branch
+    without import-blocker gymnastics."""
+    last = None
+    for mod in ("mysql.connector", "pymysql", "MySQLdb"):
+        try:
+            return __import__(mod), None
+        except ImportError as exc:  # pragma: no cover - env dependent
+            last = exc
+    return None, last
+
+
+def _mysql_connection(driver, dsn):
+    """Yield a cursor over a mysql connection built from a DSN-style string
+    (mysql://user:pass@host:port/db). Context manager closes the connection.
+    Driver quirks are isolated here."""
+    import contextlib
+    import re
+    import urllib.parse
+
+    @contextlib.contextmanager
+    def cm():
+        m = re.match(r"mysql(?:\+\w+)?://([^:/@]+)(?::([^@]*))?@([^:/]+)(?::(\d+))?/(.*)", dsn)
+        if not m:
+            raise ValueError("ADAPTER_PROBE_MYSQL_DSN must look like "
+                             "mysql://user:pass@host:3306/db")
+        user, password, host, port, database = m.groups()
+        kwargs = {"user": user, "password": password or "", "host": host,
+                  "port": int(port or 3306), "database": database}
+        if driver.__name__ == "mysql":
+            conn = driver.connector.connect(**kwargs)
+        else:
+            conn = conn_kw(driver, kwargs)
+        try:
+            cur = conn.cursor()
+            cur.connection = conn  # surface-DB default resolution
+            yield cur
+        finally:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+    return cm()
+
+
+def conn_kw(driver, kwargs):
+    """pymysql/MySQLdb connect kwargs (both accept the same core set)."""
+    return driver.connect(**kwargs)
 
 
 def _now_iso():
@@ -212,7 +306,7 @@ def run_probe(print_table=False):
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
                 "SELECT a.id, a.provider, a.adapter_status, a.evidence, "
-                "       c.name AS capability "
+                "       a.provider_endpoint, c.name AS capability "
                 "FROM nebula.adapters a "
                 "JOIN nebula.capabilities c ON c.id = a.capability_id "
                 "WHERE a.recorded_until_dt = 'infinity' "
@@ -230,7 +324,8 @@ def run_probe(print_table=False):
                                   f"{ad['provider']}"}
                 else:
                     try:
-                        outcome, detail = check(conn, ad["capability"])
+                        outcome, detail = check(conn, ad["capability"],
+                                                ad.get("provider_endpoint") or {})
                     except Exception as exc:  # noqa: BLE001
                         outcome, detail = "FAIL", {"error": str(exc)[:300]}
 
@@ -281,7 +376,7 @@ def submit_observation_stream():
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
                 "SELECT a.id, a.provider, a.adapter_status, a.evidence, "
-                "       c.name AS capability "
+                "       a.provider_endpoint, c.name AS capability "
                 "FROM nebula.adapters a "
                 "JOIN nebula.capabilities c ON c.id = a.capability_id "
                 "WHERE c.name = %s AND a.provider = %s "
