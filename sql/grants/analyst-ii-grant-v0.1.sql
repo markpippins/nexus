@@ -1,0 +1,155 @@
+-- =============================================================================
+--  analyst-ii-grant-v0.1.sql — Wave-1 clone grant event (DBA)
+--
+--  Third use of the corrected grant template (auditor-grant-v0.1.sql
+--  lineage, #299/#301). DRAFT — NOT APPLIED TO LIVE; apply waits on
+--  explicit operator go. Ratified in the grants batch (architect decision
+--  c141dd7a, Wave 1: "mechanical clones") with the precondition that the
+--  clone source is PINNED first — satisfied by wave1-clone-baseline.sql
+--  in this same PR (run it first; it refuses on drift).
+--
+--  CLONE SEMANTICS (this differs from a fresh-role grant): analyst-ii
+--  already exists with an open, capability-empty row (the 12-role batch,
+--  matrix ruling 4e42f470). This event CLOSES that empty snapshot and
+--  opens the granted successor whose capability values are pinned to the
+--  analyst clone-source baseline (snapshot 2026-09-17, R1 3bb4306b):
+--
+--    clone-of analyst v0.1:
+--      owns_domains            = {issue_triage, ambiguity_resolution}
+--      can_create_questions    = TRUE
+--      can_resolve_questions   = TRUE
+--      can_greenlight          = false
+--      can_verify_work_requests = false
+--      can_create_agendas      = false
+--      max_open_questions      = NULL (analyst baseline)
+--      escalates_to            = {architect, planner}   (mirrors analyst)
+--      escalation_triggers     = {requirement_unclear}  (mirrors analyst)
+--      requires_approval_from  = NULL (analyst baseline)
+--      level filters           = level <= 3 / level <= 3 (mirrors analyst)
+--      visibility_scope        = {analyst, all}         (mirrors analyst)
+--
+--  Second-instance pattern (ratified principle 4): clones mirror their
+--  original, including its escalation targets.
+--
+--  Template doctrine (Lessons 1–2: write the history table, never the
+--  view; V175 shape required) carries from the template header — see
+--  auditor-grant-v0.1.sql for the full text. Repeatability: re-running
+--  is another grant event (chain accumulates, handoff stays exact).
+-- =============================================================================
+
+BEGIN;
+
+DO $$
+DECLARE
+    -- ── GRANT VALUES (clone-of analyst, pinned to wave1-clone-baseline) ──
+    v_role                  text    := 'analyst-ii';
+    v_owns_domains          text[]  := ARRAY['issue_triage','ambiguity_resolution'];
+    v_can_greenlight        boolean := false;
+    v_can_create_questions  boolean := TRUE;
+    v_can_create_agendas    boolean := false;
+    v_can_resolve_questions boolean := TRUE;
+    v_can_verify_wrs        boolean := false;
+    v_max_open_questions    integer := NULL;      -- analyst baseline
+    v_requires_approval     text[]  := NULL;      -- analyst baseline
+    v_escalates_to          text[]  := ARRAY['architect','planner'];
+    v_escalation_triggers   text[]  := ARRAY['requirement_unclear'];
+    v_level_primary         text    := 'level <= 3';
+    v_level_allowed         text    := 'level <= 3';
+    v_visibility            text[]  := ARRAY['analyst','all'];
+    -- ─────────────────────────────────────────────────────────────────────
+    v_now     timestamptz := now();
+    v_closed  nebula.roles_history%ROWTYPE;
+    v_updated int;
+BEGIN
+    -- 1. CLOSE the current open snapshot (history table; never the view)
+    UPDATE nebula.roles_history
+       SET valid_until       = v_now,
+           recorded_until_dt = v_now,
+           updated_at        = v_now
+     WHERE name = v_role
+       AND valid_until = '9999-12-31 00:00:00+00'::timestamptz
+       AND recorded_until_dt = '9999-12-31 00:00:00+00'::timestamptz;
+    GET DIAGNOSTICS v_updated = ROW_COUNT;
+
+    IF v_updated <> 1 THEN
+        RAISE EXCEPTION 'GRANT: no OPEN snapshot found for role % (rows=%) — refusing', v_role, v_updated
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    -- 2. Derive the successor from the just-closed row
+    SELECT * INTO v_closed FROM nebula.roles_history
+     WHERE name = v_role AND valid_until = v_now AND recorded_until_dt = v_now;
+
+    -- 3. INSERT the open successor (new uuid; handoff-exact; non-granted
+    --    columns — identity, description, cron — carry forward)
+    INSERT INTO nebula.roles_history (
+        id, name, display_name, description,
+        owns_domains, can_greenlight, can_create_questions,
+        can_create_agendas, can_resolve_questions, can_verify_work_requests,
+        max_open_questions, requires_approval_from,
+        cron_enabled, cron_expression, cron_description,
+        escalates_to, escalation_triggers,
+        level_filter_primary, level_filter_allowed, visibility_scope,
+        created_at, updated_at,
+        valid_from, valid_until, recorded_on_dt, recorded_until_dt
+    ) VALUES (
+        gen_random_uuid(),
+        v_closed.name, v_closed.display_name, v_closed.description,
+        v_owns_domains, v_can_greenlight, v_can_create_questions,
+        v_can_create_agendas, v_can_resolve_questions, v_can_verify_wrs,
+        v_max_open_questions, v_requires_approval,
+        v_closed.cron_enabled, v_closed.cron_expression, v_closed.cron_description,
+        v_escalates_to, v_escalation_triggers,
+        v_level_primary, v_level_allowed, v_visibility,
+        v_closed.created_at, v_now,
+        v_now, '9999-12-31 00:00:00+00'::timestamptz, v_now, '9999-12-31 00:00:00+00'::timestamptz
+    );
+
+    RAISE NOTICE 'GRANT: role % closed at % and re-opened as the granted clone-of-analyst', v_role, v_now;
+END $$;
+
+-- 4. Verification gate: chain shape, handoff exactness, granted values
+DO $$
+DECLARE
+    v_open int; v_closed int; v_gap int;
+    v_verify boolean; v_cq boolean; v_rq boolean; v_domains text[];
+BEGIN
+    SELECT count(*) INTO v_open   FROM nebula.roles_history
+     WHERE name = 'analyst-ii' AND valid_until = '9999-12-31 00:00:00+00'::timestamptz;
+    SELECT count(*) INTO v_closed FROM nebula.roles_history
+     WHERE name = 'analyst-ii' AND valid_until <> '9999-12-31 00:00:00+00'::timestamptz;
+    IF v_open <> 1 OR v_closed < 1 THEN
+        RAISE EXCEPTION 'GRANT verify: chain malformed (open=%, closed=%)', v_open, v_closed
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    SELECT count(*) INTO v_gap
+    FROM nebula.roles_history o
+    JOIN nebula.roles_history c ON c.name = o.name
+      AND c.valid_until <> '9999-12-31 00:00:00+00'::timestamptz
+      AND c.valid_until = (SELECT max(valid_until) FROM nebula.roles_history
+                           WHERE name = 'analyst-ii'
+                             AND valid_until <> '9999-12-31 00:00:00+00'::timestamptz)
+    WHERE o.name = 'analyst-ii'
+      AND o.valid_until = '9999-12-31 00:00:00+00'::timestamptz
+      AND o.valid_from IS DISTINCT FROM c.valid_until;
+    IF v_gap > 0 THEN
+        RAISE EXCEPTION 'GRANT verify: handoff not exact' USING ERRCODE = 'P0001';
+    END IF;
+
+    SELECT can_verify_work_requests, can_create_questions, can_resolve_questions,
+           owns_domains
+      INTO v_verify, v_cq, v_rq, v_domains
+      FROM nebula.roles_history
+     WHERE name = 'analyst-ii' AND valid_until = '9999-12-31 00:00:00+00'::timestamptz;
+
+    IF v_verify OR NOT v_cq OR NOT v_rq
+       OR v_domains IS DISTINCT FROM ARRAY['issue_triage','ambiguity_resolution'] THEN
+        RAISE EXCEPTION 'GRANT verify: granted values do not match the analyst clone baseline'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    RAISE NOTICE 'GRANT verified — analyst-ii chain: closed=% open=%, handoff exact, clone-of-analyst values pinned', v_closed, v_open;
+END $$;
+
+COMMIT;
