@@ -125,7 +125,7 @@ class Boot:
     def __init__(self, role: str, model: str, channel: str, ttl: int, budget: int,
                  lease_policy: str, update_pointer: bool, limit: int,
                  dry_run: bool, strict: bool, want_digest: bool = False,
-                 want_conn: bool = False):
+                 want_conn: bool = False, want_attest_scan: bool = True):
         self.role = role
         self.model = model
         self.channel = channel
@@ -138,6 +138,9 @@ class Boot:
         self.strict = strict
         self.want_digest = want_digest
         self.want_conn = want_conn
+        self.want_attest_scan = want_attest_scan
+        # --attest payload: (cites_id, evidence list, session_id) or None
+        self.attest_cmd: tuple | None = None
         self.lease_id = None        # captured by the lease step (census provenance)
         self.digest_summary = None  # captured by the digest step (handoff affordance)
         self.steps: list[dict] = []
@@ -253,6 +256,67 @@ class Boot:
         except Exception as e:  # noqa: BLE001 — census must not fail the boot
             self.record("conn-record", "degraded",
                         f"census error: {e.__class__.__name__}: {str(e)[:120]}")
+
+    # 3c ─ attest-scan (V179 open-chain surfacing; read-only, default-on) --
+    def attest_scan(self) -> None:
+        print("== attest-scan (open verification requests) ==")
+        if not self.want_attest_scan:
+            return
+        if self.dry_run:
+            self.record("attest-scan", "skipped", "dry-run: read-only scan not run")
+            return
+        try:
+            # digest/conn-record steps add python/ to sys.path; standalone
+            # boots must not depend on those flags having run first
+            if os.path.join(SCRIPT_DIR, "..", "python") not in sys.path:
+                sys.path.insert(0, os.path.join(SCRIPT_DIR, "..", "python"))
+            from continuity import attest as attest_mod
+            result = attest_mod.scan(None, self.role)
+        except Exception as e:  # noqa: BLE001 — scan never fails the boot
+            self.record("attest-scan", "degraded",
+                        f"scan error: {e.__class__.__name__}: {str(e)[:120]}")
+            return
+        if not result.get("scanned"):
+            self.record("attest-scan", "skipped", result.get("reason", "unavailable"))
+            return
+        actionable = [i for i in result.get("open", [])
+                      if i.get("disposition") == "actionable"]
+        for item in result.get("open", []):
+            aid = str(item.get("attestation_id", ""))[:8]
+            if item.get("disposition") == "actionable":
+                print(f"    ACTIONABLE for {self.role}: {aid} — {item.get('note', '')}")
+            elif item.get("disposition") == "g1_refused":
+                print(f"    (yours, G1-refused: {aid} — {item.get('note', '')})")
+        detail = (f"{len(result.get('open', []))} open request(s); "
+                  f"{len(actionable)} actionable")
+        self.record("attest-scan", "ok", detail)
+
+    # 3d ─ attest --record (explicit gated recording; never default-on) ----
+    def attest_record(self) -> None:
+        if not self.attest_cmd:
+            return
+        cites_id, evidence, session_id = self.attest_cmd
+        if self.dry_run:
+            self.record("attest-record", "skipped",
+                        "dry-run: no attestation recorded (zero-mutation stance)")
+            return
+        try:
+            if os.path.join(SCRIPT_DIR, "..", "python") not in sys.path:
+                sys.path.insert(0, os.path.join(SCRIPT_DIR, "..", "python"))
+            from continuity import attest as attest_mod
+            result = attest_mod.record_attestation(
+                None, self.role, cites_id, evidence, session_id=session_id,
+                agent_record_id=os.environ.get("FREEBUFF_ATTEST_RECORD_REF"))
+        except Exception as e:  # noqa: BLE001 — recording failures are data
+            self.record("attest-record", "failed",
+                        f"record error: {e.__class__.__name__}: {str(e)[:120]}")
+            return
+        if result.get("recorded"):
+            aid = str(result.get("attestation_id") or "")[:8]
+            self.record("attest-record", "ok",
+                        f"{result.get('reason', '')} ({aid}, txid {result.get('txid', '?')})")
+        else:
+            self.record("attest-record", "failed", result.get("reason", "refused"))
 
     # 4 ─ inbox ------------------------------------------------------------
     def inbox(self) -> None:
@@ -425,6 +489,8 @@ class Boot:
             self.inbox()
         self.digest_preview()
         self.connection_record()
+        self.attest_scan()
+        self.attest_record()
         self.clock_in()
         self.forums()
         self.procedures()
@@ -461,6 +527,17 @@ def main(argv: list[str]) -> int:
                     help="record the session affordance census (nebula.agent_connections, "
                          "V169): MCP tools, procedure cards, inbox, handoff, keychains "
                          "— inert until V169 is applied")
+    ap.add_argument("--no-attest-scan", action="store_true",
+                    help="skip the default read-only attest-scan (open V179 chains)")
+    ap.add_argument("--attest", metavar="CITES_ID",
+                    help="record an attestation citing the given verification_request "
+                         "row (explicit, gated: G1/G2/G3 enforced client-side and "
+                         "server-side; requires --evidence)")
+    ap.add_argument("--evidence", metavar="REF[,REF...]",
+                    help="comma-separated evidence refs for --attest (citable runs, "
+                         "artifacts, txids — never bare claims)")
+    ap.add_argument("--attest-session", metavar="SID",
+                    help="optional session_id to stamp on the --attest row")
     args = ap.parse_args(argv)
 
     if McpClient is None:
@@ -473,7 +550,17 @@ def main(argv: list[str]) -> int:
     boot = Boot(role=args.role, model=args.model, channel=args.channel, ttl=args.ttl,
                 budget=args.budget, lease_policy=args.lease, update_pointer=args.update_pointer,
                 limit=args.limit, dry_run=args.dry_run, strict=args.strict,
-                want_digest=args.digest, want_conn=args.conn_record)
+                want_digest=args.digest, want_conn=args.conn_record,
+                want_attest_scan=not args.no_attest_scan)
+
+    if args.attest:
+        if not args.evidence:
+            print("ERROR: --attest requires --evidence REF[,REF...] (G2: an "
+                  "attestation without citable evidence is fabrication)", file=sys.stderr)
+            return 2
+        boot.attest_cmd = (args.attest,
+                           [e.strip() for e in args.evidence.split(",") if e.strip()],
+                           args.attest_session)
     code = boot.run()
     if args.json:
         print(json.dumps({"role": args.role, "model": args.model, "channel": args.channel,
