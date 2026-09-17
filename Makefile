@@ -297,3 +297,7 @@ install-hooks:
 	@cp .githooks/pre-commit .git/hooks/pre-commit
 	@chmod +x .git/hooks/pre-commit
 	@echo "Done."
+
+attestation-chain-test:
+	@echo "[attestation-chain-test] running attestation-chain gate contract suite (hermetic)..."
+	@python3 -m pytest python/nexus_core/wrp/tests/test_attestation_chain.py -v
