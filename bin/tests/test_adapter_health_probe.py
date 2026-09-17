@@ -9,6 +9,9 @@ contract (R1 d849ff31; drill findings b771c3ec):
   declared promotes ONLY on ADAPTER_PROBE_PROMOTE_DEPTH consecutive PASS;
   declared never degrades; retired is frozen against health; PASS on active
   and FAIL on degraded are no-ops
+- V174: UNREACHABLE/REFUSED degrade active like FAIL (health axis) but
+  never promote and never satisfy (capability epistemics) — the split is
+  the point; vocabulary is validated on the submit seam
 - Consecutive-pass counting ignores non-PASS tails (SKIP breaks a streak)
 - Evidence array: append newest-last, truncate to ADAPTER_PROBE_HISTORY
 - Provider dispatch: unknown provider -> SKIP (never a unit failure);
@@ -109,6 +112,41 @@ class TransitionLawTests(unittest.TestCase):
 
     def test_unknown_status_noop(self):
         self.assertIsNone(probe.apply_transition_law("weird", "PASS", []))
+
+
+class V174OutcomeLawTests(unittest.TestCase):
+    """V174 vocabulary: health axis vs capability epistemics."""
+
+    def test_vocabulary_has_five_outcomes(self):
+        self.assertEqual(
+            probe.OUTCOME_VOCABULARY,
+            ("PASS", "FAIL", "SKIP", "UNREACHABLE", "REFUSED"))
+
+    def test_unreachable_refused_degrade_active_like_fail(self):
+        for oc in ("UNREACHABLE", "REFUSED"):
+            self.assertEqual(
+                probe.apply_transition_law("active", oc, _ev("PASS", oc)),
+                "degraded", msg=oc)
+
+    def test_degraded_never_recovers_on_unreachable_refused(self):
+        for oc in ("UNREACHABLE", "REFUSED"):
+            self.assertIsNone(
+                probe.apply_transition_law("degraded", oc, _ev("FAIL", oc)),
+                msg=oc)
+
+    def test_declared_never_promotes_or_degrades_on_diagnostics(self):
+        for oc in ("UNREACHABLE", "REFUSED"):
+            self.assertIsNone(
+                probe.apply_transition_law("declared", oc, _ev(oc, oc)),
+                msg=oc)
+
+    def test_unreachable_breaks_streak(self):
+        self.assertEqual(
+            probe._consecutive_passes(_ev("PASS", "UNREACHABLE", "PASS")), 1)
+
+    def test_refused_breaks_streak(self):
+        self.assertEqual(
+            probe._consecutive_passes(_ev("PASS", "REFUSED", "PASS")), 1)
 
 
 class ConsecutivePassTests(unittest.TestCase):
@@ -264,12 +302,24 @@ class ProviderDispatchTests(unittest.TestCase):
         self.assertIn("postgresql", probe.PROVIDER_CHECKS)
 
     def test_postgresql_check_fails_safe(self):
+        # V174: a NON-connect error still classifies FAIL — the check
+        # measured and broke. Fail-safe means never raises, not "always FAIL".
         class Boom:
             def cursor(self):
-                raise RuntimeError("no connection for you")
+                raise RuntimeError("surface cursor blew up")
         outcome, detail = probe.check_postgresql(Boom(), "cap", {})
         self.assertEqual(outcome, "FAIL")
         self.assertIn("error", detail)
+
+    def test_postgresql_connect_level_classifies_unreachable(self):
+        # V174: the probe's own connection IS the connect check — a dead
+        # connection means we never measured: UNREACHABLE, not FAIL.
+        class Boom:
+            def cursor(self):
+                raise RuntimeError("connection refused by host")
+        outcome, detail = probe.check_postgresql(Boom(), "cap", {})
+        self.assertEqual(outcome, "UNREACHABLE")
+        self.assertIn("connection refused", detail["error"])
 
     def test_postgresql_check_pass_counts(self):
         class Cur:
@@ -349,6 +399,15 @@ class SubmitObservationTests(unittest.TestCase):
                                "RealDictCursor", object()):
             self.assertEqual(
                 self._run(ok, fetch=_adapter("active")), 0)
+
+    def test_unreachable_refused_accepted_and_lawed(self):
+        # the V174 diagnostics ride the same submit seam and the same law
+        for oc in ("UNREACHABLE", "REFUSED"):
+            payload = json.dumps({"source": "profiles", "capability": "cap",
+                                  "provider": "postgresql", "outcome": oc,
+                                  "synthetic": False})
+            self.assertEqual(self._run(payload, fetch=_adapter("active")), 0,
+                             msg=oc)
 
 
 @_db_skip
@@ -461,6 +520,46 @@ class MysqlCheckTests(unittest.TestCase):
             outcome, detail = probe.check_mysql(None, "cap", {})
         self.assertEqual(outcome, "FAIL")
         self.assertIn("absent", detail["error"])
+
+    def test_connect_level_errors_classify_unreachable(self):
+        # V174: connect-level failure = never measured = UNREACHABLE.
+        # The claim survives unverified; it is NOT refuted.
+        class CM:
+            def __enter__(self):
+                raise RuntimeError("connection refused by host")
+            def __exit__(self, *a):
+                return False
+        with self._with_env(ADAPTER_PROBE_MYSQL_DSN="mysql://u:p@h:3306/db"), \
+             mock.patch.object(probe, "_import_driver",
+                                    return_value=(mock.Mock(), None)), \
+             mock.patch.object(probe, "_mysql_connection", return_value=CM()):
+            outcome, detail = probe.check_mysql(None, "cap", {})
+        self.assertEqual(outcome, "UNREACHABLE")
+        self.assertIn("connection refused", detail["error"])
+
+    def test_query_failure_is_fail_not_unreachable(self):
+        # we connected (measured), the query broke — that is FAIL
+        class Cur:
+            connection = mock.Mock()
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+            def execute(self, stmt, params=None):
+                raise RuntimeError("surface query blew up")
+        class CM:
+            def __enter__(self):
+                return Cur()
+            def __exit__(self, *a):
+                return False
+        with self._with_env(ADAPTER_PROBE_MYSQL_DSN="mysql://u:p@h:3306/db",
+                            ADAPTER_PROBE_MYSQL_SURFACE="shrapnel.object_instance"), \
+             mock.patch.object(probe, "_import_driver",
+                                    return_value=(mock.Mock(), None)), \
+             mock.patch.object(probe, "_mysql_connection", return_value=CM()):
+            outcome, detail = probe.check_mysql(None, "cap", {})
+        self.assertEqual(outcome, "FAIL")
+        self.assertIn("blew up", detail["error"])
 
     def test_dispatch_table_has_mysql(self):
         self.assertIn("mysql", probe.PROVIDER_CHECKS)
