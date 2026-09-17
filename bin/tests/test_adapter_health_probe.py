@@ -379,6 +379,8 @@ class MysqlCheckTests(unittest.TestCase):
             def __exit__(self, *a):
                 return False
         with self._with_env(ADAPTER_PROBE_MYSQL_DSN="mysql://u:p@h:3306/db"), \
+             mock.patch.object(probe, "_import_driver",
+                                    return_value=(mock.Mock(), None)), \
              mock.patch.object(probe, "_mysql_connection", return_value=CM()):
             outcome, detail = probe.check_mysql(None, "cap", {})
         self.assertEqual(outcome, "FAIL")
@@ -401,6 +403,8 @@ class MysqlCheckTests(unittest.TestCase):
             def __exit__(self, *a):
                 return False
         with self._with_env(ADAPTER_PROBE_MYSQL_DSN="mysql://u:p@h:3306/db"), \
+             mock.patch.object(probe, "_import_driver",
+                                    return_value=(mock.Mock(), None)), \
              mock.patch.object(probe, "_mysql_connection", return_value=CM()):
             outcome, detail = probe.check_mysql(None, "cap", {})
         self.assertEqual(outcome, "PASS")
@@ -426,6 +430,8 @@ class MysqlCheckTests(unittest.TestCase):
                 return False
         with self._with_env(ADAPTER_PROBE_MYSQL_DSN="mysql://u:p@h:3306/db",
                             ADAPTER_PROBE_MYSQL_SURFACE="shrapnel.object_instance"), \
+             mock.patch.object(probe, "_import_driver",
+                                    return_value=(mock.Mock(), None)), \
              mock.patch.object(probe, "_mysql_connection", return_value=CM()):
             outcome, detail = probe.check_mysql(None, "cap", {})
         self.assertEqual(outcome, "PASS")
@@ -449,6 +455,8 @@ class MysqlCheckTests(unittest.TestCase):
                 return False
         with self._with_env(ADAPTER_PROBE_MYSQL_DSN="mysql://u:p@h:3306/db",
                             ADAPTER_PROBE_MYSQL_SURFACE="shrapnel.object_instance"), \
+             mock.patch.object(probe, "_import_driver",
+                                    return_value=(mock.Mock(), None)), \
              mock.patch.object(probe, "_mysql_connection", return_value=CM()):
             outcome, detail = probe.check_mysql(None, "cap", {})
         self.assertEqual(outcome, "FAIL")
