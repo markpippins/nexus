@@ -31,6 +31,7 @@ _REPO_ROOT = os.path.abspath(os.path.join(
 V156_PATH = os.path.join(_REPO_ROOT, "sql", "V156__nebula_canonical_audit_triggers.sql")
 V177_PATH = os.path.join(_REPO_ROOT, "sql", "V177__roles_history_audit_triggers.sql")
 V175_PATH = os.path.join(_REPO_ROOT, "sql", "V175__roles_history_close_then_insert_repair.sql")
+V180_PATH = os.path.join(_REPO_ROOT, "sql", "V180__applied_grants_preflight.sql")
 GRANT_PATH = os.path.join(_REPO_ROOT, "sql", "grants", "tester-grant-v0.1.sql")
 
 DSN = os.environ.get("CONDUIT_PG_DSN",
@@ -204,6 +205,7 @@ class RolesAuditE2E(unittest.TestCase):
         # impossible under the pre-V175 full unique — that trap is
         # wr-conf-025's charter, not this suite's).
         self.db.apply_file(V175_PATH)
+        self.db.apply_file(V180_PATH)  # rediff gate (GRANT-APPLIED)
 
     def test_triggers_installed_with_notice(self):
         self.assertEqual(3, self.db.trigger_count())

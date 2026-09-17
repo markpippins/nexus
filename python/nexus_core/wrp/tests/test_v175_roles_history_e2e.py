@@ -26,6 +26,7 @@ import psycopg2.extras
 _REPO_ROOT = os.path.abspath(os.path.join(
     os.path.dirname(__file__), "..", "..", "..", ".."))
 V175_PATH = os.path.join(_REPO_ROOT, "sql", "V175__roles_history_close_then_insert_repair.sql")
+V180_PATH = os.path.join(_REPO_ROOT, "sql", "V180__applied_grants_preflight.sql")
 GRANT_PATH = os.path.join(_REPO_ROOT, "sql", "grants", "auditor-grant-v0.1.sql")
 BOOTSTRAP_PATH = os.path.join(_REPO_ROOT, "sql", "ci-bootstrap", "nexus-ci-bootstrap.sql")
 
@@ -475,6 +476,8 @@ SELECT count(*) FROM (
 
     def test_grant_template_end_to_end(self):
         self.db.apply_v175()
+        with open(V180_PATH) as fh:
+            self.db.sql(fh.read())
         with open(GRANT_PATH) as fh:
             self.db.sql(fh.read())  # runs clean: close + insert + verify gate
 
@@ -500,28 +503,42 @@ WHERE o.name='auditor' AND o.valid_until = %s
     def test_grant_template_refuses_pre_v175_shape(self):
         # against the old shape the run must fail loudly (never a silent
         # no-op): the close fires, then the successor INSERT hits the full
-        # unique — refusal via the constraint, transaction aborted
+        # unique — refusal via the constraint, transaction aborted.
+        # (V180 first: the pre-flight is a universal prerequisite of the
+        # grant files — the tested refusal is the SHAPE trap, not its absence.)
+        with open(V180_PATH) as fh:
+            self.db.sql(fh.read())
         with open(GRANT_PATH) as fh:
             err = self.db.expect_error(fh.read())
         self.assertTrue("roles_name_key" in err or "GRANT" in err, msg=err)
 
-    def test_grant_template_is_repeatable(self):
-        # the template is a GRANT-EVENT executor: each run closes the current
-        # open snapshot and opens a successor — the bitemporal chain grows,
-        # handoff stays exact (this is the V175-enabled semantics)
+    def test_grant_template_self_idempotent(self):
+        """V180 rediff gate: identical re-apply = loud no-op (self-idempotence)."""
         self.db.apply_v175()
-        with open(GRANT_PATH) as fh:
+        with open(V180_PATH) as fh:
             self.db.sql(fh.read())
         with open(GRANT_PATH) as fh:
-            self.db.sql(fh.read())  # second grant event
+            self.db.sql(fh.read())
+        refused = ""
+        try:
+            with open(GRANT_PATH) as fh:
+                self.db.sql(fh.read())
+        except psycopg2.Error as exc:
+            refused = str(exc).splitlines()[0]
+            try:
+                self.db.sql("ROLLBACK")
+            except psycopg2.Error:
+                pass
+        else:
+            self.fail("identical re-apply must refuse with GRANT-APPLIED")
+        self.assertIn("GRANT-APPLIED", refused)
         rows = self.db.sql("""
 SELECT valid_until = %s AS open FROM nebula.roles_history
 WHERE name='auditor' ORDER BY valid_from
 """, (SENTINEL,))
-        self.assertEqual(len(rows), 3)
-        self.assertFalse(rows[0][0])
-        self.assertFalse(rows[1][0])
-        self.assertTrue(rows[2][0])
+        self.assertEqual(len(rows), 2)
+        self.assertFalse(rows[0][0])   # seeded snapshot, closed by the grant
+        self.assertTrue(rows[1][0])    # granted snapshot, still open
 
 
 if __name__ == "__main__":

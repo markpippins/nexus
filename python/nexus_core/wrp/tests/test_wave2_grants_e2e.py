@@ -25,6 +25,7 @@ import psycopg2
 _REPO_ROOT = os.path.abspath(os.path.join(
     os.path.dirname(__file__), "..", "..", "..", ".."))
 V175_PATH = os.path.join(_REPO_ROOT, "sql", "V175__roles_history_close_then_insert_repair.sql")
+V180_PATH = os.path.join(_REPO_ROOT, "sql", "V180__applied_grants_preflight.sql")
 GRANTS_DIR = os.path.join(_REPO_ROOT, "sql", "grants")
 
 ROLES = ["critic", "epistemologist", "devops", "sysadmin", "operator",
@@ -184,6 +185,7 @@ class Wave2GrantsE2E(unittest.TestCase):
         self.db = ThrowawayDB().__enter__()
         self.addCleanup(self.db.__exit__)
         self.db.apply_file(V175_PATH)
+        self.db.apply_file(V180_PATH)  # rediff gate (GRANT-APPLIED)
 
     def test_all_six_grant_events(self):
         for role in ROLES:
@@ -204,11 +206,22 @@ class Wave2GrantsE2E(unittest.TestCase):
             self.assertFalse(agenda, role)
             self.assertEqual(["architect"], list(esc), role)
 
-    def test_repeatability_is_second_grant_event(self):
+    def test_reapply_same_spec_refuses_GRANT_APPLIED(self):
+        """V180 rediff gate: an identical re-apply is a loud no-op, not a
+        second grant event — the self-idempotence doctrine (R1 bae6f566)."""
         self.db.apply_file(GRANT_PATHS["critic"])
-        self.db.apply_file(GRANT_PATHS["critic"])
+        try:
+            self.db.apply_file(GRANT_PATHS["critic"])
+        except psycopg2.Error as exc:
+            self.assertIn("GRANT-APPLIED", str(exc))
+        else:
+            self.fail("identical re-apply must refuse with GRANT-APPLIED")
+        try:
+            self.db.sql("ROLLBACK")   # clear stranded aborted tx (gotcha #5)
+        except psycopg2.Error:
+            pass
         closed, opened = self.db.chain("critic")
-        self.assertEqual((2, 1), (closed, opened))
+        self.assertEqual((1, 1), (closed, opened), "no redundant event minted")
         self.assertTrue(self.db.handoff_exact("critic"))
 
     def test_missing_role_refuses_atomically(self):

@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""mark-operator-go-applied — status:applied tagging for consumed operator-go records.
+
+The governance-surface half of the apply-lock guard (DBA, R1 b88227f0;
+companion to sql/V180__applied_grants_preflight.sql):
+
+  - V180  = the STRUCTURAL gate: an identical grant re-apply refuses
+            server-side with GRANT-APPLIED before any close/insert.
+  - here  = the PROCEDURAL gate: architect-issued operator:go decision
+            records carry `status:applied` once their apply is
+            verified-consumed, so an apply pre-flight can check the
+            ledger too (`grep status:applied` on the go record) and a
+            human scanning the inbox sees the go was consumed.
+
+Mechanics: GET /api/agent-records/:id (nebula-srv :3101) to resolve,
+then PATCH with the full tags array — tags-only lifecycle annotation.
+Title and content are never touched; the record stays the issuing
+role's (architect's). The `status:` tag vocabulary is established
+house practice (status:implemented / status:ratified / status:complete);
+`status:applied` extends it for authorization events.
+
+Robustness against the observed agent_records tag corruption (some
+rows store double-encoded fragments like '["to:dba"' or '"type:go"'):
+parse_tags() splits bracket/quote fragments back into clean tags and
+normalizes before appending, so tagging never makes the corruption
+worse and re-runs converge.
+
+Refusals (exit codes):
+  1  record not found (or :3101 unreachable)
+  2  record has no `operator:go` tag — not an operator-go; refuse
+  3  already tagged `status:applied` — no mutation performed, exit 3
+     so callers can distinguish "freshly tagged" (0) from "was already
+     tagged" (3). Idempotent either way: no second write, no duplicate tag.
+
+Usage:
+  bin/mark-operator-go-applied <record-uuid> [more-uuids...]
+  NEBULA_URL=http://localhost:3101 bin/mark-operator-go-applied <uuid>
+"""
+
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+APPLIED_TAG = "status:applied"
+GATE_TAG = "operator:go"
+
+# Exit codes
+EX_NOT_FOUND = 1
+EX_NOT_OPERATOR_GO = 2
+EX_ALREADY_APPLIED = 3
+
+
+def parse_tags(raw):
+    """Normalize an agent-record tags value into a clean list of tags.
+
+    Handles the three shapes seen in nebula.agent_records:
+      ['a', 'b']                        — proper list (the intended shape)
+      ['["a"', '"b"]']                  — double-encoded fragments (corruption)
+      '["a", "b"]'                      — a JSON string
+    Returns a de-duplicated list preserving order. Never raises.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            raw = [raw]
+    if not isinstance(raw, (list, tuple)):
+        raw = [raw]
+
+    out = []
+    for item in raw:
+        s = str(item).strip()
+        if not s:
+            continue
+        # Double-encoded fragment repair: '["to:dba"' -> 'to:dba'
+        if s.startswith("[") or s.endswith("]"):
+            s = s.lstrip("[").rstrip("]")
+        if len(s) >= 2 and s.startswith('"') and s.endswith('"'):
+            try:
+                s = json.loads(s)
+            except (ValueError, TypeError):
+                s = s.strip('"')
+        s = str(s).strip()
+        if s and s not in out:
+            out.append(s)
+    return out
+
+
+def build_new_tags(tags, marker):
+    """Return (new_tags, already_tagged) — append marker if absent."""
+    clean = parse_tags(tags)
+    if marker in clean:
+        return clean, True
+    return clean + [marker], False
+
+
+class Client:
+    """Thin nebula-srv REST client (stdlib only)."""
+
+    def __init__(self, base_url):
+        self.base = base_url.rstrip("/")
+
+    def get_record(self, record_id):
+        url = f"{self.base}/api/agent-records/{record_id}"
+        with urllib.request.urlopen(url, timeout=10) as r:
+            return json.loads(r.read().decode())
+
+    def patch_tags(self, record_id, tags):
+        url = f"{self.base}/api/agent-records/{record_id}"
+        body = json.dumps({"tags": tags}).encode()
+        req = urllib.request.Request(
+            url, data=body, method="PATCH",
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read().decode())
+
+
+def mark_applied(client, record_id, out=sys.stdout, err=sys.stderr):
+    """Tag one record. Returns the process exit code for it."""
+    try:
+        rec = client.get_record(record_id)
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            print(f"NOT FOUND   {record_id} — no such agent record", file=err)
+            return EX_NOT_FOUND
+        raise
+    except urllib.error.URLError as e:
+        print(f"UNREACHABLE {record_id} — nebula-srv error: {e.reason}", file=err)
+        return EX_NOT_FOUND
+
+    tags = rec.get("tags")
+    new_tags, already = build_new_tags(tags, APPLIED_TAG)
+
+    if already:
+        print(f"ALREADY     {record_id} — status:applied present, no mutation", file=out)
+        return EX_ALREADY_APPLIED
+
+    if GATE_TAG not in new_tags:
+        print(f"REFUSED     {record_id} — no '{GATE_TAG}' tag; "
+              f"not an operator-go record (tags: {new_tags})", file=err)
+        return EX_NOT_OPERATOR_GO
+
+    client.patch_tags(record_id, new_tags)
+    print(f"APPLIED     {record_id} — tagged {APPLIED_TAG} "
+          f"({len(new_tags) - 1} -> {len(new_tags)} tags)", file=out)
+    return 0
+
+
+def main(argv):
+    if len(argv) < 2:
+        print(__doc__.strip(), file=sys.stderr)
+        return 64
+    base = os.environ.get("NEBULA_URL", "http://localhost:3101")
+    client = Client(base)
+    codes = [mark_applied(client, rid) for rid in argv[1:]]
+    return 0 if all(c == 0 for c in codes) else max(codes)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

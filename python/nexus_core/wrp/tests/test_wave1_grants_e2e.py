@@ -23,6 +23,7 @@ import psycopg2
 _REPO_ROOT = os.path.abspath(os.path.join(
     os.path.dirname(__file__), "..", "..", "..", ".."))
 V175_PATH = os.path.join(_REPO_ROOT, "sql", "V175__roles_history_close_then_insert_repair.sql")
+V180_PATH = os.path.join(_REPO_ROOT, "sql", "V180__applied_grants_preflight.sql")
 BASELINE_PATH = os.path.join(_REPO_ROOT, "sql", "grants", "wave1-clone-baseline.sql")
 ANALYST_II_PATH = os.path.join(_REPO_ROOT, "sql", "grants", "analyst-ii-grant-v0.1.sql")
 ENGINEER_II_PATH = os.path.join(_REPO_ROOT, "sql", "grants", "engineer-ii-grant-v0.1.sql")
@@ -194,6 +195,7 @@ class Wave1GrantsE2E(unittest.TestCase):
         self.addCleanup(self.db.__exit__)
         self.db.sql(SEED_SQL)
         self.db.apply_file(V175_PATH)   # grant mechanics require the repaired shape
+        self.db.apply_file(V180_PATH)   # rediff gate (GRANT-APPLIED)
 
     def test_baseline_gate_passes_on_pinned_world(self):
         self.db.apply_file(BASELINE_PATH)
@@ -237,11 +239,22 @@ class Wave1GrantsE2E(unittest.TestCase):
         self.assertEqual(["architect"], list(esc))
         self.assertEqual(["design_concern"], list(trig))
 
-    def test_repeatability_is_second_grant_event(self):
+    def test_reapply_same_spec_refuses_GRANT_APPLIED(self):
+        """V180 rediff gate: an identical re-apply is a loud no-op, not a
+        second grant event — the self-idempotence doctrine (R1 bae6f566)."""
         self.db.apply_file(ANALYST_II_PATH)
-        self.db.apply_file(ANALYST_II_PATH)
+        try:
+            self.db.apply_file(ANALYST_II_PATH)
+        except psycopg2.Error as exc:
+            self.assertIn("GRANT-APPLIED", str(exc))
+        else:
+            self.fail("identical re-apply must refuse with GRANT-APPLIED")
+        try:
+            self.db.sql("ROLLBACK")   # clear stranded aborted tx (gotcha #5)
+        except psycopg2.Error:
+            pass
         closed, opened = self.db.chain("analyst-ii")
-        self.assertEqual((2, 1), (closed, opened))
+        self.assertEqual((1, 1), (closed, opened), "no redundant event minted")
         self.assertTrue(self.db.handoff_exact("analyst-ii"))
 
     def test_missing_role_refuses_atomically(self):

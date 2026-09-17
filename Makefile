@@ -201,7 +201,8 @@ mesh-test:
 	@python3 -m pytest bin/tests/test_mesh_register_probe.py bin/tests/test_sonar_preflight.py \
 		bin/tests/test_drive_guard.py bin/tests/test_vdci_backup.py \
 		bin/tests/test_pg_escape_hatch.py bin/tests/test_adapter_health_probe.py \
-		bin/tests/test_boot_attest.py -v
+		bin/tests/test_boot_attest.py \
+		bin/tests/test_mark_operator_go_applied.py -v
 
 adapter-probe-test:
 	@echo "[adapter-probe-test] running adapter health probe hermetic suite..."
@@ -316,3 +317,6 @@ attest-wiring-test:
 lead-engineer-grant-e2e-test:
 	@echo "[lead-engineer-grant-e2e-test] Wave-3 grant E2E (greenlight authority, ratified separation; throwaway DB)..."
 	@python3 -m pytest python/nexus_core/wrp/tests/test_lead_engineer_grant_e2e.py -v
+applied-grants-preflight-e2e-test:
+	@echo "[applied-grants-preflight-e2e-test] V180 rediff-gate E2E (apply / refuse-reapply / changed-spec; throwaway DB)..."
+	python3 -m pytest python/nexus_core/wrp/tests/test_v180_applied_grants_e2e.py -v
