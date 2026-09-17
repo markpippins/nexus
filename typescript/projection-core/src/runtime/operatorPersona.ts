@@ -140,8 +140,8 @@ export class DefaultOperatorPersona implements OperatorPersonaAPI {
     if (spec && "workflows" in spec && spec.workflows?.[workflowId]) {
       const wf = spec.workflows[workflowId];
       if (wf.steps.length > 0) {
-        firstStepId = wf.steps[0].id;
-        focusRoleId = wf.steps[0].focusRoleId;
+        firstStepId = wf.steps[0]!.id;
+        focusRoleId = wf.steps[0]!.focusRoleId;
       }
     }
 
@@ -162,10 +162,10 @@ export class DefaultOperatorPersona implements OperatorPersonaAPI {
 
     const spec = this.getViewSpec();
     if (spec && "workflows" in spec && spec.workflows?.[ctx.activeWorkflowId]) {
-      const wf = spec.workflows[ctx.activeWorkflowId];
+      const wf = spec.workflows[ctx.activeWorkflowId]!;
       const currentIndex = wf.steps.findIndex((s) => s.id === ctx.activeWorkflowStepId);
       if (currentIndex >= 0 && currentIndex < wf.steps.length - 1) {
-        const next = wf.steps[currentIndex + 1];
+        const next = wf.steps[currentIndex + 1]!;
         this.contextStore.onWorkflowStepEnter(ctx.activeWorkflowId, next.id, next.focusRoleId);
         this.narrate(`Advanced to step ${currentIndex + 2}: ${next.name || next.id}.`, "workflow");
         return;
@@ -185,10 +185,10 @@ export class DefaultOperatorPersona implements OperatorPersonaAPI {
 
     const spec = this.getViewSpec();
     if (spec && "workflows" in spec && spec.workflows?.[ctx.activeWorkflowId]) {
-      const wf = spec.workflows[ctx.activeWorkflowId];
+      const wf = spec.workflows[ctx.activeWorkflowId]!;
       const currentIndex = wf.steps.findIndex((s) => s.id === ctx.activeWorkflowStepId);
       if (currentIndex > 0) {
-        const prev = wf.steps[currentIndex - 1];
+        const prev = wf.steps[currentIndex - 1]!;
         this.contextStore.onWorkflowStepEnter(ctx.activeWorkflowId, prev.id, prev.focusRoleId);
         this.narrate(`Returned to step ${currentIndex}: ${prev.name || prev.id}.`, "workflow");
         return;

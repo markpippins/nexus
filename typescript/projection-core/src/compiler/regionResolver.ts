@@ -92,8 +92,7 @@ export function resolveRegionWithOrder(
 ): ResolvedRegion {
   const region = resolveRegion(roleName, role, ctx);
 
-  const basePriority =
-    role.priority === "primary" ? 0 : role.priority === "secondary" ? 1 : 2;
+  const basePriority = role.priority === "primary" ? 0 : role.priority === "secondary" ? 1 : 2;
 
   const densityOffset =
     role.density === "highSalience" ? -0.5 : role.density === "compact" ? 0.5 : 0;
@@ -103,10 +102,8 @@ export function resolveRegionWithOrder(
   const sameRegionRoles = allRoles
     .filter((r) => resolveRegion(r.name, r.spec, ctx) === region)
     .sort((a, b) => {
-      const aPriority =
-        a.spec.priority === "primary" ? 0 : a.spec.priority === "secondary" ? 1 : 2;
-      const bPriority =
-        b.spec.priority === "primary" ? 0 : b.spec.priority === "secondary" ? 1 : 2;
+      const aPriority = a.spec.priority === "primary" ? 0 : a.spec.priority === "secondary" ? 1 : 2;
+      const bPriority = b.spec.priority === "primary" ? 0 : b.spec.priority === "secondary" ? 1 : 2;
       return aPriority - bPriority;
     });
 

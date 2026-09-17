@@ -1,11 +1,6 @@
 import {
   DesignIR,
   SurfaceSpec,
-  RoleSpec,
-  InteractionSpec,
-  HierarchySetting,
-  DensitySetting,
-  GlobalContextSpec,
 } from "../types/designIR";
 import {
   ViewSpec,
@@ -86,7 +81,6 @@ export class IncrementalDesignIRCompiler {
     hash: "",
     table: {},
   };
-  private lastMultiSpec: MultiSurfaceViewSpec | null = null;
 
   /**
    * Incrementally compiles a DesignIR document with phase-level dependency diffing
@@ -324,8 +318,6 @@ export class IncrementalDesignIRCompiler {
       activeSurfaceId: Object.keys(surfaces)[0],
     };
 
-    this.lastMultiSpec = multiSpec;
-
     return {
       spec: multiSpec,
       patches,
@@ -336,6 +328,5 @@ export class IncrementalDesignIRCompiler {
   clear(): void {
     this.surfacePhaseCaches.clear();
     this.workflowsCache = { hash: "", table: {} };
-    this.lastMultiSpec = null;
   }
 }

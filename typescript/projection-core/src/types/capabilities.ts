@@ -1,4 +1,4 @@
-import { CapabilityRef, ConstraintSet } from "./designIR";
+import { CapabilityRef, ConstraintSet, SurfaceType } from "./designIR";
 
 export interface MetricSeriesContract {
   points: Array<{ x: number | string; y: number }>;
@@ -94,7 +94,7 @@ export interface WorkQueueContract {
 }
 
 export interface SurfaceContextContract {
-  surfaceType: "dashboard" | "workbench" | "inspector" | "timelineView";
+  surfaceType: SurfaceType;
   timeSensitivity: "realTime" | "nearRealTime" | "batch" | "historical";
   reliabilityBias: "eventual" | "strong" | "strict";
 }

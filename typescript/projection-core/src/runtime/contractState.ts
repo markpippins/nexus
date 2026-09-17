@@ -1,4 +1,4 @@
-export interface ContractStateStore<TContract = any> {
+export interface ContractStateStore<TContract = unknown> {
   get(): TContract;
   set(patch: Partial<TContract>): void;
   replace(next: TContract): void;

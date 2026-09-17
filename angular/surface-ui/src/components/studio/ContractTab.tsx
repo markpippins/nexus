@@ -1,5 +1,5 @@
 import * as React from "react";
-import { CapabilityId } from "@/core/types/designIR";
+import { CapabilityId } from "@nexus/projection-core";
 import { CAPABILITY_REGISTRY, getCapabilityForWidget } from "@/lib/capabilities-registry";
 import type { Widget } from "@/lib/widget-types";
 import { CheckCircle2, ShieldCheck, Sparkles, Zap } from "lucide-react";

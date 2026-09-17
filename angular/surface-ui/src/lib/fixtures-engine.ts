@@ -1,4 +1,4 @@
-import { CapabilityId } from "@/core/types/designIR";
+import { CapabilityId } from "@nexus/projection-core";
 import { CAPABILITY_REGISTRY } from "./capabilities-registry";
 
 export type FixtureScenario = "nominal" | "empty" | "overflow" | "degraded" | "fuzz";

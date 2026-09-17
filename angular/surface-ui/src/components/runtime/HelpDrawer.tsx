@@ -12,7 +12,7 @@ import {
   Copy,
   Check,
 } from "lucide-react";
-import { DocumentationEntry } from "@/core/runtime/documentationRegistry";
+import { DocumentationEntry } from "@nexus/projection-core";
 import { toast } from "sonner";
 
 interface HelpDrawerProps {

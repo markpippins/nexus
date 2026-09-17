@@ -121,7 +121,7 @@ export function governedSourceFromViewSpec(spec: ViewSpec, bindingId: string): G
     throw new GovernedAdapterError("Cannot derive source from invalid ViewSpec", "INVALID_VIEWSPEC");
   }
   const binding = spec.adapters.find((candidate) => candidate.adapterId === bindingId);
-  if (!binding || binding.source.type !== "server") {
+  if (!binding || !binding.source || binding.source.type !== "server") {
     throw new GovernedAdapterError(
       "ViewSpec binding must reference a server-controlled source",
       "SOURCE_NOT_GOVERNED",

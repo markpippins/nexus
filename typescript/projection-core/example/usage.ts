@@ -1,5 +1,5 @@
 import { DesignIR } from "../src/types/designIR";
-import { DesignIRCompiler } from "../src/compiler/compiler";
+import { compileDesignIR } from "../src/compiler/compiler";
 
 export const exampleDesignIR: DesignIR = {
   name: "Execution Overview",
@@ -49,8 +49,7 @@ export const exampleDesignIR: DesignIR = {
   },
 };
 
-const compiler = new DesignIRCompiler();
-const viewSpec = compiler.compileDesignIR(exampleDesignIR);
+const viewSpec = compileDesignIR(exampleDesignIR);
 
 console.log("=== Compiled ViewSpec ===");
 console.log(JSON.stringify(viewSpec, null, 2));

@@ -15,8 +15,8 @@ import {
   XCircle,
   Lightbulb,
 } from "lucide-react";
-import { OperatorPersonaAPI, OperatorNarration } from "@/core/runtime/operatorPersona";
-import { InteractionContext } from "@/core/runtime/interactionContext";
+import { OperatorPersonaAPI, OperatorNarration } from "@nexus/projection-core";
+import { InteractionContext } from "@nexus/projection-core";
 
 interface OperatorPanelProps {
   operator: OperatorPersonaAPI;
