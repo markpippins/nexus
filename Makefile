@@ -200,7 +200,11 @@ mesh-test:
 	@echo "[mesh-test] running mesh-register probe + drive-guard tests..."
 	@python3 -m pytest bin/tests/test_mesh_register_probe.py bin/tests/test_sonar_preflight.py \
 		bin/tests/test_drive_guard.py bin/tests/test_vdci_backup.py \
-		bin/tests/test_pg_escape_hatch.py -v
+		bin/tests/test_pg_escape_hatch.py bin/tests/test_adapter_health_probe.py -v
+
+adapter-probe-test:
+	@echo "[adapter-probe-test] running adapter health probe hermetic suite..."
+	@python3 -m pytest bin/tests/test_adapter_health_probe.py -v
 
 sonar-preflight-test:
 	@echo "[sonar-preflight-test] running sonar pre-flight gate tests..."

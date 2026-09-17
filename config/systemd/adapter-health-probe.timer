@@ -1,0 +1,14 @@
+[Unit]
+Description=daily adapter health probe timer (evidence-refresh — thread 3fce57ce)
+# Keeps the 'active' adapter claim a live observation: evidence older than
+# ADAPTER_STALENESS_THRESHOLD flips the satisfaction verdict to
+# satisfied-stale (V173 view slice). Persistent=true — catch-up matters on
+# the travel-prone laptop.
+
+[Timer]
+OnCalendar=*-*-* 04:20:00 UTC
+Persistent=true
+Unit=adapter-health-probe.service
+
+[Install]
+WantedBy=timers.target
