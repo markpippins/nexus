@@ -63,11 +63,15 @@ class NexusCoreApplicationTest {
     }
 
     @Test
-    void solscriptTransitionIsReadOnly405() {
+    void solscriptTransitionEnqueuesWriteIntent() {
+        // The JetStream write path REPLACED the previous bare 405: the POST is
+        // accepted (202) as a queued/buffered WriteIntent — never a direct DB
+        // write (buffered_local when NATS is unreachable, as in this test
+        // context). Read-only DB posture is unaffected.
         ResponseEntity<String> resp = rest.postForEntity(
             "/api/solscript/transition-entity",
             new HttpEntity<>("{}", jsonHeaders()), String.class);
-        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.METHOD_NOT_ALLOWED);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
     }
 
     private static org.springframework.http.HttpHeaders jsonHeaders() {
