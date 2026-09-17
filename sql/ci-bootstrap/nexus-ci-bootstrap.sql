@@ -16256,11 +16256,16 @@ ALTER TABLE ONLY nebula.requirements_history
 
 
 --
--- Name: roles_history roles_name_key; Type: CONSTRAINT; Schema: nebula; Owner: -
+-- Name: roles_history roles_name_open_key; Type: INDEX; Schema: nebula; Owner: -
 --
+-- V175: partial open-snapshot unique replaces the V081-era full UNIQUE(name)
+-- (roles_name_key), which permitted only one snapshot per role EVER and made
+-- the architect-ruled close-then-insert grant convention structurally
+-- impossible. Fresh bootstraps carry the repaired shape from birth.
 
-ALTER TABLE ONLY nebula.roles_history
-    ADD CONSTRAINT roles_name_key UNIQUE (name);
+CREATE UNIQUE INDEX roles_name_open_key
+    ON nebula.roles_history USING btree (name)
+    WHERE valid_until = '9999-12-31 00:00:00+00'::timestamp with time zone;
 
 
 --
