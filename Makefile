@@ -222,6 +222,10 @@ roles-audit-e2e-test:
 	@echo "[roles-audit-e2e-test] V177 E2E (roles_history joins the V156 NEBULA_AUDIT family; grant events leave an attributable trail, throwaway DB)..."
 	@python3 -m pytest python/nexus_core/wrp/tests/test_v177_roles_audit_e2e.py -v
 
+role-memory-integrity-e2e-test:
+	@echo "[role-memory-integrity-e2e-test] V178 E2E (role_memory overlapping-interval exclusion; keep-oldest repair + born-repaired bootstrap, throwaway DB)..."
+	@python3 -m pytest python/nexus_core/wrp/tests/test_v178_role_memory_e2e.py -v
+
 sonar-preflight-test:
 	@echo "[sonar-preflight-test] running sonar pre-flight gate tests..."
 	@python3 -m pytest bin/tests/test_sonar_preflight.py -v
