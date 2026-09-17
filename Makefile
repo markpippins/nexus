@@ -214,6 +214,10 @@ roles-history-e2e-test:
 	@echo "[roles-history-e2e-test] V175 E2E (pre-V175 shape -> repair -> grant template; + born-repaired ci-bootstrap path, throwaway DBs)..."
 	@python3 -m pytest python/nexus_core/wrp/tests/test_v175_roles_history_e2e.py -v
 
+wave1-grants-e2e-test:
+	@echo "[wave1-grants-e2e-test] Wave-1 clone grants E2E (pinned baseline gate + analyst-ii/engineer-ii grant events, throwaway DB)..."
+	@python3 -m pytest python/nexus_core/wrp/tests/test_wave1_grants_e2e.py -v
+
 tester-grant-e2e-test:
 	@echo "[tester-grant-e2e-test] tester capability grant v0.1 E2E (grant event on V175 shape, throwaway DB)..."
 	@python3 -m pytest python/nexus_core/wrp/tests/test_tester_grant_e2e.py -v
