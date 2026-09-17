@@ -1,11 +1,17 @@
 name: WR Conf 025 — Roles History Close-Then-Insert Repair
 
-# Runs the wr-conf-025 E2E suite: the V175 repair applied over a skeleton
-# that deliberately recreates the PRE-V175 shape (full UNIQUE(name) on
-# nebula.roles_history + nebula.roles as a view), plus the corrected
-# close-then-insert grant template executed end-to-end. The E2E creates and
-# drops its own throwaway databases (nexus_v175_test_<pid>_<hex>); no
-# production database is touched.
+# Runs the wr-conf-025 E2E suite, proving BOTH paths every run:
+#   1. repair path — the V175 repair applied over a skeleton that
+#      deliberately recreates the PRE-V175 shape (full UNIQUE(name) on
+#      nebula.roles_history + nebula.roles as a view), plus the corrected
+#      close-then-insert grant template executed end-to-end;
+#   2. born-repaired path — a throwaway DB built from the REAL
+#      sql/ci-bootstrap/nexus-ci-bootstrap.sql (via psycopg2; the dump is
+#      schema-only, meta-command lines stripped) asserted to carry the
+#      repaired shape from birth, with the V175 apply a verified no-op.
+# The E2E creates and drops its own throwaway databases
+# (nexus_v175_test_<pid>_<hex> / nexus_v175_boot_<pid>_<hex>); no production
+# database is touched.
 
 on:
   push:
@@ -19,7 +25,7 @@ permissions:
 
 jobs:
   roles-history-e2e:
-    name: "wr-conf-025: roles history repair E2E (pre-V175 shape -> V175)"
+    name: "wr-conf-025: roles history E2E (pre-V175 shape -> V175 repair; ci-bootstrap born-repaired)"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:

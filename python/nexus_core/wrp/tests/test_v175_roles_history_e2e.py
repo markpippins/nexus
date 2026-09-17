@@ -27,6 +27,7 @@ _REPO_ROOT = os.path.abspath(os.path.join(
     os.path.dirname(__file__), "..", "..", "..", ".."))
 V175_PATH = os.path.join(_REPO_ROOT, "sql", "V175__roles_history_close_then_insert_repair.sql")
 GRANT_PATH = os.path.join(_REPO_ROOT, "sql", "grants", "auditor-grant-v0.1.sql")
+BOOTSTRAP_PATH = os.path.join(_REPO_ROOT, "sql", "ci-bootstrap", "nexus-ci-bootstrap.sql")
 
 DSN = os.environ.get("CONDUIT_PG_DSN",
                      "postgresql://pguser:pgpass@localhost:5432/postgres")
@@ -81,6 +82,198 @@ class ThrowawayDB:
     def apply_v175(self):
         with open(V175_PATH) as fh:
             self.sql(fh.read())
+
+
+def _load_bootstrap_sql() -> str:
+    r"""Load nexus-ci-bootstrap.sql for execution via psycopg2 (no psql).
+
+    The dump is schema-only with no COPY blocks, so the house pattern
+    (cur.execute of the whole file) works — except for the pg_dump 16+
+    \restrict / \unrestrict token lines, which are psql meta-commands
+    psycopg2 would reject. Strip exactly those lines.
+    """
+    with open(BOOTSTRAP_PATH) as fh:
+        lines = fh.readlines()
+    return "".join(ln for ln in lines if not ln.startswith("\\restrict")
+                   and not ln.startswith("\\unrestrict"))
+
+
+class BootstrapDB:
+    """Throwaway DB built from the REAL ci-bootstrap (born-repaired path)."""
+
+    def __init__(self):
+        self.dbname = f"nexus_v175_boot_{os.getpid()}_{uuid.uuid4().hex[:6]}"
+        self.conn = None
+
+    def __enter__(self):
+        admin = psycopg2.connect(DSN.rsplit("/", 1)[0] + "/postgres")
+        admin.autocommit = True
+        with admin.cursor() as cur:
+            cur.execute(f'DROP DATABASE IF EXISTS "{self.dbname}"')
+            cur.execute(f'CREATE DATABASE "{self.dbname}"')
+        admin.close()
+        self.conn = psycopg2.connect(DSN.rsplit("/", 1)[0] + "/" + self.dbname)
+        self.conn.autocommit = True
+        with self.conn.cursor() as cur:
+            cur.execute(_load_bootstrap_sql())
+        return self
+
+    def __exit__(self, *exc):
+        try:
+            if self.conn:
+                self.conn.close()
+        finally:
+            admin = psycopg2.connect(DSN.rsplit("/", 1)[0] + "/postgres")
+            admin.autocommit = True
+            with admin.cursor() as cur:
+                cur.execute(f'DROP DATABASE IF EXISTS "{self.dbname}"')
+            admin.close()
+
+    def sql(self, stmt, params=None):
+        with self.conn.cursor() as cur:
+            cur.execute(stmt, params)
+            rows = cur.fetchall() if cur.description else None
+        if rows and len(rows) == 1 and len(rows[0]) == 1:
+            return rows[0][0]
+        return rows
+
+    def expect_error(self, stmt, params=None):
+        try:
+            self.sql(stmt, params)
+        except psycopg2.Error as exc:
+            return str(exc).split("\n")[0]
+        raise AssertionError("expected the statement to fail")
+
+    def apply_v175(self):
+        with open(V175_PATH) as fh:
+            self.sql(fh.read())
+
+
+def _count_full_unique_on_name(db) -> int:
+    """The corrected invariant (bootstrap-proof run, R2 9737fc1c): a full
+    UNIQUE(name) index is UNIQUE, on (name), WITHOUT a WHERE clause. The
+    partial open-snapshot index and the PK must not count. (An earlier
+    'any standalone index' counter false-positived on both — the PR E2E
+    caught the PK form, the proof run caught the partial-index form.)
+    """
+    r = db.sql("""
+SELECT count(*) FROM pg_indexes
+WHERE schemaname = 'nebula' AND tablename = 'roles_history'
+  AND indexdef LIKE '%%UNIQUE%%'
+  AND indexdef LIKE '%% (name)%%'
+  AND indexdef NOT LIKE '%%WHERE%%'
+""")
+    return int(r)
+
+
+class V175BootstrapE2E(unittest.TestCase):
+    """Born-repaired path: the REAL ci-bootstrap must carry the V175 repair
+    from birth (the complement of V175E2E's repair path — the repair suite
+    rebuilds the pre-V175 skeleton deliberately; this class builds from the
+    actual bootstrap and asserts nothing needs repairing).
+    """
+
+    def setUp(self):
+        self.db = BootstrapDB().__enter__()
+        self.addCleanup(self.db.__exit__)
+
+    def test_bootstrap_carries_repaired_shape(self):
+        # no UNIQUE constraint and no full UNIQUE(name) index — the
+        # anti-history shape must be gone from the bootstrap, not merely
+        # repaired post-hoc
+        ucons = self.db.sql("""
+SELECT count(*) FROM pg_constraint
+WHERE conrelid = 'nebula.roles_history'::regclass AND contype = 'u'
+""")
+        self.assertEqual(ucons, 0)
+        self.assertEqual(_count_full_unique_on_name(self.db), 0)
+
+    def test_bootstrap_partial_open_index_with_house_sentinel(self):
+        idxdef = self.db.sql("""
+SELECT indexdef FROM pg_indexes
+WHERE tablename = 'roles_history' AND indexname = 'roles_name_open_key'
+""")
+        self.assertIsNotNone(idxdef)
+        self.assertIn("UNIQUE", idxdef)
+        self.assertIn("(name)", idxdef)
+        self.assertIn(SENTINEL, idxdef)  # partial on the open sentinel
+
+    def test_close_then_insert_works_from_birth(self):
+        # history accumulates from birth: close, re-open, exactly one open
+        self.db.sql("""
+INSERT INTO nebula.roles_history (name, display_name, owns_domains)
+VALUES ('bootprobe', 'Boot Probe', '{x}')
+""")
+        self.db.sql(
+            "UPDATE nebula.roles_history SET valid_until = now() WHERE name='bootprobe'")
+        self.db.sql("""
+INSERT INTO nebula.roles_history (name, display_name, owns_domains, valid_from)
+VALUES ('bootprobe', 'Boot Probe v2', '{y}', now())
+""")
+        total = self.db.sql("""
+SELECT count(*) FROM nebula.roles_history WHERE name = 'bootprobe'
+""")
+        opened = self.db.sql("""
+SELECT count(*) FROM nebula.roles_history
+WHERE name = 'bootprobe' AND valid_until >= %s
+""", (SENTINEL,))
+        self.assertEqual(total, 2)
+        self.assertEqual(opened, 1)
+        # second OPEN refused by the partial index
+        err = self.db.expect_error("""
+INSERT INTO nebula.roles_history (name, display_name)
+VALUES ('bootprobe', 'Boot Probe v3')
+""")
+        self.assertIn("roles_name_open_key", err)
+
+    def test_view_shows_exactly_open_snapshot(self):
+        self.db.sql("""
+INSERT INTO nebula.roles_history (name, display_name)
+VALUES ('bootprobe', 'Boot Probe')
+""")
+        self.db.sql(
+            "UPDATE nebula.roles_history SET valid_until = now() WHERE name='bootprobe'")
+        self.db.sql("""
+INSERT INTO nebula.roles_history (name, display_name, valid_from)
+VALUES ('bootprobe', 'Boot Probe v2', now())
+""")
+        view_rows = self.db.sql("""
+SELECT count(*) FROM nebula.roles WHERE name = 'bootprobe'
+""")
+        self.assertEqual(view_rows, 1)
+
+    def test_v175_apply_is_verified_noop(self):
+        # the migration on a born-repaired DB: exits cleanly (gate passes,
+        # nothing to repair), shape unchanged, data untouched
+        before = self.db.sql("SELECT count(*) FROM nebula.roles_history")
+        self.db.apply_v175()  # expect no exception
+        self.assertEqual(_count_full_unique_on_name(self.db), 0)
+        partial = self.db.sql("""
+SELECT count(*) FROM pg_indexes
+WHERE tablename = 'roles_history' AND indexname = 'roles_name_open_key'
+""")
+        self.assertEqual(partial, 1)
+        after = self.db.sql("SELECT count(*) FROM nebula.roles_history")
+        self.assertEqual(after, before)
+
+    def test_ci_bootstrap_file_still_ships_the_partial_index(self):
+        # meta-guard: if the bootstrap ever regresses (refresh.sh regenerating
+        # from a drifted live DB), fail HERE, loudly, at the source
+        with open(BOOTSTRAP_PATH) as fh:
+            boot = fh.read()
+        self.assertIn("roles_name_open_key", boot)
+
+    def test_psycopg2_can_execute_bootstrap(self):
+        # the load path itself: stripping only the two pg_dump meta-command
+        # lines must leave SQL psycopg2 accepts — implicitly proven by every
+        # other test in this class building BootstrapDB successfully, but
+        # pinned explicitly so a future COPY block or new meta-command fails
+        # with a clear signal rather than a confusing syntax error
+        sql = _load_bootstrap_sql()
+        self.assertNotIn("\\restrict", sql)
+        self.assertNotIn("\\unrestrict", sql)
+        self.assertNotIn("\\connect", sql)
+        self.assertNotIn("COPY ", sql)  # dump is schema-only; COPY = data
 
 
 SKELETON_SQL = f"""
