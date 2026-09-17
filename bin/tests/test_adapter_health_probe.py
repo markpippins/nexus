@@ -35,9 +35,17 @@ from unittest import mock
 _REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _PROBE = os.path.join(_REPO, "bin", "adapter-health-probe.py")
 
+import pytest
+
 _spec = importlib.util.spec_from_file_location("adapter_health_probe", _PROBE)
 probe = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(probe)
+
+# DB-dependent test classes are skipped where psycopg2 is absent (mesh CI
+# matrix without psycopg2); pure-function classes run everywhere.
+psycopg2_missing = not probe.PSYCOPG2_AVAILABLE
+_db_skip = pytest.mark.skipif(
+    psycopg2_missing, reason="psycopg2 not installed — DB-bound surfaces")
 
 
 def _ev(*results):
@@ -163,6 +171,7 @@ def _adapter(status="declared", evidence=None):
             "capability": "has-active-shrapnel-protocol"}
 
 
+@_db_skip
 class TransitionAdapterTests(unittest.TestCase):
     def test_no_transition_still_records_observation(self):
         cur = FakeCursor()
@@ -251,6 +260,7 @@ class ProviderDispatchTests(unittest.TestCase):
         self.assertEqual(detail["object_instance_rows"], 4399)
 
 
+@_db_skip
 class SubmitObservationTests(unittest.TestCase):
     def _run(self, stdin_text, fetch=None):
         class Cur:
@@ -310,6 +320,7 @@ class SubmitObservationTests(unittest.TestCase):
                 self._run(ok, fetch=_adapter("active")), 0)
 
 
+@_db_skip
 class RunResilienceTests(unittest.TestCase):
     def test_broken_run_yields_error_row_not_raise(self):
         with mock.patch.object(probe.psycopg2, "connect",

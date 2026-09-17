@@ -53,9 +53,12 @@ from datetime import datetime, timezone
 try:
     import psycopg2
     import psycopg2.extras
-except ImportError:  # pragma: no cover
-    print("adapter-health-probe: psycopg2 is required", file=sys.stderr)
-    sys.exit(1)
+    PSYCOPG2_AVAILABLE = True
+except ImportError:
+    # hermetic surfaces (mesh family) must COLLECT without psycopg2 — the
+    # flag (not a module-level exit) keeps import safe; main() refuses to
+    # run without it
+    PSYCOPG2_AVAILABLE = False
 
 # ── Configuration (env-overridable, roundtable-tunable) ─────────────────────
 PROMOTE_DEPTH = int(os.environ.get("ADAPTER_PROBE_PROMOTE_DEPTH", "2"))
@@ -302,6 +305,9 @@ def submit_observation_stream():
 
 
 def main():
+    if not PSYCOPG2_AVAILABLE:
+        print("adapter-health-probe: psycopg2 is required", file=sys.stderr)
+        return 1
     ap = argparse.ArgumentParser(description="Adapter registry health probe")
     ap.add_argument("--print", action="store_true",
                     help="print the per-adapter outcome table")
