@@ -305,3 +305,7 @@ install-hooks:
 attestation-chain-test:
 	@echo "[attestation-chain-test] running attestation-chain gate contract suite (hermetic)..."
 	@python3 -m pytest python/nexus_core/wrp/tests/test_attestation_chain.py -v
+
+lead-engineer-grant-e2e-test:
+	@echo "[lead-engineer-grant-e2e-test] Wave-3 grant E2E (greenlight authority, ratified separation; throwaway DB)..."
+	@python3 -m pytest python/nexus_core/wrp/tests/test_lead_engineer_grant_e2e.py -v
