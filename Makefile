@@ -211,7 +211,7 @@ satisfaction-states-e2e-test:
 	@python3 -m pytest python/nexus_core/wrp/tests/test_v174_satisfaction_e2e.py -v
 
 roles-history-e2e-test:
-	@echo "[roles-history-e2e-test] V175 E2E (pre-V175 shape -> repair -> grant template, throwaway DB)..."
+	@echo "[roles-history-e2e-test] V175 E2E (pre-V175 shape -> repair -> grant template; + born-repaired ci-bootstrap path, throwaway DBs)..."
 	@python3 -m pytest python/nexus_core/wrp/tests/test_v175_roles_history_e2e.py -v
 
 sonar-preflight-test:
