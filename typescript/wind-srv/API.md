@@ -5,7 +5,7 @@
 
 REST API for the wind workflow schema: offices, titles, tasks, workflow graphs, runtime instances, tickets, and receipts.
 
-**80 endpoints** — inventory generated from source route registrations (`nexus/tools/api-docs/`).
+**84 endpoints** — inventory generated from source route registrations (`nexus/tools/api-docs/`).
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -42,6 +42,10 @@ REST API for the wind workflow schema: offices, titles, tasks, workflow graphs, 
 | DELETE | `/api/nodes/:id` | Delete node |
 | GET | `/api/nodes/:id` | Get node by ID |
 | PUT | `/api/nodes/:id` | Update node |
+| GET | `/api/nodes/:id/requirements` | GET /api/nodes/{id}/requirements — per-requirement verdicts (warn-mode) |
+| GET | `/api/nodes/:id/resolve` | GET /api/nodes/{id}/resolve — the ResolvedContextBundle (refs only) |
+| GET | `/api/nodes/capability/:key/resolve` | GET /api/capabilities/{key}/resolve — resolve a bare capability demand |
+| GET | `/api/nodes/credential/:role` | GET /api/roles/{name}/credential — bitemporal credential check (V175 shape) |
 | GET | `/api/offices` | List all offices |
 | POST | `/api/offices` | Create office |
 | DELETE | `/api/offices/:id` | Delete office (cascade deletes titles, tasks, outcomes) |
@@ -98,6 +102,7 @@ python3 tools/api-docs/gen_openapi.py --inventory /tmp/api_inventory.json   # (v
 ```
 
 <!-- API-SPEC-BEGIN -->
+
 
 
 

@@ -16,6 +16,7 @@ import { eventsRouter } from './events.js';
 import { eventTypesRouter } from './event-types.js';
 import { executionRouter } from './execution.js';
 import { providerContractsRouter } from './provider-contracts.js';
+import { nodeRequirementsRouter } from './node-requirements.js';
 
 export const routes = Router();
 
@@ -35,4 +36,5 @@ routes.use('/v-roles', vRolesRouter);
 routes.use('/events', eventsRouter);
 routes.use('/event-types', eventTypesRouter);
 routes.use('/execution-requests', executionRouter);
+routes.use('/nodes', nodeRequirementsRouter); // #314 resolver surface (warn-mode; /:id/requirements, /:id/resolve, capability/credential helpers)
 routes.use('/provider-contracts', providerContractsRouter);
