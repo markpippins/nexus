@@ -218,6 +218,10 @@ wave1-grants-e2e-test:
 	@echo "[wave1-grants-e2e-test] Wave-1 clone grants E2E (pinned baseline gate + analyst-ii/engineer-ii grant events, throwaway DB)..."
 	@python3 -m pytest python/nexus_core/wrp/tests/test_wave1_grants_e2e.py -v
 
+wave2-grants-e2e-test:
+	@echo "[wave2-grants-e2e-test] Wave-2 grants E2E (six ratified grant events: critic, epistemologist, devops, sysadmin, operator, sound-technician, throwaway DB)..."
+	@python3 -m pytest python/nexus_core/wrp/tests/test_wave2_grants_e2e.py -v
+
 tester-grant-e2e-test:
 	@echo "[tester-grant-e2e-test] tester capability grant v0.1 E2E (grant event on V175 shape, throwaway DB)..."
 	@python3 -m pytest python/nexus_core/wrp/tests/test_tester_grant_e2e.py -v
