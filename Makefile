@@ -206,6 +206,10 @@ adapter-probe-test:
 	@echo "[adapter-probe-test] running adapter health probe hermetic suite..."
 	@python3 -m pytest bin/tests/test_adapter_health_probe.py -v
 
+satisfaction-states-e2e-test:
+	@echo "[satisfaction-states-e2e-test] V174 E2E (real V172+V173+V174, throwaway DB)..."
+	@python3 -m pytest python/nexus_core/wrp/tests/test_v174_satisfaction_e2e.py -v
+
 sonar-preflight-test:
 	@echo "[sonar-preflight-test] running sonar pre-flight gate tests..."
 	@python3 -m pytest bin/tests/test_sonar_preflight.py -v

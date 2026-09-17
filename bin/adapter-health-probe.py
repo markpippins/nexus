@@ -11,7 +11,7 @@ applies the transition law — so `active` means "recently observed", not
 Transition law (design 2f6fc70d; all V172-vocabulary statuses):
   declared -> active    on ADAPTER_PROBE_PROMOTE_DEPTH (default 2) consecutive
                         PASS observations (promote on evidence, not optimism)
-  active   -> degraded  on the first FAIL
+  active   -> degraded  on the first FAIL / UNREACHABLE / REFUSED
   degraded -> active    on the first PASS (recovery easier than promotion)
   retired / declared-handling: retirement is NEVER automatic (operator
               judgment, not health); declared adapters are probed too but only
@@ -37,9 +37,9 @@ failures; exit 1 on config/usage errors. --print emits the outcome table.
 Usage:
     python3 bin/adapter-health-probe.py              # probe all live adapters
     python3 bin/adapter-health-probe.py --print      # + outcome table
-    python3 bin/adapter-health-probe.py --submit-observation  # stdin JSON:
-        {"source": "...", "capability": "has-active-shrapnel-protocol",
-         "provider": "postgresql", "outcome": "PASS|FAIL|SKIP",
+    python3 bin/adapter-health-probe.py --submit-observation  # stdin JSON:         {"source": "...", "capability": "has-active-shrapnel-protocol",
+         "provider": "postgresql",
+         "outcome": "PASS|FAIL|SKIP|UNREACHABLE|REFUSED",
          "detail": {...}, "synthetic": false}        # one law for all evidence
 """
 from __future__ import annotations
@@ -69,6 +69,15 @@ DSN = os.environ.get(
 
 PROVIDER_CHECKS = {}  # provider -> fn(conn, capability_name) -> (outcome, detail)
 
+# V174 outcome vocabulary. Health axis (adapter status): PASS promotes /
+# holds; FAIL, UNREACHABLE (connect-level measurement failure) and REFUSED
+# (reachable, explicitly declines) all degrade active health. Capability
+# epistemics (view verdicts): only PASS can satisfy; UNREACHABLE verdicts
+# 'unreachable' (claim survives UNVERIFIED, not refuted), REFUSED verdicts
+# 'refused', FAIL verdicts 'unsatisfied', SKIP is never a measurement
+# ('unknown'). UNREACHABLE DATA MUST NOT BE ATTESTED AS ABSENT.
+OUTCOME_VOCABULARY = ("PASS", "FAIL", "SKIP", "UNREACHABLE", "REFUSED")
+
 
 def provider_check(name):
     """Register a provider health-check under the dispatch table."""
@@ -96,6 +105,14 @@ def check_postgresql(conn, capability_name, endpoint):
             return ("PASS", {"check": "connect+inventory",
                              "object_instance_rows": count})
     except Exception as exc:  # noqa: BLE001 — failures are data, not crashes
+        # V174: connect-level failure vs query failure are different facts.
+        # A refused/timed-out connect means we never MEASURED — 'unreachable'
+        # — while a query failure means we measured and it broke — 'FAIL'.
+        text = str(exc).lower()
+        if "connect" in text or "connection" in text or "could not" in text \
+                or "timeout" in text or "timed out" in text or "refused" in text:
+            return ("UNREACHABLE",
+                    {"check": "connect", "error": str(exc)[:300]})
         return ("FAIL", {"check": "connect+inventory", "error": str(exc)[:300]})
 
 
@@ -139,6 +156,12 @@ def check_mysql(conn, capability_name, endpoint):
                              "surface": surface,
                              "approx_rows": row[0]})
     except Exception as exc:  # noqa: BLE001 — failures are data
+        # V174: same connect-level split as the postgresql check
+        text = str(exc).lower()
+        if "connect" in text or "connection" in text or "could not" in text \
+                or "timeout" in text or "timed out" in text or "refused" in text:
+            return ("UNREACHABLE",
+                    {"check": "mysql-connect", "error": str(exc)[:300]})
         return ("FAIL", {"check": "mysql-connect", "error": str(exc)[:300]})
 
 
@@ -236,13 +259,16 @@ def _consecutive_passes(evidence):
     return n
 
 
+DEGRADES_ACTIVE = frozenset(("FAIL", "UNREACHABLE", "REFUSED"))
+
+
 def apply_transition_law(status, outcome, evidence):
     """Pure transition-law function: (from_status, outcome, history) ->
     to_status | None. Same law for probe runs and --submit-observation."""
     if status == "retired":
         return None  # retirement is never automatic, retirement is never exited by health
     if status == "active":
-        return "degraded" if outcome == "FAIL" else None
+        return "degraded" if outcome in DEGRADES_ACTIVE else None
     if status == "degraded":
         return "active" if outcome == "PASS" else None
     if status == "declared":
@@ -327,7 +353,16 @@ def run_probe(print_table=False):
                         outcome, detail = check(conn, ad["capability"],
                                                 ad.get("provider_endpoint") or {})
                     except Exception as exc:  # noqa: BLE001
-                        outcome, detail = "FAIL", {"error": str(exc)[:300]}
+                        # V174: a check that explodes on a connect-level
+                        # failure is UNREACHABLE (never measured), not FAIL
+                        _t = str(exc).lower()
+                        outcome, detail = (
+                            ("UNREACHABLE", {"check": "dispatch",
+                                             "error": str(exc)[:300]})
+                            if ("connect" in _t or "connection" in _t
+                                or "could not" in _t or "timeout" in _t
+                                or "timed out" in _t or "refused" in _t)
+                            else ("FAIL", {"error": str(exc)[:300]}))
 
                 kind, msg = transition_adapter(
                     cur, ad, outcome, detail, lease_id, probe_mode)
@@ -364,8 +399,9 @@ def submit_observation_stream():
         outcome = str(obs_in.get("outcome", "")).upper()
         detail = obs_in.get("detail") or {}
         synthetic = bool(obs_in.get("synthetic", False))
-        if outcome not in ("PASS", "FAIL", "SKIP"):
-            raise ValueError("outcome must be PASS|FAIL|SKIP")
+        if outcome not in OUTCOME_VOCABULARY:
+            raise ValueError(
+                "outcome must be " + "|".join(OUTCOME_VOCABULARY))
     except Exception as exc:  # noqa: BLE001
         print(f"submit-observation: invalid input: {exc}", file=sys.stderr)
         return 1
