@@ -258,16 +258,16 @@ class TransitionAdapterTests(unittest.TestCase):
 
 class ProviderDispatchTests(unittest.TestCase):
     def test_unknown_provider_skips(self):
-        results = probe.run_probe.__wrapped__() if hasattr(
-            probe.run_probe, "__wrapped__") else None
-        # direct dispatch-table check instead:
-        self.assertNotIn("mysql", probe.PROVIDER_CHECKS)
+        # an unregistered provider (e.g. 'convex') must not be in the table
+        self.assertNotIn("convex", probe.PROVIDER_CHECKS)
+        self.assertIn("mysql", probe.PROVIDER_CHECKS)
+        self.assertIn("postgresql", probe.PROVIDER_CHECKS)
 
     def test_postgresql_check_fails_safe(self):
         class Boom:
             def cursor(self):
                 raise RuntimeError("no connection for you")
-        outcome, detail = probe.check_postgresql(Boom(), "cap")
+        outcome, detail = probe.check_postgresql(Boom(), "cap", {})
         self.assertEqual(outcome, "FAIL")
         self.assertIn("error", detail)
 
@@ -286,7 +286,7 @@ class ProviderDispatchTests(unittest.TestCase):
         class Conn:
             def cursor(self):
                 return Cur()
-        outcome, detail = probe.check_postgresql(Conn(), "cap")
+        outcome, detail = probe.check_postgresql(Conn(), "cap", {})
         self.assertEqual(outcome, "PASS")
         self.assertEqual(detail["object_instance_rows"], 4399)
 
@@ -352,6 +352,113 @@ class SubmitObservationTests(unittest.TestCase):
 
 
 @_db_skip
+class MysqlCheckTests(unittest.TestCase):
+    """Every branch of check_mysql — SKIPs are data, not failures."""
+
+    def _with_env(self, **kv):
+        return mock.patch.dict(probe.os.environ, kv, clear=False)
+
+    def test_no_dsn_skips_with_reason(self):
+        with self._with_env(ADAPTER_PROBE_MYSQL_DSN=""):
+            outcome, detail = probe.check_mysql(None, "cap", {})
+        self.assertEqual(outcome, "SKIP")
+        self.assertIn("ADAPTER_PROBE_MYSQL_DSN not configured", detail["reason"])
+
+    def test_no_driver_skips_with_reason(self):
+        with self._with_env(ADAPTER_PROBE_MYSQL_DSN="mysql://u:p@h:3306/db"), \
+             mock.patch.object(probe, "_import_driver", return_value=(None,
+                                    ImportError("no driver anywhere"))):
+            outcome, detail = probe.check_mysql(None, "cap", {})
+        self.assertEqual(outcome, "SKIP")
+        self.assertIn("no mysql driver", detail["reason"])
+
+    def test_connect_failure_is_fail(self):
+        class CM:
+            def __enter__(self):
+                raise RuntimeError("can't reach host")
+            def __exit__(self, *a):
+                return False
+        with self._with_env(ADAPTER_PROBE_MYSQL_DSN="mysql://u:p@h:3306/db"), \
+             mock.patch.object(probe, "_mysql_connection", return_value=CM()):
+            outcome, detail = probe.check_mysql(None, "cap", {})
+        self.assertEqual(outcome, "FAIL")
+        self.assertIn("can't reach host", detail["error"])
+
+    def test_pass_without_surface(self):
+        class Cur:
+            connection = mock.Mock()
+            def execute(self, stmt, params=None):
+                pass
+            def fetchone(self):
+                return (1,)
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+        class CM:
+            def __enter__(self):
+                return Cur()
+            def __exit__(self, *a):
+                return False
+        with self._with_env(ADAPTER_PROBE_MYSQL_DSN="mysql://u:p@h:3306/db"), \
+             mock.patch.object(probe, "_mysql_connection", return_value=CM()):
+            outcome, detail = probe.check_mysql(None, "cap", {})
+        self.assertEqual(outcome, "PASS")
+        self.assertEqual(detail["check"], "mysql-connect")
+
+    def test_pass_with_surface_rowcount(self):
+        class Cur:
+            connection = mock.Mock()
+            def __init__(self):
+                self.calls = 0
+            def execute(self, stmt, params=None):
+                self.calls += 1
+            def fetchone(self):
+                return (1234,)
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+        class CM:
+            def __enter__(self):
+                return Cur()
+            def __exit__(self, *a):
+                return False
+        with self._with_env(ADAPTER_PROBE_MYSQL_DSN="mysql://u:p@h:3306/db",
+                            ADAPTER_PROBE_MYSQL_SURFACE="shrapnel.object_instance"), \
+             mock.patch.object(probe, "_mysql_connection", return_value=CM()):
+            outcome, detail = probe.check_mysql(None, "cap", {})
+        self.assertEqual(outcome, "PASS")
+        self.assertEqual(detail["approx_rows"], 1234)
+
+    def test_absent_surface_is_fail(self):
+        class Cur:
+            connection = mock.Mock()
+            def execute(self, stmt, params=None):
+                pass
+            def fetchone(self):
+                return None
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+        class CM:
+            def __enter__(self):
+                return Cur()
+            def __exit__(self, *a):
+                return False
+        with self._with_env(ADAPTER_PROBE_MYSQL_DSN="mysql://u:p@h:3306/db",
+                            ADAPTER_PROBE_MYSQL_SURFACE="shrapnel.object_instance"), \
+             mock.patch.object(probe, "_mysql_connection", return_value=CM()):
+            outcome, detail = probe.check_mysql(None, "cap", {})
+        self.assertEqual(outcome, "FAIL")
+        self.assertIn("absent", detail["error"])
+
+    def test_dispatch_table_has_mysql(self):
+        self.assertIn("mysql", probe.PROVIDER_CHECKS)
+        self.assertIn("postgresql", probe.PROVIDER_CHECKS)
+
+
 class RunResilienceTests(unittest.TestCase):
     def test_broken_run_yields_error_row_not_raise(self):
         with mock.patch.object(probe.psycopg2, "connect",
