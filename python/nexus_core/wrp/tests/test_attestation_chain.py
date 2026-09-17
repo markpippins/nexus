@@ -136,29 +136,54 @@ class TestRunChain(unittest.TestCase):
 
 
 class TestLiveResolverDiscipline(unittest.TestCase):
-    def test_unreachable_db_raises_not_absent(self):
-        """A failed DB connection must raise — never attest absence."""
-        import os
-        old = os.environ.get("CONDUIT_PG_DSN")
-        os.environ["CONDUIT_PG_DSN"] = (
-            "postgresql://pguser:pgpass@127.0.0.1:1/nexus")  # nothing listens
-        try:
-            resolve = make_live_resolver()
-            with self.assertRaises(Exception) as ctx:
-                resolve("tester")
-            self.assertNotIsInstance(ctx.exception, KeyError)
-        finally:
-            if old is None:
-                os.environ.pop("CONDUIT_PG_DSN", None)
-            else:
-                os.environ["CONDUIT_PG_DSN"] = old
+    """The live resolver's discipline, proven without a driver or a DB:
+    the connection factory is injected, so row-mapping, missing-role-
+    is-absence, and failure-raises are pinned hermetically. (The real
+    psycopg2 path is exercised by the live --report demonstration.)"""
+
+    @staticmethod
+    def _fake_connect(rows_by_role, fail=False):
+        class _Cur:
+            def execute(self, sql, params):
+                self.row = rows_by_role.get(params[0])
+            def __enter__(self):
+                return self
+            def __exit__(self, *exc):
+                return False
+            def fetchone(self):
+                return self.row
+        class _Conn:
+            def cursor(self):
+                return _Cur()
+            def close(self):
+                pass
+        def connect(dsn):
+            if fail:
+                raise RuntimeError("connection refused (fake)")
+            return _Conn()
+        return connect
 
     def test_missing_role_is_absent_not_error(self):
         """After a successful connect, an unknown role is a capability
         absence — resolver returns falsy caps, does not raise."""
-        resolve = make_live_resolver()
+        resolve = make_live_resolver(connect=self._fake_connect({}))
         caps = resolve("role-that-does-not-exist-zzz")
         self.assertFalse(caps.get("can_verify_work_requests"))
+        self.assertFalse(caps.get("can_greenlight"))
+
+    def test_present_role_maps_booleans(self):
+        resolve = make_live_resolver(
+            connect=self._fake_connect({"tester": (True, False)}))
+        caps = resolve("tester")
+        self.assertTrue(caps["can_verify_work_requests"])
+        self.assertFalse(caps["can_greenlight"])
+
+    def test_unreachable_db_raises_not_absent(self):
+        """A failed connection must raise — never attest absence."""
+        resolve = make_live_resolver(
+            connect=self._fake_connect({}, fail=True))
+        with self.assertRaises(RuntimeError):
+            resolve("tester")
 
 
 if __name__ == "__main__":

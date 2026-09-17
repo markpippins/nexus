@@ -133,19 +133,26 @@ def gate_greenlight_citation(g: Greenlight, request: VerificationRequest,
 # ── Live capability probe (injectable; default hits nebula.roles) ──────────
 
 
-def make_live_resolver(dsn_env: str = "CONDUIT_PG_DSN"):
+def make_live_resolver(dsn_env: str = "CONDUIT_PG_DSN", connect=None):
     """Return a resolve_capabilities(role) backed by the LIVE nebula.roles
     view (open bitemporal snapshot). Raises a clear error if unreachable —
     an unreachable database must NOT be attested as absent (the auditor
-    epistemic rule)."""
+    epistemic rule).
+
+    `connect` is an injectable connection factory (dsn -> connection with a
+    context-manager cursor), so the resolver's discipline — row-mapping,
+    missing-role-is-absence, failure-raises — is testable hermetically.
+    The default connects via psycopg2 (deferred import: only the live probe
+    pays for the driver)."""
+    if connect is None:
+        def connect(dsn):
+            import psycopg2  # noqa: deferred — only the live probe imports it
+            return psycopg2.connect(dsn)
+
     def resolve_capabilities(role: str) -> dict:
-        try:
-            import psycopg2  # noqa: deferred — hermetic tests never import it
-        except ImportError as exc:  # pragma: no cover
-            raise RuntimeError("psycopg2 required for the live probe") from exc
         dsn = os.environ.get(dsn_env,
                              "postgresql://pguser:pgpass@localhost:5432/nexus")
-        conn = psycopg2.connect(dsn)
+        conn = connect(dsn)
         try:
             with conn.cursor() as cur:
                 cur.execute(
