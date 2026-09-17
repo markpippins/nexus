@@ -1,0 +1,38 @@
+name: WR Conf 031 — Attestation-Chain Gate Contract (lead-engineer Wave 3)
+
+# Hermetic suite for bin/attestation-chain-demo.py — no database, no
+# network. Pins the gate contract the Wave-3 lead-engineer thread cites
+# for the greenlight grant ratification (architect decision c141dd7a:
+# "greenlight requires the attested-verification chain demonstrated"):
+#
+#   G1 self-attestation refused (authoring role cannot attest)
+#   G2 evidence-free attestation refused
+#   G3 attester must hold can_verify_work_requests
+#   G4 greenlight grant refuses to exceed chain evidence
+#   plus chain assembly, tamper detection, and report fidelity.
+#
+# Pure unit suite — no postgres service needed.
+
+on:
+  push:
+    branches: [main, master, feature/*, dev]
+  pull_request:
+    branches: [main, master, feature/*]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  attestation-chain:
+    name: "wr-conf-031: attestation-chain gate contract (hermetic)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run wr-conf-031 suite
+        run: |
+          python3 -m pytest python/nexus_core/wrp/tests/test_attestation_chain.py -v
