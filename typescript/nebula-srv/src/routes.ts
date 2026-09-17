@@ -1848,9 +1848,7 @@ export function createRoutes(pool: Pool): Router {
         .replace(/\s+/g, '-')
         .slice(0, 50) || 'plan'; // fallback for all-symbol titles
 
-      // Build metadata (promptRef stored in jsonb per upsertPlan convention)
-      const metadata: Record<string, any> = {};
-      if (promptRef) metadata.prompt_ref = promptRef;
+      // promptRef is folded into the blueprint payload (V171) alongside goal/content/etc.
 
       const now = new Date().toISOString();
 
@@ -1870,17 +1868,25 @@ export function createRoutes(pool: Pool): Router {
           const nextId = String((maxRow?.max_id || 0) + 1).padStart(4, '0');
           const fileName = `${slug}-v${nextId}.md`;
 
+          const blueprintPayload = {
+            goal,
+            content: "",
+            files_affected: filesAffected,
+            acceptance_criteria: acceptanceCriteria,
+            dependencies,
+            tags: [],
+            spec_ref: null,
+            requirement_ref: null,
+            project,
+            ...(promptRef ? { prompt_ref: promptRef } : {}),
+          };
+
           const { rows: [plan] } = await pool.query(
-            `INSERT INTO nebula.implementation_plans
-             (plan_number, title, goal, content, files_affected, acceptance_criteria, dependencies, status, metadata, created_at, updated_at)
-             VALUES ($1, $2, $3, '', $4::text[], $5::jsonb, $6::text[], 'pending', $7::jsonb, $8, $8)
-             RETURNING *`,
-            [nextId, title, goal,
-             filesAffected,  // text[] — pass array directly (pg auto-casts)
-             JSON.stringify(acceptanceCriteria),  // jsonb
-             dependencies,  // text[]
-             JSON.stringify(metadata),  // jsonb
-             now]
+            `INSERT INTO nebula.blueprints_history
+             (plan_number, title, payload, blueprint_status, created_at, updated_at)
+             VALUES ($1, $2, $3::jsonb, 'pending', $4, $4)
+             RETURNING plan_number, title, payload, blueprint_status AS status`,
+            [nextId, title, JSON.stringify(blueprintPayload), now]
           );
 
           return res.status(201).json({
@@ -1888,7 +1894,7 @@ export function createRoutes(pool: Pool): Router {
             planNumber: plan.plan_number,
             fileName,
             title: plan.title,
-            goal: plan.goal,
+            goal: plan.payload?.goal ?? goal,
             status: plan.status,
             timestamp: now,
           });

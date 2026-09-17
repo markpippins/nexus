@@ -3012,9 +3012,21 @@ async function runMigrations(
 }
 
 // ── Plan CRUD ──────────────────────────────────────────────────────
-// All write operations go directly to nebula.implementation_plans.
-// Read operations go through the compat view nebula.plans (which maps
-// implementation_plans to the old PlanRow shape for backward compat).
+// All write operations go directly to nebula.blueprints_history (canonical
+// blueprint surface, V171). Read operations go through the compat views
+// nebula.plans / nebula.plan_status (over blueprints_history), which map
+// blueprint rows to the legacy PlanRow shape for backward compat.
+//
+// WRITE MAPPING (blueprints_history columns):
+//   title            -> title
+//   status           -> blueprint_status   (draft/pending/approved/work_requested/completed/archived)
+//   plan_number      -> plan_number        (the 431-receipt key — carried verbatim, never renumbered)
+//   goal/content/    -> payload JSONB:
+//     files_affected/    goal, content, files_affected[], acceptance_criteria[],
+//     acceptance_criteria dependencies[], tags[], spec_ref, requirement_ref, project
+//     dependencies/      (+ prompt_ref/notes/priority folded into payload for fidelity)
+//     prompt_ref/notes
+//     priority/project
 
 export interface PlanRow {
   id: string;
@@ -3063,52 +3075,52 @@ export async function upsertPlan(plan: UpsertPlanInput): Promise<void> {
   const filesAffected = parseTextArray(plan.files_affected);
   const deps = parseTextArray(plan.dependencies);
 
-  // Build metadata from fields that don't have dedicated columns
-  const metaParts: string[] = [];
-  if (plan.prompt_ref) metaParts.push(`"prompt_ref":${JSON.stringify(plan.prompt_ref)}`);
-  if (plan.notes) metaParts.push(`"notes":${JSON.stringify(plan.notes)}`);
-  if (plan.priority) metaParts.push(`"priority":${plan.priority}`);
-  if (plan.project) metaParts.push(`"project":${JSON.stringify(plan.project)}`);
-  const metadata = `{${metaParts.join(",")}}`;
+  // Fold flat fields into the blueprint payload JSONB (V171). The compat
+  // view nebula.implementation_plans reads these exact keys:
+  //   goal, content, files_affected[], acceptance_criteria[], dependencies[],
+  //   tags[], spec_ref, requirement_ref, project
+  // prompt_ref/notes/priority ride along for fidelity (not surfaced by the view).
+  const payload = {
+    goal: plan.goal ?? "",
+    content: plan.content ?? "",
+    files_affected: filesAffected,
+    acceptance_criteria: parseTextArray(plan.acceptance_criteria),
+    dependencies: deps,
+    tags: [],
+    spec_ref: null,
+    requirement_ref: null,
+    project: plan.project ?? null,
+    ...(plan.prompt_ref ? { prompt_ref: plan.prompt_ref } : {}),
+    ...(plan.notes ? { notes: plan.notes } : {}),
+    ...(plan.priority ? { priority: plan.priority } : {}),
+  };
 
-  // Map deleted flag → status
-  const status = plan.deleted === 1 ? "archived" : "pending";
+  // Map deleted flag → blueprint_status (both values valid in the CHECK)
+  const blueprintStatus = plan.deleted === 1 ? "archived" : "pending";
 
   // Generate a deterministic-looking plan_number if caller didn't provide one
-  // (the old upsert used `id` which was already the plan number)
+  // (the old upsert used `id` which was already the plan number). plan_number
+  // is the 431-receipt key: carried verbatim, never renumbered, never regenerated.
   const effectivePlanNumber = planNumber || plan.title?.slice(0, 8).toUpperCase() || uuid.slice(0, 8);
 
   await qRun(
-    `INSERT INTO nebula.implementation_plans
-       (id, plan_number, title, goal, content,
-        files_affected, acceptance_criteria, dependencies,
-        status, metadata, created_at, updated_at)
+    `INSERT INTO nebula.blueprints_history
+       (id, plan_number, title, payload, blueprint_status, created_at, updated_at)
      VALUES
-       (@uuid::uuid, @planNumber, @title, @goal, @content,
-        @filesAffected::text[], @acceptanceCriteria::jsonb, @dependencies::text[],
-        @status, @metadata::jsonb, @createdAt::timestamptz, @updatedAt::timestamptz)
-     ON CONFLICT (plan_number) WHERE plan_number IS NOT NULL DO UPDATE SET
-       title        = EXCLUDED.title,
-       goal         = EXCLUDED.goal,
-       content      = EXCLUDED.content,
-       files_affected  = EXCLUDED.files_affected,
-       acceptance_criteria = EXCLUDED.acceptance_criteria,
-       dependencies  = EXCLUDED.dependencies,
-       metadata     = implementation_plans.metadata || EXCLUDED.metadata,
-       status       = CASE WHEN EXCLUDED.status = 'archived' THEN 'archived'
-                           ELSE implementation_plans.status END,
-       updated_at   = EXCLUDED.updated_at`,
+       (@uuid::uuid, @planNumber, @title, @payload::jsonb, @blueprintStatus,
+        @createdAt::timestamptz, @updatedAt::timestamptz)
+     ON CONFLICT (plan_number) DO UPDATE SET
+       title           = EXCLUDED.title,
+       payload         = blueprints_history.payload || EXCLUDED.payload,
+       blueprint_status = CASE WHEN EXCLUDED.blueprint_status = 'archived' THEN 'archived'
+                               ELSE blueprints_history.blueprint_status END,
+       updated_at      = EXCLUDED.updated_at`,
     {
       uuid,
       planNumber: effectivePlanNumber,
       title: plan.title ?? "",
-      goal: plan.goal ?? "",
-      content: plan.content ?? "",
-      filesAffected,
-      acceptanceCriteria: plan.acceptance_criteria || "[]",
-      dependencies: deps,
-      status,
-      metadata,
+      payload: JSON.stringify(payload),
+      blueprintStatus,
       createdAt: plan.created_at || new Date().toISOString(),
       updatedAt: plan.updated_at || new Date().toISOString(),
     },
@@ -3151,9 +3163,9 @@ export async function getPlanById(id: string): Promise<PlanRow | undefined> {
 
 export async function softDeletePlan(planId: string): Promise<boolean> {
   const changes = await qRun(
-    `UPDATE nebula.implementation_plans
-        SET status = 'archived', updated_at = @now::timestamptz
-      WHERE plan_number = @planId AND status != 'archived'`,
+    `UPDATE nebula.blueprints_history
+        SET blueprint_status = 'archived', updated_at = @now::timestamptz
+      WHERE plan_number = @planId AND blueprint_status != 'archived'`,
     { planId, now: new Date().toISOString() },
   );
   return changes > 0;
@@ -3161,9 +3173,9 @@ export async function softDeletePlan(planId: string): Promise<boolean> {
 
 export async function undeletePlan(planId: string): Promise<boolean> {
   const changes = await qRun(
-    `UPDATE nebula.implementation_plans
-        SET status = 'pending', updated_at = @now::timestamptz
-      WHERE plan_number = @planId AND status = 'archived'`,
+    `UPDATE nebula.blueprints_history
+        SET blueprint_status = 'pending', updated_at = @now::timestamptz
+      WHERE plan_number = @planId AND blueprint_status = 'archived'`,
     { planId, now: new Date().toISOString() },
   );
   return changes > 0;
@@ -3185,7 +3197,7 @@ export async function hardDeletePlan(planId: string): Promise<{
     );
     const changes = await tRun(
       client,
-      "UPDATE nebula.implementation_plans SET valid_until = now() WHERE plan_number = @planId AND valid_until > now()",
+      "UPDATE nebula.blueprints_history SET valid_until = now() WHERE plan_number = @planId AND valid_until > now()",
       { planId },
     );
     return {
