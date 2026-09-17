@@ -1,7 +1,15 @@
 package org.nexus.core.broker.execution;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.sql.Array;
+import java.sql.SQLException;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.postgresql.util.PGobject;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -17,10 +25,66 @@ import org.springframework.stereotype.Service;
 @Service
 public class ExecutionReadService {
 
+    private static final ObjectMapper MAPPER = new ObjectMapper().findAndRegisterModules();
+
     private final JdbcTemplate jdbc;
 
     public ExecutionReadService(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
+    }
+
+    private static Object sanitizeValue(Object v) {
+        if (v == null) return null;
+        // text[] / _text / any ARRAY -> List
+        if (v instanceof Array arr) {
+            try {
+                Object raw = arr.getArray();
+                if (raw instanceof Object[] objArr) {
+                    return Arrays.stream(objArr).map(ExecutionReadService::sanitizeValue).toList();
+                }
+                if (raw != null && raw.getClass().isArray()) {
+                    // primitive arrays not expected for text[], but handle generically
+                    int len = java.lang.reflect.Array.getLength(raw);
+                    var out = new java.util.ArrayList<>(len);
+                    for (int i = 0; i < len; i++) out.add(sanitizeValue(java.lang.reflect.Array.get(raw, i)));
+                    return out;
+                }
+                return raw;
+            } catch (SQLException e) {
+                return v.toString();
+            }
+        }
+        if (v instanceof PGobject pg) {
+            String type = pg.getType();
+            String val = pg.getValue();
+            if (val == null) return null;
+            if ("json".equals(type) || "jsonb".equals(type)) {
+                try {
+                    JsonNode node = MAPPER.readTree(val);
+                    return node;
+                } catch (JsonProcessingException e) {
+                    return val;
+                }
+            }
+            if ("uuid".equals(type)) {
+                try { return java.util.UUID.fromString(val); } catch (Exception ignore) { return val; }
+            }
+            // hstore, citext, etc — return raw string value
+            return val;
+        }
+        // org.postgresql.jdbc.PgArray is already covered via java.sql.Array, but keep as fallback
+        // Fallback: if Jackson would choke on PgArray internals, toString above would have caught it.
+        return v;
+    }
+
+    private static Map<String, Object> sanitizeRow(Map<String, Object> row) {
+        var out = new LinkedHashMap<String, Object>(row.size());
+        for (var e : row.entrySet()) out.put(e.getKey(), sanitizeValue(e.getValue()));
+        return out;
+    }
+
+    private static List<Map<String, Object>> sanitizeRows(List<Map<String, Object>> rows) {
+        return rows.stream().map(ExecutionReadService::sanitizeRow).toList();
     }
 
     /** Paginated read over a table with optional status filter + ILIKE search. */
@@ -52,8 +116,12 @@ public class ExecutionReadService {
             }
             where.append(")");
         }
+        String orderCol = switch (table) {
+            case "receipts" -> "issued_at";
+            default -> "created_at";
+        };
         String sql = "SELECT *, COUNT(*) OVER() AS full_count FROM " + table + " " + where
-            + " ORDER BY created_at DESC LIMIT ? OFFSET ?";
+            + " ORDER BY " + orderCol + " DESC LIMIT ? OFFSET ?";
         args.add(limit);
         args.add(offset);
         List<Map<String, Object>> rows = jdbc.queryForList(sql, args.toArray());
@@ -62,55 +130,60 @@ public class ExecutionReadService {
         List<Map<String, Object>> items = rows.stream().map(r -> {
             Map<String, Object> copy = new java.util.LinkedHashMap<>(r);
             copy.remove("full_count");
-            return copy;
+            return sanitizeRow(copy);
         }).toList();
         return Map.of("total", total, "limit", limit, "offset", offset, "items", items);
     }
 
     public Map<String, Object> requestState(String id) {
-        Map<String, Object> request = jdbc.queryForMap("SELECT * FROM requests WHERE id = ?", id);
+        Map<String, Object> request = sanitizeRow(jdbc.queryForMap("SELECT * FROM requests WHERE id = ?::uuid", id));
         Map<String, Object> lease;
         try {
-            lease = jdbc.queryForMap(
-                "SELECT * FROM leases WHERE request_id = ? ORDER BY (status = 'ACTIVE') DESC, acquired_at DESC LIMIT 1", id);
+            lease = sanitizeRow(jdbc.queryForMap(
+                "SELECT * FROM leases WHERE request_id = ?::uuid ORDER BY (status = 'ACTIVE') DESC, acquired_at DESC LIMIT 1", id));
         } catch (org.springframework.dao.EmptyResultDataAccessException e) {
             lease = null;
         }
         Map<String, Object> attempt;
         try {
-            attempt = jdbc.queryForMap(
-                "SELECT * FROM attempts WHERE request_id = ? ORDER BY created_at DESC, started_at DESC NULLS LAST LIMIT 1", id);
+            attempt = sanitizeRow(jdbc.queryForMap(
+                "SELECT * FROM attempts WHERE request_id = ?::uuid ORDER BY created_at DESC, started_at DESC NULLS LAST LIMIT 1", id));
         } catch (org.springframework.dao.EmptyResultDataAccessException e) {
             attempt = null;
         }
-        List<Map<String, Object>> receipts = jdbc.queryForList(
-            "SELECT * FROM receipts WHERE request_id = ? ORDER BY issued_at ASC", id);
-        return Map.of(
-            "request", request, "current_lease", lease, "latest_attempt", attempt,
-            "receipts", receipts, "receipt_count", receipts.size());
+        List<Map<String, Object>> receipts = sanitizeRows(jdbc.queryForList(
+            "SELECT * FROM receipts WHERE request_id = ?::uuid ORDER BY issued_at ASC", id));
+        // Map.of rejects null values — build nullable map manually
+        var out = new LinkedHashMap<String, Object>();
+        out.put("request", request);
+        out.put("current_lease", lease);
+        out.put("latest_attempt", attempt);
+        out.put("receipts", receipts);
+        out.put("receipt_count", receipts.size());
+        return out;
     }
 
     public Map<String, Object> staleLeases() {
-        List<Map<String, Object>> rows = jdbc.queryForList(
+        List<Map<String, Object>> rows = sanitizeRows(jdbc.queryForList(
             "SELECT l.id AS lease_id, l.request_id, l.executor_id, l.ttl_seconds, l.acquired_at,"
             + " l.expires_at, l.created_at, r.business_key, r.title, r.status AS request_status,"
             + " EXTRACT(EPOCH FROM (NOW() - l.expires_at))::int AS overdue_seconds"
             + " FROM leases l JOIN requests r ON r.id = l.request_id"
-            + " WHERE l.status = 'ACTIVE' AND l.expires_at < NOW() ORDER BY l.expires_at ASC");
+            + " WHERE l.status = 'ACTIVE' AND l.expires_at < NOW() ORDER BY l.expires_at ASC"));
         return Map.of("count", rows.size(), "stale_leases", rows);
     }
 
     public Map<String, Object> leaseLifecycle(String id) {
         Map<String, Object> row;
         try {
-            row = jdbc.queryForMap(
+            row = sanitizeRow(jdbc.queryForMap(
                 "SELECT *, EXTRACT(EPOCH FROM (expires_at - acquired_at))::int AS promised_ttl_seconds,"
                 + " EXTRACT(EPOCH FROM (COALESCE(released_at, NOW()) - acquired_at))::int AS actual_held_seconds,"
                 + " CASE WHEN status = 'RELEASED' AND released_at > expires_at THEN EXTRACT(EPOCH FROM (released_at - expires_at))::int"
                 + " WHEN status = 'ACTIVE' AND NOW() > expires_at THEN EXTRACT(EPOCH FROM (NOW() - expires_at))::int ELSE 0 END AS overdue_seconds,"
                 + " CASE WHEN status = 'RELEASED' THEN 'released' WHEN status = 'EXPIRED' THEN 'expired_unreleased'"
                 + " WHEN status = 'ACTIVE' AND NOW() > expires_at THEN 'stale_active' WHEN status = 'ACTIVE' THEN 'live' ELSE status END AS lifecycle_state"
-                + " FROM leases WHERE id = ?", id);
+                + " FROM leases WHERE id = ?::uuid", id));
         } catch (org.springframework.dao.EmptyResultDataAccessException e) {
             throw new org.springframework.web.server.ResponseStatusException(
                 org.springframework.http.HttpStatus.NOT_FOUND, "lease not found");

@@ -13,7 +13,7 @@ import org.springframework.context.annotation.ComponentScan;
  * until the JetStream write path lands.
  */
 @SpringBootApplication
-@ComponentScan(basePackages = { "org.nexus.core", "org.nexus.solscript" })
+@ComponentScan(basePackages = { "org.nexus.core", "org.nexus.solscript", "org.nexus.writequeue" })
 public class NexusCoreApplication {
 
     public static void main(String[] args) {

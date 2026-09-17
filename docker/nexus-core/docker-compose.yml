@@ -1,0 +1,40 @@
+# docker/nexus-core — nexus-core read-only JVM projection monolith.
+#
+# Standalone compose for the nexus-core container (Dockerfile at
+# jvm/spring/nexus-core/Dockerfile, build context jvm/). Defaults point at
+# the vanadium backup/replica PostgreSQL (192.168.1.209, LAN hostname
+# vanadium) — the failover posture for this service: it may run on titanium
+# or any machine that can reach the replica, with no local PG dependency.
+#
+#   cp .env.example .env        # then fill in real credentials
+#   docker compose up -d --build
+#
+# nexus-core has NO current subscribers, so host port 8092 is unclaimed on
+# titanium; on other hosts override NEXUS_CORE_HOST_PORT in .env if needed.
+name: nexus-core
+services:
+  nexus-core:
+    build:
+      context: ../../jvm
+      dockerfile: spring/nexus-core/Dockerfile
+    image: nexus-core/nexus-core:latest
+    container_name: nexus-core
+    restart: unless-stopped
+    environment:
+      # Vanadium backup/replica PG by default (nexus DB, execution schema
+      # is set via search_path inside the app). Override in .env to retarget.
+      NEXUS_CORE_DB_URL: ${NEXUS_CORE_DB_URL:-jdbc:postgresql://vanadium:5432/nexus}
+      NEXUS_CORE_DB_USER: ${PG_USER:-pguser}
+      NEXUS_CORE_DB_PASSWORD: ${PG_PASS:?set PG_PASS in .env}
+      # Write-queue target: lazy + graceful-degradation, safe to leave
+      # unreachable (intents buffer locally instead of erroring).
+      NATS_URL: ${NATS_URL:-nats://vanadium:4222}
+      SERVER_PORT: ${NEXUS_CORE_PORT:-8092}
+    ports:
+      - "${NEXUS_CORE_HOST_PORT:-8092}:${NEXUS_CORE_PORT:-8092}"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:${NEXUS_CORE_PORT:-8092}/actuator/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3

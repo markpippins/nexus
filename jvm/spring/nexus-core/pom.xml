@@ -51,7 +51,8 @@
 
     <properties>
         <java.version>21</java.version>
-        <springdoc.version>2.5.0</springdoc.version>
+        <!-- 2.5.0 is incompatible with Boot 3.4 (ControllerAdviceBean ctor removed in Spring 6.2); 2.7.0+ required -->
+        <springdoc.version>2.7.0</springdoc.version>
     </properties>
 
     <dependencyManagement>

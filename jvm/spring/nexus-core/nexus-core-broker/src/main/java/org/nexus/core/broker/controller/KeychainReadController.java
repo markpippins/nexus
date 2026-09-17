@@ -26,20 +26,22 @@ public class KeychainReadController {
 
     @GetMapping("/agent-records/status")
     public Map<String, Object> agentRecordsStatus() {
-        return Map.of(
-            "enabled", true,
-            "latestSnapshot", (Integer) null,
-            "latestSnapshotAt", (String) null,
-            "entryCount", 0,
-            "totalRecordsProjected", (Integer) null,
-            "supersededRecords", (Integer) null);
+        var m = new java.util.LinkedHashMap<String, Object>();
+        m.put("enabled", true);
+        m.put("latestSnapshot", null);
+        m.put("latestSnapshotAt", null);
+        m.put("entryCount", 0);
+        m.put("totalRecordsProjected", null);
+        m.put("supersededRecords", null);
+        return m;
     }
 
     private static Map<String, Object> readOnlyStatus() {
-        return Map.of(
-            "enabled", true,
-            "intervalMs", 0,
-            "latestSnapshot", (Integer) null,
-            "latestSnapshotAt", (String) null);
+        var m = new java.util.LinkedHashMap<String, Object>();
+        m.put("enabled", true);
+        m.put("intervalMs", 0);
+        m.put("latestSnapshot", null);
+        m.put("latestSnapshotAt", null);
+        return m;
     }
 }
