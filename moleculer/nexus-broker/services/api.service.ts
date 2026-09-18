@@ -89,6 +89,12 @@ export default class ApiService extends Service {
               "GET /workers/pty": "worker.pty.list",
               "POST /workers/pty": "worker.pty.spawn",
               "DELETE /workers/pty/:id": "worker.pty.kill",
+              "POST /workers/pty/:id/write": "worker.pty.write",
+              "POST /workers/pty/:id/resize": "worker.pty.resize",
+              // WebSocket TTY transport adapter (M3) — process authority is
+              // worker.pty; this adapter bridges xterm.js clients. Health on
+              // the adapter's own :PTY_WS_PORT+1; this route proxies it.
+              "GET /workers/pty-transport/health": "worker.pty-transport.health",
               "GET /workers/harness": "worker.harness.health",
               "POST /workers/harness/run": "worker.harness.run",
               "POST /workers/harness/resolve-context": "worker.harness.resolveContext",
@@ -136,7 +142,7 @@ export default class ApiService extends Service {
               status: "ok",
               service: "nexus-broker",
               namespace: "nexus",
-              workers: ["worker.harness", "worker.pty", "worker.execution"],
+              workers: ["worker.harness", "worker.pty", "worker.execution", "worker.pty-transport"],
               timestamp: new Date().toISOString(),
             };
           },
