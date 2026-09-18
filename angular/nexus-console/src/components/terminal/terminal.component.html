@@ -27,7 +27,7 @@
           class="mode-toggle"
           [class.remote]="session.isRemote"
           (click)="toggleMode(i); $event.stopPropagation()"
-          [title]="session.isRemote ? 'Remote (pty-srv) — click for local' : 'Local (just-bash) — click for remote'"
+          [title]="session.isRemote ? 'Remote (Moleculer PTY transport) — click for local' : 'Local (just-bash) — click for remote'"
         >
           {{ session.isRemote ? '🌐' : '💻' }}
         </button>

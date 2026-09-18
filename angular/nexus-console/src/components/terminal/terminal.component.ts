@@ -259,8 +259,9 @@ export class   TerminalComponent implements AfterViewInit, OnDestroy {
   }
 
   /**
-   * When set to a WebSocket URL (e.g. 'ws://localhost:3120/pty'), the terminal
-   * connects to a real shell process on the host via the pty-srv backend.
+   * When set to a WebSocket URL (e.g. 'ws://localhost:3130'), the terminal
+   * connects to a real shell process on the host via the Moleculer PTY
+   * transport backend (worker.pty-transport).
    * When empty/undefined, the terminal uses the local just-bash emulator.
    */
   remoteShellUrl = input<string | undefined>(undefined);
@@ -551,7 +552,8 @@ export class   TerminalComponent implements AfterViewInit, OnDestroy {
   // ─── Per-tab mode toggle ───
 
   /**
-   * Toggles a tab between local (just-bash) and remote (pty-srv WebSocket) mode.
+   * Toggles a tab between local (just-bash) and remote (Moleculer PTY
+   * transport WebSocket) mode.
    * Disposes the current terminal and creates a fresh one with the new backend.
    */
   toggleMode(index: number): void {
@@ -867,7 +869,7 @@ export class   TerminalComponent implements AfterViewInit, OnDestroy {
   private writeWelcomeAndPrompt(session: TerminalSession): void {
     if (session.isRemote) {
       session.terminal.writeln('\x1B[1;3;34mNexus Console — Remote Shell\x1B[0m');
-      session.terminal.writeln('Connected to pty-srv');
+      session.terminal.writeln('Connected to Moleculer PTY transport');
       session.terminal.writeln('');
       return;
     }
