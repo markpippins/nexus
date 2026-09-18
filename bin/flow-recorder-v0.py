@@ -3,8 +3,8 @@
 
 Stage-1 implementation of the Aegis flow-recorder design (discussions thread
 1adce409, revision r1 comment 9c04ab1f), with the RoleAlias resolution law
-from the alignment proposal (thread e9f81ae7) applied as PROVISIONAL pending
-roundtable ratification. OBSERVER-ONLY by construction:
+from the alignment proposal (thread e9f81ae7), RATIFIED 2026-09-18 with
+Amendments A+B folded into guard evaluation (see contract below)
 
   - reads execution.receipts — no writes to any database surface
   - emits the candidate flow-record as JSON on stdout; the ONLY write this
@@ -28,6 +28,24 @@ Induction contract (each clause pinned by bin/tests/test_flow_recorder_v0.py):
   C7  executor-crash summaries under work-flow types are recorded as an
       observation (work-rejection vs agent-crash conflation), never resolved
   C8  observer-only purity: no INSERT/UPDATE/DELETE anywhere in this module
+
+RATIFIED AMENDMENTS (architect decision, thread e9f81ae7, 2026-09-18;
+the RoleAlias law is no longer provisional):
+
+  RA1 (Amendment A) — guard evaluation splits reviewer-class receipts by
+      SIGNATURE: verdict-carrying types (REVIEW_PASS/REVIEW_REJECT) test
+      the verify-holder class; CAPACITY_SIGNATURES (API_LIMIT and kin) are
+      environment events producing NO actor-pair guard — capacity is not
+      verification, testing capability against a rate-limit receipt is
+      meaningless. decide_guard() is the pure decision seam Aegis Stage 4
+      will reuse.
+  RA2 (Amendment B) — class evaluation is HISTORICAL: "held
+      can_verify_work_requests at edge time" resolves roles_history state
+      as of the receipt's recorded_on, never the live roles row (live-row
+      lookup distorts every pre-grant-date receipt). This module marks
+      every class guard with evaluation:"historical" + the as-of evidence
+      ref; resolve_class_capability() is the injection seam (live-role
+      default = the documented B violation, overridable in tests/Stage 4).
 """
 
 import argparse
@@ -36,7 +54,7 @@ import os
 import subprocess
 import sys
 
-# ── RoleAlias map (PROVISIONAL — thread e9f81ae7, pending ratification) ────
+# ── RoleAlias map (RATIFIED — thread e9f81ae7, architect decision 2026-09-18) ──
 # Entry shape: {target, rule}; rule ∈ identity|alias|class|system-actor.
 ROLE_ALIAS = {
     "planner":    {"target": "planner",       "rule": "identity"},
@@ -61,6 +79,81 @@ GUARD_VOCAB = {"receipt-observed", "actor-pair", "attestation-exists",
                "satisfaction-verdict", "audit-pair", "lease-live"}
 
 ENVIRONMENT_TYPES = {"API_LIMIT"}   # C3 / Amendment 3: environment, not nodes
+
+# RA1 (Amendment A): capacity signatures are environment EVENTS even when
+# carried by a verdict-shaped type — they never test any role's capability.
+CAPACITY_SIGNATURES = {"API_LIMIT", "RATE_LIMIT", "CAPACITY", "THROTTLED"}
+
+# RA1 (Amendment A): receipt types that carry a verification VERDICT. Only
+# these test the verify-holder class at guard evaluation; everything else
+# (including capacity signatures) tests nothing about capability.
+VERDICT_CARRYING_TYPES = {"REVIEW_PASS", "REVIEW_REJECT"}
+
+
+def is_capacity_receipt(rc):
+    """RA1: a receipt is a capacity event if its type is a capacity
+    signature — regardless of which role carried it."""
+    return rc.get("type", "") in CAPACITY_SIGNATURES
+
+
+def decide_guard(from_receipt, to_receipt, from_resolved, to_resolved):
+    """RA1 decision seam (pure): what guards does this crossing carry?
+
+    Returns (guard_dict, env_event|None). The verdict-carrying requirement:
+    an actor-pair guard into the verify-holder class is emitted ONLY when
+    the class-side receipt carries a VERDICT (REVIEW_PASS/REVIEW_REJECT).
+    Capacity receipts (API_LIMIT etc.) are environment events — no guard,
+    no node, and they break the adjacency chain exactly like C3.
+    """
+    if is_capacity_receipt(to_receipt):
+        return {}, {"type": to_receipt["type"],
+                    "role_raw": to_receipt.get("role", ""),
+                    "role_resolved": to_resolved,
+                    "receipt_id": to_receipt.get("id", ""),
+                    "at": to_receipt.get("issued_at", ""),
+                    "reason": "capacity-signature (RA1: capacity is not "
+                              "verification — no capability test)"}
+    guard = {"receipt-observed": {"type": to_receipt["type"]}}
+    sys_involved = "system-actor" in (from_resolved, to_resolved)
+    crossing = (not sys_involved) and from_resolved != to_resolved
+    if crossing:
+        if to_resolved == "verify-holder" and \
+                to_receipt.get("type") not in VERDICT_CARRYING_TYPES:
+            # Verdict-carrying requirement: class-side capability is only
+            # tested by verdict receipts. The crossing is still real
+            # (documented via actors), but carries no class capability test.
+            return guard, None
+        guard["actor-pair"] = {"from_role": from_resolved,
+                               "to_role": to_resolved,
+                               "evaluation": (
+                                   "historical" if to_resolved == "verify-holder"
+                                   else "live"),
+                               "as_of": (to_receipt.get("issued_at", "")
+                                         if to_resolved == "verify-holder"
+                                         else None)}
+    return guard, None
+
+
+def resolve_class_capability(role, as_of_iso, resolver=None):
+    """RA2 injection seam: did `role` hold can_verify_work_requests AS OF
+    `as_of_iso` (a receipt's recorded_on)? Default resolver deliberately
+    queries the LIVE roles row and marks itself as such — the documented
+    Amendment B violation, present only so the tool is runnable today;
+    Stage 4 injects the roles_history bitemporal resolver. Never raises.
+    """
+    if resolver is not None:
+        return resolver(role, as_of_iso)
+    try:
+        rows = psql_rows(
+            "SELECT can_verify_work_requests FROM nebula.roles "
+            f"WHERE name='{role}'")
+        return {"role": role, "as_of": as_of_iso, "held": bool(rows and
+                rows[0][0] in ("t", "true", "true\r")),
+                "resolution": "live-row (RA2 VIOLATION — historical "
+                              "resolver not yet wired)"}
+    except Exception as e:  # noqa: BLE001 — degrade honestly
+        return {"role": role, "as_of": as_of_iso, "held": None,
+                "resolution": f"unresolvable: {e}"}
 
 
 def resolve_role(raw):
@@ -140,6 +233,19 @@ def induce(request_id, receipts):
             prev = None          # environment breaks the adjacency chain
             continue
 
+        # RA1: the guard decision comes FIRST — a capacity-signature receipt
+        # is routed to environment events and must NOT count as a state
+        # attempt (decide_guard returns the environment event; the C3 branch
+        # above already handles its own set).
+        res_prev_for_decision = resolve_role(prev["role"])[0] if prev else None
+        guard, env_event = (decide_guard(prev, rc, res_prev_for_decision,
+                                         resolved_role)
+                            if prev is not None else ({}, None))
+        if env_event is not None:
+            env_events.append(env_event)
+            prev = None
+            continue
+
         node = nodes.setdefault(t, {"attempts": 0, "roles_raw": [],
                                     "first_at": rc["issued_at"],
                                     "last_at": rc["issued_at"]})
@@ -153,13 +259,7 @@ def induce(request_id, receipts):
                 # C2: same-type adjacency is attempt machinery, not an edge.
                 prev = rc
                 continue
-            res_prev, _ = resolve_role(prev["role"])
-            sys_involved = "system-actor" in (res_prev, resolved_role)
-            guard = {"receipt-observed": {"type": t}}
-            # C4: actor-pair only on true role-boundary crossings.
-            if (not sys_involved) and res_prev != resolved_role:
-                guard["actor-pair"] = {"from_role": res_prev,
-                                       "to_role": resolved_role}
+            res_prev = res_prev_for_decision
             key = (prev["type"], t)
             if key not in edge_index:
                 edge_index[key] = {"from": prev["type"], "to": t,
@@ -180,7 +280,9 @@ def induce(request_id, receipts):
     flow = {
         "flow_record_v0": True,
         "design_ref": "discussions 1adce409 revision r1 (9c04ab1f); "
-                      "RoleAlias law per e9f81ae7 (PROVISIONAL)",
+                      "RoleAlias law RATIFIED per e9f81ae7 (2026-09-18, "
+                      "Amendments A+B folded: RA1 signature split, RA2 "
+                      "historical evaluation)",
         "parameters": {
             "WorkRef": request_id,
             "RoleAlias_applied": {

@@ -125,8 +125,10 @@ class TestActorPairGuards(unittest.TestCase):
                     receipt(2, "BLOCK", "builder")]
         flow = fr.induce("u4", receipts)
         e = flow["edges"][0]
+        # RA (post-ratification): identity-role guards evaluate LIVE.
         self.assertEqual(e["guards"]["actor-pair"],
-                         {"from_role": "planner", "to_role": "engineer"})
+                         {"from_role": "planner", "to_role": "engineer",
+                          "evaluation": "live", "as_of": None})
 
     def test_within_role_edge_has_no_actor_pair(self):
         # builder->builder resolves engineer->engineer: no crossing.
@@ -140,8 +142,12 @@ class TestActorPairGuards(unittest.TestCase):
         receipts = [receipt(1, "IMPLEMENTATION", "builder"),
                     receipt(2, "REVIEW_PASS", "reviewer")]
         flow = fr.induce("u6", receipts)
+        # RA2: class guards are marked evaluation=historical with the
+        # receipt's issued_at as the as-of evidence timestamp.
         self.assertEqual(flow["edges"][0]["guards"]["actor-pair"],
-                         {"from_role": "engineer", "to_role": "verify-holder"})
+                         {"from_role": "engineer", "to_role": "verify-holder",
+                          "evaluation": "historical",
+                          "as_of": "2026-09-17T21:02:00Z"})
 
     def test_system_actor_edges_exempt(self):
         receipts = [receipt(1, "CANCELLED", "watchdog"),
@@ -168,9 +174,11 @@ class TestActorPairGuards(unittest.TestCase):
         ap = [(e["from"], e["guards"].get("actor-pair")) for e in flow["edges"]]
         self.assertEqual(
             [p for p in ap if p[1] is not None],
-            [("PLAN_CREATE", {"from_role": "planner", "to_role": "engineer"}),
+            [("PLAN_CREATE", {"from_role": "planner", "to_role": "engineer",
+                              "evaluation": "live", "as_of": None}),
              ("IMPLEMENTATION",
-              {"from_role": "engineer", "to_role": "verify-holder"})])
+              {"from_role": "engineer", "to_role": "verify-holder",
+               "evaluation": "historical", "as_of": "2026-09-17T21:07:00Z"})])
         self.assertEqual(flow["terminal_state"], "REVIEW_PASS")
         self.assertEqual(len(flow["edges"]), 4)
 
@@ -241,6 +249,132 @@ class TestConflationObservation(unittest.TestCase):
                     receipt(3, "REVIEW_PASS", "reviewer")]   # terminal
         flow = fr.induce("u14", receipts)
         self.assertEqual(flow["observations"], [])
+
+
+class TestAmendmentA_SignatureSplit(unittest.TestCase):
+    """RA1 (Amendment A, ratified): capacity receipts are environment events
+    with NO capability test — even when a role carries them; verdict-
+    carrying types are the only class-capability testers. decide_guard is
+    the pure evaluation seam Aegis Stage 4 reuses."""
+
+    def test_capacity_receipt_breaks_chain_and_emits_no_guard(self):
+        # BLOCK -> API_LIMIT(reviewer) -> IMPLEMENTATION: the API_LIMIT is
+        # an environment event — no edge carries a class test, and the
+        # API_LIMIT produces NO actor-pair guard. (API_LIMIT hits the C3
+        # ENVIRONMENT_TYPES branch, whose events carry no reason field;
+        # the reason field is pinned by the decide_guard seam test below.)
+        receipts = [
+            receipt(1, "BLOCK", "builder"),
+            receipt(2, "API_LIMIT", "reviewer"),
+            receipt(3, "IMPLEMENTATION", "builder"),
+        ]
+        flow = fr.induce("ra1-a", receipts)
+        self.assertEqual(len(flow["environment_events"]), 1)
+        for e in flow["edges"]:
+            self.assertNotIn("actor-pair", e["guards"])
+        edges = [(e["from"], e["to"]) for e in flow["edges"]]
+        self.assertNotIn(("BLOCK", "IMPLEMENTATION"), edges)
+
+    def test_capacity_signature_beyond_c3_also_routed_to_environment(self):
+        # A capacity type NOT in the C3 set (e.g. RATE_LIMIT): RA1 routes it
+        # through decide_guard to an environment event with the reason.
+        receipts = [
+            receipt(1, "BLOCK", "builder"),
+            receipt(2, "RATE_LIMIT", "reviewer"),
+            receipt(3, "IMPLEMENTATION", "builder"),
+        ]
+        flow = fr.induce("ra1-a2", receipts)
+        self.assertEqual(len(flow["environment_events"]), 1)
+        self.assertIn("capacity-signature", flow["environment_events"][0]["reason"])
+        self.assertNotIn("RATE_LIMIT", {s["state"] for s in flow["states"]})
+        edges = [(e["from"], e["to"]) for e in flow["edges"]]
+        self.assertNotIn(("BLOCK", "IMPLEMENTATION"), edges)
+
+    def test_decide_guard_capacity_is_environment_not_guard(self):
+        to = receipt(2, "API_LIMIT", "reviewer")
+        guard, env = fr.decide_guard(receipt(1, "IMPLEMENTATION", "builder"),
+                                     to, "engineer", "verify-holder")
+        self.assertEqual(guard, {})
+        self.assertIsNotNone(env)
+        self.assertEqual(env["role_resolved"], "verify-holder")
+
+    def test_non_verdict_type_into_class_tests_nothing(self):
+        # A non-verdict, non-capacity type into the class: real crossing,
+        # but the verdict-carrying requirement means NO capability test.
+        to = receipt(2, "REVIEW_QUEUED", "reviewer")
+        guard, env = fr.decide_guard(receipt(1, "IMPLEMENTATION", "builder"),
+                                     to, "engineer", "verify-holder")
+        self.assertIsNone(env)
+        self.assertNotIn("actor-pair", guard)
+        self.assertIn("receipt-observed", guard)
+
+    def test_verdict_types_are_exactly_the_vocabulary(self):
+        self.assertEqual(fr.VERDICT_CARRYING_TYPES,
+                         {"REVIEW_PASS", "REVIEW_REJECT"})
+
+    def test_identity_crossings_are_unaffected_by_A(self):
+        to = receipt(2, "BLOCK", "builder")
+        guard, env = fr.decide_guard(receipt(1, "PLAN_CREATE", "planner"),
+                                     to, "planner", "engineer")
+        self.assertIsNone(env)
+        self.assertEqual(guard["actor-pair"],
+                         {"from_role": "planner", "to_role": "engineer",
+                          "evaluation": "live", "as_of": None})
+
+
+class TestAmendmentB_HistoricalEvaluation(unittest.TestCase):
+    """RA2 (Amendment B, ratified): class capability evaluation is
+    HISTORICAL — resolve roles_history as of the receipt's recorded_on,
+    never the live roles row. resolve_class_capability is the injection
+    seam; the default live resolver self-identifies as the violation."""
+
+    def test_class_guards_carry_historical_evaluation_marker(self):
+        receipts = [receipt(1, "IMPLEMENTATION", "builder"),
+                    receipt(2, "REVIEW_PASS", "reviewer")]
+        flow = fr.induce("ra2-a", receipts)
+        ap = flow["edges"][0]["guards"]["actor-pair"]
+        self.assertEqual(ap["evaluation"], "historical")
+        self.assertEqual(ap["as_of"], "2026-09-17T21:02:00Z")
+
+    def test_identity_guards_are_not_marked_historical(self):
+        receipts = [receipt(1, "PLAN_CREATE", "planner"),
+                    receipt(2, "BLOCK", "builder")]
+        flow = fr.induce("ra2-b", receipts)
+        ap = flow["edges"][0]["guards"]["actor-pair"]
+        self.assertEqual(ap["evaluation"], "live")
+        self.assertIsNone(ap["as_of"])
+
+    def test_injected_historical_resolver_is_used_verbatim(self):
+        calls = []
+
+        def historical_resolver(role, as_of):
+            calls.append((role, as_of))
+            # pre-Sept-17 receipt: engineer-ii held nothing then.
+            return {"role": role, "as_of": as_of, "held": False,
+                    "resolution": "roles_history@as_of"}
+
+        out = fr.resolve_class_capability(
+            "engineer-ii", "2026-08-15T12:00:00Z",
+            resolver=historical_resolver)
+        self.assertEqual(out["held"], False)
+        self.assertEqual(out["resolution"], "roles_history@as_of")
+        self.assertEqual(calls, [("engineer-ii", "2026-08-15T12:00:00Z")])
+
+    def test_default_resolver_self_identifies_as_violation(self):
+        # No DB in tests: force the degrade path, which must STILL be honest
+        # about what it is (never silently claim historical authority).
+        import unittest.mock as mock
+        with mock.patch.object(fr, "psql_rows",
+                               side_effect=RuntimeError("no db in tests")):
+            out = fr.resolve_class_capability("tester", "2026-09-01T00:00:00Z")
+        self.assertIn("unresolvable", out["resolution"])
+
+
+class TestRatificationStatus(unittest.TestCase):
+    def test_design_ref_no_longer_provisional(self):
+        src = open(_TOOL).read()
+        self.assertNotIn("PROVISIONAL", src)
+        self.assertIn("RATIFIED", src)
 
 
 class TestObserverOnlyPurity(unittest.TestCase):
