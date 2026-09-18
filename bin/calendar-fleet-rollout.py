@@ -45,6 +45,7 @@ import json
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from urllib.parse import urlparse
 
 REPO = "~/dev/nexus"
 SSH_BASE = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8"]
@@ -155,9 +156,24 @@ def step_audit(res: HostResult, remote: str) -> bool:
     return True
 
 
+def url_host(url: str) -> str:
+    """Hostname of a git remote URL, handling both normal and scp-like
+    (git@github.com:owner/repo.git) syntax. Empty on parse failure."""
+    if "://" not in url:
+        if "@" in url and ":" in url:
+            return url.split("@", 1)[1].split(":", 1)[0].strip().lower()
+        return ""
+    try:
+        return (urlparse(url).hostname or "").strip().lower()
+    except ValueError:
+        return ""
+
+
 def pick_remote(res: HostResult) -> str | None:
     """Auto-detect the sync remote: origin preferred, else any remote whose
-    fetch URL points at the nexus GitHub repo (helium's legacy `github`)."""
+    fetch URL HOST is github.com (helium's legacy `github`). Host comparison
+    is exact-parse, never substring: 'evil.com/github.com' and
+    'github.com.evil.io' must not match."""
     rc, out, _ = run_remote(res.host, f"cd {REPO} && git remote -v")
     if rc != 0 or not out.strip():
         res.add("remote", "fail", "no git remotes configured")
@@ -172,11 +188,11 @@ def pick_remote(res: HostResult) -> str | None:
     if named:
         res.add("remote", "ok", "origin")
         return "origin"
-    github = [n for n, u in candidates if "github.com" in u or "nexus" in u]
+    github = [n for n, u in candidates if url_host(u) == "github.com"]
     if github:
-        res.add("remote", "ok", f"{github[0]} (non-standard name, URL-matched)")
+        res.add("remote", "ok", f"{github[0]} (non-standard name, host=github.com)")
         return github[0]
-    res.add("remote", "fail", "no origin and no URL match among: "
+    res.add("remote", "fail", "no origin and no github.com-host remote among: "
             + ", ".join(f"{n}={u}" for n, u in candidates))
     return None
 

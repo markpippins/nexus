@@ -200,6 +200,22 @@ class TestAuditGates(unittest.TestCase):
 
 
 class TestRemoteDetect(unittest.TestCase):
+    def test_url_host_parses_both_git_url_forms(self):
+        self.assertEqual(roll.url_host("git@github.com:markpippins/nexus.git"), "github.com")
+        self.assertEqual(roll.url_host("https://github.com/markpippins/nexus.git"), "github.com")
+        self.assertEqual(roll.url_host("ssh://git@github.com/markpippins/nexus.git"), "github.com")
+        self.assertEqual(roll.url_host("https://user@github.com:8443/x/y.git"), "github.com")
+        self.assertEqual(roll.url_host("/local/path"), "")
+        self.assertEqual(roll.url_host("file:///x"), "")
+
+    def test_substring_lookalikes_never_match(self):
+        """CodeQL js/incomplete-url-substring-sanitization, fixed: matching is
+        exact-host, never substring. The two canonical attack shapes."""
+        self.assertNotEqual(roll.url_host("https://evil.com/github.com"), "github.com")
+        self.assertNotEqual(roll.url_host("https://github.com.evil.io/x"), "github.com")
+        self.assertEqual(roll.url_host("https://evil.com/github.com"), "evil.com")
+        self.assertEqual(roll.url_host("https://github.com.evil.io/x"), "github.com.evil.io")
+
     def test_origin_preferred(self):
         CURRENT["fake"] = fake_with(script=[
             ("git remote -v", OK, "github\tgit@github.com:markpippins/nexus.git (fetch)\n"
@@ -218,7 +234,7 @@ class TestRemoteDetect(unittest.TestCase):
         r = next(s for s in res.steps if s.name == "remote")
         self.assertEqual(r.status, "ok")
         self.assertIn("github", r.detail)
-        self.assertIn("non-standard", r.detail)
+        self.assertIn("host=github.com", r.detail)
 
     def test_no_match_refuses(self):
         CURRENT["fake"] = fake_with(script=[
@@ -227,6 +243,7 @@ class TestRemoteDetect(unittest.TestCase):
         res = rollout("weird", None)
         self.assertFalse(res.ok)
         self.assertEqual(res.steps[-1].name, "remote")
+        self.assertIn("github.com-host", res.steps[-1].detail)
 
     def test_pull_failure_is_caught(self):
         CURRENT["fake"] = fake_with(script=[
