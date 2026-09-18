@@ -21,6 +21,7 @@ import json
 import os
 import sys
 import unittest.mock
+from pathlib import Path
 
 _SELF = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.abspath(os.path.join(_SELF, "..", ".."))
@@ -266,6 +267,75 @@ class TestRunOrdering(unittest.TestCase):
         self.assertEqual(rc, pkg.EX_FAIL)
         self.assertNotIn("apply", h.calls)
         self.assertIn("remote-probe:darkbox", h.calls)
+
+
+def ev(emitter, recorded_at):
+    return {"source": {"machine": "m", "emitter": emitter},
+            "provenance": {"recordedAt": recorded_at}}
+
+
+class TestEmitterComposition(unittest.TestCase):
+    """Pure-function pins for the retention-policy surface (R1 68d74864,
+    finding a1704a3b: per-machine totals hid that one emitter was 38%)."""
+
+    def test_shares_and_ranking(self):
+        events = [ev("nexus-agent-scheduler.timer", f"2026-09-18T1{m}:00:00Z") for m in (6, 7, 8)] \
+            + [ev("redis-health-monitor.timer", "2026-09-18T16:30:00Z")]
+        rows = pkg.emitter_composition(events)
+        self.assertEqual(rows[0]["emitter"], "nexus-agent-scheduler")
+        self.assertEqual(rows[0]["count"], 3)
+        self.assertEqual(rows[0]["share_pct"], 75.0)
+        self.assertEqual(rows[1]["emitter"], "redis-health-monitor")
+        self.assertEqual(rows[1]["share_pct"], 25.0)
+        # unit suffix stripped for weighting
+        self.assertNotIn(".timer", rows[0]["emitter"])
+
+    def test_per_hour_over_observed_window(self):
+        events = [ev("a.timer", "2026-09-18T16:00:00Z"),
+                  ev("a.timer", "2026-09-18T18:00:00Z"),  # 2h window
+                  ev("b.timer", "2026-09-18T17:00:00Z")]
+        rows = pkg.emitter_composition(events)
+        a = next(r for r in rows if r["emitter"] == "a")
+        self.assertEqual(a["per_hour"], 1.0)  # 2 events / 2h
+        self.assertEqual(a["window_start"], "2026-09-18T16:00:00Z")
+        self.assertEqual(a["window_end"], "2026-09-18T18:00:00Z")
+
+    def test_single_event_no_rate(self):
+        rows = pkg.emitter_composition([ev("x.timer", "2026-09-18T16:00:00Z")])
+        self.assertEqual(rows[0]["count"], 1)
+        self.assertIsNone(rows[0]["per_hour"])
+
+    def test_empty_and_torn_input(self):
+        self.assertEqual(pkg.emitter_composition([]), [])
+        # torn/missing fields tolerated: counted as unknown, no crash
+        rows = pkg.emitter_composition([{"provenance": {}}])
+        self.assertEqual(rows[0]["emitter"], "unknown")
+
+
+class TestVerifyComposition(unittest.TestCase):
+    def test_verify_reports_composition_lines(self):
+        """The verify battery includes per-emitter lines from the JSONL seam."""
+        h = Harness(regclass="NULL")
+        cal = "/tmp/v184-comp-test-calendar.jsonl"
+        with open(cal, "w") as fh:
+            for m in (6, 7, 8):
+                fh.write(json.dumps(ev("sched.timer", f"2026-09-18T1{m}:00:00Z")) + "\n")
+            fh.write(json.dumps(ev("redis.timer", "2026-09-18T16:30:00Z")) + "\n")
+        with patch_all(h), \
+             unittest.mock.patch.object(pkg, "LOCAL_JSONL", Path(cal)):
+            rc = pkg.main(["verify"])
+        self.assertEqual(rc, pkg.EX_OK)
+        os.unlink(cal)
+
+    def test_verify_still_read_only_with_composition(self):
+        """Composition queries are GROUP BY only — no writes, no fold."""
+        h = Harness(regclass="vision.calendar_events")
+        with patch_all(h):
+            rc = pkg.main(["verify"])
+        self.assertEqual(rc, pkg.EX_OK)
+        self.assertNotIn("apply", h.calls)
+        self.assertNotIn("mark", h.calls)
+        self.assertFalse(any(c.startswith("observe:") for c in h.calls))
 
 
 class TestDryRun(unittest.TestCase):

@@ -39,6 +39,7 @@ record already applied (nothing done).
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import os
 import subprocess
@@ -110,6 +111,67 @@ def probe_remote_jsonl(host: str) -> bool:
         capture_output=True, text=True, timeout=30,
     )
     return proc.returncode == 0 and "present" in proc.stdout
+
+
+def read_calendar_lines(path: Path) -> list[dict]:
+    """Parsed JSONL events (torn lines skipped — they are data for the
+    intake, not for composition). Read seam: tests inject."""
+    out = []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        return []
+    return out
+
+
+def emitter_composition(events: list[dict]) -> list[dict]:
+    """Per-emitter weighting for retention policy (finding a1704a3b: one
+    emitter was 38% of fleet volume — per-machine totals hide that).
+    Pure function over parsed events. Returns rows sorted by count desc:
+      {emitter, count, share_pct, per_hour, window_start, window_end}
+    Rate is measured over the events' own observed window (first→last
+    recordedAt), so a quiet emitter's low rate is not diluted by fleet uptime."""
+    if not events:
+        return []
+    counts: dict[str, int] = {}
+    stamps: list[str] = []
+    for e in events:
+        emitter = (e.get("source") or {}).get("emitter", "unknown")
+        emitter = emitter.split(".")[0]  # unit suffix is noise for weighting
+        counts[emitter] = counts.get(emitter, 0) + 1
+        ts = (e.get("provenance") or {}).get("recordedAt")
+        if ts:
+            stamps.append(ts)
+    total = sum(counts.values())
+    if total == 0:
+        return []
+    hours = 0.0
+    if len(stamps) >= 2:
+        def parse(ts: str) -> float:
+            return dt.datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+        try:
+            hours = (max(map(parse, stamps)) - min(map(parse, stamps))) / 3600.0
+        except ValueError:
+            hours = 0.0
+    rows = []
+    for emitter, count in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])):
+        rows.append({
+            "emitter": emitter,
+            "count": count,
+            "share_pct": round(100.0 * count / total, 1),
+            "per_hour": round(count / hours, 2) if hours > 0 else None,
+            "window_start": min(stamps) if stamps else None,
+            "window_end": max(stamps) if stamps else None,
+        })
+    return rows
 
 
 def run_consolidate(source: Path, by: str, strict: bool, mode: str = "observe") -> tuple[int, str]:
@@ -222,6 +284,33 @@ def phase_verify(remote_hosts: list[str], staging: Path | None) -> tuple[bool, l
         lines.append("[verify] ok   consolidation wiring present (13:35Z dormant timer)")
     else:
         lines.append("[verify] warn consolidation unit absent — ongoing folds will be manual")
+
+    # 6. per-emitter weighting (retention-policy surface, finding a1704a3b):
+    #    source truth from JSONLs; folded truth from the DB when applied.
+    for label, path in [("local", LOCAL_JSONL)] + [
+        (staged_path.stem, staged_path) for staged_path in staged
+    ]:
+        comp = emitter_composition(read_calendar_lines(path))
+        if not comp:
+            lines.append(f"[verify] warn {label} calendar: no events for composition")
+            continue
+        total = sum(r["count"] for r in comp)
+        top = comp[0]
+        lines.append(
+            f"[verify] ok   {label} composition: {len(comp)} emitter(s), {total} events; "
+            f"top {top['emitter']} {top['share_pct']}% ({top['count']})"
+            + (f" @ {top['per_hour']}/hr" if top["per_hour"] is not None else "")
+        )
+    rc, out, _ = db_query(
+        "SELECT (source_emitter || '' ) , count(*) FROM vision.calendar_events "
+        "GROUP BY 1 ORDER BY 2 DESC LIMIT 5"
+    ) if out != "NULL" else (0, "", "")
+    if rc == 0 and out:
+        rows = [l.split("|") for l in out.splitlines() if "|" in l]
+        if rows:
+            total_db = db_query("SELECT count(*) FROM vision.calendar_events")[1]
+            detail = ", ".join(f"{r[0]}={r[1]}" for r in rows[:5])
+            lines.append(f"[verify] ok   folded composition (top 5 of {total_db}): {detail}")
 
     return ok, lines, staged
 
