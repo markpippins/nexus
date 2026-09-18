@@ -24,7 +24,7 @@ permissions:
 jobs:
   v184-calendar-e2e:
     name: "wr-conf-036: V184 calendar primitive E2E"
-    runs-on: [self-hosted, linux]
+    runs-on: ubuntu-latest
     services:
       postgres:
         image: postgres:17
