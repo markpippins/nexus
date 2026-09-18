@@ -62,6 +62,15 @@ public class Service {
     @Column(name = "api_base_path")
     private String apiBasePath;
 
+    /**
+     * Verified per-service health-check path (audit thread 70d507dc).
+     * Added by V10 migration. When null, {@link #getHealthCheckPath()} falls
+     * back to the legacy derived "<apiBasePath>/actuator/health" so existing
+     * rows and Spring Boot services keep their behavior.
+     */
+    @Column(name = "health_check_path")
+    private String healthCheckPath;
+
     @Column(name = "repository_url")
     private String repositoryUrl;
 
@@ -305,12 +314,46 @@ public class Service {
         }
     }
 
+    // --- Health check path (audit thread 70d507dc / health-path conformance) ---
+    //
+    // History: this field was never persisted. getHealthCheckPath() synthesized
+    // "<apiBasePath>/actuator/health" and the setter was a no-op, so every
+    // caller-supplied health path (POST /api/v1/services, PUT /api/v1/services/{id},
+    // POST /api/v1/registry/register, broker sync) was silently discarded, and
+    // Express-style services that actually serve /health (aegis-srv, nebula-srv,
+    // cascade-srv, ...) were registered with a fabricated /actuator/health value.
+    //
+    // Now: explicit values are stored in health_check_path (V10) and win; the
+    // legacy derived value remains only as a fallback for rows with nothing stored.
+
+    /** Stored value if present, else the legacy derived "<apiBasePath>/actuator/health". */
     public String getHealthCheckPath() {
+        if (healthCheckPath != null && !healthCheckPath.isBlank()) {
+            return healthCheckPath;
+        }
         return apiBasePath != null ? apiBasePath + "/actuator/health" : null;
     }
 
+    /** Raw stored value without the derived fallback (for copy/update paths). */
+    public String getHealthCheckPathRaw() {
+        return healthCheckPath;
+    }
+
     public void setHealthCheckPath(String healthCheckPath) {
-        // No-op for backward compatibility
+        this.healthCheckPath = normalizeHealthCheckPath(healthCheckPath);
+    }
+
+    /**
+     * Accepts a bare path ("/health"), a path with context ("/api/health"), or
+     * a full URL ("http://host:port/health"). Values are trimmed; blank input
+     * becomes null so the derived fallback applies. Full URLs keep URL
+     * semantics (host pinning for off-host probing).
+     */
+    static String normalizeHealthCheckPath(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        return raw.trim();
     }
 
     @PrePersist

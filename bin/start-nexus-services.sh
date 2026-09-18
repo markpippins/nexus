@@ -202,19 +202,12 @@ SERVICE_PORTS=(
 # ── Custom health check paths (for services that don't serve /health) ──
 declare -A SERVICE_HEALTH_PATHS
 SERVICE_HEALTH_PATHS=(
-    # UI dev servers serve Angular/Vite HTML on /, not /health
-    ["nebula-ui.service"]="/"
-    ["duality-ui.service"]="/"
-    ["view-architect.service"]="/"
-    ["plurality-ui.service"]="/"
-    ["nexus-console.service"]="/"
-    ["conduit-ui.service"]="/"
-    ["tackle-ui.service"]="/"
-    ["cascade-ui.service"]="/"
-    ["execution-ui.service"]="/"
-    ["peb-ui.service"]="/"
-    ["semantic-kernel-ui.service"]="/"
-    # Other services with non-standard health paths
+    # NOTE (health-path conformance audit, thread 70d507dc, 2026-09-18):
+    # the eleven per-UI overrides forcing "/" were REMOVED — live probes
+    # confirmed every UI dev server answers HTTP 200 on /health, so the
+    # default /health now applies. Re-add an override only with probe
+    # evidence (curl -o /dev/null -w '%{http_code}' http://localhost:PORT/PATH).
+    # Other services with non-standard health paths (probe-verified):
     ["peb-kernel.service"]="/actuator/health"
     ["terrain.service"]="/api/v1/platform/health"
     ["quarkus-broker-gateway.service"]="/api/health"
