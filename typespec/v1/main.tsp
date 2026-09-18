@@ -49,3 +49,9 @@ import "./solscript/python/main.tsp";
 // write-queue produces entries; the Python cascade reconciler consumes them
 // and emits canonical events on nexus.events.
 import "./write-queue/main.tsp";
+
+// Calendar — temporal accumulation primitive and the Session object it
+// anchors (design post a330914e). Model-only (write-queue precedent):
+// Calendar/CalendarEvent/Session/AgentRef shared vocabulary; storage,
+// emitters, and routes wait on roundtable Q1/Q3/Q5.
+import "./calendar/main.tsp";
