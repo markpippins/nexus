@@ -25,8 +25,10 @@ import os
 import sys
 import tempfile
 import unittest
+import unittest.mock  # explicit: the submodule attribute is NOT attached by `import unittest` alone (CI-caught)
 import uuid
 from pathlib import Path
+from unittest import mock
 
 import psycopg2
 
@@ -144,7 +146,7 @@ class InertPathE2E(unittest.TestCase):
         evs = [make_event(), make_event(emitter="b.timer")]
         path = write_jsonl(evs)
         try:
-            with unittest.mock.patch.object(
+            with mock.patch.object(
                     cc, "default_exec_factory", return_value=self.exec_fn):
                 rc = cc.cmd_observe(unittest.mock.Mock(
                     source=str(path), by="dba", strict=False,
@@ -171,7 +173,7 @@ class FoldPathE2E(unittest.TestCase):
     def _fold(self, evs, by="dba-consolidator"):
         path = write_jsonl(evs)
         try:
-            with unittest.mock.patch.object(
+            with mock.patch.object(
                     cc, "default_exec_factory", return_value=self.exec_fn):
                 rc = cc.cmd_observe(unittest.mock.Mock(
                     source=str(path), by=by, strict=False,
@@ -216,7 +218,7 @@ class FoldPathE2E(unittest.TestCase):
         ev = make_event(eventId=str(uuid.uuid4()))
         path = write_jsonl([ev])
         try:
-            with unittest.mock.patch.object(
+            with mock.patch.object(
                     cc, "default_exec_factory", return_value=self.exec_fn):
                 rc = cc.cmd_observe(unittest.mock.Mock(
                     source=str(path), by="dba", strict=False,
