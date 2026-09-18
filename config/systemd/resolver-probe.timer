@@ -1,0 +1,13 @@
+[Unit]
+Description=daily synthetic resolver-check probe timer (wind enforce-flip soak evidence)
+# Decision-grade soak accumulation at low real-traffic volume — the lease-check
+# soak precedent (thread 65fe85a8) applied to the wind resolver. Offset from
+# the 13:05 lease probe so the two synthetic probes never collide.
+
+[Timer]
+OnCalendar=*-*-* 13:25:00 UTC
+Persistent=true
+Unit=resolver-probe.service
+
+[Install]
+WantedBy=timers.target
