@@ -99,11 +99,14 @@ class Harness:
 
 
 def patch_all(h):
+    """Fully hermetic: every seam injected INCLUDING subprocess.run (the ssh
+    probe). Without the last line, CI executes real ssh to helium and the
+    battery fails there while passing locally — pitfall #15 class."""
     return unittest.mock.patch.multiple(
         pkg, db_query=h.db_query, apply_sql=h.apply_sql,
         stage_remote_jsonl=h.stage, run_consolidate=h.run_consolidate,
         nebula_get=h.nebula_get, mark_go_applied=h.mark,
-        subprocess=unittest.mock.Mock(wraps=pkg.subprocess),
+        subprocess=unittest.mock.Mock(side_effect=h.ssh_probe),
     )
 
 
