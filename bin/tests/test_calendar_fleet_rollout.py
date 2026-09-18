@@ -90,9 +90,9 @@ def fake_with(**overrides):
     return FakeRemote(overrides.get("script", []) + script)
 
 
-def rollout(host="h", spec=None):
+def rollout(host="h", spec=None, **kw):
     with unittest.mock.patch.object(roll, "run_remote", CURRENT["fake"]):
-        return roll.rollout_host(host, spec)
+        return roll.rollout_host(host, spec, **kw)
 
 
 CURRENT = {"fake": None}  # lets rollout() read the test's fake
@@ -322,6 +322,8 @@ class TestVerify(unittest.TestCase):
 
 class TestLingerReported(unittest.TestCase):
     def test_linger_never_forced(self):
+        """Default posture: report-only. The enable command is NEVER attempted
+        without the explicit opt-in flag."""
         CURRENT["fake"] = fake_with(script=[("loginctl show-user", OK, "Linger=no\n")])
         res = rollout("h", None)
         l = next(s for s in res.steps if s.name == "linger")
@@ -335,6 +337,57 @@ class TestLingerReported(unittest.TestCase):
         res = rollout("h", None)
         l = next(s for s in res.steps if s.name == "linger")
         self.assertEqual(l.status, "ok")
+
+
+class TestLingerEnableOptIn(unittest.TestCase):
+    """--enable-linger: the opt-in enable path (helium lesson, R2 838ce1f3)."""
+
+    def test_enable_attempts_and_verifies(self):
+        # the combined enable+verify command contains 'enable-linger'; matcher
+        # order matters (first hit wins), so it precedes the plain probe
+        CURRENT["fake"] = fake_with(script=[
+            ("enable-linger", OK, "Linger=yes\n"),
+            ("loginctl show-user", OK, "Linger=no\n"),
+        ])
+        res = rollout("h", None, enable_linger=True)
+        self.assertTrue(res.ok, res.as_dict())
+        l = next(s for s in res.steps if s.name == "linger")
+        self.assertEqual(l.status, "ok")
+        self.assertIn("non-interactive", l.detail)
+        # the enable was attempted over the remote seam
+        self.assertTrue(any("enable-linger codex" in c[1] for c in CURRENT["fake"].calls))
+
+    def test_enable_failure_fails_host(self):
+        CURRENT["fake"] = fake_with(script=[
+            ("enable-linger", 1, "sudo: a password is required"),
+            ("loginctl show-user", OK, "Linger=no\n"),
+        ])
+        res = rollout("h", None, enable_linger=True)
+        self.assertFalse(res.ok)
+        l = next(s for s in res.steps if s.name == "linger")
+        self.assertEqual(l.status, "fail")
+        self.assertIn("did not take", l.detail)
+
+    def test_enable_when_already_on_skips_attempt(self):
+        CURRENT["fake"] = fake_with(script=[("loginctl show-user", OK, "Linger=yes\n")])
+        res = rollout("h", None, enable_linger=True)
+        self.assertTrue(res.ok)
+        l = next(s for s in res.steps if s.name == "linger")
+        self.assertEqual(l.status, "ok")
+        # no enable command was issued — it was already on
+        self.assertFalse(any("enable-linger" in c[1] for c in CURRENT["fake"].calls))
+
+    def test_enable_verifies_after_claiming(self):
+        """If the post-enable verification still shows no, fail even though
+        the helper exited 0 — verify installed state, not exit codes."""
+        CURRENT["fake"] = fake_with(script=[
+            ("enable-linger", OK, "Linger=no\n"),
+            ("loginctl show-user", OK, "Linger=no\n"),
+        ])
+        res = rollout("h", None, enable_linger=True)
+        self.assertFalse(res.ok)
+        l = next(s for s in res.steps if s.name == "linger")
+        self.assertEqual(l.status, "fail")
 
 
 class TestCli(unittest.TestCase):

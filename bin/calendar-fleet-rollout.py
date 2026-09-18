@@ -332,21 +332,43 @@ def step_verify(res: HostResult, spec: dict | None) -> None:
                 f"machine_count={machine_count})")
 
 
-def step_linger(res: HostResult) -> None:
+def step_linger(res: HostResult, enable: bool) -> None:
+    """Verify linger; with enable=True, attempt a non-interactive enable when
+    off (mirrors the helium path, R2 838ce1f3). Never prompts: BatchMode ssh
+    plus a passwordless root helper only. Default posture is report-only —
+    the enable is an explicit operator opt-in per invocation."""
     rc, out, _ = run_remote(res.host, "loginctl show-user codex -p Linger 2>/dev/null")
     linger = out.strip().split("=", 1)[-1] if rc == 0 and out.strip() else "unknown"
     if linger == "yes":
         res.add("linger", "ok", "enabled — timers fire unattended")
-    else:
+        return
+    if not enable:
         res.add("linger", "skip",
                 f"Linger={linger} — timers fire only while a session exists. "
                 "Operator one-liner if unattended coverage is wanted: "
-                f"loginctl enable-linger codex (on {res.host})")
+                f"loginctl enable-linger codex (on {res.host}); "
+                "or re-run with --enable-linger")
+        return
+    # opt-in enable: non-interactive, verify-what-you-did
+    rc, out, err = run_remote(
+        res.host,
+        "sudo -n loginctl enable-linger codex 2>&1; "
+        "loginctl show-user codex -p Linger 2>/dev/null",
+    )
+    after = out.strip().splitlines()[-1] if out.strip() else ""
+    if rc == 0 and after.strip() == "Linger=yes":
+        res.add("linger", "ok", "enabled via non-interactive helper (was "
+                f"{linger}) — timers now fire unattended")
+    else:
+        res.add("linger", "fail",
+                f"--enable-linger requested but enable did not take "
+                f"(before={linger}, after={after.strip() or 'unknown'}): "
+                f"{(err or out).strip()[:120] or 'no passwordless root path'}")
 
 
 # ── driver ───────────────────────────────────────────────────────────────
 
-def rollout_host(host: str, spec: dict | None) -> HostResult:
+def rollout_host(host: str, spec: dict | None, enable_linger: bool = False) -> HostResult:
     res = HostResult(host=host)
     if not step_reach(res):
         return res
@@ -361,7 +383,7 @@ def rollout_host(host: str, spec: dict | None) -> HostResult:
     if res.ok:
         step_probe(res, spec)
         step_verify(res, spec)
-        step_linger(res)
+        step_linger(res, enable_linger)
     return res
 
 
@@ -383,6 +405,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--probe-provision", action="append", default=[],
                     metavar="HOST:KIND:URL", help="provision <kind>-health probe per host (repeatable)")
     ap.add_argument("--report", help="write the JSON report to this path")
+    ap.add_argument("--enable-linger", action="store_true",
+                    help="when linger is off, attempt a NON-INTERACTIVE enable "
+                         "(passwordless root path only; never prompts). Default: "
+                         "report/flag only.")
     ap.add_argument("--dry-run", action="store_true",
                     help="show the plan, touch nothing")
     args = ap.parse_args(argv)
@@ -397,12 +423,13 @@ def main(argv: list[str] | None = None) -> int:
             "mode": "dry-run",
             "hosts": args.hosts,
             "probe_specs": specs,
+            "enable_linger": args.enable_linger,
             "pipeline": ["reach", "remote", "audit", "sync", "install", "probe", "verify", "linger"],
             "note": "no ssh performed; add --report to persist results of a real run",
         }, indent=2))
         return 0
 
-    results = [rollout_host(h, specs.get(h)) for h in args.hosts]
+    results = [rollout_host(h, specs.get(h), args.enable_linger) for h in args.hosts]
     report = {
         "tool": "calendar-fleet-rollout",
         "hosts_ok": sum(1 for r in results if r.ok),
