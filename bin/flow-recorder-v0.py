@@ -135,22 +135,30 @@ def decide_guard(from_receipt, to_receipt, from_resolved, to_resolved):
 
 
 def resolve_class_capability(role, as_of_iso, resolver=None):
-    """RA2 injection seam: did `role` hold can_verify_work_requests AS OF
-    `as_of_iso` (a receipt's recorded_on)? Default resolver deliberately
-    queries the LIVE roles row and marks itself as such — the documented
-    Amendment B violation, present only so the tool is runnable today;
-    Stage 4 injects the roles_history bitemporal resolver. Never raises.
+    """RA2 (Amendment B, ratified): did `role` hold can_verify_work_requests
+    AS OF `as_of_iso` (a receipt's recorded_on)? The default resolver is
+    HISTORICAL — bitemporal lookup in nebula.roles_history: the role's
+    open-snapshot semantics are evaluated on BOTH time axes at the as-of
+    instant (valid interval containing as_of AND recorded interval
+    containing as_of). A live-row lookup would distort every pre-grant-date
+    receipt (the exact RA2 violation), so the default IS the historical
+    resolver; injection remains available for tests. Never raises — DB
+    failure degrades to resolution=unresolvable, never a silent claim.
     """
     if resolver is not None:
         return resolver(role, as_of_iso)
     try:
         rows = psql_rows(
-            "SELECT can_verify_work_requests FROM nebula.roles "
-            f"WHERE name='{role}'")
-        return {"role": role, "as_of": as_of_iso, "held": bool(rows and
-                rows[0][0] in ("t", "true", "true\r")),
-                "resolution": "live-row (RA2 VIOLATION — historical "
-                              "resolver not yet wired)"}
+            "SELECT can_verify_work_requests FROM nebula.roles_history "
+            f"WHERE name='{role}' "
+            f"AND valid_from <= '{as_of_iso}'::timestamptz "
+            f"AND valid_until > '{as_of_iso}'::timestamptz "
+            f"AND recorded_on_dt <= '{as_of_iso}'::timestamptz "
+            f"AND recorded_until_dt > '{as_of_iso}'::timestamptz")
+        return {"role": role, "as_of": as_of_iso,
+                "held": bool(rows and rows[0][0] in ("t", "true", "true\r")),
+                "resolution": "roles_history@as_of (bitemporal: valid + "
+                              "recorded axes)"}
     except Exception as e:  # noqa: BLE001 — degrade honestly
         return {"role": role, "as_of": as_of_iso, "held": None,
                 "resolution": f"unresolvable: {e}"}
