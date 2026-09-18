@@ -25,8 +25,10 @@ calls via the bus.
 
 | Service | Purpose | Status |
 |---|---|---|
-| `api` | moleculer-web gateway — health + worker introspection | scaffolded |
-| `worker` | worker-tier actions (`spawn`/`kill`/`status`/`list`) | scaffolded — handlers land in Wave 4 |
+| `api` | moleculer-web gateway — health + worker introspection | live |
+| `worker` | worker-tier actions (`spawn`/`kill`/`status`/`list`) | live — handlers in Wave 4 |
+| `worker.pty` | TTY process authority — spawn/write/resize/kill/status; emits `pty.output`/`pty.exit` broker events | live |
+| `worker.pty-transport` | WebSocket TTY transport adapter (M3) — bridges xterm.js clients to `worker.pty`; wire-compatible with legacy pty-srv | live |
 
 ## Run
 

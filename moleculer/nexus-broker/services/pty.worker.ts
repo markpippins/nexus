@@ -5,14 +5,19 @@ import { v4 as uuidv4 } from "uuid";
 /**
  * worker.pty — TTY process worker (Wave 4.2).
  *
- * Manages node-pty shell processes. Each spawn creates a pty session with
- * an input/output buffer; kill terminates; status reports live sessions.
- * (The raw WebSocket TTY stream remains a transport concern — pty-srv's
- * ws endpoint can be re-pointed at this worker's session registry via the
- * broker bus, or kept standalone; the process lifecycle now lives here.)
+ * THE single PTY process authority. Manages node-pty shell processes: each
+ * spawn creates a pty session with an input/output buffer; write/resize push
+ * input and terminal geometry; kill terminates; status reports live sessions.
+ *
+ * Transport (M3): the WebSocket TTY stream is a SEPARATELY governed adapter
+ * (`worker.pty-transport` service). This worker owns the process lifecycle
+ * and emits `pty.output` / `pty.exit` broker events so any transport can
+ * bridge clients to the session registry without duplicating process
+ * authority. Retiring pty-srv (legacy :3120) is gated on this worker being
+ * the sole process + transport authority.
  */
 
-import pty from "node-pty";
+import * as pty from "node-pty";
 
 interface PtySession {
   id: string;
@@ -24,6 +29,9 @@ interface PtySession {
   outputBuffer: string;
   status: "running" | "exited";
   exitCode: number | null;
+  // The live node-pty process handle; write/resize target it. Absent once
+  // the session has exited (the session row lingers briefly for status).
+  proc: pty.IPty | null;
 }
 
 export default class PtyWorker extends Service {
@@ -49,6 +57,17 @@ export default class PtyWorker extends Service {
         kill: {
           params: { id: "string" },
           handler: (ctx: Context<{ id: string }>) => this.kill(ctx.params.id),
+        },
+
+        write: {
+          params: { id: "string", data: "string" },
+          handler: (ctx: Context<{ id: string; data: string }>) => this.write(ctx.params.id, ctx.params.data),
+        },
+
+        resize: {
+          params: { id: "string", cols: { type: "number", optional: true }, rows: { type: "number", optional: true } },
+          handler: (ctx: Context<{ id: string; cols?: number; rows?: number }>) =>
+            this.resize(ctx.params.id, ctx.params.cols, ctx.params.rows),
         },
 
         status: {
@@ -97,6 +116,7 @@ export default class PtyWorker extends Service {
       outputBuffer: "",
       status: "running",
       exitCode: null,
+      proc: shellProcess,
     };
 
     shellProcess.onData((data: string) => {
@@ -104,13 +124,18 @@ export default class PtyWorker extends Service {
       if (session.outputBuffer.length > 1_000_000) {
         session.outputBuffer = session.outputBuffer.slice(-500_000);
       }
+      // Transport bridge event — any connected pty-transport adapter (or
+      // multiple) forwards this to its client(s) for this session id.
+      this.broker.emit("pty.output", { id, data });
     });
 
     shellProcess.onExit(({ exitCode }: { exitCode: number }) => {
       session.status = "exited";
       session.exitCode = exitCode;
+      session.proc = null;
       // Keep the session row briefly for status queries, then drop.
       setTimeout(() => this.sessions.delete(id), 60_000);
+      this.broker.emit("pty.exit", { id, exitCode });
     });
 
     this.sessions.set(id, session);
@@ -139,6 +164,29 @@ export default class PtyWorker extends Service {
     } catch { /* already gone */ }
     this.logger.info(`pty kill id=${id.slice(0, 8)} pid=${session.pid}`);
     return { id, status: "terminating", pid: session.pid };
+  }
+
+  private write(id: string, data: string): any {
+    const session = this.sessions.get(id);
+    if (!session) throw new Error(`pty session ${id} not found`);
+    if (session.status !== "running" || !session.proc) {
+      throw new Error(`pty session ${id} is not running`);
+    }
+    session.proc.write(data);
+    return { id, status: "running" };
+  }
+
+  private resize(id: string, cols?: number, rows?: number): any {
+    const session = this.sessions.get(id);
+    if (!session) throw new Error(`pty session ${id} not found`);
+    const c = cols ?? session.cols;
+    const r = rows ?? session.rows;
+    if (session.status === "running" && session.proc) {
+      session.proc.resize(c, r);
+    }
+    session.cols = c;
+    session.rows = r;
+    return { id, cols: c, rows: r, status: session.status };
   }
 
   private status(id: string): any {

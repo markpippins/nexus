@@ -28,6 +28,7 @@ export default class WorkerService extends Service {
                 { name: "worker.harness", status: statusFor("worker.harness"), wave: 4 },
                 { name: "worker.pty", status: statusFor("worker.pty"), wave: 4 },
                 { name: "worker.execution", status: statusFor("worker.execution"), wave: 4 },
+                { name: "worker.pty-transport", status: statusFor("worker.pty-transport"), wave: 4 },
               ],
               nodeID: ctx.nodeID,
             };

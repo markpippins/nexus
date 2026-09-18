@@ -90,16 +90,16 @@ test('GET /api/health reports ok with all worker services', async () => {
   assert.equal(body.service, 'nexus-broker')
   assert.deepEqual(
     [...body.workers].sort(),
-    ['worker.execution', 'worker.harness', 'worker.pty']
+    ['worker.execution', 'worker.harness', 'worker.pty', 'worker.pty-transport']
   )
 })
 
-test('GET /api/workers lists the 3 wave-4 workers as available', async () => {
+test('GET /api/workers lists the wave-4 workers as available', async () => {
   const res = await fetch(`${BASE}/workers`)
   assert.equal(res.status, 200)
   const body = await res.json()
   const names = body.workers.map((w) => w.name).sort()
-  assert.deepEqual(names, ['worker.execution', 'worker.harness', 'worker.pty'])
+  assert.deepEqual(names, ['worker.execution', 'worker.harness', 'worker.pty', 'worker.pty-transport'])
   for (const w of body.workers) {
     assert.equal(w.status, 'available')
   }
