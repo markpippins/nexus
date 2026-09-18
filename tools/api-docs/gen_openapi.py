@@ -14,7 +14,7 @@ Special cases:
     route-level spec. Falls back to the generic spec if the service is down.
   - semantics-srv: skipped — it already carries a registry-derived spec
     (scripts/generate-openapi.ts + openapi.yaml).
-  - terrain-srv: skipped (retired). pty-srv: skipped (WebSocket-only, no REST).
+  - terrain-srv: skipped (retired). pty-srv: skipped (RETIRED M3, WebSocket-only, no REST).
 
 Usage:
     python tools/api-docs/extract_routes.py --out /tmp/api_inventory.json
@@ -99,9 +99,9 @@ SERVICES = {
                 "state, traces, and the SSE event stream.",
     },
     "typescript/pty-srv": {
-        "title": "pty-srv — WebSocket PTY Gateway",
+        "title": "pty-srv — WebSocket PTY Gateway (RETIRED M3)",
         "port": 3120,
-        "desc": "WebSocket terminal gateway (ws + node-pty). No REST routes are mounted; "
+        "desc": "RETIRED (M3): WebSocket terminal gateway (ws + node-pty), superseded by worker.pty-transport on :3130. No REST routes are mounted; "
                 "the API is the WebSocket upgrade surface only.",
         "skip_openapi": True,
     },

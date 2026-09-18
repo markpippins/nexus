@@ -18,7 +18,7 @@ Each replaced `typescript/*-srv` project now ships its own `Dockerfile`
 | peb-srv | `../../typescript/peb-srv` | 3111 | nexus-control-edge (3.7) |
 | cascade-srv | `../../typescript/cascade-srv` | 3106 | nexus-control-edge (3.8) |
 | harness-srv | `../../typescript/harness-srv` | 3420 | worker.harness (4) |
-| pty-srv | `../../typescript/pty-srv` | 3120 | worker.pty (4) |
+| ~~pty-srv~~ | `../../typescript/pty-srv` | ~~3120~~ | ~~worker.pty (4)~~ — **RETIRED (M3)**; superseded by `worker.pty-transport` :3130 via nexus-broker |
 | execution-srv | `../../typescript/execution-srv` | 3110 | worker.execution (4) |
 | tackle-prompt-sync-srv | `../../typescript/tackle-prompt-sync-srv` | 3501 | control-edge prompt-sync (1.1) |
 | role-memory-srv | `../../typescript/role-memory-srv` | 3500 | control-edge role-memory (1.2) |
@@ -45,8 +45,9 @@ docker build -t nexus-legacy/tackle ../.. -f ../../typescript/tackle-srv/Dockerf
 
 - **TS units** build in a multi-stage image (`node:20-bookworm` builder →
   slim runtime). **JS units** (wind-srv, peb-srv) run directly with no build.
-- **pty-srv** keeps the full bookworm runtime because `node-pty` is a native
-  module compiled at install time.
+- ~~**pty-srv** keeps the full bookworm runtime because `node-pty` is a native
+  module compiled at install time.~~ — **RETIRED (M3)**; the pty service block
+  was removed from the compose; node-pty now runs in-process in `worker.pty`.
 - **harness-srv** spawns agent subprocesses — mount `HARNESS_WORK_DIR`
   (volume `./work:/nexus` by default) and make `OPENCODE_BIN` available on
   the container. It also calls out to nebula (3101) and conduit-mcp (3100);

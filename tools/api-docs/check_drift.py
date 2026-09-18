@@ -13,7 +13,7 @@ Excluded services:
     - semantics-srv  — its openapi.yaml is derived from the TABLES registry by
                        its own generator (scripts/generate-openapi.ts), not from
                        route extraction
-    - pty-srv        — WebSocket-only, intentionally no openapi.yaml
+    - pty-srv        — RETIRED (M3); WebSocket-only, intentionally no openapi.yaml (tree retained until M3 close-out)
     - terrain-srv    — retired
 
 Usage:

@@ -25,8 +25,8 @@ For each `*-srv` (in the service's own directory):
   generic route-level spec if the service is down.
 - **semantics-srv**: excluded — it already carries a registry-derived spec
   (`typescript/semantics-srv/scripts/generate-openapi.ts` + `openapi.yaml`).
-- **terrain-srv**: excluded (retired). **pty-srv**: no REST routes
-  (WebSocket-only) — documented in its README only.
+- **terrain-srv**: excluded (retired). **pty-srv**: excluded (RETIRED M3) — no REST routes
+  (WebSocket-only) — documented in its README only; superseded by `worker.pty-transport` :3130.
 
 ## Tools
 

@@ -1,7 +1,12 @@
 # pty-srv — WebSocket PTY Gateway
 
-> **Port:** 3120
-> **Endpoint:** `ws://localhost:3120`
+> **RETIRED (M3, 2026-09-18)** — superseded by `worker.pty-transport` (WS on
+> :3130 via nexus-broker :4080). This source tree is **retained until the M3
+> close-out review** as the wire-compat reference and protocol doc. Do not
+> restart `pty-srv.service`; the unit and `:3120`/`:3121` listeners are gone.
+
+> **Port:** 3120 (historical)
+> **Endpoint:** `ws://localhost:3120` (historical — use `ws://localhost:3130`)
 > **Shell:** `$SHELL` (default `/bin/bash`)
 
 `pty-srv` is a **WebSocket-only** service: it exposes an interactive PTY

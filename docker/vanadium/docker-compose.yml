@@ -134,18 +134,9 @@ services:
     - ${HARNESS_WORK_DIR:-./work}:/nexus
     ports:
     - ${HARNESS_HOST_PORT:-3420}:3420
-  pty:
-    build:
-      context: ../../typescript
-      dockerfile: pty-srv/Dockerfile
-    container_name: legacy-pty
-    restart: unless-stopped
-    environment:
-      PTY_SRV_PORT: ${PTY_SRV_PORT:-3120}
-      PTY_HOST: ${PTY_HOST:-127.0.0.1}
-      HEARTBEAT_REGISTRY_URL: ${HEARTBEAT_REGISTRY_URL:-}
-    ports:
-    - ${PTY_HOST_PORT:-3120}:3121
+  # pty service RETIRED (M3 2026-09-18): pty-srv superseded by
+  # worker.pty-transport WS on :3130 via nexus-broker (:4080).
+  # Block removed per architect authorization (thread e57f5a3d).
   execution:
     build:
       context: ../../typescript

@@ -2,7 +2,8 @@ import { Service, ServiceBroker, Context } from "moleculer";
 
 /**
  * Worker tier — hosts the process-spawning services re-homed from the
- * Express fleet (harness-srv, pty-srv, execution-srv — Wave 4).
+ * Express fleet (harness-srv, execution-srv — Wave 4; pty-srv RETIRED M3,
+ * replaced by worker.pty-transport on :3130).
  *
  * Wave 4: real handlers now live in worker.harness / worker.pty /
  * worker.execution. This service provides the tier-level introspection
