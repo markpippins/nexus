@@ -249,8 +249,8 @@ def phase_fold(sources: list[Path], by: str) -> str:
             rep = {}
         if rc != 0:
             raise RuntimeError(f"fold failed for {src.name} (rc={rc}): {report[-200:]}")
-        folded += int(rep.get("inserted", rep.get("folded", 0)) or 0)
-        skipped += int(rep.get("duplicates", rep.get("skipped", 0)) or 0)
+        folded += int(rep.get("inserted", 0) or 0)
+        skipped += int(rep.get("skipped", 0) or 0)
     return f"{len(sources)} source(s): inserted={folded} deduped={skipped}"
 
 
