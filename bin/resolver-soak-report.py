@@ -35,6 +35,7 @@ Usage:
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -53,6 +54,28 @@ V174_STATES = [
 
 # ── Parsing (hermetic; tests feed lines directly) ────────────────────────────
 
+_OFFSET_RE = re.compile(r"([+-]\d{2})(\d{2})$")
+
+
+def _parse_journal_ts(ts_raw: str):
+    """Parse a journalctl short-iso timestamp on any supported Python.
+
+    Python < 3.11 fromisoformat() REJECTS UTC offsets without a colon
+    ('2026-09-18T05:13:44-0400' — exactly what --output short-iso emits),
+    silently yielding ts=None on the 3.10 CI leg while working on 3.11+
+    dev shells. Normalize the offset form before parsing (caught by CI,
+    pinned by test)."""
+    if not ts_raw:
+        return None
+    try:
+        return datetime.fromisoformat(ts_raw)
+    except ValueError:
+        pass
+    try:
+        return datetime.fromisoformat(_OFFSET_RE.sub(r"\1:\2", ts_raw))
+    except ValueError:
+        return None
+
 
 def parse_resolver_check_line(line: str):
     """Parse one journal line into a dict, or None if not a resolver-check line.
@@ -65,10 +88,7 @@ def parse_resolver_check_line(line: str):
     if idx < 0:
         return None
     ts_raw = line[:idx].strip().split(" ")[0] if idx > 0 else ""
-    try:
-        ts = datetime.fromisoformat(ts_raw)
-    except ValueError:
-        ts = None
+    ts = _parse_journal_ts(ts_raw)
     fields = {}
     for tok in line[idx + len(marker):].split():
         if "=" in tok:

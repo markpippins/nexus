@@ -91,6 +91,21 @@ class TestParser(unittest.TestCase):
         # reading must round-trip exactly as journald emitted it.
         self.assertEqual(p[0]["ts"].isoformat(), "2026-09-18T09:13:44-04:00")
 
+    def test_colonless_offset_parses_on_py310_too(self):
+        """CI's 3.10 leg caught this: <3.11 fromisoformat rejects '-0400'
+        (colonless), which is exactly what journalctl short-iso emits. The
+        parser must normalize — a ts=None on this class of line would make
+        the Oct 2 gate read an empty window and report NOT_READY forever."""
+        p = parse([f"{T0} titanium node[1]: resolver-check node=n "
+                   "demand=capability:k verdict=satisfied outcome=ok"])
+        self.assertIsNotNone(p[0]["ts"])
+        self.assertEqual(p[0]["ts"].utcoffset(), timedelta(hours=-4))
+
+    def test_garbage_timestamp_stays_none(self):
+        p = parse(["not-a-timestamp titanium node[1]: resolver-check "
+                   "node=n demand=capability:k verdict=satisfied outcome=ok"])
+        self.assertEqual(p[0]["ts"], None)  # still a parseable row, just undated
+
 
 class TestCriteria(unittest.TestCase):
     def test_all_pass_when_window_old_resolution_clean(self):
