@@ -171,7 +171,7 @@ describe('credential + capability helper routes', () => {
 
   it('capability resolve route returns verdict for existing key', async () => {
     query.mockImplementationOnce(() => Promise.resolve({ rows: [
-      { id: 'c1', capability: 'has-active-shrapnel-protocol', description: '' },
+      { id: 'c1', name: 'has-active-shrapnel-protocol', description: '' },
     ] }));
     query.mockImplementationOnce(() => Promise.resolve({ rows: [
       { satisfaction_state: 'satisfied', satisfying_providers: ['postgresql'],
@@ -182,5 +182,28 @@ describe('credential + capability helper routes', () => {
     expect(res.status).toBe(200);
     expect(res.body.verdict).toBe('satisfied');
     expect(res.body.satisfying_providers).toEqual(['postgresql']);
+  });
+
+  // SQL-shape pins: the mocked-db suite above can't see SQL text, which is
+  // exactly how the V175 sentinel / column-name drift shipped (alerts on the
+  // live restart). These assert the SQL against the LIVE contract.
+  describe('SQL shape pins (live-contract regression guards)', () => {
+    it('credential SQL uses the V175 house open-sentinel, not infinity', async () => {
+      query.mockResolvedValueOnce({ rows: [] });
+      await get('/credential/engineer');
+      const sql = query.mock.calls[0][0];
+      expect(sql).toContain("valid_until = '9999-12-31 00:00:00+00'::timestamptz");
+      expect(sql).toContain("recorded_until_dt = '9999-12-31 00:00:00+00'::timestamptz");
+      expect(sql).not.toContain('infinity');
+    });
+
+    it('capability SQL queries nebula.capabilities by name column', async () => {
+      query.mockImplementationOnce(() => Promise.resolve({ rows: [] }));
+      await get('/capability/anything/resolve');
+      const sql = query.mock.calls[0][0];
+      expect(sql).toContain('FROM nebula.capabilities');
+      expect(sql).toContain('WHERE name = $1');
+      expect(sql).not.toMatch(/WHERE capability\s*=/);
+    });
   });
 });

@@ -34,7 +34,8 @@ async function verifyHolders() {
   const r = await query(
     `SELECT name FROM nebula.roles
      WHERE can_verify_work_requests
-       AND valid_until = 'infinity' AND recorded_until_dt = 'infinity'
+       AND valid_until = '9999-12-31 00:00:00+00'::timestamptz
+       AND recorded_until_dt = '9999-12-31 00:00:00+00'::timestamptz
      ORDER BY name`);
   return r.rows.map((x) => x.name);
 }
@@ -43,7 +44,7 @@ async function verifyHolders() {
 // non-satisfied case: whatever v_capability_satisfaction says, passes through.
 export async function resolveCapability(capabilityKey) {
   const cap = await query(
-    `SELECT id, capability, description FROM nebula.capabilities WHERE capability = $1`,
+    `SELECT id, name, description FROM nebula.capabilities WHERE name = $1`,
     [capabilityKey]);
   if (cap.rows.length === 0) {
     return { capability: capabilityKey, exists: false, verdict: 'unknown',
@@ -80,7 +81,9 @@ export async function verifyRoleCredential(roleName) {
   const r = await query(
     `SELECT can_verify_work_requests, can_greenlight, owns_domains
      FROM nebula.roles
-     WHERE name = $1 AND valid_until = 'infinity' AND recorded_until_dt = 'infinity'`,
+     WHERE name = $1
+       AND valid_until = '9999-12-31 00:00:00+00'::timestamptz
+       AND recorded_until_dt = '9999-12-31 00:00:00+00'::timestamptz`,
     [roleName]);
   if (r.rows.length === 0) {
     return { role: roleName, exists: false, can_verify_work_requests: false,
