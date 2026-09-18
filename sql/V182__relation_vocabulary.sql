@@ -216,8 +216,12 @@ UPDATE resolution.concept_relationship
 -- 4. FKs (R-7) — by name, added NOT VALID here; VALIDATE CONSTRAINT is an
 --    explicit follow-up after soak (kept out of this migration on purpose).
 --    Naming per system convention: <table>_<column>_fk.
---    With both legacy spellings reconciled in §3, every active row satisfies
---    the constraint; V182 therefore stays mergeable as a pre-stage.
+--    concept_relationship: with the legacy spellings reconciled in §3, every
+--    active row satisfies the constraint. representation_relationship is NOT
+--    reconciled here — its 3 active edges (derived/partial/legacy) are not in
+--    the seeded vocabulary; NOT VALID keeps the pre-stage mergeable, and the
+--    VALIDATE follow-up stays BLOCKED pending ontologist disposition of those
+--    edges (architect inspection a81dc5f1; census corroborated 2026-09-18).
 -- ─────────────────────────────────────────────────────────────────────────────
 ALTER TABLE resolution.concept_relationship
   ADD CONSTRAINT concept_relationship_relationship_type_fk
@@ -275,3 +279,55 @@ BEGIN
   END IF;
 END
 $block$;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- APPENDIX (2026-09-18, engineer — append-only, non-executable commentary):
+-- representation_relationship VALIDATE gate — pre-agreed disposition statements
+-- for the 3 active non-vocabulary edges. §3 deliberately leaves
+-- representation_relationship untouched (see §4 note); the binding disposition
+-- of these edges is the ontologist's (governance I2 — architect inspection
+-- a81dc5f1, ruling 46d45c77 condition 5). This appendix records the exact
+-- statements to run in the V182 window ONCE the ontologist confirms the
+-- mappings, so VALIDATE becomes one command with zero further engineering.
+--
+-- Live census (verified 2026-09-18, titanium AND vanadium — identical):
+--   derived  1 edge : work_request table (resolution) -> vision.work_requests
+--                     (LOSM satellite; edge notes: "tracking satellite, not a
+--                     second source of truth")              -> PROJECTS
+--   partial  1 edge : implementation_plan table (resolution) -> WRP DAG node
+--                     (conduit; edge notes: "not full DAG structure; WRP is
+--                     the fuller representation")            -> PROJECTS
+--   legacy   1 edge : harvest.candidates embedded jsonb (dropped source,
+--                     nebula.harvests_history) -> candidate table
+--                     (resolution; notes: "Superseded by resolution.candidate
+--                     as the single source of truth")        -> EXPIRE
+--
+-- (1) derived -> projects (X is a derived, non-authoritative view of Y):
+--   UPDATE resolution.representation_relationship
+--      SET relationship_type = 'projects',
+--          notes = coalesce(notes || ' | ', '')
+--                  || 'V182 appendix disposition: derived->projects (ontologist freeze df6b70c4)'
+--    WHERE relationship_type = 'derived' AND expired_at IS NULL;
+--
+-- (2) partial -> projects (WRP is the fuller representation of the same
+--     planning surface — the table is the narrower projection of it):
+--   UPDATE resolution.representation_relationship
+--      SET relationship_type = 'projects',
+--          notes = coalesce(notes || ' | ', '')
+--                  || 'V182 appendix disposition: partial->projects (ontologist freeze df6b70c4)'
+--    WHERE relationship_type = 'partial' AND expired_at IS NULL;
+--
+-- (3) legacy -> expire (superseded source dropped; expire-not-delete):
+--   UPDATE resolution.representation_relationship
+--      SET expired_at = now(),
+--          notes = coalesce(notes || ' | ', '')
+--                  || 'V182 appendix disposition: legacy edge expired (ontologist freeze df6b70c4)'
+--    WHERE relationship_type = 'legacy' AND expired_at IS NULL;
+--
+-- (4) then the gate this appendix unblocks:
+--   ALTER TABLE resolution.representation_relationship
+--     VALIDATE CONSTRAINT representation_relationship_relationship_type_fk;
+--
+-- IF THE ONTOLOGIST ALTERS A MAPPING: edit these recorded statements — do NOT
+-- reconcile in §3 (R-1/R-2 scope is concept_relationship only).
+-- ─────────────────────────────────────────────────────────────────────────────
