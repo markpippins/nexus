@@ -1,0 +1,10 @@
+[Unit]
+Description=Session #1 minutes timer — one-shot 2026-09-19 13:32:00 UTC
+
+[Timer]
+OnCalendar=2026-09-19 13:32:00 UTC
+Persistent=true
+Unit=session1-minutes.service
+
+[Install]
+WantedBy=timers.target

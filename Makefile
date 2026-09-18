@@ -210,6 +210,7 @@ mesh-test:
 		bin/tests/test_calendar_typespec.py \
 		bin/tests/test_calendar_emit.py \
 		bin/tests/test_consolidate_wiring.py \
+		bin/tests/test_session1_minutes.py \
 		bin/tests/test_calendar_consolidate.py \
 		bin/tests/test_boot_digest.py bin/tests/test_boot_conn_record.py \
 		bin/tests/test_boot_attest.py -v

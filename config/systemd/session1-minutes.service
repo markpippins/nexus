@@ -1,0 +1,15 @@
+[Unit]
+Description=Session #1 minutes reconciliation — one-shot at 2026-09-19 13:32Z
+# Fires 2 minutes after the Session #1 window closes (13:05-13:30Z, event
+# d64f7a1e / thread 20aecad0): after the 13:25 resolver probe completes,
+# before the 13:35 consolidation tick. Runs bin/session1-minutes.py --post,
+# which reconciles minutes from canonical surfaces (journal + both machines'
+# calendars) and posts them to the session-plan thread.
+# SuccessExitStatus=2: pre-window refusal (if triggered early) is by design,
+# not a failure (lilac-flip executor convention).
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/session1-minutes.py --post
+SuccessExitStatus=2
+TimeoutStartSec=300
