@@ -155,3 +155,5 @@ FROM (VALUES
 ) AS v(node_key, capability_key, placeholder, role_credential)
 JOIN wind.workflow_nodes n ON n.id::text = v.node_key
 ON CONFLICT DO NOTHING;
+
+COMMIT;
