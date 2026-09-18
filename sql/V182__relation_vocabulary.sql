@@ -1,4 +1,4 @@
--- V181 — resolution.relation_vocabulary: governed relation-type vocabulary (pre-stage)
+-- V182 — resolution.relation_vocabulary: governed relation-type vocabulary (pre-stage)
 --
 -- Freeze authority : ontologist freeze draft df6b70c4-ec1a-4d53-affe-79fcb33d48c9
 --                    (status:proposed; binding 2026-09-24T23:59Z absent objection)
@@ -31,7 +31,7 @@ BEGIN
                      'representation_relationship_relationship_type_fk');
 
   IF v_fk_count > 0 THEN
-    RAISE EXCEPTION 'V181 guard: vocabulary FK constraint(s) already exist (%) — pre-stage invariant violated', v_fk_count;
+    RAISE EXCEPTION 'V182 guard: vocabulary FK constraint(s) already exist (%) — pre-stage invariant violated', v_fk_count;
   END IF;
 END
 $block$;
@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS resolution.relation_vocabulary (
 );
 
 COMMENT ON TABLE  resolution.relation_vocabulary IS
-  'Governed relation-type vocabulary for concept_relationship and representation_relationship (V181). Only ratified types are capturable as edges (FK by name, ruling R-7 of freeze draft df6b70c4). Expire-not-delete; new types enter via the insert ceremony with an ontologist freeze record.';
+  'Governed relation-type vocabulary for concept_relationship and representation_relationship (V182). Only ratified types are capturable as edges (FK by name, ruling R-7 of freeze draft df6b70c4). Expire-not-delete; new types enter via the insert ceremony with an ontologist freeze record.';
 COMMENT ON COLUMN resolution.relation_vocabulary.name IS
   'Canonical snake_case relation-type name; the FK target for relationship_type columns.';
 COMMENT ON COLUMN resolution.relation_vocabulary.definition IS
@@ -180,7 +180,7 @@ UPDATE resolution.relation_vocabulary v
 UPDATE resolution.concept_relationship
    SET expired_at = now(),
        notes      = coalesce(notes || ' | ', '')
-                    || 'R-1 fold (V181): has_dependency retired; superseded by depends_on with from/to flipped — see freeze draft df6b70c4'
+                    || 'R-1 fold (V182): has_dependency retired; superseded by depends_on with from/to flipped — see freeze draft df6b70c4'
  WHERE relationship_type = 'has_dependency'
    AND expired_at IS NULL
    AND EXISTS (SELECT 1 FROM resolution.concept_relationship live
@@ -190,12 +190,12 @@ UPDATE resolution.concept_relationship
 INSERT INTO resolution.concept_relationship
        (from_concept_id, to_concept_id, relationship_type, notes)
 SELECT to_concept_id, from_concept_id, 'depends_on',
-       'R-1 fold (V181): re-insert of has_dependency edge ' || old.id
+       'R-1 fold (V182): re-insert of has_dependency edge ' || old.id
          || ' with direction flipped — freeze draft df6b70c4'
   FROM resolution.concept_relationship old
  WHERE old.relationship_type = 'has_dependency'
    AND old.expired_at IS NOT NULL
-   AND old.notes LIKE '%R-1 fold (V181)%'
+   AND old.notes LIKE '%R-1 fold (V182)%'
    AND NOT EXISTS (
          SELECT 1 FROM resolution.concept_relationship dup
           WHERE dup.relationship_type = 'depends_on'
@@ -208,7 +208,7 @@ SELECT to_concept_id, from_concept_id, 'depends_on',
 UPDATE resolution.concept_relationship
    SET expired_at = now(),
        notes      = coalesce(notes || ' | ', '')
-                    || 'R-2 (V181): instance-level lineage fact, not class-level vocabulary — re-homed per T22 (todo 692548fd)'
+                    || 'R-2 (V182): instance-level lineage fact, not class-level vocabulary — re-homed per T22 (todo 692548fd)'
  WHERE relationship_type = 'candidate_has_state_record'
    AND expired_at IS NULL;
 
@@ -217,7 +217,7 @@ UPDATE resolution.concept_relationship
 --    explicit follow-up after soak (kept out of this migration on purpose).
 --    Naming per system convention: <table>_<column>_fk.
 --    With both legacy spellings reconciled in §3, every active row satisfies
---    the constraint; V181 therefore stays mergeable as a pre-stage.
+--    the constraint; V182 therefore stays mergeable as a pre-stage.
 -- ─────────────────────────────────────────────────────────────────────────────
 ALTER TABLE resolution.concept_relationship
   ADD CONSTRAINT concept_relationship_relationship_type_fk
@@ -232,9 +232,9 @@ ALTER TABLE resolution.representation_relationship
   NOT VALID;
 
 COMMENT ON CONSTRAINT concept_relationship_relationship_type_fk ON resolution.concept_relationship IS
-  'R-7 (V181): only ratified vocabulary types are capturable as concept edges. NOT VALID at pre-stage — VALIDATE after soak.';
+  'R-7 (V182): only ratified vocabulary types are capturable as concept edges. NOT VALID at pre-stage — VALIDATE after soak.';
 COMMENT ON CONSTRAINT representation_relationship_relationship_type_fk ON resolution.representation_relationship IS
-  'R-7 (V181): only ratified vocabulary types are capturable as representation edges. NOT VALID at pre-stage — VALIDATE after soak.';
+  'R-7 (V182): only ratified vocabulary types are capturable as representation edges. NOT VALID at pre-stage — VALIDATE after soak.';
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 5. Summary
@@ -250,16 +250,16 @@ BEGIN
   SELECT count(*) INTO v_vocab FROM resolution.relation_vocabulary WHERE expired_at IS NULL;
   SELECT count(*) INTO v_legacy FROM resolution.concept_relationship WHERE relationship_type = 'has_dependency' AND expired_at IS NULL;
   SELECT count(*) INTO v_reinsert FROM resolution.concept_relationship
-   WHERE relationship_type = 'depends_on' AND notes LIKE '%R-1 fold (V181)%' AND expired_at IS NULL;
+   WHERE relationship_type = 'depends_on' AND notes LIKE '%R-1 fold (V182)%' AND expired_at IS NULL;
   SELECT count(*) INTO v_expired FROM resolution.concept_relationship WHERE relationship_type = 'candidate_has_state_record' AND expired_at IS NULL;
   -- Folds available for re-insert (expired legacy rows marked by this migration).
   -- On a fresh bootstrap DB this is 0 (has_dependency never existed) — legitimate.
   SELECT count(*) INTO v_folds FROM resolution.concept_relationship old
    WHERE old.relationship_type = 'has_dependency'
      AND old.expired_at IS NOT NULL
-     AND old.notes LIKE '%R-1 fold (V181)%';
+     AND old.notes LIKE '%R-1 fold (V182)%';
 
-  RAISE NOTICE 'V181 summary: % active vocabulary rows (expect 23); active has_dependency rows (expect 0): %; legacy folds: %; re-inserted depends_on rows: %; active candidate_has_state_record rows (expect 0): %',
+  RAISE NOTICE 'V182 summary: % active vocabulary rows (expect 23); active has_dependency rows (expect 0): %; legacy folds: %; re-inserted depends_on rows: %; active candidate_has_state_record rows (expect 0): %',
     v_vocab, v_legacy, v_folds, v_reinsert, v_expired;
 
   -- Hard assertions: seed complete, both legacy types fully reconciled.
@@ -267,11 +267,11 @@ BEGIN
   -- active depends_on edge (dedupe guard): e.g. the live WR/WorkRequestEdge
   -- pair was double-entered in both directions; the fold collapses it to one.
   IF v_vocab <> 23 OR v_legacy <> 0 OR v_expired <> 0 THEN
-    RAISE EXCEPTION 'V181 verify failed: vocabulary=% has_dependency=% candidate_state=%',
+    RAISE EXCEPTION 'V182 verify failed: vocabulary=% has_dependency=% candidate_state=%',
       v_vocab, v_legacy, v_expired;
   END IF;
   IF v_folds > 0 AND v_reinsert < v_folds THEN
-    RAISE NOTICE 'V181: % fold(s) deduped against existing active depends_on edges (mirror already present) — no re-insert needed', v_folds - v_reinsert;
+    RAISE NOTICE 'V182: % fold(s) deduped against existing active depends_on edges (mirror already present) — no re-insert needed', v_folds - v_reinsert;
   END IF;
 END
 $block$;

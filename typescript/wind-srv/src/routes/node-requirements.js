@@ -3,12 +3,47 @@ import rateLimit from 'express-rate-limit';
 import { NotFoundError, BadRequestError } from '../errors.js';
 import {
   resolveNodeRequirements, resolveContextBundle, resolveCapability,
-  verifyRoleCredential, SATISFACTION_STATES,
+  verifyRoleCredential, SATISFACTION_STATES, resolverMode,
 } from '../capability-resolver.js';
 import {
   normalizeRequirements, insertRequirement, replaceRequirement, attachVerdicts,
 } from '../requirements.js';
 import { query } from '../db.js';
+
+// ── P1: resolver-check journal line (To Do 0577c018, gate design 0402e9b2) ──
+// ONE structured line to stderr per demand resolution → journald → the soak
+// report. Same discipline as the lease-check line (lease-probe.py /
+// lease-soak-report.py): single line, key=value, failures are data.
+//   resolver-check node=<name> demand=<capability:key|role:NAME> verdict=<V174 state> outcome=ok|error mode=<warn|enforce> probe=synthetic|real
+export function emitResolverCheck(fields) {
+  const f = fields || {};
+  const line = [
+    'resolver-check',
+    `node=${f.node || '-'}`, // node NAME, not UUID — grep-able from journalctl
+    `demand=${f.demand || '-'}`,
+    `verdict=${f.verdict || '-'}`,
+    `outcome=${f.outcome || 'ok'}`, // ok | error
+    `mode=${f.mode || resolverMode()}`, // the ONE live seam, never a literal
+    `probe=${f.probe === 'synthetic' ? 'synthetic' : 'real'}`, // whitelist: never echo request input
+  ].join(' ');
+  process.stderr.write(`${line}\n`);
+}
+
+// demand label for the journal line: capability:<key> | role:<NAME>
+function demandLabel(req) {
+  if (req && req.capability_key) return `capability:${req.capability_key}`;
+  if (req && req.role_credential && req.role_credential.role) {
+    return `role:${req.role_credential.role}`;
+  }
+  return '-';
+}
+
+// marker: ONLY the canonical probe runner sends ?probe=synthetic — its own
+// emission plus the response echo must both be trustworthy. Anything else is
+// real traffic. The value is whitelisted, never echoed from the request.
+function probeMarker(req) {
+  return req.query.probe === 'synthetic' ? 'synthetic' : 'real';
+}
 
 export const nodeRequirementsRouter = Router();
 
@@ -35,8 +70,24 @@ nodeRequirementsRouter.get('/:id/requirements', resolverReadLimiter, async (req,
     assertUuid(req.params.id, 'node id');
     const resolved = await resolveNodeRequirements(req.params.id);
     if (!resolved) throw new NotFoundError('Node not found');
-    res.json(resolved);
-  } catch (err) { next(err); }
+    const probe = probeMarker(req);
+    for (const r of resolved.requirements) {
+      emitResolverCheck({
+        node: resolved.node.name,
+        demand: demandLabel(r),
+        verdict: r.effective_verdict,
+        outcome: 'ok',
+        probe,
+      });
+    }
+    res.json({ ...resolved, probe });
+  } catch (err) {
+    emitResolverCheck({
+      node: req.params.id, demand: '-', verdict: '-', outcome: 'error',
+      probe: probeMarker(req),
+    });
+    next(err);
+  }
 });
 
 // GET /api/nodes/{id}/resolve — the ResolvedContextBundle (refs only)
@@ -45,8 +96,22 @@ nodeRequirementsRouter.get('/:id/resolve', resolverReadLimiter, async (req, res,
     assertUuid(req.params.id, 'node id');
     const bundle = await resolveContextBundle(req.params.id);
     if (!bundle) throw new NotFoundError('Node not found');
-    res.json(bundle);
-  } catch (err) { next(err); }
+    const probe = probeMarker(req);
+    emitResolverCheck({
+      node: bundle.node && bundle.node.name ? bundle.node.name : req.params.id,
+      demand: 'bundle',
+      verdict: (bundle.requirement_verdicts || []).map((v) => v.verdict).join('+') || '-',
+      outcome: 'ok',
+      probe,
+    });
+    res.json({ ...bundle, probe });
+  } catch (err) {
+    emitResolverCheck({
+      node: req.params.id, demand: 'bundle', verdict: '-', outcome: 'error',
+      probe: probeMarker(req),
+    });
+    next(err);
+  }
 });
 
 // POST /api/nodes/{id}/requirements — register demands on an existing node
@@ -126,8 +191,20 @@ nodeRequirementsRouter.get('/capability/:key/resolve', resolverReadLimiter, asyn
   try {
     const key = String(req.params.key || '').trim();
     if (!key) throw new BadRequestError('capability key is required');
-    res.json(await resolveCapability(key));
-  } catch (err) { next(err); }
+    const result = await resolveCapability(key);
+    const probe = probeMarker(req);
+    emitResolverCheck({
+      node: '-', demand: `capability:${key}`,
+      verdict: result.verdict, outcome: 'ok', probe,
+    });
+    res.json({ ...result, probe });
+  } catch (err) {
+    emitResolverCheck({
+      node: '-', demand: `capability:${req.params.key || '?'}`,
+      verdict: '-', outcome: 'error', probe: probeMarker(req),
+    });
+    next(err);
+  }
 });
 
 // GET /api/roles/{name}/credential — bitemporal credential check (V175 shape)
@@ -135,8 +212,21 @@ nodeRequirementsRouter.get('/credential/:role', resolverReadLimiter, async (req,
   try {
     const name = String(req.params.role || '').trim();
     if (!name) throw new BadRequestError('role name is required');
-    res.json(await verifyRoleCredential(name));
-  } catch (err) { next(err); }
+    const result = await verifyRoleCredential(name);
+    const probe = probeMarker(req);
+    emitResolverCheck({
+      node: '-', demand: `role:${name}`,
+      verdict: result.exists ? 'satisfied' : 'unsatisfied',
+      outcome: 'ok', probe,
+    });
+    res.json({ ...result, probe });
+  } catch (err) {
+    emitResolverCheck({
+      node: '-', demand: `role:${req.params.role || '?'}`,
+      verdict: '-', outcome: 'error', probe: probeMarker(req),
+    });
+    next(err);
+  }
 });
 
 export { SATISFACTION_STATES };

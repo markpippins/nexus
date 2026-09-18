@@ -1,0 +1,13 @@
+[Unit]
+Description=nexus daily synthetic resolver-check probe (DBA, P3 — wind enforce soak, To Do 0577c018)
+# Oneshot runner: GETs /api/nodes/{uuid}/requirements?probe=synthetic per node
+# carrying open demands. Exits 0 on completed runs by design — probe failures
+# are data (the resolver-check journal line carries outcome=error), not unit
+# failures.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/resolver-probe.py
+# Pin the endpoint explicitly (explicit config, not a default accident).
+Environment=WIND_SRV_BASE=http://127.0.0.1:3300
+# Node list: unset = live discovery from wind.node_requirements (open demands).

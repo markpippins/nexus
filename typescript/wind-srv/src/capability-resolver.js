@@ -15,6 +15,13 @@
 
 import { query } from './db.js';
 
+// The staged-ladder mode seam (P1, To Do 0577c018): warn until the operator
+// sets WIND_RESOLVER_MODE=enforce. Both the response `mode` field and the
+// resolver-check journal lines read this ONE source — never a literal.
+export function resolverMode() {
+  return process.env.WIND_RESOLVER_MODE === 'enforce' ? 'enforce' : 'warn';
+}
+
 // The six-state V174 vocabulary, mirrored for validation at the boundary.
 export const SATISFACTION_STATES = [
   'satisfied', 'satisfied-stale', 'unsatisfied', 'unreachable', 'refused', 'unknown',
@@ -156,14 +163,14 @@ export async function resolveNodeRequirements(nodeId) {
     node: { id: node.rows[0].id, name: node.rows[0].name,
             workflow_version_id: node.rows[0].workflow_version_id },
     requirements: resolutions,
-    mode: 'warn', // staged ladder: warn until operator enforce flip
+    mode: resolverMode(), // staged ladder: warn until operator enforce flip
   };
 }
 
 // Pure bundle assembly from resolved requirements: RESOLVED REFERENCES ONLY.
 // This function never carries content blobs — card slugs, digest refs,
 // record ids, work refs.
-export function buildBundle(node, requirements, mode = 'warn') {
+export function buildBundle(node, requirements, mode = resolverMode()) {
   return {
     node,
     mode,
