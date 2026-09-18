@@ -1,0 +1,22 @@
+[Unit]
+Description=nexus daily calendar consolidation (dormant until V184 applies — a330914e)
+# Oneshot runner around bin/calendar-consolidate-run.py, which wraps
+# calendar-consolidate.py observe. While vision.calendar_events is ABSENT
+# (V184 unapplied — gated on Q1/Q2 + operator go) the wrapper exits 0 with a
+# single [inert] journal line: the timer is quiescent, not failing. The
+# moment V184 applies, the next tick folds the accumulated JSONL calendar
+# automatically — no unit changes, no operator ceremony (the gate IS the
+# activation).
+#
+# Window: 13:35Z — after the 13:25 resolver probe, inside the Session #1
+# window's close margin (plan thread 20aecad0).
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/calendar-consolidate-run.py
+# Pin the calendar source explicitly (explicit config, not a default accident).
+Environment=CALENDAR_STATE_DIR=/home/codex/.local/state/nexus-calendar
+# DB seam: CONDUIT_PG_DSN defaults are compiled into calendar-consolidate.py;
+# override here if the canonical store moves.
+#Environment=CONDUIT_PG_DSN=postgresql://pguser:pgpass@localhost:5432/postgres
+TimeoutStartSec=180

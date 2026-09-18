@@ -133,7 +133,7 @@ class Boot:
                  lease_policy: str, update_pointer: bool, limit: int,
                  dry_run: bool, strict: bool, want_digest: bool = False,
                  want_conn: bool = False, want_attest_scan: bool = True,
-                 want_calendar: bool = True):
+                 want_calendar: bool = True, want_consolidate: bool = True):
         self.role = role
         self.model = model
         self.channel = channel
@@ -148,6 +148,7 @@ class Boot:
         self.want_conn = want_conn
         self.want_attest_scan = want_attest_scan
         self.want_calendar = want_calendar
+        self.want_consolidate = want_consolidate
         self.lease_instant: str | None = None  # captured at clock-in (Q2 anchor)
         # --attest payload: (cites_id, evidence list, session_id) or None
         self.attest_cmd: tuple | None = None
@@ -277,6 +278,43 @@ class Boot:
         except Exception as e:  # emitter failure is data, not a boot failure
             self.record("calendar", "degraded",
                         f"emitter subprocess failed: {type(e).__name__}: {str(e)[:120]}")
+
+    # 3b′ ─ consolidation (dormant fold-back, gated on V184) ----------------
+    def consolidate_step(self) -> None:
+        """Fold the JSONL calendar into vision.calendar_events when live.
+
+        Dormant by construction (thread a330914e): the wrapper normalizes
+        the observe tool's inert refusal (V184 absent) into a quiet [skip]
+        and the fold fires automatically the moment V184 applies. Runs
+        AFTER the calendar step so the boot's own session event is folded
+        too. Degrades, never fails:
+        - --no-consolidate      → step absent entirely
+        - inert (gate closed)   → [skip] (quiescent, exit-0 path)
+        - wrapper/DB failure    → degraded (data, boot continues)
+        - --dry-run             → [skip] (zero-mutation stance)
+        """
+        if not self.want_consolidate:
+            return
+        if self.dry_run:
+            print("== consolidation (fold-back, gated on V184) ==")
+            self.record("consolidate", "skipped",
+                        "dry-run: fold-back not run (zero-mutation stance)")
+            return
+        try:
+            r = subprocess.run(
+                [sys.executable, os.path.join(SCRIPT_DIR, "calendar-consolidate-run.py")],
+                capture_output=True, text=True, timeout=150,
+            )
+            detail = (r.stdout.strip().splitlines() or
+                      (r.stderr.strip().splitlines() or ["no output"]))[-1][:160]
+            if r.returncode == 0:
+                status = "skipped" if "[inert]" in detail else "ok"
+                self.record("consolidate", status, detail)
+            else:
+                self.record("consolidate", "degraded", detail)
+        except Exception as e:  # consolidation failure is data, not a boot failure
+            self.record("consolidate", "degraded",
+                        f"wrapper failed: {type(e).__name__}: {str(e)[:120]}")
 
     # 3c ─ connection record (V169 affordance census) -----------------------
     def connection_record(self) -> None:
@@ -549,6 +587,7 @@ class Boot:
         self.attest_record()
         self.clock_in()
         self.calendar_step()
+        self.consolidate_step()
         self.forums()
         self.procedures()
         return self.report()
@@ -589,6 +628,11 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--no-calendar", action="store_false", dest="calendar",
                     help="skip the session CalendarEvent (default-on): no kind=occurred "
                          "session-start event is appended to the local JSONL calendar")
+    ap.add_argument("--consolidate", action="store_true", default=True,
+                    help=argparse.SUPPRESS)  # default-on since the consolidate-wiring PR; kept for symmetry
+    ap.add_argument("--no-consolidate", action="store_false", dest="consolidate",
+                    help="skip the consolidation step (default-on, dormant until V184 "
+                         "applies): no fold-back attempt at boot")
     ap.add_argument("--no-attest-scan", action="store_true",
                     help="skip the default read-only attest-scan (open V179 chains)")
     ap.add_argument("--attest", metavar="CITES_ID",
@@ -614,7 +658,8 @@ def main(argv: list[str]) -> int:
         limit=args.limit, dry_run=args.dry_run, strict=args.strict,
         want_digest=args.digest, want_conn=args.conn_record,
         want_attest_scan=not args.no_attest_scan,
-        want_calendar=args.calendar)
+        want_calendar=args.calendar,
+        want_consolidate=args.consolidate)
 
     if args.attest:
         if not args.evidence:
