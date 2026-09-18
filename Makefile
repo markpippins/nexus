@@ -209,6 +209,7 @@ mesh-test:
 		bin/tests/test_flow_emit_aegis.py \
 		bin/tests/test_calendar_typespec.py \
 		bin/tests/test_calendar_emit.py \
+		bin/tests/test_calendar_consolidate.py \
 		bin/tests/test_boot_digest.py bin/tests/test_boot_conn_record.py \
 		bin/tests/test_boot_attest.py -v
 
@@ -322,6 +323,9 @@ attestations-e2e-test:
 calendar-e2e-test:
 	@echo "[calendar-e2e-test] V184 calendar primitive E2E (staged-inert DDL, throwaway DB, wr-conf-036)..."
 	@python3 -m pytest python/nexus_core/wrp/tests/test_v184_calendar_e2e.py -v
+calendar-consolidate-test:
+	@echo "[calendar-consolidate-test] consolidation intake (hermetic + real-V184 E2E, wr-conf-037)..."
+	@python3 -m pytest bin/tests/test_calendar_consolidate.py python/nexus_core/wrp/tests/test_calendar_consolidate_e2e.py -v
 attest-wiring-test:
 	@echo "[attest-wiring-test] boot-shim attestation wiring (hermetic + real-DB E2E, wr-conf-034)..."
 	@python3 -m pytest python/continuity/tests/test_attest.py python/nexus_core/wrp/tests/test_attest_wiring_e2e.py -v
