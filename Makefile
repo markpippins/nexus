@@ -202,6 +202,7 @@ mesh-test:
 		bin/tests/test_drive_guard.py bin/tests/test_vdci_backup.py \
 		bin/tests/test_pg_escape_hatch.py bin/tests/test_adapter_health_probe.py \
 		bin/tests/test_boot_attest.py \
+	bin/tests/test_migration_commit_lint.py \
 		bin/tests/test_mark_operator_go_applied.py \
 		bin/tests/test_flow_recorder_v0.py -v
 
