@@ -144,6 +144,7 @@ public class ServiceController {
         existingService.setDescription(service.getDescription());
         existingService.setDefaultPort(service.getDefaultPort());
         existingService.setApiBasePath(service.getApiBasePath());
+        existingService.setHealthCheckPath(service.getHealthCheckPathRaw());
         existingService.setRepositoryUrl(service.getRepositoryUrl());
         existingService.setVersion(service.getVersion());
         existingService.setStatus(service.getStatus());
