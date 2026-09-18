@@ -160,6 +160,69 @@ describe('ResolvedContextBundle (refs-only law)', () => {
   });
 });
 
+describe('per-kind verdict law (credential demands)', () => {
+  // Regression pin for the live battery finding: a credential-only demand
+  // used to inherit the null capability's `unknown` verdict. A named role
+  // holding real authority resolves `satisfied`; an existing-but-empty row
+  // resolves `unsatisfied`; never `unknown`.
+  function mockNodeWithCredential(rows) {
+    query.mockImplementationOnce(() => Promise.resolve({ rows: [
+      { id: NODE_ID, name: 'triage', workflow_version_id: 'v-1' },
+    ] }));
+    query.mockImplementationOnce(() => Promise.resolve({ rows }));
+    // verifyHolders query (only when requirements exist)
+    query.mockImplementationOnce(() => Promise.resolve({ rows: [
+      { name: 'tester' },
+    ] }));
+  }
+
+  it('credential-only demand with real authority → satisfied (not unknown)', async () => {
+    mockNodeWithCredential([
+      { capability_key: null, role_credential: 'planner', last_verdict: null },
+    ]);
+    query.mockImplementationOnce(() => Promise.resolve({ rows: [
+      { can_verify_work_requests: false, can_greenlight: true,
+        owns_domains: ['plan_proposals'] },
+    ] }));
+    const res = await get(`/${NODE_ID}/requirements`);
+    expect(res.status).toBe(200);
+    expect(res.body.requirements[0].effective_verdict).toBe('satisfied');
+  });
+
+  it('credential-only demand for an existing-but-impotent row → unsatisfied', async () => {
+    mockNodeWithCredential([
+      { capability_key: null, role_credential: 'ghost-with-row', last_verdict: null },
+    ]);
+    query.mockImplementationOnce(() => Promise.resolve({ rows: [
+      { can_verify_work_requests: false, can_greenlight: false,
+        owns_domains: [] },
+    ] }));
+    const res = await get(`/${NODE_ID}/requirements`);
+    expect(res.body.requirements[0].effective_verdict).toBe('unsatisfied');
+  });
+
+  it('combined demand (capability + credential) requires BOTH to hold', async () => {
+    mockNodeWithCredential([
+      { capability_key: 'has-active-shrapnel-protocol',
+        role_credential: 'tester', last_verdict: null },
+    ]);
+    query.mockImplementationOnce(() => Promise.resolve({ rows: [
+      { id: 'c1', name: 'has-active-shrapnel-protocol', description: '' },
+    ] }));
+    query.mockImplementationOnce(() => Promise.resolve({ rows: [
+      { satisfaction_state: 'satisfied', satisfying_providers: ['postgresql'],
+        active_adapters: 1, degraded_adapters: 0, declared_adapters: 0,
+        last_observed_at: null, evidence_age: null, concept_id: null },
+    ] }));
+    query.mockImplementationOnce(() => Promise.resolve({ rows: [
+      { can_verify_work_requests: true, can_greenlight: false,
+        owns_domains: ['test-verification'] },
+    ] }));
+    const res = await get(`/${NODE_ID}/requirements`);
+    expect(res.body.requirements[0].effective_verdict).toBe('satisfied');
+  });
+});
+
 describe('credential + capability helper routes', () => {
   it('credential route reports exists=false for unknown role (absence as data)', async () => {
     query.mockImplementationOnce(() => Promise.resolve({ rows: [] }));

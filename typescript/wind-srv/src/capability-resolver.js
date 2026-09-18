@@ -115,10 +115,33 @@ export async function resolveNodeRequirements(nodeId) {
   const holders = reqs.rows.length ? await verifyHolders() : [];
   const resolutions = [];
   for (const req of reqs.rows) {
-    const capRes = await resolveCapability(req.capability_key);
+    const capRes = req.capability_key
+      ? await resolveCapability(req.capability_key)
+      : null;
     const credential = req.role_credential
       ? await verifyRoleCredential(req.role_credential)
       : null;
+    // Per-kind verdict: a credential demand is judged by whether the named
+    // role holds a lawful open snapshot with real authority (a live row that
+    // exists but holds nothing is `unsatisfied`, not `satisfied`); a
+    // capability demand keeps its V174 verdict verbatim. Combined demands
+    // (both kinds on one row — not produced by the seeder) must BOTH hold.
+    let verdict;
+    if (req.capability_key && credential) {
+      const credOk = credential.exists &&
+        (credential.can_verify_work_requests || credential.can_greenlight ||
+         (credential.owns_domains || []).length > 0);
+      verdict = (capRes.verdict === 'satisfied' && credOk) ? 'satisfied' : 'unsatisfied';
+    } else if (req.capability_key) {
+      verdict = capRes.verdict;
+    } else if (credential) {
+      const credOk = credential.exists &&
+        (credential.can_verify_work_requests || credential.can_greenlight ||
+         (credential.owns_domains || []).length > 0);
+      verdict = credOk ? 'satisfied' : 'unsatisfied';
+    } else {
+      verdict = 'unknown';
+    }
     resolutions.push({
       capability_key: req.capability_key,
       capability: capRes,
@@ -126,7 +149,7 @@ export async function resolveNodeRequirements(nodeId) {
       // verify-holder class resolution (RoleAlias e9f81ae7): which live roles
       // could satisfy a verify-shaped demand right now.
       verify_holder_class: holders,
-      effective_verdict: capRes.verdict,
+      effective_verdict: verdict,
     });
   }
   return {
