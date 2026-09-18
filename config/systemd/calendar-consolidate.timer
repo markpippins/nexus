@@ -1,0 +1,10 @@
+[Unit]
+Description=daily calendar consolidation tick 13:35Z (dormant until V184 applies)
+
+[Timer]
+OnCalendar=*-*-* 13:35:00 UTC
+Persistent=true
+Unit=calendar-consolidate.service
+
+[Install]
+WantedBy=timers.target
