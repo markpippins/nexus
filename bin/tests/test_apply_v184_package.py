@@ -80,6 +80,11 @@ class Harness:
         m.stdout = "present\n" if self.jsonl_ok else ""
         return m
 
+    def remote_probe(self, host):
+        """probe_remote_jsonl seam — hermetic, no subprocess."""
+        self.calls.append(f"remote-probe:{host}")
+        return self.jsonl_ok
+
     def run_consolidate(self, source, by, strict, mode="observe"):
         self.calls.append(f"{mode}:{source}")
         # default fold_rc=0 only applies to observe; validate mode is green
@@ -99,14 +104,14 @@ class Harness:
 
 
 def patch_all(h):
-    """Fully hermetic: every seam injected INCLUDING subprocess.run (the ssh
-    probe). Without the last line, CI executes real ssh to helium and the
-    battery fails there while passing locally — pitfall #15 class."""
+    """Fully hermetic: every network/subprocess seam injected. probe_remote_
+    jsonl is its own seam (pitfall #15: leaving subprocess.run real let CI
+    ssh helium while local passed)."""
     return unittest.mock.patch.multiple(
         pkg, db_query=h.db_query, apply_sql=h.apply_sql,
         stage_remote_jsonl=h.stage, run_consolidate=h.run_consolidate,
         nebula_get=h.nebula_get, mark_go_applied=h.mark,
-        subprocess=unittest.mock.Mock(side_effect=h.ssh_probe),
+        probe_remote_jsonl=h.remote_probe,
     )
 
 
@@ -256,13 +261,11 @@ class TestRunOrdering(unittest.TestCase):
     def test_remote_unreachable_fails_verify(self):
         h = Harness(regclass="NULL", jsonl_ok=False)
         with patch_all(h):
-            with unittest.mock.patch.object(pkg.subprocess, "run", h.ssh_probe), \
-                 unittest.mock.patch.object(pkg.tempfile, "mkdtemp",
-                                            return_value="/tmp/v184-test-stage5"):
-                rc = run_main(["run", "--operator-go", "go-1",
-                               "--remote-hosts", "darkbox", "--dry-run"])
+            rc = run_main(["run", "--operator-go", "go-1",
+                           "--remote-hosts", "darkbox", "--dry-run"])
         self.assertEqual(rc, pkg.EX_FAIL)
         self.assertNotIn("apply", h.calls)
+        self.assertIn("remote-probe:darkbox", h.calls)
 
 
 class TestDryRun(unittest.TestCase):

@@ -102,6 +102,16 @@ def stage_remote_jsonl(host: str, dest_dir: Path) -> Path:
     return dest
 
 
+def probe_remote_jsonl(host: str) -> bool:
+    """True if the host's calendar.jsonl exists (read-only fleet probe)."""
+    proc = subprocess.run(
+        ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", host,
+         f"test -f {FLEET_JSONL} && echo present"],
+        capture_output=True, text=True, timeout=30,
+    )
+    return proc.returncode == 0 and "present" in proc.stdout
+
+
 def run_consolidate(source: Path, by: str, strict: bool, mode: str = "observe") -> tuple[int, str]:
     """mode: 'validate' (read-only, verify battery) or 'observe' (the fold)."""
     cmd = [sys.executable, str(CONSOLIDATE), mode,
@@ -193,12 +203,7 @@ def phase_verify(remote_hosts: list[str], staging: Path | None) -> tuple[bool, l
     staged: list[Path] = []
     for host in remote_hosts:
         if staging is None:
-            probe = subprocess.run(
-                ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", host,
-                 f"test -f {FLEET_JSONL} && echo present"],
-                capture_output=True, text=True, timeout=30,
-            )
-            if probe.returncode == 0 and "present" in probe.stdout:
+            if probe_remote_jsonl(host):
                 lines.append(f"[verify] ok   {host} calendar reachable (dry-run: not staged)")
             else:
                 ok = False
