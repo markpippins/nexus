@@ -240,7 +240,11 @@ def render(report: dict) -> str:
 
 
 def fetch_journal(unit: str, since: str) -> "tuple[int, list]":
-    """journalctl fetch; returns (rc, lines). rc 2 = tool/usage failure."""
+    """journalctl fetch; returns (rc, lines). rc 2 = tool/usage failure.
+
+    A timeout is caught (tool error, exit 2 with a hint to narrow --since) —
+    never an unhandled traceback. The lease tool should inherit this when
+    next touched."""
     try:
         out = subprocess.run(
             ["journalctl", "--user", "-u", unit, "--output", "short-iso",
@@ -252,6 +256,11 @@ def fetch_journal(unit: str, since: str) -> "tuple[int, list]":
                   file=sys.stderr)
             return 2, []
         return 0, out.stdout.splitlines()
+    except subprocess.TimeoutExpired:
+        print("ERROR: journalctl timed out after 60s — narrow the window "
+              "(e.g. --since '7 days ago') or trim the unit's journal",
+              file=sys.stderr)
+        return 2, []
     except FileNotFoundError:
         print("ERROR: journalctl not available", file=sys.stderr)
         return 2, []

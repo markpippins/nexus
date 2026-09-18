@@ -197,6 +197,29 @@ class TestCriteria(unittest.TestCase):
         self.assertEqual(r["criteria"]["c_vocabulary_v174_cold"]["status"], "FAIL")
 
 
+class TestFetchJournal(unittest.TestCase):
+    def test_journalctl_timeout_is_tool_error_not_traceback(self):
+        """A 60s journalctl timeout (huge journal, wide --since) must yield a
+        clean (2, []) — the post-merge live run on the shared checkout hit
+        exactly this and crashed with a raw TimeoutExpired traceback."""
+        import subprocess as sp
+        import unittest.mock as mock
+        with mock.patch.object(
+                RSR.subprocess, "run",
+                side_effect=sp.TimeoutExpired(cmd=["journalctl"], timeout=60)):
+            rc, lines = RSR.fetch_journal("wind-srv.service", "21 days ago")
+        self.assertEqual(rc, 2)
+        self.assertEqual(lines, [])
+
+    def test_journalctl_missing_binary_is_tool_error(self):
+        import unittest.mock as mock
+        with mock.patch.object(
+                RSR.subprocess, "run", side_effect=FileNotFoundError("journalctl")):
+            rc, lines = RSR.fetch_journal("wind-srv.service", "21 days ago")
+        self.assertEqual(rc, 2)
+        self.assertEqual(lines, [])
+
+
 class TestGateMode(unittest.TestCase):
     def _run_gate(self, lines):
         import unittest.mock as mock
