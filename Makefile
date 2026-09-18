@@ -319,6 +319,9 @@ attestation-chain-test:
 attestations-e2e-test:
 	@echo "[attestations-e2e-test] V179 E2E (real gate-contract DDL, throwaway DB)..."
 	@python3 -m pytest python/nexus_core/wrp/tests/test_v179_attestations_e2e.py -v
+calendar-e2e-test:
+	@echo "[calendar-e2e-test] V184 calendar primitive E2E (staged-inert DDL, throwaway DB, wr-conf-036)..."
+	@python3 -m pytest python/nexus_core/wrp/tests/test_v184_calendar_e2e.py -v
 attest-wiring-test:
 	@echo "[attest-wiring-test] boot-shim attestation wiring (hermetic + real-DB E2E, wr-conf-034)..."
 	@python3 -m pytest python/continuity/tests/test_attest.py python/nexus_core/wrp/tests/test_attest_wiring_e2e.py -v
