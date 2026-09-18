@@ -99,7 +99,7 @@
 | Moleculer worker (`:4080`, `nexus-broker.service` active, rev `326ad244` 2026-09-05) | Legacy counterpart (all units active, all ports live) |
 |---|---|
 | `worker.harness` | `harness-srv` `:3420` (rev `161cac78`); `wind-srv` still calls `HARNESS_URL` `:3420` directly |
-| `worker.pty` (+ `worker.pty-transport` WS adapter, M3 rev) | `pty-srv` `:3121` (rev `1885b121`); note `:3120` also listening on loopback — dual-listen flag |
+| `worker.pty` (+ `worker.pty-transport` WS adapter, M3 rev) | **RETIRED (M3):** `pty-srv` `:3121` (rev `1885b121`) — retired 2026-09-18 per architect authorization (thread `e57f5a3d`); superseded by `worker.pty-transport` WS on :3130. Source tree `typescript/pty-srv/` kept until M3 close-out as the wire-compat reference; `:3120`/`:3121` listeners zero |
 | `worker.execution` | `execution-srv` `:3110` (rev `756ace12`); gateway exposes only execution health at `/api/workers/execution`, not the full read catalog |
 | `keychain-snapshot` | **No legacy counterpart** (Keychains subsystem excepted from 1:1 per operator guidance) |
 | Contract `typespec/v1/nexus-broker/typescript/` | **Known drift (unresolved):** contract-only `GET/POST /api/solir/...` with no source implementation; no per-op status annotations |

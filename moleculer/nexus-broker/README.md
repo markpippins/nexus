@@ -7,7 +7,7 @@ Per binding ruling `D-2026-08-14-002` (one HTTP edge + Moleculer worker tier),
 this broker hosts the process-spawning services re-homed from the Express fleet:
 
 - `harness-srv` (Wave 4)
-- `pty-srv` (Wave 4)
+- ~~`pty-srv` (Wave 4)~~ — **RETIRED (M3)**: replaced by `worker.pty-transport` WS on :3130
 - `execution-srv` (Wave 4)
 
 Plus any internal actions the AdonisJS edge (`nexus-control-edge`, :8082)

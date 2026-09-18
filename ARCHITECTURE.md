@@ -92,7 +92,7 @@ Ports below are the authoritative `SERVICE_PORTS` map from that script.
 | `image-server` | — | Image hosting |
 | `address-tts` | 8600 | Speech synthesis (completion announcements, R6) |
 | `address-tts-mcp` | 3105 | TTS MCP |
-| `pty-srv` | 3120 | WebSocket PTY bridge (xterm.js) |
+| ~~`pty-srv`~~ | ~~3120~~ | ~~WebSocket PTY bridge (xterm.js)~~ — **RETIRED** (M3): superseded by `worker.pty-transport` WS on :3130 via nexus-broker (:4080); see M1-SERVICE-MANIFEST |
 | `file-system-server` | 4042 | File-system operations |
 | `secure-file-system-server` | 4040 | Secure file-system operations |
 | `mcp-bridge` | 3131–3134 | Generic stdio→SSE bridge (knowledge/vision/peb/terrain MCPs) |

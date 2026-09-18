@@ -72,7 +72,6 @@ ALL_SERVICES=(
     "conduit-kernel.service"   # port 3103 — WRP kernel FastAPI (sessions/breaker/receipts/admin/delta/replay)
     "conduit-mcp.service"      # port 3100 — work request orchestration
     "conduit-srv.service"      # port 3104 — conduit REST API (extracted from conduit-mcp)
-    "pty-srv.service"          # port 3120 — WebSocket PTY bridge for xterm.js
     "nebula-mcp-sse.service"   # port 3102 — Nebula MCP SSE
     "nebula-mcp.service"       # stdio  — Nebula MCP (on-demand; clients spawn independently)
     "terrain-mcp.service"      # stdio  — Terrain topology MCP (on-demand; clients spawn independently)
@@ -164,7 +163,6 @@ SERVICE_PORTS=(
     ["peb-srv.service"]="3111"
     ["aegis-srv.service"]="3116"
     ["operator-svc.service"]="3018"
-    ["pty-srv.service"]="3121"
 ["cpf-api.service"]="3108"
     ["atlas.service"]="8090"
     ["execution-srv.service"]="3110"

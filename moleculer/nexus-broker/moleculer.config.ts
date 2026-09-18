@@ -4,8 +4,9 @@ import { BrokerOptions } from "moleculer";
  * nexus-broker — Moleculer worker-tier broker (D-2026-08-14-002).
  *
  * Hosts the process-spawning worker services re-homed from the Express
- * fleet (harness-srv, pty-srv, execution-srv — Wave 4) plus any internal
- * actions the two AdonisJS edges call via the bus.
+ * fleet (harness-srv, execution-srv — Wave 4; pty-srv RETIRED M3 — replaced
+ * by worker.pty-transport on :3130) plus any internal actions the two
+ * AdonisJS edges call via the bus.
  *
  * Topology note: `transporter: null` runs all worker services in-process
  * (single-broker mode). When the worker tier outgrows one process, switch
