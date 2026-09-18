@@ -49,7 +49,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install test deps
-        run: python3 -m pip install psycopg2-binary
+        run: python3 -m pip install pytest psycopg2-binary
 
       - name: Run V184 E2E
         run: python3 -m pytest python/nexus_core/wrp/tests/test_v184_calendar_e2e.py -v
