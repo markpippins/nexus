@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: wind-srv — Wind Workflow Schema API
-  version: 1.0.f67cb1d4
+  version: 1.0.56ace84f
   description: 'REST API for the wind workflow schema: offices, titles, tasks, workflow graphs, runtime instances, tickets,
     and receipts.
 
@@ -1053,7 +1053,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-      summary: Create node
+      summary: 'Create node — optionally with demands: `requirements` accepts capability keys (string or {capabilityKey})
+        and/or role credentials ({roleCred'
   /api/nodes/{id}:
     delete:
       tags:
@@ -1194,6 +1195,124 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       summary: GET /api/nodes/{id}/requirements — per-requirement verdicts (warn-mode)
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags:
+      - nodes
+      operationId: post_nodes_id_requirements
+      responses:
+        '201':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      summary: 'POST /api/nodes/{id}/requirements — register demands on an existing node (the seeding path for nodes created
+        before V181). Body: array of ca'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/nodes/{id}/requirements/{reqId}:
+    put:
+      tags:
+      - nodes
+      operationId: put_nodes_id_requirements_reqId
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      summary: PUT /api/nodes/{id}/requirements/:reqId — close-then-insert replacement of one open demand (V175 convention;
+        never in-place history mutation
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: reqId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/nodes/{id}/requirements/current:
+    get:
+      tags:
+      - nodes
+      operationId: get_nodes_id_requirements_current
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      summary: GET /api/nodes/{id}/requirements/current — stored rows + live verdicts attached (the seed-verification view;
+        distinct from the resolver's co
       parameters:
       - name: id
         in: path

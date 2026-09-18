@@ -5,7 +5,7 @@
 
 REST API for the wind workflow schema: offices, titles, tasks, workflow graphs, runtime instances, tickets, and receipts.
 
-**84 endpoints** — inventory generated from source route registrations (`nexus/tools/api-docs/`).
+**87 endpoints** — inventory generated from source route registrations (`nexus/tools/api-docs/`).
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -38,11 +38,14 @@ REST API for the wind workflow schema: offices, titles, tasks, workflow graphs, 
 | POST | `/api/instances/:id/run` | Run an instance to completion (loop: execute → advance → … until terminal). |
 | POST | `/api/instances/:id/stop` | Stop (cancel) an instance |
 | GET | `/api/nodes` | List nodes for a version |
-| POST | `/api/nodes` | Create node |
+| POST | `/api/nodes` | Create node — optionally with demands: `requirements` accepts capability keys (string or {capabilityKey}) and/or role credentials ({roleCredential}). Demands land in wind.node_requirements (V181); open-interval unique indexes fork-proof the set. Seeding failures do NOT roll back the node: the demand |
 | DELETE | `/api/nodes/:id` | Delete node |
 | GET | `/api/nodes/:id` | Get node by ID |
 | PUT | `/api/nodes/:id` | Update node |
 | GET | `/api/nodes/:id/requirements` | GET /api/nodes/{id}/requirements — per-requirement verdicts (warn-mode) |
+| POST | `/api/nodes/:id/requirements` | POST /api/nodes/{id}/requirements — register demands on an existing node (the seeding path for nodes created before V181). Body: array of capability keys / {capabilityKey} / {roleCredential}, or a single one. Re-registering an identical OPEN demand is idempotent-by-conflict: surfaced as `duplicate:  |
+| PUT | `/api/nodes/:id/requirements/:reqId` | PUT /api/nodes/{id}/requirements/:reqId — close-then-insert replacement of one open demand (V175 convention; never in-place history mutation). |
+| GET | `/api/nodes/:id/requirements/current` | GET /api/nodes/{id}/requirements/current — stored rows + live verdicts attached (the seed-verification view; distinct from the resolver's contract route above, which resolves from scratch). |
 | GET | `/api/nodes/:id/resolve` | GET /api/nodes/{id}/resolve — the ResolvedContextBundle (refs only) |
 | GET | `/api/nodes/capability/:key/resolve` | GET /api/capabilities/{key}/resolve — resolve a bare capability demand |
 | GET | `/api/nodes/credential/:role` | GET /api/roles/{name}/credential — bitemporal credential check (V175 shape) |
@@ -102,6 +105,7 @@ python3 tools/api-docs/gen_openapi.py --inventory /tmp/api_inventory.json   # (v
 ```
 
 <!-- API-SPEC-BEGIN -->
+
 
 
 

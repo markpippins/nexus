@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { BadRequestError, NotFoundError } from '../errors.js';
+import { normalizeRequirements, insertRequirement } from '../requirements.js';
 
 export const nodesRouter = Router();
 
@@ -38,10 +39,14 @@ nodesRouter.get('/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// Create node
+// Create node — optionally with demands: `requirements` accepts capability
+// keys (string or {capabilityKey}) and/or role credentials ({roleCredential}).
+// Demands land in wind.node_requirements (V181); open-interval unique
+// indexes fork-proof the set. Seeding failures do NOT roll back the node:
+// the demand set is data, and the soak reports demand-side anomalies.
 nodesRouter.post('/', async (req, res, next) => {
   try {
-    const { workflow_version_id, task_id, name, is_entrypoint, is_terminal } = req.body;
+    const { workflow_version_id, task_id, name, is_entrypoint, is_terminal, requirements } = req.body;
     if (!workflow_version_id || !task_id || !name) {
       throw new BadRequestError('workflow_version_id, task_id, and name are required');
     }
@@ -51,7 +56,18 @@ nodesRouter.post('/', async (req, res, next) => {
        RETURNING id, workflow_version_id, task_id, name, is_entrypoint, is_terminal, created_at`,
       [workflow_version_id, task_id, name, is_entrypoint || false, is_terminal || false]
     );
-    res.status(201).json(result.rows[0]);
+    const node = result.rows[0];
+    const demands = normalizeRequirements(requirements);
+    const inserted = [];
+    const failed = [];
+    for (const demand of demands) {
+      try {
+        inserted.push(await insertRequirement(node.id, demand));
+      } catch (e) {
+        failed.push({ demand, error: String(e.message || e) });
+      }
+    }
+    res.status(201).json({ ...node, requirements: inserted, requirements_failed: failed });
   } catch (err) { next(err); }
 });
 
