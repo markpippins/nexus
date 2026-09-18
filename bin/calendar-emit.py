@@ -358,7 +358,9 @@ Description=CalendarEvent emission for %i (calendar-emit, design a330914e)
 
 [Service]
 Type=oneshot
-ExecStart={script} emit --kind occurred --emitter %i --from-unit %i \\
+# /usr/bin/python3 prefix: repo scripts are not executable by default
+# (203/EXEC otherwise — found on the first real trigger, 2026-09-18).
+ExecStart=/usr/bin/python3 {script} emit --kind occurred --emitter %i --from-unit %i \\
   --title "timer %i occurred" \\
   --state-dir {state_dir}
 """
