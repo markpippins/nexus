@@ -22,6 +22,7 @@ import json
 import os
 import sys
 import unittest
+import unittest.mock as mock
 
 _SELF = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.abspath(os.path.join(_SELF, "..", ".."))
@@ -343,6 +344,43 @@ class TestAmendmentB_HistoricalEvaluation(unittest.TestCase):
         ap = flow["edges"][0]["guards"]["actor-pair"]
         self.assertEqual(ap["evaluation"], "live")
         self.assertIsNone(ap["as_of"])
+
+    def test_default_resolver_is_bitemporal_roles_history(self):
+        """RA2 real: the default resolver queries roles_history on BOTH time
+        axes at the as-of instant — not the live roles row. Pinned by SQL
+        shape (the mocked-db lesson from #318) + engineered live-shaped rows
+        (engineer-ii: no capability before 2026-09-17 16:18, verify after).
+        """
+        captured = {}
+
+        def fake_psql_rows(sql):
+            captured["sql"] = sql
+            # live-shaped output (psql -At): only the post-grant open
+            # snapshot matches the as-of predicate the tool must emit.
+            return [["t"]] if "2026-09-18" in sql else []
+
+        with mock.patch.object(fr, "psql_rows", side_effect=fake_psql_rows):
+            out = fr.resolve_class_capability(
+                "engineer-ii", "2026-09-18T12:00:00Z")
+        self.assertEqual(out["held"], True)
+        self.assertIn("roles_history@as_of", out["resolution"])
+        self.assertIn("roles_history", captured["sql"])
+        self.assertNotIn("FROM nebula.roles ", captured["sql"])
+        # BOTH axes must be constrained at as_of (the bitemporal law).
+        self.assertIn("valid_from <=", captured["sql"])
+        self.assertIn("valid_until >", captured["sql"])
+        self.assertIn("recorded_on_dt <=", captured["sql"])
+        self.assertIn("recorded_until_dt >", captured["sql"])
+
+    def test_default_resolver_pre_grant_as_of_holds_nothing(self):
+        """The Amendment B distortion case: engineer-ii as-of 2026-08-15
+        (before its 2026-09-17 grant) must resolve held=False even though
+        the LIVE row says verify=true — the live lookup would have lied."""
+        with mock.patch.object(fr, "psql_rows", return_value=[]):
+            out = fr.resolve_class_capability(
+                "engineer-ii", "2026-08-15T12:00:00Z")
+        self.assertEqual(out["held"], False)  # absent-as-of = NOT held
+        self.assertIn("roles_history@as_of", out["resolution"])
 
     def test_injected_historical_resolver_is_used_verbatim(self):
         calls = []
