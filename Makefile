@@ -207,7 +207,10 @@ mesh-test:
 		bin/tests/test_mark_operator_go_applied.py \
 		bin/tests/test_flow_recorder_v0.py \
 		bin/tests/test_flow_emit_aegis.py \
-		bin/tests/test_calendar_typespec.py -v
+		bin/tests/test_calendar_typespec.py \
+		bin/tests/test_calendar_emit.py \
+		bin/tests/test_boot_digest.py bin/tests/test_boot_conn_record.py \
+		bin/tests/test_boot_attest.py -v
 
 adapter-probe-test:
 	@echo "[adapter-probe-test] running adapter health probe hermetic suite..."

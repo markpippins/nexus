@@ -47,6 +47,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -65,6 +66,12 @@ NEBULA_MCP = os.environ.get("NEBULA_MCP_BASE", "http://localhost:3102")
 TACKLE_MCP = os.environ.get("TACKLE_MCP_BASE", "http://localhost:3400")
 ASSEMBLY_API = os.environ.get("ASSEMBLY_API", "http://localhost:3107/api")
 TIMECLOCK = os.environ.get("NEXUS_TIMECLOCK_URL", "http://localhost:3600")
+# Local CalendarEvent accumulation (Q3 slice, design a330914e): the JSONL
+# calendar the --calendar step and timer emitters append to. File-backed,
+# no DB — consolidation waits on Q1/Q2.
+CALENDAR_STATE_DIR = os.environ.get(
+    "CALENDAR_STATE_DIR",
+    os.path.expanduser("~/.local/state/nexus-calendar"))
 
 DEFAULT_TTL = 4 * 3600          # 4h lease window
 DEFAULT_BUDGET = 10             # budget units
@@ -125,7 +132,8 @@ class Boot:
     def __init__(self, role: str, model: str, channel: str, ttl: int, budget: int,
                  lease_policy: str, update_pointer: bool, limit: int,
                  dry_run: bool, strict: bool, want_digest: bool = False,
-                 want_conn: bool = False, want_attest_scan: bool = True):
+                 want_conn: bool = False, want_attest_scan: bool = True,
+                 want_calendar: bool = False):
         self.role = role
         self.model = model
         self.channel = channel
@@ -139,6 +147,8 @@ class Boot:
         self.want_digest = want_digest
         self.want_conn = want_conn
         self.want_attest_scan = want_attest_scan
+        self.want_calendar = want_calendar
+        self.lease_instant: str | None = None  # captured at clock-in (Q2 anchor)
         # --attest payload: (cites_id, evidence list, session_id) or None
         self.attest_cmd: tuple | None = None
         self.lease_id = None        # captured by the lease step (census provenance)
@@ -219,10 +229,54 @@ class Boot:
             detail = (f"clocked in ({(body.get('record') or {}).get('id', '?')})"
                       if ok else f"unexpected response: HTTP {status} {json.dumps(body)[:100]}")
             self.record("clock-in", "ok" if ok else "degraded", detail)
+            # Q2 anchor: the clock-in instant is the session's window.start —
+            # the calendar step emits anchored here, not at emit time.
+            if ok:
+                self.lease_instant = datetime.now(timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ")
         except Exception as e:
             self.record("clock-in", "degraded", f"timeclock unavailable: {type(e).__name__}: {str(e)[:120]}")
 
-    # 3b ─ connection record (V169 affordance census) -----------------------
+    # 3b ─ calendar (session CalendarEvent, Q3 slice a330914e) --------------
+    def calendar_step(self) -> None:
+        """Emit the session CalendarEvent (Q3 slice, design a330914e).
+
+        Records this boot as a kind=occurred event anchored at the lease
+        instant (the session's true start, per PR #331 window semantics —
+        the occurrence, not the emit instant). Degrades, never fails:
+        - default (no flag)     → step absent entirely
+        - emitter subprocess any outcome → recorded as data, boot continues
+        - --dry-run             → [skip] (zero-mutation stance)
+        """
+        if not self.want_calendar:
+            return
+        print("== calendar (session event) ==")
+        if self.dry_run:
+            self.record("calendar", "skipped",
+                        "dry-run: session event not emitted (zero-mutation stance)")
+            return
+        window_start = self.lease_instant or datetime.now(timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        try:
+            r = subprocess.run(
+                [sys.executable, os.path.join(SCRIPT_DIR, "calendar-emit.py"),
+                 "emit", "--kind", "occurred",
+                 "--emitter", "boot-shim:session-start",
+                 "--title", f"session start: {self.role}@{self.channel} ({self.model})",
+                 "--role", self.role,
+                 "--window-start", window_start,
+                 "--state-dir", CALENDAR_STATE_DIR],
+                capture_output=True, text=True, timeout=15,
+            )
+            detail = (r.stdout.strip().splitlines() or ["no output"])[-1][:160]
+            status = "ok" if r.returncode == 0 and "[appended]" in detail else \
+                     ("ok" if "[duplicate]" in detail else "degraded")
+            self.record("calendar", status, detail)
+        except Exception as e:  # emitter failure is data, not a boot failure
+            self.record("calendar", "degraded",
+                        f"emitter subprocess failed: {type(e).__name__}: {str(e)[:120]}")
+
+    # 3c ─ connection record (V169 affordance census) -----------------------
     def connection_record(self) -> None:
         print("== connection record (affordance census) ==")
         if not self.want_conn:
@@ -492,6 +546,7 @@ class Boot:
         self.attest_scan()
         self.attest_record()
         self.clock_in()
+        self.calendar_step()
         self.forums()
         self.procedures()
         return self.report()
@@ -527,6 +582,10 @@ def main(argv: list[str]) -> int:
                     help="record the session affordance census (nebula.agent_connections, "
                          "V169): MCP tools, procedure cards, inbox, handoff, keychains "
                          "— inert until V169 is applied")
+    ap.add_argument("--calendar", action="store_true",
+                    help="emit the session CalendarEvent (Q3 slice, design a330914e): "
+                         "kind=occurred anchored at the clock-in instant, appended to "
+                         "the local JSONL calendar (no DB — consolidation waits on Q1/Q2)")
     ap.add_argument("--no-attest-scan", action="store_true",
                     help="skip the default read-only attest-scan (open V179 chains)")
     ap.add_argument("--attest", metavar="CITES_ID",
@@ -549,9 +608,10 @@ def main(argv: list[str]) -> int:
 
     boot = Boot(role=args.role, model=args.model, channel=args.channel, ttl=args.ttl,
                 budget=args.budget, lease_policy=args.lease, update_pointer=args.update_pointer,
-                limit=args.limit, dry_run=args.dry_run, strict=args.strict,
-                want_digest=args.digest, want_conn=args.conn_record,
-                want_attest_scan=not args.no_attest_scan)
+        limit=args.limit, dry_run=args.dry_run, strict=args.strict,
+        want_digest=args.digest, want_conn=args.conn_record,
+        want_attest_scan=not args.no_attest_scan,
+        want_calendar=args.calendar)
 
     if args.attest:
         if not args.evidence:
