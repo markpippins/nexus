@@ -146,13 +146,14 @@ class AttestScanTests(unittest.TestCase):
              mock.patch.object(b, "connection_record", lambda: order.append("conn")), \
              mock.patch.object(b, "attest_scan", lambda: order.append("attest-scan")), \
              mock.patch.object(b, "attest_record", lambda: order.append("attest-record")), \
+             mock.patch.object(b, "calendar_step", lambda: order.append("calendar")), \
              mock.patch.object(b, "clock_in", lambda: order.append("clock-in")), \
              mock.patch.object(b, "forums", lambda: order.append("forums")), \
              mock.patch.object(b, "procedures", lambda: order.append("procs")), \
              mock.patch.object(b, "report", lambda: 0):
             b.run()
         self.assertEqual(order, ["digest", "conn", "attest-scan",
-                                 "attest-record", "clock-in", "forums", "procs"])
+                                 "attest-record", "clock-in", "calendar", "forums", "procs"])
 
 
 class AttestRecordTests(unittest.TestCase):

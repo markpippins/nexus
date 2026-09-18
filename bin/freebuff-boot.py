@@ -133,7 +133,7 @@ class Boot:
                  lease_policy: str, update_pointer: bool, limit: int,
                  dry_run: bool, strict: bool, want_digest: bool = False,
                  want_conn: bool = False, want_attest_scan: bool = True,
-                 want_calendar: bool = False):
+                 want_calendar: bool = True):
         self.role = role
         self.model = model
         self.channel = channel
@@ -243,10 +243,12 @@ class Boot:
 
         Records this boot as a kind=occurred event anchored at the lease
         instant (the session's true start, per PR #331 window semantics —
-        the occurrence, not the emit instant). Degrades, never fails:
-        - default (no flag)     → step absent entirely
+        the occurrence, not the emit instant). **Default-on** since PR
+        #336: every session start lands in the calendar; --no-calendar is
+        the explicit opt-out. Degrades, never fails:
+        - --no-calendar          → step absent entirely
         - emitter subprocess any outcome → recorded as data, boot continues
-        - --dry-run             → [skip] (zero-mutation stance)
+        - --dry-run              → [skip] (zero-mutation stance)
         """
         if not self.want_calendar:
             return
@@ -582,10 +584,11 @@ def main(argv: list[str]) -> int:
                     help="record the session affordance census (nebula.agent_connections, "
                          "V169): MCP tools, procedure cards, inbox, handoff, keychains "
                          "— inert until V169 is applied")
-    ap.add_argument("--calendar", action="store_true",
-                    help="emit the session CalendarEvent (Q3 slice, design a330914e): "
-                         "kind=occurred anchored at the clock-in instant, appended to "
-                         "the local JSONL calendar (no DB — consolidation waits on Q1/Q2)")
+    ap.add_argument("--calendar", action="store_true", default=True,
+                    help=argparse.SUPPRESS)  # default-on since PR #336; kept for back-compat
+    ap.add_argument("--no-calendar", action="store_false", dest="calendar",
+                    help="skip the session CalendarEvent (default-on): no kind=occurred "
+                         "session-start event is appended to the local JSONL calendar")
     ap.add_argument("--no-attest-scan", action="store_true",
                     help="skip the default read-only attest-scan (open V179 chains)")
     ap.add_argument("--attest", metavar="CITES_ID",
