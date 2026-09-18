@@ -172,7 +172,7 @@ def default_exec_factory():
     def exec_fn(sql: str, params: tuple = ()) -> list[tuple]:
         import psycopg2
         dsn = os.environ.get("CONDUIT_PG_DSN",
-                             "postgresql://pguser:pgpass@localhost:5432/postgres")
+                             "postgresql://pguser:pgpass@localhost:5432/nexus")
         with psycopg2.connect(dsn) as conn:
             with conn.cursor() as cur:
                 cur.execute(sql, params)
