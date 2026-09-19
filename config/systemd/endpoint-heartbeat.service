@@ -1,0 +1,17 @@
+[Unit]
+Description=nexus fleet endpoint heartbeat (terrain.service_endpoints liveness)
+# Oneshot re-assertion for this host's registered endpoints. Topology
+# changes go through `register` (probe-gated); heartbeat only refreshes
+# last_heartbeat on rows this host already owns.
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/endpoint-register.py heartbeat --manifest /home/codex/dev/nexus/bin/config/endpoint-manifest-titanium.json
+# Explicit fleet identity (matches bin/config/fleet-manifest.json).
+Environment=NEXUS_HOST=titanium
+Environment=NEXUS_INSTANCE=titanium
+# Heartbeat failures are data (stale rows are detectable drift), not
+# unit failures — exit 0 keeps the timer history clean.
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,44 @@
+{
+  "_comment": "Declared fleet manifest — fleet slice 3 (R1 0d40c061). This file is DECLARED state (what the operator says should exist); terrain.service_endpoints is OBSERVED state (what registration probes). The diff is fleet drift. Fields left out are left alone in the DB (no fabrication): omit ip_address unless known.",
+  "services": [
+    {
+      "name": "nexus-core",
+      "default_port": 8092,
+      "description": "read-only JVM projection monolith (Spring Boot) — docker/nexus-core compose; actuator health"
+    }
+  ],
+  "fleet": [
+    {
+      "hostname": "titanium",
+      "environment": "Production",
+      "description": "primary nexus host — canonical PG, all core services, operator workstation",
+      "status": "ACTIVE",
+      "services": ["nebula-srv", "assembly-srv", "conduit-mcp", "tackle-mcp", "nebula-mcp", "wind-srv", "role-memory-srv"]
+    },
+    {
+      "hostname": "helium",
+      "environment": "Production",
+      "description": "read-only JVM experimental node — nexus-core :8092 (Spring Boot) + helium-mongo; calendar emitter",
+      "status": "ACTIVE",
+      "services": ["nexus-core"]
+    },
+    {
+      "hostname": "vanadium",
+      "environment": "Production",
+      "description": "off-machine lab node — sonar runner, CI backup target, PG replication target; calendar emitter",
+      "status": "ACTIVE",
+      "services": []
+    },
+    {
+      "hostname": "entropy",
+      "environment": "Development",
+      "description": "reserve node — containerized python services under evaluation",
+      "status": "ACTIVE",
+      "services": []
+    }
+  ],
+  "retire": {
+    "_comment": "Element-era inventory rows retired to RETIRED (never deleted — provenance). Historical replication targets (strontium->barium->vanadium chain) documented in AGENTS.md R9.",
+    "hostnames": ["barium", "beryllium", "bohrium", "iridium", "osmium", "strontium", "thallium", "thorium"]
+  }
+}
