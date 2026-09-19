@@ -15,7 +15,9 @@ Behavior:
     fields the manifest actually states; rows not in the manifest are
     NOT touched here — explicit retirement happens via the manifest's
     `retire.hostnames` list (status='RETIRED', rows never deleted —
-    provenance).
+    provenance). NEW hosts require a declared ip_address
+    (registry.servers.ip_address is NOT NULL): unaddressable hosts are
+    reported loudly and excluded — the tool never fabricates an address.
   - deployments: one row per manifest service on its host. Zero rows
     exist today; the table has no natural key, so the tool matches on
     (service name, host, port) and inserts when absent — idempotent by
@@ -23,9 +25,11 @@ Behavior:
   - service names are resolved against registry.services UNIQUE(name);
     unknown names are reported loudly and skipped — UNLESS the manifest
     declares them under `services` (explicit archetype additions: name,
-    default_port, description). The manifest is the single declared
-    source; the tool inserts what the operator declared and invents
-    nothing on its own.
+    default_port, description, framework, service_type). The manifest
+    is the single declared source; the tool inserts what the operator
+    declared and invents nothing on its own. framework/service_type
+    default to Spring Boot / REST API when omitted and must resolve
+    against the registry lookup tables — unknown names fail loudly.
 
 DRY-RUN BY DEFAULT: without --apply the tool prints the full plan and
 writes nothing. With --apply it executes the same plan in one
@@ -65,6 +69,27 @@ def load_manifest(path: str) -> dict[str, Any]:
     return data
 
 
+def _resolve_lookup(
+    cur, table: str, name: Optional[str], svc_name: str, kind: str,
+) -> int:
+    """Resolve a declared archetype's NOT NULL lookup FK by name.
+
+    The manifest may omit the name, in which case the documented default
+    applies (framework=Spring Boot for nexus-core, service_type=REST API).
+    Unresolvable names fail loudly — the tool never invents lookup rows.
+    """
+    if name is None:
+        name = "Spring Boot" if kind == "framework" else "REST API"
+    cur.execute(f"SELECT id FROM {table} WHERE name = %s", (name,))
+    row = cur.fetchone()
+    if row is None:
+        raise ValueError(
+            f"service {svc_name!r}: unknown {kind} {name!r} "
+            f"(not in {table}) — declare an existing row or add it first"
+        )
+    return row[0]
+
+
 def plan(conn, manifest: dict[str, Any]) -> dict[str, Any]:
     """Build the full sync plan against the live DB (read-only)."""
     out: dict[str, Any] = {
@@ -73,6 +98,7 @@ def plan(conn, manifest: dict[str, Any]) -> dict[str, Any]:
         "deployments_insert": [],
         "unknown_services": [],
         "services_insert": [],
+        "unaddressable_servers": [],
     }
     with conn.cursor() as cur:
         # host -> id for existing rows
@@ -83,14 +109,18 @@ def plan(conn, manifest: dict[str, Any]) -> dict[str, Any]:
         svc = {n: (i, p) for n, i, p in cur.fetchall()}
 
         # declared archetype additions (explicit in the manifest only)
+        declared_names: set[str] = set()
         for s in manifest.get("services", []):
             name = s.get("name")
             if not name:
                 raise ValueError(f"manifest services entry missing name: {s!r}")
+            declared_names.add(name)
             if name not in svc:
                 out["services_insert"].append(
                     {"name": name, "default_port": s.get("default_port"),
-                     "description": s.get("description")}
+                     "description": s.get("description"),
+                     "framework": s.get("framework"),
+                     "service_type": s.get("service_type")}
                 )
 
         for host in manifest["fleet"]:
@@ -104,11 +134,20 @@ def plan(conn, manifest: dict[str, Any]) -> dict[str, Any]:
                 fields["status"] = ("raw", host["status"])
             if "ip_address" in host:
                 fields["ip_address"] = ("raw", host["ip_address"])
+            exists = hn in host_ids
+            # registry.servers.ip_address is NOT NULL: a NEW host the manifest
+            # cannot state an address for is not fabricatable — report loudly,
+            # exclude from the plan (absence stays data).
+            if not exists and "ip_address" not in fields:
+                out["unaddressable_servers"].append(hn)
+                continue
             out["servers_upsert"].append(
-                {"hostname": hn, "exists": hn in host_ids, "fields": fields}
+                {"hostname": hn, "exists": exists, "fields": fields}
             )
             for name in host.get("services", []):
                 if name not in svc:
+                    if name in declared_names:
+                        continue  # declared below — resolved post-insert
                     out["unknown_services"].append(
                         {"host": hn, "service": name}
                     )
@@ -154,11 +193,19 @@ def apply_plan(conn, p: dict[str, Any], host_env: dict[str, int]) -> dict[str, i
             )
             row = cur.fetchone()
             if row is None:
+                fw = _resolve_lookup(
+                    cur, "registry.frameworks", s.get("framework"),
+                    s["name"], "framework",
+                )
+                st = _resolve_lookup(
+                    cur, "registry.service_type", s.get("service_type"),
+                    s["name"], "service_type",
+                )
                 cur.execute(
                     "INSERT INTO registry.services (name, default_port, "
-                    "description, active_flag, origin) "
-                    "VALUES (%s, %s, %s, true, 'fleet-manifest')",
-                    (s["name"], s["default_port"], s["description"]),
+                    "description, framework_id, service_type_id, active_flag, "
+                    "origin) VALUES (%s, %s, %s, %s, %s, true, 'fleet-manifest')",
+                    (s["name"], s["default_port"], s["description"], fw, st),
                 )
                 counts["services"] += 1
 
@@ -205,11 +252,14 @@ def apply_plan(conn, p: dict[str, Any], host_env: dict[str, int]) -> dict[str, i
                     env_id = row[0]
                 cur.execute(
                     "INSERT INTO registry.servers (hostname, environment_type_id, "
-                    "description, status, active_flag) "
-                    "VALUES (%s, %s, %s, %s, true)",
+                    "ip_address, description, status, active_flag) "
+                    "VALUES (%s, %s, %s, %s, %s, true)",
                     (
                         hn,
                         env_id,
+                        # plan() guarantees ip_address on every insert entry —
+                        # unaddressable hosts are excluded before this runs
+                        entry["fields"]["ip_address"][1],
                         entry["fields"].get("description", ("raw", None))[1],
                         entry["fields"].get("status", ("raw", "ACTIVE"))[1],
                     ),
@@ -225,15 +275,25 @@ def apply_plan(conn, p: dict[str, Any], host_env: dict[str, int]) -> dict[str, i
             )
             counts["retired"] += cur.rowcount or 0
 
-        # deployments: re-read host ids (new servers included)
+        # deployments: re-read host ids (new servers included); deployments
+        # inherit their host's environment (environment_id NOT NULL)
         cur.execute("SELECT hostname, id FROM registry.servers")
         host_ids = {h: i for h, i in cur.fetchall()}
+        cur.execute("SELECT hostname, environment_type_id FROM registry.servers")
+        host_env_ids = {h: e for h, e in cur.fetchall()}
         cur.execute("SELECT name, id FROM registry.services")
         svc_ids = {n: i for n, i in cur.fetchall()}
         for dep in p["deployments_insert"]:
             hn = dep["host"]
             hid = host_ids.get(hn) or dep["host_id"]
             sid = svc_ids.get(dep["service"]) or dep["service_id"]
+            env_id = host_env_ids.get(hn)
+            if env_id is None:
+                raise ValueError(
+                    f"deployment {dep['service']} @ {hn}: host has no "
+                    "environment (registry.servers.environment_type_id is "
+                    "NOT NULL) — declare one in the manifest"
+                )
             cur.execute(
                 "SELECT id FROM registry.deployments WHERE service_id = %s "
                 "AND host_id = %s AND port IS NOT DISTINCT FROM %s",
@@ -242,9 +302,9 @@ def apply_plan(conn, p: dict[str, Any], host_env: dict[str, int]) -> dict[str, i
             if cur.fetchone() is None:
                 cur.execute(
                     "INSERT INTO registry.deployments "
-                    "(service_id, host_id, port, status, active_flag) "
-                    "VALUES (%s, %s, %s, 'RUNNING', true)",
-                    (sid, hid, dep["port"]),
+                    "(service_id, host_id, environment_id, port, status, "
+                    "active_flag) VALUES (%s, %s, %s, %s, 'RUNNING', true)",
+                    (sid, hid, env_id, dep["port"]),
                 )
                 counts["deployments"] += 1
     return counts
@@ -272,7 +332,15 @@ def main(argv: Optional[list[str]] = None) -> int:
             print("DECLARED SERVICES (manifest archetype additions):")
             for s in p["services_insert"]:
                 print(f"  [service] {s['name']} "
-                      f"port={s['default_port'] if s['default_port'] is not None else '-'}")
+                      f"port={s['default_port'] if s['default_port'] is not None else '-'} "
+                      f"framework={s.get('framework') or 'Spring Boot(default)'} "
+                      f"type={s.get('service_type') or 'REST API(default)'}")
+        if p["unaddressable_servers"]:
+            print("UNADDRESSABLE SERVERS (declared but no ip_address known — "
+                  "registry.servers.ip_address is NOT NULL; add the address "
+                  "to the manifest to include them):")
+            for hn in p["unaddressable_servers"]:
+                print(f"  [skip] server {hn}")
         print(f"plan: {len(p['servers_upsert'])} server(s) to upsert, "
               f"{len(p['servers_retire'])} to retire, "
               f"{len(p['deployments_insert'])} deployment(s) to ensure")

@@ -9,6 +9,12 @@ No DB: the cursor is a scripted fake. Pins the R1 0d40c061 contract:
     retire = RETIRED + active_flag=false (never DELETE),
     deployments are check-then-insert idempotent, and deployments for
     NEWLY-inserted servers resolve the new host id (post-insert re-read)
+  - schema contract (V—fleet sync, R1 0d40c061 follow-up): the three
+    NOT NULLs the first live apply tripped — services.framework_id +
+    service_type_id (resolved from lookup tables, defaults documented),
+    deployments.environment_id (inherited from host), and
+    servers.ip_address on NEW hosts (plan excludes unaddressable hosts,
+    insert carries the declared address)
   - main(): dry-run default writes nothing; --apply commits
 """
 
@@ -111,10 +117,10 @@ def _manifest(**over):
     m = {
         "fleet": [
             {"hostname": "titanium", "environment": "Production",
-             "status": "ACTIVE",
+             "status": "ACTIVE", "ip_address": "192.0.2.10",
              "services": ["nebula-srv", "wind-srv"]},
             {"hostname": "helium", "environment": "Production",
-             "services": []},
+             "ip_address": "192.0.2.20", "services": []},
         ],
         "retire": {"hostnames": ["barium", "atlantis"]},
     }
@@ -171,7 +177,9 @@ class Plan(unittest.TestCase):
 
 class Apply(unittest.TestCase):
     def _conn(self):
-        # servers select read twice: second read includes the new host
+        # servers select read twice: second read includes the new host.
+        # ORDER MATTERS in the fake: the specific env re-read predicate
+        # must precede the generic hosts predicate (first match wins).
         reads = {"n": 0}
 
         def hosts_result():
@@ -180,7 +188,11 @@ class Apply(unittest.TestCase):
                 return [("titanium", 1), ("barium", 2)]
             return [("titanium", 1), ("barium", 2), ("helium", 99)]
 
+        def envs_result():
+            return [("titanium", 7), ("barium", 7), ("helium", 7)]
+
         return _FakeConn([
+            ("hostname, environment_type_id", envs_result),
             ("FROM registry.servers", hosts_result),
             *_svc_scripts(),
             ("FROM registry.environment_type", ENV_OK),
@@ -229,6 +241,121 @@ class Apply(unittest.TestCase):
             *_svc_scripts(),
             ("FROM registry.environment_type", None),  # name not found
         ]
+        p = frs.plan(conn, _manifest())
+        with self.assertRaises(ValueError):
+            frs.apply_plan(conn, p, {})
+
+
+class SchemaContract(unittest.TestCase):
+    """The three NOT NULLs the first live apply tripped (schema contract)."""
+
+    def _plan_conn(self):
+        return _FakeConn([
+            ("FROM registry.servers", lambda: list(HOSTS)),
+            *_svc_scripts(),
+        ])
+
+    def test_unaddressable_new_server_excluded_with_report(self):
+        # helium declared WITHOUT ip_address and not in HOSTS -> excluded
+        m = _manifest()
+        del m["fleet"][1]["ip_address"]
+        p = frs.plan(self._plan_conn(), m)
+        self.assertEqual(p["unaddressable_servers"], ["helium"])
+        hosts = {e["hostname"] for e in p["servers_upsert"]}
+        self.assertNotIn("helium", hosts)
+        self.assertIn("titanium", hosts)  # existing host stays addressable
+
+    def test_addressed_new_server_insert_carries_ip(self):
+        conn = self._plan_conn()
+        p = frs.plan(conn, _manifest())
+        apply_conn = Apply._conn(self)
+        frs.apply_plan(apply_conn, p, {})
+        srv_inserts = [(s, prm) for s, prm in apply_conn.cur.executed
+                       if "INSERT INTO registry.servers" in s]
+        self.assertEqual(len(srv_inserts), 1)
+        sql, prm = srv_inserts[0]
+        self.assertIn("ip_address", sql)
+        self.assertEqual(prm[2], "192.0.2.20")  # helium's declared address
+
+    def test_archetype_insert_resolves_framework_and_type(self):
+        conn = _FakeConn([
+            ("FROM registry.servers", lambda: list(HOSTS)),
+            *_svc_scripts(),
+            ("FROM registry.environment_type", ENV_OK),
+            ("FROM registry.frameworks", [(1,)]),      # Spring Boot
+            ("FROM registry.service_type", [(15,)]),   # Agent Service
+            ("FROM registry.deployments", None),
+        ])
+        m = _manifest()
+        m["services"] = [{"name": "mystery-svc", "default_port": 4000,
+                          "description": "d", "framework": "Spring Boot",
+                          "service_type": "Agent Service"}]
+        m["fleet"][0]["services"] = ["nebula-srv", "mystery-svc"]
+        p = frs.plan(conn, m)
+        frs.apply_plan(conn, p, {})
+        svc_inserts = [(s, prm) for s, prm in conn.cur.executed
+                       if "INSERT INTO registry.services" in s]
+        self.assertEqual(len(svc_inserts), 1)
+        sql, prm = svc_inserts[0]
+        self.assertIn("framework_id", sql)
+        self.assertIn("service_type_id", sql)
+        self.assertEqual(prm[3], 1)    # framework_id resolved
+        self.assertEqual(prm[4], 15)   # service_type_id resolved
+
+    def test_archetype_insert_defaults_when_manifest_omits(self):
+        conn = _FakeConn([
+            ("FROM registry.servers", lambda: list(HOSTS)),
+            *_svc_scripts(),
+            ("FROM registry.environment_type", ENV_OK),
+            ("FROM registry.frameworks", [(1,)]),
+            ("FROM registry.service_type", [(1,)]),
+            ("FROM registry.deployments", None),
+        ])
+        m = _manifest()
+        m["services"] = [{"name": "mystery-svc", "default_port": 4000}]
+        m["fleet"][0]["services"] = ["nebula-srv", "mystery-svc"]
+        p = frs.plan(conn, m)
+        frs.apply_plan(conn, p, {})
+        fw_calls = [prm for s, prm in conn.cur.executed
+                    if "FROM registry.frameworks" in s]
+        st_calls = [prm for s, prm in conn.cur.executed
+                    if "FROM registry.service_type" in s]
+        self.assertEqual(fw_calls, [("Spring Boot",)])   # documented default
+        self.assertEqual(st_calls, [("REST API",)])      # documented default
+
+    def test_unknown_framework_name_fails_loudly(self):
+        conn = _FakeConn([
+            ("FROM registry.servers", lambda: list(HOSTS)),
+            *_svc_scripts(),
+            ("FROM registry.frameworks", None),  # name not found
+        ])
+        m = _manifest()
+        m["services"] = [{"name": "mystery-svc", "framework": "Vaporware"}]
+        m["fleet"][0]["services"] = ["nebula-srv", "mystery-svc"]
+        p = frs.plan(conn, m)
+        with self.assertRaises(ValueError):
+            frs.apply_plan(conn, p, {})
+
+    def test_deployment_inherits_host_environment(self):
+        apply_conn = Apply._conn(self)
+        p = frs.plan(self._plan_conn(), _manifest())
+        frs.apply_plan(apply_conn, p, {})
+        dep_inserts = [(s, prm) for s, prm in apply_conn.cur.executed
+                       if "INSERT INTO registry.deployments" in s]
+        self.assertEqual(len(dep_inserts), 2)
+        for sql, prm in dep_inserts:
+            self.assertIn("environment_id", sql)
+            self.assertEqual(prm[2], 7)  # ENV_OK resolved environment
+
+    def test_deployment_without_host_env_fails_loudly(self):
+        conn = _FakeConn([
+            ("hostname, environment_type_id", [("titanium", None),
+                                               ("barium", None)]),
+            ("FROM registry.servers", [("titanium", 1), ("barium", 2)]),
+            *_svc_scripts(),
+            ("FROM registry.environment_type", ENV_OK),
+            ("FROM registry.deployments", None),
+        ])
         p = frs.plan(conn, _manifest())
         with self.assertRaises(ValueError):
             frs.apply_plan(conn, p, {})
