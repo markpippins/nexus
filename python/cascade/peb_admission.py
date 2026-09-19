@@ -8,6 +8,7 @@ state. Records are deterministic and duplicate-safe from captured inputs.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import uuid
@@ -19,11 +20,29 @@ except ImportError:  # legacy standalone invocation
     binding_idempotency_key = None
     validate_binding_decision = None
 
+# Default pathway: docker-exec psql on the container host (unchanged).
 _PSQL: List[str] = [
     "docker", "exec", "-i", "pgvector_db",
     "psql", "-U", "pguser", "-d", "nexus", "-t", "-A", "-q",
 ]
 _RECORD_TIMEOUT_S = 4.0
+
+
+def _psql_cmd() -> List[str]:
+    """Resolve the advisory psql command (inspector G1, thread 5d45f921).
+
+    The hardcoded docker-exec default voids the advisory record-then-act
+    guarantee anywhere Docker isn't the runtime. When CONDUIT_PG_DSN is set
+    (house convention: timeclock/db.py, wrp-bridge-daemon.service), psql is
+    invoked directly against that DSN so the advisory insert holds on any
+    host that can reach the database. The default docker pathway is
+    preserved unchanged for the container host; an explicitly injected
+    command list still wins over both.
+    """
+    dsn = os.environ.get("CONDUIT_PG_DSN", "").strip()
+    if dsn:
+        return ["psql", "-t", "-A", "-q", dsn]
+    return list(_PSQL)
 
 
 def _esc(value: str) -> str:
@@ -55,7 +74,7 @@ def record_gate_outcome(*, gate: str, entity_id: str, admitted: bool, reason: st
     key is derived from immutable identity/fingerprint or the captured payload,
     never from wall-clock time.
     """
-    cmd = psql if psql is not None else _PSQL
+    cmd = psql if psql is not None else _psql_cmd()
     try:
         binding = payload.get("binding_decision") if isinstance(payload, dict) else None
         if binding is not None and validate_binding_decision is not None:

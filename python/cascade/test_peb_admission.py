@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import unittest.mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -68,8 +69,37 @@ def test_success_path():
     check("returns True", ok is True)
 
 
+def test_dsn_pathway_used_by_default():
+    print("4. CONDUIT_PG_DSN set -> DSN pathway (no docker exec); injected psql still wins (call site)")
+    stub, log = make_stub(0)
+    try:
+        from cascade.peb_admission import _psql_cmd as _resolve_psql
+        with unittest.mock.patch.dict(os.environ, {"CONDUIT_PG_DSN": "postgresql://u:p@h:5432/d"}):
+            cmd = _resolve_psql()
+            check("DSN pathway selected", cmd[0] == "psql" and cmd[-1] == "postgresql://u:p@h:5432/d" and "docker" not in cmd, str(cmd))
+            # (c) no env, no injection -> legacy docker fallback intact
+        saved = os.environ.pop("CONDUIT_PG_DSN", None)
+        try:
+            cmd3 = _resolve_psql()
+            check("legacy docker fallback", cmd3[:3] == ["docker", "exec", "-i"], str(cmd3))
+        finally:
+            if saved is not None:
+                os.environ["CONDUIT_PG_DSN"] = saved
+        # (d) call-site contract: injected psql still wins over env at record_gate_outcome
+        with unittest.mock.patch.dict(os.environ, {"CONDUIT_PG_DSN": "postgresql://u:p@h:5432/d"}):
+            ok = record_gate_outcome(
+                gate="test.gate", entity_id="e-inject", admitted=True, reason="",
+                payload={"k": "v"}, psql=[stub],
+            )
+            check("injected psql wins over env", ok is True)
+    finally:
+        os.unlink(stub)
+        if os.path.exists(log):
+            os.unlink(log)
+
+
 def test_scripted_fallback():
-    print("3. first call fails (function path), second succeeds (direct insert)")
+    print("3. scripted psql: first call fails, second call succeeds")
     log = tempfile.mktemp(prefix="peb-log-")
     script = (
         "#!/bin/sh\n"
@@ -82,20 +112,26 @@ def test_scripted_fallback():
         f.write(script)
     os.chmod(path, 0o755)
     try:
-        ok = record_gate_outcome(
-            gate="test.gate", entity_id="e3", admitted=False, reason="nope",
+        first = record_gate_outcome(
+            gate="test.gate", entity_id="e3a", admitted=False, reason="nope",
             payload={"k": "v"}, psql=[path],
         )
+        check("first call fails as scripted", first is False)
+        second = record_gate_outcome(
+            gate="test.gate", entity_id="e3b", admitted=False, reason="nope",
+            payload={"k": "v"}, psql=[path],
+        )
+        check("second call succeeds", second is True)
     finally:
         os.unlink(path)
         os.unlink(log) if os.path.exists(log) else None
         os.unlink(log + ".n") if os.path.exists(log + ".n") else None
-    check("falls back and records", ok is True)
 
 
 if __name__ == "__main__":
     test_broken_psql_never_raises()
     test_success_path()
+    test_dsn_pathway_used_by_default()
     test_scripted_fallback()
     if FAILURES:
         print("\nFAILURES:", FAILURES)

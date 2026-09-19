@@ -300,6 +300,40 @@ class TestLoadPostureRows(unittest.TestCase):
         with mock.patch("subprocess.run", return_value=proc):
             self.assertEqual(load_posture_rows(psql=["psql"]), [])
 
+    def test_dsn_pathway_selected_by_env(self):
+        """CONDUIT_PG_DSN set -> direct psql (no docker), injected psql wins (G1)."""
+        proc = SimpleNamespace(returncode=0, stdout="")
+        with mock.patch.dict(os.environ, {"CONDUIT_PG_DSN": "postgresql://u:p@h:5432/nexus"}):
+            with mock.patch("subprocess.run", return_value=proc) as run:
+                load_posture_rows()
+        argv = run.call_args[0][0]
+        self.assertEqual(argv[0], "psql")
+        self.assertIn("postgresql://u:p@h:5432/nexus", argv)
+        self.assertNotIn("docker", argv)
+
+    def test_injected_psql_wins_over_dsn(self):
+        """Explicit psql= injection still wins over the env DSN (G1 precedence)."""
+        proc = SimpleNamespace(returncode=0, stdout="")
+        with mock.patch.dict(os.environ, {"CONDUIT_PG_DSN": "postgresql://u:p@h:5432/nexus"}):
+            with mock.patch("subprocess.run", return_value=proc) as run:
+                load_posture_rows(psql=["psql"])
+        argv = run.call_args[0][0]
+        self.assertEqual(argv[0], "psql")
+        self.assertNotIn("postgresql://u:p@h:5432/nexus", argv)
+
+    def test_legacy_docker_fallback_without_dsn(self):
+        """No DSN, no injection -> legacy docker-exec command unchanged."""
+        saved = os.environ.pop("CONDUIT_PG_DSN", None)
+        try:
+            proc = SimpleNamespace(returncode=0, stdout="")
+            with mock.patch("subprocess.run", return_value=proc) as run:
+                load_posture_rows()
+        finally:
+            if saved is not None:
+                os.environ["CONDUIT_PG_DSN"] = saved
+        argv = run.call_args[0][0]
+        self.assertEqual(argv[:4], ["docker", "exec", "-i", "pgvector_db"])
+
 
 class TestEnforceStreamPosture(unittest.TestCase):
     """The CLI decision path honors DB posture without flip-flopping the

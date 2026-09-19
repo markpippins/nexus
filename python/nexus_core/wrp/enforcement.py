@@ -31,8 +31,10 @@ Design (mirrors the zero-dependency rule of ``cir_sdm.py``):
   cross-kernel-safe and trivially testable.
 * ``load_posture_rows`` is the ONLY I/O surface — a thin psql read of
   ``resolution.enforcement_posture`` (active = latest ``effective_from``
-  ``<= now()`` per family). It returns ``[]`` on any failure so the caller
-  falls back to the bootstrap default rather than erroring (R-D R2).
+  ``<= now()`` per family). Reach: injected ``psql=`` > CONDUIT_PG_DSN >
+  legacy docker-exec fallback (see ``_resolve_psql``). It returns ``[]`` on
+  any failure so the caller falls back to the bootstrap default rather than
+  erroring (R-D R2).
 * ``render_enforcement_state`` produces the startup audit line the dispatch
   service logs once at boot (shadow vs enforced + source + active rule set).
 
@@ -50,6 +52,8 @@ Usage (dispatch path)::
 """
 
 from __future__ import annotations
+
+import os
 
 from typing import Any, Dict, FrozenSet, Iterable, List, Optional
 
@@ -82,12 +86,28 @@ ENFORCED_RULES_KEY = "CIR_SDM_ENFORCE"
 DEFAULT_ENFORCED_RULES: FrozenSet[str] = frozenset({RULE_ONE_WAY_GATE})
 
 # Same host-side psql pathway the promotion gate / peb_admission use to reach
-# the nexus DB (docker exec into the pgvector_db container). Module-level so
-# tests can swap it.
+# the nexus DB. Default legacy docker-exec command is a fallback only:
+# CONDUIT_PG_DSN is the primary pathway (house convention — timeclock,
+# wrp-bridge-daemon, lilac_drift), used when the container is absent (other
+# hosts, containerized topologies). Module-level so tests can swap it.
 _PSQL: List[str] = [
     "docker", "exec", "-i", "pgvector_db",
     "psql", "-U", "pguser", "-d", "nexus", "-t", "-A", "-q",
 ]
+
+
+def _resolve_psql(psql: Optional[List[str]] = None) -> List[str]:
+    """Resolve the psql command for a call.
+
+    Order: explicit ``psql=`` injection (tests) wins, then CONDUIT_PG_DSN
+    (primary house pathway), then the legacy docker-exec fallback. Pure.
+    """
+    if psql is not None:
+        return psql
+    dsn = os.environ.get("CONDUIT_PG_DSN", "").strip()
+    if dsn:
+        return ["psql", dsn, "-t", "-A", "-q"]
+    return list(_PSQL)
 
 
 def load_posture_rows(
@@ -103,7 +123,7 @@ def load_posture_rows(
     the ONLY I/O surface in the enforcement layer.
     """
     import subprocess
-    cmd = psql if psql is not None else _PSQL
+    cmd = _resolve_psql(psql)
     sql = (
         "SELECT DISTINCT ON (family) family, mode, authorized_by, effective_from "
         "FROM resolution.enforcement_posture "
