@@ -70,22 +70,28 @@ def load_manifest(path: str) -> dict[str, Any]:
 
 
 def _resolve_lookup(
-    cur, table: str, name: Optional[str], svc_name: str, kind: str,
+    cur, table: str, name: Optional[str], ctx: str, kind: str,
+    default: Optional[str] = None,
 ) -> int:
-    """Resolve a declared archetype's NOT NULL lookup FK by name.
+    """Resolve a NOT NULL lookup FK by name against a registry lookup table.
 
-    The manifest may omit the name, in which case the documented default
-    applies (framework=Spring Boot for nexus-core, service_type=REST API).
-    Unresolvable names fail loudly — the tool never invents lookup rows.
+    `default` is the documented fallback when the manifest omits the name;
+    None default + omitted name = loud failure. Unresolvable names fail
+    loudly — the tool never invents lookup rows.
     """
     if name is None:
-        name = "Spring Boot" if kind == "framework" else "REST API"
-    cur.execute(f"SELECT id FROM {table} WHERE name = %s", (name,))
+        if default is None:
+            raise ValueError(
+                f"{ctx}: {kind} is required "
+                f"(registry.{table} is NOT NULL) — declare it in the manifest"
+            )
+        name = default
+    cur.execute(f"SELECT id FROM registry.{table} WHERE name = %s", (name,))
     row = cur.fetchone()
     if row is None:
         raise ValueError(
-            f"service {svc_name!r}: unknown {kind} {name!r} "
-            f"(not in {table}) — declare an existing row or add it first"
+            f"{ctx}: unknown {kind} {name!r} (not in registry.{table}) — "
+            "declare an existing row or add it first"
         )
     return row[0]
 
@@ -135,12 +141,23 @@ def plan(conn, manifest: dict[str, Any]) -> dict[str, Any]:
             if "ip_address" in host:
                 fields["ip_address"] = ("raw", host["ip_address"])
             exists = hn in host_ids
-            # registry.servers.ip_address is NOT NULL: a NEW host the manifest
-            # cannot state an address for is not fabricatable — report loudly,
-            # exclude from the plan (absence stays data).
-            if not exists and "ip_address" not in fields:
-                out["unaddressable_servers"].append(hn)
-                continue
+            # registry.servers NOT NULLs on NEW hosts: ip_address,
+            # operating_system_id, server_type_id. A NEW host the manifest
+            # cannot fully state is not fabricatable — report loudly per
+            # missing field and exclude from the plan (absence stays data).
+            if not exists:
+                missing = [
+                    k for k in ("ip_address", "os", "server_type")
+                    if k not in host
+                ]
+                if missing:
+                    out["unaddressable_servers"].append(
+                        {"hostname": hn, "missing": missing})
+                    continue
+            if "os" in host:
+                fields["operating_system_id"] = ("lookup", host["os"])
+            if "server_type" in host:
+                fields["server_type_id"] = ("lookup", host["server_type"])
             out["servers_upsert"].append(
                 {"hostname": hn, "exists": exists, "fields": fields}
             )
@@ -194,12 +211,14 @@ def apply_plan(conn, p: dict[str, Any], host_env: dict[str, int]) -> dict[str, i
             row = cur.fetchone()
             if row is None:
                 fw = _resolve_lookup(
-                    cur, "registry.frameworks", s.get("framework"),
-                    s["name"], "framework",
+                    cur, "frameworks", s.get("framework"),
+                    f"service {s['name']!r}", "framework",
+                    default="Spring Boot",
                 )
                 st = _resolve_lookup(
-                    cur, "registry.service_type", s.get("service_type"),
-                    s["name"], "service_type",
+                    cur, "service_type", s.get("service_type"),
+                    f"service {s['name']!r}", "service_type",
+                    default="REST API",
                 )
                 cur.execute(
                     "INSERT INTO registry.services (name, default_port, "
@@ -213,16 +232,22 @@ def apply_plan(conn, p: dict[str, Any], host_env: dict[str, int]) -> dict[str, i
             hn = entry["hostname"]
             if entry["exists"]:
                 sets, params = [], {}
+                _lookup_tables = {
+                    "environment_type_id": "environment_type",
+                    "operating_system_id": "operating_systems",
+                    "server_type_id": "server_type",
+                }
                 for col, (kind, val) in entry["fields"].items():
-                    if kind == "env":
+                    if kind in ("env", "lookup"):
+                        table = _lookup_tables[col]
                         cur.execute(
-                            "SELECT id FROM registry.environment_type WHERE name = %s",
+                            f"SELECT id FROM registry.{table} WHERE name = %s",
                             (val,),
                         )
                         row = cur.fetchone()
                         if row is None:
                             raise ValueError(
-                                f"unknown environment name: {val!r} (host {hn})"
+                                f"unknown {table} name: {val!r} (host {hn})"
                             )
                         params[col] = row[0]
                     else:
@@ -237,28 +262,31 @@ def apply_plan(conn, p: dict[str, Any], host_env: dict[str, int]) -> dict[str, i
                     )
                     counts["servers"] += cur.rowcount or 0
             else:
-                env_id = None
-                if "environment_type_id" in entry["fields"]:
-                    kind, val = entry["fields"]["environment_type_id"]
-                    cur.execute(
-                        "SELECT id FROM registry.environment_type WHERE name = %s",
-                        (val,),
-                    )
-                    row = cur.fetchone()
-                    if row is None:
-                        raise ValueError(
-                            f"unknown environment name: {val!r} (host {hn})"
-                        )
-                    env_id = row[0]
+                # plan() guarantees every NEW-host NOT NULL is present here —
+                # unaddressable/undescribed hosts are excluded before this runs
+                env_id = _resolve_lookup(
+                    cur, "environment_type",
+                    entry["fields"].get("environment_type_id", (None,))[1],
+                    f"server {hn!r}", "environment", default="Production",
+                )
+                os_id = _resolve_lookup(
+                    cur, "operating_systems", entry["fields"]["operating_system_id"][1],
+                    f"server {hn!r}", "operating_system",
+                )
+                styp_id = _resolve_lookup(
+                    cur, "server_type", entry["fields"]["server_type_id"][1],
+                    f"server {hn!r}", "server_type",
+                )
                 cur.execute(
                     "INSERT INTO registry.servers (hostname, environment_type_id, "
-                    "ip_address, description, status, active_flag) "
-                    "VALUES (%s, %s, %s, %s, %s, true)",
+                    "operating_system_id, server_type_id, ip_address, "
+                    "description, status, active_flag) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, true)",
                     (
                         hn,
                         env_id,
-                        # plan() guarantees ip_address on every insert entry —
-                        # unaddressable hosts are excluded before this runs
+                        os_id,
+                        styp_id,
                         entry["fields"]["ip_address"][1],
                         entry["fields"].get("description", ("raw", None))[1],
                         entry["fields"].get("status", ("raw", "ACTIVE"))[1],
@@ -336,11 +364,11 @@ def main(argv: Optional[list[str]] = None) -> int:
                       f"framework={s.get('framework') or 'Spring Boot(default)'} "
                       f"type={s.get('service_type') or 'REST API(default)'}")
         if p["unaddressable_servers"]:
-            print("UNADDRESSABLE SERVERS (declared but no ip_address known — "
-                  "registry.servers.ip_address is NOT NULL; add the address "
-                  "to the manifest to include them):")
-            for hn in p["unaddressable_servers"]:
-                print(f"  [skip] server {hn}")
+            print("UNADDRESSABLE SERVERS (declared but missing fields a NEW "
+                  "registry.servers row requires — ip_address/os/server_type "
+                  "are NOT NULL; add them to the manifest to include the host):")
+            for u in p["unaddressable_servers"]:
+                print(f"  [skip] server {u['hostname']} missing={u['missing']}")
         print(f"plan: {len(p['servers_upsert'])} server(s) to upsert, "
               f"{len(p['servers_retire'])} to retire, "
               f"{len(p['deployments_insert'])} deployment(s) to ensure")

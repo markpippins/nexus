@@ -9,12 +9,13 @@ No DB: the cursor is a scripted fake. Pins the R1 0d40c061 contract:
     retire = RETIRED + active_flag=false (never DELETE),
     deployments are check-then-insert idempotent, and deployments for
     NEWLY-inserted servers resolve the new host id (post-insert re-read)
-  - schema contract (V—fleet sync, R1 0d40c061 follow-up): the three
-    NOT NULLs the first live apply tripped — services.framework_id +
-    service_type_id (resolved from lookup tables, defaults documented),
-    deployments.environment_id (inherited from host), and
-    servers.ip_address on NEW hosts (plan excludes unaddressable hosts,
-    insert carries the declared address)
+  - schema contract (R1 0d40c061 follow-ups #357/#358): the NOT NULLs
+    the live applies tripped — services.framework_id + service_type_id
+    (resolved from lookup tables, defaults documented),
+    deployments.environment_id (inherited from host), and on NEW
+    servers ip_address + operating_system_id + server_type_id (plan
+    excludes underspecified hosts per-field with the missing list,
+    insert resolves the lookups and carries the declared address)
   - main(): dry-run default writes nothing; --apply commits
 """
 
@@ -118,9 +119,11 @@ def _manifest(**over):
         "fleet": [
             {"hostname": "titanium", "environment": "Production",
              "status": "ACTIVE", "ip_address": "192.0.2.10",
+             "os": "Linux", "server_type": "Physical",
              "services": ["nebula-srv", "wind-srv"]},
             {"hostname": "helium", "environment": "Production",
-             "ip_address": "192.0.2.20", "services": []},
+             "ip_address": "192.0.2.20", "os": "Linux",
+             "server_type": "Physical", "services": []},
         ],
         "retire": {"hostnames": ["barium", "atlantis"]},
     }
@@ -134,6 +137,22 @@ class Plan(unittest.TestCase):
             ("FROM registry.servers", lambda: list(HOSTS)),
             *_svc_scripts(),
         ])
+
+    def test_underspecified_new_server_reports_each_missing_field(self):
+        # no ip_address only -> that field, and only that field, is missing
+        m = _manifest()
+        del m["fleet"][1]["ip_address"]
+        p = frs.plan(self._conn(), m)
+        self.assertEqual(p["unaddressable_servers"],
+                         [{"hostname": "helium",
+                           "missing": ["ip_address"]}])
+        # drop os too -> both reported
+        m2 = _manifest()
+        del m2["fleet"][1]["ip_address"]
+        del m2["fleet"][1]["os"]
+        p2 = frs.plan(self._conn(), m2)
+        self.assertEqual(p2["unaddressable_servers"][0]["missing"],
+                         ["ip_address", "os"])
 
     def test_split_insert_vs_update(self):
         conn = self._conn()
@@ -196,6 +215,8 @@ class Apply(unittest.TestCase):
             ("FROM registry.servers", hosts_result),
             *_svc_scripts(),
             ("FROM registry.environment_type", ENV_OK),
+            ("FROM registry.operating_systems", [(1,)]),   # Linux
+            ("FROM registry.server_type", [(1,)]),         # Physical
             ("FROM registry.deployments", None),  # no existing deployment
         ])
 
@@ -228,6 +249,8 @@ class Apply(unittest.TestCase):
             ("FROM registry.servers", [("titanium", 1), ("barium", 2)]),
             *_svc_scripts(),
             ("FROM registry.environment_type", ENV_OK),
+            ("FROM registry.operating_systems", [(1,)]),
+            ("FROM registry.server_type", [(1,)]),
             ("FROM registry.deployments", [(42,)]),
         ])
         p = frs.plan(conn, _manifest())
@@ -260,28 +283,44 @@ class SchemaContract(unittest.TestCase):
         m = _manifest()
         del m["fleet"][1]["ip_address"]
         p = frs.plan(self._plan_conn(), m)
-        self.assertEqual(p["unaddressable_servers"], ["helium"])
+        self.assertEqual(p["unaddressable_servers"],
+                         [{"hostname": "helium", "missing": ["ip_address"]}])
         hosts = {e["hostname"] for e in p["servers_upsert"]}
         self.assertNotIn("helium", hosts)
         self.assertIn("titanium", hosts)  # existing host stays addressable
 
-    def test_addressed_new_server_insert_carries_ip(self):
+    def test_addressed_new_server_insert_resolves_lookups_and_ip(self):
         conn = self._plan_conn()
         p = frs.plan(conn, _manifest())
-        apply_conn = Apply._conn(self)
+        apply_conn = _FakeConn([
+            ("hostname, environment_type_id", [("titanium", 7),
+                                               ("barium", 7)]),
+            ("FROM registry.servers", lambda: list(HOSTS)),
+            *_svc_scripts(),
+            ("FROM registry.environment_type", [(7,)]),      # Production
+            ("FROM registry.operating_systems", [(1,)]),    # Linux
+            ("FROM registry.server_type", [(1,)]),          # Physical
+            ("FROM registry.deployments", None),
+        ])
         frs.apply_plan(apply_conn, p, {})
         srv_inserts = [(s, prm) for s, prm in apply_conn.cur.executed
                        if "INSERT INTO registry.servers" in s]
         self.assertEqual(len(srv_inserts), 1)
         sql, prm = srv_inserts[0]
         self.assertIn("ip_address", sql)
-        self.assertEqual(prm[2], "192.0.2.20")  # helium's declared address
+        self.assertIn("operating_system_id", sql)
+        self.assertIn("server_type_id", sql)
+        self.assertEqual(prm[2], 1)             # Linux resolved
+        self.assertEqual(prm[3], 1)             # Physical resolved
+        self.assertEqual(prm[4], "192.0.2.20") # helium's declared address
 
     def test_archetype_insert_resolves_framework_and_type(self):
         conn = _FakeConn([
             ("FROM registry.servers", lambda: list(HOSTS)),
             *_svc_scripts(),
             ("FROM registry.environment_type", ENV_OK),
+            ("FROM registry.operating_systems", [(1,)]),
+            ("FROM registry.server_type", [(1,)]),
             ("FROM registry.frameworks", [(1,)]),      # Spring Boot
             ("FROM registry.service_type", [(15,)]),   # Agent Service
             ("FROM registry.deployments", None),
@@ -307,6 +346,8 @@ class SchemaContract(unittest.TestCase):
             ("FROM registry.servers", lambda: list(HOSTS)),
             *_svc_scripts(),
             ("FROM registry.environment_type", ENV_OK),
+            ("FROM registry.operating_systems", [(1,)]),
+            ("FROM registry.server_type", [(1,)]),
             ("FROM registry.frameworks", [(1,)]),
             ("FROM registry.service_type", [(1,)]),
             ("FROM registry.deployments", None),
@@ -337,7 +378,7 @@ class SchemaContract(unittest.TestCase):
             frs.apply_plan(conn, p, {})
 
     def test_deployment_inherits_host_environment(self):
-        apply_conn = Apply._conn(self)
+        apply_conn = Apply._conn(self)  # envs faked at id 7
         p = frs.plan(self._plan_conn(), _manifest())
         frs.apply_plan(apply_conn, p, {})
         dep_inserts = [(s, prm) for s, prm in apply_conn.cur.executed
@@ -371,6 +412,8 @@ class Main(unittest.TestCase):
             ("FROM registry.servers", [("titanium", 1), ("barium", 2)]),
             *_svc_scripts(),
             ("FROM registry.environment_type", ENV_OK),
+            ("FROM registry.operating_systems", [(1,)]),
+            ("FROM registry.server_type", [(1,)]),
             ("FROM registry.deployments", None),
         ])
         with mock.patch.object(frs, "default_connect", lambda dsn: conn), \
