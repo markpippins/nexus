@@ -41,6 +41,7 @@ Both record the outcome into ``peb.transactions`` before returning
 
 from __future__ import annotations
 
+import copy
 from typing import Any, Dict, Iterable, List, Optional
 
 
@@ -109,14 +110,15 @@ _ALL_FAMILIES = (
     "cir-sdm.ir-payload-separation",
 )
 
-# ── Singleton state ───────────────────────────────────────────────────
+# ── Shared immutable state (built once, never mutated) ────────────────
+#
+# C2 (inspector report 5d45f921 / architect plan 8261648): the evaluation
+# path must never write module-level state. _STATE is built once by
+# _build() and only ever READ afterward; each evaluation deep-copies it
+# and mutates only its private copy. Cached PropositionFrameValue objects
+# are handed to the copy by reference — the interpreter only reads them.
 
-_interp = None
-_cir_prop = None
-_ccnf_prop = None
-_family_pfv: Dict[str, Any] = {}        # family  -> PropositionFrameValue
-_mode_pfv: Dict[str, Any] = {}          # mode    -> PropositionFrameValue
-_version_pfv_cache: Dict[str, Any] = {}  # version -> PropositionFrameValue
+_STATE: Optional[Dict[str, Any]] = None
 
 
 def _family_posture(
@@ -150,7 +152,7 @@ def _normalize_violation(violation: Any) -> Dict[str, Any]:
 # ── Builder ───────────────────────────────────────────────────────────
 
 def _build() -> None:
-    global _interp, _cir_prop, _ccnf_prop
+    global _STATE
 
     _import_solscript()
     from SOLScript.solscript import (                   # type: ignore[import-untyped]
@@ -275,17 +277,20 @@ def _build() -> None:
     )
     interp.add_proposition(cir_prop)
 
-    # Pre-built frame values per family / mode (swapped per call)
+    # Pre-built frame values per family / mode (read-only; handed to the
+    # per-call clone by reference)
+    family_pfv: Dict[str, PropositionFrameValue] = {}
     for family in _ALL_FAMILIES:
-        _family_pfv[family] = PropositionFrameValue(
+        family_pfv[family] = PropositionFrameValue(
             id=f"cir-gate:violation-governed:frame:family:{family}",
             proposition_id=_CIR_PROP_ID,
             dimension_id=_FAMILY_DIM_ID,
             reference_value_id=f"cir-gate:family:{family}",
             scalar_value=None,
         )
+    mode_pfv: Dict[str, PropositionFrameValue] = {}
     for mode in ("enforced", "shadow"):
-        _mode_pfv[mode] = PropositionFrameValue(
+        mode_pfv[mode] = PropositionFrameValue(
             id=f"cir-gate:violation-governed:frame:mode:{mode}",
             proposition_id=_CIR_PROP_ID,
             dimension_id=_MODE_DIM_ID,
@@ -373,9 +378,14 @@ def _build() -> None:
     )
     interp.add_proposition(ccnf_prop)
 
-    _interp = interp
-    _cir_prop = cir_prop
-    _ccnf_prop = ccnf_prop
+    _STATE = {
+        "interp": interp,
+        "cir_prop": cir_prop,
+        "ccnf_prop": ccnf_prop,
+        "family_pfv": family_pfv,
+        "mode_pfv": mode_pfv,
+        "version_pfv_cache": {},
+    }
 
 
 # ── Public API ────────────────────────────────────────────────────────
@@ -402,12 +412,12 @@ def _evaluate_cir_sdm_violation(
     posture_rows: Optional[Iterable[Dict[str, Any]]],
 ) -> tuple[bool, str]:
     """Internal evaluation core (wrapped by evaluate_cir_sdm_violation)."""
-    if _interp is None:
+    if _STATE is None:
         _build()
 
     from SOLScript.solscript import Entity  # type: ignore[import-untyped]
 
-    assert _interp is not None and _cir_prop is not None
+    assert _STATE is not None
 
     v = _normalize_violation(violation)
     family = v.get("rule_id", "")
@@ -415,11 +425,20 @@ def _evaluate_cir_sdm_violation(
         return False, "no rule family on violation"
 
     mode, authorized = _family_posture(family, posture_rows)
-    if mode not in _mode_pfv or family not in _family_pfv:
+    family_pfv = _STATE["family_pfv"]
+    mode_pfv = _STATE["mode_pfv"]
+    if mode not in mode_pfv or family not in family_pfv:
         return False, f"family {family!r} not in frame vocabulary — not governed"
 
-    # Frame the proposition to (family, mode); rebuild the entity per call.
-    _cir_prop.frame_values = [_family_pfv[family], _mode_pfv[mode]]
+    # Frame the proposition to (family, mode) on a PER-CALL COPY (C2);
+    # rebuild the entity per call. The shared _STATE is never mutated.
+    try:
+        state = copy.deepcopy(_STATE)
+    except Exception:  # noqa: BLE001 — fail closed, never raise out of a gate
+        return False, "evaluation context clone failed"
+    interp = state["interp"]
+    cir_prop = state["cir_prop"]
+    cir_prop.frame_values = [family_pfv[family], mode_pfv[mode]]
     entity = Entity(
         id=_CIR_ENTITY_ID,
         concept_id=_CIR_CONCEPT_ID,
@@ -430,12 +449,12 @@ def _evaluate_cir_sdm_violation(
         },
         external_id=v.get("violation_id", ""),
     )
-    _interp.entities[_CIR_ENTITY_ID] = entity
+    interp.entities[_CIR_ENTITY_ID] = entity
 
     context = {"enforcement_rule_family": family, "cir_sdm_mode": mode}
     try:
-        disposition, all_passed, context_status = _interp.evaluate_proposition(
-            _cir_prop, context=context,
+        disposition, all_passed, context_status = interp.evaluate_proposition(
+            cir_prop, context=context,
         )
     except Exception:
         return False, "SOL evaluation failed"
@@ -472,12 +491,12 @@ def _evaluate_ccnf_version_lock(
     posture_rows: Optional[Iterable[Dict[str, Any]]],
 ) -> tuple[bool, str]:
     """Internal evaluation core (wrapped by evaluate_ccnf_version_lock)."""
-    if _interp is None:
+    if _STATE is None:
         _build()
 
     from SOLScript.solscript import Entity  # type: ignore[import-untyped]
 
-    assert _interp is not None and _ccnf_prop is not None
+    assert _STATE is not None
 
     # R-D R4: genuinely malformed input (no version to build a proposition
     # over) is a contract/programming error — raw exception remains correct.
@@ -499,8 +518,16 @@ def _evaluate_ccnf_version_lock(
     # version-lock family posture (mode, authorized_by)
     mode, authorized = _family_posture("cir-sdm.version-lock", posture_rows)
 
-    # Frame on the event's version (typed_scalar integer); build entity.
-    _ccnf_prop.frame_values = [_version_pfv(version_int)]
+    # Frame on the event's version (typed_scalar integer) on a PER-CALL
+    # COPY (C2); build the entity on the copy. The shared _STATE is never
+    # mutated.
+    try:
+        state = copy.deepcopy(_STATE)
+    except Exception:  # noqa: BLE001 — fail closed, never raise out of a gate
+        return False, "evaluation context clone failed"
+    interp = state["interp"]
+    ccnf_prop = state["ccnf_prop"]
+    ccnf_prop.frame_values = [_version_pfv(version_int)]
     entity = Entity(
         id=_CCNF_ENTITY_ID,
         concept_id=_CCNF_CONCEPT_ID,
@@ -510,12 +537,12 @@ def _evaluate_ccnf_version_lock(
         },
         external_id=str(event.get("event_id", "")),
     )
-    _interp.entities[_CCNF_ENTITY_ID] = entity
+    interp.entities[_CCNF_ENTITY_ID] = entity
 
     context = {"ccnf_version": version_int}
     try:
-        disposition, all_passed, context_status = _interp.evaluate_proposition(
-            _ccnf_prop, context=context,
+        disposition, all_passed, context_status = interp.evaluate_proposition(
+            ccnf_prop, context=context,
         )
     except Exception:
         return False, "SOL evaluation failed"
@@ -533,17 +560,27 @@ def _evaluate_ccnf_version_lock(
 
 
 def _version_pfv(version: int) -> Any:
-    """Return the (cached) PropositionFrameValue for a ccnf_version scalar."""
-    if version not in _version_pfv_cache:
-        from SOLScript.solscript import PropositionFrameValue  # type: ignore[import-untyped]
-        _version_pfv_cache[version] = PropositionFrameValue(
-            id=f"ccnf-gate:version-governed:frame:v{version}",
-            proposition_id=_CCNF_PROP_ID,
-            dimension_id=_VERSION_DIM_ID,
-            reference_value_id=None,
-            scalar_value=str(version),
-        )
-    return _version_pfv_cache[version]
+    """Return the (cached) PropositionFrameValue for a ccnf_version scalar.
+
+    The cache is read-after-fill and the PFV objects are only ever handed
+    to per-call evaluation copies by reference (read-only), so filling it
+    under concurrency is benign: worst case two threads build equivalent
+    PFVs and one wins the slot.
+    """
+    from SOLScript.solscript import PropositionFrameValue  # type: ignore[import-untyped]
+    cache = _STATE["version_pfv_cache"] if _STATE else None
+    if cache is not None and version in cache:
+        return cache[version]
+    pfv = PropositionFrameValue(
+        id=f"ccnf-gate:version-governed:frame:v{version}",
+        proposition_id=_CCNF_PROP_ID,
+        dimension_id=_VERSION_DIM_ID,
+        reference_value_id=None,
+        scalar_value=str(version),
+    )
+    if cache is not None:
+        cache[version] = pfv
+    return pfv
 
 
 def _record_admission(

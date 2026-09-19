@@ -10,9 +10,12 @@ with a frame-scoped SOL proposition.  Each watch is evaluated against
 
 The proposition is framed on ``execution_backend`` — the watch's own
 backend, one of the V096 governed values (``operator`` / ``harness`` /
-``freebuff``).  The frame value is swapped per call to the watch's
-backend, so any governed backend is in scope and an unknown backend
-fails closed with ``context_mismatch``.
+``freebuff``).  The shared build state is **never mutated on the
+evaluation path** (inspector C2 / plan 8261648): every evaluation
+deep-copies the built state into a per-call context and frames only the
+copy, so any governed backend is in scope and an unknown backend fails
+closed with ``context_mismatch`` — and concurrent evaluations can never
+observe each other's frame.
 
 Interface::
 
@@ -28,6 +31,7 @@ outcome.
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 _IMPORTED = False
@@ -74,17 +78,22 @@ _BACKEND_VALUE_ID = {
     "freebuff": _BACKEND_FREEBUFF,
 }
 
-# ── Singleton state ───────────────────────────────────────────────────
+# ── Shared immutable state (built once, never mutated) ───────────────
+#
+# C2 (inspector report 5d45f921 / architect plan 8261648): the evaluation
+# path must never write module-level state. _STATE is built once by
+# _build() and only ever READ afterward; each evaluation deep-copies it
+# and mutates only its private copy. The pre-built PropositionFrameValue
+# objects are handed to the copy by reference — the interpreter only
+# reads them.
 
-_interp = None
-_prop = None
-_pfv_by_backend: dict[str, Any] = {}
+_STATE: dict[str, Any] | None = None
 
 
 # ── Builder (matches sol_gate.py pattern exactly) ─────────────────────
 
 def _build() -> None:
-    global _interp, _prop, _pfv_by_backend
+    global _STATE
 
     _import_solscript()
     from SOLScript.solscript import (                   # type: ignore[import-untyped]
@@ -228,8 +237,9 @@ def _build() -> None:
     # frame value, so a single proposition can only be scoped to ONE
     # value per dimension at a time — we swap the active frame value per
     # call to the watch's own backend (see evaluate_watch_admission).
+    pfv_by_backend: dict[str, PropositionFrameValue] = {}
     for value, value_id in _BACKEND_VALUE_ID.items():
-        _pfv_by_backend[value] = PropositionFrameValue(
+        pfv_by_backend[value] = PropositionFrameValue(
             id=f"{_FRAME_ID_PREFIX}{value}",
             proposition_id=_PROPOSITION_ID,
             dimension_id=_BACKEND_DIM_ID,
@@ -237,8 +247,11 @@ def _build() -> None:
             scalar_value=None,
         )
 
-    _interp = interp
-    _prop = prop
+    _STATE = {
+        "interp": interp,
+        "prop": prop,
+        "pfv_by_backend": pfv_by_backend,
+    }
 
 
 # ── Public API ────────────────────────────────────────────────────────
@@ -275,12 +288,12 @@ def _evaluate_watch_admission(
     enforce_preflights: bool = True,
 ) -> tuple[bool, str]:
     """Internal evaluation core (wrapped by evaluate_watch_admission)."""
-    if _interp is None:
+    if _STATE is None:
         _build()
 
     from SOLScript.solscript import Entity  # type: ignore[import-untyped]
 
-    assert _interp is not None and _prop is not None
+    assert _STATE is not None
 
     if watch is None:
         return False, "no watch provided"
@@ -325,23 +338,36 @@ def _evaluate_watch_admission(
         },
         external_id=str(watch.get("id", "")),
     )
-    _interp.entities[_ENTITY_ID] = entity
 
     # ── Frame the proposition to the watch's own backend ─────────
     backend = str(watch.get("execution_backend") or "")
-    pfv = _pfv_by_backend.get(backend)
+    pfv = _STATE["pfv_by_backend"].get(backend)
     if pfv is None:
         # Unknown / ungoverned backend — fail closed.  The SQL WHERE
         # already excludes non-active rows; this is the frame-scoped
         # admission boundary for anything that slips past it.
         return False, f"context_mismatch (backend={backend or 'unknown'})"
-    _prop.frame_values = [pfv]
+
+    # ── Per-call evaluation context (C2) ─────────────────────────
+    # The shared _STATE is never mutated: every call deep-copies it,
+    # frames the COPY's proposition to this call's backend, and
+    # registers the entity on the COPY's interpreter. Concurrent
+    # evaluations can therefore never observe each other's frame or
+    # entity.
+    try:
+        state = copy.deepcopy(_STATE)
+    except Exception:  # noqa: BLE001 — fail closed, never raise out of a gate
+        return False, "evaluation context clone failed"
+    interp = state["interp"]
+    prop = state["prop"]
+    prop.frame_values = [pfv]
+    interp.entities[_ENTITY_ID] = entity
     context = {"execution_backend": backend}
 
     # ── SOL evaluation ───────────────────────────────────────────
     try:
-        disposition, all_passed, context_status = _interp.evaluate_proposition(
-            _prop,
+        disposition, all_passed, context_status = interp.evaluate_proposition(
+            prop,
             context=context,
         )
     except Exception:
