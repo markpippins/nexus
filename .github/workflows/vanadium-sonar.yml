@@ -82,6 +82,7 @@ jobs:
           if [ ! -d node_modules ]; then npm ci --no-audit --no-fund || npm install --no-audit --no-fund || true; fi
           npm install --no-save --no-audit --no-fund @vitest/coverage-v8 || true
           npx vitest run src/compile-verdict.test.ts src/compile-identity.test.ts \
+            src/runtime-kernel-fold.test.ts \
             --coverage.enabled --coverage.provider=v8 \
             --coverage.reportsDirectory=../../coverage/ts-raw \
             --coverage.reporter=lcovonly || echo "TS coverage generation attempted (see log)"
