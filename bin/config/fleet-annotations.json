@@ -1,0 +1,137 @@
+{
+  "_comment": "Nexus judgment layered on the osmium declared source (fleet-manifest-from-ansible). Not fleet fact: descriptions, environments, per-host services, declared service archetypes. Power state lives ONLY in osmium:~/devops/ansible/fleet-state.yml; membership/addresses ONLY in inventory.yml on osmium.",
+  "defaults": {
+    "status": "OFFLINE"
+  },
+  "services": [
+    {
+      "name": "nexus-core",
+      "default_port": 8092,
+      "description": "read-only JVM projection monolith (Spring Boot) — docker/nexus-core compose; actuator health",
+      "framework": "Spring Boot",
+      "service_type": "REST API"
+    }
+  ],
+  "hosts": [
+    {
+      "hostname": "titanium",
+      "environment": "Production",
+      "description": "primary nexus host — canonical PG, all core services, operator workstation (x86)",
+      "os": "Linux",
+      "server_type": "Physical",
+      "services": ["nebula-srv", "assembly-srv", "conduit-mcp", "tackle-mcp", "nebula-mcp", "wind-srv", "role-memory-srv"]
+    },
+    {
+      "hostname": "helium",
+      "environment": "Production",
+      "description": "read-only JVM experimental node (banana-pi) — nexus-core :8092 (Spring Boot) + helium-mongo; calendar emitter",
+      "os": "Linux",
+      "server_type": "Physical",
+      "services": ["nexus-core"]
+    },
+    {
+      "hostname": "vanadium",
+      "environment": "Production",
+      "description": "lab node (pi4) — sonar runner, CI backup target, PG replication target; calendar emitter",
+      "os": "Linux",
+      "server_type": "Physical",
+      "services": []
+    },
+    {
+      "hostname": "osmium",
+      "environment": "Production",
+      "description": "ansible control node (Orange Pi Zero, armv7) — fleet inventory source of truth ~/devops/ansible; calendar emitter",
+      "os": "Linux",
+      "server_type": "Physical",
+      "services": []
+    },
+    {
+      "hostname": "rubidium",
+      "environment": "Development",
+      "description": "pi3 — powered down (fleet consolidation in progress)",
+      "os": "Linux",
+      "server_type": "Physical",
+      "services": []
+    },
+    {
+      "hostname": "iridium",
+      "environment": "Development",
+      "description": "pi4 — powered down (fleet consolidation in progress)",
+      "os": "Linux",
+      "server_type": "Physical",
+      "services": []
+    },
+    {
+      "hostname": "barium",
+      "environment": "Development",
+      "description": "pi4 — powered down (fleet consolidation in progress); former PG replication target (R9 chain)",
+      "os": "Linux",
+      "server_type": "Physical",
+      "services": []
+    },
+    {
+      "hostname": "thallium",
+      "environment": "Development",
+      "description": "pi4 — powered down (fleet consolidation in progress)",
+      "os": "Linux",
+      "server_type": "Physical",
+      "services": []
+    },
+    {
+      "hostname": "deuterium",
+      "environment": "Development",
+      "description": "pi4 — powered down (fleet consolidation in progress)",
+      "os": "Linux",
+      "server_type": "Physical",
+      "services": []
+    },
+    {
+      "hostname": "cesium",
+      "environment": "Development",
+      "description": "pi4 — powered down (fleet consolidation in progress)",
+      "os": "Linux",
+      "server_type": "Physical",
+      "services": []
+    },
+    {
+      "hostname": "lithium",
+      "environment": "Development",
+      "description": "pi4 — powered down (fleet consolidation in progress)",
+      "os": "Linux",
+      "server_type": "Physical",
+      "services": []
+    },
+    {
+      "hostname": "radium",
+      "environment": "Development",
+      "description": "pi4 — powered down (fleet consolidation in progress)",
+      "os": "Linux",
+      "server_type": "Physical",
+      "services": []
+    },
+    {
+      "hostname": "sodium",
+      "environment": "Development",
+      "description": "nano — powered down (fleet consolidation in progress)",
+      "os": "Linux",
+      "server_type": "Physical",
+      "services": []
+    },
+    {
+      "hostname": "thorium",
+      "environment": "Development",
+      "description": "c4 — powered down (fleet consolidation in progress)",
+      "os": "Linux",
+      "server_type": "Physical",
+      "services": []
+    },
+    {
+      "hostname": "entropy",
+      "environment": "Development",
+      "description": "reserve node — containerized python services under evaluation (no routable address verified yet — sync reports it unaddressable until the manifest states one)",
+      "os": "Linux",
+      "server_type": "Physical",
+      "services": []
+    }
+  ]
+}
