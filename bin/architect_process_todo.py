@@ -225,34 +225,36 @@ def write_implementation_plan(req_id: str, spec_id: str, title: str,
                                files_affected: list[str] = None,
                                content: str = None,
                                dry_run: bool = False) -> str | None:
-    """Write an implementation plan linked to requirement + spec."""
+    """Write an implementation plan linked to requirement + spec.
+
+    Targets canonical nebula.blueprints_history (V171) with the payload fold
+    (same mapping as conduit's upsertPlan, PR #302): the implementation_plans
+    view is read-only over the folded payload and the V171 mirror trigger
+    retired in V176, so view-INSERTs fail (feature-not-supported) and legacy-
+    table writes would silently vanish.
+    """
     plan_id = str(uuidlib.uuid4())
     escaped_title = title.replace("'", "''")
-    escaped_goal = goal.replace("'", "''")
-    ac_json = json.dumps(acceptance_criteria).replace("'", "''")
-    files_pg = "ARRAY[" + ",".join(f"'{f}'" for f in (files_affected or [])) + "]::text[]"
-    escaped_content = (content or "").replace("'", "''")
-    now = datetime.now(timezone.utc).isoformat()
+    payload = json.dumps({
+        "spec_ref": spec_id,
+        "requirement_ref": req_id,
+        "goal": goal,
+        "content": content or "",
+        "files_affected": files_affected or [],
+        "acceptance_criteria": acceptance_criteria,
+        "tags": ["architect-generated"],
+        "source": "architect_process_todo",
+    }).replace("'", "''")
 
     sql = f"""
-        INSERT INTO nebula.implementation_plans
-            (id, plan_number, spec_id, requirement_id, title, goal, content,
-             files_affected, acceptance_criteria, status, tags, metadata,
-             created_at, updated_at)
+        INSERT INTO nebula.blueprints_history
+            (id, plan_number, title, payload, blueprint_status)
         VALUES (
             '{plan_id}'::uuid,
             NULL,
-            '{spec_id}'::uuid,
-            '{req_id}'::uuid,
             '{escaped_title}',
-            '{escaped_goal}',
-            '{escaped_content}',
-            {files_pg},
-            '{ac_json}'::jsonb,
-            'pending',
-            '{{"architect-generated"}}'::text[],
-            '{{"source": "architect_process_todo"}}'::jsonb,
-            '{now}', '{now}'
+            '{payload}'::jsonb,
+            'pending'
         )
         RETURNING id;
     """

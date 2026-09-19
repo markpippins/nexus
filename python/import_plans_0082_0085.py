@@ -141,7 +141,8 @@ def main():
         print("\nDRY RUN — no DB writes")
         return
 
-    # Check for existing rows (idempotency)
+    # Check for existing rows (idempotency) — read through the compat view,
+    # which is backed by canonical nebula.blueprints_history (V171).
     existing, _ = psql(
         "SELECT plan_number FROM nebula.implementation_plans "
         "WHERE plan_number IN ('0082','0083','0084','0085')"
@@ -156,22 +157,29 @@ def main():
         meta = {"source": p["source"], "project": p["project"]}
         meta = {k: v for k, v in meta.items() if v}
         tags_sql = ",".join(sq(t) for t in p["tags"])
+        # Write to canonical blueprints_history with the payload fold
+        # (same mapping as conduit's upsertPlan, PR #302). The legacy
+        # implementation_plans surface is a read-only compat view over the
+        # folded payload (V171); its mirror trigger retired in V176.
+        import json as _json
+        payload_sql = _json.dumps({
+            "goal": p["goal"],
+            "content": p["content"],
+            "files_affected": [],
+            "acceptance_criteria": p["acceptance_criteria"],
+            "dependencies": [],
+            "tags": p["tags"],
+            "project": p["project"] or None,
+            "source": p["source"],
+        }).replace("'", "''")
         sql = f"""
-            INSERT INTO nebula.implementation_plans
-                (plan_number, title, goal, content, files_affected, acceptance_criteria,
-                 dependencies, status, tags, metadata, created_at, updated_at)
+            INSERT INTO nebula.blueprints_history
+                (plan_number, title, payload, blueprint_status)
             VALUES (
                 {sq(p['plan_number'])},
                 {sq(p['title'])},
-                {sq(p['goal'])},
-                {sq(p['content'])},
-                ARRAY[]::text[],
-                {sq_json(p['acceptance_criteria'])},
-                ARRAY[]::text[],
-                {sq(p['status'])},
-                ARRAY[{tags_sql}],
-                {sq_json(meta)},
-                now(), now()
+                '{payload_sql}'::jsonb,
+                {sq(p['status'])}
             )
         """
         _, rc = psql(sql)
