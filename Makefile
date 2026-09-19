@@ -220,7 +220,8 @@ mesh-test:
 		bin/tests/test_fleet_registry_sync.py \
 		bin/tests/test_fleet_manifest_from_ansible.py \
 		bin/tests/test_terrain_drift_check.py \
-		bin/tests/test_terrain_status_sync.py -v
+		bin/tests/test_terrain_status_sync.py \
+		bin/tests/test_drift_check_run.py -v
 
 close-code-g3-test:
 	@echo "[close-code-g3-test] G3 remap (hermetic mapping + real-V185 E2E, wr-conf-038)..."
