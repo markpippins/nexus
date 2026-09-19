@@ -55,7 +55,10 @@ def main():
     # multi-line document; parse the whole stdout, not just the last line)
     summary = None
     try:
-        payload = json.loads(r.stdout.strip())
+        # stdout is the --json document; raw_decode tolerates any trailing
+        # operational chatter (e.g. older census versions printing the
+        # record confirmation to stdout)
+        payload, _ = json.JSONDecoder().raw_decode(r.stdout.strip())
         defects = payload.get("defects", [])
         summary = (
             f"checked={payload.get('checked')} "
