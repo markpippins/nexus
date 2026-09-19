@@ -1,4 +1,13 @@
-"""Tests for bin/terrain-drift-check.py (offline, stubbed probes)."""
+"""Tests for bin/terrain-drift-check.py (offline, stubbed probes).
+
+Pins the OFFLINE-aware drift semantics (#359 census):
+  - a host declared OFFLINE in registry.servers (via injected
+    load_declared_offline) that probes DOWN is "expected-offline" —
+    reported, but NOT a defect and not in the exit-code count
+  - a declared-OFFLINE host that probes UP is "stale-offline" —
+    the declaration is stale (machine probably powered on)
+  - registry unreachable degrades to a note, census still runs
+"""
 import importlib.util
 import json
 import socket
@@ -47,7 +56,8 @@ class StubProbe:
 
 @pytest.fixture
 def patch_census(monkeypatch):
-    def _install(probe, services, mcps=None, servers=SERVERS):
+    def _install(probe, services, mcps=None, servers=SERVERS,
+                 offline=None, note=None):
         mcps = mcps or []
 
         def fake_get_json(url):
@@ -57,8 +67,12 @@ def patch_census(monkeypatch):
                 return {"data": mcps}
             return {"data": servers}
 
+        def fake_declared_offline(dsn=None):
+            return set(offline or ()), note
+
         monkeypatch.setattr(mod, "get_json", fake_get_json)
         monkeypatch.setattr(mod, "tcp_open", probe)
+        monkeypatch.setattr(mod, "load_declared_offline", fake_declared_offline)
     return _install
 
 
@@ -121,7 +135,7 @@ def test_dead_row_on_own_host(patch_census, monkeypatch):
     patch_census(
         services=[svc(1, "ok", 3000), svc(2, "dead", 9999)],
         probe=probe)
-    _, _, _, checked, _, defects = mod.census()
+    _, _, _, checked, _, _, defects, _ = mod.census()
     assert checked == 2
     assert probe.calls == [("localhost", 3000), ("localhost", 9999)]
     assert [d["name"] for d in defects] == ["dead"]
@@ -135,7 +149,7 @@ def test_probe_config_when_host_unregistered(patch_census):
     patch_census(
         services=[svc(1, "odd-host", 80, hcu="http://10.9.9.9:80/health")],
         probe=probe)
-    _, _, _, _, _, defects = mod.census()
+    _, _, _, _, _, _, defects, _ = mod.census()
     assert defects[0]["class"] == "probe-config"
 
 
@@ -146,7 +160,7 @@ def test_inactive_and_portless_skipped(patch_census):
         svc(2, "worker", None),
         svc(3, "offlined", 1234, status="OFFLINE"),
     ], probe=probe)
-    _, _, _, checked, skipped, defects = mod.census()
+    _, _, _, checked, skipped, _, defects, _ = mod.census()
     assert checked == 0
     assert len(skipped) == 3
     assert defects == []
@@ -159,7 +173,7 @@ def test_mcp_rows_probe_too(patch_census):
     patch_census(services=[], mcps=[
         svc(9, "vd-sonar", 9000, serverId=3),
     ], probe=probe)
-    _, _, _, checked, _, defects = mod.census()
+    _, _, _, checked, _, _, defects, _ = mod.census()
     assert checked == 1
     assert defects[0]["class"] == "dead"
 
@@ -171,7 +185,106 @@ def test_helium_hcu_uses_ip_not_hostname(patch_census):
         services=[svc(1, "helium-ollama", 11434,
                       hcu="http://192.168.1.229:11434/")],
         probe=probe)
-    _, _, _, checked, _, defects = mod.census()
+    _, _, _, checked, _, _, defects, _ = mod.census()
     assert checked == 1
     assert probe.calls == [("192.168.1.229", 11434)]
     assert defects == []
+
+
+# --------------------------------------------------------------------------
+# OFFLINE-aware semantics (#359 census)
+# --------------------------------------------------------------------------
+
+def test_declared_offline_host_down_is_expected_not_defect(patch_census):
+    """A service claiming ONLINE on a declared-OFFLINE host that probes DOWN
+    is expected-offline: reported, but NOT a defect (exit-code unaffected)."""
+    probe = StubProbe({"192.168.1.212:5432": False})
+    patch_census(
+        services=[svc(1, "barium-svc", 5432, serverId=3)],
+        servers=SERVERS + [
+            {"id": 3, "hostname": "barium", "ipAddress": "192.168.1.212"}],
+        offline={"barium", "192.168.1.212"},
+        probe=probe)
+    _, _, _, checked, skipped, expected, defects, note = mod.census()
+    assert checked == 1
+    assert skipped == []
+    assert defects == []                      # not drift
+    assert len(expected) == 1
+    assert expected[0]["class"] == "expected-offline"
+    assert expected[0]["host"] == "192.168.1.212"
+    assert note is None
+
+
+def test_declared_offline_hostname_key_matches_hcu_probe(patch_census):
+    """Match keys are exact-lowercase against the probed host: a hostname
+    key from the registry matches a probe through an HCU hostname (the
+    real loader emits BOTH hostname and IP keys per row, so either
+    probe-provisioning path matches)."""
+    probe = StubProbe({"barium:5432": False})
+    patch_census(
+        services=[svc(1, "barium-svc", 5432,
+                      hcu="http://barium:5432/")],
+        offline={"barium"},                 # hostname key variant
+        probe=probe)
+    _, _, _, _, _, expected, defects, _ = mod.census()
+    assert defects == []
+    assert len(expected) == 1
+    assert expected[0]["host"] == "barium"
+
+
+def test_declared_offline_host_up_is_stale_offline_defect(patch_census):
+    """A declared-OFFLINE host that probes UP means the declaration is
+    stale (machine probably powered on) — this IS a defect."""
+    probe = StubProbe({"192.168.1.212:5432": True})
+    patch_census(
+        services=[svc(1, "barium-svc", 5432, serverId=3)],
+        servers=SERVERS + [
+            {"id": 3, "hostname": "barium", "ipAddress": "192.168.1.212"}],
+        offline={"barium", "192.168.1.212"},
+        probe=probe)
+    _, _, _, _, _, expected, defects, _ = mod.census()
+    assert expected == []
+    assert len(defects) == 1
+    assert defects[0]["class"] == "stale-offline"
+    assert "stale" in defects[0]["detail"]
+
+
+def test_offline_host_down_stays_dead_when_declaration_absent(patch_census):
+    """Without the declared-OFFLINE signal (empty registry set), the same
+    down probe is still a plain dead defect — semantics only come from
+    the declared layer, never inferred."""
+    probe = StubProbe({"192.168.1.212:5432": False})
+    patch_census(
+        services=[svc(1, "barium-svc", 5432, serverId=3)],
+        servers=SERVERS + [
+            {"id": 3, "hostname": "barium", "ipAddress": "192.168.1.212"}],
+        offline=None,                        # registry reachable, no OFFLINE rows
+        probe=probe)
+    _, _, _, _, _, expected, defects, _ = mod.census()
+    assert expected == []
+    assert defects[0]["class"] == "dead"
+
+
+def test_registry_unreachable_degrades_not_crashes(patch_census):
+    """Registry unreachable -> degraded note, empty offline set, census
+    still completes and classifies normally."""
+    probe = StubProbe({"192.168.1.212:5432": False})
+    patch_census(
+        services=[svc(1, "barium-svc", 5432, serverId=3)],
+        servers=SERVERS + [
+            {"id": 3, "hostname": "barium", "ipAddress": "192.168.1.212"}],
+        note="registry unreachable (OperationalError) — OFFLINE semantics unavailable",
+        probe=probe)
+    _, _, _, _, _, expected, defects, note = mod.census()
+    assert expected == []
+    assert defects[0]["class"] == "dead"     # honest without the declared layer
+    assert "unreachable" in note
+
+
+def test_load_declared_offline_real_db_or_graceful(monkeypatch):
+    """Unit: the real loader returns keys on success, ({}, note) on error —
+    exercised hermetically via a bad DSN (never raises either way)."""
+    keys, note = mod.load_declared_offline(
+        "postgresql://pguser:pgpass@localhost:1/nosuchdb")
+    assert keys == set()
+    assert "unreachable" in note
