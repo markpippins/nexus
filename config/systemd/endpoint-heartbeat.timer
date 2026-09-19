@@ -1,0 +1,10 @@
+[Unit]
+Description=fleet endpoint heartbeat schedule (every 15 min, UTC)
+[Timer]
+OnCalendar=*:0/15 UTC
+Persistent=true
+Unit=endpoint-heartbeat.service
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
