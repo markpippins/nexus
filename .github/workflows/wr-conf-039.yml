@@ -1,0 +1,56 @@
+name: WR Conf 039 — WorkRequest Primitive (real-V186 E2E, staged inert)
+
+# Applies the REAL sql/V186__work_request_primitive.sql to a throwaway
+# database carrying the pre-V186 skeleton (semantics + resolution + vision +
+# nebula surfaces, live-true constraints) and drives the full absorb
+# contract against live constraint behavior — GATE-001 idempotency refusal,
+# the VOCAB-001 loud refusal on unmapped status (the DBA amendment, record
+# 6be5faaa), Phase-1 asset mirror, vision+nebula backfill with the confirmed
+# vocabulary (settled→COMPLETED), bitemporal sentinels, FK/CHECK reality,
+# and the structural legacy_id uniqueness. No mocks on the DB path.
+# The suite creates and drops its own throwaway databases; no production
+# database is touched. Service pinned to postgres:17 for consistency with
+# live (house convention after the wr-conf-025 PG17 lesson, PR #300).
+
+on:
+  push:
+    branches: [main, master, feature/*, dev]
+  pull_request:
+    branches: [main, master, feature/*]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  v186-work-request:
+    name: "wr-conf-039: V186 absorb E2E"
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: pguser
+          POSTGRES_PASSWORD: pgpass
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pguser"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CONDUIT_PG_DSN: postgresql://pguser:pgpass@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test deps
+        run: python3 -m pip install pytest psycopg2-binary
+
+      - name: V186 absorb E2E (real migration, throwaway DB)
+        run: python3 -m pytest python/nexus_core/wrp/tests/test_v186_work_request_e2e.py -v
