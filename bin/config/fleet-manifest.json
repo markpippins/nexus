@@ -4,7 +4,9 @@
     {
       "name": "nexus-core",
       "default_port": 8092,
-      "description": "read-only JVM projection monolith (Spring Boot) — docker/nexus-core compose; actuator health"
+      "description": "read-only JVM projection monolith (Spring Boot) — docker/nexus-core compose; actuator health",
+      "framework": "Spring Boot",
+      "service_type": "REST API"
     }
   ],
   "fleet": [
@@ -13,6 +15,7 @@
       "environment": "Production",
       "description": "primary nexus host — canonical PG, all core services, operator workstation",
       "status": "ACTIVE",
+      "ip_address": "192.168.1.120",
       "services": ["nebula-srv", "assembly-srv", "conduit-mcp", "tackle-mcp", "nebula-mcp", "wind-srv", "role-memory-srv"]
     },
     {
@@ -20,6 +23,7 @@
       "environment": "Production",
       "description": "read-only JVM experimental node — nexus-core :8092 (Spring Boot) + helium-mongo; calendar emitter",
       "status": "ACTIVE",
+      "ip_address": "192.168.1.229",
       "services": ["nexus-core"]
     },
     {
@@ -27,12 +31,13 @@
       "environment": "Production",
       "description": "off-machine lab node — sonar runner, CI backup target, PG replication target; calendar emitter",
       "status": "ACTIVE",
+      "ip_address": "192.168.1.209",
       "services": []
     },
     {
       "hostname": "entropy",
       "environment": "Development",
-      "description": "reserve node — containerized python services under evaluation",
+      "description": "reserve node — containerized python services under evaluation (no routable address verified yet — sync reports it unaddressable until the manifest states one)",
       "status": "ACTIVE",
       "services": []
     }
