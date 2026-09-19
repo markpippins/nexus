@@ -37,6 +37,7 @@ Usage::
 from __future__ import annotations
 
 import enum
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -70,6 +71,28 @@ def _new_id() -> str:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _origin_host() -> str | None:
+    """Fleet host identity for emitted events (env-injected).
+
+    NEXUS_HOST is set by deployment tooling (bin/fleet-registry-sync.py,
+    systemd units, container env). No env → None: absent identity is
+    honest data, a fabricated hostname would be a lie in the provenance
+    graph.
+    """
+    return os.environ.get("NEXUS_HOST") or None
+
+
+def _origin_instance() -> str | None:
+    """Fleet instance identity for emitted events (env-injected).
+
+    NEXUS_INSTANCE distinguishes multiple deployments of the same
+    component (host-local, container, secondary). Defaults to the host
+    name when unset so single-instance hosts still get a usable,
+    terrain-compatible instance key.
+    """
+    return os.environ.get("NEXUS_INSTANCE") or os.environ.get("NEXUS_HOST") or None
 
 
 # ── CanonicalEnvelope ───────────────────────────────────────────────
@@ -106,6 +129,19 @@ class CanonicalEnvelope:
         Always "nexus" for now. Could distinguish federated instances.
     origin_component:
         "cascade", "voyager", "html-importer", "vision", "conduit".
+    origin_host:
+        The machine this event was emitted on (e.g. "titanium",
+        "helium"). Fleet identity: with multiple nexus instances on
+        the network, topology is answerable only if every event says
+        where it came from. Defaults to NEXUS_HOST, else None —
+        absent means "unspecified", never fabricated.
+    origin_instance:
+        Which deployment instance of the component emitted this
+        (e.g. "titanium", "docker-cascade-1"). Defaults to
+        NEXUS_INSTANCE, else None. Instance naming must keep the
+        terrain.service_endpoints UNIQUE(unit, instance) key
+        collision-free across hosts — hostname-encoding is the
+        house convention (see bin/endpoint-register.py).
 
     ── Causality (the provenance graph) ──
     correlation_id:
@@ -154,6 +190,8 @@ class CanonicalEnvelope:
         "occurred_at",
         "origin_system",
         "origin_component",
+        "origin_host",
+        "origin_instance",
         "domain",
         "ccnf_version",
         "epoch_id",
@@ -181,6 +219,8 @@ class CanonicalEnvelope:
         event_version: int = 1,
         occurred_at: str | None = None,
         origin_system: str = "nexus",
+        origin_host: str | None = None,
+        origin_instance: str | None = None,
         domain: str | None = None,
         ccnf_version: int | None = None,
         epoch_id: str | None = None,
@@ -198,6 +238,10 @@ class CanonicalEnvelope:
         self.occurred_at = occurred_at or _now_iso()
         self.origin_system = origin_system
         self.origin_component = origin_component
+        self.origin_host = origin_host if origin_host is not None else _origin_host()
+        self.origin_instance = (
+            origin_instance if origin_instance is not None else _origin_instance()
+        )
         self.domain = domain
         self.ccnf_version = ccnf_version
         self.epoch_id = epoch_id
@@ -223,6 +267,8 @@ class CanonicalEnvelope:
             "occurred_at": self.occurred_at,
             "origin_system": self.origin_system,
             "origin_component": self.origin_component,
+            "origin_host": self.origin_host,
+            "origin_instance": self.origin_instance,
             "domain": self.domain,
             "ccnf_version": self.ccnf_version,
             "epoch_id": self.epoch_id,
@@ -254,6 +300,8 @@ class CanonicalEnvelope:
             occurred_at=data["occurred_at"],
             origin_system=data.get("origin_system", "nexus"),
             origin_component=data["origin_component"],
+            origin_host=data.get("origin_host"),
+            origin_instance=data.get("origin_instance"),
             domain=data.get("domain"),
             ccnf_version=data.get("ccnf_version"),
             epoch_id=data.get("epoch_id"),
