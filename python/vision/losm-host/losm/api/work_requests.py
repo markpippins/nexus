@@ -16,7 +16,7 @@ from losm_store.models import (
 from losm_store.governed_triggers import GovernedTriggerAdapter
 from losm_store.repository import (
     create_work_request,
-    get_work_request,
+    get_work_request_by_wr_id,
     list_work_requests,
     update_work_request,
 )
@@ -26,10 +26,6 @@ from nexus_core.wrp.identity import ccnf_input_from_intent_string, emit_identity
 
 from losm_ir.transition import validate_transition, TransitionError
 from losm_shell.lifecycle.orchestrator import PipelineCoordinator
-from losm_shell.planning.compiler import PlanCompiler
-
-from losm_ir.plan import PlanIR
-from losm_ir.spec import SpecIR
 
 router = APIRouter(prefix="/work-requests", tags=["work_requests"])
 
@@ -96,11 +92,14 @@ def create_wr(payload: WorkRequestCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/{wr_id}", response_model=WorkRequestResponse)
-def read_wr(wr_id: int, db: Session = Depends(get_db)):
-    try:
-        wr = get_work_request(db, wr_id)
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=str(e))
+def read_wr(wr_id: str, db: Session = Depends(get_db)):
+    # Decision 5d8e10fd: consumers address work requests by the business-key
+    # string UUID (wr_id), never the internal integer PK. The /api surface
+    # (compat.py) serves the vision-srv wire shapes; this native surface
+    # returns the typed WorkRequestResponse model.
+    wr = get_work_request_by_wr_id(db, wr_id)
+    if wr is None:
+        raise HTTPException(status_code=404, detail="Work request not found")
     return WorkRequestResponse.from_orm_with_metadata(wr)
 
 
@@ -111,8 +110,8 @@ def list_wr(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
 
 
 @router.post("/{wr_id}/orchestrate")
-def orchestrate_wr(wr_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    wr = get_work_request(db, wr_id)
+def orchestrate_wr(wr_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    wr = get_work_request_by_wr_id(db, wr_id)
     current_state = wr.status.value if hasattr(wr.status, "value") else str(wr.status)
 
     async def run_orchestrator(execution_id: str, state: str):
@@ -133,8 +132,8 @@ class TransitionRequest(BaseModel):
 
 
 @router.post("/{wr_id}/transition", response_model=WorkRequestResponse)
-def transition_wr(wr_id: int, payload: TransitionRequest, db: Session = Depends(get_db)):
-    wr = get_work_request(db, wr_id)
+def transition_wr(wr_id: str, payload: TransitionRequest, db: Session = Depends(get_db)):
+    wr = get_work_request_by_wr_id(db, wr_id)
     from_state = wr.status.value if hasattr(wr.status, "value") else wr.status
     adapter = GovernedTriggerAdapter()
 
@@ -177,7 +176,7 @@ def transition_wr(wr_id: int, payload: TransitionRequest, db: Session = Depends(
         db.commit()
         raise HTTPException(status_code=400, detail=validation.reason)
 
-    wr.status = WorkStatus(payload.to_state)
+    wr.status = payload.to_state
     lifecycle = LifecycleEventModel(
         wr_id=str(wr_id),
         from_state=from_state,
@@ -204,6 +203,8 @@ def transition_wr(wr_id: int, payload: TransitionRequest, db: Session = Depends(
     return WorkRequestResponse.from_orm_with_metadata(wr)
 
 
-@router.post("/{wr_id}/compile", response_model=SpecIR)
-def compile_plan(wr_id: str, plan: PlanIR):
-    return PlanCompiler.compile(plan)
+# Note: the legacy /{wr_id}/compile route (PlanIR -> SpecIR) was absorbed by
+# the vision-srv consolidation (decision 5d8e10fd) and intentionally NOT
+# carried over: no consumer used it, and it was unauthenticated mutation
+# surface over the plan compiler. Re-add via a reviewed contract op if a
+# consumer ever appears.
