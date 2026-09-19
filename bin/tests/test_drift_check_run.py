@@ -63,10 +63,12 @@ class Summary(unittest.TestCase):
             return rc, buf.getvalue()
 
     def test_clean_run_summary_and_exit(self):
+        # --json emits a MULTI-LINE document — the wrapper must parse the
+        # whole stdout, not just the last line (regression pin)
         payload = {"checked": 86, "expected_offline": [], "defects": [],
                    "degraded": None}
         rc, out = self._run_with_census(
-            "import json,sys; print(json.dumps(%r))" % payload)
+            "import json,sys; print(json.dumps(%r, indent=2))" % payload)
         self.assertEqual(rc, 0)
         self.assertIn("checked=86", out)
         self.assertIn("defects=0", out)
