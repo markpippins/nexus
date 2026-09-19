@@ -215,7 +215,8 @@ mesh-test:
 		bin/tests/test_apply_v184_package.py \
 		bin/tests/test_calendar_consolidate.py \
 		bin/tests/test_boot_digest.py bin/tests/test_boot_conn_record.py \
-		bin/tests/test_boot_attest.py -v
+		bin/tests/test_boot_attest.py \
+		bin/tests/test_terrain_drift_check.py -v
 
 adapter-probe-test:
 	@echo "[adapter-probe-test] running adapter health probe hermetic suite..."
