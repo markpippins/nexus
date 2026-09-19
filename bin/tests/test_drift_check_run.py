@@ -102,6 +102,19 @@ class Summary(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("no JSON summary", out)
 
+    def test_json_with_trailing_chatter_still_parses(self):
+        # raw_decode tolerance: operational chatter after the JSON document
+        # (e.g. an older census printing the record id to stdout) must not
+        # kill the summary — the document itself is still parsed
+        payload = {"checked": 40, "expected_offline": [], "defects": [],
+                   "degraded": None}
+        rc, out = self._run_with_census(
+            "import json,sys; print(json.dumps(%r, indent=2)); "
+            "print('  record: abc-123')" % payload)
+        self.assertEqual(rc, 0)
+        self.assertIn("checked=40", out)
+        self.assertNotIn("no JSON summary", out)
+
 
 class RealSubprocess(unittest.TestCase):
     def test_timeout_and_oserror_paths_return_four(self):

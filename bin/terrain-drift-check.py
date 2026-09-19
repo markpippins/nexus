@@ -265,7 +265,8 @@ def main():
                 headers={"Content-Type": "application/json"}, method="POST")
             with urllib.request.urlopen(req, timeout=15) as r:
                 rid = json.load(r).get("id", "?")
-            print(f"  record: {rid}")
+            # stderr: under --json, stdout stays pure machine-readable
+            print(f"  record: {rid}", file=sys.stderr)
         except Exception as e:
             print(f"  record POST failed: {e}", file=sys.stderr)
 
