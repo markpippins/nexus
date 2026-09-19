@@ -1,0 +1,58 @@
+name: WR Conf 038 — G3 Close-Code Vocabulary (hermetic + real-V185 E2E)
+
+# Runs the G3 fix suites: the hermetic coordinator-mapping tests
+# (OUTCOME_CLOSED_LEASE -> 'unknown', granular codes unchanged) plus the
+# real-DB E2E, which applies the REAL sql/V185__close_reason_unknown.sql
+# to a throwaway database carrying the V130-shape skeleton — pre-state
+# rejection of 'unknown', post-state vocabulary, legacy-row survival,
+# idempotency, and the single-writer close pattern. No mocks on the DB
+# path. The suite creates and drops its own throwaway database; no
+# production database is touched. Service pinned to postgres:17 for
+# consistency with live (house convention after the wr-conf-025 PG17
+# lesson, PR #300).
+
+on:
+  push:
+    branches: [main, master, feature/*, dev]
+  pull_request:
+    branches: [main, master, feature/*]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  close-code-v185:
+    name: "wr-conf-038: V185 close-code vocabulary E2E"
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: pguser
+          POSTGRES_PASSWORD: pgpass
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pguser"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CONDUIT_PG_DSN: postgresql://pguser:pgpass@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test deps
+        run: python3 -m pip install pytest psycopg2-binary
+
+      - name: Hermetic close-code mapping tests
+        run: python3 -m pytest python/cascade/test_conformance_close_code_g3.py -v
+
+      - name: V185 E2E (real migration, throwaway DB)
+        run: python3 -m pytest python/nexus_core/wrp/tests/test_v185_close_code_e2e.py -v
