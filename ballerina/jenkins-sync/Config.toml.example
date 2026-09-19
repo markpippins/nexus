@@ -1,7 +1,11 @@
 # Copy to Config.toml and fill in. Config.toml is gitignored.
 port = 9097
 jenkinsBase = "http://192.168.1.209:8080"
-jenkinsAuthBasic = "<base64('admin:password')>"
+# EITHER (legacy, takes precedence):
+#jenkinsAuthBasic = "<base64('user:token')>"
+# OR (preferred — matches ci-gateway keys):
+jenkinsUser = "admin"
+jenkinsToken = "<api-token>"
 dbHost = "localhost"
 dbPort = 5432
 dbDatabase = "nexus"

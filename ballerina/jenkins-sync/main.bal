@@ -16,13 +16,42 @@ import ballerinax/postgresql.driver as _;
 configurable int port = 9097;
 configurable string bindHost = "127.0.0.1";
 configurable string jenkinsBase = ?;
-configurable string jenkinsAuthBasic = ?;
+// Credential: EITHER pre-encoded jenkinsAuthBasic (base64("user:token"),
+// legacy key — takes precedence) OR the jenkinsUser + jenkinsToken pair,
+// which matches ci-gateway's keys so both components can share one
+// credential block. (Incident 2026-09-19: the Sep 3 token rotation updated
+// ci-gateway but not jenkins-sync's base64 blob; sync failed silently for
+// 16 days. Matching keys + startup validation prevent a repeat.)
+configurable string jenkinsAuthBasic = "";
+configurable string jenkinsUser = "";
+configurable string jenkinsToken = "";
 configurable string dbHost = ?;
 configurable int dbPort = 5432;
 configurable string dbDatabase = ?;
 configurable string dbUser = ?;
 configurable string dbPass = ?;
 configurable int syncIntervalSeconds = 120;
+
+// Resolved at module init: validates the credential config and dies loudly
+// on a bad combination instead of failing every sync cycle silently.
+final string jenkinsAuthValue = resolveJenkinsAuth();
+
+function resolveJenkinsAuth() returns string {
+    if jenkinsAuthBasic.length() > 0 {
+        if jenkinsUser.length() > 0 || jenkinsToken.length() > 0 {
+            panic error("jenkins-sync config: set EITHER jenkinsAuthBasic OR " +
+                "jenkinsUser+jenkinsToken, not both");
+        }
+        return jenkinsAuthBasic;
+    }
+    if jenkinsUser.length() > 0 && jenkinsToken.length() > 0 {
+        // Same wire format ci-gateway produces via http:Client auth config:
+        // Basic base64("user:token").
+        return (jenkinsUser + ":" + jenkinsToken).toBytes().toBase64();
+    }
+    panic error("jenkins-sync config: no Jenkins credential — set either " +
+        "jenkinsAuthBasic (base64 user:token) or jenkinsUser + jenkinsToken");
+}
 
 final http:Client jenkins = check new (jenkinsBase);
 final postgresql:Client db = check new (dbHost, dbUser, dbPass, dbDatabase, dbPort);
@@ -31,7 +60,7 @@ final postgresql:Client db = check new (dbHost, dbUser, dbPass, dbDatabase, dbPo
 
 function jenkinsGet(string path) returns json|http:ClientError {
     return jenkins->get(path,
-        headers = {"Authorization": "Basic " + jenkinsAuthBasic},
+        headers = {"Authorization": "Basic " + jenkinsAuthValue},
         targetType = json);
 }
 
