@@ -51,10 +51,11 @@ def main():
 
     dur = time.time() - t0
 
-    # journal-friendly summary line from the JSON payload
+    # journal-friendly summary line from the JSON payload (--json emits a
+    # multi-line document; parse the whole stdout, not just the last line)
     summary = None
     try:
-        payload = json.loads(r.stdout.strip().splitlines()[-1])
+        payload = json.loads(r.stdout.strip())
         defects = payload.get("defects", [])
         summary = (
             f"checked={payload.get('checked')} "
