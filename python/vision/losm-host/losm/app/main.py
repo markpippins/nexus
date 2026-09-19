@@ -19,11 +19,17 @@ from losm.api.artifacts import router as artifacts_router
 from losm.api.branches import router as branches_router
 from losm.api.routes import router as kernel_router
 
+# vision-srv compatibility surface (decision 5d8e10fd): the /api-prefixed
+# routes absorbed from vision-srv (:8003) so vision-ui / vision-mcp / slash
+# consumers pass unchanged after the repoint to :8006.
+from losm.api.compat import router as compat_router
+
 app.include_router(receipts_router)
 app.include_router(work_requests_router)
 app.include_router(artifacts_router)
 app.include_router(branches_router)
 app.include_router(kernel_router)
+app.include_router(compat_router)
 
 
 @app.get("/health")
