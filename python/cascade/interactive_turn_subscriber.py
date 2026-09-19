@@ -78,6 +78,15 @@ ASSEMBLY_URL = os.getenv("ASSEMBLY_URL", "http://localhost:3107")
 NEBULA_URL = os.getenv("NEBULA_URL", "http://localhost:3101")
 FORUM_SLUG = os.getenv("DUALITY_FORUM_SLUG", "duality-sessions")
 
+# Author-of-record fallback for Assembly projections when the acting role
+# has no Assembly user (inspector C1, post 5d45f921). Legacy behavior
+# hardcoded the engineer UUID for every role; the resolver below now maps
+# role -> postedById and falls back ONLY here, loudly logged.
+ASSEMBLY_FALLBACK_POSTED_BY_ID = os.getenv(
+    "ASSEMBLY_FALLBACK_POSTED_BY_ID",
+    "af069ff6-760c-44cb-a0d4-11517164169b",  # engineer — legacy C1 default
+)
+
 # ── Logging ─────────────────────────────────────────────────────────
 
 def _log(msg: str, *args: Any) -> None:
@@ -878,6 +887,44 @@ async def _emit_turn_requested(
         return False
 
 
+def _resolve_posted_by_id(pg_conn: Any, role: str | None) -> tuple[str, str]:
+    """Resolve the Assembly author UUID for a comment's acting role.
+
+    Inspector C1 (discussions post 5d45f921): posting every session
+    response under one hardcoded UUID attributed Architect/Critic/Reviewer
+    statements of record to engineer — an attribution-integrity violation
+    at the persistence layer (I2 origin gating).
+
+    Resolution: case-insensitive alias match on assembly.users (the DBA
+    user is 'DBA', role strings arrive lowercase). Returns
+    (posted_by_id, provenance) where provenance is 'role' when the role's
+    own user resolved, or 'fallback' when it did not — fallback keeps the
+    comment postable but the caller logs it loudly so absent-identity is
+    visible data, never silent misattribution.
+    """
+    r = (role or "").strip()
+    if r and r != "system":
+        try:
+            with pg_conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id::text FROM assembly.users "
+                    "WHERE lower(alias) = lower(%s) LIMIT 1",
+                    (r,),
+                )
+                row = cur.fetchone()
+            if row and row[0]:
+                return str(row[0]), "role"
+        except Exception as e:
+            _log("postedById lookup failed for role %s: %s", r, e)
+    else:
+        # 'system' (and unknown) roles have no Assembly user by design:
+        # recorded under the fallback with explicit provenance.
+        pass
+    _log("postedById fallback (no Assembly user for role %r) -> %s",
+         r, ASSEMBLY_FALLBACK_POSTED_BY_ID[:8])
+    return ASSEMBLY_FALLBACK_POSTED_BY_ID, "fallback"
+
+
 def _post_assembly_comment(
     pg_conn: Any,
     thread_id: str,
@@ -895,6 +942,11 @@ def _post_assembly_comment(
     id (so the turn envelope's response_comment_id resolves in the thread
     history), or None when the projection failed — the event survives either
     way.
+
+    Authorship (inspector C1): postedById resolves from the acting role's
+    Assembly user so statements of record persist under the identity that
+    produced them. 'system' and unmapped roles fall back explicitly (see
+    _resolve_posted_by_id) — never silently.
     """
     event_type = "thinking" if role == "thinking" else "comment.created"
     canonical_id = str(uuid.uuid4())
@@ -915,9 +967,10 @@ def _post_assembly_comment(
 
     # 2. Project the Assembly comment (render).
     try:
+        posted_by_id, _provenance = _resolve_posted_by_id(pg_conn, role)
         payload = {
             "body": body_text,
-            "postedById": "af069ff6-760c-44cb-a0d4-11517164169b",  # engineer UUID
+            "postedById": posted_by_id,
             "role": role,
             "model": model or "freebuff/deepseek-v4-flash",
         }
