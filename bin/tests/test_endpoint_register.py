@@ -125,6 +125,22 @@ class SeedRetirement(unittest.TestCase):
 
 
 class Register(unittest.TestCase):
+    def test_row_id_is_deterministic_per_host_instance_service(self):
+        a = er.endpoint_id("titanium", "titanium", "nebula-srv")
+        b = er.endpoint_id("titanium", "titanium", "nebula-srv")
+        c = er.endpoint_id("titanium", "titanium", "wind-srv")
+        d = er.endpoint_id("helium", "helium", "nebula-srv")
+        self.assertEqual(a, b)
+        self.assertNotEqual(a, c)
+        self.assertNotEqual(a, d)
+        self.assertRegex(a, r"^[0-9a-f-]{36}$")
+
+    def test_upsert_carries_explicit_id(self):
+        # live catch: terrain.service_endpoints.id is NOT NULL with no
+        # default — the INSERT must supply it (deterministic uuid5).
+        self.assertIn("(id, host, instance", er.UPSERT_SQL.replace("\n", " "))
+        self.assertIn("%(id)s", er.UPSERT_SQL)
+
     def test_up_ok_on_successful_probe(self):
         conn = _FakeConn()
         with mock.patch.dict(os.environ, {"NEXUS_HOST": "titanium"}, clear=True):
