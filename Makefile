@@ -217,6 +217,7 @@ mesh-test:
 		bin/tests/test_boot_digest.py bin/tests/test_boot_conn_record.py \
 		bin/tests/test_boot_attest.py \
 		bin/tests/test_endpoint_register.py \
+		bin/tests/test_fleet_registry_sync.py \
 		bin/tests/test_terrain_drift_check.py -v
 
 close-code-g3-test:
