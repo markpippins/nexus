@@ -23,7 +23,14 @@ Usage:
   python3 bin/terrain-drift-check.py --record   # also file agent record
   python3 bin/terrain-drift-check.py --json     # machine-readable
 
-Env: TERRAIN_URL (default http://localhost:8084), NEBULA_URL (3101).
+Env: TERRAIN_URL (default http://localhost:8084), NEBULA_URL (3101),
+     REGISTRY_DSN (default postgresql://pguser:pgpass@localhost:5432/nexus)
+     — the declared fleet layer. A host declared OFFLINE in registry.servers
+     (fleet census, #359) is expected to be down: a service row claiming
+     ONLINE on it that probes DOWN is "expected-offline", not a defect;
+     if it unexpectedly probes UP the declaration is stale ("stale-offline"
+     defect — the machine is probably powered on and the manifest should
+     say ACTIVE). Unreachable registry degrades to a warning, not failure.
 """
 
 import argparse
@@ -39,6 +46,8 @@ import urllib.request
 
 TERRAIN = os.environ.get("TERRAIN_URL", "http://localhost:8084")
 NEBULA = os.environ.get("NEBULA_URL", "http://localhost:3101")
+REGISTRY_DSN = os.environ.get(
+    "REGISTRY_DSN", "postgresql://pguser:pgpass@localhost:5432/nexus")
 TIMEOUT = float(os.environ.get("TERRAIN_PROBE_TIMEOUT", "3"))
 
 SELF_HOST = socket.gethostname().lower()
@@ -47,6 +56,34 @@ SELF_HOST = socket.gethostname().lower()
 def get_json(url):
     with urllib.request.urlopen(url, timeout=15) as r:
         return json.load(r)
+
+
+def load_declared_offline(dsn=None):
+    """Declared fleet layer (registry.servers): set of lowercased hostnames
+    and LAN IPs whose declared status is OFFLINE — real-but-powered-down
+    fleet members (census semantics, #359). Returns (offline_keys, note)
+    where note describes the degradation when the registry is unreachable.
+    Never raises."""
+    dsn = dsn or REGISTRY_DSN
+    try:
+        import psycopg2
+        with psycopg2.connect(dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT hostname, ip_address::text FROM registry.servers "
+                    "WHERE upper(status) = 'OFFLINE'")
+                rows = cur.fetchall()
+    except Exception as e:  # noqa: BLE001 — degraded mode is data, not crash
+        return set(), (
+            f"registry unreachable ({e.__class__.__name__}) — "
+            "OFFLINE semantics unavailable")
+    keys: set[str] = set()
+    for hostname, ip in rows:
+        if hostname:
+            keys.add(str(hostname).strip().lower())
+        if ip:
+            keys.add(str(ip).strip())
+    return keys, None
 
 
 def tcp_open(host, port):
@@ -86,13 +123,14 @@ def census():
     services = get_json(f"{TERRAIN}/api/v1/runnable-services?size=200").get("data", [])
     mcps = get_json(f"{TERRAIN}/{'api/v1/mcp-servers?size=200'}").get("data", [])
     servers_by_id = {s.get("id"): s for s in servers}
+    declared_offline, degraded_note = load_declared_offline()
 
     known_hosts = {str(s.get("ipAddress") or "").strip() for s in servers}
     known_hosts |= {"localhost", "127.0.0.1"}
     known_hosts |= {str(s.get("hostname") or "").lower() for s in servers}
     known_hosts.discard("")
 
-    defects, checked, skipped = [], 0, []
+    defects, checked, skipped, expected = [], 0, [], []
     for kind, rows in (("svc", services), ("mcp", mcps)):
         for row in rows:
             name = row.get("name") or f"(null-name#{row.get('id')})"
@@ -116,8 +154,17 @@ def census():
                     "prov": prov, "class": "probe-config", "detail": str(e),
                 })
                 continue
+            offline_host = host.lower() in declared_offline
             if alive is False:
-                if host not in known_hosts:
+                if offline_host:
+                    # declared OFFLINE (real-but-powered-down fleet member,
+                    # census #359): confirmed down is EXPECTED, not drift
+                    expected.append({
+                        "kind": kind, "name": name, "port": port, "host": host,
+                        "prov": prov, "class": "expected-offline",
+                        "detail": "host declared OFFLINE in registry.servers",
+                    })
+                elif host not in known_hosts:
                     defects.append({
                         "kind": kind, "name": name, "port": port, "host": host,
                         "prov": prov, "class": "probe-config",
@@ -129,7 +176,15 @@ def census():
                         "prov": prov, "class": "dead",
                         "detail": "TCP connect failed",
                     })
-    return servers, services, mcps, checked, skipped, defects
+            elif offline_host:
+                # probes UP but declared OFFLINE: the declaration is stale —
+                # the machine is probably powered on and should be ACTIVE
+                defects.append({
+                    "kind": kind, "name": name, "port": port, "host": host,
+                    "prov": prov, "class": "stale-offline",
+                    "detail": "probes UP but declared OFFLINE — manifest stale",
+                })
+    return servers, services, mcps, checked, skipped, expected, defects, degraded_note
 
 
 def main():
@@ -142,7 +197,8 @@ def main():
 
     t0 = time.time()
     try:
-        servers, services, mcps, checked, skipped, defects = census()
+        servers, services, mcps, checked, skipped, expected, defects, \
+            degraded_note = census()
     except Exception as e:
         print(f"FATAL: terrain unreachable at {TERRAIN}: {e}", file=sys.stderr)
         return 125
@@ -150,12 +206,15 @@ def main():
     dur = time.time() - t0
     dead = [d for d in defects if d["class"] == "dead"]
     cfg = [d for d in defects if d["class"] == "probe-config"]
+    stale = [d for d in defects if d["class"] == "stale-offline"]
 
     if args.as_json:
         print(json.dumps({
             "titanium": SELF_HOST, "duration_s": round(dur, 1),
             "servers": [s.get("hostname") for s in servers],
             "checked": checked, "skipped": len(skipped),
+            "expected_offline": expected,
+            "degraded": degraded_note,
             "defects": defects,
         }, indent=2))
     else:
@@ -164,7 +223,15 @@ def main():
               f"({dur:.1f}s)")
         print(f"  probed: {checked} ONLINE+active rows with ports "
               f"({len(skipped)} skipped: inactive / portless)")
-        print(f"  defects: {len(dead)} dead, {len(cfg)} probe-config")
+        print(f"  expected-offline: {len(expected)} "
+              f"(declared OFFLINE, confirmed down — not drift)")
+        print(f"  defects: {len(dead)} dead, {len(cfg)} probe-config, "
+              f"{len(stale)} stale-offline")
+        if degraded_note:
+            print(f"  WARNING: {degraded_note}")
+        for d in expected:
+            print(f"    [expected-off] {d['kind']}/{d['name']} "
+                  f"port={d['port']} host={d['host']}: {d['detail']}")
         for d in defects:
             print(f"    [{d['class']:12}] {d['kind']}/{d['name']} "
                   f"port={d['port']} host={d['host']} via {d['prov']}: "
@@ -174,7 +241,11 @@ def main():
         body = (
             "## Terrain drift census (automated)\n\n"
             f"- probed {checked} ONLINE+active rows ({len(skipped)} skipped)\n"
-            f"- dead: {len(dead)}; probe-config defects: {len(cfg)}\n\n"
+            f"- expected-offline: {len(expected)} (declared OFFLINE, "
+            "confirmed down — not drift)\n"
+            f"- dead: {len(dead)}; probe-config: {len(cfg)}; "
+            f"stale-offline: {len(stale)}\n\n"
+            + (f"- degraded: {degraded_note}\n" if degraded_note else "")
             + ("\n".join(
                 f"- [{d['class']}] {d['kind']}/{d['name']} port={d['port']} "
                 f"host={d['host']}: {d['detail']}" for d in defects)
