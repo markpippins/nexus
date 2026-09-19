@@ -3,7 +3,7 @@ from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import NoResultFound
 
-from losm_store.models import PlanningTask, Artifact, Branch, BranchArtifact
+from losm_store.models import PlanningTask, Artifact, Branch, BranchArtifact, CURRENT_TENSE
 
 
 def create_work_request(
@@ -26,7 +26,17 @@ def create_work_request(
 
 
 def get_work_request(db: Session, wr_id: int) -> PlanningTask:
-    wr = db.get(PlanningTask, wr_id)
+    # Current-tense filter: on the base history table an id may in principle
+    # carry superseded versions; reads must resolve the live one (the
+    # semantics the work_requests_losm view's WHERE clause used to carry).
+    wr = (
+        db.query(PlanningTask)
+        .filter(
+            PlanningTask.id == wr_id,
+            PlanningTask.recorded_until_dt == CURRENT_TENSE,
+        )
+        .first()
+    )
     if wr is None:
         raise NoResultFound(f"PlanningTask id={wr_id} not found")
     return wr
@@ -34,7 +44,14 @@ def get_work_request(db: Session, wr_id: int) -> PlanningTask:
 
 def get_work_request_by_wr_id(db: Session, wr_id: str) -> Optional[PlanningTask]:
     """Look up a work request by its business-key UUID (wr_id column)."""
-    return db.query(PlanningTask).filter(PlanningTask.wr_id == wr_id).first()
+    return (
+        db.query(PlanningTask)
+        .filter(
+            PlanningTask.wr_id == wr_id,
+            PlanningTask.recorded_until_dt == CURRENT_TENSE,
+        )
+        .first()
+    )
 
 
 def update_work_request(
@@ -79,7 +96,14 @@ def delete_work_request(db: Session, wr_id: str) -> bool:
 
 
 def list_work_requests(db: Session, skip: int = 0, limit: int = 100) -> List[PlanningTask]:
-    return db.query(PlanningTask).offset(skip).limit(limit).all()
+    return (
+        db.query(PlanningTask)
+        .filter(PlanningTask.recorded_until_dt == CURRENT_TENSE)
+        .order_by(PlanningTask.id)
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
 
 
 def list_all_artifacts(

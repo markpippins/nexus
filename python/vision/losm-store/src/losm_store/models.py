@@ -1,9 +1,9 @@
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
-from sqlalchemy import Column, DateTime, Enum as SAEnum, Integer, String, Text, Float, JSON
+from sqlalchemy import Column, DateTime, Enum as SAEnum, Integer, String, Text, Float, JSON, text
 from sqlalchemy.orm import declarative_base
 
 from losm_ir.states import WorkStatus
@@ -11,6 +11,12 @@ from losm_ir.states import WorkStatus
 # ── Schema ───────────────────────────────────────────────────────────────────
 # All models map to the "vision" schema in PostgreSQL.
 _SCHEMA = "vision"
+
+# The bitemporal "current tense" sentinel on *._history tables: rows carrying
+# this recorded_until_dt are the live version; anything else is history.
+# Must match the DB default ('9999-12-31 23:59:59+00') exactly, microseconds
+# included (i.e. zero).
+CURRENT_TENSE = datetime(9999, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
 
 
 def _table_args() -> dict:
@@ -29,10 +35,16 @@ class ArtifactType(str, Enum):
     SUMMARY = "SUMMARY"
 
 
-# ── PlanningTask (view: work_requests) ──────────────────────────────────────
+# ── PlanningTask (base: work_requests_history) ──────────────────────────
 
 class PlanningTask(Base):
-    __tablename__ = "work_requests_losm"
+    # Option-A repair (migration 016, incident e772b969): map the ORM at the
+    # BASE history table, not the work_requests_losm view. The view is a plain
+    # pass-through again after 016, but writing through it is unnecessary view
+    # machinery; the base is the durable surface and needs no auto-updatability
+    # guarantee. Current-tense filtering is enforced in the repository read
+    # paths via CURRENT_TENSE (the view's WHERE clause, carried into Python).
+    __tablename__ = "work_requests_history"
     __table_args__ = _table_args()
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -45,9 +57,18 @@ class PlanningTask(Base):
     status = Column(SAEnum(WorkStatus), default=WorkStatus.NEW, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
-    # Semi-bitemporal columns (set by DB triggers, read-only via ORM)
-    recorded_on_dt = Column(DateTime(timezone=True), nullable=True)
-    recorded_until_dt = Column(DateTime(timezone=True), nullable=True)
+    # Semi-bitemporal columns. The DB owns the authoritative values (server
+    # defaults now() / sentinel), but Python-side defaults mirror them so the
+    # same ORM works on the sealed SQLite test stores and every ORM-created
+    # row is current-tense by construction.
+    recorded_on_dt = Column(
+        DateTime(timezone=True), nullable=True,
+        default=datetime.utcnow, server_default=text("now()"),
+    )
+    recorded_until_dt = Column(
+        DateTime(timezone=True), nullable=True,
+        default=lambda: CURRENT_TENSE,
+    )
 
     @property
     def updated_at(self):
