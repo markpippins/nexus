@@ -82,7 +82,20 @@ def test_probe_target_falls_back_to_serverid_then_default():
 
 
 def test_tcp_open_true_false_and_unresolvable():
-    assert mod.tcp_open("127.0.0.1", 4222) is True  # local nats is up
+    # True case: REAL ephemeral loopback listener (hermetic — no external deps)
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        port = srv.getsockname()[1]
+        assert mod.tcp_open("127.0.0.1", port) is True
+    finally:
+        srv.close()
+    # False case: a port that was bound (guaranteed free) then closed -> refused
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s2:
+        s2.bind(("127.0.0.1", 0))
+        closed_port = s2.getsockname()[1]
+    assert mod.tcp_open("127.0.0.1", closed_port) is False
     with pytest.raises(ValueError, match="does not resolve"):
         mod.tcp_open("no-such-host.invalid", 80)
 
