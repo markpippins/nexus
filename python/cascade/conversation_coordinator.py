@@ -63,6 +63,11 @@ CLOSE_CODE_TURNS           = "turns"
 CLOSE_CODE_AGENT           = "agent"
 CLOSE_CODE_IDLE            = "idle"
 CLOSE_CODE_NATURAL         = "natural"
+# Explicit no-granularity code (V185, inspector G3): the legacy aggregate
+# OUTCOME_CLOSED_LEASE covers revoked/exhausted/expired equally, and
+# session_watches persists no release_reason evidence — 'unknown' says
+# exactly that instead of a false specific claim.
+CLOSE_CODE_UNKNOWN         = "unknown"
 
 # Pattern: DELEGATE <role>: <instruction>
 _DELEGATE_RE = re.compile(r'DELEGATE\s+(\w[\w-]*)\s*:\s*(.+)', re.IGNORECASE)
@@ -262,18 +267,24 @@ _CLOSE_CODE_BY_OUTCOME = {
     OUTCOME_CLOSED_AGENT:           CLOSE_CODE_AGENT,
     OUTCOME_CLOSED_IDLE:            CLOSE_CODE_IDLE,
     OUTCOME_CLOSED_NATURAL:         CLOSE_CODE_NATURAL,
-    # Legacy aggregates (pre-#7, no granularity) — conservative fallbacks.
+    # Legacy aggregates (pre-#7, no granularity):
+    #   OUTCOME_CLOSED -> 'natural' (conservative, unchanged)
+    #   OUTCOME_CLOSED_LEASE -> 'unknown' (V185, inspector G3): the lease
+    #   aggregate covers revoked/exhausted/expired equally; persisting
+    #   'lease_expired' asserted a specificity the data never had.
     OUTCOME_CLOSED:                 CLOSE_CODE_NATURAL,
-    OUTCOME_CLOSED_LEASE:           CLOSE_CODE_LEASE_EXPIRED,
+    OUTCOME_CLOSED_LEASE:           CLOSE_CODE_UNKNOWN,
 }
 
 
 def close_code_for_outcome(outcome: str) -> str:
     """Map a terminal outcome to its structured close code.
 
-    Vocab (V130 CHECK): lease_revoked, lease_exhausted, lease_expired,
-    turns, agent, idle, natural. Unknown outcomes fall back to ``natural``.
-    The legacy aggregates (OUTCOME_CLOSED / OUTCOME_CLOSED_LEASE) carry no
-    granularity and map conservatively.
+    Vocab (V130 CHECK as extended by V185): lease_revoked, lease_exhausted,
+    lease_expired, turns, agent, idle, natural, unknown. Unknown outcomes
+    fall back to ``natural``. The legacy aggregates carry no granularity:
+    OUTCOME_CLOSED -> ``natural`` (conservative), OUTCOME_CLOSED_LEASE ->
+    ``unknown`` (V185, inspector G3 — no false specificity in the
+    governance column).
     """
     return _CLOSE_CODE_BY_OUTCOME.get(outcome, CLOSE_CODE_NATURAL)

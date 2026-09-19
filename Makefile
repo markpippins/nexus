@@ -217,6 +217,10 @@ mesh-test:
 		bin/tests/test_boot_digest.py bin/tests/test_boot_conn_record.py \
 		bin/tests/test_boot_attest.py -v
 
+close-code-g3-test:
+	@echo "[close-code-g3-test] G3 remap (hermetic mapping + real-V185 E2E, wr-conf-038)..."
+	@python3 -m pytest python/cascade/test_conformance_close_code_g3.py python/nexus_core/wrp/tests/test_v185_close_code_e2e.py -v
+
 adapter-probe-test:
 	@echo "[adapter-probe-test] running adapter health probe hermetic suite..."
 	@python3 -m pytest bin/tests/test_adapter_health_probe.py -v
