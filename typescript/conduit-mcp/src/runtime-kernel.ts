@@ -63,6 +63,12 @@ export interface RuntimeEvent {
   wrId: string;
   timestamp?: string;
   payload?: Record<string, unknown>;
+  /** DB sequence number (work_request_events.sequence_number) — deterministic
+   *  fold tiebreaker for identical timestamps (inspector G2, plan 8261649). */
+  sequenceNumber?: number;
+  /** DB event id — secondary tiebreaker when sequence numbers are absent
+   *  (e.g. in-memory events) so equal-timestamp folds are order-independent. */
+  eventId?: string;
 }
 
 // ── WorkRequest state (folded from events) ─────────────────────────
@@ -332,10 +338,19 @@ export function foldEvents(
   wrId: string,
   events: RuntimeEvent[],
 ): WorkRequestState {
+  // Deterministic ordering (inspector G2 / plan 8261649): primary key is
+  // timestamp; ties break on sequenceNumber (DB insert order), then eventId,
+  // then type — so identical-timestamp events fold to ONE canonical state
+  // regardless of the order rows arrive from the database. The final
+  // Array.prototype.sort stability guarantee (ES2019+) makes equal keys
+  // keep input order; the explicit keys make equal-timestamp inputs
+  // order-independent.
+  const sortKey = (e: RuntimeEvent): string =>
+    `${String(new Date(e.timestamp || 0).getTime()).padStart(15, "0")}:` +
+    `${e.sequenceNumber === undefined ? "~" : String(e.sequenceNumber).padStart(15, "0")}:` +
+    `${e.eventId ?? "~"}:${e.type}`;
   const sorted = [...events].sort(
-    (a, b) =>
-      new Date(a.timestamp || 0).getTime() -
-      new Date(b.timestamp || 0).getTime(),
+    (a, b) => (sortKey(a) < sortKey(b) ? -1 : sortKey(a) > sortKey(b) ? 1 : 0),
   );
 
   const initialState: WorkRequestState = {
@@ -499,12 +514,19 @@ export function dbEventToRuntimeEvent(row: {
   event_type: string;
   payload: any;
   occurred_at: string;
+  sequence_number?: number | string;
+  event_id?: string;
 }): RuntimeEvent {
   return {
     type: row.event_type as RuntimeEventType,
     wrId: row.work_request_id,
     timestamp: row.occurred_at,
     payload: typeof row.payload === "object" ? row.payload : {},
+    sequenceNumber:
+      row.sequence_number === undefined || row.sequence_number === null
+        ? undefined
+        : Number(row.sequence_number),
+    eventId: row.event_id || undefined,
   };
 }
 
