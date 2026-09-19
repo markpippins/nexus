@@ -141,6 +141,57 @@ class Register(unittest.TestCase):
         self.assertIn("(id, host, instance", er.UPSERT_SQL.replace("\n", " "))
         self.assertIn("%(id)s", er.UPSERT_SQL)
 
+    def test_upsert_supplies_ip_and_unit(self):
+        # live catch #2: ip (inet) and unit are NOT NULL on live; the
+        # conflict target (unit, instance) requires unit in the VALUES.
+        flat = er.UPSERT_SQL.replace("\n", " ")
+        self.assertIn("ip, unit, port", flat)
+        self.assertIn("%(ip)s", flat)
+        self.assertIn("%(unit)s", flat)
+        self.assertIn("ip              = EXCLUDED.ip", flat)
+
+    def test_resolve_ip_manifest_override_wins(self):
+        self.assertEqual(er.resolve_ip("192.168.1.50"), "192.168.1.50")
+
+    def test_resolve_ip_env_then_loopback_fallback(self):
+        with mock.patch.dict(os.environ, {"NEXUS_IP": "10.0.0.9"}, clear=True):
+            self.assertEqual(er.resolve_ip(None), "10.0.0.9")
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with mock.patch.object(er.socket.socket, "connect",
+                                   side_effect=OSError("no route")):
+                self.assertEqual(er.resolve_ip(None), "127.0.0.1")
+
+    def test_resolve_ip_never_reports_loopback_from_egress(self):
+        # the egress trick on a host with only the 127.0.1.1 /etc/hosts
+        # alias must NOT record loopback as fleet-routable
+        class _Sock:
+            def getsockname(self):
+                return ("127.0.1.1", 0)
+
+            def close(self):
+                pass
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with mock.patch.object(er.socket, "socket", return_value=_Sock()):
+                self.assertEqual(er.resolve_ip(None), "127.0.0.1")
+
+    def test_register_passes_resolved_ip_and_unit(self):
+        conn = _FakeConn()
+        captured = {}
+        real_upsert = er.upsert_endpoint
+
+        def spy(cur, **kw):
+            captured.update(kw)
+            return real_upsert(cur, **kw)
+
+        with mock.patch.dict(os.environ, {"NEXUS_IP": "192.168.8.8"}, clear=True):
+            with mock.patch.object(er, "upsert_endpoint", spy):
+                rc = er.cmd_register(_mk_args(), lambda dsn: conn,
+                                     lambda t: (True, "ok"))
+        self.assertEqual(rc, 0)
+        self.assertEqual(captured["ip"], "192.168.8.8")
+        self.assertEqual(captured["service"], "nebula-srv")
+
     def test_up_ok_on_successful_probe(self):
         conn = _FakeConn()
         with mock.patch.dict(os.environ, {"NEXUS_HOST": "titanium"}, clear=True):
