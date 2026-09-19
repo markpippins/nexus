@@ -175,6 +175,17 @@ def plan(conn, manifest: dict[str, Any]) -> dict[str, Any]:
                      "service_id": sid, "port": default_port}
                 )
 
+        # a host cannot be both a declared member and retired — that
+        # contradiction would apply as upsert-then-retire and silently
+        # discard the declaration
+        declared_hosts = {h["hostname"] for h in manifest["fleet"]}
+        overlap = declared_hosts & set(manifest["retire"]["hostnames"])
+        if overlap:
+            raise ValueError(
+                "manifest contradiction: hosts both declared and retired: "
+                + ", ".join(sorted(overlap))
+            )
+
         for hn in manifest["retire"]["hostnames"]:
             if hn in host_ids:
                 out["servers_retire"].append(hn)
@@ -253,6 +264,17 @@ def apply_plan(conn, p: dict[str, Any], host_env: dict[str, int]) -> dict[str, i
                     else:
                         params[col] = val
                     sets.append(f"{col} = %({col})s")
+                # active_flag follows declared status (fleet census 2026-09-19,
+                # ansible inventory.yml): declared hosts are fleet members —
+                # an OFFLINE machine is real-but-powered-down and stays
+                # active_flag=true; only RETIRED status (or the retire list)
+                # deactivates. Previously active_flag was never restored on
+                # update, so a retired row re-declared as a member could
+                # never wake up.
+                declared_status = entry["fields"].get("status", (None, None))[1]
+                if declared_status is not None:
+                    params["active_flag"] = declared_status != "RETIRED"
+                    sets.append("active_flag = %(active_flag)s")
                 if sets:
                     params["hostname"] = hn
                     cur.execute(
@@ -277,11 +299,12 @@ def apply_plan(conn, p: dict[str, Any], host_env: dict[str, int]) -> dict[str, i
                     cur, "server_type", entry["fields"]["server_type_id"][1],
                     f"server {hn!r}", "server_type",
                 )
+                new_status = entry["fields"].get("status", ("raw", "ACTIVE"))[1]
                 cur.execute(
                     "INSERT INTO registry.servers (hostname, environment_type_id, "
                     "operating_system_id, server_type_id, ip_address, "
                     "description, status, active_flag) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, true)",
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
                     (
                         hn,
                         env_id,
@@ -289,7 +312,8 @@ def apply_plan(conn, p: dict[str, Any], host_env: dict[str, int]) -> dict[str, i
                         styp_id,
                         entry["fields"]["ip_address"][1],
                         entry["fields"].get("description", ("raw", None))[1],
-                        entry["fields"].get("status", ("raw", "ACTIVE"))[1],
+                        new_status,
+                        new_status != "RETIRED",
                     ),
                 )
                 host_env[hn] = cur.lastrowid if hasattr(cur, "lastrowid") else None

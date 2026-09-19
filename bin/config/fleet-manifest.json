@@ -1,10 +1,10 @@
 {
-  "_comment": "Declared fleet manifest \u2014 fleet slice 3 (R1 0d40c061). This file is DECLARED state (what the operator says should exist); terrain.service_endpoints is OBSERVED state (what registration probes). The diff is fleet drift. Fields left out are left alone in the DB (no fabrication): omit ip_address unless known.",
+  "_comment": "Declared fleet manifest — full census 2026-09-19 (DBA), source: ~/devops/ansible/inventory.yml on osmium (192.168.1.162, Sep 3 2026) with two operator caveats: helium's IP moved to .229 on 2026-09-18 (inventory corrected on osmium, backup kept), and most element machines are real but currently powered down — OFFLINE means real-but-unpowered, NOT retired; only machines absent from the census are RETIRED. terrain.service_endpoints remains OBSERVED state (probes); the declared/observed diff is fleet drift. Fields left out are left alone in the DB (no fabrication).",
   "services": [
     {
       "name": "nexus-core",
       "default_port": 8092,
-      "description": "read-only JVM projection monolith (Spring Boot) \u2014 docker/nexus-core compose; actuator health",
+      "description": "read-only JVM projection monolith (Spring Boot) — docker/nexus-core compose; actuator health",
       "framework": "Spring Boot",
       "service_type": "REST API"
     }
@@ -13,7 +13,7 @@
     {
       "hostname": "titanium",
       "environment": "Production",
-      "description": "primary nexus host \u2014 canonical PG, all core services, operator workstation",
+      "description": "primary nexus host — canonical PG, all core services, operator workstation (x86)",
       "status": "ACTIVE",
       "ip_address": "192.168.1.120",
       "services": [
@@ -31,7 +31,7 @@
     {
       "hostname": "helium",
       "environment": "Production",
-      "description": "read-only JVM experimental node \u2014 nexus-core :8092 (Spring Boot) + helium-mongo; calendar emitter",
+      "description": "read-only JVM experimental node (banana-pi) — nexus-core :8092 (Spring Boot) + helium-mongo; calendar emitter",
       "status": "ACTIVE",
       "ip_address": "192.168.1.229",
       "services": [
@@ -43,7 +43,7 @@
     {
       "hostname": "vanadium",
       "environment": "Production",
-      "description": "off-machine lab node \u2014 sonar runner, CI backup target, PG replication target; calendar emitter",
+      "description": "lab node (pi4) — sonar runner, CI backup target, PG replication target; calendar emitter",
       "status": "ACTIVE",
       "ip_address": "192.168.1.209",
       "services": [],
@@ -51,26 +51,131 @@
       "server_type": "Physical"
     },
     {
+      "hostname": "osmium",
+      "environment": "Production",
+      "description": "ansible control node (Orange Pi Zero, armv7) — fleet inventory source of truth ~/devops/ansible; calendar emitter",
+      "status": "ACTIVE",
+      "ip_address": "192.168.1.162",
+      "services": [],
+      "os": "Linux",
+      "server_type": "Physical"
+    },
+    {
+      "hostname": "rubidium",
+      "environment": "Development",
+      "description": "pi3 — powered down (fleet consolidation in progress)",
+      "status": "OFFLINE",
+      "ip_address": "192.168.1.253",
+      "services": [],
+      "os": "Linux",
+      "server_type": "Physical"
+    },
+    {
+      "hostname": "iridium",
+      "environment": "Development",
+      "description": "pi4 — powered down (fleet consolidation in progress)",
+      "status": "OFFLINE",
+      "ip_address": "192.168.1.207",
+      "services": [],
+      "os": "Linux",
+      "server_type": "Physical"
+    },
+    {
+      "hostname": "barium",
+      "environment": "Development",
+      "description": "pi4 — powered down (fleet consolidation in progress); former PG replication target (R9 chain)",
+      "status": "OFFLINE",
+      "ip_address": "192.168.1.212",
+      "services": [],
+      "os": "Linux",
+      "server_type": "Physical"
+    },
+    {
+      "hostname": "thallium",
+      "environment": "Development",
+      "description": "pi4 — powered down (fleet consolidation in progress)",
+      "status": "OFFLINE",
+      "ip_address": "192.168.1.82",
+      "services": [],
+      "os": "Linux",
+      "server_type": "Physical"
+    },
+    {
+      "hostname": "deuterium",
+      "environment": "Development",
+      "description": "pi4 — powered down (fleet consolidation in progress)",
+      "status": "OFFLINE",
+      "ip_address": "192.168.1.91",
+      "services": [],
+      "os": "Linux",
+      "server_type": "Physical"
+    },
+    {
+      "hostname": "cesium",
+      "environment": "Development",
+      "description": "pi4 — powered down (fleet consolidation in progress)",
+      "status": "OFFLINE",
+      "ip_address": "192.168.1.64",
+      "services": [],
+      "os": "Linux",
+      "server_type": "Physical"
+    },
+    {
+      "hostname": "lithium",
+      "environment": "Development",
+      "description": "pi4 — powered down (fleet consolidation in progress)",
+      "status": "OFFLINE",
+      "ip_address": "192.168.1.131",
+      "services": [],
+      "os": "Linux",
+      "server_type": "Physical"
+    },
+    {
+      "hostname": "radium",
+      "environment": "Development",
+      "description": "pi4 — powered down (fleet consolidation in progress)",
+      "status": "OFFLINE",
+      "ip_address": "192.168.1.124",
+      "services": [],
+      "os": "Linux",
+      "server_type": "Physical"
+    },
+    {
+      "hostname": "sodium",
+      "environment": "Development",
+      "description": "nano — powered down (fleet consolidation in progress)",
+      "status": "OFFLINE",
+      "ip_address": "192.168.1.185",
+      "services": [],
+      "os": "Linux",
+      "server_type": "Physical"
+    },
+    {
+      "hostname": "thorium",
+      "environment": "Development",
+      "description": "c4 — powered down (fleet consolidation in progress)",
+      "status": "OFFLINE",
+      "ip_address": "192.168.1.200",
+      "services": [],
+      "os": "Linux",
+      "server_type": "Physical"
+    },
+    {
       "hostname": "entropy",
       "environment": "Development",
-      "description": "reserve node \u2014 containerized python services under evaluation (no routable address verified yet \u2014 sync reports it unaddressable until the manifest states one)",
-      "status": "ACTIVE",
+      "description": "reserve node — containerized python services under evaluation (no routable address verified yet — sync reports it unaddressable until the manifest states one)",
+      "status": "OFFLINE",
       "services": [],
       "os": "Linux",
       "server_type": "Physical"
     }
   ],
   "retire": {
-    "_comment": "Element-era inventory rows retired to RETIRED (never deleted \u2014 provenance). Historical replication targets (strontium->barium->vanadium chain) documented in AGENTS.md R9.",
+    "_comment": "Retired = absent from the 2026-09-19 ansible census (not element-era machines — those are real and now declared OFFLINE). strontium: decommissioned VM (172.16.x era, former replication target). beryllium, bohrium: no ansible entries — decommissioned. Provenance kept, never deleted.",
     "hostnames": [
-      "barium",
       "beryllium",
       "bohrium",
-      "iridium",
-      "osmium",
-      "strontium",
-      "thallium",
-      "thorium"
+      "strontium"
     ]
   }
 }
