@@ -1,0 +1,19 @@
+[Unit]
+Description=nexus daily fleet drift census (terrain-drift-check via drift-check-run)
+# Oneshot wrapper: runs the OFFLINE-aware census against terrain +
+# registry, files an agent record (to:sysadmin) and prints a JSON summary
+# line to the journal. A completed census with defects is a SUCCESSFUL unit
+# run (defects are data); only an unrunnable census (terrain FATAL) fails
+# the unit — see bin/drift-check-run.py docstring for the exit contract.
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/drift-check-run.py
+# Explicit config pins (not defaults-by-accident):
+Environment=TERRAIN_URL=http://localhost:8084
+Environment=NEBULA_URL=http://localhost:3101
+Environment=REGISTRY_DSN=postgresql://pguser:pgpass@localhost:5432/nexus
+# The census probes up to ~90 rows at 3s worst-case each; give it room.
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target
