@@ -41,6 +41,7 @@ import os
 import socket
 import subprocess
 import sys
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
@@ -125,10 +126,19 @@ def load_manifest(path: str) -> list[dict[str, Any]]:
 
 # ── SQL ─────────────────────────────────────────────────────────────
 
+def endpoint_id(host: str, instance: str, service: str) -> str:
+    """Deterministic row identity: same service on the same host+instance
+    always maps to the same row id (NOT NULL PK has no default; uuid5
+    keeps re-registrations stable and debuggable)."""
+    return str(
+        uuid.uuid5(uuid.NAMESPACE_URL, f"nexus://terrain/{host}/{instance}/{service}")
+    )
+
+
 UPSERT_SQL = """
 INSERT INTO terrain.service_endpoints
-    (host, instance, port, scheme, status, last_heartbeat)
-VALUES (%(host)s, %(instance)s, %(port)s, %(scheme)s, %(status)s, now())
+    (id, host, instance, port, scheme, status, last_heartbeat)
+VALUES (%(id)s, %(host)s, %(instance)s, %(port)s, %(scheme)s, %(status)s, now())
 ON CONFLICT (unit, instance) DO UPDATE SET
     host            = EXCLUDED.host,
     port            = EXCLUDED.port,
@@ -151,8 +161,9 @@ def upsert_endpoint(cur, *, host: str, instance: str, service: str,
                     port: int, scheme: str, status: str) -> None:
     cur.execute(
         UPSERT_SQL,
-        {"host": host, "instance": instance, "port": port,
-         "scheme": scheme, "status": status},
+        {"id": endpoint_id(host, instance, service), "host": host,
+         "instance": instance, "port": port, "scheme": scheme,
+         "status": status},
     )
     # unit is not in the INSERT list — set it explicitly for new rows.
     cur.execute(
