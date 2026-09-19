@@ -119,6 +119,7 @@ def load_manifest(path: str) -> list[dict[str, Any]]:
                 "scheme": str(entry.get("scheme", "http")),
                 "health_path": str(entry.get("health_path", "/")),
                 "tcp": bool(entry.get("tcp", False)),
+                "ip": entry.get("ip"),
             }
         )
     return out
@@ -137,10 +138,12 @@ def endpoint_id(host: str, instance: str, service: str) -> str:
 
 UPSERT_SQL = """
 INSERT INTO terrain.service_endpoints
-    (id, host, instance, port, scheme, status, last_heartbeat)
-VALUES (%(id)s, %(host)s, %(instance)s, %(port)s, %(scheme)s, %(status)s, now())
+    (id, host, instance, ip, unit, port, scheme, status, last_heartbeat)
+VALUES (%(id)s, %(host)s, %(instance)s, %(ip)s, %(unit)s, %(port)s,
+        %(scheme)s, %(status)s, now())
 ON CONFLICT (unit, instance) DO UPDATE SET
     host            = EXCLUDED.host,
+    ip              = EXCLUDED.ip,
     port            = EXCLUDED.port,
     scheme          = EXCLUDED.scheme,
     status          = EXCLUDED.status,
@@ -158,18 +161,14 @@ UPDATE terrain.service_endpoints
 
 
 def upsert_endpoint(cur, *, host: str, instance: str, service: str,
-                    port: int, scheme: str, status: str) -> None:
+                    port: int, scheme: str, status: str, ip: str) -> None:
+    # unit + ip are NOT NULL on live — supplied here, and the conflict
+    # target (unit, instance) works because unit is in the VALUES list.
     cur.execute(
         UPSERT_SQL,
         {"id": endpoint_id(host, instance, service), "host": host,
-         "instance": instance, "port": port, "scheme": scheme,
-         "status": status},
-    )
-    # unit is not in the INSERT list — set it explicitly for new rows.
-    cur.execute(
-        "UPDATE terrain.service_endpoints SET unit = %s "
-        "WHERE unit IS NULL AND host = %s AND instance = %s AND port = %s",
-        (service, host, instance, port),
+         "instance": instance, "ip": ip, "unit": service,
+         "port": port, "scheme": scheme, "status": status},
     )
 
 
@@ -181,6 +180,32 @@ def retire_seeds(cur, service: Optional[str]) -> int:
 
 
 # ── commands ────────────────────────────────────────────────────────
+
+def resolve_ip(explicit: Optional[str]) -> str:
+    """Best-honest chain for the fleet-routable address (ip is NOT NULL
+    inet on live): explicit manifest value > NEXUS_IP env > local egress
+    interface (UDP-connect trick — no packets are sent) > documented
+    loopback fallback. A loopback address in a fleet registry is honest
+    only when no better source exists; the manifest override is the fix.
+    """
+    if explicit:
+        return explicit
+    env = os.environ.get("NEXUS_IP")
+    if env:
+        return env
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("10.255.255.255", 1))  # unroutable; nothing sent
+            ip = s.getsockname()[0]
+            if ip and not ip.startswith("127."):
+                return ip
+        finally:
+            s.close()
+    except Exception:
+        pass
+    return "127.0.0.1"
+
 
 def probe_dispatch(target):
     """Probe dispatcher: ('tcp', port) → TCP check, str → HTTP URL."""
@@ -220,6 +245,7 @@ def cmd_register(args, connect_fn: Callable, probe_fn=probe) -> int:
                 upsert_endpoint(
                     cur, host=host, instance=instance, service=svc["service"],
                     port=svc["port"], scheme=svc["scheme"], status=status,
+                    ip=resolve_ip(svc.get("ip")),
                 )
                 registered += 1
                 down += 0 if ok else 1

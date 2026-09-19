@@ -2,13 +2,13 @@
   "_comment": "Titanium declared endpoint manifest — fleet slice 2 (R1 0d40c061).",
   "_probe": "tcp=true entries are checked port-open only (JSON-RPC MCP surfaces without GET health routes); others via GET health_path.",
   "services": [
-    { "service": "nebula-srv",       "port": 3101 },
-    { "service": "assembly-srv",     "port": 3107 },
+    { "service": "nebula-srv",       "port": 3101, "health_path": "/health" },
+    { "service": "assembly-srv",     "port": 3107, "health_path": "/api/forums" },
     { "service": "conduit-mcp",      "port": 3100, "tcp": true },
     { "service": "tackle-mcp",       "port": 3400, "tcp": true },
     { "service": "nebula-mcp",       "port": 3102, "tcp": true },
-    { "service": "role-memory-srv",  "port": 3500 },
-    { "service": "wind-srv",         "port": 3300 },
+    { "service": "role-memory-srv",  "port": 3500, "health_path": "/health" },
+    { "service": "wind-srv",         "port": 3300, "health_path": "/health" },
     { "service": "operator_svc",     "port": 8088 },
     { "service": "vision-mcp",       "port": 3010, "tcp": true }
   ]
