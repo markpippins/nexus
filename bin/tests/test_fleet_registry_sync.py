@@ -434,5 +434,88 @@ class Main(unittest.TestCase):
         self.assertTrue(conn.committed)
 
 
+class CensusSemantics(unittest.TestCase):
+    """Fleet-census semantics (2026-09-19, ansible inventory.yml source):
+    OFFLINE = real-but-powered-down fleet member (active_flag stays true);
+    only RETIRED (absent from the census) deactivates. Pins the defect fix
+    where active_flag was never restored on update, so a retired row
+    re-declared as a fleet member could never wake up."""
+
+    def _conn(self):
+        # barium EXISTS as RETIRED (element-era retire) and is re-declared
+        return _FakeConn([
+            ("FROM registry.servers", lambda: [("barium", 2)]),
+            *_svc_scripts(),
+            ("FROM registry.environment_type", ENV_OK),
+            ("FROM registry.operating_systems", [(1,)]),
+            ("FROM registry.server_type", [(1,)]),
+        ])
+
+    def _manifest_barium(self, status):
+        return {"fleet": [{"hostname": "barium", "environment": "Development",
+                           "status": status, "ip_address": "192.168.1.212",
+                           "os": "Linux", "server_type": "Physical",
+                           "services": []}],
+                "retire": {"hostnames": []}}
+
+    def _update_sql(self, conn):
+        ups = [e for e in conn.cur.executed
+               if e[0].startswith("UPDATE registry.servers")
+               and "WHERE hostname" in e[0]]
+        self.assertEqual(len(ups), 1)
+        return ups[0]
+
+    def test_offline_declaration_keeps_active_flag_true(self):
+        conn = self._conn()
+        p = frs.plan(conn, self._manifest_barium("OFFLINE"))
+        frs.apply_plan(conn, p, {})
+        sql, params = self._update_sql(conn)
+        self.assertIn("active_flag = %(active_flag)s", sql)
+        self.assertTrue(params["active_flag"])   # OFFLINE is a member
+        self.assertEqual(params["status"], "OFFLINE")
+
+    def test_retired_host_redeclared_active_wakes_up(self):
+        conn = self._conn()
+        p = frs.plan(conn, self._manifest_barium("ACTIVE"))
+        frs.apply_plan(conn, p, {})
+        sql, params = self._update_sql(conn)
+        self.assertTrue(params["active_flag"])   # the wake-up fix
+
+    def test_declared_retired_status_deactivates(self):
+        conn = self._conn()
+        p = frs.plan(conn, self._manifest_barium("RETIRED"))
+        frs.apply_plan(conn, p, {})
+        sql, params = self._update_sql(conn)
+        self.assertFalse(params["active_flag"])
+
+    def test_omitted_status_leaves_active_flag_alone(self):
+        conn = self._conn()
+        m = self._manifest_barium("ACTIVE")
+        del m["fleet"][0]["status"]
+        p = frs.plan(conn, m)
+        frs.apply_plan(conn, p, {})
+        sql, params = self._update_sql(conn)
+        self.assertNotIn("active_flag", sql)     # not fabricated
+
+    def test_insert_offline_new_host_is_active_member(self):
+        conn = self._conn()
+        m = self._manifest_barium("OFFLINE")
+        m["fleet"][0]["hostname"] = "sodium"     # not in HOSTS -> insert
+        p = frs.plan(conn, m)
+        frs.apply_plan(conn, p, {})
+        ins = [e for e in conn.cur.executed
+               if e[0].startswith("INSERT INTO registry.servers")]
+        self.assertEqual(len(ins), 1)
+        self.assertEqual(ins[0][1][6], "OFFLINE")        # status
+        self.assertTrue(ins[0][1][7])                    # active_flag
+
+    def test_declare_and_retire_contradiction_refused(self):
+        conn = self._conn()
+        m = self._manifest_barium("ACTIVE")
+        m["retire"]["hostnames"] = ["barium"]    # both declared AND retired
+        with self.assertRaises(ValueError):
+            frs.plan(conn, m)
+
+
 if __name__ == "__main__":
     unittest.main()
