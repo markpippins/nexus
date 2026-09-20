@@ -101,7 +101,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'planner', 'reviewer', 'sysadmin', 'tester', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'lead-engineer', 'planner', 'reviewer', 'sysadmin', 'tester', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -152,7 +152,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'inspector', 'layout-mechanic', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'inspector', 'layout-mechanic', 'lead-engineer', 'planner', 'reviewer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -192,7 +192,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'inspector', 'layout-mechanic', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'inspector', 'layout-mechanic', 'lead-engineer', 'planner', 'reviewer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -232,7 +232,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['devops', 'engineer', 'engineer-ii', 'topologist'];
+        v_roles := ARRAY['devops', 'engineer', 'engineer-ii', 'lead-engineer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -272,7 +272,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['architect', 'builder', 'devops', 'engineer', 'engineer-ii', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['architect', 'builder', 'devops', 'engineer', 'engineer-ii', 'lead-engineer', 'planner', 'reviewer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -303,7 +303,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'lead-engineer', 'planner', 'reviewer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -372,7 +372,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'ontologist', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -413,7 +413,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'ontologist', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -465,7 +465,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'ontologist', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -502,7 +502,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['devops', 'engineer', 'engineer-ii', 'topologist'];
+        v_roles := ARRAY['devops', 'engineer', 'engineer-ii', 'lead-engineer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -534,7 +534,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['devops', 'engineer', 'engineer-ii', 'topologist'];
+        v_roles := ARRAY['devops', 'engineer', 'engineer-ii', 'lead-engineer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -599,7 +599,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['architect', 'devops', 'engineer', 'engineer-ii', 'planner', 'topologist'];
+        v_roles := ARRAY['architect', 'devops', 'engineer', 'engineer-ii', 'lead-engineer', 'planner', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -632,7 +632,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['architect', 'auditor', 'builder', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'layout-mechanic', 'ontologist', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['architect', 'auditor', 'builder', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -666,7 +666,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['builder', 'devops', 'engineer', 'engineer-ii', 'topologist'];
+        v_roles := ARRAY['builder', 'devops', 'engineer', 'engineer-ii', 'lead-engineer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -695,7 +695,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['devops', 'engineer', 'engineer-ii', 'inspector', 'reviewer', 'topologist'];
+        v_roles := ARRAY['devops', 'engineer', 'engineer-ii', 'inspector', 'lead-engineer', 'reviewer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -811,7 +811,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'ontologist', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -886,7 +886,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'ontologist', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -942,7 +942,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'ontologist', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1007,7 +1007,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'ontologist', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1060,7 +1060,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'lead-engineer', 'planner', 'reviewer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1106,7 +1106,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'ontologist', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1160,7 +1160,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'ontologist', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1214,7 +1214,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'ontologist', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1262,7 +1262,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'lead-engineer', 'planner', 'reviewer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1314,7 +1314,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['devops', 'engineer', 'engineer-ii', 'planner', 'topologist'];
+        v_roles := ARRAY['devops', 'engineer', 'engineer-ii', 'lead-engineer', 'planner', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1353,7 +1353,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['builder', 'devops', 'engineer', 'engineer-ii', 'planner', 'topologist'];
+        v_roles := ARRAY['builder', 'devops', 'engineer', 'engineer-ii', 'lead-engineer', 'planner', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1394,7 +1394,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['builder', 'devops', 'engineer', 'engineer-ii', 'topologist'];
+        v_roles := ARRAY['builder', 'devops', 'engineer', 'engineer-ii', 'lead-engineer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1444,7 +1444,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['builder', 'devops', 'engineer', 'engineer-ii', 'topologist'];
+        v_roles := ARRAY['builder', 'devops', 'engineer', 'engineer-ii', 'lead-engineer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1515,7 +1515,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['architect', 'builder', 'devops', 'engineer', 'engineer-ii', 'planner', 'topologist'];
+        v_roles := ARRAY['architect', 'builder', 'devops', 'engineer', 'engineer-ii', 'lead-engineer', 'planner', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1693,7 +1693,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['builder', 'devops', 'engineer', 'engineer-ii', 'topologist'];
+        v_roles := ARRAY['builder', 'devops', 'engineer', 'engineer-ii', 'lead-engineer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1844,7 +1844,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'devops', 'engineer', 'engineer-ii', 'planner', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'devops', 'engineer', 'engineer-ii', 'lead-engineer', 'planner', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -2405,7 +2405,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['architect', 'builder', 'devops', 'engineer', 'engineer-ii', 'topologist'];
+        v_roles := ARRAY['architect', 'builder', 'devops', 'engineer', 'engineer-ii', 'lead-engineer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -2539,7 +2539,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'lead-engineer', 'planner', 'reviewer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -2674,7 +2674,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'lead-engineer', 'planner', 'reviewer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -2818,7 +2818,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'engineer', 'inspector', 'planner', 'reviewer'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'engineer', 'inspector', 'lead-engineer', 'planner', 'reviewer'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -2978,7 +2978,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'planner', 'reviewer', 'tester', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'lead-engineer', 'planner', 'reviewer', 'tester', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -3021,7 +3021,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['architect', 'devops', 'engineer', 'engineer-ii'];
+        v_roles := ARRAY['architect', 'devops', 'engineer', 'engineer-ii', 'lead-engineer'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -3200,7 +3200,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'design-synthesist', 'engineer', 'layout-mechanic', 'operator', 'reviewer'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'design-synthesist', 'engineer', 'layout-mechanic', 'lead-engineer', 'operator', 'reviewer'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -3381,7 +3381,7 @@ BEGIN
         '   - Every push to a shared branch MUST be accompanied by a PR with: what changed, why, migration steps, agent record UUID, and verification.\n'
         '   - Squash-merge preferred.\n'
         '\n'
-        '5. **The merge gate is the tests.** A PR may only be merged when the code has tests AND the tests pass. If that is not met, raise the PR as a **draft** (do not request merge) and say so; do not silently merge untested work.\n'
+        '5. **The merge gate is the tests.** A PR may only be merged when the code has tests AND the tests pass. Verification of the passing condition is the tester role''s attestation (can_verify_work_requests; grant ratified in decision 2f9acb11) — attest with evidence, not author self-declaration. If the conditions are not met, raise the PR as a **draft** (do not request merge) and say so; do not silently merge untested work.\n'
         '\n'
         '6. **Track the PR** through the Assembly \`github\` forum until it merges or closes (R8.1).',
         ARRAY['worktree', 'git', 'pr', 'pull-request', 'committing', 'shipping', 'development'],
@@ -3391,7 +3391,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'lead-engineer', 'planner', 'reviewer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);

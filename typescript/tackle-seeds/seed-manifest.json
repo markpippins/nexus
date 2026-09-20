@@ -14,6 +14,7 @@
         "engineer",
         "engineer-ii",
         "inspector",
+        "lead-engineer",
         "planner",
         "reviewer",
         "topologist"
@@ -54,6 +55,7 @@
         "engineer-ii",
         "inspector",
         "layout-mechanic",
+        "lead-engineer",
         "planner",
         "reviewer",
         "topologist"
@@ -91,6 +93,7 @@
         "devops",
         "engineer",
         "engineer-ii",
+        "lead-engineer",
         "topologist"
       ],
       "sha256": "69d21ce769629edd510e335e55046800f8cb96916ab69fbc03dfb83119cef819",
@@ -128,9 +131,11 @@
         "epistemologist",
         "inspector",
         "layout-mechanic",
+        "lead-engineer",
         "ontologist",
         "planner",
         "reviewer",
+        "sound-technician",
         "topologist"
       ],
       "sha256": "362605eacbf94c686442feee321b2ae14cc26c5ead0293735e39cf0e70512963",
@@ -168,9 +173,11 @@
         "epistemologist",
         "inspector",
         "layout-mechanic",
+        "lead-engineer",
         "ontologist",
         "planner",
         "reviewer",
+        "sound-technician",
         "topologist"
       ],
       "sha256": "55a87f408dd0c685263dd9b401518f8b479301878b061e745121079575170887",
@@ -303,6 +310,7 @@
         "engineer",
         "engineer-ii",
         "inspector",
+        "lead-engineer",
         "planner",
         "reviewer",
         "tester",
@@ -379,6 +387,7 @@
         "engineer",
         "engineer-ii",
         "inspector",
+        "lead-engineer",
         "planner",
         "reviewer",
         "topologist"
@@ -417,6 +426,7 @@
         "engineer",
         "engineer-ii",
         "inspector",
+        "lead-engineer",
         "planner",
         "reviewer",
         "topologist"
@@ -449,6 +459,7 @@
         "devops",
         "engineer",
         "engineer-ii",
+        "lead-engineer",
         "topologist"
       ],
       "sha256": "2bfc96bb6050d16be898033f511d4c4381853a98d48937534816dfbdfbd69fd9",
@@ -490,9 +501,11 @@
         "epistemologist",
         "inspector",
         "layout-mechanic",
+        "lead-engineer",
         "ontologist",
         "planner",
         "reviewer",
+        "sound-technician",
         "topologist"
       ],
       "sha256": "aaf19bac0def929f44ac6b3f94813eafeba8e4131e9feaea1e9e6ec6e42a6c85",
@@ -528,6 +541,7 @@
         "devops",
         "engineer",
         "engineer-ii",
+        "lead-engineer",
         "planner",
         "topologist"
       ],
@@ -655,9 +669,11 @@
         "epistemologist",
         "inspector",
         "layout-mechanic",
+        "lead-engineer",
         "ontologist",
         "planner",
         "reviewer",
+        "sound-technician",
         "topologist"
       ],
       "sha256": "c1d83419bbc08b6cd8441edb7054e88ad290412b90e8d830a5b272c87ed529f0",
@@ -686,6 +702,7 @@
         "devops",
         "engineer",
         "engineer-ii",
+        "lead-engineer",
         "planner",
         "topologist"
       ],
@@ -726,9 +743,11 @@
         "epistemologist",
         "inspector",
         "layout-mechanic",
+        "lead-engineer",
         "ontologist",
         "planner",
         "reviewer",
+        "sound-technician",
         "topologist"
       ],
       "sha256": "81d16958f5c8bf456d1313cc3d3c8f6db1a7943e1cca389db146a004ee23aff4",
@@ -762,9 +781,11 @@
         "engineer-ii",
         "epistemologist",
         "layout-mechanic",
+        "lead-engineer",
         "ontologist",
         "planner",
         "reviewer",
+        "sound-technician",
         "topologist"
       ],
       "sha256": "d7000694b392869257c891ff6cec9708add46289d69ac751328969da6fae96fd",
@@ -972,6 +993,7 @@
         "engineer",
         "engineer-ii",
         "inspector",
+        "lead-engineer",
         "reviewer",
         "topologist"
       ],
@@ -1005,6 +1027,7 @@
         "critic",
         "engineer",
         "inspector",
+        "lead-engineer",
         "planner",
         "reviewer"
       ],
@@ -1049,9 +1072,11 @@
         "epistemologist",
         "inspector",
         "layout-mechanic",
+        "lead-engineer",
         "ontologist",
         "planner",
         "reviewer",
+        "sound-technician",
         "topologist"
       ],
       "sha256": "94efb56303b8b929f021e915e6c95db8c0251eefca1ee9e44dea0004d660b10a",
@@ -1086,6 +1111,7 @@
         "engineer",
         "engineer-ii",
         "inspector",
+        "lead-engineer",
         "planner",
         "reviewer",
         "sysadmin",
@@ -1127,6 +1153,7 @@
         "devops",
         "engineer",
         "engineer-ii",
+        "lead-engineer",
         "topologist"
       ],
       "sha256": "5fdb48bba237129e0cf4dc1246c008f94d72e811d1316f907c03b8573aaa137a",
@@ -1160,6 +1187,7 @@
         "devops",
         "engineer",
         "engineer-ii",
+        "lead-engineer",
         "planner",
         "topologist"
       ],
@@ -1219,6 +1247,7 @@
         "devops",
         "engineer",
         "engineer-ii",
+        "lead-engineer",
         "planner",
         "topologist"
       ],
@@ -1257,6 +1286,7 @@
         "engineer-ii",
         "inspector",
         "layout-mechanic",
+        "lead-engineer",
         "planner",
         "reviewer",
         "topologist"
@@ -1295,6 +1325,7 @@
         "engineer",
         "engineer-ii",
         "inspector",
+        "lead-engineer",
         "planner",
         "reviewer",
         "topologist"
@@ -1326,6 +1357,7 @@
         "devops",
         "engineer",
         "engineer-ii",
+        "lead-engineer",
         "planner",
         "topologist"
       ],
@@ -1352,7 +1384,8 @@
         "architect",
         "devops",
         "engineer",
-        "engineer-ii"
+        "engineer-ii",
+        "lead-engineer"
       ],
       "sha256": "d5583b3bd764f513cb3597d4ffd2c5e01e0c9536790eb6f2f477c13517834b91",
       "slug": "role-creation",
@@ -1392,9 +1425,11 @@
         "epistemologist",
         "inspector",
         "layout-mechanic",
+        "lead-engineer",
         "ontologist",
         "planner",
         "reviewer",
+        "sound-technician",
         "topologist"
       ],
       "sha256": "f0b1af8f27a778561df95a74b8c9cd4b49bbb725f271242553c82a6cd57d6389",
@@ -1427,6 +1462,7 @@
         "devops",
         "engineer",
         "engineer-ii",
+        "lead-engineer",
         "topologist"
       ],
       "sha256": "acf9a5e781bc90cdf29b7a0ab1ea31399b544beefa49e8b313ba950227544566",
@@ -1459,6 +1495,7 @@
         "devops",
         "engineer",
         "engineer-ii",
+        "lead-engineer",
         "topologist"
       ],
       "sha256": "83fbfcfff2ca604246dfbb0567202ea6665dd2edd0f65b60f4784d9ab35b685b",
@@ -1487,6 +1524,7 @@
         "devops",
         "engineer",
         "engineer-ii",
+        "lead-engineer",
         "topologist"
       ],
       "sha256": "e0d503237723c3d53ce309e2d9846acc08d0b2169590696189f28e1e0d3f0ac5",
@@ -1527,9 +1565,11 @@
         "epistemologist",
         "inspector",
         "layout-mechanic",
+        "lead-engineer",
         "ontologist",
         "planner",
         "reviewer",
+        "sound-technician",
         "topologist"
       ],
       "sha256": "fa89f80946beb39192f43e005743e76852f42809caf25fb117246969d4284a5d",
@@ -1567,9 +1607,11 @@
         "epistemologist",
         "inspector",
         "layout-mechanic",
+        "lead-engineer",
         "ontologist",
         "planner",
         "reviewer",
+        "sound-technician",
         "topologist"
       ],
       "sha256": "83d7ac6d0b3d5c444447fdd755b5b936dd91a3ef7a6aeaa2717fa229d54d5302",
@@ -1599,6 +1641,7 @@
         "devops",
         "engineer",
         "engineer-ii",
+        "lead-engineer",
         "topologist"
       ],
       "sha256": "b064c658a02543d2cd36b279d25d3c8c29e7d261ce25c87bee2b2977dd5730af",
@@ -1629,6 +1672,7 @@
         "design-synthesist",
         "engineer",
         "layout-mechanic",
+        "lead-engineer",
         "operator",
         "reviewer"
       ],
@@ -1667,9 +1711,11 @@
         "epistemologist",
         "inspector",
         "layout-mechanic",
+        "lead-engineer",
         "ontologist",
         "planner",
         "reviewer",
+        "sound-technician",
         "topologist"
       ],
       "sha256": "20a67b199b3fd6cc919dbe6faf011055362f05be880dc79575b6eb45c2775b56",
@@ -1701,6 +1747,7 @@
         "devops",
         "engineer",
         "engineer-ii",
+        "lead-engineer",
         "planner",
         "reviewer",
         "topologist"
@@ -1730,6 +1777,7 @@
         "devops",
         "engineer",
         "engineer-ii",
+        "lead-engineer",
         "topologist"
       ],
       "sha256": "5b231e5c928551faf77b714693254f2936eaac29ad0b4f1dbba37366e9571ec0",
@@ -1768,6 +1816,7 @@
         "engineer",
         "engineer-ii",
         "inspector",
+        "lead-engineer",
         "planner",
         "reviewer",
         "topologist"
@@ -1790,7 +1839,7 @@
       ]
     },
     {
-      "body_md": "## Procedure\n\n1. **Create a worktree** in the canonical root (full absolute path, a sibling of the repo, NEVER inside the repo):\n   - `git -C /home/codex/dev/nexus worktree add /home/codex/dev/nexus-worktrees/<topic> -b <topic>`\n   - Example: `/home/codex/dev/nexus-worktrees/add-foo-endpoint` on branch `add-foo-endpoint`.\n   - The canonical worktree root is `/home/codex/dev/nexus-worktrees`, not any shorthand, and never `nexus/worktrees` inside the repo.\n\n2. **Keep main clean.** Do the work on the worktree branch; never commit directly to `main`.\n\n3. **Write tests** for the change. Tests are a non-negotiable condition for shipping.\n\n4. **Commit, push, and open a PR \u2014 without asking permission** (R8). No confirmation gate.\n   - Commit messages MUST align with the agent record (the record is the source of truth).\n   - Every push to a shared branch MUST be accompanied by a PR with: what changed, why, migration steps, agent record UUID, and verification.\n   - Squash-merge preferred.\n\n5. **The merge gate is the tests.** A PR may only be merged when the code has tests AND the tests pass. If that is not met, raise the PR as a **draft** (do not request merge) and say so; do not silently merge untested work.\n\n6. **Track the PR** through the Assembly `github` forum until it merges or closes (R8.1).",
+      "body_md": "## Procedure\n\n1. **Create a worktree** in the canonical root (full absolute path, a sibling of the repo, NEVER inside the repo):\n   - `git -C /home/codex/dev/nexus worktree add /home/codex/dev/nexus-worktrees/<topic> -b <topic>`\n   - Example: `/home/codex/dev/nexus-worktrees/add-foo-endpoint` on branch `add-foo-endpoint`.\n   - The canonical worktree root is `/home/codex/dev/nexus-worktrees`, not any shorthand, and never `nexus/worktrees` inside the repo.\n\n2. **Keep main clean.** Do the work on the worktree branch; never commit directly to `main`.\n\n3. **Write tests** for the change. Tests are a non-negotiable condition for shipping.\n\n4. **Commit, push, and open a PR \u2014 without asking permission** (R8). No confirmation gate.\n   - Commit messages MUST align with the agent record (the record is the source of truth).\n   - Every push to a shared branch MUST be accompanied by a PR with: what changed, why, migration steps, agent record UUID, and verification.\n   - Squash-merge preferred.\n\n5. **The merge gate is the tests.** A PR may only be merged when the code has tests AND the tests pass. Verification of the passing condition is the tester role's attestation (can_verify_work_requests; grant ratified in decision 2f9acb11) \u2014 attest with evidence, not author self-declaration. If the conditions are not met, raise the PR as a **draft** (do not request merge) and say so; do not silently merge untested work.\n\n6. **Track the PR** through the Assembly `github` forum until it merges or closes (R8.1).",
       "mcp_tools": [],
       "roles": [
         "analyst",
@@ -1800,11 +1849,12 @@
         "devops",
         "engineer",
         "engineer-ii",
+        "lead-engineer",
         "planner",
         "reviewer",
         "topologist"
       ],
-      "sha256": "f16ed34d425d406d4b5de71418668c9837b3dd3cff27c5b9cf015f569b1f64a7",
+      "sha256": "743864a567164ddaf93a0a35e158c9864c390fd35a02f87d833b09fb6ba7ad69",
       "slug": "worktree-development-workflow",
       "summary": "Work in a git worktree; commit, push, and raise a PR without asking, gated on passing tests.",
       "tags": [
@@ -1828,6 +1878,6 @@
       ]
     }
   ],
-  "role_count": 447,
+  "role_count": 497,
   "schema": "tackle"
 }
