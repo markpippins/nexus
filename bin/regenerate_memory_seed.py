@@ -69,7 +69,12 @@ from nexus_core.wrp.seed_manifest import (  # noqa: E402
 
 MANIFEST_FILES = [MANIFEST_PATH]
 
-HEADER = """DO $$
+# Dollar-quote tag: card bodies may legitimately contain '$$' (e.g. the
+# V181 COMMIT lesson quotes '$$...$$' prose). A bare $$ DO-wrapper would
+# terminate at the first body '$$' — the whole DO block is scanned
+# lexically, quotes don't protect it. A tagged quote ($mem$) survives any
+# body content that isn't itself '$mem$'.
+HEADER = """DO $mem$
 DECLARE
     v_memory_id UUID;
     v_role TEXT;
@@ -78,7 +83,7 @@ BEGIN
 """
 
 FOOTER = """    RAISE NOTICE 'Memory procedures seeded.';
-END $$;"""
+END $mem$;"""
 
 
 # ── escaping ────────────────────────────────────────────────────────────────
@@ -265,7 +270,7 @@ while (true) {
   const i = src.indexOf('return `', searchFrom);
   if (i === -1) break;
   const tick = src.indexOf('`', i + 7);
-  if (src.slice(tick + 1, tick + 40).trimStart().startsWith('DO $$')) { open = tick; break; }
+  if (src.slice(tick + 1, tick + 40).trimStart().startsWith('DO $mem$')) { open = tick; break; }
   searchFrom = i + 1;
 }
 if (open === -1) { console.error('no seed template'); process.exit(1); }

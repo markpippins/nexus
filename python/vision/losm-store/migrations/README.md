@@ -1,4 +1,10 @@
-# losm-store migrations — HISTORICAL ARTIFACTS
+# losm-store migrations — **DEMOTED** (historical artifacts)
+
+> **STATUS: DEMOTED (2026-09-20).** This migration chain is superseded by
+> `resolution.work_request` (V186, plan 8261650 Stage 1 — the canonical WR
+> store). These files remain for provenance ONLY; they do not replay and are
+> not the deployment path. Fresh deploys come from the ci-bootstrap; legacy
+> surfaces demote to views at plan 8261650 Stage 6.
 
 > **Disposition (DBA, 2026-09-20, thread 63d4ddb9, under Option B ruling
 > thread 402d8a0d / decision 2026-09-20T00:57Z):** the ci-bootstrap is the
