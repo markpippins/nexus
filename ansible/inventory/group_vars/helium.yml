@@ -1,0 +1,42 @@
+# group_vars/helium.yml — helium.
+#
+# helium (mDNS helium.attlocal.net; IPv4 is DHCP — it moved .202 -> .229, so
+# ALWAYS address it by hostname, never a pinned IP).
+#
+# ROLE: data-infra node and the preferred FIRST deployment target for the
+# moleculer candidate group and the jvm nexus-core tier. helium runs
+# ~/srv/infra (helium-mongo, helium-redis, helium-nats) and ollama :11434
+# (embeddings, systemd). It is NOT the authority and NOT the backup replica:
+# it is a client of titanium's PG/Redis/Conduit over LAN, exactly like
+# vanadium.
+#
+# WHY HELIUM IS THE FIRST TARGET (rationale recorded to the architect):
+# vanadium is now a fixture — it hosts the CI/CD pipeline (Jenkins,
+# SonarQube, ballerina tier) and the backup database that is live for
+# read-only clients. Container churn from a candidate deploy there competes
+# with CI and sits next to the replica. helium has no such tenants.
+#
+# Use: ansible-playbook -i inventory/hosts.ini playbooks/deploy-candidate.yml \
+#        -e candidate_targets=helium
+
+# helium tracks main. NOTE: group_vars/vanadium.yml still says `dev`, a
+# branch that no longer exists on origin — do not copy that here.
+nexus_branch: main
+
+# The helium override retargets PG/Conduit at the authority host; it is a
+# near-twin of compose.vanadium.yaml because both are non-authority hosts.
+candidate_stack_override: compose.helium.yaml
+
+# Local backing stores exist on this host but stay OUT of the candidate
+# group's path for now:
+#   helium-mongo — 0 users, auth disabled, and empty (admin/config/local
+#                  only). The authority-borrowed MONGO_URL authenticates as
+#                  mongoUser with authSource=admin, so it cannot point here
+#                  without creating a root user and restarting mongod with
+#                  --auth. Using it would make the group genuinely
+#                  independent (no shared-sol_ir double-write) — that is a
+#                  DBA/architect call, not a deploy-time one.
+#   helium-redis — reachable on :6379, but the group runs its own in-compose
+#                  redis deliberately (isolation; no shared state).
+#   helium-nats  — the write-queue target; the candidate broker does not use it.
+candidate_mongo_source: authority

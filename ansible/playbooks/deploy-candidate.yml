@@ -1,19 +1,26 @@
-# deploy-candidate.yml — sync code, render candidate .env, bring the
-# candidate failover group up on vanadium.
+# deploy-candidate.yml — sync code, render the candidate .env, and bring the
+# candidate failover group up on the target host.
 #
 # Companion to deploy-tier.yml (legacy tier) using the SAME ground rules:
 #   - Idempotent: re-running converges.
 #   - Mongo credentials come ONLY from the controller's untracked
 #     nexus/.env — never committed to the repo. Fails loudly if absent.
-#   - NO --remove-orphans: this host runs other compose projects (legacy
-#     vd-* front doors, CI stack) — remove-orphans would stop them.
-#     Learned 2026-08-24.
-#   - reset --hard is intentional: vanadium is a managed deploy target.
+#   - NO --remove-orphans: the target runs other compose projects. On
+#     vanadium that is the legacy vd-* front doors and the CI stack; on
+#     helium it is helium-infra (mongo/redis/nats) and nexus-core.
+#     --remove-orphans would stop them. Learned 2026-08-24.
+#   - reset --hard is intentional: targets are managed deploy checkouts.
 #
-# Run against the [vanadium] inventory group only.
+# WHICH HOST: this playbook is target-parameterized. Run it against the
+# group you mean:
+#     ansible-playbook -i inventory/hosts.ini playbooks/deploy-candidate.yml \
+#       -e candidate_targets=helium
+# The default is vanadium (the original failover target). All shared
+# parameters live in group_vars/all.yml; per-target values (branch, compose
+# override, mongo source) live in group_vars/<host>.yml.
 ---
-- name: Deploy candidate stack on vanadium
-  hosts: vanadium
+- name: Deploy candidate stack
+  hosts: "{{ candidate_targets | default('vanadium') }}"
   gather_facts: false
   vars:
     ansible_become: false
@@ -33,16 +40,35 @@
                         | regex_replace('@localhost:', '@' ~ authority_host ~ ':') }}"
       delegate_to: localhost
       run_once: true
+      when: candidate_mongo_source == 'authority'
 
     # Candidate broker projects into the sol_ir DB with admin authSource
     # (learned 2026-08-26: driver defaults SCRAM to the path DB and fails
     # code 18 against the root user). Strip any path/query from the Spring
     # URI, keep scheme+credentials+host, re-append our own.
-    - name: Derive candidate MONGO_URL (sol_ir projection, admin authSource)
+    - name: Derive candidate MONGO_URL (authority mongod, sol_ir, admin authSource)
       ansible.builtin.set_fact:
         cand_mongo_url: "{{ (mongo_uri | regex_replace('^(mongodb(\\+srv)?://[^/]+).*$', '\\1')) }}/sol_ir?authSource=admin"
       delegate_to: localhost
       run_once: true
+      when: candidate_mongo_source == 'authority'
+
+    # Local-mongod posture: the target's own mongod, no credentials. Only
+    # valid where that mongod has auth disabled — helium-mongo currently has
+    # 0 users, so a credentialed URI would fail SCRAM there.
+    - name: Derive candidate MONGO_URL (target-local mongod, credential-free)
+      ansible.builtin.set_fact:
+        cand_mongo_url: "mongodb://host.docker.internal:27017/sol_ir"
+      when: candidate_mongo_source == 'local'
+
+    - name: Fail if no MONGO_URL could be derived
+      ansible.builtin.assert:
+        that:
+          - cand_mongo_url is defined
+          - cand_mongo_url | length > 0
+        fail_msg: >-
+          candidate_mongo_source "{{ candidate_mongo_source }}" produced no
+          MONGO_URL (expected 'authority' or 'local').
 
     - name: Fetch latest {{ nexus_branch }}
       ansible.builtin.command:
@@ -91,7 +117,6 @@
       no_log: true
 
     - name: Build candidate images ({{ candidate_build_services | join(', ') }})
-      # Node sources build clean on arm64 — unlike prebuilt terrain-ts (W2).
       ansible.builtin.command:
         cmd: >-
           docker compose

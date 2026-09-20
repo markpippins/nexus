@@ -1,0 +1,37 @@
+# helium override for the candidate stack.
+#
+# Applied as:
+#   docker compose -f compose.yaml -f compose.helium.yaml up -d
+#
+# WHY THIS EXISTS: the base manifest targets the titanium-local topology —
+# host.docker.internal reaches titanium's own PG/Mongo/Conduit. On helium
+# those services live on the AUTHORITY HOST over LAN, so the env must be
+# retargeted (compose `environment` overrides both base values and env_file
+# per key). MONGO_URL itself is NOT set here: it carries credentials and is
+# injected by deploy-candidate.yml into the rendered .env (never committed).
+#
+# Near-twin of compose.vanadium.yaml by construction: both are non-authority
+# hosts, so both point at titanium for PG/Conduit and differ only in which
+# mongod the injected MONGO_URL names.
+#
+# helium-specific facts this override deliberately does NOT change:
+#   - helium runs its own backing stores (~/srv/infra: helium-mongo,
+#     helium-redis, helium-nats) — the group still runs its own in-compose
+#     redis rather than joining helium-infra, so the two projects stay
+#     independent and `docker compose down` on either cannot disturb the other.
+#   - host ports 14080/18082 are free on helium; only 8092 (nexus-core),
+#     27017/6379/4222/8222 (helium-infra) and 11434 (ollama) are taken.
+#   - helium is a 4 GB board running ollama: the broker's mem_limit of 1g
+#     matters here more than it does on vanadium.
+
+services:
+  broker:
+    environment:
+      # Workers reach shared infrastructure on the authority host.
+      PG_HOST: "192.168.1.120"
+      CONDUIT_MCP_URL: "http://192.168.1.120:3100"
+      # REDIS_HOST stays "redis" — in-compose DNS, unchanged.
+
+  control-edge:
+    environment:
+      PG_HOST: "192.168.1.120"

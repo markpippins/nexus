@@ -1,0 +1,55 @@
+# group_vars/all.yml — fleet-wide deployment parameters.
+#
+# Anything here applies to EVERY inventory host. Host-specific values belong
+# in group_vars/<host>.yml. Keep the split strict: the candidate stack has
+# more than one possible target (helium first, vanadium still supported), so
+# its parameters live here ONCE instead of being hand-copied per host — see
+# bin/fleet-manifest-from-ansible.py ("the helium-IP incident proved
+# hand-maintained twins drift").
+#
+# NOTE ON SECRETS: no credentials in this file. The Mongo URI is read at
+# deploy time from the CONTROLLER's untracked nexus/.env and injected into
+# the rendered target .env only.
+
+# ── Host topology ─────────────────────────────────────────────────────
+# titanium owns PostgreSQL + Redis + Conduit. Every other host is a client
+# of those services over LAN.
+authority_host: 192.168.1.120
+
+# ── Code checkout ─────────────────────────────────────────────────────
+nexus_root: /home/codex/dev/nexus
+# Controller-side untracked env (holds SPRING_DATA_MONGODB_URI etc.). Always
+# read from the CONTROLLER via delegate_to: localhost — never the target.
+nexus_controller_env: /home/codex/dev/nexus/.env
+
+# ── Candidate stack (adonisjs/moleculer failover group) ───────────────
+# Deployed by deploy-candidate.yml; probed by health-candidate.yml.
+# Manifest source of truth: docker/candidate-stack/compose.yaml plus the
+# per-host override selected by candidate_stack_override.
+#
+# WHICH HOST: pass -e candidate_targets=<inventory-group>. Default is
+# vanadium (the original failover target); helium is now the preferred first
+# deployment target (see group_vars/helium.yml).
+candidate_compose_dir: "{{ nexus_root }}/docker/candidate-stack"
+candidate_compose_files:
+  - compose.yaml
+  - "{{ candidate_stack_override }}"
+# Node sources build clean on arm64 (unlike prebuilt terrain-ts, W2 backlog).
+candidate_build_services:
+  - broker
+  - control-edge
+# cand-redis has no published host port (compose-internal only) — nothing to probe.
+candidate_endpoints:
+  - { name: cand-broker,       port: 14080, path: /api/health }
+  - { name: cand-control-edge, port: 18082, path: /health }
+
+# Which mongod the candidate broker projects into.
+#   authority — borrow titanium's mongod (credentials from the controller
+#               .env; the documented warm-standby posture).
+#   local     — the target's own mongod, reachable via host-gateway and used
+#               credential-free (only valid where that mongod has no auth).
+# Per-host override in group_vars/<host>.yml.
+candidate_mongo_source: authority
+
+# Per-host compose override. Overridden by each target's group_vars.
+candidate_stack_override: compose.vanadium.yaml

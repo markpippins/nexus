@@ -1,9 +1,13 @@
-# health-candidate.yml — probe the candidate-stack endpoints on vanadium.
+# health-candidate.yml — probe the candidate-stack endpoints on the target.
 # Same contract as health-check.yml (legacy tier): fails on any non-200,
 # no amber tolerance today (both endpoints are pure Node builds).
+#
+# Target-parameterized, mirroring deploy-candidate.yml:
+#   ansible-playbook -i inventory/hosts.ini playbooks/health-candidate.yml \
+#     -e candidate_targets=helium
 ---
-- name: Health-check the candidate stack on vanadium
-  hosts: vanadium
+- name: Health-check the candidate stack
+  hosts: "{{ candidate_targets | default('vanadium') }}"
   gather_facts: false
 
   tasks:
