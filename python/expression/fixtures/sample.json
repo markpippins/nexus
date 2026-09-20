@@ -1,0 +1,8 @@
+{
+  "transcript_id": "expression-fixture-001",
+  "source_file": "expression-fixture-001.json",
+  "turns": [
+    {"role": "user", "content": "Review PR #251 and V163 before the decision."},
+    {"role": "assistant", "content": "The Architect approved the pre-stage, but the evidence remains disputed."}
+  ]
+}
