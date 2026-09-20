@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import { spawn } from "node:child_process";
 import { PipelineWatcher } from "./watcher";
+import { KILLABLE_ROLES } from "./role-vocabulary";
 import { registerToolHandlers, toolDefinitions } from "./tools";
 import { createError, createSuccess } from "./errors";
 import {
@@ -494,16 +495,10 @@ app.post("/sessions/:sessionId/kill", async (req, res) => {
 app.post("/agents/:role/kill", async (req, res) => {
   const { role } = req.params;
 
-  // Validate role
-  const validRoles = [
-    "planner",
-    "builder",
-    "reviewer",
-    "critic",
-    "analyst",
-    "architect",
-  ];
-  if (!validRoles.includes(role)) {
+  // Validate role — allowlist derived from the ratified roles matrix
+  // (src/role-vocabulary.ts). Superset of the legacy 6-role gate.
+  const validRoles = KILLABLE_ROLES;
+  if (!validRoles.includes(role as (typeof KILLABLE_ROLES)[number])) {
     res
       .status(400)
       .json({
