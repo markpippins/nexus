@@ -61,7 +61,7 @@ namespace org.nexus.nexusbroker {
 
   @route("/api/keychain-snapshot/status")
   @get
-  @doc("Legacy observations/assessments keychain projection status.")
+  @doc("Event-driven keychain projection status: outbox activity, last snapshot, and D6 delta-chain health. The periodic timer was retired under D3; no intervalMs is exposed.")
   op keychainStatus(): KeychainStatus;
 
   @route("/api/keychain-snapshot/snapshot")
