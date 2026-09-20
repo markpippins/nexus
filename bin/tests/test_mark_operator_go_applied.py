@@ -140,6 +140,12 @@ class ParseTagsTests(unittest.TestCase):
         self.assertTrue(already)
         self.assertEqual(new, ["operator:go", "status:applied"])
 
+    def test_gate_tags_carry_both_live_spellings(self):
+        # live records use BOTH forms (relays 56acc5be/16870ec1/8ea65d19 are
+        # hyphen-form; the canonical 17316f4f is colon-form) — the gate must
+        # accept both or fresh records refuse (defect repro 28506af3)
+        self.assertEqual(set(self.m.GATE_TAGS), {"operator:go", "operator-go"})
+
 
 # ── live-path tests against the mock server ────────────────────────────
 
@@ -159,6 +165,15 @@ class MarkAppliedLiveTests(unittest.TestCase):
         self.not_go_id = self.store.add(
             "33333333-3333-3333-3333-333333333333",
             ["to:dba", "type:status-update"])
+        # the ACTUAL live defect shape: relay operator-go records carry the
+        # hyphen form (record 56acc5be repro)
+        self.hyphen_go_id = self.store.add(
+            "55555555-5555-5555-5555-555555555555",
+            ["to:dba", "type:status-update", "operator-go", "stage1", "8261650"])
+        # corruption × hyphen form: fragment repair must feed the gate
+        self.dirty_hyphen_id = self.store.add(
+            "66666666-6666-6666-6666-666666666666",
+            ['["to:dba"', '"operator-go"', '"stage1"]'])
         self._srv = mock_server(self.store)
         self.base = self._srv.__enter__()
         self.addCleanup(self._srv.__exit__, None, None, None)
@@ -205,6 +220,38 @@ class MarkAppliedLiveTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(self.store.patches, [])
         self.assertNotIn("status:applied", self.tags_of(self.not_go_id))
+
+    def test_hyphen_form_operator_go_is_accepted(self):
+        # THE defect: colon-only gate refused every fresh hyphen-form record
+        code = self.m.mark_applied(self.client, self.hyphen_go_id)
+        self.assertEqual(code, 0)
+        self.assertIn("status:applied", self.tags_of(self.hyphen_go_id))
+        self.assertEqual(len(self.store.patches), 1)
+
+    def test_hyphen_form_idempotent_rerun(self):
+        self.assertEqual(self.m.mark_applied(self.client, self.hyphen_go_id), 0)
+        n = len(self.store.patches)
+        self.assertEqual(self.m.mark_applied(self.client, self.hyphen_go_id), 3)
+        self.assertEqual(len(self.store.patches), n)
+
+    def test_corrupted_hyphen_form_still_authorized(self):
+        # parse_tags repair + gate must compose: '"operator-go"' fragment
+        # normalizes to operator-go and authorizes the tagging
+        code = self.m.mark_applied(self.client, self.dirty_hyphen_id)
+        self.assertEqual(code, 0)
+        self.assertEqual(self.tags_of(self.dirty_hyphen_id)[-1], "status:applied")
+
+    def test_refusal_reports_current_tags_not_the_write_set(self):
+        # honesty pin: the refusal prints the record's CURRENT tags — the old
+        # output printed the local new_tags list, which included
+        # 'status:applied' as if a write had happened when none had
+        import io
+        err = io.StringIO()
+        code = self.m.mark_applied(self.client, self.not_go_id, err=err)
+        self.assertEqual(code, 2)
+        tail = err.getvalue().split("current tags:")[-1]
+        self.assertIn("type:status-update", tail)      # real current tags shown
+        self.assertNotIn("status:applied", tail)       # no phantom write marker
 
     def test_missing_record_exit1(self):
         code = self.m.mark_applied(self.client, "44444444-4444-4444-4444-444444444444")
