@@ -358,6 +358,14 @@ wr-repoint-verify-test:
 wr-repoint-verify-live:
 	@echo "[wr-repoint-verify-live] structural battery + optional tranche against LIVE PG (read-only)..."
 	@python3 bin/wr-repoint-verify.py $(ARGS)
+
+r9-verify-test:
+	@echo "[r9-verify-test] R9 vanadium replication checklist battery (hermetic, no ssh/systemd/journal)..."
+	@python3 -m unittest bin.tests.test_r9_replication_verify -v
+
+r9-verify-live:
+	@echo "[r9-verify-live] R9 replication checklist against LIVE hosts (read-only; V4 checksums vanadium — allow minutes)..."
+	@python3 bin/r9-replication-verify.py $(ARGS)
 attest-wiring-test:
 	@echo "[attest-wiring-test] boot-shim attestation wiring (hermetic + real-DB E2E, wr-conf-034)..."
 	@python3 -m pytest python/continuity/tests/test_attest.py python/nexus_core/wrp/tests/test_attest_wiring_e2e.py -v
