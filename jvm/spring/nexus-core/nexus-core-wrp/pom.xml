@@ -12,6 +12,13 @@
     <name>nexus-core-wrp</name>
     <description>Framework-free Java 21 WRP kernel — states, CAL addressing, CCNF identity, reduce engine (parity: python/nexus_core/wrp + Go ccnf-ref)</description>
     <dependencies>
+        <!-- Runtime kernel is deliberately zero-dependency; Jackson is
+             test-scoped only (golden-vector parsing in parity tests). -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>

@@ -1,0 +1,443 @@
+{
+  "_meta": {
+    "generator": "generate-golden-fixtures.py",
+    "reference": "nexus/python/nexus_core/wrp (Python 3.12, zero-dep substrate)",
+    "note": "Java must reproduce every value byte-for-byte; Go binary + Rust verifier remain CCNF conformance authority"
+  },
+  "addressing": [
+    {
+      "realm": "dev",
+      "graph": "my-pipeline",
+      "trajectory": "t0",
+      "node_id": "transform",
+      "expected_address": "cal://dev/my-pipeline/t0/transform/6400f9c2c7c8",
+      "expected_version": "6400f9c2c7c8",
+      "expected_content_hash": "6400f9c2c7c8",
+      "explicit_version_address": "cal://dev/my-pipeline/t0/transform/v9",
+      "parsed": {
+        "realm": "dev",
+        "graph": "my-pipeline",
+        "trajectory": "t0",
+        "node_id": "transform",
+        "version": "6400f9c2c7c8"
+      },
+      "parsed_non_cal": null
+    },
+    {
+      "realm": "prod",
+      "graph": "graph-2",
+      "trajectory": "traj-1",
+      "node_id": "node-9",
+      "expected_address": "cal://prod/graph-2/traj-1/node-9/47d186b0f93e",
+      "expected_version": "47d186b0f93e",
+      "expected_content_hash": "47d186b0f93e",
+      "explicit_version_address": "cal://prod/graph-2/traj-1/node-9/v9",
+      "parsed": {
+        "realm": "prod",
+        "graph": "graph-2",
+        "trajectory": "traj-1",
+        "node_id": "node-9",
+        "version": "47d186b0f93e"
+      },
+      "parsed_non_cal": null
+    },
+    {
+      "realm": "dev",
+      "graph": "pipeline-with-ünïcode",
+      "trajectory": "t1",
+      "node_id": "nöde",
+      "expected_address": "cal://dev/pipeline-with-ünïcode/t1/nöde/d300cc06d1fe",
+      "expected_version": "d300cc06d1fe",
+      "expected_content_hash": "d300cc06d1fe",
+      "explicit_version_address": "cal://dev/pipeline-with-ünïcode/t1/nöde/v9",
+      "parsed": {
+        "realm": "dev",
+        "graph": "pipeline-with-ünïcode",
+        "trajectory": "t1",
+        "node_id": "nöde",
+        "version": "d300cc06d1fe"
+      },
+      "parsed_non_cal": null
+    },
+    {
+      "realm": "",
+      "graph": "",
+      "trajectory": "",
+      "node_id": "",
+      "expected_address": "cal://////732c4e971163",
+      "expected_version": "732c4e971163",
+      "expected_content_hash": "732c4e971163",
+      "explicit_version_address": "cal://////v9",
+      "parsed": {
+        "realm": "",
+        "graph": "",
+        "trajectory": "",
+        "node_id": "",
+        "version": "732c4e971163"
+      },
+      "parsed_non_cal": null
+    }
+  ],
+  "canonical_json_bytes": [
+    {
+      "value": null,
+      "expected_json": "null",
+      "expected_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+    },
+    {
+      "value": true,
+      "expected_json": "true",
+      "expected_sha256": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b"
+    },
+    {
+      "value": 7,
+      "expected_json": "7",
+      "expected_sha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451"
+    },
+    {
+      "value": {
+        "b": 2,
+        "a": 1
+      },
+      "expected_json": "{\"a\":1,\"b\":2}",
+      "expected_sha256": "43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
+    },
+    {
+      "value": {
+        "k": "a\u0001b"
+      },
+      "expected_json": "{\"k\":\"a\\u0001b\"}",
+      "expected_sha256": "d39396c0a6f8854f7e258a7e382fb6761d2a6f513621b6f5940b3d894556857a"
+    },
+    {
+      "value": {
+        "s": "quote\" back\\slash\nnewline\ttab\rcr"
+      },
+      "expected_json": "{\"s\":\"quote\\\" back\\\\slash\\nnewline\\ttab\\rcr\"}",
+      "expected_sha256": "6e44b626ec0553b7cf53b60e7b2c28c350dcbe4f73159555b9a8168cf4f59a54"
+    },
+    {
+      "value": {
+        "list": [
+          1,
+          "two",
+          null,
+          true
+        ],
+        "nested": {
+          "z": 1,
+          "y": {
+            "deep": []
+          }
+        }
+      },
+      "expected_json": "{\"list\":[1,\"two\",null,true],\"nested\":{\"y\":{\"deep\":[]},\"z\":1}}",
+      "expected_sha256": "0f9ae38ab6cccb940c4f4594e9cc6e7f06d1e13737185053b13fc65002b4e3bb"
+    },
+    {
+      "value": {
+        "float": 2.5,
+        "integral": 3.0
+      },
+      "expected_json": "{\"float\":2.5,\"integral\":3}",
+      "expected_sha256": "f0f16d4254f7207f7b13d2e4cfb6c099b3a690d52e1b26eae713357a191a8f43"
+    }
+  ],
+  "identity": [
+    {
+      "doc": {
+        "event_id": "wr-0001",
+        "actor": {
+          "type": "system",
+          "id": "conduit"
+        },
+        "intent": {
+          "action": "execute",
+          "target_type": "workrequest",
+          "target_id": "workrequest:wr-0001"
+        },
+        "domain": "execution"
+      },
+      "expected_entity_key": "aa512485a017493fedf97827e25f29cb1bd4d071656a94cd1b4e6d9c0d92779a",
+      "expected_event_type": "event",
+      "expected_scope": "executiongraph.v2",
+      "expected_domain_scope": "executiongraph.v2"
+    },
+    {
+      "doc": {
+        "event_id": "wr-spec",
+        "actor": {
+          "type": "dba",
+          "id": "luna"
+        },
+        "intent": {
+          "action": "create",
+          "target_type": "plan",
+          "target_id": "plan:1"
+        },
+        "domain": "specification"
+      },
+      "expected_entity_key": "456594ab2b7b205f5844c82a1377775d5f80973db9170850ff490f11fcc85924",
+      "expected_event_type": "event",
+      "expected_scope": "specification.v1",
+      "expected_domain_scope": "specification.v1"
+    },
+    {
+      "doc": {
+        "event_id": "wr-sys",
+        "actor": {
+          "type": "system",
+          "id": "tackle"
+        },
+        "intent": {
+          "action": "validate",
+          "target_type": "schema",
+          "target_id": "schema:x"
+        },
+        "domain": "system"
+      },
+      "expected_entity_key": "e0e468c208b018d2155f4da05a149f97dd19b04cc4fb7e132e17c27343a5824a",
+      "expected_event_type": "event",
+      "expected_scope": "system.v1",
+      "expected_domain_scope": "system.v1"
+    },
+    {
+      "doc": {
+        "event_id": "wr-other",
+        "actor": {
+          "type": "human",
+          "id": "bp"
+        },
+        "intent": {
+          "action": "emit",
+          "target_type": "event",
+          "target_id": "event:9"
+        },
+        "domain": "custom-domain"
+      },
+      "expected_entity_key": "c867babcc0c9761072a2fc29f90d0d770066d11a7799e251e60d29494953d1b0",
+      "expected_event_type": "event",
+      "expected_scope": "custom-domain.v1",
+      "expected_domain_scope": "custom-domain.v1"
+    },
+    {
+      "doc": {
+        "event_id": "wr-noactor",
+        "intent": {
+          "action": "delete",
+          "target_type": "row",
+          "target_id": "row:1"
+        },
+        "domain": "execution"
+      },
+      "expected_entity_key": "40264a3fbf052377d0c0bc0cf3603c69249258c15ce41fc2dae7e58f411f999e",
+      "expected_event_type": "event",
+      "expected_scope": "executiongraph.v2",
+      "expected_domain_scope": "executiongraph.v2"
+    }
+  ],
+  "identity_errors": [
+    {
+      "label": "free_text_intent",
+      "intent": "just do the thing",
+      "expected_error": "cannot normalize intent: free-text intent 'just do the thing' cannot be mapped"
+    },
+    {
+      "label": "unknown_action",
+      "intent": {
+        "action": "vibes",
+        "target_type": "x",
+        "target_id": "y"
+      },
+      "expected_error": "cannot normalize intent: unknown action 'vibes'"
+    },
+    {
+      "label": "empty_action",
+      "intent": {
+        "action": "",
+        "target_type": "x",
+        "target_id": "y"
+      },
+      "expected_error": "cannot normalize intent: empty action in intent"
+    }
+  ],
+  "states": {
+    "matrix": {
+      "CREATED": [
+        "INTAKE"
+      ],
+      "INTAKE": [
+        "FAILED",
+        "PLANNING"
+      ],
+      "PLANNING": [
+        "CRITIQUE",
+        "FAILED"
+      ],
+      "CRITIQUE": [
+        "FAILED",
+        "PLANNING",
+        "SPECIFICATION"
+      ],
+      "SPECIFICATION": [
+        "APPROVED",
+        "CRITIQUE",
+        "FAILED"
+      ],
+      "APPROVED": [
+        "FAILED",
+        "QUEUED",
+        "SPECIFICATION"
+      ],
+      "QUEUED": [
+        "EXECUTING",
+        "FAILED"
+      ],
+      "EXECUTING": [
+        "COMPLETED",
+        "FAILED"
+      ],
+      "COMPLETED": [
+        "ARCHIVED"
+      ],
+      "ARCHIVED": [],
+      "FAILED": []
+    },
+    "receipt_map": {
+      "PLANNING": "INTAKE",
+      "PLAN_CREATE": "PLANNING",
+      "CRITIQUE": "CRITIQUE",
+      "CRITIQUE_PASS": "SPECIFICATION",
+      "CRITIQUE_REJECT": "PLANNING",
+      "IMPLEMENTATION": "EXECUTING",
+      "CCNF_EXECUTION": "EXECUTING",
+      "REVIEW": "APPROVED",
+      "REVIEW_PASS": "COMPLETED",
+      "REVIEW_REJECT": "EXECUTING",
+      "BLOCK": "FAILED",
+      "PLAN_BLOCK": "FAILED",
+      "API_LIMIT": "FAILED",
+      "HOLD": "QUEUED",
+      "REQUEUED": "QUEUED",
+      "CANCELLED": "ARCHIVED",
+      "ABANDONED": "FAILED"
+    }
+  },
+  "state_transitions": [
+    {
+      "from": "APPROVED",
+      "to": "FAILED",
+      "valid": true
+    },
+    {
+      "from": "APPROVED",
+      "to": "QUEUED",
+      "valid": true
+    },
+    {
+      "from": "APPROVED",
+      "to": "SPECIFICATION",
+      "valid": true
+    },
+    {
+      "from": "COMPLETED",
+      "to": "ARCHIVED",
+      "valid": true
+    },
+    {
+      "from": "CREATED",
+      "to": "INTAKE",
+      "valid": true
+    },
+    {
+      "from": "CRITIQUE",
+      "to": "FAILED",
+      "valid": true
+    },
+    {
+      "from": "CRITIQUE",
+      "to": "PLANNING",
+      "valid": true
+    },
+    {
+      "from": "CRITIQUE",
+      "to": "SPECIFICATION",
+      "valid": true
+    },
+    {
+      "from": "EXECUTING",
+      "to": "COMPLETED",
+      "valid": true
+    },
+    {
+      "from": "EXECUTING",
+      "to": "FAILED",
+      "valid": true
+    },
+    {
+      "from": "INTAKE",
+      "to": "FAILED",
+      "valid": true
+    },
+    {
+      "from": "INTAKE",
+      "to": "PLANNING",
+      "valid": true
+    },
+    {
+      "from": "PLANNING",
+      "to": "CRITIQUE",
+      "valid": true
+    },
+    {
+      "from": "PLANNING",
+      "to": "FAILED",
+      "valid": true
+    },
+    {
+      "from": "QUEUED",
+      "to": "EXECUTING",
+      "valid": true
+    },
+    {
+      "from": "QUEUED",
+      "to": "FAILED",
+      "valid": true
+    },
+    {
+      "from": "SPECIFICATION",
+      "to": "APPROVED",
+      "valid": true
+    },
+    {
+      "from": "SPECIFICATION",
+      "to": "CRITIQUE",
+      "valid": true
+    },
+    {
+      "from": "SPECIFICATION",
+      "to": "FAILED",
+      "valid": true
+    },
+    {
+      "from": "CREATED",
+      "to": "FAILED",
+      "valid": false
+    },
+    {
+      "from": "COMPLETED",
+      "to": "FAILED",
+      "valid": false
+    },
+    {
+      "from": "INTAKE",
+      "to": "EXECUTING",
+      "valid": false
+    },
+    {
+      "from": "ARCHIVED",
+      "to": "INTAKE",
+      "valid": false
+    }
+  ]
+}
