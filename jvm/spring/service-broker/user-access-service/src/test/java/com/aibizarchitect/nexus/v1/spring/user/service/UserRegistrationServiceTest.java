@@ -10,6 +10,7 @@ import java.util.UUID;
 import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.junit.jupiter.api.Test;
 
 import com.aibizarchitect.nexus.v1.user.UserRegistrationDTO;
@@ -27,14 +28,17 @@ class UserRegistrationServiceTest {
     @BeforeEach
     void setUp() {
         userRepository = mock(UserRegistrationRepository.class);
-        userAccessService = new UserAccessService(userRepository);
+        userAccessService = new UserAccessService(userRepository,
+                new BCryptPasswordEncoder(10));
 
         validUser = new UserRegistration();
         validUser.setId(UUID.fromString("123e4567-e89b-12d3-a456-426614174000"));
         validUser.setAlias("testUser");
         validUser.setEmail("test@example.com");
         validUser.setIdentifier("testpass");
-        validUser.setPassword("testpass");
+        // V191 format: the stored credential is a bcrypt hash — validateUser
+        // verifies via PasswordEncoder.matches(), never plaintext equals.
+        validUser.setPassword(new BCryptPasswordEncoder(10).encode("testpass"));
     }
 
     @Test

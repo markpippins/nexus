@@ -1,6 +1,7 @@
 package com.aibizarchitect.nexus.v1.spring.tackleregistry.web;
 
 import com.aibizarchitect.nexus.v1.spring.tackleregistry.tackle.InferenceService;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -19,7 +20,17 @@ import java.util.Map;
  *   POST /ai/invoke {"provider_type":"ollama","endpoint_url":"http://...",
  *                    "model_identifier":"llama3","prompt":"..."}   (direct)
  */
+/**
+ * DORMANCY GUARD (issue 59bcd3da, item 4): registered ONLY when
+ * app.ai-invoke.enabled=true. Default (absent) = DORMANT — the route
+ * does not exist. The direct mode forwards a caller-supplied
+ * endpoint_url + apiKey server-side (SSRF-shaped) and the surface is
+ * unauthenticated; dormancy was previously accidental. Enabling is a
+ * deliberate, auditable act and should ride the broker auth-provider
+ * work before going live.
+ */
 @RestController
+@ConditionalOnProperty(name = "app.ai-invoke.enabled", havingValue = "true")
 @RequestMapping("/ai")
 public class AiInvokeController {
 

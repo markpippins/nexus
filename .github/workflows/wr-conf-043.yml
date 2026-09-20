@@ -1,0 +1,56 @@
+name: WR Conf 043 — Users Password BCrypt (V191 security remediation E2E)
+
+# Applies the REAL sql/V191__users_password_bcrypt.sql to a throwaway
+# database carrying the pre-V191 live shape (census 2026-09-20, titanium):
+# assembly.users with 8 plaintext rows (the surface
+# user-access-service validateUser authenticates against) and gateway.users
+# with 2 plaintext rows (write-orphaned). Drives the full remediation
+# contract against live constraint behavior — backfill to bcrypt (bf,10),
+# round-trip verification via pgcrypto crypt() (the check Java's
+# BCryptPasswordEncoder.matches() implements), idempotent re-apply,
+# born-clean CHECKs rejecting plaintext writes (the AdminUserSeeder class
+# made impossible), and never-rehash of pre-existing hashes.
+# No mocks on the DB path. Service pinned to postgres:17 (house
+# convention after the wr-conf-025 PG17 lesson, PR #300).
+
+on:
+  push:
+    branches: [main, master, feature/*, dev]
+  pull_request:
+    branches: [main, master, feature/*]
+  workflow_dispatch:
+
+jobs:
+  v191-users-bcrypt-e2e:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: pguser
+          POSTGRES_PASSWORD: pgpass
+          POSTGRES_DB: nexus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pguser"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies (declared, not mocked — pitfall #15)
+        run: python3 -m pip install pytest psycopg2-binary
+
+      - name: Run V191 users-bcrypt E2E
+        env:
+          CONDUIT_PG_DSN: postgresql://pguser:pgpass@localhost:5432/postgres
+        run: |
+          python3 -m pytest python/nexus_core/wrp/tests/test_v191_users_bcrypt_e2e.py -v
