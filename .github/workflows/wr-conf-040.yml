@@ -1,0 +1,61 @@
+name: WR Conf 040 — WR View Demotion (real-V186+V187 E2E, staged inert)
+
+# Applies the REAL sql/V186 then REAL sql/V187 in sequence to a throwaway
+# database carrying the pre-V187 live shape (probed 2026-09-20, titanium):
+# vision.work_requests as a BASE TABLE with the landing-guard and asset
+# triggers, the EMPTY work_requests_history substrate (the live-dead _losm
+# read path), edges/dag views with INSTEAD OF triggers, the shape registry,
+# nebula.work_requests view, execution.requests with its FK, and the two
+# ORIGINAL v_work_request_overview definitions. Drives the full demotion
+# contract against live constraint behavior — archive-then-demotion, the
+# legacy id map, the entity_key repair (V186 gap), the resurrection of the
+# losm read path (0→6 rows, documented), corrected vocabulary
+# (cancelled→CANCELLED, no silent ELSE), append-only archives, FK
+# preservation, the dependency-correct overview rebuild, and the named
+# refusal gates (IDEM-001, PREFLIGHT-001/002/005/006). No mocks on the DB
+# path. The suite creates and drops its own throwaway databases; no
+# production database is touched. Service pinned to postgres:17 (house
+# convention after the wr-conf-025 PG17 lesson, PR #300).
+
+on:
+  push:
+    branches: [main, master, feature/*, dev]
+  pull_request:
+    branches: [main, master, feature/*]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  v187-view-demotion:
+    name: "wr-conf-040: V187 view demotion E2E"
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: pguser
+          POSTGRES_PASSWORD: pgpass
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pguser"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CONDUIT_PG_DSN: postgresql://pguser:pgpass@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test deps
+        run: python3 -m pip install pytest psycopg2-binary
+
+      - name: V187 demotion E2E (real V186+V187, throwaway DB)
+        run: python3 -m pytest python/nexus_core/wrp/tests/test_v187_work_request_demotion_e2e.py -v

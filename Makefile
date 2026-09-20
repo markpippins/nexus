@@ -343,6 +343,9 @@ calendar-consolidate-test:
 wr-primitive-e2e-test:
 	@echo "[wr-primitive-e2e-test] V186 WorkRequest absorb E2E (staged-inert DDL, throwaway DB, wr-conf-039)..."
 	@python3 -m pytest python/nexus_core/wrp/tests/test_v186_work_request_e2e.py -v
+wr-view-demotion-e2e-test:
+	@echo "[wr-view-demotion-e2e-test] V187 view demotion E2E (real V186+V187, throwaway DB, wr-conf-040)..."
+	@python3 -m pytest python/nexus_core/wrp/tests/test_v187_work_request_demotion_e2e.py -v
 attest-wiring-test:
 	@echo "[attest-wiring-test] boot-shim attestation wiring (hermetic + real-DB E2E, wr-conf-034)..."
 	@python3 -m pytest python/continuity/tests/test_attest.py python/nexus_core/wrp/tests/test_attest_wiring_e2e.py -v
