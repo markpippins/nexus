@@ -355,6 +355,18 @@ v191-users-bcrypt-e2e-test:
 	@echo "[v191-users-bcrypt-e2e-test] V191 bcrypt-at-rest E2E (backfill + round-trip + born-clean CHECKs, throwaway DB, wr-conf-043)..."
 	@python3 -m pytest python/nexus_core/wrp/tests/test_v191_users_bcrypt_e2e.py -v
 
+v190-scratch-vocab-e2e-test:
+	@echo "[v190-scratch-vocab-e2e-test] V190 scratch role-vocabulary widening E2E (repair + drift gate + born-clean bootstrap, throwaway DB, wr-conf-042)..."
+	@python3 -m pytest python/nexus_core/wrp/tests/test_v190_scratch_vocabulary_e2e.py -v
+
+role-vocab-parity-test:
+	@echo "[role-vocab-parity-test] born-clean parity: bootstrap == ROLE-VOCAB PIN == V190 swap (hermetic)..."
+	@python3 -m unittest bin.tests.test_role_vocab_parity -v
+
+role-vocab-drift-live:
+	@echo "[role-vocab-drift-live] three-way comparator against LIVE nebula (read-only)..."
+	@python3 bin/role-vocab-drift.py $(ARGS)
+
 wr-repoint-verify-test:
 	@echo "[wr-repoint-verify-test] W1-W4 repoint verification battery (hermetic, no DB/network)..."
 	@python3 -m unittest bin.tests.test_wr_repoint_verify -v
