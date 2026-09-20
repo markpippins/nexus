@@ -1,17 +1,21 @@
 """
-T26 Item B conformance: WR birth persists + dedups entity_key.
+T26 Item B conformance: WR birth persists + dedups identity.
 
-Guards the T07 emission-boundary dedup: every WR born through the conduit
-write paths (``db_adapter.add_work_request`` and the cascade admission
-``ensure_nebula_work_request``) carries its deterministic entity_key from
-birth, and re-emitting the same WR reuses the existing row instead of
-inserting a duplicate (idempotent emission) — backed by the 045 btree_gist
-exclusion constraint.
+W3 (plan 8261650 stage 2, spec 7e8c0222): db_adapter.add_work_request was
+repointed from nebula.work_requests_history to resolution.work_request
+(canonical). Per DBA disposition 767abf1b:
+  - idempotency is a legacy_id existence-check inside the insert transaction
+    (no entity_key column on the canonical store)
+  - the deterministic entity_key is preserved into context['entity_key'] for
+    traceability during Stages 2-6, not as a column
+  - plan_id is preserved at context['plan_id'] (not the column — FK to the
+    still-empty resolution.implementation_plan)
 
-DoD (T26 Item B):
-  - WR birth persists + dedups entity_key
-  - double-submit test green: same intent twice → one WR / one entity_key /
-    no duplicate row
+This test asserts the new canonical contract for the conduit path:
+double-submit → one canonical row (legacy_id idempotency), entity_key present
+in context. The cascade admission_subscriber path (ensure_nebula_work_request)
+is W4 scope and still writes the nebula surface — its assertions are unchanged
+until W4 repoints.
 
 DB-backed: requires the live local PostgreSQL (CONDUIT_PG_DSN). Skips when
 unreachable. Self-cleaning (deletes the synthetic rows it inserts).
@@ -54,7 +58,7 @@ def _canonical_key(wr_id: str) -> str:
 
 
 class TestWorkRequestEntityKeyBirth(unittest.TestCase):
-    """DB-backed: WR birth persists + dedups entity_key (double-submit)."""
+    """DB-backed: WR birth persists + dedups identity (double-submit)."""
 
     @classmethod
     def setUpClass(cls):
@@ -83,6 +87,10 @@ class TestWorkRequestEntityKeyBirth(unittest.TestCase):
             with self._conn.cursor() as cur:
                 for lid in self._synthetic_legacy_ids:
                     cur.execute(
+                        "DELETE FROM resolution.work_request WHERE legacy_id = %s",
+                        (lid,),
+                    )
+                    cur.execute(
                         "DELETE FROM nebula.work_requests_history WHERE legacy_id = %s",
                         (lid,),
                     )
@@ -108,30 +116,31 @@ class TestWorkRequestEntityKeyBirth(unittest.TestCase):
             derive_wr_entity_key(dco_json, wr_id), expected,
             "derivation must equal the canonical emit_identity key")
 
-        # First submit: inserts with entity_key. Second submit (same intent):
-        # must NOT insert a duplicate row.
+        # First submit: inserts a canonical row. Second submit (same legacy_id):
+        # must NOT insert a duplicate row (legacy_id existence-check, disp 767abf1b).
         db.add_work_request(wr_id, None, dco_json, title="T26 double-submit")
         db.add_work_request(wr_id, None, dco_json, title="T26 double-submit")
 
         with self._conn.cursor() as cur:
             cur.execute(
-                "SELECT count(*), count(entity_key) "
-                "FROM nebula.work_requests_history WHERE legacy_id = %s",
+                "SELECT count(*) FROM resolution.work_request WHERE legacy_id = %s",
                 (wr_id,),
             )
-            total, non_null = cur.fetchone()
+            total = cur.fetchone()[0]
             cur.execute(
-                "SELECT entity_key FROM nebula.work_requests_history "
-                "WHERE legacy_id = %s",
+                "SELECT context::text FROM resolution.work_request WHERE legacy_id = %s",
                 (wr_id,),
             )
-            keys = [r[0] for r in cur.fetchall()]
+            context = json.loads(cur.fetchone()[0]) if cur.rowcount else None
 
         self.assertEqual(total, 1, "double-submit must not create a duplicate row")
-        self.assertEqual(non_null, 1, "entity_key must be persisted at birth")
-        self.assertEqual(keys, [expected], "persisted entity_key must equal the canonical key")
+        self.assertEqual(
+            context.get("entity_key"), expected,
+            "entity_key must be preserved into context at birth (disposition 767abf1b)")
 
     def test_ensure_nebula_work_request_persists_and_dedups(self):
+        # W4 scope — cascade admission_subscriber still writes the nebula surface
+        # until W4 repoints. Unchanged until then.
         import cascade.admission_subscriber as sub
 
         wr_id = f"wr-t26-cascade-{uuid_mod.uuid4().hex[:12]}"
