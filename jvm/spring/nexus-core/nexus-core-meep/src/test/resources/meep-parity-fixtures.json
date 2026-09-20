@@ -1,0 +1,16 @@
+{
+  "classifier": [
+    {"prompt": "hello world", "expected_archetype": "DEFAULT", "min_probability": 0.9},
+    {"prompt": "fix the bug in ServiceBroker", "expected_archetype": "REVISION", "min_probability": 0.5},
+    {"prompt": "why did this happen", "expected_archetype": "REFLECTION", "min_probability": 0.5}
+  ],
+  "pipeline": {
+    "prompt": "build a service",
+    "clock": "2026-09-20T00:00:00Z",
+    "expected_event_count": 6,
+    "expected_node_ids": ["construction-specify", "construction-build", "construction-verify"]
+  },
+  "replay": {
+    "terminal_states": ["COMPLETED", "FAILED", "SKIPPED"]
+  }
+}
