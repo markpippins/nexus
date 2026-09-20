@@ -350,6 +350,14 @@ wr-view-demotion-e2e-test:
 topology-spine-e2e-test:
 	@echo "[topology-spine-e2e-test] V189 topology asset-spine E2E (staged-inert DDL, throwaway DB, wr-conf-041)..."
 	@python3 -m pytest python/nexus_core/wrp/tests/test_v189_topology_spine_e2e.py -v
+
+wr-repoint-verify-test:
+	@echo "[wr-repoint-verify-test] W1-W4 repoint verification battery (hermetic, no DB/network)..."
+	@python3 -m unittest bin.tests.test_wr_repoint_verify -v
+
+wr-repoint-verify-live:
+	@echo "[wr-repoint-verify-live] structural battery + optional tranche against LIVE PG (read-only)..."
+	@python3 bin/wr-repoint-verify.py $(ARGS)
 attest-wiring-test:
 	@echo "[attest-wiring-test] boot-shim attestation wiring (hermetic + real-DB E2E, wr-conf-034)..."
 	@python3 -m pytest python/continuity/tests/test_attest.py python/nexus_core/wrp/tests/test_attest_wiring_e2e.py -v
