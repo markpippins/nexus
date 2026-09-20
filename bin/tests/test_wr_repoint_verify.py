@@ -65,6 +65,18 @@ class StructuralBattery(unittest.TestCase):
         self.assertEqual(bad[0], mod.FAIL)
         self.assertIn("UNKNOWN", bad[1])
 
+    def test_s2_wr_t26_hyphen_form_is_known(self):
+        # The canonical test vocabulary (engineer-ii T26 entity-key suite,
+        # #393 companion) writes wr-t26-<hex> ids — the prefix normalizes to
+        # 'wr-t26' and must NOT be flagged unknown. The SQL must carry the
+        # hyphen-form branch (pinned by inspecting the emitted query).
+        def q(sql):
+            self.assertIn("wr-t26-%", sql, "S2 SQL lost the hyphen-form normalization")
+            return [("wr-t26",)]
+
+        verdict, msg = mod.s2_prefix_set(q, dict(CTXT))
+        self.assertEqual(verdict, mod.PASS)
+
     def test_s3_counts_unlinked_vision_rows(self):
         ok = self.run_check("S3", [scalar(0)])
         self.assertEqual(ok[0], mod.PASS)
