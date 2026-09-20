@@ -95,6 +95,21 @@ BEGIN
 END $$;
 
 -- =============================================================================
+-- ── CROSSWALK VERIFICATION CONTRACT (pin from the architect's Stage-1
+--    evidence-check, 2026-09-20 — DBA record f08fdf0c) ──────────────────────
+-- The mirror key `asset:nexus:vision_work_requests:<uuid>` embeds the
+-- CANONICAL row's PK (= vision's work_request_uuid), NOT the `wr_id` that
+-- `legacy_id` strings carry. Verifiers MUST key on:
+--   1. mirror.canonical_asset_id = 'asset:nexus:vision_work_requests:'
+--        || resolution.work_request.id
+--   2. resolution.work_request.id = vision.work_requests.work_request_uuid
+--        (joined via legacy_id tail = wr_id)
+-- A checker equating the mirror-key tail with the legacy_id tail
+-- false-fails 0/6 (the attestation's first probe did exactly that).
+-- All three identifiers are mutually derivable through vision's two columns.
+-- =============================================================================
+
+-- =============================================================================
 -- ── PHASE 1 — asset registry unification (semantics → resolution) ──────────
 -- The 6 referenced assets mirror by identity (same id, same
 -- canonical_asset_id) so downstream uuid references stay identity-stable.
