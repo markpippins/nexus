@@ -51,6 +51,9 @@ jobs:
         run: pip install psycopg2-binary
 
       - name: Run V189 topology asset-spine E2E
+        run: python3 -m pip install pytest psycopg2-binary
+
+      - name: Run V189 topology asset-spine E2E
         env:
           CONDUIT_PG_DSN: postgresql://pguser:pgpass@localhost:5432/postgres
         run: |
