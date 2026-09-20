@@ -269,6 +269,38 @@ interface KeychainEntry {
   projected_at: string;
 }
 
+/**
+ * Flat `instance_id -> current record_id` index.
+ *
+ * This is the ONLY prior state a delta needs in order to be computed: an
+ * instance that is present with the same record_id did not move, a changed
+ * record_id is an update (supersession), a missing instance was removed.
+ */
+interface InstanceIndex {
+  [instanceId: string]: string;
+}
+
+/**
+ * A contentless instance manifest — the unit of a state-vector delta.
+ * Carries identity and version only; record content lives in PG/Shrapnel.
+ */
+interface InstanceManifest {
+  instance_id: string;
+  record_type: string;
+  record_id: string;
+  version: number;
+  role: string;
+  supersession_type: string;
+  asset_id: string | null;
+}
+
+/** What moved between two checkpoints (D6). */
+interface CheckpointDelta {
+  added: InstanceManifest[];
+  updated: InstanceManifest[];
+  removed: string[];
+}
+
 const PG_CONFIG = {
   host: process.env.PG_HOST || "localhost",
   port: Number(process.env.PG_PORT || 5432),
@@ -287,6 +319,8 @@ export default class KeychainService extends Service {
   private outboxPollInFlight = false;
   private agentProjectionLock: Promise<void> = Promise.resolve();
   private readonly checkpointReservationTtlMs = 5 * 60 * 1000;
+  /** Deepest delta replay served by rewind since boot (D6 ruling 2b). */
+  private deepestRewindDepth = 0;
 
   constructor(broker: ServiceBroker) {
     super(broker);
@@ -306,11 +340,48 @@ export default class KeychainService extends Service {
             const client = await this.getMongo();
             const db = client.db("keychains");
             const latest = await db.collection("snapshots").findOne({}, { sort: { version: -1 } });
+            // D3 (keychains thread e267263c): there is no snapshot timer — the
+            // interval retired with PR #116 and the contract no longer
+            // advertises one. Snapshots are driven by decision points /
+            // state transitions consumed from resolution.keychain_event_outbox.
+            // lastEventAt/lastSnapshotAt expose that posture so a monitor sees
+            // "idle outbox" rather than a fictional 60s cadence.
+            const pool = await this.getPool();
+            const outboxRes = await pool.query(
+              `SELECT max(created_at) AS last_event_at FROM resolution.keychain_event_outbox`,
+            );
+            const lastEventAt = outboxRes.rows[0]?.last_event_at
+              ? new Date(outboxRes.rows[0].last_event_at).toISOString()
+              : null;
+            const arNewest = await db.collection("ar_snapshots").findOne(
+              { $or: [{ checkpoint_status: "committed" }, { checkpoint_status: { $exists: false } }] },
+              { sort: { version: -1 }, projection: { version: 1, storage: 1, base_version: 1, created_at: 1 } },
+            );
+            // D6 ruling 2b: chain health for the newest committed checkpoint —
+            // distance to its nearest replayable base, so a broken base is
+            // visible before a rewind needs one.
+            let chainHealth: any = null;
+            if (arNewest) {
+              const baseVersion = arNewest.storage === "delta" && arNewest.base_version != null
+                ? Number(arNewest.base_version)
+                : Number(arNewest.version);
+              chainHealth = {
+                version: Number(arNewest.version),
+                storage: arNewest.storage === "delta" ? "delta" : "base",
+                nearestBaseDistance: Number(arNewest.version) - baseVersion,
+                nearestBaseVersion: baseVersion,
+              };
+            }
             return {
               enabled: true,
-              intervalMs: Number(process.env.KEYCHAIN_SYNC_INTERVAL_MS || 60000),
+              mode: "event_driven",
+              outboxPollMs: Number(process.env.KEYCHAIN_OUTBOX_POLL_MS || 5000),
+              lastEventAt,
+              lastSnapshotAt: arNewest ? arNewest.created_at : null,
               latestSnapshot: latest ? latest.version : null,
               latestSnapshotAt: latest ? latest.created_at : null,
+              chainHealth,
+              deepestRewindSinceBoot: this.deepestRewindDepth,
             };
           },
         },
@@ -370,7 +441,26 @@ export default class KeychainService extends Service {
               return { ok: false, error: `no snapshot v${version} exists` };
             }
             const stateVector = (snap as any).state_vector;
-            if (!stateVector) {
+            if (stateVector) {
+              // Legacy checkpoints and every Nth base carry the full manifest.
+              return {
+                ok: true,
+                version: snap.version,
+                label: snap.label,
+                created_at: snap.created_at,
+                trigger: (snap as any).trigger || null,
+                totalRecords: (snap as any).totalRecords || null,
+                entryCount: (snap as any).entryCount || null,
+                recordTypeCount: Object.keys(stateVector).length,
+                state_vector: stateVector,
+                storage: (snap as any).storage || "base",
+                decision_context: (snap as any).decision_context || null,
+              };
+            }
+
+            // Delta checkpoint (D6): replay base -> deltas up to the target.
+            const delta = (snap as any).delta as CheckpointDelta | undefined;
+            if (!delta) {
               return {
                 ok: true,
                 version: snap.version,
@@ -382,6 +472,61 @@ export default class KeychainService extends Service {
                 state_vector: null,
               };
             }
+            // Walk the prevVersion pointers back to the nearest checkpoint
+            // that still carries a full state_vector, then replay the deltas
+            // forward. A pointer walk (rather than a contiguous version range)
+            // is required because versions are consumed by checkpoints that
+            // may never commit — an aborted delivery or a removed checkpoint
+            // leaves a permanent hole in the global version sequence, and that
+            // must not make unrelated deltas unreconstructable.
+            const path: any[] = [];
+            const visited = new Set<number>();
+            let cursor: any = snap;
+            while (!cursor.state_vector) {
+              if (!cursor.delta) {
+                return {
+                  ok: false,
+                  error: `v${cursor.version} carries neither a state_vector nor a delta`,
+                  version: snap.version,
+                };
+              }
+              path.push(cursor);
+              const prevVersion = Number(cursor.prevVersion);
+              if (!Number.isInteger(prevVersion) || prevVersion < 1) {
+                return {
+                  ok: false,
+                  error: `v${cursor.version} is a delta with no usable prevVersion pointer`,
+                  version: snap.version,
+                };
+              }
+              if (visited.has(prevVersion)) {
+                return { ok: false, error: `delta chain cycle at v${prevVersion}`, version: snap.version };
+              }
+              visited.add(prevVersion);
+              if (path.length > 5000) {
+                return { ok: false, error: "delta chain exceeded 5000 steps", version: snap.version };
+              }
+              cursor = await db.collection("ar_snapshots").findOne({
+                version: prevVersion,
+                $or: [
+                  { checkpoint_status: "committed" },
+                  { checkpoint_status: { $exists: false } },
+                ],
+              });
+              if (!cursor) {
+                return {
+                  ok: false,
+                  error: `delta chain is broken: v${prevVersion} no longer exists`,
+                  version: snap.version,
+                };
+              }
+            }
+            let merged: Record<string, InstanceManifest[]> = cursor.state_vector;
+            const baseVersion = Number(cursor.version);
+            for (const step of path.reverse()) {
+              merged = this.mergeDelta(merged, step.delta as CheckpointDelta);
+            }
+            if (path.length > this.deepestRewindDepth) this.deepestRewindDepth = path.length;
             return {
               ok: true,
               version: snap.version,
@@ -390,8 +535,12 @@ export default class KeychainService extends Service {
               trigger: (snap as any).trigger || null,
               totalRecords: (snap as any).totalRecords || null,
               entryCount: (snap as any).entryCount || null,
-              recordTypeCount: Object.keys(stateVector).length,
-              state_vector: stateVector,
+              recordTypeCount: Object.keys(merged).length,
+              state_vector: merged,
+              storage: "delta",
+              reconstructed: true,
+              base_version: baseVersion,
+              delta_steps: path.length,
               decision_context: (snap as any).decision_context || null,
             };
           },
@@ -411,8 +560,8 @@ export default class KeychainService extends Service {
                   { $or: [{ checkpoint_status: "committed" }, { checkpoint_status: { $exists: false } }] },
                   { sort: { version: -1 } },
                 );
-            const entryCount = active
-              ? await db.collection("checkpoint_entries").countDocuments({ checkpoint_id: active.checkpoint_id })
+            const entryCount = latest?.entryCount != null
+              ? Number(latest.entryCount)
               : await db.collection("entries").countDocuments();
             return {
               enabled: true,
@@ -480,6 +629,14 @@ export default class KeychainService extends Service {
         this.logger.info(
           "keychain snapshots are event-driven (D3) — no periodic timer; " +
           "runSnapshot() is explicit-invocation only"
+        );
+        // D6: checkpoint storage is a periodic full base plus per-checkpoint
+        // deltas. The checkpoint_entries full copies are retired; its unique
+        // index is left in place and simply stops receiving writes.
+        this.logger.info(
+          `keychain checkpoint storage is base+delta (D6) — full base every ` +
+          `${this.baseInterval()} checkpoints, deltas between; ` +
+          `checkpoint_entries full copies retired`
         );
       },
 
@@ -1196,6 +1353,125 @@ export default class KeychainService extends Service {
     return entries;
   }
 
+  // ========================================================================
+  // Checkpoint storage: periodic base + per-checkpoint delta (D6)
+  // ========================================================================
+  //
+  // Historical shape: every checkpoint embedded a full state_vector (~2.8 MB)
+  // plus parallel instance_ids / current_record_ids arrays (~0.86 MB), and
+  // separately wrote a complete copy of every resolved entry (~10.9k docs,
+  // ~2.8 KB each) into checkpoint_entries. Measured cost: 3.74 MB per
+  // ar_snapshots doc and 5.7 GB of checkpoint_entries for 201 decision
+  // points — for a state vector of 11,774 instances. Nothing read the entry
+  // copies back: rewind reconstructs from state_vector, and the only other
+  // reference was a countDocuments for a status field.
+  //
+  // Current shape: every Nth checkpoint stores a full state_vector (a BASE);
+  // the rest store only what moved (a DELTA) plus the version of the base
+  // they replay from. Rewind loads the nearest base at or before the target
+  // and replays the deltas in version order. Legacy checkpoints still carry
+  // state_vector and remain readable by the same path.
+
+  private instanceManifest(entry: KeychainEntry): InstanceManifest {
+    return {
+      instance_id: entry.instance_id,
+      record_type: entry.record_type,
+      record_id: entry.current.record_id,
+      version: entry.current.version,
+      role: entry.role,
+      supersession_type: entry.provenance.supersession_type,
+      asset_id: entry.asset_id,
+    };
+  }
+
+  private indexFromManifests(manifests: InstanceManifest[]): InstanceIndex {
+    const index: InstanceIndex = {};
+    for (const manifest of manifests) index[manifest.instance_id] = manifest.record_id;
+    return index;
+  }
+
+  /**
+   * Derive an index from a legacy checkpoint's parallel id arrays.
+   *
+   * Both arrays are built by iterating the same Map in the same pass, so they
+   * are positionally parallel. If they are not the same length the pairing
+   * cannot be trusted and null is returned, which forces the next checkpoint
+   * to be a base rather than a delta computed against unknown prior state.
+   *
+   * The arrays store the legacy entries-map KEYS ("amendment:<token>",
+   * "explicit:<prefix>", "single:<uuid>") while state vectors and manifests
+   * carry the UNPREFIXED instance ids the entries were built with. The prefix
+   * is stripped here so the derived index is comparable with current
+   * manifests — without this, the first delta after a legacy base would see
+   * zero key overlap and degenerate into a full-rewrite delta.
+   */
+  private indexFromLegacyArrays(
+    instanceIds: unknown,
+    currentRecordIds: unknown,
+  ): InstanceIndex | null {
+    if (!Array.isArray(instanceIds) || !Array.isArray(currentRecordIds)) return null;
+    if (instanceIds.length !== currentRecordIds.length) return null;
+    const index: InstanceIndex = {};
+    for (let i = 0; i < instanceIds.length; i += 1) {
+      const raw = String(instanceIds[i]);
+      // "amendment:<token>" | "explicit:<prefix>" | "single:<uuid>" -> <id>
+      const stripped = /^(amendment|explicit|single):(.+)$/.exec(raw);
+      index[stripped ? stripped[2] : raw] = String(currentRecordIds[i]);
+    }
+    return index;
+  }
+
+  private computeDelta(prevIndex: InstanceIndex, manifests: InstanceManifest[]): CheckpointDelta {
+    const added: InstanceManifest[] = [];
+    const updated: InstanceManifest[] = [];
+    const current: InstanceIndex = {};
+    for (const manifest of manifests) {
+      current[manifest.instance_id] = manifest.record_id;
+      const prevRecordId = prevIndex[manifest.instance_id];
+      if (prevRecordId === undefined) added.push(manifest);
+      else if (prevRecordId !== manifest.record_id) updated.push(manifest);
+    }
+    const removed = Object.keys(prevIndex).filter((instanceId) => current[instanceId] === undefined);
+    return { added, updated, removed };
+  }
+
+  /**
+   * Apply a delta to a state vector, returning a new state vector.
+   *
+   * Pure by construction so rewind can replay without mutating the base it
+   * loaded. A record_type change moves the instance between groups.
+   */
+  private mergeDelta(
+    stateVector: Record<string, InstanceManifest[]>,
+    delta: CheckpointDelta,
+  ): Record<string, InstanceManifest[]> {
+    const next: Record<string, InstanceManifest[]> = {};
+    for (const [recordType, instances] of Object.entries(stateVector || {})) {
+      next[recordType] = Array.isArray(instances) ? [...instances] : [];
+    }
+    const dropInstance = (instanceId: string) => {
+      for (const recordType of Object.keys(next)) {
+        next[recordType] = next[recordType].filter((instance) => instance.instance_id !== instanceId);
+      }
+    };
+    for (const instanceId of delta.removed || []) dropInstance(instanceId);
+    // Updates are re-homed under the record_type the instance now carries.
+    for (const manifest of delta.updated || []) {
+      dropInstance(manifest.instance_id);
+      (next[manifest.record_type] ||= []).push(manifest);
+    }
+    for (const manifest of delta.added || []) {
+      (next[manifest.record_type] ||= []).push(manifest);
+    }
+    return next;
+  }
+
+  /** Every Nth checkpoint is a full base; the rest are deltas. */
+  private baseInterval(): number {
+    const raw = Number(process.env.KEYCHAIN_BASE_INTERVAL || 50);
+    return Number.isInteger(raw) && raw > 0 ? raw : 50;
+  }
+
   /**
    * Project agent_records into the keychain contextual layer.
    *
@@ -1651,12 +1927,26 @@ export default class KeychainService extends Service {
       { sort: { version: -1 } },
     );
     const prevVersion = prev ? (prev.version as number) : 0;
-    const prevInstanceIds = prev
-      ? new Set<string>((prev.instance_ids as string[]) || [])
-      : new Set<string>();
-    const prevCurrentRecordIds = prev
-      ? new Set<string>((prev.current_record_ids as string[]) || [])
-      : new Set<string>();
+
+    // ── Prior instance index (the only prior state a delta needs) ─────────
+    // Preferred source is the bounded checkpoint_heads pointer, which is one
+    // small doc rather than a full manifest embedded in every checkpoint.
+    // A legacy checkpoint's parallel id arrays are accepted as a fallback so
+    // the transition out of the historical shape is seamless; if neither is
+    // usable this checkpoint becomes a base, so a delta is never computed
+    // against unknown prior state.
+    const head = await db.collection<any>("checkpoint_heads").findOne({ _id: "agent-records" });
+    let prevIndex: InstanceIndex | null = null;
+    if (head && head.index && Number(head.version) === prevVersion) {
+      prevIndex = head.index as InstanceIndex;
+    } else if (prev) {
+      prevIndex = this.indexFromLegacyArrays((prev as any).instance_ids, (prev as any).current_record_ids);
+    } else {
+      prevIndex = {};
+    }
+    let prevStateKnown = prevIndex !== null;
+    const prevInstanceIds = new Set<string>(Object.keys(prevIndex || {}));
+    const prevCurrentRecordIds = new Set<string>(Object.values(prevIndex || {}));
 
     // ── Resolve logical instances ─────────────────────────────────────────
     const version = await this.allocateCheckpointVersion(db);
@@ -1664,6 +1954,47 @@ export default class KeychainService extends Service {
     const now = new Date().toISOString();
 
     const entries = this.resolveKeychainEntries(records, version, now, assetsByRecordId);
+
+    // ── Decide base vs delta, and compute the delta (D6) ──────────────────
+    const manifests = Array.from(entries.values()).map((entry) => this.instanceManifest(entry));
+    const currentIndex = this.indexFromManifests(manifests);
+    // Overlap sanity: a prior index that shares essentially no keys with the
+    // current population is not comparable prior state (scheme change,
+    // foreign index) — diffing against it would produce a full-rewrite delta
+    // that defeats the storage model. Degrade to a base instead.
+    if (prevStateKnown && prevIndex && manifests.length > 100 && prevInstanceIds.size > 100) {
+      const overlap = manifests.filter((m) => prevInstanceIds.has(m.instance_id)).length;
+      if (overlap / manifests.length < 0.5) {
+        prevIndex = null;
+        prevStateKnown = false;
+      }
+    }
+    const isBase = !prevStateKnown || version % this.baseInterval() === 0;
+    const delta: CheckpointDelta = isBase
+      ? { added: [], updated: [], removed: [] }
+      : this.computeDelta(prevIndex || {}, manifests);
+    let baseVersion: number | null = null;
+    if (!isBase) {
+      const nearestBase = await arSnapshots.findOne(
+        {
+          version: { $lte: prevVersion },
+          $or: [
+            { checkpoint_status: "committed" },
+            { checkpoint_status: { $exists: false } },
+          ],
+          $and: [
+            {
+              $or: [
+                { storage: "base" },
+                { state_vector: { $exists: true } },
+              ],
+            },
+          ],
+        },
+        { sort: { version: -1 }, projection: { version: 1 } },
+      );
+      baseVersion = nearestBase ? Number(nearestBase.version) : null;
+    }
 
     // ── Compute drift: new/changed instances vs previous snapshot ─────────
     const driftFindings: any[] = [];
@@ -1715,19 +2046,15 @@ export default class KeychainService extends Service {
     // keeps the prior checkpoint readable until promotion and allows startup
     // reconciliation to recover an interrupted delivery.
     const checkpointId = randomUUID();
+    // Full entry documents are still materialized for the `entries`
+    // compatibility view — one bounded generation, replaced on every commit.
+    // The per-checkpoint full copy is gone (D6): the checkpoint persists a
+    // delta, and the state vector is stored only in bases.
     const checkpointEntries = Array.from(entries.values()).map((entry) => ({
       ...entry,
       checkpoint_id: checkpointId,
     }));
     let checkpointCommitted = false;
-    try {
-      if (checkpointEntries.length > 0) {
-        await db.collection("checkpoint_entries").insertMany(checkpointEntries);
-      }
-    } catch (err) {
-      await db.collection("checkpoint_entries").deleteMany({ checkpoint_id: checkpointId }).catch(() => undefined);
-      throw err;
-    }
 
     const supersededCount = records.length - entries.size;
     const typeBreakdown: Record<string, number> = {};
@@ -1764,11 +2091,25 @@ export default class KeychainService extends Service {
       entryCount: entries.size,
       supersededRecords: supersededCount,
       driftCount: driftFindings.length,
-      instance_ids: Array.from(currentInstanceIds),
-      current_record_ids: Array.from(currentRecordIds),
       typeBreakdown,
       roleBreakdown,
-      state_vector: stateVector, // D1: current set of records per record type
+      // D1/D6: the state vector is stored as a periodic BASE (full manifest)
+      // plus per-checkpoint DELTAS. The former instance_ids /
+      // current_record_ids arrays are gone: they were ~0.86 MB of every
+      // 3.74 MB document, derivable from the manifest, and are now kept in the
+      // single bounded checkpoint_heads pointer instead.
+      storage: isBase ? "base" : "delta",
+      ...(isBase
+        ? { state_vector: stateVector }
+        : {
+            base_version: baseVersion,
+            delta,
+            delta_counts: {
+              added: delta.added.length,
+              updated: delta.updated.length,
+              removed: delta.removed.length,
+            },
+          }),
       decision_context: triggerEvent ? this.buildDecisionContextManifest(triggerEvent, { checkpoint_id: checkpointId, version }) : null,
       ...(triggerEvent?.source_namespace && triggerEvent?.source_event_id
         ? {
@@ -1789,6 +2130,14 @@ export default class KeychainService extends Service {
       );
       checkpointCommitted = true;
       await this.promoteActiveCheckpoint(db, checkpoint);
+      // Advance the bounded prior-state pointer used to compute the next
+      // delta. Written after promotion so a failed commit never leaves a head
+      // describing a checkpoint that does not exist.
+      await db.collection("checkpoint_heads").updateOne(
+        { _id: "agent-records" } as any,
+        { $set: { version, index: currentIndex, updated_at: now } },
+        { upsert: true },
+      );
     } catch (err) {
       if (!checkpointCommitted) {
         await arSnapshots.deleteMany({ checkpoint_id: checkpointId, checkpoint_status: "staged" }).catch(() => undefined);
@@ -1864,6 +2213,13 @@ export default class KeychainService extends Service {
       typeBreakdown,
       roleBreakdown,
       recordTypeCount: Object.keys(stateVector).length,
+      storage: isBase ? "base" : "delta",
+      base_version: baseVersion,
+      delta_counts: {
+        added: delta.added.length,
+        updated: delta.updated.length,
+        removed: delta.removed.length,
+      },
       trigger: triggerEvent || null,
       decision_context: triggerEvent ? this.buildDecisionContextManifest(triggerEvent, { checkpoint_id: checkpointId, version }) : null,
       deduplicated: false,

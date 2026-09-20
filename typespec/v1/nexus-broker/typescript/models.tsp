@@ -64,12 +64,31 @@ namespace org.nexus.nexusbroker {
   // Keychains — agent-record contextual layer (state vector + rewind)
   // ========================================================================
 
-  /** GET /api/keychain-snapshot/status response (legacy observations projection). */
+  /** GET /api/keychain-snapshot/status response (event-driven observations projection). */
   model KeychainStatus {
     enabled: boolean;
-    intervalMs: int32;
+    /** D3: literal "event_driven" — the periodic snapshot timer is retired. */
+    mode: string;
+    /** Outbox poll cadence in ms (KEYCHAIN_OUTBOX_POLL_MS). */
+    outboxPollMs: int32;
+    /** Newest outbox event timestamp, null if none. */
+    lastEventAt: string | null;
+    /** Newest committed legacy checkpoint timestamp, null if none. */
+    lastSnapshotAt: string | null;
     latestSnapshot: int32 | null;
     latestSnapshotAt: string | null;
+    /** D6 chain health for the newest committed agent-records checkpoint. */
+    chainHealth: KeychainChainHealth | null;
+    /** Deepest delta replay served by rewind since broker boot. */
+    deepestRewindSinceBoot: int32;
+  }
+
+  /** D6 chain health for the newest committed checkpoint. */
+  model KeychainChainHealth {
+    version: int32;
+    storage: string;
+    nearestBaseDistance: int32;
+    nearestBaseVersion: int32;
   }
 
   /** The current issuance of a keychain instance (latest version only). */

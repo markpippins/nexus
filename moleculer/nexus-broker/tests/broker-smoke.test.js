@@ -20,6 +20,7 @@ dotenv.config({ path: path.join(__dirname, '..', '.env') })
 
 const BROKER_DIR = path.resolve(__dirname, '..')
 const TEST_PORT = process.env.TEST_SERVICE_PORT || '4098'
+const TEST_PTY_WS_PORT = process.env.TEST_PTY_WS_PORT || String(Number(TEST_PORT) + 1)
 const BASE = `http://localhost:${TEST_PORT}/api`
 
 let child = null
@@ -30,7 +31,12 @@ async function startBroker() {
     ['node_modules/.bin/moleculer-runner', '--mask', '**/*.js', 'dist/services'],
     {
       cwd: BROKER_DIR,
-      env: { ...process.env, SERVICE_PORT: TEST_PORT, NODE_ENV: 'test' },
+      env: {
+        ...process.env,
+        SERVICE_PORT: TEST_PORT,
+        PTY_WS_PORT: TEST_PTY_WS_PORT,
+        NODE_ENV: 'test',
+      },
       // Drain output so a large projection cannot block the child on a full
       // pipe before the test reaches its assertions.
       stdio: ['ignore', 'ignore', 'ignore'],
@@ -110,6 +116,19 @@ test('GET /api/workers/harness health action responds', async () => {
   assert.equal(res.status, 200)
   const body = await res.json()
   assert.equal(body.status, 'ok')
+})
+
+test('GET /api/keychain-snapshot/status exposes the event-driven D6 contract', async () => {
+  const res = await fetch(`${BASE}/keychain-snapshot/status`)
+  assert.equal(res.status, 200)
+  const body = await res.json()
+  assert.equal(body.enabled, true)
+  assert.equal(body.mode, 'event_driven')
+  assert.ok(Number.isInteger(body.outboxPollMs) && body.outboxPollMs > 0)
+  assert.ok(Object.hasOwn(body, 'lastEventAt'))
+  assert.ok(Object.hasOwn(body, 'lastSnapshotAt'))
+  assert.ok(Object.hasOwn(body, 'chainHealth'))
+  assert.ok(Number.isInteger(body.deepestRewindSinceBoot))
 })
 
 test('GET /api/keychain-snapshot/agent-records/status exposes the active checkpoint', async () => {
