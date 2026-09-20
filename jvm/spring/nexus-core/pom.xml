@@ -80,6 +80,11 @@
                 <version>${project.version}</version>
             </dependency>
             <dependency>
+                <groupId>org.nexus.core</groupId>
+                <artifactId>nexus-core-meep</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
                 <groupId>org.springdoc</groupId>
                 <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
                 <version>${springdoc.version}</version>
