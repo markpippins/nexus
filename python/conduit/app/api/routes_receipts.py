@@ -172,18 +172,49 @@ def insert_receipt(body: ReceiptInsertRequest):
     return {"ok": True, "id": body.id, "plan_id": body.plan_id}
 
 
+# Sole legitimate caller of the DELETE surface is conduit-mcp's unblock_plan
+# tool (typescript/conduit-mcp/src/tools.ts ~L1905), which purges the unblock
+# receipt family so a previously-blocked plan can be re-ticketed cleanly.
+# Per architect ruling fcec95a2 (#2): the endpoint must NOT remain a
+# general-purpose receipt deleter — any type outside the unblock family is
+# rejected. This is the receipt-immutability exception, scoped and typed to
+# the unblock workflow (see unblock_plan). Do not widen without an architect
+# decision.
+UNBLOCK_RECEIPT_TYPES = {"BLOCK", "PLAN_BLOCK", "CANCELLED", "ABANDONED"}
+
+
 @router.delete("/{plan_id}")
 def delete_receipts_by_plan_and_type(
     plan_id: str,
     types: str = Query(..., description="Comma-separated receipt types to delete"),
 ):
-    """Delete receipts by plan and type. Equivalent to db.ts deleteReceiptsByPlanAndType()."""
+    """Delete receipts by plan and type (unblock family only).
+
+    Constrained to the unblock receipt family {BLOCK, PLAN_BLOCK, CANCELLED,
+    ABANDONED} — the sole legitimate caller is conduit-mcp's unblock_plan tool
+    (typescript/conduit-mcp/src/tools.ts ~L1905). This is a scoped, typed,
+    operator-action-backed purge (the unblock workflow), not arbitrary history
+    rewriting. Receipt-immutability doctrine is untouched. Any type outside the
+    family is rejected with 400.
+    """
     from db_adapter import DBAdapter
     db = DBAdapter()
 
     type_list = [t.strip() for t in types.split(",") if t.strip()]
     if not type_list:
         raise HTTPException(status_code=400, detail="No receipt types provided")
+
+    # HARDENING (ruling fcec95a2 #2): reject anything outside the unblock family.
+    disallowed = [t for t in type_list if t not in UNBLOCK_RECEIPT_TYPES]
+    if disallowed:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Receipt type(s) {disallowed} are outside the unblock family "
+                f"({sorted(UNBLOCK_RECEIPT_TYPES)}). This endpoint exists solely for "
+                "unblock_plan and must not be used as a general-purpose receipt deleter."
+            ),
+        )
 
     placeholders = ", ".join(["%s"] * len(type_list))
     with db._get_connection() as conn:

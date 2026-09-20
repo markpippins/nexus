@@ -418,7 +418,10 @@ export const toolDefinitions: MCPToolDefinition[] = [
     name: "unblock_plan",
     description:
       "Move a blocked plan back to pending: undeletes (status→pending) if archived, "
-      + "deletes all BLOCK/PLAN_BLOCK receipts, issues a PLAN_CREATE receipt, "
+      + "deletes the unblock-family receipts (BLOCK/PLAN_BLOCK/CANCELLED/ABANDONED — "
+      + "this tool is the SOLE legitimate caller of deleteReceiptsByPlanAndType; the "
+      + "scoped receipt purge is the receipt-immutability exception, architect ruling "
+      + "fcec95a2 #2), issues a PLAN_CREATE receipt, "
       + "and spawns a builder ticket so the conduit can pick it up again.",
     inputSchema: {
       type: "object",

@@ -3597,6 +3597,17 @@ export async function runCompileGate(opts: {
   return { ...decision, verdict_id: verdictId };
 }
 
+/**
+ * Delete receipts by plan and type.
+ *
+ * Sole legitimate caller: the unblock_plan tool (tools.ts ~L1905). Allowed
+ * type set: the unblock receipt family {BLOCK, PLAN_BLOCK, CANCELLED,
+ * ABANDONED}. This is a scoped, typed, operator-action-backed purge (the
+ * unblock workflow) — NOT a general-purpose receipt deleter. Receipt-
+ * immutability doctrine is untouched. The REST surface
+ * (DELETE /api/receipts/{plan_id}) rejects any type outside this family
+ * (architect ruling fcec95a2 #2). Do not widen without an architect decision.
+ */
 export async function deleteReceiptsByPlanAndType(
   planId: string,
   types: string[],
