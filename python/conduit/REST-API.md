@@ -637,19 +637,31 @@ Returns raw DB rows from `vision.receipts`.
 {"ok": true, "id": "RCP-UNIQUE-ID", "plan_id": "plan_0053"}
 ```
 
-### `DELETE /api/receipts/{plan_id}` — Delete Receipts by Type
+### `DELETE /api/receipts/{plan_id}` — Delete Receipts by Type (unblock family only)
+
+> **Constrained endpoint.** Sole legitimate caller is conduit-mcp's
+> `unblock_plan` tool (typescript/conduit-mcp/src/tools.ts ~L1905). It is a
+> scoped, typed, operator-action-backed purge of the unblock receipt family —
+> NOT a general-purpose receipt deleter. Receipt-immutability doctrine is
+> untouched. Any type outside the unblock family is rejected with 400
+> (architect ruling fcec95a2 #2).
 
 #### Query Parameters
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
-| `types` | string | **required** | Comma-separated list of receipt types to delete |
+| `types` | string | **required** | Comma-separated receipt types to delete. Allowed: `BLOCK`, `PLAN_BLOCK`, `CANCELLED`, `ABANDONED` only. |
 
 #### Response
 
 ```json
-{"deleted": 2, "plan_id": "plan_0053", "types": ["PROPOSED", "PLANNING"]}
+{"deleted": 2, "plan_id": "plan_0053", "types": ["BLOCK", "PLAN_BLOCK"]}
 ```
+
+#### Errors
+
+- `400` — any requested type outside the unblock family is rejected with a
+  message enumerating the allowed set.
 
 ---
 
