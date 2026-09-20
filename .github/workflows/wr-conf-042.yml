@@ -1,0 +1,66 @@
+name: WR Conf 042 — Scratch Role Vocabulary Widening (V190 G1 close-out E2E)
+
+# Applies the REAL sql/V190__scratch_role_vocabulary_widening.sql to throwaway
+# databases and drives the full contract against live constraint behavior:
+#
+#   - RepairPath: a skeleton carrying the PRE-V190 live shape (scratch
+#     agent_records_history with the stale 21-role CHECK, nebula twin with the
+#     live 24-role CHECK as the preflight's comparison target). The pre-state
+#     defect reproduces (lead-engineer write rejected through the scratch
+#     path — the operator's failure), then V190 widens: the three
+#     previously-rejected roles (ontologist / lead-engineer /
+#     sound-technician) are accepted, bogus roles still rejected, ''
+#     still allowed, scratch's constraint literals equal nebula's, existing
+#     rows survive, and re-apply is an idempotent no-op.
+#   - DriftGate: nebula's vocabulary grown beyond the pin refuses loudly
+#     (V190 PREFLIGHT FAIL ... drifted) and changes nothing; a missing
+#     nebula source of truth refuses too.
+#   - BootstrapPath: the REAL patched ci-bootstrap deploys born-clean — the
+#     24-role CHECK present at birth, every pinned role (plus '') insertable,
+#     a bogus role rejected. No repair needed, none applied.
+#
+# No mocks on the DB path. The suite creates and drops its own throwaway
+# databases; no production database is touched. Service pinned to postgres:17
+# (house convention after the wr-conf-025 PG17 lesson, PR #300).
+
+on:
+  push:
+    branches: [main, master, feature/*, dev]
+  pull_request:
+    branches: [main, master, feature/*]
+  workflow_dispatch:
+
+jobs:
+  v190-scratch-vocabulary-e2e:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: pguser
+          POSTGRES_PASSWORD: pgpass
+          POSTGRES_DB: nexus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pguser"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies (declared, not mocked — pitfall #15)
+        run: python3 -m pip install pytest psycopg2-binary
+
+      - name: Run V190 scratch role-vocabulary E2E
+        env:
+          CONDUIT_PG_DSN: postgresql://pguser:pgpass@localhost:5432/postgres
+        run: |
+          python3 -m pytest python/nexus_core/wrp/tests/test_v190_scratch_vocabulary_e2e.py -v
