@@ -337,7 +337,11 @@ SELECT 'ROLES_LIVE', count(*) FROM tackle.role_memory;
 ROLLBACK;
 """
         p = subprocess.run(
-            ["psql", "-v", "ON_ERROR_STOP=1", DSN],
+            # -At is REQUIRED: the failure regex anchors MISMATCH/... at
+            # line start, which only holds for unaligned tuples-only output.
+            # Without -At, padded table output made every failure invisible
+            # (verify reported byte-identical on genuinely drifted seeds).
+            ["psql", "-X", "-v", "ON_ERROR_STOP=1", "-At", DSN],
             input=compare_sql, capture_output=True, text=True,
         )
         if p.returncode != 0:
