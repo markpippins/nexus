@@ -74,7 +74,12 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: "8082"
+      # REDIS_PORT is required by start/env.ts and validated as a number; the
+      # broker already pins it, and pinning it here too keeps the group
+      # self-consistent instead of depending on the injected .env (2026-09-20:
+      # a missing REDIS_PORT restart-looped control-edge on helium).
       REDIS_HOST: redis
+      REDIS_PORT: "6379"
       PG_HOST: host.docker.internal
     extra_hosts:
       - "host.docker.internal:host-gateway"

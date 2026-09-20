@@ -96,8 +96,16 @@
       when: git_sync is not skipped
 
     # Superset of the keys both containers read via env_file (.env):
-    # control-edge needs APP_*/PG_*, broker needs MONGO_URL. Same dev-tier
-    # credential posture as the legacy tier (documented LAN dev creds).
+    # control-edge needs APP_*/PG_*/REDIS_*, broker needs MONGO_URL. Same
+    # dev-tier credential posture as the legacy tier (documented LAN dev
+    # creds).
+    #
+    # ⚠ This render OVERWRITES the whole file. It must stay a faithful
+    # superset of the hand-maintained docker/candidate-stack/.env or a
+    # deployed target silently loses keys the dev checkout still has.
+    # Learned the hard way 2026-09-20: REDIS_PORT was absent here, so the
+    # first helium deploy produced a control-edge that restart-looped on
+    # adonis' EnvValidationException while titanium stayed healthy.
     - name: Render candidate .env
       ansible.builtin.copy:
         dest: "{{ candidate_compose_dir }}/.env"
@@ -112,6 +120,7 @@
           PG_PASSWORD=pgpass
           PG_DB_NAME=nexus
           PG_PORT=5432
+          REDIS_PORT=6379
           MONGO_URL={{ cand_mongo_url }}
       register: env_render
       no_log: true
