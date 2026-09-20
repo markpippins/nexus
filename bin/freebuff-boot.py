@@ -133,7 +133,8 @@ class Boot:
                  lease_policy: str, update_pointer: bool, limit: int,
                  dry_run: bool, strict: bool, want_digest: bool = False,
                  want_conn: bool = False, want_attest_scan: bool = True,
-                 want_calendar: bool = True, want_consolidate: bool = True):
+                 want_calendar: bool = True, want_consolidate: bool = True,
+                 want_blackboard: bool = False, blackboard_advance: bool = False):
         self.role = role
         self.model = model
         self.channel = channel
@@ -149,6 +150,8 @@ class Boot:
         self.want_attest_scan = want_attest_scan
         self.want_calendar = want_calendar
         self.want_consolidate = want_consolidate
+        self.want_blackboard = want_blackboard
+        self.blackboard_advance = blackboard_advance
         self.lease_instant: str | None = None  # captured at clock-in (Q2 anchor)
         # --attest payload: (cites_id, evidence list, session_id) or None
         self.attest_cmd: tuple | None = None
@@ -572,6 +575,61 @@ class Boot:
         except Exception as e:  # noqa: BLE001 — surface as degraded, keep booting
             self.record("digest", "degraded", f"assembly error: {e}")
 
+    # 7 ─ coordination blackboard digest (optional, --blackboard) -----------
+    def blackboard_step(self) -> None:
+        """Print the per-role coordination blackboard digest (V192 companion).
+
+        Thread 88385a46 slice 2: at session start, render the role's buckets
+        from nebula.v_coordination_blackboard (To Do policy ac2d1382) with a
+        Redis TTL cache. Inert until V192 applies; --blackboard-advance also
+        advances the role's inbox/todo checkpoints (the deliberate agent act
+        the V192 design requires — never automatic).
+
+        Degrades, never fails the boot (census lesson):
+        - flag off                    -> step absent
+        - view absent (V192 inert)    -> [skipped] inert-skip
+        - PG down / module absent     -> [degraded]
+        - --dry-run                   -> [skipped] (zero-mutation stance)
+        """
+        if not self.want_blackboard:
+            return
+        if self.dry_run:
+            self.record("blackboard", "skipped",
+                        "dry-run: digest not rendered, checkpoints not advanced "
+                        "(zero-mutation stance)")
+            return
+        sys.path.insert(0, os.path.join(SCRIPT_DIR, "..", "python"))
+        try:
+            from continuity.blackboard import RedisCache, render_role_digest
+        except Exception as e:  # noqa: BLE001 — absence is a skip
+            self.record("blackboard", "skipped",
+                        f"blackboard module not importable ({e.__class__.__name__})")
+            return
+        try:
+            dsn = os.environ.get(
+                "NEXUS_BLACKBOARD_DSN",
+                "postgresql://pguser:pgpass@localhost:5432/nexus")
+            cache = RedisCache(
+                host=os.environ.get("NEXUS_REDIS_HOST", "localhost"),
+                port=int(os.environ.get("NEXUS_REDIS_PORT", "6379")))
+            r = render_role_digest(self.role, dsn, cache=cache,
+                                   advance=self.blackboard_advance,
+                                   model=self.model)
+            if r["status"] == "ok":
+                print(r["format"])
+                print(json.dumps(r["digest"], indent=2, default=str))
+                self.record("blackboard", "ok",
+                            f"digest rendered (cache {r['cache']})"
+                            + (", checkpoints advanced"
+                               if self.blackboard_advance else ""))
+            elif r["status"] == "inert-skip":
+                self.record("blackboard", "skipped", r["reason"])
+            else:
+                self.record("blackboard", "degraded", r.get("reason", "unknown"))
+        except Exception as e:  # noqa: BLE001 — keep booting
+            self.record("blackboard", "degraded",
+                        f"render error: {e.__class__.__name__}")
+
     def run(self) -> int:
         state = self.preflight()
         print()
@@ -588,6 +646,7 @@ class Boot:
         self.clock_in()
         self.calendar_step()
         self.consolidate_step()
+        self.blackboard_step()
         self.forums()
         self.procedures()
         return self.report()
@@ -633,6 +692,16 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--no-consolidate", action="store_false", dest="consolidate",
                     help="skip the consolidation step (default-on, dormant until V184 "
                          "applies): no fold-back attempt at boot")
+    ap.add_argument("--blackboard", action="store_true",
+                    help="print the per-role coordination blackboard digest at "
+                         "session start (V192 companion, thread 88385a46): To Do "
+                         "policy buckets + inbox fold across the role's checkpoint "
+                         "boundary, Redis-cached. Inert until V192 applies")
+    ap.add_argument("--blackboard-advance", action="store_true",
+                    help="with --blackboard: also advance the role's inbox/todo "
+                         "checkpoints to now() after a successful render (the "
+                         "deliberate 'seen everything up to T' act — explicit, "
+                         "never automatic)")
     ap.add_argument("--no-attest-scan", action="store_true",
                     help="skip the default read-only attest-scan (open V179 chains)")
     ap.add_argument("--attest", metavar="CITES_ID",
@@ -659,7 +728,9 @@ def main(argv: list[str]) -> int:
         want_digest=args.digest, want_conn=args.conn_record,
         want_attest_scan=not args.no_attest_scan,
         want_calendar=args.calendar,
-        want_consolidate=args.consolidate)
+        want_consolidate=args.consolidate,
+        want_blackboard=args.blackboard,
+        blackboard_advance=args.blackboard_advance)
 
     if args.attest:
         if not args.evidence:

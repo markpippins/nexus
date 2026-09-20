@@ -139,7 +139,21 @@ class EpistemicVocabulary(unittest.TestCase):
         self.assertIn("NOT a refusal", m)
 
     def test_absent_distinct_from_failed(self):
-        m = s1m.build_minutes()  # real run: window is tomorrow -> probes ABSENT
+        """ABSENT branch renders its epistemic disclaimer (hermetic).
+
+        Pitfall-#15 lesson: the original version called build_minutes()
+        unmocked — live journalctl + ssh — on the assumption the probe
+        window was still future so probes would be ABSENT. That assumption
+        expired the moment the probes ran (2026-09-19) and the test has
+        failed on real data ever since. The ABSENT branch is now pinned
+        hermetically by injecting empty journal output and an empty local
+        calendar: no services contacted, deterministic outcome.
+        """
+        with mock.patch.object(s1m, "journal", side_effect=["", "", ""]), \
+             mock.patch.object(s1m, "read_calendar", side_effect=[
+                 {"present": True, "events": [], "error": None},   # titanium
+                 {"present": True, "events": [], "error": None}]):  # vanadium
+            m = s1m.build_minutes()
         self.assertIn("distinct from a failed probe", m)
         self.assertIn("ABSENT", m)
 

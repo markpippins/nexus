@@ -215,7 +215,7 @@ mesh-test:
 		bin/tests/test_apply_v184_package.py \
 		bin/tests/test_calendar_consolidate.py \
 		bin/tests/test_boot_digest.py bin/tests/test_boot_conn_record.py \
-		bin/tests/test_boot_attest.py \
+		bin/tests/test_boot_attest.py bin/tests/test_boot_blackboard.py \
 		bin/tests/test_endpoint_register.py \
 		bin/tests/test_fleet_registry_sync.py \
 		bin/tests/test_fleet_manifest_from_ansible.py \

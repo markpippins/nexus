@@ -193,9 +193,13 @@ class TestDigestStep(unittest.TestCase):
              mock.patch.object(boot, "digest_preview",
                                side_effect=lambda: calls.append("digest")), \
              mock.patch.object(boot, "calendar_step",
-                               side_effect=lambda: calls.append("calendar")):
+                               side_effect=lambda: calls.append("calendar")), \
+             mock.patch.object(boot, "consolidate_step",
+                               side_effect=lambda: calls.append("consolidate")):
             boot.run()
-        self.assertEqual(calls, ["digest", "clock", "calendar", "forums", "procs"])
+        self.assertEqual(
+            calls,
+            ["digest", "clock", "calendar", "consolidate", "forums", "procs"])
 
 
 class TestLeaseFetcherWiring(unittest.TestCase):
