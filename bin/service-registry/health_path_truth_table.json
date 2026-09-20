@@ -75,7 +75,7 @@
   ],
   "excluded": [
     {"name": "image-server", "reason": "no HTTP health endpoint (start-script comment + probes); stored /actuator/health value is fabricated — recommend manual null"},
-    {"name": "pty-srv", "reason": "unit DOWN; pty-srv retirement decision 2026-09-18 in flight"},
+    {"name": "pty-srv", "reason": "RETIRED (M3 2026-09-18): superseded by worker.pty-transport WS on :3130 via nexus-broker; legacy :3120/:3121 listeners gone, no HTTP health path (tree retained as wire-compat reference)"},
     {"name": "angular-assembly", "port": 4204, "reason": "no 200 on /health or / at probe time"},
     {"name": "terrain-ui", "reason": "no live port found; not in terrain.runnable_services"},
     {"name": "wrp-bridge-daemon, voyager, voyager-adapter, cascade-*-subscriber", "reason": "no HTTP health endpoint by design (stored null is correct)"},
