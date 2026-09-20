@@ -1,12 +1,12 @@
 package org.nexus.core.meep.execution;
 
 import java.time.Clock;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.nexus.core.meep.MeepException;
+import org.nexus.core.meep.MeepTimestamp;
 import org.nexus.core.meep.model.CerLog;
 import org.nexus.core.meep.model.Models;
 
@@ -26,10 +26,10 @@ public final class Execution {
         for (String nodeId : graph.topologicalOrder()) {
             Models.ExecNode node = graph.nodes().stream().filter(n -> n.id().equals(nodeId)).findFirst().orElseThrow();
             String startId = String.format("evt-%s-%04d", executionId, ++counter);
-            log.append(new Models.CerEvent(startId, Instant.now(clock).toString(), executionId, nodeId,
+            log.append(new Models.CerEvent(startId, MeepTimestamp.now(clock), executionId, nodeId,
                     "NODE_START", Map.of("handler", node.handler()), ""));
             String completeId = String.format("evt-%s-%04d", executionId, ++counter);
-            log.append(new Models.CerEvent(completeId, Instant.now(clock).toString(), executionId, nodeId,
+            log.append(new Models.CerEvent(completeId, MeepTimestamp.now(clock), executionId, nodeId,
                     "NODE_COMPLETE", Map.of("status", "ok", "node_id", nodeId, "handler", "simulated"), ""));
         }
         return log;

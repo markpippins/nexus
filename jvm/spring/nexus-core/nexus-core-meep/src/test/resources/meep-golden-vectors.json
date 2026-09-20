@@ -1,0 +1,1277 @@
+{
+  "_meta": {
+    "generator": "generate-golden-fixtures.py",
+    "reference": "nexus/python/meep (Python 3.12)",
+    "golden_clock": "2026-09-20T00:00:00Z",
+    "note": "Java must reproduce every digest byte-for-byte via CanonicalJson.sha256"
+  },
+  "canonical_json_bytes": [
+    {
+      "label": "{\"a\": 1, \"b\": 2}",
+      "value": {
+        "b": 2,
+        "a": 1
+      },
+      "expected_json": "{\"a\": 1, \"b\": 2}",
+      "expected_sha256": "d8497d9d82770a70729261095aa98f7ef5154d7af499f8037b6ca250296785a6"
+    },
+    {
+      "label": "{\"nested\": {\"x\": null, \"y\": true, \"z\": [",
+      "value": {
+        "nested": {
+          "z": [
+            1,
+            2,
+            {
+              "k": "v"
+            }
+          ],
+          "y": true,
+          "x": null
+        }
+      },
+      "expected_json": "{\"nested\": {\"x\": null, \"y\": true, \"z\": [1, 2, {\"k\": \"v\"}]}}",
+      "expected_sha256": "370482ded5f9ed0aff82c338941b0ac9d79adf794166ce31f94c45094ca9de67"
+    },
+    {
+      "label": "{\"emoji\": \"caf\\u00e9 \\u2615 \\u2014 na\\u0",
+      "value": {
+        "emoji": "café ☕ — naïve"
+      },
+      "expected_json": "{\"emoji\": \"caf\\u00e9 \\u2615 \\u2014 na\\u00efve\"}",
+      "expected_sha256": "86b1a872fb17a471350aa517ea7525c91d08938a3b673e31d45a0800152860ee"
+    },
+    {
+      "label": "{\"path\": \"C:\\\\Users\\\\test\\nnewline\\ttab\"",
+      "value": {
+        "path": "C:\\Users\\test\nnewline\ttab"
+      },
+      "expected_json": "{\"path\": \"C:\\\\Users\\\\test\\nnewline\\ttab\"}",
+      "expected_sha256": "3a9d00cda12d40b8145588c0af13b721928752caf5d7a22499c6a68340ef5563"
+    },
+    {
+      "label": "{}",
+      "value": {},
+      "expected_json": "{}",
+      "expected_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "label": "[]",
+      "value": [],
+      "expected_json": "[]",
+      "expected_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "label": "{\"i\": 7, \"n\": 3.5}",
+      "value": {
+        "n": 3.5,
+        "i": 7
+      },
+      "expected_json": "{\"i\": 7, \"n\": 3.5}",
+      "expected_sha256": "da3fdf77d943a15ab163a3dbd495eda87cae3f8fb93add33908c7fcfbe8a2576"
+    }
+  ],
+  "classifier": [
+    {
+      "prompt": "build a service",
+      "archetype": "CONSTRUCTION",
+      "confidence": 0.5,
+      "probabilities": {
+        "CONSTRUCTION": 0.5,
+        "EXECUTION": 0.0,
+        "REFLECTION": 0.0,
+        "RECONCILIATION": 0.0,
+        "REVISION": 0.0,
+        "COUNTERFACTUAL": 0.0,
+        "AUDIT": 0.0,
+        "COMPRESSION": 0.0,
+        "CONSTRAINT_INJECTION": 0.0,
+        "DEFAULT": 0.5
+      }
+    },
+    {
+      "prompt": "run the deployment",
+      "archetype": "DEFAULT",
+      "confidence": 0.5,
+      "probabilities": {
+        "CONSTRUCTION": 0.0,
+        "EXECUTION": 0.5,
+        "REFLECTION": 0.0,
+        "RECONCILIATION": 0.0,
+        "REVISION": 0.0,
+        "COUNTERFACTUAL": 0.0,
+        "AUDIT": 0.0,
+        "COMPRESSION": 0.0,
+        "CONSTRAINT_INJECTION": 0.0,
+        "DEFAULT": 0.5
+      }
+    },
+    {
+      "prompt": "why did this happen",
+      "archetype": "REFLECTION",
+      "confidence": 0.666666666667,
+      "probabilities": {
+        "CONSTRUCTION": 0.0,
+        "EXECUTION": 0.0,
+        "REFLECTION": 0.666666666667,
+        "RECONCILIATION": 0.0,
+        "REVISION": 0.0,
+        "COUNTERFACTUAL": 0.0,
+        "AUDIT": 0.0,
+        "COMPRESSION": 0.0,
+        "CONSTRAINT_INJECTION": 0.0,
+        "DEFAULT": 0.333333333333
+      }
+    },
+    {
+      "prompt": "merge the two branches",
+      "archetype": "DEFAULT",
+      "confidence": 0.5,
+      "probabilities": {
+        "CONSTRUCTION": 0.0,
+        "EXECUTION": 0.0,
+        "REFLECTION": 0.0,
+        "RECONCILIATION": 0.5,
+        "REVISION": 0.0,
+        "COUNTERFACTUAL": 0.0,
+        "AUDIT": 0.0,
+        "COMPRESSION": 0.0,
+        "CONSTRAINT_INJECTION": 0.0,
+        "DEFAULT": 0.5
+      }
+    },
+    {
+      "prompt": "fix the bug in ServiceBroker",
+      "archetype": "REVISION",
+      "confidence": 0.666666666667,
+      "probabilities": {
+        "CONSTRUCTION": 0.0,
+        "EXECUTION": 0.0,
+        "REFLECTION": 0.0,
+        "RECONCILIATION": 0.0,
+        "REVISION": 0.666666666667,
+        "COUNTERFACTUAL": 0.0,
+        "AUDIT": 0.0,
+        "COMPRESSION": 0.0,
+        "CONSTRAINT_INJECTION": 0.0,
+        "DEFAULT": 0.333333333333
+      }
+    },
+    {
+      "prompt": "what if we tried X",
+      "archetype": "COUNTERFACTUAL",
+      "confidence": 0.5,
+      "probabilities": {
+        "CONSTRUCTION": 0.0,
+        "EXECUTION": 0.0,
+        "REFLECTION": 0.0,
+        "RECONCILIATION": 0.0,
+        "REVISION": 0.0,
+        "COUNTERFACTUAL": 0.5,
+        "AUDIT": 0.0,
+        "COMPRESSION": 0.0,
+        "CONSTRAINT_INJECTION": 0.0,
+        "DEFAULT": 0.5
+      }
+    },
+    {
+      "prompt": "audit the compliance",
+      "archetype": "AUDIT",
+      "confidence": 0.666666666667,
+      "probabilities": {
+        "CONSTRUCTION": 0.0,
+        "EXECUTION": 0.0,
+        "REFLECTION": 0.0,
+        "RECONCILIATION": 0.0,
+        "REVISION": 0.0,
+        "COUNTERFACTUAL": 0.0,
+        "AUDIT": 0.666666666667,
+        "COMPRESSION": 0.0,
+        "CONSTRAINT_INJECTION": 0.0,
+        "DEFAULT": 0.333333333333
+      }
+    },
+    {
+      "prompt": "summarize the log",
+      "archetype": "COMPRESSION",
+      "confidence": 0.5,
+      "probabilities": {
+        "CONSTRUCTION": 0.0,
+        "EXECUTION": 0.0,
+        "REFLECTION": 0.0,
+        "RECONCILIATION": 0.0,
+        "REVISION": 0.0,
+        "COUNTERFACTUAL": 0.0,
+        "AUDIT": 0.0,
+        "COMPRESSION": 0.5,
+        "CONSTRAINT_INJECTION": 0.0,
+        "DEFAULT": 0.5
+      }
+    },
+    {
+      "prompt": "sanitize the user input",
+      "archetype": "CONSTRAINT_INJECTION",
+      "confidence": 0.5,
+      "probabilities": {
+        "CONSTRUCTION": 0.0,
+        "EXECUTION": 0.0,
+        "REFLECTION": 0.0,
+        "RECONCILIATION": 0.0,
+        "REVISION": 0.0,
+        "COUNTERFACTUAL": 0.0,
+        "AUDIT": 0.0,
+        "COMPRESSION": 0.0,
+        "CONSTRAINT_INJECTION": 0.5,
+        "DEFAULT": 0.5
+      }
+    },
+    {
+      "prompt": "hello world",
+      "archetype": "DEFAULT",
+      "confidence": 1.0,
+      "probabilities": {
+        "CONSTRUCTION": 0.0,
+        "EXECUTION": 0.0,
+        "REFLECTION": 0.0,
+        "RECONCILIATION": 0.0,
+        "REVISION": 0.0,
+        "COUNTERFACTUAL": 0.0,
+        "AUDIT": 0.0,
+        "COMPRESSION": 0.0,
+        "CONSTRAINT_INJECTION": 0.0,
+        "DEFAULT": 1.0
+      }
+    }
+  ],
+  "graphs": [
+    {
+      "prompt": "build a service",
+      "nodes": [
+        {
+          "id": "construction-specify",
+          "label": "Specify",
+          "handler": "specify_handler"
+        },
+        {
+          "id": "construction-build",
+          "label": "Build",
+          "handler": "construct_handler"
+        },
+        {
+          "id": "construction-verify",
+          "label": "Verify",
+          "handler": "verify_handler"
+        }
+      ],
+      "topological_order": [
+        "construction-specify",
+        "construction-build",
+        "construction-verify"
+      ],
+      "frozen_at": "2026-09-20T00:00:00Z",
+      "schema_version": "v1",
+      "expected_content_hash": "b4ace12fa36534eed4acdf523f162fa87c974fba93a772c28caf6224cb961f9b"
+    },
+    {
+      "prompt": "run the deployment",
+      "nodes": [
+        {
+          "id": "default-clarify",
+          "label": "Clarify intent",
+          "handler": "clarify_intent_handler"
+        }
+      ],
+      "topological_order": [
+        "default-clarify"
+      ],
+      "frozen_at": "2026-09-20T00:00:00Z",
+      "schema_version": "v1",
+      "expected_content_hash": "7efb404ec2d7c7e323bd08ac60fc7ca14644a1da4fececbc04e9e96cb2ce2b84"
+    },
+    {
+      "prompt": "why did this happen",
+      "nodes": [
+        {
+          "id": "reflection-gather",
+          "label": "Gather context",
+          "handler": "gather_context_handler"
+        },
+        {
+          "id": "reflection-analyze",
+          "label": "Analyze",
+          "handler": "analyze_handler"
+        },
+        {
+          "id": "reflection-report",
+          "label": "Document findings",
+          "handler": "report_findings_handler"
+        }
+      ],
+      "topological_order": [
+        "reflection-gather",
+        "reflection-analyze",
+        "reflection-report"
+      ],
+      "frozen_at": "2026-09-20T00:00:00Z",
+      "schema_version": "v1",
+      "expected_content_hash": "69a5d74076b78134829bf56011f1fd18f8eaaa07dab3253f2fbef745eda7b60a"
+    },
+    {
+      "prompt": "merge the two branches",
+      "nodes": [
+        {
+          "id": "default-clarify",
+          "label": "Clarify intent",
+          "handler": "clarify_intent_handler"
+        }
+      ],
+      "topological_order": [
+        "default-clarify"
+      ],
+      "frozen_at": "2026-09-20T00:00:00Z",
+      "schema_version": "v1",
+      "expected_content_hash": "7efb404ec2d7c7e323bd08ac60fc7ca14644a1da4fececbc04e9e96cb2ce2b84"
+    },
+    {
+      "prompt": "fix the bug in ServiceBroker",
+      "nodes": [
+        {
+          "id": "revision-identify",
+          "label": "Identify issue",
+          "handler": "identify_issue_handler"
+        },
+        {
+          "id": "revision-plan",
+          "label": "Plan change",
+          "handler": "plan_change_handler"
+        },
+        {
+          "id": "revision-apply",
+          "label": "Apply change",
+          "handler": "apply_change_handler"
+        },
+        {
+          "id": "revision-verify",
+          "label": "Verify fix",
+          "handler": "verify_fix_handler"
+        }
+      ],
+      "topological_order": [
+        "revision-identify",
+        "revision-plan",
+        "revision-apply",
+        "revision-verify"
+      ],
+      "frozen_at": "2026-09-20T00:00:00Z",
+      "schema_version": "v1",
+      "expected_content_hash": "d2d1d82bef0c839b20ad23bcf8d2c91b0cfeed00436fd445c2b1ed9cb540d6de"
+    },
+    {
+      "prompt": "what if we tried X",
+      "nodes": [
+        {
+          "id": "counterfactual-scenario",
+          "label": "Define scenario",
+          "handler": "define_scenario_handler"
+        },
+        {
+          "id": "counterfactual-explore",
+          "label": "Explore alternative",
+          "handler": "explore_alternative_handler"
+        },
+        {
+          "id": "counterfactual-compare",
+          "label": "Compare outcomes",
+          "handler": "compare_outcomes_handler"
+        }
+      ],
+      "topological_order": [
+        "counterfactual-scenario",
+        "counterfactual-explore",
+        "counterfactual-compare"
+      ],
+      "frozen_at": "2026-09-20T00:00:00Z",
+      "schema_version": "v1",
+      "expected_content_hash": "86ce6839105930d14abac7db87f1431568b85f65e6b8f694a83b0e3ab9280def"
+    },
+    {
+      "prompt": "audit the compliance",
+      "nodes": [
+        {
+          "id": "audit-collect",
+          "label": "Collect evidence",
+          "handler": "collect_evidence_handler"
+        },
+        {
+          "id": "audit-evaluate",
+          "label": "Evaluate compliance",
+          "handler": "evaluate_compliance_handler"
+        },
+        {
+          "id": "audit-report",
+          "label": "Report findings",
+          "handler": "report_audit_findings_handler"
+        }
+      ],
+      "topological_order": [
+        "audit-collect",
+        "audit-evaluate",
+        "audit-report"
+      ],
+      "frozen_at": "2026-09-20T00:00:00Z",
+      "schema_version": "v1",
+      "expected_content_hash": "c1fd3a894495ca26116af0ac86ad9d60da62a453855e246e99a79ca724a6d19c"
+    },
+    {
+      "prompt": "summarize the log",
+      "nodes": [
+        {
+          "id": "compression-scan",
+          "label": "Scan input",
+          "handler": "scan_input_handler"
+        },
+        {
+          "id": "compression-extract",
+          "label": "Extract key points",
+          "handler": "extract_key_points_handler"
+        },
+        {
+          "id": "compression-summary",
+          "label": "Produce summary",
+          "handler": "produce_summary_handler"
+        }
+      ],
+      "topological_order": [
+        "compression-scan",
+        "compression-extract",
+        "compression-summary"
+      ],
+      "frozen_at": "2026-09-20T00:00:00Z",
+      "schema_version": "v1",
+      "expected_content_hash": "0ccf1b31b8ade26b36872ca514902243e60afc412636b17da6e88e4d3c3df13c"
+    },
+    {
+      "prompt": "sanitize the user input",
+      "nodes": [
+        {
+          "id": "constraint_injection-analyze",
+          "label": "Analyze constraints",
+          "handler": "analyze_constraints_handler"
+        },
+        {
+          "id": "constraint_injection-modify",
+          "label": "Modify behavior",
+          "handler": "modify_behavior_handler"
+        },
+        {
+          "id": "constraint_injection-validate",
+          "label": "Validate",
+          "handler": "validate_constraints_handler"
+        }
+      ],
+      "topological_order": [
+        "constraint_injection-analyze",
+        "constraint_injection-modify",
+        "constraint_injection-validate"
+      ],
+      "frozen_at": "2026-09-20T00:00:00Z",
+      "schema_version": "v1",
+      "expected_content_hash": "e147863a427cc6df1ed33d8cec217f6475f11e3cb0192136d7d86878f6ec1db1"
+    },
+    {
+      "prompt": "hello world",
+      "nodes": [
+        {
+          "id": "default-clarify",
+          "label": "Clarify intent",
+          "handler": "clarify_intent_handler"
+        }
+      ],
+      "topological_order": [
+        "default-clarify"
+      ],
+      "frozen_at": "2026-09-20T00:00:00Z",
+      "schema_version": "v1",
+      "expected_content_hash": "7efb404ec2d7c7e323bd08ac60fc7ca14644a1da4fececbc04e9e96cb2ce2b84"
+    }
+  ],
+  "cer_chains": [
+    {
+      "prompt": "build a service",
+      "execution_id": "ex-b4ace12fa365",
+      "events": [
+        {
+          "event_id": "evt-ex-b4ace12fa365-0001",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-b4ace12fa365",
+          "node_id": "construction-specify",
+          "event_type": "NODE_START",
+          "payload": {
+            "handler": "specify_handler"
+          },
+          "prev_event_hash": "genesis",
+          "expected_hash_of_event": "6842a5a1e9a0bfad2aef1f8045c2179050314e4fb92c6db415912248edeaaea1"
+        },
+        {
+          "event_id": "evt-ex-b4ace12fa365-0002",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-b4ace12fa365",
+          "node_id": "construction-specify",
+          "event_type": "NODE_COMPLETE",
+          "payload": {
+            "status": "ok",
+            "node_id": "construction-specify",
+            "handler": "simulated"
+          },
+          "prev_event_hash": "6842a5a1e9a0bfad2aef1f8045c2179050314e4fb92c6db415912248edeaaea1",
+          "expected_hash_of_event": "45bb0ed3d2a7993f52805adac9a62ad1d38c4084e6839a035c1a9078c63b8fdb"
+        },
+        {
+          "event_id": "evt-ex-b4ace12fa365-0003",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-b4ace12fa365",
+          "node_id": "construction-build",
+          "event_type": "NODE_START",
+          "payload": {
+            "handler": "construct_handler"
+          },
+          "prev_event_hash": "45bb0ed3d2a7993f52805adac9a62ad1d38c4084e6839a035c1a9078c63b8fdb",
+          "expected_hash_of_event": "f9fb5f7a970023c2e740d02294cc95c5ea074acd9e25171228e219920824db4b"
+        },
+        {
+          "event_id": "evt-ex-b4ace12fa365-0004",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-b4ace12fa365",
+          "node_id": "construction-build",
+          "event_type": "NODE_COMPLETE",
+          "payload": {
+            "status": "ok",
+            "node_id": "construction-build",
+            "handler": "simulated"
+          },
+          "prev_event_hash": "f9fb5f7a970023c2e740d02294cc95c5ea074acd9e25171228e219920824db4b",
+          "expected_hash_of_event": "f3b079e77aaf73c8c4f54e9330a187a67bf1a18644d6e379841a274ba6abc838"
+        },
+        {
+          "event_id": "evt-ex-b4ace12fa365-0005",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-b4ace12fa365",
+          "node_id": "construction-verify",
+          "event_type": "NODE_START",
+          "payload": {
+            "handler": "verify_handler"
+          },
+          "prev_event_hash": "f3b079e77aaf73c8c4f54e9330a187a67bf1a18644d6e379841a274ba6abc838",
+          "expected_hash_of_event": "5056a76c2a4a1a2ae30d7920da0eca439ad4b83e4d2f2cb45f13fa4ad649128c"
+        },
+        {
+          "event_id": "evt-ex-b4ace12fa365-0006",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-b4ace12fa365",
+          "node_id": "construction-verify",
+          "event_type": "NODE_COMPLETE",
+          "payload": {
+            "status": "ok",
+            "node_id": "construction-verify",
+            "handler": "simulated"
+          },
+          "prev_event_hash": "5056a76c2a4a1a2ae30d7920da0eca439ad4b83e4d2f2cb45f13fa4ad649128c",
+          "expected_hash_of_event": "59cef64ed961656b1cbfd33fb188bfe8a72194c8828ff5e1a65664a3a1913eb2"
+        }
+      ],
+      "expected_tail_hash": "59cef64ed961656b1cbfd33fb188bfe8a72194c8828ff5e1a65664a3a1913eb2"
+    },
+    {
+      "prompt": "run the deployment",
+      "execution_id": "ex-7efb404ec2d7",
+      "events": [
+        {
+          "event_id": "evt-ex-7efb404ec2d7-0001",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-7efb404ec2d7",
+          "node_id": "default-clarify",
+          "event_type": "NODE_START",
+          "payload": {
+            "handler": "clarify_intent_handler"
+          },
+          "prev_event_hash": "genesis",
+          "expected_hash_of_event": "b403fb0f3e1caad1c2419febafac4535aee4eb38454fd60c7c58a5b21e218ba2"
+        },
+        {
+          "event_id": "evt-ex-7efb404ec2d7-0002",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-7efb404ec2d7",
+          "node_id": "default-clarify",
+          "event_type": "NODE_COMPLETE",
+          "payload": {
+            "status": "ok",
+            "node_id": "default-clarify",
+            "handler": "simulated"
+          },
+          "prev_event_hash": "b403fb0f3e1caad1c2419febafac4535aee4eb38454fd60c7c58a5b21e218ba2",
+          "expected_hash_of_event": "01786fcc4b1cf7987ac9363795a00d0ef03abb8b588a71b60096643d212c4654"
+        }
+      ],
+      "expected_tail_hash": "01786fcc4b1cf7987ac9363795a00d0ef03abb8b588a71b60096643d212c4654"
+    },
+    {
+      "prompt": "why did this happen",
+      "execution_id": "ex-69a5d74076b7",
+      "events": [
+        {
+          "event_id": "evt-ex-69a5d74076b7-0001",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-69a5d74076b7",
+          "node_id": "reflection-gather",
+          "event_type": "NODE_START",
+          "payload": {
+            "handler": "gather_context_handler"
+          },
+          "prev_event_hash": "genesis",
+          "expected_hash_of_event": "039d320c906e90857590b82c9c75a5387b941de9ef137c510a0bf832036b4fdf"
+        },
+        {
+          "event_id": "evt-ex-69a5d74076b7-0002",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-69a5d74076b7",
+          "node_id": "reflection-gather",
+          "event_type": "NODE_COMPLETE",
+          "payload": {
+            "status": "ok",
+            "node_id": "reflection-gather",
+            "handler": "simulated"
+          },
+          "prev_event_hash": "039d320c906e90857590b82c9c75a5387b941de9ef137c510a0bf832036b4fdf",
+          "expected_hash_of_event": "8dd41207446c138c0c1b33b697cae89c5ed92973bd6fa16a5eb1e729e8474f5c"
+        },
+        {
+          "event_id": "evt-ex-69a5d74076b7-0003",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-69a5d74076b7",
+          "node_id": "reflection-analyze",
+          "event_type": "NODE_START",
+          "payload": {
+            "handler": "analyze_handler"
+          },
+          "prev_event_hash": "8dd41207446c138c0c1b33b697cae89c5ed92973bd6fa16a5eb1e729e8474f5c",
+          "expected_hash_of_event": "8e54bb61149e9a67aee2985eeffb4e4a2ea439f0cd3d9dc7464384c1551a6617"
+        },
+        {
+          "event_id": "evt-ex-69a5d74076b7-0004",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-69a5d74076b7",
+          "node_id": "reflection-analyze",
+          "event_type": "NODE_COMPLETE",
+          "payload": {
+            "status": "ok",
+            "node_id": "reflection-analyze",
+            "handler": "simulated"
+          },
+          "prev_event_hash": "8e54bb61149e9a67aee2985eeffb4e4a2ea439f0cd3d9dc7464384c1551a6617",
+          "expected_hash_of_event": "430d184ab307563d01500381c79920e2a7db9ef1bc135712ee4c4b06dd5c8285"
+        },
+        {
+          "event_id": "evt-ex-69a5d74076b7-0005",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-69a5d74076b7",
+          "node_id": "reflection-report",
+          "event_type": "NODE_START",
+          "payload": {
+            "handler": "report_findings_handler"
+          },
+          "prev_event_hash": "430d184ab307563d01500381c79920e2a7db9ef1bc135712ee4c4b06dd5c8285",
+          "expected_hash_of_event": "9f6c75918fcb77a9cd47dd01a1aecea8e892a84808637c74912a0516fce8194f"
+        },
+        {
+          "event_id": "evt-ex-69a5d74076b7-0006",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-69a5d74076b7",
+          "node_id": "reflection-report",
+          "event_type": "NODE_COMPLETE",
+          "payload": {
+            "status": "ok",
+            "node_id": "reflection-report",
+            "handler": "simulated"
+          },
+          "prev_event_hash": "9f6c75918fcb77a9cd47dd01a1aecea8e892a84808637c74912a0516fce8194f",
+          "expected_hash_of_event": "8eccf9c98dca262e2b5308394e8a541270dc7370d8ecac140cc5758a6dbb97cc"
+        }
+      ],
+      "expected_tail_hash": "8eccf9c98dca262e2b5308394e8a541270dc7370d8ecac140cc5758a6dbb97cc"
+    },
+    {
+      "prompt": "merge the two branches",
+      "execution_id": "ex-7efb404ec2d7",
+      "events": [
+        {
+          "event_id": "evt-ex-7efb404ec2d7-0001",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-7efb404ec2d7",
+          "node_id": "default-clarify",
+          "event_type": "NODE_START",
+          "payload": {
+            "handler": "clarify_intent_handler"
+          },
+          "prev_event_hash": "genesis",
+          "expected_hash_of_event": "b403fb0f3e1caad1c2419febafac4535aee4eb38454fd60c7c58a5b21e218ba2"
+        },
+        {
+          "event_id": "evt-ex-7efb404ec2d7-0002",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-7efb404ec2d7",
+          "node_id": "default-clarify",
+          "event_type": "NODE_COMPLETE",
+          "payload": {
+            "status": "ok",
+            "node_id": "default-clarify",
+            "handler": "simulated"
+          },
+          "prev_event_hash": "b403fb0f3e1caad1c2419febafac4535aee4eb38454fd60c7c58a5b21e218ba2",
+          "expected_hash_of_event": "01786fcc4b1cf7987ac9363795a00d0ef03abb8b588a71b60096643d212c4654"
+        }
+      ],
+      "expected_tail_hash": "01786fcc4b1cf7987ac9363795a00d0ef03abb8b588a71b60096643d212c4654"
+    },
+    {
+      "prompt": "fix the bug in ServiceBroker",
+      "execution_id": "ex-d2d1d82bef0c",
+      "events": [
+        {
+          "event_id": "evt-ex-d2d1d82bef0c-0001",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-d2d1d82bef0c",
+          "node_id": "revision-identify",
+          "event_type": "NODE_START",
+          "payload": {
+            "handler": "identify_issue_handler"
+          },
+          "prev_event_hash": "genesis",
+          "expected_hash_of_event": "3dddfb9030fc25dd83a0d48328ee971661458c25ab2d6d358dd734b6d5175eb2"
+        },
+        {
+          "event_id": "evt-ex-d2d1d82bef0c-0002",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-d2d1d82bef0c",
+          "node_id": "revision-identify",
+          "event_type": "NODE_COMPLETE",
+          "payload": {
+            "status": "ok",
+            "node_id": "revision-identify",
+            "handler": "simulated"
+          },
+          "prev_event_hash": "3dddfb9030fc25dd83a0d48328ee971661458c25ab2d6d358dd734b6d5175eb2",
+          "expected_hash_of_event": "a570b5b6a8461a6c1ef214b3c1c8308aa343a6548f994d9a5accffbcdc5125f5"
+        },
+        {
+          "event_id": "evt-ex-d2d1d82bef0c-0003",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-d2d1d82bef0c",
+          "node_id": "revision-plan",
+          "event_type": "NODE_START",
+          "payload": {
+            "handler": "plan_change_handler"
+          },
+          "prev_event_hash": "a570b5b6a8461a6c1ef214b3c1c8308aa343a6548f994d9a5accffbcdc5125f5",
+          "expected_hash_of_event": "dff5604914e0bfdead2ab2ae0ea3d083d920f091e710e7dfa438622d78e8434b"
+        },
+        {
+          "event_id": "evt-ex-d2d1d82bef0c-0004",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-d2d1d82bef0c",
+          "node_id": "revision-plan",
+          "event_type": "NODE_COMPLETE",
+          "payload": {
+            "status": "ok",
+            "node_id": "revision-plan",
+            "handler": "simulated"
+          },
+          "prev_event_hash": "dff5604914e0bfdead2ab2ae0ea3d083d920f091e710e7dfa438622d78e8434b",
+          "expected_hash_of_event": "39c385a62e3f69795dec70150b768476458ae54c863398d4a4ea4a11a79d8b67"
+        },
+        {
+          "event_id": "evt-ex-d2d1d82bef0c-0005",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-d2d1d82bef0c",
+          "node_id": "revision-apply",
+          "event_type": "NODE_START",
+          "payload": {
+            "handler": "apply_change_handler"
+          },
+          "prev_event_hash": "39c385a62e3f69795dec70150b768476458ae54c863398d4a4ea4a11a79d8b67",
+          "expected_hash_of_event": "524773e74d4110fee64b1e71a5882465d56cb87c970ead6e08510d853c9c2b0e"
+        },
+        {
+          "event_id": "evt-ex-d2d1d82bef0c-0006",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-d2d1d82bef0c",
+          "node_id": "revision-apply",
+          "event_type": "NODE_COMPLETE",
+          "payload": {
+            "status": "ok",
+            "node_id": "revision-apply",
+            "handler": "simulated"
+          },
+          "prev_event_hash": "524773e74d4110fee64b1e71a5882465d56cb87c970ead6e08510d853c9c2b0e",
+          "expected_hash_of_event": "84ce5defd5bf43c19f3509c372d662c6502889a2db05b7affd9a3b0208e05508"
+        },
+        {
+          "event_id": "evt-ex-d2d1d82bef0c-0007",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-d2d1d82bef0c",
+          "node_id": "revision-verify",
+          "event_type": "NODE_START",
+          "payload": {
+            "handler": "verify_fix_handler"
+          },
+          "prev_event_hash": "84ce5defd5bf43c19f3509c372d662c6502889a2db05b7affd9a3b0208e05508",
+          "expected_hash_of_event": "4047095590cbcc3ee38b7275b6c32b83d2b756cffbd1042a784bd45a7190fa37"
+        },
+        {
+          "event_id": "evt-ex-d2d1d82bef0c-0008",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-d2d1d82bef0c",
+          "node_id": "revision-verify",
+          "event_type": "NODE_COMPLETE",
+          "payload": {
+            "status": "ok",
+            "node_id": "revision-verify",
+            "handler": "simulated"
+          },
+          "prev_event_hash": "4047095590cbcc3ee38b7275b6c32b83d2b756cffbd1042a784bd45a7190fa37",
+          "expected_hash_of_event": "4025b5c303a628bb21657d8f51f93da189cf116129d8905f442050f18e503a2d"
+        }
+      ],
+      "expected_tail_hash": "4025b5c303a628bb21657d8f51f93da189cf116129d8905f442050f18e503a2d"
+    },
+    {
+      "prompt": "what if we tried X",
+      "execution_id": "ex-86ce68391059",
+      "events": [
+        {
+          "event_id": "evt-ex-86ce68391059-0001",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-86ce68391059",
+          "node_id": "counterfactual-scenario",
+          "event_type": "NODE_START",
+          "payload": {
+            "handler": "define_scenario_handler"
+          },
+          "prev_event_hash": "genesis",
+          "expected_hash_of_event": "53a496a7a5d45fded5db600522449b206599ea47ca60f2dc656e9b427dcd14ed"
+        },
+        {
+          "event_id": "evt-ex-86ce68391059-0002",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-86ce68391059",
+          "node_id": "counterfactual-scenario",
+          "event_type": "NODE_COMPLETE",
+          "payload": {
+            "status": "ok",
+            "node_id": "counterfactual-scenario",
+            "handler": "simulated"
+          },
+          "prev_event_hash": "53a496a7a5d45fded5db600522449b206599ea47ca60f2dc656e9b427dcd14ed",
+          "expected_hash_of_event": "96c8a26800b612c4b7c14f7bc407628c96b9ed4a5a50e74f196c94e9ffccf37f"
+        },
+        {
+          "event_id": "evt-ex-86ce68391059-0003",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-86ce68391059",
+          "node_id": "counterfactual-explore",
+          "event_type": "NODE_START",
+          "payload": {
+            "handler": "explore_alternative_handler"
+          },
+          "prev_event_hash": "96c8a26800b612c4b7c14f7bc407628c96b9ed4a5a50e74f196c94e9ffccf37f",
+          "expected_hash_of_event": "7a6ff5f4635f49b951259bd2d500c4edb247dd95f4e4fe58a001cad8b74c3e63"
+        },
+        {
+          "event_id": "evt-ex-86ce68391059-0004",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-86ce68391059",
+          "node_id": "counterfactual-explore",
+          "event_type": "NODE_COMPLETE",
+          "payload": {
+            "status": "ok",
+            "node_id": "counterfactual-explore",
+            "handler": "simulated"
+          },
+          "prev_event_hash": "7a6ff5f4635f49b951259bd2d500c4edb247dd95f4e4fe58a001cad8b74c3e63",
+          "expected_hash_of_event": "6141a15b31c0ff471ba50b36858d3a217c671317c79c0a407b9a5fad245bc50c"
+        },
+        {
+          "event_id": "evt-ex-86ce68391059-0005",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-86ce68391059",
+          "node_id": "counterfactual-compare",
+          "event_type": "NODE_START",
+          "payload": {
+            "handler": "compare_outcomes_handler"
+          },
+          "prev_event_hash": "6141a15b31c0ff471ba50b36858d3a217c671317c79c0a407b9a5fad245bc50c",
+          "expected_hash_of_event": "96cc0fc8109d01819b8af28f0eb9dbd892a65b12b15bb5300a8e71d604d23937"
+        },
+        {
+          "event_id": "evt-ex-86ce68391059-0006",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-86ce68391059",
+          "node_id": "counterfactual-compare",
+          "event_type": "NODE_COMPLETE",
+          "payload": {
+            "status": "ok",
+            "node_id": "counterfactual-compare",
+            "handler": "simulated"
+          },
+          "prev_event_hash": "96cc0fc8109d01819b8af28f0eb9dbd892a65b12b15bb5300a8e71d604d23937",
+          "expected_hash_of_event": "711e7b73c174bab355ec7eedc5a1f5e91c6fc7ca47b5a25b0e2aafa52a79cfe6"
+        }
+      ],
+      "expected_tail_hash": "711e7b73c174bab355ec7eedc5a1f5e91c6fc7ca47b5a25b0e2aafa52a79cfe6"
+    },
+    {
+      "prompt": "audit the compliance",
+      "execution_id": "ex-c1fd3a894495",
+      "events": [
+        {
+          "event_id": "evt-ex-c1fd3a894495-0001",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-c1fd3a894495",
+          "node_id": "audit-collect",
+          "event_type": "NODE_START",
+          "payload": {
+            "handler": "collect_evidence_handler"
+          },
+          "prev_event_hash": "genesis",
+          "expected_hash_of_event": "719d941a96edd9c8d15181e9a8f93f5d393e627f5e6ac0741dcd19e495a1da66"
+        },
+        {
+          "event_id": "evt-ex-c1fd3a894495-0002",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-c1fd3a894495",
+          "node_id": "audit-collect",
+          "event_type": "NODE_COMPLETE",
+          "payload": {
+            "status": "ok",
+            "node_id": "audit-collect",
+            "handler": "simulated"
+          },
+          "prev_event_hash": "719d941a96edd9c8d15181e9a8f93f5d393e627f5e6ac0741dcd19e495a1da66",
+          "expected_hash_of_event": "51da415f3762ca77e1fc0188c6fc13a27dfb543bac6de3f9dd28aa860bc8205a"
+        },
+        {
+          "event_id": "evt-ex-c1fd3a894495-0003",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-c1fd3a894495",
+          "node_id": "audit-evaluate",
+          "event_type": "NODE_START",
+          "payload": {
+            "handler": "evaluate_compliance_handler"
+          },
+          "prev_event_hash": "51da415f3762ca77e1fc0188c6fc13a27dfb543bac6de3f9dd28aa860bc8205a",
+          "expected_hash_of_event": "ede85a857ac230e90519cd6e6ba07a6126884a55ea4eeb98e20520780f31856c"
+        },
+        {
+          "event_id": "evt-ex-c1fd3a894495-0004",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-c1fd3a894495",
+          "node_id": "audit-evaluate",
+          "event_type": "NODE_COMPLETE",
+          "payload": {
+            "status": "ok",
+            "node_id": "audit-evaluate",
+            "handler": "simulated"
+          },
+          "prev_event_hash": "ede85a857ac230e90519cd6e6ba07a6126884a55ea4eeb98e20520780f31856c",
+          "expected_hash_of_event": "f3a6cd17fda0d8c90b47f7a15874d32758c3890acc5e6fd0f1d26dbacf86c92a"
+        },
+        {
+          "event_id": "evt-ex-c1fd3a894495-0005",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-c1fd3a894495",
+          "node_id": "audit-report",
+          "event_type": "NODE_START",
+          "payload": {
+            "handler": "report_audit_findings_handler"
+          },
+          "prev_event_hash": "f3a6cd17fda0d8c90b47f7a15874d32758c3890acc5e6fd0f1d26dbacf86c92a",
+          "expected_hash_of_event": "c5f5d7456c4ddb423e1a5763ecbbdbdab3a3dd32b67c32fe036db82a39f11598"
+        },
+        {
+          "event_id": "evt-ex-c1fd3a894495-0006",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-c1fd3a894495",
+          "node_id": "audit-report",
+          "event_type": "NODE_COMPLETE",
+          "payload": {
+            "status": "ok",
+            "node_id": "audit-report",
+            "handler": "simulated"
+          },
+          "prev_event_hash": "c5f5d7456c4ddb423e1a5763ecbbdbdab3a3dd32b67c32fe036db82a39f11598",
+          "expected_hash_of_event": "230774d1a30e5824cf90688338ce69ca21fe5ef1c45f8edd0be858161c586f2d"
+        }
+      ],
+      "expected_tail_hash": "230774d1a30e5824cf90688338ce69ca21fe5ef1c45f8edd0be858161c586f2d"
+    },
+    {
+      "prompt": "summarize the log",
+      "execution_id": "ex-0ccf1b31b8ad",
+      "events": [
+        {
+          "event_id": "evt-ex-0ccf1b31b8ad-0001",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-0ccf1b31b8ad",
+          "node_id": "compression-scan",
+          "event_type": "NODE_START",
+          "payload": {
+            "handler": "scan_input_handler"
+          },
+          "prev_event_hash": "genesis",
+          "expected_hash_of_event": "8d6d6e2ef0c72cbd40399454c4f876b51939717c8485c8e2d5278188960f8acd"
+        },
+        {
+          "event_id": "evt-ex-0ccf1b31b8ad-0002",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-0ccf1b31b8ad",
+          "node_id": "compression-scan",
+          "event_type": "NODE_COMPLETE",
+          "payload": {
+            "status": "ok",
+            "node_id": "compression-scan",
+            "handler": "simulated"
+          },
+          "prev_event_hash": "8d6d6e2ef0c72cbd40399454c4f876b51939717c8485c8e2d5278188960f8acd",
+          "expected_hash_of_event": "90ba9e1746e26d0e79b5ffed42903c006e197fca33f38e5d76618412dffafcfc"
+        },
+        {
+          "event_id": "evt-ex-0ccf1b31b8ad-0003",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-0ccf1b31b8ad",
+          "node_id": "compression-extract",
+          "event_type": "NODE_START",
+          "payload": {
+            "handler": "extract_key_points_handler"
+          },
+          "prev_event_hash": "90ba9e1746e26d0e79b5ffed42903c006e197fca33f38e5d76618412dffafcfc",
+          "expected_hash_of_event": "9f5b88d63445ee1e16a99d10d5348d2a044852db1eef094f6af1be37157b78c6"
+        },
+        {
+          "event_id": "evt-ex-0ccf1b31b8ad-0004",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-0ccf1b31b8ad",
+          "node_id": "compression-extract",
+          "event_type": "NODE_COMPLETE",
+          "payload": {
+            "status": "ok",
+            "node_id": "compression-extract",
+            "handler": "simulated"
+          },
+          "prev_event_hash": "9f5b88d63445ee1e16a99d10d5348d2a044852db1eef094f6af1be37157b78c6",
+          "expected_hash_of_event": "e80557c73acae7dcad5e016527c26dc90f4bdf68446e0b6c6350f2d3d6bdf2dd"
+        },
+        {
+          "event_id": "evt-ex-0ccf1b31b8ad-0005",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-0ccf1b31b8ad",
+          "node_id": "compression-summary",
+          "event_type": "NODE_START",
+          "payload": {
+            "handler": "produce_summary_handler"
+          },
+          "prev_event_hash": "e80557c73acae7dcad5e016527c26dc90f4bdf68446e0b6c6350f2d3d6bdf2dd",
+          "expected_hash_of_event": "47aa2d72ba6147d3ef72c392528ab6d87f9d087fc08401834d2c90eb8a09f4df"
+        },
+        {
+          "event_id": "evt-ex-0ccf1b31b8ad-0006",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-0ccf1b31b8ad",
+          "node_id": "compression-summary",
+          "event_type": "NODE_COMPLETE",
+          "payload": {
+            "status": "ok",
+            "node_id": "compression-summary",
+            "handler": "simulated"
+          },
+          "prev_event_hash": "47aa2d72ba6147d3ef72c392528ab6d87f9d087fc08401834d2c90eb8a09f4df",
+          "expected_hash_of_event": "758b27cfb29a94fad1cdfe1de7528695b9ea608fc57e262211ce691b28f6bc09"
+        }
+      ],
+      "expected_tail_hash": "758b27cfb29a94fad1cdfe1de7528695b9ea608fc57e262211ce691b28f6bc09"
+    },
+    {
+      "prompt": "sanitize the user input",
+      "execution_id": "ex-e147863a427c",
+      "events": [
+        {
+          "event_id": "evt-ex-e147863a427c-0001",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-e147863a427c",
+          "node_id": "constraint_injection-analyze",
+          "event_type": "NODE_START",
+          "payload": {
+            "handler": "analyze_constraints_handler"
+          },
+          "prev_event_hash": "genesis",
+          "expected_hash_of_event": "82e606b27ee7033f501ab98c0c03d69df9437b7114ca743f4c3969dbc91c9cd5"
+        },
+        {
+          "event_id": "evt-ex-e147863a427c-0002",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-e147863a427c",
+          "node_id": "constraint_injection-analyze",
+          "event_type": "NODE_COMPLETE",
+          "payload": {
+            "status": "ok",
+            "node_id": "constraint_injection-analyze",
+            "handler": "simulated"
+          },
+          "prev_event_hash": "82e606b27ee7033f501ab98c0c03d69df9437b7114ca743f4c3969dbc91c9cd5",
+          "expected_hash_of_event": "a6ba3fc4a7aa0f3afc9c5def20514194ac9d8c676a61e12fded490316bf72f66"
+        },
+        {
+          "event_id": "evt-ex-e147863a427c-0003",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-e147863a427c",
+          "node_id": "constraint_injection-modify",
+          "event_type": "NODE_START",
+          "payload": {
+            "handler": "modify_behavior_handler"
+          },
+          "prev_event_hash": "a6ba3fc4a7aa0f3afc9c5def20514194ac9d8c676a61e12fded490316bf72f66",
+          "expected_hash_of_event": "d75715d033dd7354e419b66294c7f5fec92c0d59313440a7c2f4a24df3ca2f85"
+        },
+        {
+          "event_id": "evt-ex-e147863a427c-0004",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-e147863a427c",
+          "node_id": "constraint_injection-modify",
+          "event_type": "NODE_COMPLETE",
+          "payload": {
+            "status": "ok",
+            "node_id": "constraint_injection-modify",
+            "handler": "simulated"
+          },
+          "prev_event_hash": "d75715d033dd7354e419b66294c7f5fec92c0d59313440a7c2f4a24df3ca2f85",
+          "expected_hash_of_event": "c9ea4913885552878fd4ee99d9d42bdc54de50dd3f2025fc768e01c2e1325309"
+        },
+        {
+          "event_id": "evt-ex-e147863a427c-0005",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-e147863a427c",
+          "node_id": "constraint_injection-validate",
+          "event_type": "NODE_START",
+          "payload": {
+            "handler": "validate_constraints_handler"
+          },
+          "prev_event_hash": "c9ea4913885552878fd4ee99d9d42bdc54de50dd3f2025fc768e01c2e1325309",
+          "expected_hash_of_event": "3f778da18708885545acee9d45cd10bb05572f27dfe6307e0083865d11571395"
+        },
+        {
+          "event_id": "evt-ex-e147863a427c-0006",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-e147863a427c",
+          "node_id": "constraint_injection-validate",
+          "event_type": "NODE_COMPLETE",
+          "payload": {
+            "status": "ok",
+            "node_id": "constraint_injection-validate",
+            "handler": "simulated"
+          },
+          "prev_event_hash": "3f778da18708885545acee9d45cd10bb05572f27dfe6307e0083865d11571395",
+          "expected_hash_of_event": "c3f50d2be0118f0a3a1923072dd24c192508bd840834570afa87834c8a8d0d55"
+        }
+      ],
+      "expected_tail_hash": "c3f50d2be0118f0a3a1923072dd24c192508bd840834570afa87834c8a8d0d55"
+    },
+    {
+      "prompt": "hello world",
+      "execution_id": "ex-7efb404ec2d7",
+      "events": [
+        {
+          "event_id": "evt-ex-7efb404ec2d7-0001",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-7efb404ec2d7",
+          "node_id": "default-clarify",
+          "event_type": "NODE_START",
+          "payload": {
+            "handler": "clarify_intent_handler"
+          },
+          "prev_event_hash": "genesis",
+          "expected_hash_of_event": "b403fb0f3e1caad1c2419febafac4535aee4eb38454fd60c7c58a5b21e218ba2"
+        },
+        {
+          "event_id": "evt-ex-7efb404ec2d7-0002",
+          "timestamp": "2026-09-20T00:00:00Z",
+          "execution_id": "ex-7efb404ec2d7",
+          "node_id": "default-clarify",
+          "event_type": "NODE_COMPLETE",
+          "payload": {
+            "status": "ok",
+            "node_id": "default-clarify",
+            "handler": "simulated"
+          },
+          "prev_event_hash": "b403fb0f3e1caad1c2419febafac4535aee4eb38454fd60c7c58a5b21e218ba2",
+          "expected_hash_of_event": "01786fcc4b1cf7987ac9363795a00d0ef03abb8b588a71b60096643d212c4654"
+        }
+      ],
+      "expected_tail_hash": "01786fcc4b1cf7987ac9363795a00d0ef03abb8b588a71b60096643d212c4654"
+    }
+  ],
+  "replay": [
+    {
+      "label": "mixed_complete_fail_skip",
+      "events": [
+        {
+          "event_id": "s0",
+          "node_id": "n0",
+          "event_type": "NODE_START"
+        },
+        {
+          "event_id": "c0",
+          "node_id": "n0",
+          "event_type": "NODE_COMPLETE"
+        },
+        {
+          "event_id": "s1",
+          "node_id": "n1",
+          "event_type": "NODE_START"
+        },
+        {
+          "event_id": "f1",
+          "node_id": "n1",
+          "event_type": "NODE_FAIL"
+        },
+        {
+          "event_id": "s2",
+          "node_id": "n2",
+          "event_type": "NODE_START"
+        },
+        {
+          "event_id": "k2",
+          "node_id": "n2",
+          "event_type": "NODE_SKIP"
+        }
+      ],
+      "expected_state": {
+        "node_states": {
+          "n0": "COMPLETED",
+          "n1": "FAILED",
+          "n2": "SKIPPED"
+        },
+        "completed_nodes": [
+          "n0"
+        ],
+        "failed_nodes": [
+          "n1"
+        ],
+        "event_count": 6,
+        "is_complete": true
+      },
+      "partial_until_5": {
+        "event_count": 5,
+        "n2_state": "RUNNING",
+        "is_complete": false
+      }
+    }
+  ]
+}

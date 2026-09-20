@@ -32,7 +32,7 @@ public final class CanonicalJson {
     private static String render(JsonNode node) {
         if (node == null || node.isNull()) return "null";
         if (node.isTextual()) {
-            try { return MAPPER.writeValueAsString(node.textValue()); }
+            try { return escapeAscii(MAPPER.writeValueAsString(node.textValue())); }
             catch (JsonProcessingException e) { throw new IllegalArgumentException(e); }
         }
         if (node.isNumber() || node.isBoolean()) return node.toString();
@@ -50,6 +50,27 @@ public final class CanonicalJson {
             return "{" + String.join(", ", fields) + "}";
         }
         return node.toString();
+    }
+
+    /**
+     * Python json.dumps default ensure_ascii=True: non-ASCII characters are
+     * emitted as backslash-uXXXX escapes (surrogate pairs for astral planes). Applied
+     * after JSON quoting so the quote characters themselves are untouched.
+     */
+    static String escapeAscii(String quoted) {
+        StringBuilder out = new StringBuilder(quoted.length() + 16);
+        quoted.codePoints().forEach(cp -> {
+            if (cp < 0x80) {
+                out.appendCodePoint(cp);
+            } else if (cp > 0xFFFF) {
+                cp -= 0x10000;
+                int hi = 0xD800 + (cp >> 10), lo = 0xDC00 + (cp & 0x3FF);
+                out.append(String.format("\\u%04x\\u%04x", hi, lo));
+            } else {
+                out.append(String.format("\\u%04x", cp));
+            }
+        });
+        return out.toString();
     }
 
     public static String sha256(Object value) {
