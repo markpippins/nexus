@@ -2,6 +2,8 @@ import { ServiceBroker } from "moleculer";
 import GoogleSearchService, {
   __useTestCacheCollection,
   __resetCacheState,
+  __useTestRedis,
+  __resetRedisState,
 } from "../services/google-search.service";
 import axios from "axios";
 import { testBrokerConfig } from "./moleculer.config";
@@ -23,11 +25,20 @@ describe("GoogleSearchService", () => {
     // test can accidentally pass via a cache hit. Cache behavior lives in
     // test/search-cache.test.ts (fake collections).
     __useTestCacheCollection(null);
+    // Slice-3 limiter is likewise forced off (explicit null) so the live
+    // path is exercised with no live Redis socket. Without this, the first
+    // action call would lazily open a real ioredis connection that nothing
+    // disconnects — jest reports it as an open handle (TCPWRAP). Limiter
+    // behavior lives in test/search-cache.test.ts (fake Redis).
+    __useTestRedis(null);
   });
 
   afterEach(async () => {
     process.env = originalEnv;
     __resetCacheState();
+    // Defensive: drop any live Redis client this suite might have created
+    // so no TCP handle outlives the test run.
+    __resetRedisState();
     if (broker) {
       await broker.stop();
     }
