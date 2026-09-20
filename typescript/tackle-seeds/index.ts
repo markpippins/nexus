@@ -14,7 +14,7 @@
 export function seedMemoryProcedures(): string {
   const SQL = `tackle`;
   return `
-DO $$
+DO $mem$
 DECLARE
     v_memory_id UUID;
     v_role TEXT;
@@ -101,7 +101,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'planner', 'reviewer', 'sysadmin', 'tester', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'lead-engineer', 'planner', 'reviewer', 'sysadmin', 'tester', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -152,7 +152,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'inspector', 'layout-mechanic', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'inspector', 'layout-mechanic', 'lead-engineer', 'planner', 'reviewer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -192,7 +192,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'inspector', 'layout-mechanic', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'inspector', 'layout-mechanic', 'lead-engineer', 'planner', 'reviewer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -232,7 +232,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['devops', 'engineer', 'engineer-ii', 'topologist'];
+        v_roles := ARRAY['devops', 'engineer', 'engineer-ii', 'lead-engineer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -272,7 +272,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['architect', 'builder', 'devops', 'engineer', 'engineer-ii', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['architect', 'builder', 'devops', 'engineer', 'engineer-ii', 'lead-engineer', 'planner', 'reviewer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -303,7 +303,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'lead-engineer', 'planner', 'reviewer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -372,7 +372,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'ontologist', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -413,7 +413,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'ontologist', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -465,7 +465,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'ontologist', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -502,7 +502,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['devops', 'engineer', 'engineer-ii', 'topologist'];
+        v_roles := ARRAY['devops', 'engineer', 'engineer-ii', 'lead-engineer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -534,7 +534,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['devops', 'engineer', 'engineer-ii', 'topologist'];
+        v_roles := ARRAY['devops', 'engineer', 'engineer-ii', 'lead-engineer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -599,7 +599,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['architect', 'devops', 'engineer', 'engineer-ii', 'planner', 'topologist'];
+        v_roles := ARRAY['architect', 'devops', 'engineer', 'engineer-ii', 'lead-engineer', 'planner', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -632,7 +632,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['architect', 'auditor', 'builder', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'layout-mechanic', 'ontologist', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['architect', 'auditor', 'builder', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -666,7 +666,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['builder', 'devops', 'engineer', 'engineer-ii', 'topologist'];
+        v_roles := ARRAY['builder', 'devops', 'engineer', 'engineer-ii', 'lead-engineer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -695,7 +695,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['devops', 'engineer', 'engineer-ii', 'inspector', 'reviewer', 'topologist'];
+        v_roles := ARRAY['devops', 'engineer', 'engineer-ii', 'inspector', 'lead-engineer', 'reviewer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -811,7 +811,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'ontologist', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -886,7 +886,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'ontologist', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -942,7 +942,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'ontologist', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1007,7 +1007,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'ontologist', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1060,7 +1060,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'lead-engineer', 'planner', 'reviewer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1106,7 +1106,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'ontologist', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1160,7 +1160,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'ontologist', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1214,7 +1214,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'ontologist', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1262,7 +1262,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'lead-engineer', 'planner', 'reviewer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1314,7 +1314,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['devops', 'engineer', 'engineer-ii', 'planner', 'topologist'];
+        v_roles := ARRAY['devops', 'engineer', 'engineer-ii', 'lead-engineer', 'planner', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1353,7 +1353,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['builder', 'devops', 'engineer', 'engineer-ii', 'planner', 'topologist'];
+        v_roles := ARRAY['builder', 'devops', 'engineer', 'engineer-ii', 'lead-engineer', 'planner', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1394,7 +1394,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['builder', 'devops', 'engineer', 'engineer-ii', 'topologist'];
+        v_roles := ARRAY['builder', 'devops', 'engineer', 'engineer-ii', 'lead-engineer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1444,7 +1444,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['builder', 'devops', 'engineer', 'engineer-ii', 'topologist'];
+        v_roles := ARRAY['builder', 'devops', 'engineer', 'engineer-ii', 'lead-engineer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1515,7 +1515,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['architect', 'builder', 'devops', 'engineer', 'engineer-ii', 'planner', 'topologist'];
+        v_roles := ARRAY['architect', 'builder', 'devops', 'engineer', 'engineer-ii', 'lead-engineer', 'planner', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1693,7 +1693,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['builder', 'devops', 'engineer', 'engineer-ii', 'topologist'];
+        v_roles := ARRAY['builder', 'devops', 'engineer', 'engineer-ii', 'lead-engineer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1844,7 +1844,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'devops', 'engineer', 'engineer-ii', 'planner', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'devops', 'engineer', 'engineer-ii', 'lead-engineer', 'planner', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -2405,7 +2405,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['architect', 'builder', 'devops', 'engineer', 'engineer-ii', 'topologist'];
+        v_roles := ARRAY['architect', 'builder', 'devops', 'engineer', 'engineer-ii', 'lead-engineer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -2539,7 +2539,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'lead-engineer', 'planner', 'reviewer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -2674,7 +2674,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'lead-engineer', 'planner', 'reviewer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -2818,7 +2818,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'engineer', 'inspector', 'planner', 'reviewer'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'engineer', 'inspector', 'lead-engineer', 'planner', 'reviewer'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -2978,7 +2978,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'planner', 'reviewer', 'tester', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'inspector', 'lead-engineer', 'planner', 'reviewer', 'tester', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -3021,7 +3021,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['architect', 'devops', 'engineer', 'engineer-ii'];
+        v_roles := ARRAY['architect', 'devops', 'engineer', 'engineer-ii', 'lead-engineer'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -3200,7 +3200,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'design-synthesist', 'engineer', 'layout-mechanic', 'operator', 'reviewer'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'design-synthesist', 'engineer', 'layout-mechanic', 'lead-engineer', 'operator', 'reviewer'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -3381,7 +3381,7 @@ BEGIN
         '   - Every push to a shared branch MUST be accompanied by a PR with: what changed, why, migration steps, agent record UUID, and verification.\n'
         '   - Squash-merge preferred.\n'
         '\n'
-        '5. **The merge gate is the tests.** A PR may only be merged when the code has tests AND the tests pass. If that is not met, raise the PR as a **draft** (do not request merge) and say so; do not silently merge untested work.\n'
+        '5. **The merge gate is the tests.** A PR may only be merged when the code has tests AND the tests pass. Verification of the passing condition is the tester role''s attestation (can_verify_work_requests; grant ratified in decision 2f9acb11) — attest with evidence, not author self-declaration. If the conditions are not met, raise the PR as a **draft** (do not request merge) and say so; do not silently merge untested work.\n'
         '\n'
         '6. **Track the PR** through the Assembly \`github\` forum until it merges or closes (R8.1).',
         ARRAY['worktree', 'git', 'pr', 'pull-request', 'committing', 'shipping', 'development'],
@@ -3391,12 +3391,454 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'lead-engineer', 'planner', 'reviewer', 'topologist'];
+        FOREACH v_role IN ARRAY v_roles LOOP
+            INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
+            VALUES (v_memory_id, v_role, NOW(), NULL);
+        END LOOP;
+    END IF;
+    -- ──────────────────────────────────────────────────────────
+    -- 54. PR Protocol
+    -- ──────────────────────────────────────────────────────────
+    v_memory_id := NULL;
+    INSERT INTO ${SQL}.memory (slug, title, summary, body_md, tags, triggers, mcp_tools)
+    VALUES (
+        'pr-protocol',
+        'PR Protocol',
+        'Full pull-request template, merge gate, and exceptions referenced by AGENTS.md R8 — commit alignment, required PR body sections, tester attestation semantics, draft exception, post-merge hygiene.',
+        '# PR Protocol\n'
+        '\n'
+        'The full pull-request template, merge gate, and exceptions referenced by\n'
+        'AGENTS.md **R8**. Content authority remains AGENTS.md; this card is the\n'
+        'operational expansion so the R8 reference resolves. Created 2026-09-17 by\n'
+        'the DBA (R2 5f5a41e6 flagged the dangling pointer; R1 cbc8c72f).\n'
+        '\n'
+        '## 1. Every push gets a PR — no exceptions\n'
+        '\n'
+        'All work ships from a worktree branch (R8.0 canonical root:\n'
+        '\`/home/codex/dev/nexus-worktrees/<topic>\`); \`main\` is never pushed to\n'
+        'directly. Commit, push, and raise the PR **without asking permission** —\n'
+        'the no-confirmation gate is the rule, not a courtesy to request.\n'
+        '\n'
+        '## 2. Commit-message alignment\n'
+        '\n'
+        'Commit messages MUST align with what was written to the agent record — the\n'
+        'record is the source of truth for what was done. If the record says the\n'
+        'work was X, the commit message describes X. Squash-merge preferred; the\n'
+        'squash subject should carry the PR title.\n'
+        '\n'
+        '## 3. The PR body — required sections\n'
+        '\n'
+        'Every PR body covers, at minimum:\n'
+        '\n'
+        '1. **What** — the files/artifacts changed and what each does.\n'
+        '2. **Why** — the motivating record, ruling, thread, or user request\n'
+        '   (cite agent record UUIDs / thread IDs).\n'
+        '3. **Migration / deployment steps** — how the change goes live, or an\n'
+        '   explicit "none required". For DB migrations: the apply command,\n'
+        '   staging-inert status, and any quiesce/reader-check discipline.\n'
+        '4. **Agent record UUID** — the R1 (intent) and R2 (completion) records\n'
+        '   for the work unit.\n'
+        '5. **Verification** — how the change was proven: test counts and names,\n'
+        '   CI workflow runs, live probe output. "Tests pass" without evidence\n'
+        '   names is not verification.\n'
+        '\n'
+        '## 4. The merge gate is the tests\n'
+        '\n'
+        'A PR may only be merged when the code has tests AND the tests pass.\n'
+        'Verification of the passing condition is the **tester role''s** attestation\n'
+        '(\`can_verify_work_requests\`; grant ratified in decision 2f9acb11) — attest\n'
+        'with evidence, not author self-declaration.\n'
+        '\n'
+        'If the conditions are not met, raise the PR as a **draft** (do not request\n'
+        'merge) and say so; do not silently merge untested work.\n'
+        '\n'
+        '### Merge-gate exceptions (narrow, enumerated)\n'
+        '\n'
+        '- **Admin merge to unblock a verified sequence** — when checks are green\n'
+        '  but branch-hygiene state (e.g. stale main pull) blocks the merge, an\n'
+        '  admin merge with the sequence recorded is legitimate. Record the ruling\n'
+        '  that authorizes it.\n'
+        '- **Reverts** — reverting a bad merge restores a known state; the revert\n'
+        '  PR cites the incident. Tests still apply where they can run.\n'
+        '- **CI-infrastructure-only changes** — workflow files with no runtime\n'
+        '  surface (e.g. a postgres version pin) still get their new workflow\n'
+        '  exercised on the PR itself; that run is the test.\n'
+        '\n'
+        'Anything outside these three is not an exception; it is a draft.\n'
+        '\n'
+        '## 5. Named reviewers are governance-carried (the #310 finding)\n'
+        '\n'
+        'GitHub-native review requests are structurally unavailable in this\n'
+        'harness: every PR is authored by the single operator account\n'
+        '(\`markpippins\`), and GitHub refuses review requests to the PR author\n'
+        '(REST 422: "Review cannot be requested from pull request author"). Do not\n'
+        'retry the request or treat the refusal as a process failure.\n'
+        '\n'
+        '- **Carry the obligation on the governance surfaces instead**: a\n'
+        '  \`to:<role>\` agent record naming the reviewer with the PR link, plus a\n'
+        '  comment on the governing thread. (Finding: R2 7e867bcb; case: PR #310,\n'
+        '  where the architect reviewed and merged ~75 minutes after the ping.)\n'
+        '- **\`reviews: []\` is not evidence of no review.** When auditing PR state\n'
+        '  via \`gh pr view --json reviews\`, an empty array is the harness norm,\n'
+        '  not a missing review. The merge itself is the review outcome when the\n'
+        '  named reviewer merged it or the merge follows their explicit go.\n'
+        '\n'
+        '## 6. Track the PR after push (R8.1)\n'
+        '\n'
+        'Raising the PR is not the end of the work. On subsequent turns, check the\n'
+        'Assembly \`github\` forum for the PR''s outcome — merged, closed, rejected,\n'
+        'CI/lint results — and surface it. A merge confirmation closes the loop the\n'
+        'PR opened.\n'
+        '\n'
+        '## 7. Post-merge hygiene\n'
+        '\n'
+        'Pull main into the shared checkout, restart any services that consume the\n'
+        'merged changes, and verify the live behavior the PR promised. File the R2\n'
+        'record with the merge SHA and the verification evidence.\n'
+        '\n'
+        '## Related\n'
+        '\n'
+        '- AGENTS.md R8 / R8.0 / R8.1 — the governing rules\n'
+        '- \`worktree-development-workflow\` card — worktree creation and branch rules\n'
+        '- \`git-committer\` skill — commit mechanics\n'
+        '\n'
+        '',
+        ARRAY['pr', 'pull-request', 'merge-gate', 'committing', 'worktree', 'protocol'],
+        ARRAY['pr protocol', 'pull request', 'raise a pr', 'merge gate', 'pr template', 'open a pr', 'merge conditions'],
+        '{}'
+    )
+    ON CONFLICT (slug) DO NOTHING
+    RETURNING id INTO v_memory_id;
+    IF v_memory_id IS NOT NULL THEN
+        v_roles := ARRAY['analyst', 'architect', 'builder', 'critic', 'DBA', 'devops', 'engineer', 'engineer-ii', 'planner', 'reviewer', 'topologist'];
+        FOREACH v_role IN ARRAY v_roles LOOP
+            INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
+            VALUES (v_memory_id, v_role, NOW(), NULL);
+        END LOOP;
+    END IF;
+    -- ──────────────────────────────────────────────────────────
+    -- 55. SQL Pitfalls (house recurring)
+    -- ──────────────────────────────────────────────────────────
+    v_memory_id := NULL;
+    INSERT INTO ${SQL}.memory (slug, title, summary, body_md, tags, triggers, mcp_tools)
+    VALUES (
+        'sql-pitfalls',
+        'SQL Pitfalls (house recurring)',
+        'Recurring PostgreSQL gotchas from real house work (V155-V177, grants, CI) — symptom/cause/fix for the ||/->> precedence trap, NULL concat, RAISE/SQLSTATE forms, autocommit BEGIN traps, constraint/index detection, view-writes, CASCADE blast radius, engine drift, skeleton-vs-live drift, PL/pgSQL DECLARE-time defaults, psql boolean rendering (t/f vs ::text ''true''), and more.',
+        '# SQL Pitfalls (house recurring)\n'
+        '\n'
+        'Recurring PostgreSQL gotchas encountered in real house work (V155–V177,\n'
+        'grants #299/#301, CI #300, live batteries), each with symptom, cause, and\n'
+        'the fix that worked. If a query fails weirdly here, check this list\n'
+        'before inventing a new theory. Maintained by the DBA; newest live\n'
+        'examples cited by record where they exist.\n'
+        '\n'
+        '## 1. \`''x'' || details->>''op''\` — the jsonb extraction precedence trap\n'
+        '\n'
+        '- **Symptom:** \`ERROR: operator does not exist: text ->> unknown\` or\n'
+        '  \`invalid input syntax for type json\` on a SELECT that looks fine.\n'
+        '- **Why:** \`||\` and \`->>\` have the SAME precedence and are\n'
+        '  left-associative. \`''NEBULA_AUDIT: '' || details->>''op''\` parses as\n'
+        '  \`(''NEBULA_AUDIT: '' || details) ->> ''op''\` — i.e. PostgreSQL tries to\n'
+        '  JSON-parse your concatenated string, then extract from it. Bitten\n'
+        '  three times in house history (V167 audit inspection, V177 battery\n'
+        '  display query, +1).\n'
+        '- **Fix:** always parenthesize extractions in concatenations:\n'
+        '  \`''x: '' || (details->>''op'')\`. Same for comparisons in WHERE:\n'
+        '  \`(details->>''table'') = ''roles_history''\`.\n'
+        '\n'
+        '## 2. \`SELECT ''label='' || col\` prints NOTHING when col is NULL\n'
+        '\n'
+        '- **Symptom:** a diagnostic query returns zero rows for a row you know\n'
+        '  exists.\n'
+        '- **Why:** string concatenation with NULL yields NULL — the whole\n'
+        '  result string silently disappears (no error, no row text).\n'
+        '- **Fix:** \`SELECT ''label='' || coalesce(col::text, ''<null>'')\`. Live\n'
+        '  example: pr-protocol convention-date probe (2026-09-17).\n'
+        '\n'
+        '## 3. PL/pgSQL RAISE takes a single format literal\n'
+        '\n'
+        '- **Symptom:** syntax error at \`||\` inside \`RAISE EXCEPTION ''a'' || ''b''\`.\n'
+        '- **Why:** RAISE''s message is one format string, not an expression\n'
+        '  list.\n'
+        '- **Fix:** \`RAISE EXCEPTION ''a % b'', v_var\` or\n'
+        '  \`RAISE EXCEPTION ''%'', format(''a % b'', x, y)\`. Caught in the V175\n'
+        '  grant template work.\n'
+        '\n'
+        '## 4. Exception handlers need the \`SQLSTATE ''Pxxxx''\` form\n'
+        '\n'
+        '- **Symptom:** \`WHEN P0001 THEN\` is a syntax error in PL/pgSQL.\n'
+        '- **Why:** bare condition codes aren''t valid; only named conditions or\n'
+        '  \`SQLSTATE ''xxxxx''\`.\n'
+        '- **Fix:** \`WHEN SQLSTATE ''P0001'' THEN ...\`. Caught in the V167 guard\n'
+        '  battery.\n'
+        '\n'
+        '## 5. Explicit \`BEGIN;\` in a migration file + autocommit driver = stranded aborted transaction\n'
+        '\n'
+        '- **Symptom:** after an error mid-file, every subsequent query on the\n'
+        '  connection fails with \`current transaction is aborted\`; and\n'
+        '  \`conn.rollback()\` is a NO-OP under autocommit, so it never clears.\n'
+        '- **Why:** the file''s explicit BEGIN opened a real transaction; the\n'
+        '  error aborted it; autocommit mode means psycopg2 won''t manage it.\n'
+        '- **Fix:** issue an SQL \`ROLLBACK;\` from the driver, or read the file\n'
+        '  and execute without autocommit. The V175/#299 E2E harness carries\n'
+        '  this handling.\n'
+        '\n'
+        '## 6. Constraint drops leave their backing index behind\n'
+        '\n'
+        '- **Symptom:** after \`ALTER TABLE ... DROP CONSTRAINT roles_name_key\`,\n'
+        '  a "unique index without WHERE" still exists, also named\n'
+        '  \`roles_name_key\`; \`DROP INDEX\` then fails because it is\n'
+        '  constraint-owned.\n'
+        '- **Why:** PostgreSQL keeps the constraint''s index under the same\n'
+        '  name.\n'
+        '- **Fix:** never heuristic-detect "unique on column X"; use a precise\n'
+        '  \`pg_index\` predicate pinning the exact column set and the\n'
+        '  constraint/index distinction. Two bugs in V175''s first draft came\n'
+        '  from loose detection (one false-positived on the PRIMARY KEY).\n'
+        '\n'
+        '## 7. View-write trap on bitemporal current-row views\n'
+        '\n'
+        '- **Symptom:** \`UPDATE nebula.roles SET ...\` reports \`UPDATE 0\`\n'
+        '  silently — no error, no change.\n'
+        '- **Why:** the view''s predicate (\`now() < valid_until\`) excludes the\n'
+        '  row the moment its snapshot closes mid-transaction.\n'
+        '- **Fix:** write the HISTORY table (\`nebula.roles_history\`), never the\n'
+        '  view, for close-then-insert. Grant-template Lesson 1.\n'
+        '\n'
+        '## 8. \`ON CONFLICT\` needs a real unique constraint\n'
+        '\n'
+        '- **Symptom:** \`there is no unique or exclusion constraint matching\n'
+        '  the ON CONFLICT specification\`.\n'
+        '- **Why:** e.g. the \`role_memory\` association table in the tackle schema\n'
+        '  (as of 2026-09-17) had no unique constraint on \`(memory_id, role)\` —\n'
+        '  duplicates would be accepted silently. (Card bodies must never spell\n'
+        '  schema-qualified table names as unbroken tokens — see the seed-guard\n'
+        '  card-body constraint.)\n'
+        '- **Fix:** \`WHERE NOT EXISTS (...)\` guard for the insert AND file the\n'
+        '  missing-constraint as a schema gap (V178 candidate). Flagged in\n'
+        '  R2 78a891ff.\n'
+        '\n'
+        '## 9. Statement triggers cannot reference NEW/OLD\n'
+        '\n'
+        '- **Symptom:** \`NEW\` is unknown in a FOR EACH STATEMENT trigger.\n'
+        '- **Fix:** \`REFERENCING NEW TABLE AS inserted_rows\` transition tables,\n'
+        '  then aggregate over them (the V156 pattern). Use statement triggers\n'
+        '  for audit (one row per statement, not per row).\n'
+        '\n'
+        '## 10. DROP VIEW ... CASCADE has a silent blast radius\n'
+        '\n'
+        '- **Symptom:** applying a migration kills unrelated views — consumers\n'
+        '  break at runtime, not at apply time.\n'
+        '- **Why:** CASCADE drops every dependent, transitively. V171''s first\n'
+        '  apply took down \`nebula.plans_by_status\` (conduit-mcp''s own\n'
+        '  consumer surface) with it.\n'
+        '- **Fix:** enumerate dependents BEFORE the drop\n'
+        '  (\`pg_depend\` / \`information_schema.view_table_usage\`), quiesce the\n'
+        '  surface (long-transaction check), wrap with \`statement_timeout\`,\n'
+        '  restore the full dependent set in the same migration.\n'
+        '\n'
+        '## 11. SAVEPOINT needs an explicit transaction\n'
+        '\n'
+        '- **Symptom:** \`SAVEPOINT can only be used in transaction blocks\` on\n'
+        '  an autocommit connection.\n'
+        '- **Fix:** run guard-probe batteries inside one \`BEGIN; ... ROLLBACK;\`\n'
+        '  with nested exception handlers (the V167 battery pattern), not\n'
+        '  per-statement savepoints.\n'
+        '\n'
+        '## 12. jsonb scalar strings masquerade as objects\n'
+        '\n'
+        '- **Symptom:** \`details->>''k''\` errors or returns nothing on rows you\n'
+        '  expect to be objects.\n'
+        '- **Why:** pre-V155-era rows may carry a jsonb SCALAR (a quoted\n'
+        '  string), not an object.\n'
+        '- **Fix:** \`details::text\` never fails — diagnose with it first, and\n'
+        '  check \`jsonb_typeof(details)\`. (The V167 "malformed details" false\n'
+        '  alarm was finally disproven this way.)\n'
+        '\n'
+        '## 13. Engine drift: PG17-only parameters in fresh dumps\n'
+        '\n'
+        '- **Symptom:** \`unrecognized configuration parameter\n'
+        '  "transaction_timeout"\` applying a dump on postgres:16 — while it\n'
+        '  works locally.\n'
+        '- **Why:** dumps generated from a PG17 server carry PG17-only\n'
+        '  statements.\n'
+        '- **Fix:** engine-pin CI services to the LIVE engine (postgres:17 —\n'
+        '  the #300 lesson, now house convention). The born-repaired bootstrap\n'
+        '  class exists precisely to surface this coupling.\n'
+        '\n'
+        '## 14. psql meta-commands and Python escapes in dump handling\n'
+        '\n'
+        '- **Symptom:** psycopg2 chokes on \`\\restrict\` / \`\\unrestrict\` lines\n'
+        '  (pg_dump 16+ tokens); separately, a Python docstring containing\n'
+        '  \`\\unrestrict\` raises \`SyntaxError: (unicode error) ''unicodeescape''\`\n'
+        '  because \`\\u\` starts an escape in a non-raw string.\n'
+        '- **Fix:** strip meta-command lines when executing dumps via\n'
+        '  psycopg2; make docstrings that quote them raw strings. (Both caught\n'
+        '  in the #300 bootstrap-class work.)\n'
+        '\n'
+        '## 15. Optional-dependency imports are not hermetic — inject the boundary\n'
+        '\n'
+        '- **Symptom:** a test class labelled "hermetic" exercises a resolver whose\n'
+        '  live path does a deferred \`import psycopg2\`. It passes on dev machines\n'
+        '  (driver installed) and fails on CI (driver absent) — or worse, passes on\n'
+        '  CI *for the wrong reason*: the ImportError-derived exception is the one\n'
+        '  the test "expected", without the discipline under test ever running.\n'
+        '  #308''s wr-conf-031 first CI run failed exactly this way (11s,\n'
+        '  \`RuntimeError: psycopg2 required for the live probe\` instead of a\n'
+        '  missing-role verdict; the unreachable-DB test had been passing via the\n'
+        '  same accidental path).\n'
+        '- **Why:** hermeticity is a property of the **dependency graph**, not of\n'
+        '  the test''s intent. A deferred import inside the function under test is\n'
+        '  still a mandatory dependency on the test path — CI only proves it later\n'
+        '  and more expensively. A test that needs an optional dependency is not\n'
+        '  hermetic.\n'
+        '- **Fix:** inject the dependency boundary. Give the live path an optional\n'
+        '  \`connect\` factory parameter (dsn -> connection) with the real driver as\n'
+        '  the deferred default; pin the discipline (row-mapping,\n'
+        '  missing-role-is-absence, failure-raises) against a fake factory that\n'
+        '  imports nothing; exercise the real driver path explicitly in the live\n'
+        '  demonstration run. The unreachable-DB test must fail for the *intended*\n'
+        '  reason (connection error), never an import error.\n'
+        '  (Worked example: \`make_live_resolver(dsn_env, connect=None)\` in\n'
+        '  \`bin/attestation-chain-demo.py\`, PR #308 fixes 6f46641e -> 29558da6.)\n'
+        '\n'
+        '## 16. The E2E skeleton is not the live schema — drift refuses at apply time\n'
+        '\n'
+        '- **Symptom:** an apply path fully green on its throwaway-DB suite fails on\n'
+        '  live with a NOT NULL violation (\`column "level_filter_primary" violates\n'
+        '  not-null constraint\`), atomically rolled back. Wave-2''s six grant events\n'
+        '  were all refused on first attempt exactly this way (2026-09-17, txids\n'
+        '  never issued): the E2E skeleton allowed NULL level filters, while live\n'
+        '  carries NOT NULL columns seeded \`<= 4\` by the original roles batch.\n'
+        '- **Why:** a suite proves logic against the world *it builds*; it cannot\n'
+        '  see constraint drift between its skeleton and live. Columns added,\n'
+        '  constrained, or seeded on live after the skeleton was written are\n'
+        '  invisible to the suite — the divergence surfaces at apply time, under\n'
+        '  the operator go, with the audit trail watching.\n'
+        '- **Fix:** make apply paths pre-flight the live shape they depend on\n'
+        '  (\`information_schema.columns\` checks for every column the file touches,\n'
+        '  refusing with a named diff before BEGIN), or give the suite a drift\n'
+        '  check comparing skeleton columns against live''s for the tables it\n'
+        '  exercises. Structural prevention beats either check: write grant files\n'
+        '  with the house **carry-forward semantics** (non-granted columns inherit\n'
+        '  the closed row''s values — commit ee2c6961) so they are robust to this\n'
+        '  drift by construction. See pitfall 17 for the carry-forward''s PL/pgSQL\n'
+        '  trap.\n'
+        '\n'
+        '## 17. PL/pgSQL DECLARE defaults evaluate at block entry — not lazily\n'
+        '\n'
+        '- **Symptom:** the Wave-2 carry-forward fix first placed the assignments\n'
+        '  in the DECLARE block (\`v_level_primary timestamptz DEFAULT\n'
+        '  v_closed.level_filter_primary\`), referencing a variable a later step\n'
+        '  populates via SELECT INTO. The suite refused the shape: the carried\n'
+        '  values were NULL — silently, not by exception.\n'
+        '- **Why:** PL/pgSQL evaluates DECLARE-block default expressions **once,\n'
+        '  at block entry, in declaration order** — not lazily at first use and\n'
+        '  not re-evaluated after later statements populate the referenced\n'
+        '  variables. A default that reads a variable assigned in the body\n'
+        '  captures whatever that variable held at entry (NULL), and the row\n'
+        '  ships with silent NULLs instead of the intended carry-forward.\n'
+        '- **Fix:** assignments that depend on data loaded later belong in the\n'
+        '  **body, after the SELECT INTO** — never in DECLARE defaults. The suite\n'
+        '  refusing the DECLARE form and passing the body form (wr-conf-030,\n'
+        '  4/4 after the fix) is the enforcement working; keep that assertion in\n'
+        '  every grant-file suite.\n'
+        '\n'
+        '## 18. psql renders booleans as t/f — \`boolean::text\` yields ''true''/''false''\n'
+        '\n'
+        '- **Symptom:** the boot-shim attestation scan (PR #311) read tester''s live\n'
+        '  capability row and concluded \`can_verify_work_requests = FALSE\` — while the\n'
+        '  row was TRUE in the database. The fetch query worked; the capability query\n'
+        '  lied. No error, no warning, just a wrong answer.\n'
+        '- **Why:** two different text representations of the same value. psql\n'
+        '  *renders* booleans as \`t\` / \`f\` in its output, but \`boolean::text\` *casts*\n'
+        '  to \`''true''\` / \`''false''\`. A client that casts with \`::text\` and compares\n'
+        '  against \`''t''\` gets a silent FALSE for every TRUE row (and vice versa). The\n'
+        '  mirror variant bites test adapters: Python \`str(True)\` renders \`''True''\`,\n'
+        '  which matches neither \`''t''\` nor \`''true''\` — the E2E suite caught that side\n'
+        '  of the same trap the same day.\n'
+        '- **Fix:** never compare boolean text forms across representation boundaries.\n'
+        '  Select the boolean bare and let the driver deliver a real boolean, or make\n'
+        '  the form canonical and explicit: \`r.flag IS TRUE\`, or \`CASE WHEN r.flag\n'
+        '  THEN ... END\`. If parsing a psql \`-At\` stream, compare against \`t\`/\`f\` and\n'
+        '  do NOT add \`::text\`. Both directions are pinned as regression tests in the\n'
+        '  #311 suites (hermetic \`test_attest.py\` + E2E adapter rendering via psql\n'
+        '  semantics).\n'
+        '- **Incident:** attest-wiring live scan misread tester''s capability until\n'
+        '  fixed (R1 43d28339 → R2 e1e4b263, PR #311).\n'
+        '\n'
+        '## 19. A migration with BEGIN; but no COMMIT; persists nothing — and one-session E2E cannot see it\n'
+        '\n'
+        '**Symptom.** The apply prints full success — \`CREATE TABLE\`, \`INSERT 0 5\` — but the objects are absent afterward. Nothing errors; the migration simply never persisted.\n'
+        '\n'
+        '**Mechanism.** psql holds the file''s \`BEGIN;\`-opened transaction open until an explicit \`COMMIT;\`. If the file never commits, **psql rolls the whole thing back on session exit**. DDL is transactional in PostgreSQL; "it printed CREATE TABLE" means "it created it inside an open transaction", not "it committed it".\n'
+        '\n'
+        '**Why the E2E could not catch it (the trap).** The house throwaway-DB pattern holds **one connection for the entire test**. An uncommitted transaction is fully visible inside the session that opened it — the E2E''s verification queries see the created tables, the seeded rows, the triggers, everything. The suite goes green on a database state that evaporates the moment the session closes. Single-session E2E is *structurally* blind to this class; only a **fresh-session post-apply probe** or the lint below can catch it.\n'
+        '\n'
+        '**Guard.** \`bin/tests/test_migration_commit_lint.py\` (PR: commit-lint) enforces the invariant against the real corpus: a \`sql/V1*.sql\` file must not open \`BEGIN;\` without closing \`COMMIT;\`. Files with no BEGIN are legal (psql autocommit per statement — V112/V122/V136 style). The parser strips dollar-quoted bodies (a trigger function''s internal \`BEGIN...END\` inside \`$$...$$\` must not satisfy the lint) and ignores commented-out COMMITs; positive-control fixtures prove it detects the class. Wired into \`mesh-test\`.\n'
+        '\n'
+        '**Detection heuristic for the live incident:** "applied twice successfully, table still absent, both applies from fresh psql sessions" — that combination is this pitfall or an apply-to-the-wrong-instance question (check \`ss -ltnp\`/docker before suspecting your SQL). Here it was the transaction, not a second server.\n'
+        '\n'
+        '- **Incident:** V181 \`wind.node_requirements\` applied twice on live with zero persistence (R2 f00be42c disclosed it; fixed live same day; file + lint repaired in the commit-lint PR). Fix: trailing \`COMMIT;\` per the house shape (V180 is the reference).\n'
+        '\n'
+        '## Related\n'
+        '\n'
+        '- \`bin/attestation-chain-demo.py\` + wr-conf-031 — pitfall 15''s worked example (injected connect factory; PR #308)\n'
+        '\n'
+        '- V156 audit-family pattern (statement triggers + transition tables)\n'
+        '- \`sql/grants/*\` — close-then-insert template (Lessons 1–2)\n'
+        '- \`#300\` bootstrap-class lessons (engine pinning, dump handling)\n'
+        '- Wave-2 grants arc (R2 57312d5f, commit ee2c6961) — pitfalls 16–17''s incident; the carry-forward template now in \`sql/grants/*\`\n'
+        '\n'
+        '\n'
+        '## 20. A test that needs an import a sibling module happened to make is not hermetic — bare \`import unittest\` does NOT attach \`unittest.mock\`\n'
+        '\n'
+        '**Symptom.** The suite is green locally, red in CI with \`AttributeError: module ''unittest'' has no attribute ''mock''\` — on tests that import nothing exotic. The failure moves depending on *which files pytest ran in the same process*, not on the code under test.\n'
+        '\n'
+        '**Mechanism.** Python does not attach a submodule''s attribute until that submodule is imported *somewhere*. \`import unittest\` binds the name but does not execute \`unittest.mock\`. If any other test module in the same pytest process imports \`unittest.mock\` first, the attribute exists for everyone — a hidden cross-module ordering dependency. CI runs the failing file *alone* (its own workflow), so the mask is gone and the latent bug fires.\n'
+        '\n'
+        '**Why CI catches it (not the reverse).** CI hermeticity runs each file in isolation; the local all-files-together run is the anomaly. Same lesson class as pitfall #15 — a test that depends on a sibling''s side effect is not a test of anything.\n'
+        '\n'
+        '**Guard.** Import submodules explicitly at the point of use, even when the parent is already imported: \`import unittest.mock\` (or \`from unittest import mock\`). If a mock is needed only inside one helper, import there. Never rely on "something else in the process already imported it."\n'
+        '\n'
+        '- **Incident:** wr-conf-037 on PR #335 (calendar consolidation intake): \`test_calendar_consolidate_e2e.py\` used \`unittest.mock.patch\` with only \`import unittest\` at top; the hermetic suite in the same local pytest process masked it; CI (file run alone) failed 10/10. Fixed by explicit \`import unittest.mock\` + \`from unittest import mock\` (fix commit on #335, R2 46ac5383).\n'
+        '\n'
+        '\n'
+        '## 21. Bitemporal history tables with composite PKs don''t get generation defaults — idempotent DDL or a generator column, or inserts die with NULL id\n'
+        '\n'
+        '**Symptom.** Writes into a \`*_history\` table fail with \`null value in column "id" violates not-null constraint\` — even though the twin live-surface table inserts fine.\n'
+        '\n'
+        '**Mechanism.** Generation defaults (\`SERIAL\`/\`GENERATED\`) attach to the *table definition*. When a history table is declared with a bare \`INTEGER NOT NULL id\` inside a composite PK \`(id, valid_from)\`, no default exists — and every audit/trigger path that mirrors a live-surface insert into history dies on the first autoincrement attempt. D1 of the losm-store chain (migration \`001_create_vision_schema.sql\`): half of incident e772b969''s write-path failure traced to exactly this.\n'
+        '\n'
+        '**Guard.** Two shapes: (a) \`GENERATED ALWAYS AS IDENTITY\` on the history table and leave the PK composite (id is then supplied by the writer); or (b) idempotent repair DDL — \`ALTER TABLE ... ALTER COLUMN id SET DEFAULT\` (additive, replays safe) plus a backfill trigger for rows arriving without id. Prefer (b) for chains under disposition: it repairs in place without touching PK structure.\n'
+        '\n'
+        '- **Incident:** losm-store \`001\` (D1) — repairs proven in closed PR #369''s standby patch; disposition: historical, ci-bootstrap is the replayable source (README banner, PR: losm-demote-banner).\n'
+        '\n'
+        '## 22. Recursive CTEs drop the typmod of the recursive term — cast the anchor AND the recursive column, not just the anchor\n'
+        '\n'
+        '**Symptom.** \`recursive query "..." column 2 has type character varying(255) in non-recursive term but type character varying overall\` — or, subtler, a silent length mismatch that only fires when the recursion deepens past the anchor''s data.\n'
+        '\n'
+        '**Mechanism.** A recursive CTE''s output column types come from the **anchor** term. If the anchor selects \`VARCHAR(36) path\` but the recursive term selects the working CTE''s own column, the recursive term''s type is the *unannotated* \`VARCHAR\` — and any comparison/concatenation against a length-annotated column can fail (\`recursive dag_tree\` in losm-store \`015_dag_data_model.sql\` (D3), where the dropped \`VARCHAR(36)\` typmod on \`path\` broke the recursion).\n'
+        '\n'
+        '**Guard.** Cast the anchor''s output explicitly AND re-cast inside the recursive term: \`SELECT path::VARCHAR(36) ... UNION ALL SELECT (parent_path || ''/'' || id)::VARCHAR(36) ...\`. The cast on the recursive term is the one people forget; the anchor cast alone does not fix it.\n'
+        '\n'
+        '- **Incident:** losm-store \`015\` (D3) — fix pattern in closed PR #369''s standby patch; disposition per the D1 incident ref.\n'
+        '',
+        ARRAY['sql', 'postgresql', 'pitfalls', 'debugging', 'query', 'jsonb', 'migration'],
+        ARRAY['sql error', 'psql error', 'operator does not exist', 'invalid input syntax', 'jsonb', 'query fails', 'update 0', 'on conflict', 'trigger syntax', 'sql pitfall'],
+        '{}'
+    )
+    ON CONFLICT (slug) DO NOTHING
+    RETURNING id INTO v_memory_id;
+    IF v_memory_id IS NOT NULL THEN
+        v_roles := ARRAY['analyst', 'architect', 'builder', 'critic', 'DBA', 'devops', 'engineer', 'engineer-ii', 'planner', 'reviewer', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
         END LOOP;
     END IF;
     RAISE NOTICE 'Memory procedures seeded.';
-END $$;`;
+END $mem$;`;
 }

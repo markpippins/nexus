@@ -110,7 +110,7 @@ RENDER_MJS = (
     "  const i = src.indexOf('return `', searchFrom);\n"
     "  if (i === -1) break;\n"
     "  const tick = src.indexOf('`', i + 7);\n"
-    "  if (src.slice(tick + 1, tick + 40).trimStart().startsWith('DO $$')) { open = tick; break; }\n"
+    "  if (src.slice(tick + 1, tick + 40).trimStart().startsWith('DO $mem$')) { open = tick; break; }\n"
     "  searchFrom = i + 1;\n"
     "}\n"
     "if (open === -1) { console.error('seed template not found'); process.exit(1); }\n"
@@ -379,8 +379,11 @@ class TestAc1RenderIntegrity(unittest.TestCase):
     def test_render_produces_executable_do_block(self):
         """Rendered SQL is a DO block with one INSERT per live card."""
         sql = _render_seed()
-        self.assertTrue(sql.lstrip().startswith("DO $$"), "rendered SQL must be a DO block")
-        self.assertIn("END $$;", sql)
+        self.assertTrue(
+            sql.lstrip().startswith("DO $mem$"),
+            "rendered SQL must be a tagged DO block ($mem$ — bare $$ dies on bodies quoting '$$...$$')",
+        )
+        self.assertIn("END $mem$;", sql)
         self.assertIn("RAISE NOTICE 'Memory procedures seeded.';", sql)
         schema = _schema_name()
         # One INSERT per live card — derived from the DB so the guard never
