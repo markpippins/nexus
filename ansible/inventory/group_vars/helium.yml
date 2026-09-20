@@ -1,0 +1,58 @@
+# group_vars/helium.yml — helium.
+#
+# helium (mDNS helium.attlocal.net; IPv4 is DHCP — it moved .202 -> .229, so
+# ALWAYS address it by hostname, never a pinned IP).
+#
+# ROLE: preferred FIRST deployment target for the moleculer candidate group
+# and the jvm nexus-core tier. helium runs ~/srv/infra (helium-mongo,
+# helium-redis, helium-nats) and ollama :11434 (embeddings, systemd). It is
+# NOT the authority and NOT the backup replica: like titanium's local candidate
+# group it consumes titanium's PG/Redis/Conduit over LAN.
+#
+# WHY HELIUM IS THE FIRST TARGET: architect decision 24ba3e38 rules the
+# candidate group / moleculer stack onto helium and freezes vanadium to
+# CI/CD + PG backup/replication (no new workloads, no unnecessary changes).
+# Doctrine 8d9c751a follows from it: no incidental provisioning on the
+# durability tier, so nothing vanadium-targeted may grow as a side effect of
+# this retarget.
+#
+# Ollama stays co-located here; the operator accepts the performance hit and
+# the contingency for saturation is a fresh barium install, not isolation
+# work (decision §4).
+#
+# Use: ansible-playbook -i inventory/hosts.ini playbooks/deploy-candidate.yml \
+#        -e candidate_targets=helium
+
+nexus_branch: main
+
+# The helium override retargets PG/Conduit at the authority host; it is a
+# near-twin of compose.vanadium.yaml because both are non-authority hosts.
+candidate_stack_override: compose.helium.yaml
+
+# SHARED-AUTHORITY MONGO (decision 24ba3e38 §3 as AMENDED by PR review
+# 4de54dfe). §3 initially asked for a self-contained composed mongo here; the
+# review reversed that for this shape, and the engineer's first deploy had
+# recorded the same reasoning: helium-mongo exists but has 0 users, auth
+# disabled and is empty, so a credentialed URI cannot point at it without a
+# root user + --auth restart (a DBA call, not a deploy-time one), and — more
+# importantly — a group that PROJECTS shared data wants the shared authority:
+# pointing at titanium gives zero drift on failover, where a self-contained
+# store would risk split-brain and manufacture the very seed/sync problem §3
+# sought to avoid. The titanium-down coverage gap §3 worried about is the
+# mongo-durability charter question (8d9c751a), already open and unscheduled.
+#
+# ⚠ CONSEQUENCE — deploy ≠ failover. Because both the helium standby and
+# titanium's local candidate group would project into the SAME sol_ir
+# collections, they must not run concurrently against them without a writer
+# decision. Warm standby, never a second authority.
+#
+# helium's own backing stores stay OUT of the group's path deliberately:
+#   helium-mongo — see above (auth-disabled, empty, and on :27017 for the
+#                  infra project).
+#   helium-redis — reachable on :6379, but the group runs its own in-compose
+#                  redis (isolation; no shared state).
+#   helium-nats  — the write-queue target; the candidate broker does not use it.
+#
+# `local` (an in-group/host-local mongo) remains a supported source in
+# deploy-candidate.yml for the day the mongo-durability charter lands.
+candidate_mongo_source: authority

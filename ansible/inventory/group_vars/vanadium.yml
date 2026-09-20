@@ -6,15 +6,20 @@
 # these to ansible-vault.
 
 # ── Host topology ─────────────────────────────────────────────────────
-authority_host: 192.168.1.120      # titanium — PostgreSQL + Redis authority
+# authority_host / nexus_root / nexus_controller_env now live in
+# group_vars/all.yml (fleet-wide — helium needs them too). Only the values
+# that are genuinely vanadium-specific stay here.
 standby_host: 192.168.1.209        # vanadium — this machine
 
 # ── Code & compose ────────────────────────────────────────────────────
 nexus_repo: https://github.com/markpippins/nexus.git
-nexus_branch: dev
-nexus_root: /home/codex/dev/nexus
-# Controller-side untracked env (holds SPRING_DATA_MONGODB_URI etc.)
-nexus_controller_env: /home/codex/dev/nexus/.env
+# `dev` never existed on any remote (the repository publishes `main` only), so
+# every keyed deploy failed at `git fetch origin dev`. Corrected to `main`
+# under the owner ruling recorded in PR review 4de54dfe, condition 2.
+# NOTE: vanadium deploys remain OPERATOR-GATED while the tier is frozen to
+# CI/CD + PG backup (decision 24ba3e38 §2) — this corrects the value, it does
+# not authorize running the playbook.
+nexus_branch: main
 compose_dir: /home/codex/dev/nexus/docker/vanadium
 
 # W2 (f17d973d) approves HOST NETWORKING for terrain-ts so its hardcoded
@@ -107,18 +112,13 @@ tier_endpoints:
   - { name: terrain-ts,      port: 8084, path: /health, tolerate_amber: true }
 
 # ── Candidate stack (adonisjs/moleculer failover group) ────────────────
-# Deployed by deploy-candidate.yml; probed by health-candidate.yml.
-# Source of truth for the manifest: docker/candidate-stack/compose.yaml
-# plus the compose.vanadium.yaml override (env retarget to authority host).
-candidate_compose_dir: "{{ nexus_root }}/docker/candidate-stack"
-candidate_compose_files:
-  - compose.yaml
-  - compose.vanadium.yaml
-# Node sources build clean on arm64 (unlike prebuilt terrain-ts, W2 backlog).
-candidate_build_services:
-  - broker
-  - control-edge
-# cand-redis has no published host port (compose-internal only) — nothing to probe.
-candidate_endpoints:
-  - { name: cand-broker,       port: 14080, path: /api/health }
-  - { name: cand-control-edge, port: 18082, path: /health }
+# Moved to group_vars/all.yml (shared: helium and vanadium are both valid
+# targets of deploy-candidate.yml). Vanadium supplies only its compose
+# override here; the rest — compose dir, build services, endpoint map,
+# mongo source — is fleet-wide.
+#
+# NOTE: vanadium is no longer the preferred first target. It is the CI/CD
+# host and the live backup-DB replica; helium is preferred for new
+# deployments (see group_vars/helium.yml).
+candidate_stack_override: compose.vanadium.yaml
+candidate_mongo_source: authority
