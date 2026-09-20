@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../db.js';
 import { BadRequestError, NotFoundError } from '../errors.js';
+import { requireUuid } from '../uuid-params.js';
 
 export const forumsRouter = Router();
 
@@ -243,7 +244,7 @@ forumsRouter.post('/by-id/:forumId/threads', async (req, res, next) => {
 
     const forumCheck = await pool.query(
       'SELECT id FROM assembly.forums WHERE id = $1 AND (expiration_dt = \'infinity\'::timestamptz OR expiration_dt > now()) LIMIT 1',
-      [req.params.forumId]
+      [requireUuid(req.params.forumId, 'forumId')]
     );
     if (forumCheck.rows.length === 0) throw new NotFoundError('Forum not found');
 
@@ -251,7 +252,7 @@ forumsRouter.post('/by-id/:forumId/threads', async (req, res, next) => {
       `INSERT INTO assembly.posts (id, forum_uuid, posted_by_id, title, text, source_url, role, model, created)
        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, NOW())
        RETURNING id, title, role, model`,
-      [req.params.forumId, postedById, String(title).slice(0, 500), String(body), source_url || null, role || null, model || null]
+      [requireUuid(req.params.forumId, 'forumId'), postedById, String(title).slice(0, 500), String(body), source_url || null, role || null, model || null]
     );
     invalidateThreadListCache();
     res.status(201).json(result.rows[0]);
@@ -267,7 +268,7 @@ forumsRouter.get('/by-id/:forumId/threads', async (req, res, next) => {
         `SELECT id FROM assembly.forums WHERE id = $1
          AND (expiration_dt = 'infinity'::timestamptz OR expiration_dt > now())
          LIMIT 1`,
-        [req.params.forumId]
+        [requireUuid(req.params.forumId, 'forumId')]
       );
       if (forumCheck.rows.length === 0) {
         throw new NotFoundError('Forum not found');
@@ -283,7 +284,7 @@ forumsRouter.get('/by-id/:forumId/threads', async (req, res, next) => {
        JOIN assembly.users u ON u.id = p.posted_by_id
        WHERE p.forum_uuid = $1 AND (p.expiration_dt = 'infinity'::timestamptz OR p.expiration_dt > now())
        ORDER BY p.created DESC`,
-      [req.params.forumId]
+      [requireUuid(req.params.forumId, 'forumId')]
     );
     res.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
     res.json(result.rows);
@@ -312,7 +313,7 @@ forumsRouter.get('/threads/:threadId', async (req, res, next) => {
       JOIN assembly.users u ON u.id = p.posted_by_id
       WHERE p.id = $1 AND (p.expiration_dt = 'infinity'::timestamptz OR p.expiration_dt > now())
       LIMIT 1
-    `, [req.params.threadId]);
+    `, [requireUuid(req.params.threadId, 'threadId')]);
 
     if (threadResult.rows.length === 0) {
       throw new NotFoundError('Thread not found');
@@ -345,7 +346,7 @@ forumsRouter.get('/threads/:threadId', async (req, res, next) => {
       FROM comment_tree ct
       JOIN assembly.users u ON u.id = ct.posted_by_id
       ORDER BY ct.depth ASC, ct.created ASC
-    `, [req.params.threadId]);
+    `, [requireUuid(req.params.threadId, 'threadId')]);
 
     const comments = commentsResult.rows.map(c => ({
       id: c.comment_id,
@@ -403,11 +404,11 @@ forumsRouter.post('/threads/:threadId/comments', async (req, res, next) => {
 
     const result = await pool.query(
       'SELECT * FROM assembly.add_comment($1, $2, $3, $4, $5, $6)',
-      [req.params.threadId, postedById, String(body), parentId || null, role || null, model || null]
+      [requireUuid(req.params.threadId, 'threadId'), postedById, String(body), parentId || null, role || null, model || null]
     );
     let status = null;
     if (newStatus !== null) {
-      status = await setThreadStatusRating(req.params.threadId, newStatus);
+      status = await setThreadStatusRating(requireUuid(req.params.threadId, 'threadId'), newStatus);
     }
     invalidateThreadListCache();
 
@@ -435,7 +436,7 @@ forumsRouter.put('/threads/:threadId', async (req, res, next) => {
            updated = now()
        WHERE id = $1 AND (expiration_dt = 'infinity'::timestamptz OR expiration_dt > now())
        RETURNING id, title`,
-      [req.params.threadId, title == null ? null : String(title).slice(0, 500), body == null ? null : String(body)]
+      [requireUuid(req.params.threadId, 'threadId'), title == null ? null : String(title).slice(0, 500), body == null ? null : String(body)]
     );
     if (result.rows.length === 0) throw new NotFoundError('Thread not found');
     invalidateThreadListCache();
@@ -453,7 +454,7 @@ forumsRouter.put('/threads/:threadId/status', async (req, res, next) => {
   try {
     const raw = req.body?.rating ?? req.body?.statusRating;
     const rating = normalizeStatusRating(raw);
-    const out = await setThreadStatusRating(req.params.threadId, rating);
+    const out = await setThreadStatusRating(requireUuid(req.params.threadId, 'threadId'), rating);
     res.json(out);
   } catch (err) {
     if (err.code === '23503' || err.code === '22P02') return next(new NotFoundError('Thread not found'));
@@ -478,7 +479,7 @@ forumsRouter.get('/by-id/:id', async (req, res, next) => {
   try {
     const result = await pool.query(
       'SELECT id, name, slug, description FROM assembly.forums WHERE id = $1',
-      [req.params.id]
+      [requireUuid(req.params.id, 'id')]
     );
     if (result.rows.length === 0) throw new NotFoundError('Forum not found');
     res.json(result.rows[0]);
@@ -508,11 +509,11 @@ forumsRouter.put('/:id', async (req, res, next) => {
     if (slug !== undefined) { sets.push(`slug = $${idx++}`); params.push(slug); }
     if (description !== undefined) { sets.push(`description = $${idx++}`); params.push(description); }
     if (sets.length === 0) {
-      const r = await pool.query('SELECT id, name, slug, description FROM assembly.forums WHERE id = $1', [req.params.id]);
+      const r = await pool.query('SELECT id, name, slug, description FROM assembly.forums WHERE id = $1', [requireUuid(req.params.id, 'id')]);
       if (r.rows.length === 0) throw new NotFoundError('Forum not found');
       return res.json(r.rows[0]);
     }
-    params.push(req.params.id);
+    params.push(requireUuid(req.params.id, 'id'));
     const result = await pool.query(
       `UPDATE assembly.forums SET ${sets.join(', ')} WHERE id = $${idx} RETURNING id, name, slug, description`,
       params
@@ -526,7 +527,7 @@ forumsRouter.delete('/:id', async (req, res, next) => {
   try {
     const result = await pool.query(
       'UPDATE assembly.forums SET expiration_dt = now() WHERE id = $1 RETURNING id, name',
-      [req.params.id]
+      [requireUuid(req.params.id, 'id')]
     );
     if (result.rows.length === 0) throw new NotFoundError('Forum not found');
     res.json({ expired: true, forum_id: req.params.id, name: result.rows[0].name });
@@ -569,8 +570,8 @@ forumsRouter.post('/move-thread', async (req, res, next) => {
 });forumsRouter.delete('/threads/:threadId', async (req, res, next) => {
   try {
     const result = await pool.query(
-      'SELECT * FROM assembly.soft_delete_thread($1)',
-      [req.params.threadId]
+      'SELECT * FROM assembly.soft_delete_thread($1)',      [requireUuid(req.params.threadId, 'threadId')]
+
     );
     if (result.rowCount === 0) throw new NotFoundError('Thread not found');
     invalidateThreadListCache();
@@ -613,7 +614,7 @@ forumsRouter.get('/comments/:id', async (req, res, next) => {
   try {
     const result = await pool.query(
       'SELECT id, created, updated, text, url, rating, posted_by_id, post_id, parent_id FROM assembly.comments WHERE id = $1',
-      [req.params.id]
+      [requireUuid(req.params.id, 'id')]
     );
     if (result.rows.length === 0) throw new NotFoundError('Comment not found');
     res.json(result.rows[0]);
@@ -635,7 +636,7 @@ forumsRouter.put('/comments/:id', async (req, res, next) => {
          AND (expiration_dt = 'infinity'::timestamptz OR expiration_dt > now())
        RETURNING id, post_id, parent_id, text AS body, role, model,
                  created AS "createdAt", updated`,
-      [req.params.id, String(body)]
+      [requireUuid(req.params.id, 'id'), String(body)]
     );
     if (result.rows.length === 0) throw new NotFoundError('Comment not found');
     invalidateThreadListCache();
@@ -652,8 +653,8 @@ forumsRouter.delete('/threads/:threadId/comments', async (req, res, next) => {
       `UPDATE assembly.comments
        SET expiration_dt = now()
        WHERE post_id = $1
-         AND (expiration_dt = 'infinity'::timestamptz OR expiration_dt > now())`,
-      [req.params.threadId]
+         AND (expiration_dt = 'infinity'::timestamptz OR expiration_dt > now())`,      [requireUuid(req.params.threadId, 'threadId')]
+
     );
     invalidateThreadListCache();
     res.json({ deleted: result.rowCount, expired: true, thread_id: req.params.threadId });
@@ -668,7 +669,7 @@ forumsRouter.delete('/comments/:id', async (req, res, next) => {
   try {
     const result = await pool.query(
       'SELECT * FROM assembly.soft_delete_comment($1)',
-      [req.params.id]
+      [requireUuid(req.params.id, 'id')]
     );
     if (result.rowCount === 0) throw new NotFoundError('Comment not found');
     invalidateThreadListCache();
