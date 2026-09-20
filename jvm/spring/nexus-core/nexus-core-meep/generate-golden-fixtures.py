@@ -18,7 +18,25 @@ import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.abspath(os.path.join(HERE, "..", "..", "..", "..", ".."))
+
+
+def _find_repo_root():
+    """Walk upward from this file to locate the repo root (owns python/meep).
+
+    Depth-agnostic so the generator runs identically from a worktree, a CI
+    checkout, or any future directory reshuffle.
+    """
+    probe = HERE
+    for _ in range(10):
+        if os.path.isdir(os.path.join(probe, "python", "meep")):
+            return probe
+        probe = os.path.dirname(probe)
+    raise RuntimeError(
+        "repo root with python/meep not found above " + HERE
+    )
+
+
+REPO_ROOT = _find_repo_root()
 sys.path.insert(0, os.path.join(REPO_ROOT, "python"))
 
 from meep.ast_parser import parse
