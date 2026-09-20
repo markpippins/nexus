@@ -53,13 +53,14 @@
       run_once: true
       when: candidate_mongo_source == 'authority'
 
-    # Local-mongod posture: the target's own mongod, no credentials. Only
-    # valid where that mongod has auth disabled — helium-mongo currently has
-    # 0 users, so a credentialed URI would fail SCRAM there.
-    - name: Derive candidate MONGO_URL (target-local mongod, credential-free)
+    # Composed posture (required for helium, architect decision 24ba3e38 §3):
+    # the group's own `mongo` service, reached over the compose network by
+    # service name. Credential-free because the store is not published to the
+    # host — nothing outside the group can reach it.
+    - name: Derive candidate MONGO_URL (in-group mongo service, credential-free)
       ansible.builtin.set_fact:
-        cand_mongo_url: "mongodb://host.docker.internal:27017/sol_ir"
-      when: candidate_mongo_source == 'local'
+        cand_mongo_url: "mongodb://mongo:27017/keychains"
+      when: candidate_mongo_source == 'composed'
 
     - name: Fail if no MONGO_URL could be derived
       ansible.builtin.assert:
@@ -68,7 +69,7 @@
           - cand_mongo_url | length > 0
         fail_msg: >-
           candidate_mongo_source "{{ candidate_mongo_source }}" produced no
-          MONGO_URL (expected 'authority' or 'local').
+          MONGO_URL (expected 'authority' or 'composed').
 
     - name: Fetch latest {{ nexus_branch }}
       ansible.builtin.command:

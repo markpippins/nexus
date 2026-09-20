@@ -10,11 +10,17 @@
 # it is a client of titanium's PG/Redis/Conduit over LAN, exactly like
 # vanadium.
 #
-# WHY HELIUM IS THE FIRST TARGET (rationale recorded to the architect):
-# vanadium is now a fixture — it hosts the CI/CD pipeline (Jenkins,
-# SonarQube, ballerina tier) and the backup database that is live for
-# read-only clients. Container churn from a candidate deploy there competes
-# with CI and sits next to the replica. helium has no such tenants.
+# WHY HELIUM IS THE FIRST TARGET: architect decision 24ba3e38 rules the
+# candidate group / moleculer stack onto helium and freezes vanadium to
+# CI/CD + PG backup/replication (no new workloads, no unnecessary changes).
+# Doctrine 8d9c751a follows from it: no incidental provisioning on the
+# durability tier, so nothing vanadium-targeted may grow as a side effect of
+# this retarget — which is why the group's own mongo lives in the helium
+# override rather than anywhere near vanadium.
+#
+# Ollama stays co-located here; the operator accepts the performance hit and
+# the contingency for saturation is a fresh barium install, not isolation
+# work (decision §4).
 #
 # Use: ansible-playbook -i inventory/hosts.ini playbooks/deploy-candidate.yml \
 #        -e candidate_targets=helium
@@ -27,16 +33,23 @@ nexus_branch: main
 # near-twin of compose.vanadium.yaml because both are non-authority hosts.
 candidate_stack_override: compose.helium.yaml
 
-# Local backing stores exist on this host but stay OUT of the candidate
-# group's path for now:
-#   helium-mongo — 0 users, auth disabled, and empty (admin/config/local
-#                  only). The authority-borrowed MONGO_URL authenticates as
-#                  mongoUser with authSource=admin, so it cannot point here
-#                  without creating a root user and restarting mongod with
-#                  --auth. Using it would make the group genuinely
-#                  independent (no shared-sol_ir double-write) — that is a
-#                  DBA/architect call, not a deploy-time one.
+# Composed mongo (architect decision 24ba3e38 §3): the group brings its own
+# `mongo` service in compose.helium.yaml, so it is self-contained and no
+# longer borrows the authority's mongod.
+#
+# SEED/SYNC: the store starts EMPTY and is populated by the group's own
+# writes. `keychain-snapshot.service.ts` projects PG (KEYCHAIN_SOURCE_DATABASES
+# = nexus,sol) into db `keychains` (snapshots, transitions, ar_snapshots,
+# checkpoint_entries, checkpoint_sequences) and seeds its checkpoint sequence
+# from whatever it finds locally, so versioning starts at 0 and advances with
+# real transitions. Nothing is copied from titanium, so helium's projection
+# diverges from titanium's accumulated history; a one-time sync-from-titanium
+# is a bounded follow-up, not a deploy blocker.
+#
+# helium's own backing stores stay OUT of the group's path deliberately:
+#   helium-mongo — 0 users and empty, and on :27017 for the infra project.
+#                  The group's mongo publishes no host port, so both coexist.
 #   helium-redis — reachable on :6379, but the group runs its own in-compose
-#                  redis deliberately (isolation; no shared state).
+#                  redis (isolation; no shared state).
 #   helium-nats  — the write-queue target; the candidate broker does not use it.
-candidate_mongo_source: authority
+candidate_mongo_source: composed

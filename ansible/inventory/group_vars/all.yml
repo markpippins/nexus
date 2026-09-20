@@ -38,16 +38,24 @@ candidate_compose_files:
 candidate_build_services:
   - broker
   - control-edge
+# NOTE: a target may additionally declare non-built services in its compose
+# override (helium adds `mongo`), which are pulled rather than built.
 # cand-redis has no published host port (compose-internal only) — nothing to probe.
 candidate_endpoints:
   - { name: cand-broker,       port: 14080, path: /api/health }
   - { name: cand-control-edge, port: 18082, path: /health }
 
 # Which mongod the candidate broker projects into.
-#   authority — borrow titanium's mongod (credentials from the controller
-#               .env; the documented warm-standby posture).
-#   local     — the target's own mongod, reachable via host-gateway and used
-#               credential-free (only valid where that mongod has no auth).
+#   composed  — the group's own `mongo` service, declared in the target's
+#               compose override, reached over the compose network by service
+#               name and credential-free (it publishes no host port).
+#               REQUIRED for helium: architect decision 24ba3e38 §3 rules the
+#               candidate group self-contained, and doctrine 8d9c751a forbids
+#               provisioning mongo on vanadium.
+#   authority — borrow the authority host's mongod using credentials from the
+#               controller .env. Retained only as the documented pre-decision
+#               posture; do NOT redeploy vanadium (it is frozen to CI/CD +
+#               PG backup) and do not point a live group at it.
 # Per-host override in group_vars/<host>.yml.
 candidate_mongo_source: authority
 
