@@ -46,6 +46,7 @@
         <module>nexus-core-broker</module>
         <module>nexus-core-solscript</module>
         <module>nexus-core-writequeue</module>
+        <module>nexus-core-meep</module>
         <module>nexus-core-app</module>
     </modules>
 
@@ -76,6 +77,11 @@
             <dependency>
                 <groupId>org.nexus.core</groupId>
                 <artifactId>nexus-core-writequeue</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.nexus.core</groupId>
+                <artifactId>nexus-core-meep</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
