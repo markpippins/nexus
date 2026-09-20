@@ -346,6 +346,10 @@ wr-primitive-e2e-test:
 wr-view-demotion-e2e-test:
 	@echo "[wr-view-demotion-e2e-test] V187 view demotion E2E (real V186+V187, throwaway DB, wr-conf-040)..."
 	@python3 -m pytest python/nexus_core/wrp/tests/test_v187_work_request_demotion_e2e.py -v
+
+topology-spine-e2e-test:
+	@echo "[topology-spine-e2e-test] V189 topology asset-spine E2E (staged-inert DDL, throwaway DB, wr-conf-041)..."
+	@python3 -m pytest python/nexus_core/wrp/tests/test_v189_topology_spine_e2e.py -v
 attest-wiring-test:
 	@echo "[attest-wiring-test] boot-shim attestation wiring (hermetic + real-DB E2E, wr-conf-034)..."
 	@python3 -m pytest python/continuity/tests/test_attest.py python/nexus_core/wrp/tests/test_attest_wiring_e2e.py -v

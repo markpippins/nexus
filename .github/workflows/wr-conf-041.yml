@@ -1,0 +1,57 @@
+name: WR Conf 041 — Topology Asset Spine (V189 pre-stage E2E, staged inert)
+
+# Applies the REAL sql/V189__topology_asset_spine.sql to a throwaway database
+# carrying the pre-V189 live shape (census 2026-09-20, titanium): the
+# semantics.canonical_asset table with 26 convention-only kinds and NO kind
+# CHECK, plus minimal registry.servers / terrain.servers /
+# terrain.service_endpoints. Drives the full pre-stage contract against live
+# constraint behavior — the loud PREFLIGHT-001 kind-vocabulary refusal, the
+# PREFLIGHT-003 double-apply refusal, the chk_canonical_asset_kind contract
+# (29 kinds pass, a 30th refuses), the additive asset_id/origin_source/
+# origin_ref columns with honest defaults and NULL backfill, the FK into
+# semantics.canonical_asset(id), and the one-asset-one-row unique partial
+# indexes. No mocks on the DB path. The suite creates and drops its own
+# throwaway databases; no production database is touched. Service pinned to
+# postgres:17 (house convention after the wr-conf-025 PG17 lesson, PR #300).
+
+on:
+  push:
+    branches: [main, master, feature/*, dev]
+  pull_request:
+    branches: [main, master, feature/*]
+  workflow_dispatch:
+
+jobs:
+  v189-topology-spine-e2e:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: pguser
+          POSTGRES_PASSWORD: pgpass
+          POSTGRES_DB: nexus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pguser"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install DB driver
+        run: pip install psycopg2-binary
+
+      - name: Run V189 topology asset-spine E2E
+        env:
+          CONDUIT_PG_DSN: postgresql://pguser:pgpass@localhost:5432/postgres
+        run: |
+          python3 -m pytest python/nexus_core/wrp/tests/test_v189_topology_spine_e2e.py -v
