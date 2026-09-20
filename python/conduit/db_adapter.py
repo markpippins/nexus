@@ -1349,65 +1349,82 @@ class DBAdapter:
             return str(created["id"]) if created else None
 
     def add_work_request(self, wr_id: str, plan_id: str, dco_json: str, title: str = ''):
-        """Insert a work request into nebula.work_requests.
-        
+        """Insert a work request into resolution.work_request (canonical).
+
+        W3 repoint (plan 8261650 stage 2, spec 7e8c0222) — was writing to
+        nebula.work_requests_history; now writes the canonical row. Per DBA
+        disposition 767abf1b:
+          - plan_id is NOT written to resolution.work_request.plan_id (FK to
+            resolution.implementation_plan, which stays empty through Stage 2 —
+            the Stage-3 blueprint migration is the authorized path for plan
+            rows). The real plan id is preserved at context.plan_id, matching
+            the V186 backfill convention.
+          - idempotency is a legacy_id existence-check inside the same
+            transaction (indexed: idx_resolution_work_request_legacy_id). The
+            T26 entity_key is preserved into context (entity_key) for
+            traceability during Stages 2-6, but is NOT a column.
+
         Args:
             wr_id: Legacy TEXT ID (e.g., wr-0130-1781781240) - stored in legacy_id column
-            plan_id: Implementation plan ID
-            dco_json: Decomposition Command Object JSON
+            plan_id: Implementation plan ID - preserved at context.plan_id (not the column)
+            dco_json: Decomposition Command Object JSON (full DCO dump)
             title: Work request title
         """
         import uuid
+        import json as _json
         _log.info("add_work_request: wr=%s plan=%s title=%s", wr_id, plan_id, title or '(empty)')
         now = datetime.utcnow().isoformat() + "Z"
         # T26 Item B (T07 emission boundary): derive the entity_key at birth so
-        # the row carries content identity from creation, not retroactively.
+        # the context carries content identity from creation. Preserved into
+        # context only — the canonical table has no entity_key column.
         entity_key = derive_wr_entity_key(dco_json, wr_id)
+        # Build the canonical context JSONB: intent + constraints from the DCO,
+        # plus plan_id (disposition 767abf1b) + entity_key + wr identity.
+        try:
+            dco = _json.loads(dco_json) if dco_json else {}
+        except ValueError:
+            dco = {}
+        context = {}
+        if isinstance(dco.get("intent"), dict):
+            context["intent"] = dco["intent"]
+        if isinstance(dco.get("constraints"), dict):
+            context["constraints"] = dco["constraints"]
+        if plan_id:
+            context["plan_id"] = plan_id
+        if entity_key:
+            context["entity_key"] = entity_key
+        context["work_request_uuid"] = wr_id
         with self._get_connection() as conn:
-            # SCD-type-4 temporal upgrade: nebula.work_requests is a VIEW over
-            # work_requests_history. INSERT ... ON CONFLICT through views is not
-            # supported by PostgreSQL (no matching unique constraint on the view
-            # target). Preserve the idempotent DO NOTHING semantics with an
-            # explicit existence check, then write to the _history table
-            # directly (temporal columns take table defaults: now()/sentinel).
+            # Idempotency: legacy_id existence-check (disposition 767abf1b).
+            # Same transaction as the INSERT. No entity_key column, no
+            # entity_key active-row dedup in the canonical path.
             existing = conn.execute(
-                "SELECT 1 FROM nebula.work_requests_history "
+                "SELECT 1 FROM resolution.work_request "
                 "WHERE legacy_id = %s LIMIT 1",
                 (wr_id,),
             ).fetchone()
             if existing:
                 _log.info("add_work_request: wr=%s already exists, skipping", wr_id)
             else:
-                # T26 Item B: idempotent emission dedup — when the derived key
-                # is already active (same entity re-emitted), reuse the existing
-                # row instead of inserting a duplicate. The 045 exclusion
-                # constraint backstops overlap at the DB level.
-                if entity_key:
-                    active = conn.execute(
-                        "SELECT 1 FROM nebula.work_requests_history "
-                        "WHERE entity_key = %s "
-                        "AND now() >= valid_from AND now() < valid_until LIMIT 1",
-                        (entity_key,),
-                    ).fetchone()
-                    if active:
-                        _log.info(
-                            "add_work_request: wr=%s entity_key already active, "
-                            "reusing row (idempotent emission)", wr_id)
-                        conn.commit()
-                        return
                 conn.execute(
-                    "INSERT INTO nebula.work_requests_history "
-                    "(id, legacy_id, plan_id, title, business_status, dco_json, "
-                    "created_at, updated_at, entity_key) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                    (str(uuid.uuid4()), wr_id, plan_id, title, 'DRAFT', dco_json,
-                     now, now, entity_key),
+                    "INSERT INTO resolution.work_request "
+                    "(id, title, business_status, intent, context, constraints, "
+                    "dco_json, legacy_id, plan_id, created_at, updated_at) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NULL, %s, %s)",
+                    (str(uuid.uuid4()), title, 'DRAFT',
+                     (dco.get("intent") or {}).get("type"),
+                     _json.dumps(context), _json.dumps(dco.get("constraints") or {}),
+                     dco_json, wr_id, now, now),
                 )
             conn.commit()
 
     def update_work_request_status(self, wr_id: str, status: str):
         """Update work request business_status by legacy_id (TEXT ID).
-        
+
+        W3 repoint (plan 8261650 stage 2, spec 7e8c0222) — was updating
+        nebula.work_requests; now updates resolution.work_request (canonical)
+        by legacy_id. Mapping unchanged.
+
         Maps conduit statuses to business statuses:
         - pending → DRAFT
         - completed → DISPATCHED (and sets consumed_at)
@@ -1430,12 +1447,12 @@ class DBAdapter:
             if business_status == 'DISPATCHED':
                 # Set consumed_at when work is dispatched to execution
                 conn.execute(
-                    "UPDATE nebula.work_requests SET business_status = %s, consumed_at = %s, updated_at = %s WHERE legacy_id = %s",
+                    "UPDATE resolution.work_request SET business_status = %s, consumed_at = %s, updated_at = %s WHERE legacy_id = %s",
                     (business_status, now, now, wr_id)
                 )
             else:
                 conn.execute(
-                    "UPDATE nebula.work_requests SET business_status = %s, updated_at = %s WHERE legacy_id = %s",
+                    "UPDATE resolution.work_request SET business_status = %s, updated_at = %s WHERE legacy_id = %s",
                     (business_status, now, wr_id)
                 )
             conn.commit()
