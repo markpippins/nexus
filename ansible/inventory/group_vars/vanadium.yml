@@ -13,12 +13,13 @@ standby_host: 192.168.1.209        # vanadium — this machine
 
 # ── Code & compose ────────────────────────────────────────────────────
 nexus_repo: https://github.com/markpippins/nexus.git
-# ⚠ KNOWN DEFECT (2026-09-20): `dev` no longer exists on any remote — the
-# repository publishes `main` only. `git fetch origin dev` therefore FAILS
-# and any playbook keyed to this value cannot run. helium's group_vars uses
-# `main`. Fixing this for vanadium changes legacy-tier deploy semantics, so
-# it needs an owner's ruling rather than a silent edit here.
-nexus_branch: dev
+# `dev` never existed on any remote (the repository publishes `main` only), so
+# every keyed deploy failed at `git fetch origin dev`. Corrected to `main`
+# under the owner ruling recorded in PR review 4de54dfe, condition 2.
+# NOTE: vanadium deploys remain OPERATOR-GATED while the tier is frozen to
+# CI/CD + PG backup (decision 24ba3e38 §2) — this corrects the value, it does
+# not authorize running the playbook.
+nexus_branch: main
 compose_dir: /home/codex/dev/nexus/docker/vanadium
 
 # W2 (f17d973d) approves HOST NETWORKING for terrain-ts so its hardcoded

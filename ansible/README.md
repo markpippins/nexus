@@ -61,6 +61,14 @@ ansible-playbook -i inventory/hosts.ini playbooks/health-candidate.yml \
 
 - Standby services share titanium's PostgreSQL over LAN — the tier is a
   warm standby, never a second authority. No destructive tests.
+- **Candidate group: shared authority mongod ⇒ deploy ≠ failover.** The
+  candidate broker projects into the authority host's mongo (`sol_ir`), so the
+  helium standby and titanium's local candidate group target the *same*
+  collections and must not run concurrently against them without a writer
+  decision. `deploy-candidate.yml` brings a group up; it does not decide who
+  may write. (Recorded as a condition of the retarget PR, review `4de54dfe`;
+  the standalone-local-mongo alternative is a charter question, doctrine
+  `8d9c751a`.)
 - The candidate group runs its own in-compose redis on every target, so
   `docker compose down` in that project cannot disturb another project's
   backing stores on the same host.

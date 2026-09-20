@@ -4,64 +4,36 @@
 #   docker compose -f compose.yaml -f compose.helium.yaml up -d
 #
 # WHY THIS EXISTS: the base manifest targets the titanium-local topology —
-# host.docker.internal reaches titanium's own PG/Conduit. On helium those
-# services live on the AUTHORITY HOST over LAN, so the env must be retargeted
-# (compose `environment` overrides both base values and env_file per key).
+# host.docker.internal reaches titanium's own PG/Mongo/Conduit. On helium
+# those services live on the AUTHORITY HOST over LAN, so the env must be
+# retargeted (compose `environment` overrides both base values and env_file
+# per key). MONGO_URL itself is NOT set here: it carries credentials and is
+# injected by deploy-candidate.yml into the rendered .env (never committed).
 #
-# MONGO_URL is NOT set here: deploy-candidate.yml renders it into .env next to
-# this file (credential-free for this target — see the `composed` mongo source
-# in ansible/inventory/group_vars/helium.yml).
+# Near-twin of compose.vanadium.yaml by construction: both are non-authority
+# hosts, so both point at titanium for PG/Conduit and differ only in which
+# mongod the injected MONGO_URL names.
+#
+# NO in-group mongo. Architect decision 24ba3e38 §3 first asked for a
+# self-contained mongo here; PR review 4de54dfe AMENDED that for this shape:
+# the group PROJECTS shared data, so a self-contained store would risk
+# split-brain and manufacture the seed/sync problem §3 was trying to avoid.
+# The shared authority is the correct posture for a projecting failover group.
+# An in-group mongo remains expressible via `candidate_mongo_source: local` if
+# the mongo-durability charter question (doctrine 8d9c751a) ever lands.
 #
 # helium-specific facts this override deliberately does NOT change:
 #   - helium runs its own backing stores (~/srv/infra: helium-mongo,
 #     helium-redis, helium-nats) — the group still runs its own in-compose
-#     redis AND mongo rather than joining helium-infra, so the two projects
-#     stay independent and `docker compose down` on either cannot disturb the
-#     other.
+#     redis rather than joining helium-infra, so the two projects stay
+#     independent and `docker compose down` on either cannot disturb the other.
 #   - host ports 14080/18082 are free on helium; only 8092 (nexus-core),
 #     27017/6379/4222/8222 (helium-infra) and 11434 (ollama) are taken.
 #   - helium is a 4 GB board running ollama: the broker's mem_limit of 1g
-#     matters here more than it does elsewhere.
+#     matters here more than it does on vanadium.
 
 services:
-  # Self-contained mongo for this group, per architect decision 24ba3e38 §3:
-  # the candidate group must not depend on titanium's mongod, and no mongo
-  # may be provisioned on vanadium (doctrine 8d9c751a). Standalone is
-  # acceptable; a single-node replica set is not needed yet.
-  #
-  # Deliberately NO host port: the store is reachable only from this compose
-  # network, so it never widens helium's listening surface (which is already
-  # shared with helium-mongo on :27017 for the infra project).
-  #
-  # SEED/SYNC STORY: this store starts EMPTY by design. The broker projects
-  # its own state into it — `keychain-snapshot.service.ts` reads PG
-  # (KEYCHAIN_SOURCE_DATABASES=nexus,sol) and writes db `keychains`
-  # (snapshots, transitions, ar_snapshots, checkpoint_entries,
-  # checkpoint_sequences), seeding its checkpoint sequence from whatever it
-  # finds locally ($max upsert), so versioning begins at 0 and advances with
-  # real transitions. Nothing is copied from titanium. Consequence: helium's
-  # projection diverges from titanium's accumulated history, and a one-time
-  # sync-from-titanium (mongodump/restore of `keychains`, or a re-projection
-  # crawl) is a bounded follow-up rather than a deploy blocker — as the
-  # decision specifies. It also ends the earlier latent double-write where a
-  # second group projected into the same authority-side store.
-  mongo:
-    image: mongo:7
-    container_name: cand-mongo
-    restart: unless-stopped
-    volumes:
-      - cand-mongo-data:/data/db
-    healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-
   broker:
-    depends_on:
-      mongo:
-        condition: service_healthy
     environment:
       # Workers reach shared infrastructure on the authority host.
       PG_HOST: "192.168.1.120"
@@ -71,6 +43,3 @@ services:
   control-edge:
     environment:
       PG_HOST: "192.168.1.120"
-
-volumes:
-  cand-mongo-data:

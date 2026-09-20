@@ -53,14 +53,16 @@
       run_once: true
       when: candidate_mongo_source == 'authority'
 
-    # Composed posture (required for helium, architect decision 24ba3e38 §3):
-    # the group's own `mongo` service, reached over the compose network by
-    # service name. Credential-free because the store is not published to the
-    # host — nothing outside the group can reach it.
-    - name: Derive candidate MONGO_URL (in-group mongo service, credential-free)
+    # Host-local posture: the target's own mongod via the docker host gateway,
+    # credential-free (only valid where that mongod has auth disabled). Kept
+    # supported for the day the mongo-durability charter question (8d9c751a)
+    # lands; NOT the helium posture — see group_vars/helium.yml.
+    # NOTE: the path component is nominal. keychain-snapshot.service.ts calls
+    # client.db("keychains") explicitly, so the driver ignores it.
+    - name: Derive candidate MONGO_URL (host-local mongod, credential-free)
       ansible.builtin.set_fact:
-        cand_mongo_url: "mongodb://mongo:27017/keychains"
-      when: candidate_mongo_source == 'composed'
+        cand_mongo_url: "mongodb://host.docker.internal:27017/keychains"
+      when: candidate_mongo_source == 'local'
 
     - name: Fail if no MONGO_URL could be derived
       ansible.builtin.assert:
@@ -69,7 +71,7 @@
           - cand_mongo_url | length > 0
         fail_msg: >-
           candidate_mongo_source "{{ candidate_mongo_source }}" produced no
-          MONGO_URL (expected 'authority' or 'composed').
+          MONGO_URL (expected 'authority' or 'local').
 
     - name: Fetch latest {{ nexus_branch }}
       ansible.builtin.command:
