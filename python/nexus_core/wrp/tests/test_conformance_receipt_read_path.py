@@ -100,14 +100,21 @@ class TestReceiptReadPathsTest(unittest.TestCase):
 
     @classmethod
     def _seed(cls) -> None:
+        # Seed canonical blueprints_history (V171 surface) with the payload
+        # fold — the implementation_plans view is read-only over the folded
+        # payload and the V171 mirror trigger retired in V176, so writing
+        # through the view would fail (feature-not-supported) and writing the
+        # legacy table would silently vanish.
         _psql(
             f"""
-            INSERT INTO nebula.implementation_plans
-              (plan_number, title, goal, content, status, created_at, updated_at)
+            INSERT INTO nebula.blueprints_history
+              (plan_number, title, payload, blueprint_status)
             VALUES
               ('{cls.PLAN_ID}', 'wr-conf-010 receipt read-path regression',
-               'conduit-lineage receipt must be visible to get_plan_receipts + query_conduit_state',
-               '', 'pending', NOW(), NOW());
+               jsonb_build_object(
+                 'goal', 'conduit-lineage receipt must be visible to get_plan_receipts + query_conduit_state',
+                 'content', ''),
+               'pending');
 
             INSERT INTO execution.requests
               (id, business_key, source_plan_id, status, created_at, updated_at)
@@ -140,7 +147,7 @@ class TestReceiptReadPathsTest(unittest.TestCase):
                OR receipt_id IN ('{cls.LINEAGE_ID}');
             DELETE FROM vision.tickets WHERE plan_id = '{cls.PLAN_ID}';
             DELETE FROM execution.requests WHERE id = '{cls.REQUEST_UUID}';
-            DELETE FROM nebula.implementation_plans WHERE plan_number = '{cls.PLAN_ID}';
+            DELETE FROM nebula.blueprints_history WHERE plan_number = '{cls.PLAN_ID}';
             """
         )
 

@@ -609,38 +609,41 @@ def call_conduit_submit_work_request(normalized: dict, compiled: dict) -> str | 
 
 
 def create_implementation_plan(normalized: dict, compiled: dict) -> str | None:
-    """Create a record in nebula.implementation_plans for the compiled output.
+    """Create a record in nebula.blueprints_history for the compiled output.
 
     Implementation plans are the detailed context-heavy bridge between
-    requirements/specs and WorkRequests. This is the canonical record.
+    requirements/specs and WorkRequests. blueprints_history is the canonical
+    surface (V171); the implementation_plans compat view is read-only over
+    the folded payload, and the legacy mirror trigger retired in V176 — so
+    writers must target blueprints_history directly with the payload fold
+    (same mapping as conduit's upsertPlan, PR #302).
     """
     import uuid as uuidlib
     plan_id = str(uuidlib.uuid4())
     req_id = normalized["requirement_id"]
-    now = datetime.utcnow().isoformat() + "Z"
 
     title = normalized["title"].replace("'", "''")
-    goal = normalized["intent_summary"].replace("'", "''")
     files = compiled["files_affected"]
     criteria = compiled["acceptance_criteria"]
     deps = compiled["dependencies"]
 
-    files_json = json.dumps(files).replace("'", "''")
-    criteria_json = json.dumps(criteria).replace("'", "''")
-    deps_json = json.dumps(deps).replace("'", "''")
+    payload_sql = json.dumps({
+        "goal": normalized["intent_summary"],
+        "files_affected": files,
+        "acceptance_criteria": criteria,
+        "dependencies": deps,
+        "requirement_ref": req_id,
+        "spec_ref": None,
+        "compiled": True,
+        "idempotency_key": compiled.get("idempotency_key", ""),
+    }).replace("'", "''")
 
     sql = f"""
-        INSERT INTO nebula.implementation_plans
-            (id, plan_number, requirement_id, title, goal,
-             files_affected, acceptance_criteria, dependencies,
-             status, metadata, created_at, updated_at)
+        INSERT INTO nebula.blueprints_history
+            (id, plan_number, title, payload, blueprint_status)
         VALUES
-            ('{plan_id}'::uuid, '{req_id[:8]}', '{req_id}'::uuid,
-             '{title}', '{goal}',
-             '{files_json}'::text[], '{criteria_json}'::jsonb, '{deps_json}'::text[],
-             'work_requested',
-             '{{"compiled": true, "idempotency_key": "{compiled.get("idempotency_key", "")}"}}'::jsonb,
-             '{now}', '{now}')
+            ('{plan_id}'::uuid, '{req_id[:8]}', '{title}',
+             '{payload_sql}'::jsonb, 'work_requested')
         RETURNING id;
     """
     rc, out = psql(sql)

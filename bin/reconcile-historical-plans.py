@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Reconcile historical conduit plans into nebula.implementation_plans_history.
+"""Reconcile historical conduit plans into nebula.blueprints_history.
 
 Sweep-tooling item 6/6 (to-do 3c204f0c), per user rulings A1/A2/B1/B2/C1/C2
 and planner confirmation 5d77804b:
 
-- A1: ALL plans live in nebula.implementation_plans (the bitemporal table).
-      Historical plans become rows with status='archived'; pointer fields ride
-      in metadata jsonb (origin_subdir, source_path, file_mtime, kg_entity_id,
+- A1: ALL plans live in nebula.blueprints_history (the canonical bitemporal
+      surface, V171; the implementation_plans view is a read-only compat fold
+      over payload). Historical plans become rows with
+      blueprint_status='archived'; pointer fields ride inside the payload
+      jsonb (origin_subdir, source_path, file_mtime, kg_entity_id,
       resolution_state). NO DDL — 'archived' passes the existing CHECK.
 - A2: KG holds canonical references for outliers; we link via kg_entity_id,
       never duplicate KG content into plan rows.
@@ -22,8 +24,12 @@ Sources merged:
   1. audit/IMPLEMENTATION_PLANS/{completed,pending,planning,proposed}/*.md
   2. KG plans-section entities (knowledge-mcp) not already covered
 
-Inserts go to nebula.implementation_plans_history with valid_from=now(),
-recorded_until_dt=9999-12-31 so the implementation_plans view sees them.
+Writes go to nebula.blueprints_history directly with the payload fold (same
+mapping as conduit's upsertPlan, PR #302). The legacy
+nebula.implementation_plans_history table is frozen post-V176 — writes there
+no longer propagate anywhere (the V171 mirror trigger is retired) and would
+silently vanish; idempotency checks likewise read the compat view, which is
+backed by the canonical surface.
 
 Usage:
   python3 bin/reconcile-historical-plans.py --dry-run   # print plan
@@ -121,12 +127,12 @@ def collect() -> list[dict]:
 
     # 2. KG entities (A2: link, don't duplicate)
     for ent in kg_plan_entities():
-        eid = str(ent.get("entity_id", ""))
+        eid = str(ent.get("entity_id", "")) if isinstance(ent, dict) else ""
         num = eid if re.fullmatch(r"\d{3,5}", eid) else None
-        key = num or f"kg:{ent['id']}"
+        key = num or f"kg:{ent.get('id')}"
         if key in candidates:
             # enrich the fs-derived row with the KG link
-            candidates[key]["metadata"]["kg_entity_id"] = ent["id"]
+            candidates[key]["metadata"]["kg_entity_id"] = ent.get("id")
             continue
         candidates[key] = {
             "plan_number": num,
@@ -134,7 +140,7 @@ def collect() -> list[dict]:
             "status": "archived",
             "metadata": {
                 "origin_subdir": "kg-only",
-                "kg_entity_id": ent["id"],
+                "kg_entity_id": ent.get("id"),
                 "kg_status": ent.get("status") or "",
                 "resolution_state": "unknown",
             },
@@ -143,7 +149,11 @@ def collect() -> list[dict]:
 
 
 def existing_numbers() -> set[str]:
-    out = psql("SELECT DISTINCT plan_number FROM nebula.implementation_plans_history;",
+    # Read through the compat view (backed by canonical blueprints_history,
+    # V171) — the legacy table is frozen post-V176 and must not be consulted
+    # for idempotency, or reruns would re-insert rows that already exist
+    # canonically.
+    out = psql("SELECT DISTINCT plan_number FROM nebula.implementation_plans;",
                tuples=True)
     return {line.split("\t")[0] for line in out.splitlines() if line}
 
@@ -152,14 +162,19 @@ def insert_row(c: dict) -> str:
     pid = str(uuid.uuid4())
     num = c["plan_number"] or c["metadata"].get("kg_entity_id", "")[:8]
     title = c["title"].replace("'", "''")
-    meta = json.dumps(c["metadata"]).replace("'", "''")
+    # Payload fold (same mapping as conduit's upsertPlan, PR #302). The
+    # legacy implementation_plans_history table is frozen post-V176 — direct
+    # writes there no longer propagate anywhere and would silently vanish.
+    payload = json.dumps({
+        "goal": "",
+        "tags": ["historical-reconcile"],
+        "source": "historical-reconcile",
+        "metadata": c["metadata"],
+    }).replace("'", "''")
     return (
-        "INSERT INTO nebula.implementation_plans_history "
-        "(id, plan_number, title, goal, status, tags, metadata, "
-        " valid_from, valid_until, recorded_on_dt, recorded_until_dt) VALUES ("
-        f"'{pid}', '{num}', '{title}', '', 'archived', "
-        f"ARRAY['historical-reconcile']::text[], '{meta}', "
-        "now(), '9999-12-31', now(), '9999-12-31') "
+        "INSERT INTO nebula.blueprints_history "
+        "(id, plan_number, title, payload, blueprint_status) VALUES ("
+        f"'{pid}', '{num}', '{title}', '{payload}'::jsonb, 'archived') "
         f"ON CONFLICT (plan_number) DO NOTHING;"
     )
 

@@ -416,26 +416,28 @@ class ArchitectHarness(Harness):
             "completion_envelope": envelope,
         }
 
+        # blueprints_history is the canonical plan surface (V171); the legacy
+        # implementation_plans view is read-only over the folded payload and
+        # the V171 mirror trigger retired in V176, so writes must fold into
+        # payload (same mapping as conduit's upsertPlan, PR #302).
         cur.execute("""
-            INSERT INTO nebula.implementation_plans
-            (id, plan_number, requirement_id, title, goal, content,
-             files_affected, acceptance_criteria, status, tags, metadata,
-             created_at, updated_at)
+            INSERT INTO nebula.blueprints_history
+            (id, plan_number, title, payload, blueprint_status)
             VALUES (
-                gen_random_uuid(), NULL, %s::uuid, %s, %s, %s,
-                %s, %s::jsonb, 'pending', %s::text[], %s::jsonb,
-                %s, %s
+                gen_random_uuid(), NULL, %s, %s::jsonb, 'pending'
             )
         """, (
-            req_id,
             plan.get("title", f"Plan for {req_id[:8]}"),
-            plan.get("goal", ""),
-            plan.get("approach", ""),
-            plan.get("files_affected", []),
-            json.dumps(plan.get("acceptance_criteria", [])),
-            ["architect-generated"],
-            json.dumps(metadata),
-            now, now,
+            json.dumps({
+                "requirement_ref": req_id,
+                "spec_ref": None,
+                "goal": plan.get("goal", ""),
+                "content": plan.get("approach", ""),
+                "files_affected": plan.get("files_affected", []),
+                "acceptance_criteria": plan.get("acceptance_criteria", []),
+                "tags": ["architect-generated"],
+                "metadata": metadata,
+            }),
         ))
 
         self._conn.commit()

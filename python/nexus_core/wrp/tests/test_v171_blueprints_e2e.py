@@ -14,7 +14,9 @@ invariants live — and drops the database on exit.
   - asset-kind rename: linked current-row assets are kind=blueprint
   - payload fold: legacy flat columns readable through the payload contract
   - compat view: legacy column contract served from the new surface
-  - mirror trigger: new legacy INSERTs write through to blueprints
+  - mirror trigger: installed by V171, retired by V176 (transition window
+    only — post-V176 the legacy table is frozen and writes must target
+    blueprints_history directly)
   - audit trail: NEBULA_AUDIT rows land in tackle.system_logs
   - sanity gates: duplicate plan_numbers refused; re-apply idempotent
 """
@@ -28,6 +30,7 @@ import psycopg2
 _REPO_ROOT = os.path.abspath(os.path.join(
     os.path.dirname(__file__), "..", "..", "..", ".."))
 V171_PATH = os.path.join(_REPO_ROOT, "sql", "V171__blueprints_rename_collapse.sql")
+V176_PATH = os.path.join(_REPO_ROOT, "sql", "V176__retire_plans_mirror_trigger.sql")
 
 DSN = os.environ.get("CONDUIT_PG_DSN",
                      "postgresql://pguser:pgpass@localhost:5432/postgres")
@@ -142,6 +145,11 @@ class ThrowawayDB:
         with open(V171_PATH) as fh:
             self.sql(fh.read())
 
+    def apply_v176(self):
+        """Apply the V176 trigger-retirement migration (idempotent)."""
+        with open(V176_PATH) as fh:
+            self.sql(fh.read())
+
     def seed(self, n=24):
         """Seed n legacy plan rows with V081-style asset envelopes.
 
@@ -243,9 +251,11 @@ WHERE plan_number IN ('0001','0016','8261617');
         self.assertEqual(count, 3)
 
     def test_03_mirror_trigger_writes_through(self):
+        # Transition-window semantics: V171 installs the write-through shim,
+        # and a legacy INSERT (Conduit-era writer shape) mirrors to
+        # blueprints_history while the shim is live.
         self.db.seed(1)
         self.db.apply_v171()
-        # a post-V171 legacy INSERT (Conduit-era writer shape) mirrors automatically
         self.db.sql("""
 INSERT INTO nebula.implementation_plans_history
     (plan_number, title, goal, content, status)
@@ -257,7 +267,39 @@ WHERE plan_number = '9999' AND payload->>'goal' = 'mirrored goal';
 """)[0][0]
         self.assertEqual(count, 1)
 
-    def test_04_audit_trail_lands(self):
+    def test_04_v176_retires_mirror_and_freezes_legacy(self):
+        # Post-V176 consumer-cutover semantics: the shim is gone (new legacy
+        # INSERTs stay put and propagate nowhere) while the compat view keeps
+        # serving the canonical surface unchanged.
+        self.db.seed(1)
+        self.db.apply_v171()
+        self.db.apply_v176()
+
+        self.db.sql("""
+INSERT INTO nebula.implementation_plans_history
+    (plan_number, title, goal, content, status)
+VALUES ('9998', 'post-V176 frozen write', 'frozen goal', 'frozen content', 'pending');
+""")
+        # the frozen write stays ONLY in the legacy table
+        count = self.db.sql("""
+SELECT count(*) FROM nebula.blueprints_history
+WHERE plan_number = '9998';
+""")[0][0]
+        self.assertEqual(count, 0)
+        count = self.db.sql("""
+SELECT count(*) FROM nebula.implementation_plans_history
+WHERE plan_number = '9998';
+""")[0][0]
+        self.assertEqual(count, 1)
+        # and the audit trigger is the only remaining one on the legacy table
+        triggers = self.db.sql("""
+SELECT count(*) FROM pg_trigger
+WHERE tgrelid = 'nebula.implementation_plans_history'::regclass
+  AND NOT tgisinternal;
+""")[0][0]
+        self.assertEqual(triggers, 0)
+
+    def test_05_audit_trail_lands(self):
         self.db.seed(1)
         self.db.apply_v171()
         self.db.sql("""
@@ -274,7 +316,7 @@ WHERE category = 'NEBULA_AUDIT'
 """)[0][0]
         self.assertEqual(count, 1)
 
-    def test_05_duplicate_plan_numbers_refused(self):
+    def test_06_duplicate_plan_numbers_refused(self):
         self.db.seed(2)
         # The legacy UNIQUE constraint already blocks duplicates at the
         # storage layer, so the migration's own gate is defensive against
@@ -290,7 +332,7 @@ WHERE plan_number = '0002';
             self.db.apply_v171()
         self.assertIn("duplicate plan_number", str(ctx.exception))
 
-    def test_06_idempotent_reapply(self):
+    def test_07_idempotent_reapply(self):
         self.db.seed(1)
         self.db.apply_v171()
         # re-apply: guarded, no duplicates, no errors
@@ -298,7 +340,7 @@ WHERE plan_number = '0002';
         count = self.db.sql("SELECT count(*) FROM nebula.blueprints_history;")[0][0]
         self.assertEqual(count, 1)
 
-    def test_07_legacy_view_dropped_and_replaced(self):
+    def test_08_legacy_view_dropped_and_replaced(self):
         self.db.seed(1)
         self.db.apply_v171()
         # the old standalone view is gone: implementation_plans now resolves
