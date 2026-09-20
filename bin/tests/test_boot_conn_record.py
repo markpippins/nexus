@@ -187,6 +187,8 @@ class TestRunOrder(unittest.TestCase):
                                lambda: order.append("conn-record")), \
              mock.patch.object(b, "calendar_step",
                                lambda: order.append("calendar")), \
+             mock.patch.object(b, "consolidate_step",
+                               lambda: order.append("consolidate")), \
              mock.patch.object(b, "clock_in", lambda: order.append("clock-in")), \
              mock.patch.object(b, "forums", lambda: order.append("forums")), \
              mock.patch.object(b, "procedures", lambda: order.append("procedures")), \
@@ -194,7 +196,8 @@ class TestRunOrder(unittest.TestCase):
             code = b.run()
         self.assertEqual(code, 0)
         self.assertEqual(order, ["lease", "inbox", "digest", "conn-record",
-                                 "clock-in", "calendar", "forums", "procedures"])
+                                 "clock-in", "calendar", "consolidate",
+                                 "forums", "procedures"])
 
 
 if __name__ == "__main__":
