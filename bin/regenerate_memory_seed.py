@@ -396,6 +396,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Regenerate seedMemoryProcedures() from live tackle.memory")
     ap.add_argument("--dry-run", action="store_true", help="report without writing")
     ap.add_argument("--verify", action="store_true", help="shadow-seed byte-compare after writing")
+    ap.add_argument("--exclude-slug", action="append", default=[],
+                    help="drop a card slug from the regenerated seed + manifest "
+                         "(repeatable). Use to keep the committed seed at a curated "
+                         "subset when a live-only card is not yet seed-safe "
+                         "(e.g. carries escaping that breaks dollar-quote execution).")
     args = ap.parse_args()
 
     import psycopg2
@@ -405,6 +410,11 @@ def main() -> int:
         cards = load_cards(conn)
     finally:
         conn.close()
+
+    if args.exclude_slug:
+        ex = set(args.exclude_slug)
+        cards = [c for c in cards if c["slug"] not in ex]
+        print(f"  --exclude-slug: dropped {sorted(ex)}")
 
     seed_slugs = seed_slug_order(open(SEED_FILES[0], encoding="utf-8").read())
     cards = order_cards(cards, seed_slugs)
@@ -438,6 +448,11 @@ def main() -> int:
             manifest = build_manifest(conn2)
         finally:
             conn2.close()
+        if args.exclude_slug:
+            ex = set(args.exclude_slug)
+            manifest["cards"] = [c for c in manifest["cards"] if c["slug"] not in ex]
+            manifest["card_count"] = len(manifest["cards"])
+            manifest["role_count"] = sum(len(c["roles"]) for c in manifest["cards"])
         write_manifest(manifest)
         rel = os.path.relpath(MANIFEST_PATH, REPO)
         print(f"  {rel}: wrote ({manifest['card_count']} cards, "
