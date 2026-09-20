@@ -53,6 +53,7 @@
 [submodule "angular/throttler-ui"]
 	path = angular/throttler-ui
 	url = https://github.com/markpippins/nexus-explorer.git
+	branch = main
 [submodule "angular/wind-ui-v2"]
 	path = angular/wind-ui-v2
 	url = https://github.com/markpippins/nexus-wind-v2.git
