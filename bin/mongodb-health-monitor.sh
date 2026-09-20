@@ -34,6 +34,51 @@ MONGODB_DEPENDENT_SERVICES=(
     "broker-gateway.service"
 )
 
+# ── Authenticated readiness probe (MongoDB integration pass, 7b0d775d) ──
+# HISTORICAL DEFECT: the probe below used `mongosh`/`mongo` on the HOST, but
+# neither client is installed here — so every authenticated check silently
+# fell through to a bare port check, and a mongod that was listening but
+# refusing/failing auth still read as "healthy". This is the "health checks
+# lie" finding: mongod deliberately answers an unauthenticated `ping`.
+#
+# Fix: authenticate. Run the read INSIDE the container (the mongo image
+# ships the shell), against the admin auth DB, with credentials from the
+# repo .env. `listCollections` on the app DB is a real read a bare ping
+# cannot substitute for.
+MONGO_CONTAINER="atomic-mongodb"
+MONGO_APP_DB="nexus"
+# Parse (do not source) .env — avoids executing arbitrary lines as shell.
+_mongo_env() {
+    local key="$1"
+    local file="$NEXUS_ROOT/.env"
+    [[ -f "$file" ]] || return 0
+    sed -n "s/^${key}=//p" "$file" | tail -1
+}
+MONGO_ROOT_USER="$(_mongo_env MONGO_ROOT_USER)"; MONGO_ROOT_USER="${MONGO_ROOT_USER:-mongoUser}"
+MONGO_ROOT_PASS="$(_mongo_env MONGO_ROOT_PASS)"; MONGO_ROOT_PASS="${MONGO_ROOT_PASS:-somePassword}"
+
+# Authenticated readiness: true only when mongod accepts the credentials and
+# completes a real read on the application database.
+_mongodb_ready() {
+    command -v docker &>/dev/null || return 1
+    docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$MONGO_CONTAINER" || return 1
+    local out
+    out=$(timeout 8 docker exec "$MONGO_CONTAINER" mongo --quiet \
+            -u "$MONGO_ROOT_USER" -p "$MONGO_ROOT_PASS" \
+            --authenticationDatabase admin \
+            --eval "db.getSiblingDB('${MONGO_APP_DB}').runCommand({listCollections:1}).ok" \
+            2>/dev/null | tr -d '\r')
+    [[ "$out" == *1* ]]
+}
+
+# Liveness only — port is open. Says NOTHING about auth or data reachability;
+# used only as a labelled degraded fallback, never as the health verdict.
+_mongodb_port_open() {
+    ss -tlnp 2>/dev/null | grep -q ':27017 ' 2>/dev/null && return 0
+    timeout 2 bash -c 'echo > /dev/tcp/localhost/27017' 2>/dev/null && return 0
+    return 1
+}
+
 # ── Terrain registry write-back ────────────────────────────────────────
 # MongoDB has no HTTP health endpoint and no heartbeat registration, so
 # staleness sweeps periodically flip its terrain row OFFLINE while the
@@ -68,31 +113,43 @@ _log() {
     echo "[mongodb-health-monitor] $(date '+%Y-%m-%d %H:%M:%S') [$level] $*"
 }
 
-# Check if MongoDB is healthy. Uses multiple fallback methods.
+# Check if MongoDB is healthy.
+#
+# Verdict order:
+#   1. authenticated readiness (authoritative) — auth + real read succeed
+#   2. host-side client ping, if a client happens to exist (legacy path)
+#   3. port-open LIVENESS ONLY — reported as degraded, never as healthy
+#
+# A mongod that is listening but failing auth therefore stays DOWN (honest),
+# and the reason is logged so the failure is visible rather than masked.
+_MONGODB_DEGRADED=false
 _mongodb_healthy() {
-    # Method 1: mongosh ping (newer MongoDB versions) — with 5s timeout
+    _MONGODB_DEGRADED=false
+    # 1. Authoritative: authenticated read inside the container.
+    if _mongodb_ready; then
+        return 0
+    fi
+    # 2. Host client, if present (kept for portability; absent on this host).
     if command -v mongosh &>/dev/null; then
-        if timeout 5 mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok' "mongodb://localhost:27017" 2>/dev/null | grep -q '1'; then
+        if timeout 5 mongosh --quiet -u "$MONGO_ROOT_USER" -p "$MONGO_ROOT_PASS" \
+            --authenticationDatabase admin --eval 'db.runCommand({ ping: 1 }).ok' \
+            "mongodb://localhost:27017" 2>/dev/null | grep -q '1'; then
             return 0
         fi
     fi
-    # Method 2: mongo ping (older MongoDB versions) — with 5s timeout
     if command -v mongo &>/dev/null; then
-        if timeout 5 mongo --quiet --eval 'db.runCommand({ ping: 1 }).ok' "mongodb://localhost:27017" 2>/dev/null | grep -q '1'; then
+        if timeout 5 mongo --quiet -u "$MONGO_ROOT_USER" -p "$MONGO_ROOT_PASS" \
+            --authenticationDatabase admin --eval 'db.runCommand({ ping: 1 }).ok' \
+            "mongodb://localhost:27017" 2>/dev/null | grep -q '1'; then
             return 0
         fi
     fi
-    # Method 3: check if Docker container is running
-    if command -v docker &>/dev/null; then
-        if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx 'atomic-mongodb'; then
-            # Container exists — try a direct port check to confirm it's responding
-            timeout 2 bash -c 'echo > /dev/tcp/localhost/27017' 2>/dev/null && return 0
-        fi
+    # 3. Degraded: port answers but readiness could not be proven.
+    if _mongodb_port_open; then
+        _MONGODB_DEGRADED=true
+        _log "WARN" "mongod port 27017 is open but the authenticated readiness read FAILED — reporting degraded, not healthy (auth/credentials or data reachability problem)"
+        return 0
     fi
-    # Method 4: raw port check
-    ss -tlnp 2>/dev/null | grep -q ':27017 ' 2>/dev/null && return 0
-    # Method 5: /dev/tcp bash built-in
-    timeout 2 bash -c 'echo > /dev/tcp/localhost/27017' 2>/dev/null && return 0
     return 1
 }
 
