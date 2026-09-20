@@ -1,0 +1,80 @@
+# WRP cross-runtime parity gate (JVM vs Python zero-dep substrate)
+#
+# Proves — on every PR/push path that touches the WRP substrate — that the
+# Java kernel (jvm/spring/nexus-core/nexus-core-wrp) reproduces the Python
+# reference (python/nexus_core/wrp) byte-for-byte on the shared contract
+# surface: CAL addressing, CCNF canonical JSON, entity_key derivation,
+# and the 12-state machine.
+#
+#   1. Regenerate golden vectors from the Python reference (pinned, deterministic).
+#   2. Fail closed if regeneration drifts from the COMMITTED fixture
+#      (replay-gate AC4 byte-stability pattern).
+#   3. Run the JVM kernel tests including WrpGoldenParityTest.
+#
+# CCNF conformance authority remains the Go binary + Rust verifier
+# (wr-conf-008/010) — this gate guards the JVM parity consumer only.
+
+name: WRP Parity Gate
+
+on:
+  push:
+    branches: [ main, master, dev, feature/* ]
+    paths:
+      - 'python/nexus_core/wrp/addressing.py'
+      - 'python/nexus_core/wrp/identity.py'
+      - 'python/nexus_core/wrp/states.py'
+      - 'python/nexus_core/wrp/kernel.py'
+      - 'jvm/spring/nexus-core/nexus-core-wrp/**'
+      - 'jvm/spring/nexus-core/pom.xml'
+      - '.github/workflows/wrp-parity-gate.yml'
+  pull_request:
+    branches: [ main, master, dev, feature/* ]
+    paths:
+      - 'python/nexus_core/wrp/addressing.py'
+      - 'python/nexus_core/wrp/identity.py'
+      - 'python/nexus_core/wrp/states.py'
+      - 'python/nexus_core/wrp/kernel.py'
+      - 'jvm/spring/nexus-core/nexus-core-wrp/**'
+      - 'jvm/spring/nexus-core/pom.xml'
+      - '.github/workflows/wrp-parity-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    name: Python golden vectors vs JVM digests (byte-exact)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Regenerate golden vectors from the Python reference
+        run: python3 jvm/spring/nexus-core/nexus-core-wrp/generate-golden-fixtures.py
+
+      - name: Fail closed if regenerated vectors drifted from the committed fixture
+        run: |
+          git diff --exit-code -- jvm/spring/nexus-core/nexus-core-wrp/src/test/resources/wrp-golden-vectors.json \
+            || { echo "::error::wrp-golden-vectors.json drifted: the Python reference changed but the committed fixture was not regenerated. Run generate-golden-fixtures.py, review the diff, and commit it if the change is intended."; exit 1; }
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v3
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Run JVM kernel tests (incl. byte-exact golden parity)
+        run: mvn -B -f jvm/spring/nexus-core/pom.xml -pl nexus-core-wrp clean test
+
+      - name: Upload surefire reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wrp-parity-gate-reports
+          path: jvm/spring/nexus-core/nexus-core-wrp/target/surefire-reports/**
+          if-no-files-found: error
