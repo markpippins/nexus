@@ -2,6 +2,7 @@ package com.aibizarchitect.nexus.v1.spring.user.service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import com.aibizarchitect.nexus.v1.spring.broker.spi.BrokerOperation;
@@ -16,11 +17,29 @@ public class UserAccessService {
     private static final Logger log = LoggerFactory.getLogger(UserAccessService.class);
 
     private final UserRegistrationRepository userRepository;
+    private final PasswordEncoder passwordEncoder;
 
-    public UserAccessService(UserRegistrationRepository userRepository) {
+    public UserAccessService(UserRegistrationRepository userRepository,
+            PasswordEncoder passwordEncoder) {
         this.userRepository = userRepository;
-        log.info("UserAccessService initialized");
+        this.passwordEncoder = passwordEncoder;
+        log.info("UserAccessService initialized (bcrypt verification)");
     }
+
+    /**
+     * Credential verification against assembly.users — the live auth surface.
+     *
+     * Issue 59bcd3da remediation: was `password.equals(userReg.getPassword())`
+     * over a PLAINTEXT column. Since V191 the column stores only bcrypt hashes
+     * (born-clean CHECK), so verification is constant-time-ish
+     * BCryptPasswordEncoder.matches() over the stored hash.
+     *
+     * Timing side-channel hardening: an unknown alias still consumes one
+     * matches() pass against a dummy hash so response latency does not
+     * reveal account existence.
+     */
+    private static final String DUMMY_HASH =
+            "$2a$10$N9qo8uLOickgx2ZMRZoMye.IjPeGqBQVLfJ9X0nYbRJRBQ8RfV9Aa";
 
     @BrokerOperation("validateUser")
     public UserRegistrationDTO validateUser(@BrokerParam("email") String email,
@@ -28,13 +47,20 @@ public class UserAccessService {
 
         log.info("Validating user {}", email);
 
-        UserRegistration userReg = userRepository.findByEmail(email).orElse(null);
-
-        if (userReg == null || !password.equals(userReg.getPassword())) {
+        if (email == null || email.isBlank()
+                || password == null || password.isBlank()) {
             return null;
         }
 
-        if (!password.equals(userReg.getPassword())) {
+        UserRegistration userReg = userRepository.findByEmail(email).orElse(null);
+
+        if (userReg == null) {
+            // Equalize work factor for unknown users (no user enumeration).
+            passwordEncoder.matches(password, DUMMY_HASH);
+            return null;
+        }
+
+        if (!passwordEncoder.matches(password, userReg.getPassword())) {
             log.info("Password mismatch for user {}", email);
             return null;
         }

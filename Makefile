@@ -351,6 +351,10 @@ topology-spine-e2e-test:
 	@echo "[topology-spine-e2e-test] V189 topology asset-spine E2E (staged-inert DDL, throwaway DB, wr-conf-041)..."
 	@python3 -m pytest python/nexus_core/wrp/tests/test_v189_topology_spine_e2e.py -v
 
+v191-users-bcrypt-e2e-test:
+	@echo "[v191-users-bcrypt-e2e-test] V191 bcrypt-at-rest E2E (backfill + round-trip + born-clean CHECKs, throwaway DB, wr-conf-043)..."
+	@python3 -m pytest python/nexus_core/wrp/tests/test_v191_users_bcrypt_e2e.py -v
+
 v190-scratch-vocab-e2e-test:
 	@echo "[v190-scratch-vocab-e2e-test] V190 scratch role-vocabulary widening E2E (repair + drift gate + born-clean bootstrap, throwaway DB, wr-conf-042)..."
 	@python3 -m pytest python/nexus_core/wrp/tests/test_v190_scratch_vocabulary_e2e.py -v
