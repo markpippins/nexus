@@ -1,0 +1,58 @@
+name: WR Conf 044 — Coordination Checkpoints + Blackboard (V192 E2E, staged inert)
+
+# Applies the REAL sql/V192__coordination_checkpoints_blackboard.sql to a
+# throwaway database carrying the live-shape prerequisites (census
+# 2026-09-20, titanium): nebula.roles (name PK), assembly.forums with the
+# 'to-do' forum, assembly.posts (rating bigint, created timestamp WITHOUT
+# tz), assembly.comments (role attribution), resolution.migration_ledger,
+# and the minimal agent_records_history subset. Drives the full V192
+# contract against live constraint behavior — preflight refusals (P2-P5),
+# checkpoint table FK/CHECK/trigger contract, to-do routing through
+# nebula.roles (unmapped tokens -> 'unrouted', arrow form -> first token),
+# the To Do policy v0.1 bucket logic (72h ack SLA, 14d stale window, the
+# acked-but-unadvanced §6 case), the inbox fold across the checkpoint
+# boundary, and read-only view enforcement.
+# No mocks on the DB path. Service pinned to postgres:17 (house
+# convention after the wr-conf-025 PG17 lesson, PR #300).
+
+on:
+  push:
+    branches: [main, master, feature/*, dev]
+  pull_request:
+    branches: [main, master, feature/*]
+  workflow_dispatch:
+
+jobs:
+  v192-blackboard-e2e:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: pguser
+          POSTGRES_PASSWORD: pgpass
+          POSTGRES_DB: nexus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pguser"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies (declared, not mocked — pitfall #15)
+        run: python3 -m pip install pytest psycopg2-binary
+
+      - name: Run V192 checkpoints + blackboard E2E
+        env:
+          CONDUIT_PG_DSN: postgresql://pguser:pgpass@localhost:5432/postgres
+        run: |
+          python3 -m pytest python/nexus_core/wrp/tests/test_v192_blackboard_e2e.py -v
