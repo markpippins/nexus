@@ -88,7 +88,10 @@ tier_endpoints:
   - { name: peb,             port: 3111, path: /health }
   - { name: cascade,         port: 3106, path: /cascade/health }
   - { name: harness,         port: 3420, path: /health }
-  - { name: pty,             port: 3120, path: / }
+  # pty-srv RETIRED (M3 2026-09-18): superseded by worker.pty-transport WS
+  # on :3130 via nexus-broker (:4080). Removed from the health sweep — the
+  # legacy :3120/:3121 listeners are gone, and :3130 is a WebSocket
+  # transport with no HTTP health path.
   - { name: execution,       port: 3110, path: /health }
   - { name: prompt-sync,     port: 3501, path: /health }
   - { name: memory,          port: 3500, path: /health }
