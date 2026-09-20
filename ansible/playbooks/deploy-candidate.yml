@@ -1,19 +1,26 @@
-# deploy-candidate.yml — sync code, render candidate .env, bring the
-# candidate failover group up on vanadium.
+# deploy-candidate.yml — sync code, render the candidate .env, and bring the
+# candidate failover group up on the target host.
 #
 # Companion to deploy-tier.yml (legacy tier) using the SAME ground rules:
 #   - Idempotent: re-running converges.
 #   - Mongo credentials come ONLY from the controller's untracked
 #     nexus/.env — never committed to the repo. Fails loudly if absent.
-#   - NO --remove-orphans: this host runs other compose projects (legacy
-#     vd-* front doors, CI stack) — remove-orphans would stop them.
-#     Learned 2026-08-24.
-#   - reset --hard is intentional: vanadium is a managed deploy target.
+#   - NO --remove-orphans: the target runs other compose projects. On
+#     vanadium that is the legacy vd-* front doors and the CI stack; on
+#     helium it is helium-infra (mongo/redis/nats) and nexus-core.
+#     --remove-orphans would stop them. Learned 2026-08-24.
+#   - reset --hard is intentional: targets are managed deploy checkouts.
 #
-# Run against the [vanadium] inventory group only.
+# WHICH HOST: this playbook is target-parameterized. Run it against the
+# group you mean:
+#     ansible-playbook -i inventory/hosts.ini playbooks/deploy-candidate.yml \
+#       -e candidate_targets=helium
+# The default is vanadium (the original failover target). All shared
+# parameters live in group_vars/all.yml; per-target values (branch, compose
+# override, mongo source) live in group_vars/<host>.yml.
 ---
-- name: Deploy candidate stack on vanadium
-  hosts: vanadium
+- name: Deploy candidate stack
+  hosts: "{{ candidate_targets | default('vanadium') }}"
   gather_facts: false
   vars:
     ansible_become: false
@@ -33,16 +40,38 @@
                         | regex_replace('@localhost:', '@' ~ authority_host ~ ':') }}"
       delegate_to: localhost
       run_once: true
+      when: candidate_mongo_source == 'authority'
 
     # Candidate broker projects into the sol_ir DB with admin authSource
     # (learned 2026-08-26: driver defaults SCRAM to the path DB and fails
     # code 18 against the root user). Strip any path/query from the Spring
     # URI, keep scheme+credentials+host, re-append our own.
-    - name: Derive candidate MONGO_URL (sol_ir projection, admin authSource)
+    - name: Derive candidate MONGO_URL (authority mongod, sol_ir, admin authSource)
       ansible.builtin.set_fact:
         cand_mongo_url: "{{ (mongo_uri | regex_replace('^(mongodb(\\+srv)?://[^/]+).*$', '\\1')) }}/sol_ir?authSource=admin"
       delegate_to: localhost
       run_once: true
+      when: candidate_mongo_source == 'authority'
+
+    # Host-local posture: the target's own mongod via the docker host gateway,
+    # credential-free (only valid where that mongod has auth disabled). Kept
+    # supported for the day the mongo-durability charter question (8d9c751a)
+    # lands; NOT the helium posture — see group_vars/helium.yml.
+    # NOTE: the path component is nominal. keychain-snapshot.service.ts calls
+    # client.db("keychains") explicitly, so the driver ignores it.
+    - name: Derive candidate MONGO_URL (host-local mongod, credential-free)
+      ansible.builtin.set_fact:
+        cand_mongo_url: "mongodb://host.docker.internal:27017/keychains"
+      when: candidate_mongo_source == 'local'
+
+    - name: Fail if no MONGO_URL could be derived
+      ansible.builtin.assert:
+        that:
+          - cand_mongo_url is defined
+          - cand_mongo_url | length > 0
+        fail_msg: >-
+          candidate_mongo_source "{{ candidate_mongo_source }}" produced no
+          MONGO_URL (expected 'authority' or 'local').
 
     - name: Fetch latest {{ nexus_branch }}
       ansible.builtin.command:
@@ -64,14 +93,28 @@
       when: heads.stdout_lines[0] != heads.stdout_lines[1]
       register: git_sync
 
+    # `git_sync.after` does not exist for the command module, so the previous
+    # message printed "repo at unchanged" even on a run that had just
+    # fast-forwarded (seen 2026-09-20 on the first helium deploy). Report the
+    # SHAs that were actually read.
     - name: Report repo state
       ansible.builtin.debug:
-        msg: "repo at {{ git_sync.after | default('unchanged') }}"
-      when: git_sync is not skipped
+        msg: >-
+          repo at {{ heads.stdout_lines[0] }}{{
+            ' (fast-forwarded to ' ~ heads.stdout_lines[1] ~ ')' if git_sync is changed
+            else ' (already current)' }}
 
     # Superset of the keys both containers read via env_file (.env):
-    # control-edge needs APP_*/PG_*, broker needs MONGO_URL. Same dev-tier
-    # credential posture as the legacy tier (documented LAN dev creds).
+    # control-edge needs APP_*/PG_*/REDIS_*, broker needs MONGO_URL. Same
+    # dev-tier credential posture as the legacy tier (documented LAN dev
+    # creds).
+    #
+    # ⚠ This render OVERWRITES the whole file. It must stay a faithful
+    # superset of the hand-maintained docker/candidate-stack/.env or a
+    # deployed target silently loses keys the dev checkout still has.
+    # Learned the hard way 2026-09-20: REDIS_PORT was absent here, so the
+    # first helium deploy produced a control-edge that restart-looped on
+    # adonis' EnvValidationException while titanium stayed healthy.
     - name: Render candidate .env
       ansible.builtin.copy:
         dest: "{{ candidate_compose_dir }}/.env"
@@ -86,12 +129,12 @@
           PG_PASSWORD=pgpass
           PG_DB_NAME=nexus
           PG_PORT=5432
+          REDIS_PORT=6379
           MONGO_URL={{ cand_mongo_url }}
       register: env_render
       no_log: true
 
     - name: Build candidate images ({{ candidate_build_services | join(', ') }})
-      # Node sources build clean on arm64 — unlike prebuilt terrain-ts (W2).
       ansible.builtin.command:
         cmd: >-
           docker compose
@@ -112,7 +155,12 @@
           up -d --no-build
         chdir: "{{ candidate_compose_dir }}"
       register: compose_up
-      changed_when: compose_up.stdout != ''
+      # docker compose writes its progress to stderr, so `stdout` is empty on a
+      # normal run and the old `changed_when: compose_up.stdout != ''` reported
+      # ok/not-changed — which then skipped the settle wait below entirely
+      # (seen 2026-09-20). Bringing the group up is a mutation attempt either
+      # way, so report it as one and let the wait run.
+      changed_when: true
 
     - name: Prune dangling images from rebuilds
       ansible.builtin.command:
