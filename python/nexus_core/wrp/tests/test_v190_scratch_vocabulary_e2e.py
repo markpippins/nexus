@@ -40,13 +40,29 @@ BOOTSTRAP_PATH = os.path.join(_REPO_ROOT, "sql", "ci-bootstrap", "nexus-ci-boots
 DSN = os.environ.get("CONDUIT_PG_DSN",
                      "postgresql://pguser:pgpass@localhost:5432/postgres")
 
-PINNED_ROLES = [
-    "architect", "planner", "builder", "reviewer", "critic", "analyst",
-    "inspector", "engineer", "engineer-ii", "devops", "topologist", "auditor",
-    "dba", "epistemologist", "operator", "sysadmin", "DBA", "tester",
-    "analyst-ii", "design-synthesist", "layout-mechanic", "ontologist",
-    "lead-engineer", "sound-technician",
-]
+
+def _load_pin_roles():
+    """Derive the vocabulary from the ROLE-VOCAB PIN in the migration itself
+    (single in-repo copy — wr-conf-042's parity suite enforces bootstrap
+    parity; deriving here keeps the E2E from carrying a second list that
+    could silently drift)."""
+    with open(V190_PATH, encoding="utf-8") as fh:
+        text = fh.read()
+    mk = text.find("ROLE-VOCAB PIN")
+    if mk < 0:
+        raise RuntimeError("ROLE-VOCAB PIN marker missing from V190")
+    arr = text.find("ARRAY[", mk)
+    close = text.find("]", arr)
+    roles = sorted({r for r in re.findall(r"'([^']*)'", text[arr:close]) if r})
+    if len(roles) < 20:
+        raise RuntimeError("pin parse yielded implausible role count: %d" % len(roles))
+    for role in ("ontologist", "lead-engineer", "sound-technician"):
+        if role not in roles:
+            raise RuntimeError("pin lost ratified-12 role: %s" % role)
+    return roles
+
+
+PINNED_ROLES = _load_pin_roles()
 STALE_ROLES = [r for r in PINNED_ROLES
                if r not in ("ontologist", "lead-engineer", "sound-technician")]
 

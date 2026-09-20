@@ -18,10 +18,16 @@ name: WR Conf 042 — Scratch Role Vocabulary Widening (V190 G1 close-out E2E)
 #   - BootstrapPath: the REAL patched ci-bootstrap deploys born-clean — the
 #     24-role CHECK present at birth, every pinned role (plus '') insertable,
 #     a bogus role rejected. No repair needed, none applied.
+#   - ParitySuite (hermetic): the born-clean assertion on every PR — the
+#     ci-bootstrap's role CHECK must carry EXACTLY the ROLE-VOCAB PIN's
+#     vocabulary (the marker-designated in-repo authority in V190); V190's
+#     swap DDL must match its own pin; exactly one pin marker may exist in
+#     sql/; the pin must carry the G1 trio. Plus hermetic tests for the
+#     on-box comparator (bin/role-vocab-drift.py, live==pin==bootstrap).
 #
-# No mocks on the DB path. The suite creates and drops its own throwaway
-# databases; no production database is touched. Service pinned to postgres:17
-# (house convention after the wr-conf-025 PG17 lesson, PR #300).
+# No mocks on the DB path of the E2E. The suite creates and drops its own
+# throwaway databases; no production database is touched. Service pinned to
+# postgres:17 (house convention after the wr-conf-025 PG17 lesson, PR #300).
 
 on:
   push:
@@ -64,3 +70,11 @@ jobs:
           CONDUIT_PG_DSN: postgresql://pguser:pgpass@localhost:5432/postgres
         run: |
           python3 -m pytest python/nexus_core/wrp/tests/test_v190_scratch_vocabulary_e2e.py -v
+
+      - name: Born-clean role-vocabulary parity (hermetic)
+        run: |
+          python3 -m unittest bin.tests.test_role_vocab_parity -v
+
+      - name: role-vocab-drift comparator tests (hermetic)
+        run: |
+          python3 -m unittest bin.tests.test_role_vocab_drift -v

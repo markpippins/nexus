@@ -34,6 +34,25 @@
 -- Apply:  psql -d nexus -f sql/V190__scratch_role_vocabulary_widening.sql
 -- =============================================================================
 
+-- =============================================================================
+-- ROLE-VOCAB PIN — the marker-designated in-repo authority (2026-09-20).
+--
+-- The pinned role list below is THE authoritative role vocabulary in the
+-- repository. Consumers:
+--   * V190's own preflight (live nebula CHECK must equal this pin at apply
+--     time — the drift gate below)
+--   * wr-conf-042 CI: sql/ci-bootstrap/nexus-ci-bootstrap.sql's
+--     agent_records_role_check must carry EXACTLY these literals (born-clean
+--     assertion, enforced on every PR)
+--   * bin/role-vocab-drift.py (on-box): live nebula == pin == bootstrap
+--
+-- WIDENING THE VOCABULARY: copy this marker comment into the new migration
+-- with the new pin, update the bootstrap to the same list, and REMOVE the
+-- marker from this file — exactly ONE authoritative pin may exist at any
+-- time (wr-conf-042 fails the build otherwise). Nebula's live constraint and
+-- this pin must move together.
+-- =============================================================================
+
 BEGIN;
 
 -- -----------------------------------------------------------------------------
