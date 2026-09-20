@@ -27,7 +27,8 @@ worse and re-runs converge.
 
 Refusals (exit codes):
   1  record not found (or :3101 unreachable)
-  2  record has no `operator:go` tag — not an operator-go; refuse
+  2  record has no operator-go authorization tag (either spelling,
+     `operator:go` or `operator-go`) — not an operator-go; refuse
   3  already tagged `status:applied` — no mutation performed, exit 3
      so callers can distinguish "freshly tagged" (0) from "was already
      tagged" (3). Idempotent either way: no second write, no duplicate tag.
@@ -44,7 +45,13 @@ import urllib.error
 import urllib.request
 
 APPLIED_TAG = "status:applied"
-GATE_TAG = "operator:go"
+# Both live spellings of the authorization tag. The canonical operator-go
+# records carry the hyphen form `operator-go` (see the relay/contingent/canonical
+# records of 2026-09-20: 56acc5be, 16870ec1, 8ea65d19, 17316f4f), while this
+# tool's original gate matched only the colon form `operator:go` — so every
+# FRESH operator-go record refused. Accept both; refuse only records carrying
+# neither.
+GATE_TAGS = ("operator:go", "operator-go")
 
 # Exit codes
 EX_NOT_FOUND = 1
@@ -133,15 +140,17 @@ def mark_applied(client, record_id, out=sys.stdout, err=sys.stderr):
         return EX_NOT_FOUND
 
     tags = rec.get("tags")
+    current_tags = parse_tags(tags)
     new_tags, already = build_new_tags(tags, APPLIED_TAG)
 
     if already:
         print(f"ALREADY     {record_id} — status:applied present, no mutation", file=out)
         return EX_ALREADY_APPLIED
 
-    if GATE_TAG not in new_tags:
-        print(f"REFUSED     {record_id} — no '{GATE_TAG}' tag; "
-              f"not an operator-go record (tags: {new_tags})", file=err)
+    if not any(g in current_tags for g in GATE_TAGS):
+        print(f"REFUSED     {record_id} — no operator-go authorization tag "
+              f"(accepted: {' / '.join(GATE_TAGS)}); record's current tags: {current_tags}",
+              file=err)
         return EX_NOT_OPERATOR_GO
 
     client.patch_tags(record_id, new_tags)
