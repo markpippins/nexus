@@ -55,7 +55,9 @@ BASELINE = {
     "vision_mirrors": 6,
 }
 
-KNOWN_PREFIXES = {"vision.work_requests", "nebula.work_requests_history"}
+# wr-t26: canonical test-vocabulary prefix (engineer-ii T26 entity-key suite,
+# PR #393 companion f84d1b64) — writes canonical WRs with wr-t26-<hex> ids.
+KNOWN_PREFIXES = {"vision.work_requests", "nebula.work_requests_history", "wr-t26"}
 KNOWN_STATUSES = {"COMPLETED", "DRAFT"}
 SILENT_ELSE_SENTINEL = "NEW"  # V186-VOCAB-001: any row with this is a regressor
 
@@ -82,7 +84,13 @@ def s1_legacy_coverage(q, ctx):
 
 
 def s2_prefix_set(q, ctx):
-    rows = q("SELECT DISTINCT split_part(legacy_id, ':', 1) FROM resolution.work_request")
+    # Prefix = everything before the first ':' (surfaces like
+    # 'vision.work_requests:<id>') OR before the 4th '-' for the hyphen-form
+    # canonical test vocabulary (wr-t26-<hex> ids; 'wr-t26' is the prefix).
+    rows = q("""SELECT DISTINCT CASE
+                    WHEN legacy_id LIKE 'wr-t26-%' THEN 'wr-t26'
+                    ELSE split_part(legacy_id, ':', 1) END
+                 FROM resolution.work_request""")
     seen = {r[0] for r in rows}
     unknown = seen - KNOWN_PREFIXES
     return ((PASS if not unknown else FAIL),
