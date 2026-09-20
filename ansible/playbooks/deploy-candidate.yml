@@ -90,10 +90,16 @@
       when: heads.stdout_lines[0] != heads.stdout_lines[1]
       register: git_sync
 
+    # `git_sync.after` does not exist for the command module, so the previous
+    # message printed "repo at unchanged" even on a run that had just
+    # fast-forwarded (seen 2026-09-20 on the first helium deploy). Report the
+    # SHAs that were actually read.
     - name: Report repo state
       ansible.builtin.debug:
-        msg: "repo at {{ git_sync.after | default('unchanged') }}"
-      when: git_sync is not skipped
+        msg: >-
+          repo at {{ heads.stdout_lines[0] }}{{
+            ' (fast-forwarded to ' ~ heads.stdout_lines[1] ~ ')' if git_sync is changed
+            else ' (already current)' }}
 
     # Superset of the keys both containers read via env_file (.env):
     # control-edge needs APP_*/PG_*/REDIS_*, broker needs MONGO_URL. Same
@@ -146,7 +152,12 @@
           up -d --no-build
         chdir: "{{ candidate_compose_dir }}"
       register: compose_up
-      changed_when: compose_up.stdout != ''
+      # docker compose writes its progress to stderr, so `stdout` is empty on a
+      # normal run and the old `changed_when: compose_up.stdout != ''` reported
+      # ok/not-changed — which then skipped the settle wait below entirely
+      # (seen 2026-09-20). Bringing the group up is a mutation attempt either
+      # way, so report it as one and let the wait run.
+      changed_when: true
 
     - name: Prune dangling images from rebuilds
       ansible.builtin.command:
