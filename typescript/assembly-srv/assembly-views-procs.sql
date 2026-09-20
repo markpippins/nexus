@@ -8,7 +8,13 @@
 -- ── VIEWS ──────────────────────────────────────────────────────────────────
 
 -- 1. Forum list with thread/comment counts
-CREATE OR REPLACE VIEW assembly.forum_list_v AS
+--     V188 (2026-09-20): grouped-aggregate rewrite of the original per-row
+--     count subqueries — those compiled to two UNCORRELATED full-scan SubPlans
+--     over posts/comments executed once per forum row (29x), making
+--     GET /api/forums take 6.3-8.0s. Same columns/order; see
+--     sql/V188__assembly_forum_list_v_rewrite.sql for the gated migration.
+DROP VIEW IF EXISTS assembly.forum_list_v;
+CREATE VIEW assembly.forum_list_v AS
 SELECT
     f.id,
     f.name,
@@ -16,15 +22,24 @@ SELECT
     f.description,
     f.sort_order,
     f.expiration_dt,
-    (SELECT COUNT(*) FROM assembly.posts p WHERE p.forum_uuid = f.id) AS thread_count,
-    (SELECT COUNT(*) FROM assembly.comments c
-       JOIN assembly.posts p ON p.id = c.post_id
-       WHERE p.forum_uuid = f.id) AS comment_count
+    COALESCE(pc.thread_count, 0)  AS thread_count,
+    COALESCE(cc.comment_count, 0) AS comment_count
 FROM assembly.forums f
+LEFT JOIN (
+    SELECT p.forum_uuid, COUNT(*) AS thread_count
+    FROM assembly.posts p
+    GROUP BY p.forum_uuid
+) pc ON pc.forum_uuid = f.id
+LEFT JOIN (
+    SELECT p.forum_uuid, COUNT(*) AS comment_count
+    FROM assembly.comments c
+    JOIN assembly.posts p ON p.id = c.post_id
+    GROUP BY p.forum_uuid
+) cc ON cc.forum_uuid = f.id
 WHERE f.expiration_dt = 'infinity'::timestamptz OR f.expiration_dt > now()
 ORDER BY COALESCE(f.sort_order, 0) ASC, f.name ASC;
 
-COMMENT ON VIEW assembly.forum_list_v IS 'Forum listing with thread/comment counts, replaces forums.js:11 inline query';
+COMMENT ON VIEW assembly.forum_list_v IS 'Forum listing with thread/comment counts (V188 grouped-aggregate rewrite), replaces forums.js:11 inline query';
 
 -- 2. Thread list (per-forum, parameterized via WHERE clause in JS)
 -- Aggregated in ONE pass over comments (GROUP BY + array_agg) instead of 3

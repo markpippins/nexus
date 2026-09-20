@@ -160,3 +160,42 @@ ALTER TABLE duality.session_watches DROP CONSTRAINT IF EXISTS session_watches_st
 ALTER TABLE duality.session_watches
   ADD CONSTRAINT session_watches_status_check
   CHECK (status = ANY (ARRAY['active'::text, 'paused'::text, 'closed'::text, 'expired'::text]));
+
+-- 12. V188 backport — forum_list_v grouped-aggregate rewrite + workhorse
+--     indexes (incident 2026-09-20: GET /api/forums 6.3-8.0s from per-row
+--     count SubPlans over posts/comments; see sql/V188__assembly_forum_list_v_rewrite.sql
+--     for the gated migration with post-apply verification). This block is
+--     the idempotent boot-migration mirror so a service restart deploys the
+--     fix; statement-level "already exists" tolerance in db.js covers re-runs.
+CREATE INDEX IF NOT EXISTS idx_posts_forum_uuid ON assembly.posts (forum_uuid);
+CREATE INDEX IF NOT EXISTS idx_comments_post_id ON assembly.comments (post_id);
+CREATE INDEX IF NOT EXISTS idx_posts_forum_uuid_current
+    ON assembly.posts (forum_uuid, rating)
+    WHERE expiration_dt = 'infinity'::timestamptz;
+DROP VIEW IF EXISTS assembly.forum_list_v;
+CREATE VIEW assembly.forum_list_v AS
+SELECT
+    f.id,
+    f.name,
+    f.slug,
+    f.description,
+    f.sort_order,
+    f.expiration_dt,
+    COALESCE(pc.thread_count, 0)  AS thread_count,
+    COALESCE(cc.comment_count, 0) AS comment_count
+FROM assembly.forums f
+LEFT JOIN (
+    SELECT p.forum_uuid, COUNT(*) AS thread_count
+    FROM assembly.posts p
+    GROUP BY p.forum_uuid
+) pc ON pc.forum_uuid = f.id
+LEFT JOIN (
+    SELECT p.forum_uuid, COUNT(*) AS comment_count
+    FROM assembly.comments c
+    JOIN assembly.posts p ON p.id = c.post_id
+    GROUP BY p.forum_uuid
+) cc ON cc.forum_uuid = f.id
+WHERE f.expiration_dt = 'infinity'::timestamptz OR f.expiration_dt > now()
+ORDER BY COALESCE(f.sort_order, 0) ASC, f.name ASC;
+COMMENT ON VIEW assembly.forum_list_v IS
+'Forum listing with thread/comment counts (V188: grouped-aggregate rewrite of the per-row count subqueries).';
