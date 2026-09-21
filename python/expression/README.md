@@ -79,6 +79,12 @@ Expression's current observation vocabulary is explicit and documented in `expre
 
 `expression.solscript_adapter` binds the E4 evaluation envelope to the real in-memory `ResolutionInterpreter` (python/SOLScript). Live dispositions map into the E4 wire vocabulary; context-gate outcomes become explicit results: `context_required` → `unevaluable`, `context_mismatch` → `refused`, unknown context keys on framed propositions → `refused` (`invalid_context`). Propositions absent from the interpreter are `pending` (`proposition_not_in_interpreter`) rather than silently refused, and interpreter exceptions fail closed. `evaluate_bundle_with_interpreter()` and `replay_bundle_with_interpreter()` produce E4 envelopes pinned to `solscript-resolution-interpreter-v32`; the adapter never mutates interpreter state, invokes transitions, or persists — the E6 writer remains the only persistence path.
 
+## E8.2 database-loaded interpreter adapter
+
+`expression.loaded_interpreter.LoadedInterpreter` wraps a `DatabaseLoader`-populated interpreter (E8.1 loader: real dispositions, assertions, frame values) and adds the identity seam: Expression candidates carry deterministic digest IDs, DB propositions carry UUIDs, and evaluation happens ONLY through a pinned `register_candidate(expression_id, db_proposition_id)` mapping. Unregistered candidates are `pending` (`proposition_not_registered`) — never guessed, never silently aliased, even when the candidate ID happens to equal a DB UUID. Registration requires the DB proposition to actually be loaded and refuses conflicting re-registration.
+
+Every envelope pins `loaded_population_fingerprint` (propositions with dispositions/assertions/frame values, frame dimensions, and dimension values — excluding mutable runtime state) so replay detects population drift. Context is passed through the seam explicitly; gate outcomes (`context_required` → `unevaluable`, `context_mismatch` → `refused`) surface unchanged from E7. The adapter remains evaluation-only; E6 stays the only persistence path.
+
 ## Validate
 
 From the worktree root:
