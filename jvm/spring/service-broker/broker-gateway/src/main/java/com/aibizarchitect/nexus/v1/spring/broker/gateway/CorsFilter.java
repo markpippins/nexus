@@ -35,21 +35,22 @@ public class CorsFilter implements Filter {
 
         log.info("CORS Filter - Method: {}, URI: {}, Origin: {}", method, requestUri, origin);
 
-        // For development - allow specific origins with credentials
-        if (origin != null && !origin.isEmpty()) {
-            // Check if origin is a trusted development origin
-            if (isTrustedOrigin(origin)) {
-                response.setHeader("Access-Control-Allow-Origin", origin);
-                response.setHeader("Access-Control-Allow-Credentials", "true");
-            } else {
-                // For untrusted origins, use wildcard but without credentials
-                response.setHeader("Access-Control-Allow-Origin", "*");
-            }
+        // Per architect remediation F3: deny unmatched origins instead of reflecting them
+        // Only allow origins explicitly configured in allowed.origins property
+        if (origin != null && !origin.isEmpty() && isTrustedOrigin(origin)) {
+            response.setHeader("Access-Control-Allow-Origin", origin);
+            response.setHeader("Access-Control-Allow-Credentials", "true");
         } else {
-            response.setHeader("Access-Control-Allow-Origin", "*");
+            // Deny unmatched origins - do NOT reflect the origin
+            // Return 403 for credentialed requests from untrusted origins
+            if (origin != null && !origin.isEmpty()) {
+                log.warn("CORS Filter - Rejected untrusted origin: {}", origin);
+                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                return;
+            }
         }
 
-        response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD, TRACE");
+        response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD");
         response.setHeader("Access-Control-Allow-Headers",
                 "Origin, X-Requested-With, Content-Type, Accept, Authorization, X-CSRF-TOKEN");
         response.setHeader("Access-Control-Expose-Headers",
@@ -64,7 +65,7 @@ public class CorsFilter implements Filter {
         }
     }
 
-    @org.springframework.beans.factory.annotation.Value("${allowed.origins:*}")
+    @org.springframework.beans.factory.annotation.Value("${allowed.origins:}")
     private String[] allowedOrigins;
 
     private boolean isTrustedOrigin(String origin) {
