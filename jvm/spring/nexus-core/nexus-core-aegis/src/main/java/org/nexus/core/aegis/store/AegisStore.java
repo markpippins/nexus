@@ -1,5 +1,7 @@
 package org.nexus.core.aegis.store;
 
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -44,6 +46,67 @@ public class AegisStore {
         this.dataSource = dataSource;
     }
 
+    // ── Row sanitization (pg-driver parity) ─────────────────────────────
+    //
+    // The TS service's `pg` driver parses text[] and jsonb columns into JS
+    // values automatically. JdbcTemplate.queryForList does NOT: it hands back
+    // raw java.sql.Array / PGobject objects, which Jackson cannot serialize
+    // (PgArray carries a live PgConnection). Every read goes through q(),
+    // which normalizes rows to Jackson-safe values — matching what the TS
+    // service would return for the same row.
+
+    /** queryForList + per-row pg-type normalization (see sanitize). */
+    public List<Map<String, Object>> q(String sql, Object... args) {
+        List<Map<String, Object>> rows = args.length == 0
+                ? jdbc.queryForList(sql)
+                : jdbc.queryForList(sql, args);
+        for (int i = 0; i < rows.size(); i++) {
+            rows.set(i, sanitize(rows.get(i)));
+        }
+        return rows;
+    }
+
+    /** Normalize pg-specific JDBC values to JSON-serializable equivalents. */
+    @SuppressWarnings("unchecked")
+    public static Map<String, Object> sanitize(Map<String, Object> row) {
+        for (Map.Entry<String, Object> e : row.entrySet()) {
+            Object v = e.getValue();
+            if (v instanceof java.sql.Array arr) {
+                try {
+                    Object a = arr.getArray();
+                    List<Object> out = new ArrayList<>();
+                    if (a instanceof Object[] oa) {
+                        out.addAll(java.util.Arrays.asList(oa));
+                    } else if (a != null) {
+                        out.add(a);
+                    }
+                    v = out;
+                } catch (java.sql.SQLException ex) {
+                    v = null;
+                }
+            } else if (v instanceof org.postgresql.util.PGobject pg) {
+                String type = pg.getType();
+                String value = pg.getValue();
+                if ("jsonb".equals(type) || "json".equals(type)) {
+                    v = parseJson(value);
+                } else {
+                    v = value;
+                }
+            }
+            e.setValue(v);
+        }
+        return row;
+    }
+
+    private static Object parseJson(String raw) {
+        if (raw == null) return null;
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper().readValue(raw, Object.class);
+        } catch (Exception ex) {
+            return raw;
+        }
+    }
+
     // ── Helpers mirroring routes.ts ──────────────────────────────────────
 
     public static boolean isUuid(String v) {
@@ -60,50 +123,93 @@ public class AegisStore {
         return out;
     }
 
-    /** JSONB columns must arrive as JSON text for pg; everything else passes through. */
+    /**
+     * JSONB columns must arrive as JSON text for pg; everything else passes
+     * through — except text[] columns, which must arrive as java.sql.Array
+     * (the pg driver cannot bind a java.util.List; TS pg binds JS arrays
+     * natively). Array binding needs a live Connection, so list values are
+     * wrapped in a SqlTypeValue that creates the array lazily on the
+     * executing connection (works under NamedParameterJdbcTemplate).
+     */
     private static LinkedHashMap<String, Object> jsonbCoerced(LinkedHashMap<String, Object> cols) {
         LinkedHashMap<String, Object> coerced = new LinkedHashMap<>();
         for (Map.Entry<String, Object> e : cols.entrySet()) {
-            coerced.put(e.getKey(), JSONB_COLS.contains(e.getKey()) && e.getValue() != null
-                    ? AegisDigest.canonicalJson(e.getValue()) : e.getValue());
+            Object v = e.getValue();
+            if (JSONB_COLS.contains(e.getKey()) && v != null) {
+                // JSON text bound with Types.OTHER: pg must infer jsonb from
+                // the column context (setString would declare varchar and PG
+                // rejects 42804 — node-postgres gets this for free by sending
+                // unspecified parameter types).
+                coerced.put(e.getKey(), otherTyped(AegisDigest.canonicalJson(v)));
+            } else if (v instanceof List<?> list) {
+                coerced.put(e.getKey(), textArrayOf(list));
+            } else {
+                coerced.put(e.getKey(), v);
+            }
         }
         return coerced;
     }
 
+    /** Bind a value with Types.OTHER so PG infers the target type from context. */
+    private static org.springframework.jdbc.core.SqlTypeValue otherTyped(String json) {
+        return new org.springframework.jdbc.core.SqlTypeValue() {
+            @Override
+            public void setTypeValue(PreparedStatement ps, int paramIndex, int sqlType, String typeName)
+                    throws SQLException {
+                ps.setObject(paramIndex, json, java.sql.Types.OTHER);
+            }
+        };
+    }
+
+    /** SqlTypeValue binding a Java list as a PostgreSQL text[] on the executing connection. */
+    private static org.springframework.jdbc.core.SqlTypeValue textArrayOf(List<?> list) {
+        final Object[] arr = list.toArray();
+        return new org.springframework.jdbc.core.SqlTypeValue() {
+            @Override
+            public void setTypeValue(PreparedStatement ps, int paramIndex, int sqlType, String typeName)
+                    throws SQLException {
+                java.sql.Array a = ps.getConnection().createArrayOf("text", arr);
+                ps.setArray(paramIndex, a);
+            }
+        };
+    }
+
     /** Map a pg SQLSTATE to an HTTP status + message (mirrors pgError in routes.ts). */
-    public record PgError(int status, String message) {}
+    public record PgError(int status, String message, boolean unmapped) {
+        public PgError(int status, String message) { this(status, message, false); }
+    }
 
     public static PgError mapPgError(String sqlState) {
-        if (sqlState == null) return new PgError(500, "internal server error");
+        if (sqlState == null) return new PgError(500, "internal server error", true);
         return switch (sqlState) {
             case "23505" -> new PgError(409, "duplicate key: conflict");
             case "23503" -> new PgError(400, "foreign key violation: referenced row missing");
             case "23514" -> new PgError(400, "check constraint violation");
             case "22P02" -> new PgError(400, "invalid value");
-            default -> new PgError(500, "internal server error");
+            default -> new PgError(500, "internal server error", true);
         };
     }
 
     // ── Registries ───────────────────────────────────────────────────────
 
     public List<Map<String, Object>> listRegistries() {
-        return jdbc.queryForList("SELECT * FROM aegis.registry ORDER BY created_at");
+        return q("SELECT * FROM aegis.registry ORDER BY created_at");
     }
 
     public Map<String, Object> registryByName(String name) {
-        List<Map<String, Object>> rows = jdbc.queryForList(
+        List<Map<String, Object>> rows = q(
                 "SELECT * FROM aegis.registry WHERE name = ? AND is_active = true", name);
         return rows.isEmpty() ? null : rows.get(0);
     }
 
     public Map<String, Object> registryById(String id) {
-        List<Map<String, Object>> rows = jdbc.queryForList(
+        List<Map<String, Object>> rows = q(
                 "SELECT * FROM aegis.registry WHERE id = ?", UUID.fromString(id));
         return rows.isEmpty() ? null : rows.get(0);
     }
 
     public String registryExists(String id) {
-        List<Map<String, Object>> rows = jdbc.queryForList(
+        List<Map<String, Object>> rows = q(
                 "SELECT id FROM aegis.registry WHERE id = ?", UUID.fromString(id));
         return rows.isEmpty() ? null : String.valueOf(rows.get(0).get("id"));
     }
@@ -116,7 +222,7 @@ public class AegisStore {
                 "INSERT INTO aegis.registry (" + String.join(", ", cols.keySet())
                         + ") VALUES (:" + String.join(", :", cols.keySet()) + ") RETURNING *",
                 params);
-        return rows.get(0);
+        return sanitize(rows.get(0));
     }
 
     public Map<String, Object> updateRegistry(String id, Map<String, Object> body) {
@@ -133,7 +239,7 @@ public class AegisStore {
         }
         List<Map<String, Object>> rows = named.queryForList(
                 "UPDATE aegis.registry SET " + set + " WHERE id = :id RETURNING *", params);
-        return rows.isEmpty() ? null : rows.get(0);
+        return rows.isEmpty() ? null : sanitize(rows.get(0));
     }
 
     public int softDeleteRegistry(String id) {
@@ -148,20 +254,20 @@ public class AegisStore {
                 "SELECT aegis.create_registry_revision(?, ?) AS revision_id",
                 UUID.class, UUID.fromString(registryId),
                 createdBy == null ? null : UUID.fromString(createdBy));
-        List<Map<String, Object>> rows = jdbc.queryForList(
+        List<Map<String, Object>> rows = q(
                 "SELECT * FROM aegis.registry_revision WHERE id = ?", revisionId);
         return rows.get(0);
     }
 
     public Map<String, Object> getRegistryRevision(String registryId, String revisionId) {
-        List<Map<String, Object>> rows = jdbc.queryForList(
+        List<Map<String, Object>> rows = q(
                 "SELECT * FROM aegis.registry_revision WHERE id = ? AND registry_id = ?",
                 UUID.fromString(revisionId), UUID.fromString(registryId));
         return rows.isEmpty() ? null : rows.get(0);
     }
 
     public List<Map<String, Object>> listRevisions(String registryId) {
-        return jdbc.queryForList(
+        return q(
                 "SELECT * FROM aegis.registry_revision WHERE registry_id = ? ORDER BY revision_number DESC",
                 UUID.fromString(registryId));
     }
@@ -184,7 +290,7 @@ public class AegisStore {
     }
 
     public List<Map<String, Object>> listValidationResults(String registryId) {
-        return jdbc.queryForList(
+        return q(
                 "SELECT * FROM aegis.validation_result WHERE registry_id = ? ORDER BY validated_at DESC",
                 UUID.fromString(registryId));
     }
@@ -211,7 +317,7 @@ public class AegisStore {
     }
 
     public List<Map<String, Object>> listModelCheckResults(String registryId) {
-        return jdbc.queryForList(
+        return q(
                 "SELECT * FROM aegis.model_check_result WHERE registry_id = ? ORDER BY checked_at DESC",
                 UUID.fromString(registryId));
     }
@@ -219,34 +325,67 @@ public class AegisStore {
     // ── Child CRUD (generic, mirroring childHandlers) ────────────────────
 
     public List<Map<String, Object>> listChildren(String table, String registryId) {
-        return jdbc.queryForList(
+        return q(
                 "SELECT * FROM aegis." + table + " WHERE registry_id = ? ORDER BY created_at",
                 UUID.fromString(registryId));
     }
 
     public Map<String, Object> createChild(String table, String registryId, LinkedHashMap<String, Object> body) {
         if (body.isEmpty()) throw new NoFieldsException();
+        // Mirrors the TS childHandlers.create: INSERT (registry_id, <body cols>)
+        // RETURNING *. No timestamp injection — PG defaults (created_at now())
+        // apply, and child tables have no updated_at column.
         LinkedHashMap<String, Object> coerced = jsonbCoerced(body);
-        coerced.put("registry_id", UUID.fromString(registryId));
-        SimpleJdbcInsert insert = new SimpleJdbcInsert(dataSource)
-                .withTableName(table).withSchemaName("aegis").usingGeneratedKeyColumns();
-        java.sql.Timestamp ts = new java.sql.Timestamp(System.currentTimeMillis());
-        LinkedHashMap<String, Object> withDefaults = new LinkedHashMap<>(coerced);
-        withDefaults.putIfAbsent("created_at", ts);
-        withDefaults.putIfAbsent("updated_at", ts);
-        Number key = insert.executeAndReturnKeyHolder(withDefaults).getKey();
-        return jdbc.queryForMap("SELECT * FROM aegis." + table + " WHERE id = ?", key);
+        StringBuilder cols = new StringBuilder("registry_id");
+        StringBuilder marks = new StringBuilder("?");
+        int i = 0;
+        for (String col : coerced.keySet()) {
+            cols.append(", ").append(col);
+            marks.append(", ?");
+            i++;
+        }
+        Object[] args = new Object[i + 1];
+        args[0] = UUID.fromString(registryId);
+        int a = 1;
+        for (Object v : coerced.values()) args[a++] = v;
+        // RETURNING * (not getGeneratedKeys): uuid PKs are app- or db-generated,
+        // and this mirrors the TS INSERT ... RETURNING *.
+        return sanitize(jdbc.queryForObject(
+                "INSERT INTO aegis." + table + " (" + cols + ") VALUES (" + marks + ") RETURNING *",
+                (rs, rowNum) -> {
+                    java.sql.ResultSetMetaData md = rs.getMetaData();
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    for (int c = 1; c <= md.getColumnCount(); c++) {
+                        String label = md.getColumnLabel(c);
+                        Object v = rs.getObject(c);
+                        if (v instanceof java.sql.Array arr) {
+                            try {
+                                Object a2 = arr.getArray();
+                                List<Object> out = new ArrayList<>();
+                                if (a2 instanceof Object[] oa) out.addAll(java.util.Arrays.asList(oa));
+                                else if (a2 != null) out.add(a2);
+                                v = out;
+                            } catch (SQLException ex) { v = null; }
+                        } else if (v instanceof org.postgresql.util.PGobject pg) {
+                            String val = pg.getValue();
+                            v = ("jsonb".equals(pg.getType()) || "json".equals(pg.getType()))
+                                    ? parseJson(val) : val;
+                        }
+                        row.put(label, v);
+                    }
+                    return row;
+                }, args));
     }
 
     public boolean childExists(String table, String registryId, String childId) {
-        List<Map<String, Object>> rows = jdbc.queryForList(
+        List<Map<String, Object>> rows = q(
                 "SELECT id FROM aegis." + table + " WHERE id = ? AND registry_id = ?",
                 UUID.fromString(childId), UUID.fromString(registryId));
         return !rows.isEmpty();
     }
 
     public Map<String, Object> getChild(String table, String registryId, String childId) {
-        List<Map<String, Object>> rows = jdbc.queryForList(
+        List<Map<String, Object>> rows = q(
                 "SELECT * FROM aegis." + table + " WHERE id = ? AND registry_id = ?",
                 UUID.fromString(childId), UUID.fromString(registryId));
         return rows.isEmpty() ? null : rows.get(0);
@@ -255,6 +394,7 @@ public class AegisStore {
     public Map<String, Object> updateChild(String table, String registryId, String childId,
                                            LinkedHashMap<String, Object> body) {
         if (body.isEmpty()) throw new NoFieldsException();
+        // Mirrors the TS childHandlers.update: SET <body cols only>.
         MapSqlParameterSource params = new MapSqlParameterSource(jsonbCoerced(body));
         params.addValue("id", UUID.fromString(childId));
         params.addValue("registry_id", UUID.fromString(registryId));
@@ -269,7 +409,7 @@ public class AegisStore {
                 "UPDATE aegis." + table + " SET " + set
                         + " WHERE id = :id AND registry_id = :registry_id RETURNING *",
                 params);
-        return rows.isEmpty() ? null : rows.get(0);
+        return rows.isEmpty() ? null : sanitize(rows.get(0));
     }
 
     public int deleteChild(String table, String registryId, String childId) {
@@ -280,13 +420,13 @@ public class AegisStore {
     // ── Wind compilation (read surfaces) ─────────────────────────────────
 
     public List<Map<String, Object>> listWindCompilations(String registryId) {
-        return jdbc.queryForList(
+        return q(
                 "SELECT * FROM aegis.wind_compilation WHERE registry_id = ? ORDER BY compiled_at DESC",
                 UUID.fromString(registryId));
     }
 
     public Map<String, Object> getWindCompilation(String registryId, String compilationId) {
-        List<Map<String, Object>> rows = jdbc.queryForList(
+        List<Map<String, Object>> rows = q(
                 "SELECT * FROM aegis.wind_compilation WHERE id = ? AND registry_id = ?",
                 UUID.fromString(compilationId), UUID.fromString(registryId));
         return rows.isEmpty() ? null : rows.get(0);

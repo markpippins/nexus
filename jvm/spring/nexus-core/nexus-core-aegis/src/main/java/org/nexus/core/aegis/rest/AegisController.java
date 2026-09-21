@@ -9,6 +9,8 @@ import org.nexus.core.aegis.kernel.AegisDigest;
 import org.nexus.core.aegis.kernel.ModelChecker;
 import org.nexus.core.aegis.store.AegisStore;
 import org.nexus.core.aegis.store.AegisStore.NoFieldsException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -32,6 +34,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/aegis")
 public class AegisController {
 
+    private static final Logger log = LoggerFactory.getLogger(AegisController.class);
+
     private final AegisStore store;
 
     public AegisController(AegisStore store) {
@@ -48,6 +52,9 @@ public class AegisController {
     private static ResponseEntity<Map<String, Object>> pgError(DataAccessException e) {
         String sqlState = (e.getCause() instanceof java.sql.SQLException sql) ? sql.getSQLState() : null;
         AegisStore.PgError mapped = AegisStore.mapPgError(sqlState);
+        if (mapped.unmapped()) {
+            log.warn("[aegis] unmapped DB error (sqlState={})", sqlState, e);
+        }
         return err(mapped.status(), mapped.message());
     }
 
