@@ -309,28 +309,312 @@ namespace org.nexus.jev.inquiry {
     calibrationRequiredBeforeAdoption: true;
   }
 
-  // ── SolScript seam (InferenceEngine.external_knowledge_base) ─────────
+  // ── Judgment Cache Design (Jev 4) ────────────────────────────────────
 
   /**
-   * The SOLScript seam — already exists as a stub in
-   * python/SOLScript/solscript/inference_engine.py:
-   *
-   *   InferenceEngine.external_knowledge_base: KnowledgeBase | None
-   *   KnowledgeBase.query(target_key, context) → Any
-   *
-   * This contract maps JevInquiry to the KnowledgeBase query protocol.
+   * Cache entry status — tracks freshness and validity.
    */
-  model SolScriptJevSeam {
-    /** The unbounded query key (proposition ID or question hash). */
-    queryKey: string;
+  enum CacheEntryStatus {
+    /** Fresh entry, valid for reuse. */
+    Fresh: "fresh",
 
-    /** Context from the evaluation frame (state, frame values, provenance). */
-    context: Record<unknown>;
+    /** Read-set has drifted; entry must not be served. */
+    StaleReadSet: "stale_read_set",
 
-    /** Expected return type maps to JevPrimitive. */
-    expectedReturnType: JevPrimitive;
+    /** Model version mismatch; entry invalidated. */
+    ModelVersionMismatch: "model_version_mismatch",
 
-    /** The full inquiry for provenance/replay. */
-    inquiry: JevInquiry;
+    /** Policy/vocabulary revision mismatch; entry invalidated. */
+    PolicyVersionMismatch: "policy_version_mismatch",
+
+    /** Adapter/backend changed; entry invalidated. */
+    BackendMismatch: "backend_mismatch",
+
+    /** Explicitly evicted (retention policy). */
+    Evicted: "evicted",
+
+    /** Entry corrupted or failed validation. */
+    Corrupted: "corrupted",
   }
+
+  /**
+   * Cache validation result — determines if cached entry can be served.
+   */
+  model CacheValidationResult {
+    /** Whether the entry is valid for reuse. */
+    valid: boolean;
+
+    /** If invalid, the reason. */
+    status?: CacheEntryStatus;
+
+    /** Human-readable detail. */
+    detail: string;
+
+    /** The cache key that was validated. */
+    validatedKey: JudgmentCacheKey;
+
+    /** Current read-set digest for comparison. */
+    currentReadSetDigest?: string;
+
+    /** Expected read-set digest from cached entry. */
+    expectedReadSetDigest?: string;
+  }
+
+  /**
+   * Cache eviction/retention policy.
+   */
+  model CacheRetentionPolicy {
+    /** Maximum time-to-live for cached judgments. */
+    maxTtl: string;  // ISO 8601 duration, e.g., "P30D"
+
+    /** Maximum number of entries per (state_hash, question) group. */
+    maxEntriesPerGroup?: int32;
+
+    /** Maximum total cache size (entries). */
+    maxTotalEntries?: int32;
+
+    /** Evict on model version change. */
+    evictOnModelVersionChange: boolean = true;
+
+    /** Evict on policy version change. */
+    evictOnPolicyVersionChange: boolean = true;
+
+    /** Evict on backend change. */
+    evictOnBackendChange: boolean = true;
+  }
+
+  /**
+   * Stale read-set rejection configuration.
+   */
+  model StaleReadSetRejection {
+    /** Enable stale read-set detection. */
+    enabled: boolean = true;
+
+    /** Maximum allowed age of read-set (ISO 8601 duration). */
+    maxReadSetAge: string = "P1D";
+
+    /** Reject if read-set digest doesn't match cached digest. */
+    rejectOnDigestMismatch: boolean = true;
+
+    /** Action when stale: "reject" | "retry_fresh" | "return_stale_with_warning". */
+    onStale: "reject" | "retry_fresh" | "return_stale_with_warning" = "reject";
+  }
+
+  /**
+   * Replay identity — ensures cached judgments are replayable with identical results.
+   */
+  model ReplayIdentity {
+    /** Unique replay identifier. */
+    replayId: string;
+
+    /** The cache key used for the original judgment. */
+    originalCacheKey: JudgmentCacheKey;
+
+    /** The cached judgment being replayed. */
+    originalJudgment: CachedJudgment;
+
+    /** Current context for replay (may differ from original). */
+    replayContext: Record<unknown>;
+
+    /** Whether replay produced identical outcome. */
+    outcomeIdentical: boolean;
+
+    /** If not identical, the difference summary. */
+    difference?: string;
+
+    /** Timestamp of replay attempt. */
+    replayedAt: utcDateTime;
+  }
+
+  /**
+   * Source-of-truth placement for judgment records.
+   * Judgments are L1 evidence (never authority) — stored in the evidence store,
+   * not in the canonical resolution schema.
+   */
+  enum JudgmentStoreLocation {
+    /** Evidence store (append-only, immutable) — PRIMARY. */
+    EvidenceStore: "evidence_store",
+
+    /** Keychains read-set manifest (for provenance linkage). */
+    KeychainsManifest: "keychains_manifest",
+
+    /** Witnessed-run attempt record (for audit trail). */
+    WitnessedRun: "witnessed_run",
+
+    /** Cache store (ephemeral, TTL-based) — SECONDARY. */
+    CacheStore: "cache_store",
+  }
+
+  /**
+   * Canonical judgment record — the authoritative record of a judgment.
+   * Stored in evidence store; cache is a derived projection.
+   */
+  model CanonicalJudgmentRecord {
+    /** Unique record ID. */
+    recordId: string;
+
+    /** The cache key (also serves as lookup key). */
+    cacheKey: JudgmentCacheKey;
+
+    /** The judgment outcome or non-outcome. */
+    outcome: JevOutcome | JevNonOutcome;
+
+    /** Full provenance. */
+    provenance: JevProvenance;
+
+    /** Calibration metadata. */
+    calibration: CalibrationMetadata;
+
+    /** Source-of-truth placement. */
+    storeLocation: JudgmentStoreLocation;
+
+    /** Cache validation status at write time. */
+    validationStatus: CacheEntryStatus = CacheEntryStatus.Fresh;
+
+    /** Created timestamp. */
+    createdAt: utcDateTime;
+
+    /** Retention policy reference. */
+    retentionPolicy: CacheRetentionPolicy;
+
+    /** Replay identity for verification. */
+    replayIdentity?: ReplayIdentity;
+  }
+
+  /**
+   * Negative test case — documents a scenario that MUST produce a specific
+   * cache validation failure. Used for contract compliance testing.
+   */
+  model JudgmentCacheNegativeCase {
+    /** Unique case ID. */
+    caseId: string;
+
+    /** Human-readable description. */
+    description: string;
+
+    /** The cache key that triggers the failure. */
+    triggeringKey: JudgmentCacheKey;
+
+    /** The current context that causes the failure. */
+    currentContext: Record<unknown>;
+
+    /** Expected validation failure. */
+    expectedFailure: CacheEntryStatus;
+
+    /** Expected error message pattern. */
+    expectedErrorPattern: string;
+
+    /** Category of negative case. */
+    category: "stale_read_set" | "model_version_mismatch" | "policy_version_mismatch" | "backend_mismatch" | "corrupted_entry";
+  }
+
+  /**
+   * Standard negative cases for Jev cache compliance.
+   * Implementations MUST handle all these cases correctly.
+   */
+  model StandardNegativeCases {
+    staleReadSet: JudgmentCacheNegativeCase;
+    modelVersionMismatch: JudgmentCacheNegativeCase;
+    policyVersionMismatch: JudgmentCacheNegativeCase;
+    backendMismatch: JudgmentCacheNegativeCase;
+    corruptedEntry: JudgmentCacheNegativeCase;
+  }
+
+  /**
+   * The standard negative cases that every Jev cache implementation MUST handle.
+   * These are the compliance test vectors.
+   */
+  const STANDARD_NEGATIVE_CASES: StandardNegativeCases = #{
+    staleReadSet: #{
+      caseId: "neg-stale-readset-001",
+      description: "Read-set has drifted since cache entry was created — digest mismatch",
+      triggeringKey: #{
+        stateHash: "a1b2c3d4e5f67890",
+        question: "Is the entity's readiness_score greater than 0.85?",
+        expectedOutcomeType: "noul",
+        modelVersion: "jev-latest",
+        policyVersionHash: "policy-v1",
+        adapterBackend: "ollama-helium",
+      },
+      currentContext: #{
+        readSetDigest: "different-digest-12345",
+        expectedReadSetDigest: "original-digest-67890",
+      },
+      expectedFailure: CacheEntryStatus.StaleReadSet,
+      expectedErrorPattern: "read.set.digest.mismatch|stale.read.set",
+      category: "stale_read_set",
+    },
+    modelVersionMismatch: #{
+      caseId: "neg-model-version-001",
+      description: "Model version changed from jev-latest to jev-2026-10-01 — cache invalidated",
+      triggeringKey: #{
+        stateHash: "a1b2c3d4e5f67890",
+        question: "Classify the drift_type for the observed entity divergence.",
+        expectedOutcomeType: "choice",
+        modelVersion: "jev-latest",
+        policyVersionHash: "policy-v1",
+        adapterBackend: "ollama-helium",
+      },
+      currentContext: #{
+        modelVersion: "jev-2026-10-01",
+      },
+      expectedFailure: CacheEntryStatus.ModelVersionMismatch,
+      expectedErrorPattern: "model.version.mismatch",
+      category: "model_version_mismatch",
+    },
+    policyVersionMismatch: #{
+      caseId: "neg-policy-version-001",
+      description: "Policy/vocabulary revision changed — cache invalidated",
+      triggeringKey: #{
+        stateHash: "a1b2c3d4e5f67890",
+        question: "Evaluate the overall readiness of the evaluation frame against the standard rubric.",
+        expectedOutcomeType: "score",
+        modelVersion: "jev-latest",
+        policyVersionHash: "policy-v1",
+        adapterBackend: "ollama-helium",
+      },
+      currentContext: #{
+        policyVersionHash: "policy-v2",
+      },
+      expectedFailure: CacheEntryStatus.PolicyVersionMismatch,
+      expectedErrorPattern: "policy.version.mismatch",
+      category: "policy_version_mismatch",
+    },
+    backendMismatch: #{
+      caseId: "neg-backend-mismatch-001",
+      description: "Adapter backend changed from ollama-helium to jev-hosted — cache invalidated",
+      triggeringKey: #{
+        stateHash: "a1b2c3d4e5f67890",
+        question: "Determine the readiness tier for the current evaluation frame.",
+        expectedOutcomeType: "choice",
+        modelVersion: "jev-latest",
+        policyVersionHash: "policy-v1",
+        adapterBackend: "ollama-helium",
+      },
+      currentContext: #{
+        adapterBackend: "jev-hosted",
+      },
+      expectedFailure: CacheEntryStatus.BackendMismatch,
+      expectedErrorPattern: "backend.mismatch|adapter.backend.changed",
+      category: "backend_mismatch",
+    },
+    corruptedEntry: #{
+      caseId: "neg-corrupted-001",
+      description: "Cached entry failed validation (checksum mismatch or malformed data)",
+      triggeringKey: #{
+        stateHash: "a1b2c3d4e5f67890",
+        question: "Score the representation quality against the canonical representation.",
+        expectedOutcomeType: "score",
+        modelVersion: "jev-latest",
+        policyVersionHash: "policy-v1",
+        adapterBackend: "ollama-helium",
+      },
+      currentContext: #{
+        validationError: "checksum_mismatch",
+      },
+      expectedFailure: CacheEntryStatus.Corrupted,
+      expectedErrorPattern: "corrupted|validation.failed|checksum",
+      category: "corrupted_entry"
+    },
+    };
 }

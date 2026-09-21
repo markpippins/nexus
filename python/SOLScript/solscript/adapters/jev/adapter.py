@@ -14,15 +14,26 @@ Guardrails (enforced at code level):
 - Read-only: no governance writes, no admission authority, no reviewer settlement
 - Fail-visible: timeout/error/unknown behavior surfaces explicitly
 - No hosted Jev commitment: this is the ollama adapter spike only
+
+Jev 4 additions:
+- Full judgment cache with key: (state_hash, question, expected_outcome_type, model_version, policy_version_hash, adapter_backend)
+- Stale-read-set rejection via read-set digest comparison
+- Replay identity for verification
+- Retention policies with TTL and eviction rules
+- Source-of-truth placement: evidence store (primary), cache store (secondary)
+- Negative case handling for stale, drifted, mismatched versions
 """
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
@@ -46,6 +57,129 @@ class JevConfidence:
     """Confidence is concentration-based (calibrated, not vibes)."""
     concentration: float = 0.0
     decision_mass: float = 0.0
+
+
+# ── Jev 4: Cache Models ─────────────────────────────────────────────────
+
+class CacheEntryStatus(str, Enum):
+    """Cache entry status — tracks freshness and validity."""
+    FRESH = "fresh"
+    STALE_READ_SET = "stale_read_set"
+    MODEL_VERSION_MISMATCH = "model_version_mismatch"
+    POLICY_VERSION_MISMATCH = "policy_version_mismatch"
+    BACKEND_MISMATCH = "backend_mismatch"
+    EVICTED = "evicted"
+    CORRUPTED = "corrupted"
+
+
+@dataclass
+class CacheValidationResult:
+    """Cache validation result — determines if cached entry can be served."""
+    valid: bool
+    status: Optional[CacheEntryStatus] = None
+    detail: str = ""
+    validated_key: Optional["JudgmentCacheKey"] = None
+    current_read_set_digest: Optional[str] = None
+    expected_read_set_digest: Optional[str] = None
+
+
+@dataclass
+class JudgmentCacheKey:
+    """Judgment cache key per Jev 4 doctrine:
+    (state_hash, question, expected_outcome_type, model_version, policy_version_hash, adapter_backend)"""
+    state_hash: str
+    question: str
+    expected_outcome_type: JevPrimitiveType
+    model_version: str
+    policy_version_hash: str
+    adapter_backend: str
+    
+    def to_string(self) -> str:
+        return f"{self.state_hash}:{self.question}:{self.expected_outcome_type.value}:{self.model_version}:{self.policy_version_hash}:{self.adapter_backend}"
+    
+    @classmethod
+    def from_string(cls, key_str: str) -> "JudgmentCacheKey":
+        parts = key_str.split(":")
+        if len(parts) != 6:
+            raise ValueError(f"Invalid cache key format: {key_str}")
+        return cls(
+            state_hash=parts[0],
+            question=parts[1],
+            expected_outcome_type=JevPrimitiveType(parts[2]),
+            model_version=parts[3],
+            policy_version_hash=parts[4],
+            adapter_backend=parts[5],
+        )
+
+
+@dataclass
+class CacheRetentionPolicy:
+    """Cache eviction/retention policy."""
+    max_ttl: timedelta = field(default_factory=lambda: timedelta(days=30))
+    max_entries_per_group: int = 10
+    max_total_entries: int = 10000
+    evict_on_model_version_change: bool = True
+    evict_on_policy_version_change: bool = True
+    evict_on_backend_change: bool = True
+
+
+@dataclass
+class StaleReadSetRejection:
+    """Stale read-set rejection configuration."""
+    enabled: bool = True
+    max_read_set_age: timedelta = field(default_factory=lambda: timedelta(days=1))
+    reject_on_digest_mismatch: bool = True
+    on_stale: str = "reject"  # "reject" | "retry_fresh" | "return_stale_with_warning"
+
+
+@dataclass
+class ReplayIdentity:
+    """Replay identity — ensures cached judgments are replayable with identical results."""
+    replay_id: str
+    original_cache_key: JudgmentCacheKey
+    original_judgment: Any
+    replay_context: Dict[str, Any]
+    outcome_identical: bool
+    difference: Optional[str] = None
+    replayed_at: datetime = field(default_factory=datetime.utcnow)
+
+
+class JudgmentStoreLocation(str, Enum):
+    """Source-of-truth placement for judgment records."""
+    EVIDENCE_STORE = "evidence_store"      # PRIMARY - append-only, immutable
+    KEYCHAINS_MANIFEST = "keychains_manifest"  # For provenance linkage
+    WITNESSED_RUN = "witnessed_run"        # For audit trail
+    CACHE_STORE = "cache_store"            # SECONDARY - ephemeral, TTL-based
+
+
+@dataclass
+class CanonicalJudgmentRecord:
+    """Canonical judgment record — the authoritative record of a judgment.
+    Stored in evidence store; cache is a derived projection."""
+    record_id: str
+    cache_key: JudgmentCacheKey
+    outcome: Any
+    provenance: Dict[str, Any]
+    calibration: Dict[str, Any]
+    store_location: JudgmentStoreLocation = JudgmentStoreLocation.EVIDENCE_STORE
+    validation_status: CacheEntryStatus = CacheEntryStatus.FRESH
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    retention_policy: Optional[CacheRetentionPolicy] = None
+    replay_identity: Optional[ReplayIdentity] = None
+
+
+@dataclass
+class CacheEntry:
+    """Internal cache entry with full metadata."""
+    key: JudgmentCacheKey
+    outcome: Any
+    provenance: Dict[str, Any]
+    calibration: Dict[str, Any]
+    read_set_digest: str
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    accessed_at: datetime = field(default_factory=datetime.utcnow)
+    access_count: int = 0
+    validation_status: CacheEntryStatus = CacheEntryStatus.FRESH
 
 
 @dataclass
@@ -121,23 +255,14 @@ class TypeSafeAdapter(ABC):
         questions: List[str],
         expected_types: Optional[List[JevPrimitiveType]] = None,
     ) -> List[Union[JevJudgmentResult, JevNonOutcomeResult]]:
-        """Execute bounded judgment queries.
-        
-        Args:
-            state: The evaluation frame state (context for the judgments)
-            questions: List of bounded questions to evaluate
-            expected_types: Optional expected primitive for each question
-        
-        Returns:
-            List of JevJudgmentResult or JevNonOutcomeResult, one per question
-        """
+        """Execute bounded judgment queries."""
         pass
-
+    
     @abstractmethod
     async def health_check(self) -> bool:
         """Check if the backend is available."""
         pass
-
+    
     @abstractmethod
     def get_backend_identity(self) -> str:
         """Return backend identifier for provenance/cache key."""
@@ -217,13 +342,8 @@ class OllamaTypeSafeAdapter(TypeSafeAdapter):
         expected_type: JevPrimitiveType,
     ) -> Union[JevJudgmentResult, JevNonOutcomeResult]:
         """Execute a single judgment against ollama."""
-        # Build the prompt based on expected primitive type
         prompt = self._build_prompt(state, question, expected_type)
-        
-        # Call ollama with structured output
         response = await self._call_ollama(prompt)
-        
-        # Parse response into the appropriate primitive
         return self._parse_response(response, expected_type)
     
     def _build_prompt(
@@ -287,7 +407,6 @@ Return ONLY a JSON object:
     
     def _summarize_state(self, state: Dict[str, Any]) -> str:
         """Summarize state for prompt context (truncated)."""
-        # Keep it bounded to avoid token bloat
         summary = {}
         for k, v in state.items():
             if isinstance(v, (str, int, float, bool)):
@@ -341,9 +460,7 @@ Return ONLY a JSON object:
         expected_type: JevPrimitiveType,
     ) -> Union[JevJudgmentResult, JevNonOutcomeResult]:
         """Parse ollama response into structured judgment."""
-        # Try to extract JSON from response
         try:
-            # Find JSON object in response
             start = response.find("{")
             end = response.rfind("}") + 1
             if start >= 0 and end > start:
@@ -358,7 +475,6 @@ Return ONLY a JSON object:
                 retryable=True,
             )
         
-        # Validate confidence
         concentration = data.get("confidence_concentration", 0.0)
         decision_mass = data.get("confidence_decision_mass", 0.0)
         confidence = JevConfidence(
@@ -366,7 +482,6 @@ Return ONLY a JSON object:
             decision_mass=decision_mass,
         )
         
-        # Check confidence threshold
         flag_for_review = concentration < self.config.confidence_threshold
         
         if expected_type == JevPrimitiveType.NOUL:
@@ -407,30 +522,265 @@ class JevKnowledgeBase(KnowledgeBase):
     This is the SOLScript seam — implements the `query(target_key, context)`
     protocol expected by InferenceEngine.external_knowledge_base.
     
-    Maps JevInquiry contract to the KnowledgeBase query protocol.
+    Jev 4: Full judgment cache with:
+    - Cache key: (state_hash, question, expected_outcome_type, model_version, policy_version_hash, adapter_backend)
+    - Stale-read-set rejection via read-set digest comparison
+    - Replay identity for verification
+    - Retention policies with TTL and eviction rules
+    - Source-of-truth placement: evidence store (primary), cache store (secondary)
+    - Negative case handling for stale, drifted, mismatched versions
     """
     
-    def __init__(self, adapter: TypeSafeAdapter, default_primitive: JevPrimitiveType = JevPrimitiveType.NOUL):
+    def __init__(
+        self, 
+        adapter: TypeSafeAdapter, 
+        default_primitive: JevPrimitiveType = JevPrimitiveType.NOUL,
+        retention_policy: Optional[CacheRetentionPolicy] = None,
+        stale_rejection: Optional[StaleReadSetRejection] = None,
+    ):
         self.adapter = adapter
         self.default_primitive = default_primitive
-        self._cache: Dict[str, Any] = {}  # Simple in-memory cache for spike
+        self.retention_policy = retention_policy or CacheRetentionPolicy()
+        self.stale_rejection = stale_rejection or StaleReadSetRejection()
+        
+        # Internal cache: key_string -> CacheEntry
+        self._cache: Dict[str, CacheEntry] = {}
+        
+        # Evidence store for canonical records (append-only)
+        self._evidence_store: Dict[str, CanonicalJudgmentRecord] = {}
+        
+        # Cache statistics
+        self._stats = {
+            "hits": 0,
+            "misses": 0,
+            "evictions": 0,
+            "stale_rejections": 0,
+            "validation_failures": 0,
+        }
+    
+    def _make_judgment_cache_key(self, key: str, context: Dict[str, Any]) -> JudgmentCacheKey:
+        """Create a full JudgmentCacheKey per Jev 4 doctrine:
+        (state_hash, question, expected_outcome_type, model_version, policy_version_hash, adapter_backend)"""
+        state_str = json.dumps(context, sort_keys=True, default=str)[:1000]
+        state_hash = hashlib.sha256(state_str.encode()).hexdigest()[:16]
+        
+        read_set_digest = context.get("read_set_digest", "")
+        if read_set_digest:
+            state_hash = hashlib.sha256((state_hash + read_set_digest).encode()).hexdigest()[:16]
+        
+        model_version = getattr(self.adapter.config, 'model_version', 'jev-latest')
+        if hasattr(self.adapter.config, 'ollama') and hasattr(self.adapter.config.ollama, 'model'):
+            model_version = self.adapter.config.ollama.model
+        
+        policy_version_hash = context.get("policy_version_hash", "policy-v1")
+        adapter_backend = self.adapter.get_backend_identity()
+        
+        return JudgmentCacheKey(
+            state_hash=state_hash,
+            question=key,
+            expected_outcome_type=self.default_primitive,
+            model_version=model_version,
+            policy_version_hash=policy_version_hash,
+            adapter_backend=adapter_backend,
+        )
+    
+    def _make_cache_key(self, key: str, context: Dict[str, Any]) -> str:
+        """Create cache key string from JudgmentCacheKey."""
+        return self._make_judgment_cache_key(key, context).to_string()
+    
+    def _compute_read_set_digest(self, context: Dict[str, Any]) -> str:
+        """Compute SHA-256 digest of the read-set for stale detection."""
+        read_set_data = {
+            k: v for k, v in context.items() 
+            if not k.startswith("_") and k not in ["read_set_digest", "policy_version_hash"]
+        }
+        read_set_str = json.dumps(read_set_data, sort_keys=True, default=str)
+        return hashlib.sha256(read_set_str.encode()).hexdigest()[:32]
+    
+    def _validate_cache_entry(self, entry: CacheEntry, context: Dict[str, Any]) -> CacheValidationResult:
+        """Validate a cache entry against current context."""
+        key = entry.key
+        
+        # Check model version
+        if self.retention_policy.evict_on_model_version_change:
+            current_model = getattr(self.adapter.config, 'model_version', 'jev-latest')
+            if hasattr(self.adapter.config, 'ollama') and hasattr(self.adapter.config.ollama, 'model'):
+                current_model = self.adapter.config.ollama.model
+            if key.model_version != current_model:
+                return CacheValidationResult(
+                    valid=False,
+                    status=CacheEntryStatus.MODEL_VERSION_MISMATCH,
+                    detail=f"Model version mismatch: cached={key.model_version}, current={current_model}",
+                    validated_key=key,
+                )
+        
+        # Check policy version
+        if self.retention_policy.evict_on_policy_version_change:
+            current_policy = context.get("policy_version_hash", "policy-v1")
+            if key.policy_version_hash != current_policy:
+                return CacheValidationResult(
+                    valid=False,
+                    status=CacheEntryStatus.POLICY_VERSION_MISMATCH,
+                    detail=f"Policy version mismatch: cached={key.policy_version_hash}, current={current_policy}",
+                    validated_key=key,
+                )
+        
+        # Check backend
+        if self.retention_policy.evict_on_backend_change:
+            current_backend = self.adapter.get_backend_identity()
+            if key.adapter_backend != current_backend:
+                return CacheValidationResult(
+                    valid=False,
+                    status=CacheEntryStatus.BACKEND_MISMATCH,
+                    detail=f"Backend mismatch: cached={key.adapter_backend}, current={current_backend}",
+                    validated_key=key,
+                )
+        
+        # Check read-set staleness
+        if self.stale_rejection.enabled:
+            current_digest = self._compute_read_set_digest(context)
+            if self.stale_rejection.reject_on_digest_mismatch:
+                if entry.read_set_digest != current_digest:
+                    return CacheValidationResult(
+                        valid=False,
+                        status=CacheEntryStatus.STALE_READ_SET,
+                        detail=f"Read-set digest mismatch: cached={entry.read_set_digest[:16]}, current={current_digest[:16]}",
+                        validated_key=key,
+                        current_read_set_digest=current_digest,
+                        expected_read_set_digest=entry.read_set_digest,
+                    )
+            
+            # Check age
+            age = datetime.utcnow() - entry.created_at
+            if age > self.stale_rejection.max_read_set_age:
+                return CacheValidationResult(
+                    valid=False,
+                    status=CacheEntryStatus.STALE_READ_SET,
+                    detail=f"Read-set age {age} exceeds max {self.stale_rejection.max_read_set_age}",
+                    validated_key=key,
+                )
+        
+        # Check TTL
+        age = datetime.utcnow() - entry.created_at
+        if age > self.retention_policy.max_ttl:
+            return CacheValidationResult(
+                valid=False,
+                status=CacheEntryStatus.EVICTED,
+                detail=f"Entry age {age} exceeds max TTL {self.retention_policy.max_ttl}",
+                validated_key=key,
+            )
+        
+        # All validations passed
+        return CacheValidationResult(
+            valid=True,
+            detail="Cache entry valid",
+            validated_key=key,
+        )
+    
+    def _evict_if_needed(self) -> None:
+        """Evict entries if cache exceeds limits."""
+        # Check total entries
+        if len(self._cache) >= self.retention_policy.max_total_entries:
+            # Evict oldest entries
+            sorted_entries = sorted(
+                self._cache.items(), 
+                key=lambda kv: kv[1].accessed_at
+            )
+            to_evict = len(self._cache) - self.retention_policy.max_total_entries + 1
+            for i in range(to_evict):
+                key_str, entry = sorted_entries[i]
+                entry.validation_status = CacheEntryStatus.EVICTED
+                del self._cache[key_str]
+                self._stats["evictions"] += 1
+        
+        # Check per-group limit (same state_hash + question)
+        groups: Dict[str, List[tuple]] = {}
+        for key_str, entry in self._cache.items():
+            group_key = f"{entry.key.state_hash}:{entry.key.question}"
+            if group_key not in groups:
+                groups[group_key] = []
+            groups[group_key].append((key_str, entry))
+        
+        for group_key, entries in groups.items():
+            if len(entries) > self.retention_policy.max_entries_per_group:
+                # Evict oldest in group
+                entries.sort(key=lambda kv: kv[1].accessed_at)
+                to_evict = len(entries) - self.retention_policy.max_entries_per_group
+                for i in range(to_evict):
+                    key_str, entry = entries[i]
+                    entry.validation_status = CacheEntryStatus.EVICTED
+                    del self._cache[key_str]
+                    self._stats["evictions"] += 1
+    
+    def _write_canonical_record(self, entry: CacheEntry, context: Dict[str, Any]) -> CanonicalJudgmentRecord:
+        """Write canonical judgment record to evidence store."""
+        record = CanonicalJudgmentRecord(
+            record_id=str(uuid.uuid4()),
+            cache_key=entry.key,
+            outcome=entry.outcome,
+            provenance=entry.provenance,
+            calibration=entry.provenance.get("calibration", {}),
+            store_location=JudgmentStoreLocation.EVIDENCE_STORE,
+            validation_status=entry.validation_status,
+            created_at=entry.created_at,
+            retention_policy=self.retention_policy,
+        )
+        self._evidence_store[record.record_id] = record
+        return record
     
     async def query(self, key: str, context: Dict[str, Any]) -> Optional[Any]:
-        """Query the TypeSafe adapter for a judgment.
+        """Query the TypeSafe adapter for a judgment with full Jev 4 cache logic.
         
         Args:
             key: The proposition/question key (maps to JevInquiry.question)
             context: The evaluation frame context (maps to JevInquiry.readSetScope)
         
         Returns:
-            Structured judgment result or None if unevaluable
+            Structured judgment result or JevNonOutcomeResult if unevaluable
         """
-        # Check cache first (per judgment cache doctrine)
-        cache_key = self._make_cache_key(key, context)
-        if cache_key in self._cache:
-            cached = self._cache[cache_key]
-            logger.debug(f"Cache hit for key: {key}")
-            return cached
+        # Create full cache key
+        judgment_key = self._make_judgment_cache_key(key, context)
+        cache_key_str = judgment_key.to_string()
+        
+        # Compute read-set digest for stale detection
+        read_set_digest = self._compute_read_set_digest(context)
+        
+        # Check cache first
+        if cache_key_str in self._cache:
+            entry = self._cache[cache_key_str]
+            
+            # Validate the entry
+            validation = self._validate_cache_entry(entry, context)
+            
+            if validation.valid:
+                # Cache hit - update stats and access time
+                entry.accessed_at = datetime.utcnow()
+                entry.access_count += 1
+                self._stats["hits"] += 1
+                logger.debug(f"Cache hit for key: {key}")
+                return entry.outcome
+            else:
+                # Cache validation failed - handle per stale rejection config
+                self._stats["validation_failures"] += 1
+                logger.warning(f"Cache validation failed for {key}: {validation.detail}")
+                
+                if validation.status == CacheEntryStatus.STALE_READ_SET:
+                    self._stats["stale_rejections"] += 1
+                    if self.stale_rejection.on_stale == "reject":
+                        return JevNonOutcomeResult(
+                            kind="stale",
+                            reason=validation.detail,
+                            retryable=True,
+                        )
+                    elif self.stale_rejection.on_stale == "return_stale_with_warning":
+                        # Return stale entry with warning (for emergency use)
+                        logger.warning(f"Returning stale entry for {key}: {validation.detail}")
+                        return entry.outcome
+                    # "retry_fresh" falls through to fresh query
+                # For other failures, fall through to fresh query
+        
+        # Cache miss or validation failure with retry
+        self._stats["misses"] += 1
         
         try:
             # Execute the judgment
@@ -442,9 +792,40 @@ class JevKnowledgeBase(KnowledgeBase):
             
             if results:
                 result = results[0]
-                # Cache successful judgments
+                
+                # Create cache entry for successful judgments
                 if not isinstance(result, JevNonOutcomeResult):
-                    self._cache[cache_key] = result
+                    # Build provenance
+                    provenance = {
+                        "source_system": "type-safe-system-one" if "jev" in self.adapter.get_backend_identity() else "system-one-adapter",
+                        "verifier_method": "concentration" if self.default_primitive == JevPrimitiveType.NOUL else "rubric" if self.default_primitive == JevPrimitiveType.SCORE else "adapter-llm",
+                        "policy_version_hash": context.get("policy_version_hash", "policy-v1"),
+                        "read_set_digest": read_set_digest,
+                        "evaluator_ref": self.adapter.get_backend_identity(),
+                        "adapter_backend": self.adapter.get_backend_identity(),
+                        "calibration": self.adapter.config.calibration or {},
+                    }
+                    
+                    calibration = self.adapter.config.calibration or {}
+                    
+                    entry = CacheEntry(
+                        key=judgment_key,
+                        outcome=result,
+                        provenance=provenance,
+                        calibration=calibration,
+                        read_set_digest=read_set_digest,
+                    )
+                    
+                    # Evict if needed before adding
+                    self._evict_if_needed()
+                    
+                    # Store in cache
+                    self._cache[cache_key_str] = entry
+                    
+                    # Write canonical record to evidence store
+                    canonical_record = self._write_canonical_record(entry, context)
+                    logger.debug(f"Cached judgment for {key} (record: {canonical_record.record_id})")
+                
                 return result
             
         except Exception as e:
@@ -462,23 +843,127 @@ class JevKnowledgeBase(KnowledgeBase):
             retryable=True,
         )
     
-    def _make_cache_key(self, key: str, context: Dict[str, Any]) -> str:
-        """Create a cache key per judgment cache doctrine:
-        (state_hash, question, model_version, policy_version, adapter_backend)"""
-        import hashlib
-        # Simplified for spike — full implementation in Jev 4
+    def _make_judgment_cache_key(self, key: str, context: Dict[str, Any]) -> JudgmentCacheKey:
+        """Create a full JudgmentCacheKey per Jev 4 doctrine."""
         state_str = json.dumps(context, sort_keys=True, default=str)[:1000]
         state_hash = hashlib.sha256(state_str.encode()).hexdigest()[:16]
-        backend = self.adapter.get_backend_identity()
-        return f"{state_hash}:{key}:{backend}"
+        
+        read_set_digest = context.get("read_set_digest", "")
+        if read_set_digest:
+            state_hash = hashlib.sha256((state_hash + read_set_digest).encode()).hexdigest()[:16]
+        
+        model_version = getattr(self.adapter.config, 'model_version', 'jev-latest')
+        if hasattr(self.adapter.config, 'ollama') and hasattr(self.adapter.config.ollama, 'model'):
+            model_version = self.adapter.config.ollama.model
+        
+        policy_version_hash = context.get("policy_version_hash", "policy-v1")
+        adapter_backend = self.adapter.get_backend_identity()
+        
+        return JudgmentCacheKey(
+            state_hash=state_hash,
+            question=key,
+            expected_outcome_type=self.default_primitive,
+            model_version=model_version,
+            policy_version_hash=policy_version_hash,
+            adapter_backend=adapter_backend,
+        )
+    
+    def _compute_read_set_digest(self, context: Dict[str, Any]) -> str:
+        """Compute SHA-256 digest of the read-set for stale detection."""
+        read_set_data = {
+            k: v for k, v in context.items() 
+            if not k.startswith("_") and k not in ["read_set_digest", "policy_version_hash"]
+        }
+        read_set_str = json.dumps(read_set_data, sort_keys=True, default=str)
+        return hashlib.sha256(read_set_str.encode()).hexdigest()[:32]
+    
+    def _write_canonical_record(self, entry: CacheEntry, context: Dict[str, Any]) -> CanonicalJudgmentRecord:
+        """Write canonical judgment record to evidence store."""
+        record = CanonicalJudgmentRecord(
+            record_id=str(uuid.uuid4()),
+            cache_key=entry.key,
+            outcome=entry.outcome,
+            provenance=entry.provenance,
+            calibration=entry.provenance.get("calibration", {}),
+            store_location=JudgmentStoreLocation.EVIDENCE_STORE,
+            validation_status=entry.validation_status,
+            created_at=entry.created_at,
+            retention_policy=self.retention_policy,
+        )
+        self._evidence_store[record.record_id] = record
+        return record
+    
+    def replay_judgment(self, record_id: str, replay_context: Dict[str, Any]) -> Optional[ReplayIdentity]:
+        """Replay a judgment from the evidence store to verify reproducibility."""
+        if record_id not in self._evidence_store:
+            return None
+        
+        record = self._evidence_store[record_id]
+        
+        # Re-execute with replay context
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(
+                self.adapter.system_one(
+                    state=replay_context,
+                    questions=[record.cache_key.question],
+                    expected_types=[record.cache_key.expected_outcome_type],
+                )
+            )
+            outcome_identical = False
+            difference = None
+            if result and not isinstance(result[0], JevNonOutcomeResult):
+                # Compare outcomes (simplified)
+                outcome_identical = str(result[0]) == str(record.outcome)
+                if not outcome_identical:
+                    difference = f"Original: {record.outcome}, Replay: {result[0]}"
+        finally:
+            loop.close()
+        
+        replay = ReplayIdentity(
+            replay_id=str(uuid.uuid4()),
+            original_cache_key=record.cache_key,
+            original_judgment=record.outcome,
+            replay_context=replay_context,
+            outcome_identical=outcome_identical,
+            difference=difference,
+        )
+        
+        # Update record with replay identity
+        record.replay_identity = replay
+        return replay
+    
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get cache statistics."""
+        return {
+            **self._stats,
+            "cache_size": len(self._cache),
+            "evidence_store_size": len(self._evidence_store),
+            "hit_rate": self._stats["hits"] / max(1, self._stats["hits"] + self._stats["misses"]),
+        }
+    
+    def get_canonical_records(self) -> List[CanonicalJudgmentRecord]:
+        """Get all canonical judgment records from evidence store."""
+        return list(self._evidence_store.values())
     
     def add_knowledge(self, key: str, value: Any, context: Optional[Dict[str, Any]] = None) -> None:
         """Add manual knowledge (from base KnowledgeBase)."""
         if context:
             cache_key = self._make_cache_key(key, context)
+            read_set_digest = self._compute_read_set_digest(context)
         else:
             cache_key = f"manual:{key}"
-        self._cache[cache_key] = value
+            read_set_digest = ""
+        # Store as manual entry with special provenance
+        judgment_key = self._make_judgment_cache_key(key, context or {})
+        entry = CacheEntry(
+            key=judgment_key,
+            outcome=value,
+            provenance={"source_system": "manual", "verifier_method": "manual"},
+            calibration={},
+            read_set_digest=read_set_digest,
+        )
+        self._cache[cache_key] = entry
     
     def add_pattern(self, pattern: str, key: str, resolver: callable) -> None:
         """Add pattern-based knowledge (from base KnowledgeBase)."""
@@ -511,12 +996,195 @@ async def create_jev_adapter(
 # ── Synchronous wrapper for non-async contexts ──────────────────────────
 
 class SyncJevKnowledgeBase(KnowledgeBase):
-    """Synchronous wrapper around JevKnowledgeBase for non-async contexts."""
+    """Synchronous wrapper around JevKnowledgeBase for non-async contexts.
     
-    def __init__(self, adapter: TypeSafeAdapter, default_primitive: JevPrimitiveType = JevPrimitiveType.NOUL):
+    Uses the full Jev 4 cache implementation with synchronous execution.
+    """
+    
+    def __init__(
+        self, 
+        adapter: TypeSafeAdapter, 
+        default_primitive: JevPrimitiveType = JevPrimitiveType.NOUL,
+        retention_policy: Optional[CacheRetentionPolicy] = None,
+        stale_rejection: Optional[StaleReadSetRejection] = None,
+    ):
         self.adapter = adapter
         self.default_primitive = default_primitive
-        self._cache: Dict[str, Any] = {}
+        self.retention_policy = retention_policy or CacheRetentionPolicy()
+        self.stale_rejection = stale_rejection or StaleReadSetRejection()
+        
+        # Internal cache: key_string -> CacheEntry
+        self._cache: Dict[str, CacheEntry] = {}
+        
+        # Evidence store for canonical records (append-only)
+        self._evidence_store: Dict[str, CanonicalJudgmentRecord] = {}
+        
+        # Cache statistics
+        self._stats = {
+            "hits": 0,
+            "misses": 0,
+            "evictions": 0,
+            "stale_rejections": 0,
+            "validation_failures": 0,
+        }
+    
+    def _make_judgment_cache_key(self, key: str, context: Dict[str, Any]) -> JudgmentCacheKey:
+        """Create a full JudgmentCacheKey per Jev 4 doctrine."""
+        state_str = json.dumps(context, sort_keys=True, default=str)[:1000]
+        state_hash = hashlib.sha256(state_str.encode()).hexdigest()[:16]
+        
+        read_set_digest = context.get("read_set_digest", "")
+        if read_set_digest:
+            state_hash = hashlib.sha256((state_hash + read_set_digest).encode()).hexdigest()[:16]
+        
+        model_version = getattr(self.adapter.config, 'model_version', 'jev-latest')
+        if hasattr(self.adapter.config, 'ollama') and hasattr(self.adapter.config.ollama, 'model'):
+            model_version = self.adapter.config.ollama.model
+        
+        policy_version_hash = context.get("policy_version_hash", "policy-v1")
+        adapter_backend = self.adapter.get_backend_identity()
+        
+        return JudgmentCacheKey(
+            state_hash=state_hash,
+            question=key,
+            expected_outcome_type=self.default_primitive,
+            model_version=model_version,
+            policy_version_hash=policy_version_hash,
+            adapter_backend=adapter_backend,
+        )
+    
+    def _make_cache_key(self, key: str, context: Dict[str, Any]) -> str:
+        return self._make_judgment_cache_key(key, context).to_string()
+    
+    def _compute_read_set_digest(self, context: Dict[str, Any]) -> str:
+        read_set_data = {
+            k: v for k, v in context.items() 
+            if not k.startswith("_") and k not in ["read_set_digest", "policy_version_hash"]
+        }
+        read_set_str = json.dumps(read_set_data, sort_keys=True, default=str)
+        return hashlib.sha256(read_set_str.encode()).hexdigest()[:32]
+    
+    def _validate_cache_entry(self, entry: CacheEntry, context: Dict[str, Any]) -> CacheValidationResult:
+        key = entry.key
+        
+        # Check model version
+        if self.retention_policy.evict_on_model_version_change:
+            current_model = getattr(self.adapter.config, 'model_version', 'jev-latest')
+            if hasattr(self.adapter.config, 'ollama') and hasattr(self.adapter.config.ollama, 'model'):
+                current_model = self.adapter.config.ollama.model
+            if key.model_version != current_model:
+                return CacheValidationResult(
+                    valid=False,
+                    status=CacheEntryStatus.MODEL_VERSION_MISMATCH,
+                    detail=f"Model version mismatch: cached={key.model_version}, current={current_model}",
+                    validated_key=key,
+                )
+        
+        # Check policy version
+        if self.retention_policy.evict_on_policy_version_change:
+            current_policy = context.get("policy_version_hash", "policy-v1")
+            if key.policy_version_hash != current_policy:
+                return CacheValidationResult(
+                    valid=False,
+                    status=CacheEntryStatus.POLICY_VERSION_MISMATCH,
+                    detail=f"Policy version mismatch: cached={key.policy_version_hash}, current={current_policy}",
+                    validated_key=key,
+                )
+        
+        # Check backend
+        if self.retention_policy.evict_on_backend_change:
+            current_backend = self.adapter.get_backend_identity()
+            if key.adapter_backend != current_backend:
+                return CacheValidationResult(
+                    valid=False,
+                    status=CacheEntryStatus.BACKEND_MISMATCH,
+                    detail=f"Backend mismatch: cached={key.adapter_backend}, current={current_backend}",
+                    validated_key=key,
+                )
+        
+        # Check read-set staleness
+        if self.stale_rejection.enabled:
+            current_digest = self._compute_read_set_digest(context)
+            if self.stale_rejection.reject_on_digest_mismatch:
+                if entry.read_set_digest != current_digest:
+                    return CacheValidationResult(
+                        valid=False,
+                        status=CacheEntryStatus.STALE_READ_SET,
+                        detail=f"Read-set digest mismatch: cached={entry.read_set_digest[:16]}, current={current_digest[:16]}",
+                        validated_key=key,
+                        current_read_set_digest=current_digest,
+                        expected_read_set_digest=entry.read_set_digest,
+                    )
+            
+            age = datetime.utcnow() - entry.created_at
+            if age > self.stale_rejection.max_read_set_age:
+                return CacheValidationResult(
+                    valid=False,
+                    status=CacheEntryStatus.STALE_READ_SET,
+                    detail=f"Read-set age {age} exceeds max {self.stale_rejection.max_read_set_age}",
+                    validated_key=key,
+                )
+        
+        # Check TTL
+        age = datetime.utcnow() - entry.created_at
+        if age > self.retention_policy.max_ttl:
+            return CacheValidationResult(
+                valid=False,
+                status=CacheEntryStatus.EVICTED,
+                detail=f"Entry age {age} exceeds max TTL {self.retention_policy.max_ttl}",
+                validated_key=key,
+            )
+        
+        return CacheValidationResult(
+            valid=True,
+            detail="Cache entry valid",
+            validated_key=key,
+        )
+    
+    def _evict_if_needed(self) -> None:
+        if len(self._cache) >= self.retention_policy.max_total_entries:
+            sorted_entries = sorted(
+                self._cache.items(), 
+                key=lambda kv: kv[1].accessed_at
+            )
+            to_evict = len(self._cache) - self.retention_policy.max_total_entries + 1
+            for i in range(to_evict):
+                key_str, entry = sorted_entries[i]
+                entry.validation_status = CacheEntryStatus.EVICTED
+                del self._cache[key_str]
+                self._stats["evictions"] += 1
+        
+        groups: Dict[str, List[tuple]] = {}
+        for key_str, entry in self._cache.items():
+            group_key = f"{entry.key.state_hash}:{entry.key.question}"
+            if group_key not in groups:
+                groups[group_key] = []
+            groups[group_key].append((key_str, entry))
+        
+        for group_key, entries in groups.items():
+            if len(entries) > self.retention_policy.max_entries_per_group:
+                entries.sort(key=lambda kv: kv[1].accessed_at)
+                to_evict = len(entries) - self.retention_policy.max_entries_per_group
+                for i in range(to_evict):
+                    key_str, entry = entries[i]
+                    entry.validation_status = CacheEntryStatus.EVICTED
+                    del self._cache[key_str]
+                    self._stats["evictions"] += 1
+    
+    def _write_canonical_record(self, entry: CacheEntry, context: Dict[str, Any]) -> CanonicalJudgmentRecord:
+        record = CanonicalJudgmentRecord(
+            record_id=str(uuid.uuid4()),
+            cache_key=entry.key,
+            outcome=entry.outcome,
+            provenance=entry.provenance,
+            calibration=entry.provenance.get("calibration", {}),
+            store_location=JudgmentStoreLocation.EVIDENCE_STORE,
+            validation_status=entry.validation_status,
+            created_at=entry.created_at,
+            retention_policy=self.retention_policy,
+        )
+        self._evidence_store[record.record_id] = record
+        return record
     
     def query(self, key: str, context: Dict[str, Any]) -> Optional[Any]:
         """Synchronous query — runs async internally."""
@@ -529,9 +1197,37 @@ class SyncJevKnowledgeBase(KnowledgeBase):
         return loop.run_until_complete(self._async_query(key, context))
     
     async def _async_query(self, key: str, context: Dict[str, Any]) -> Optional[Any]:
-        cache_key = self._make_cache_key(key, context)
-        if cache_key in self._cache:
-            return self._cache[cache_key]
+        judgment_key = self._make_judgment_cache_key(key, context)
+        cache_key_str = judgment_key.to_string()
+        read_set_digest = self._compute_read_set_digest(context)
+        
+        if cache_key_str in self._cache:
+            entry = self._cache[cache_key_str]
+            validation = self._validate_cache_entry(entry, context)
+            
+            if validation.valid:
+                entry.accessed_at = datetime.utcnow()
+                entry.access_count += 1
+                self._stats["hits"] += 1
+                logger.debug(f"Sync cache hit for key: {key}")
+                return entry.outcome
+            else:
+                self._stats["validation_failures"] += 1
+                logger.warning(f"Sync cache validation failed for {key}: {validation.detail}")
+                
+                if validation.status == CacheEntryStatus.STALE_READ_SET:
+                    self._stats["stale_rejections"] += 1
+                    if self.stale_rejection.on_stale == "reject":
+                        return JevNonOutcomeResult(
+                            kind="stale",
+                            reason=validation.detail,
+                            retryable=True,
+                        )
+                    elif self.stale_rejection.on_stale == "return_stale_with_warning":
+                        logger.warning(f"Returning stale entry for {key}: {validation.detail}")
+                        return entry.outcome
+        
+        self._stats["misses"] += 1
         
         try:
             results = await self.adapter.system_one(
@@ -539,14 +1235,39 @@ class SyncJevKnowledgeBase(KnowledgeBase):
                 questions=[key],
                 expected_types=[self.default_primitive],
             )
+            
             if results:
                 result = results[0]
+                
                 if not isinstance(result, JevNonOutcomeResult):
-                    self._cache[cache_key] = result
+                    provenance = {
+                        "source_system": "type-safe-system-one" if "jev" in self.adapter.get_backend_identity() else "system-one-adapter",
+                        "verifier_method": "concentration" if self.default_primitive == JevPrimitiveType.NOUL else "rubric" if self.default_primitive == JevPrimitiveType.SCORE else "adapter-llm",
+                        "policy_version_hash": context.get("policy_version_hash", "policy-v1"),
+                        "read_set_digest": read_set_digest,
+                        "evaluator_ref": self.adapter.get_backend_identity(),
+                        "adapter_backend": self.adapter.get_backend_identity(),
+                        "calibration": self.adapter.config.calibration or {},
+                    }
+                    
+                    calibration = self.adapter.config.calibration or {}
+                    
+                    entry = CacheEntry(
+                        key=judgment_key,
+                        outcome=result,
+                        provenance=provenance,
+                        calibration=calibration,
+                        read_set_digest=read_set_digest,
+                    )
+                    
+                    self._evict_if_needed()
+                    self._cache[cache_key_str] = entry
+                    self._write_canonical_record(entry, context)
+                
                 return result
+            
         except Exception as e:
             logger.error(f"SyncJevKnowledgeBase query failed for '{key}': {e}")
-            # Fail-visible: return explicit non-outcome
             return JevNonOutcomeResult(
                 kind="unevaluable",
                 reason=f"Adapter error: {e}",
@@ -559,19 +1280,42 @@ class SyncJevKnowledgeBase(KnowledgeBase):
             retryable=True,
         )
     
-    def _make_cache_key(self, key: str, context: Dict[str, Any]) -> str:
-        import hashlib
-        state_str = json.dumps(context, sort_keys=True, default=str)[:1000]
-        state_hash = hashlib.sha256(state_str.encode()).hexdigest()[:16]
-        backend = self.adapter.get_backend_identity()
-        return f"{state_hash}:{key}:{backend}"
+    def _compute_read_set_digest(self, context: Dict[str, Any]) -> str:
+        read_set_data = {
+            k: v for k, v in context.items() 
+            if not k.startswith("_") and k not in ["read_set_digest", "policy_version_hash"]
+        }
+        read_set_str = json.dumps(read_set_data, sort_keys=True, default=str)
+        return hashlib.sha256(read_set_str.encode()).hexdigest()[:32]
+    
+    def get_cache_stats(self) -> Dict[str, Any]:
+        return {
+            **self._stats,
+            "cache_size": len(self._cache),
+            "evidence_store_size": len(self._evidence_store),
+            "hit_rate": self._stats["hits"] / max(1, self._stats["hits"] + self._stats["misses"]),
+        }
+    
+    def get_canonical_records(self) -> List[CanonicalJudgmentRecord]:
+        return list(self._evidence_store.values())
     
     def add_knowledge(self, key: str, value: Any, context: Optional[Dict[str, Any]] = None) -> None:
         if context:
             cache_key = self._make_cache_key(key, context)
         else:
             cache_key = f"manual:{key}"
-        self._cache[cache_key] = value
+        judgment_key = self._make_judgment_cache_key(key, context or {})
+        entry = CacheEntry(
+            key=judgment_key,
+            outcome=value,
+            provenance={"source_system": "manual", "verifier_method": "manual"},
+            calibration={},
+            read_set_digest="",
+        )
+        self._cache[cache_key] = entry
+    
+    def add_pattern(self, pattern: str, key: str, resolver: callable) -> None:
+        pass
 
 
 def create_sync_jev_knowledge_base(
