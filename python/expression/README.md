@@ -13,10 +13,36 @@ This package is the first executable Expression slice. It provides:
 - a pure evaluator adapter with explicit read-set/evaluator/ontology identity;
 - deterministic replay comparison and fail-closed refusal/unevaluable results;
 - an explicit compatibility and storage boundary: Expression converges with existing harvest/semantics/KG material, keeps observations regenerable staging data, and leaves canonical identity, lineage, disposition, and evaluation joins in Resolution;
-- a read-only compatibility adapter for `nebula.harvests`/`harvest_candidates` and `semantics.source_observation` records, preserving source identities and surfacing conflicting hashes instead of overwriting history;
-- a composable source-tag/metadata projection adapter that preserves namespaces and source revisions, attaches only by stable identity, and never creates a governed SOL tag.
+- a read-only compatibility adapter for harvests, harvest candidates, semantics observations, and cross-reference material, preserving source identities, emitting proposed/ambiguous identity candidates, and surfacing missing identity, conflicting hashes, and supersession lineage instead of overwriting history;
+- a composable source-tag/metadata projection adapter that preserves namespaces and source revisions, attaches only by stable identity, and never creates a governed SOL tag;
+- an E1 canonical contract normalizer and semantic fingerprint shared by Python and future TypeScript consumers;
+- a bounded E2 redacted corpus builder with deterministic replay and committed input/artifact fingerprints.
 
 It deliberately does **not** perform identity resolution, semantic inference, graph writes, proposition admission, or authority changes. Candidate links remain `proposed` or `ambiguous`; they are not confirmations. The evaluator callback is a seam for SOLScript/Resolution and is not an admission path.
+
+## E2 corpus boundary
+
+`expression.corpus` builds the committed `fixtures/e2-corpus.json` through a deterministic redaction policy: control bytes are removed, secret-shaped values are replaced, and prompt-injection markers are labeled and replaced. It emits canonical Expression bundles without database, graph, Aspects, Resolution, or authority writes. `fixtures/e2-corpus-manifest.json` records the input fingerprint, generated artifact fingerprint, byte count, and replay rule. The corpus is synthetic/redacted architecture material, not a live transcript authority.
+
+## E1 canonical contract and Aspects boundary
+
+`expression.contract` is the E1 contract gate. `canonicalize_bundle()` converts the internal extraction dictionaries into the exact v0.1 wire shape and rejects contract, authority, candidate-link, or boundary drift. `contract_manifest()` and `contract_fingerprint()` fingerprint semantic fields rather than source formatting or file paths.
+
+The active v0.1 vocabulary is deliberately limited to `reference`, `version`, and `speech_act`. Candidate links are only `proposed` or `ambiguous`; `confirmed` belongs to a governed Resolution/Aspects path. Proposition candidates carry `predicate_status: unresolved` and cannot claim a governed relation. Projected tags retain `governed_tag_id: null` and `authority_status: projected`; Aspects owns later binding.
+
+The TypeSpec `CanonicalExpressionBundle` mirrors this normalized shape. The package remains model-only (`emit: []`) until the workspace registers the correct generated-client emitter; the committed semantic fingerprint and reconciliation tests are the interim E1 boundary, not an implied generated API. `canonicalize_tag_bundle()` explicitly maps the Python/Aspects adapter field `namespace` to the TypeSpec field `tag_namespace` and rejects any pre-populated governed tag id. Aspects therefore receives a stable projected-tag candidate, not an accidental authority claim.
+
+## E4 evaluator boundary
+
+E4 wraps the existing SOLScript/Resolution evaluator seam without making Expression an authority. Requests pin the Expression contract, source, ontology, evaluator, authority owner, and read-set fingerprints; `mutation_policy` is always `forbidden`. Archived Resolution dispositions map to the stable wire vocabulary (`Asserted` → `asserted`, `Disputed` → `disputed`, `Rejected` → `rejected`, `Pending` → `pending`, `Proposed` → `advisory`, `Stale` → `stale`, `Retracted` → `refused`). Missing read sets are `unevaluable`; unavailable evaluators are `pending`; uncertain/advisory results remain non-authoritative; unsupported outcomes fail closed to `refused`.
+
+Callbacks receive deep copies, and the adapter never invokes transition, persistence, admission, or graph APIs. Replay compares evaluation fingerprints using the same pinned inputs.
+
+## E3 compatibility boundary
+
+The E3 adapter accepts already-fetched records shaped like `nebula.harvests`, `nebula.harvest_candidates`, `semantics.source_observation`, and `nebula.cross_references`. It preserves stable source identity before considering registered aliases. A stable match yields a `proposed` candidate; an alias collision yields `ambiguous`; missing identity is `unresolved`; a changed hash under the same identity is `conflict`; and supersession is recorded as `declared` or `dangling` lineage evidence. None of these outcomes resolves canonical identity or changes source state. Resolution remains canonical for identity, lineage, disposition, and evaluation joins.
+
+The adapter is deliberately compatible with the consolidated Resolution direction: it reads legacy/source-shaped material but does not recreate a legacy table or claim that harvest storage is canonical. It returns deterministic staging data only.
 
 ## Compatibility and storage boundary
 
@@ -36,6 +62,22 @@ Source tags and metadata are represented as `ProjectedTagObservation` values. Th
 ## Taxonomy and contract drift
 
 Expression's current observation vocabulary is explicit and documented in `expression.taxonomy` and the TypeSpec `ExpressionTaxonomy` model. The POC currently expects `reference`, `version`, and `speech_act` observations to remain `unreviewed` and `non_authoritative`. Adding a new observation kind should be accompanied by an explicit taxonomy entry before the kind is treated as part of the contract. `validate_observations()` is a contract-gate helper: it reports mismatches relative to the current taxonomy instead of silently accepting new vocabulary.
+
+## E5 bounded persistence and projection boundary
+
+`expression.e5` builds a deterministic, write-free E5 artifact from one E4 evaluation envelope. The artifact separates three layers: compact evaluation receipts owned canonically by Resolution, a regenerable graph projection, and a Keychains context manifest containing only source/read-set/evaluator identities and references. It does not store source content, call PostgreSQL, call MongoDB, write the graph, or mutate authority.
+
+`rollback_slice()` appends rollback lineage without deleting the prior artifact. `replay_slice()` rebuilds the artifact from the same pinned bundle, read set, and source run and compares fingerprints. Retention is explicit (`bounded_review_fixture` or `operational_review`); arbitrary indefinite retention is rejected.
+
+## E6 live Resolution persistence
+
+`expression.persistence` is the E6 writer: it turns one E5 artifact's canonical receipts into real `resolution.receipt` rows using the V139 R4/Q3 contract shared with the Lilac adapter. Idempotency is `(source_system='expression', source_receipt_id)` with `payload_fingerprint` equivalence; the same id with a different fingerprint is a fail-closed `conflict` carrying both fingerprints. Producer grants are enforced by the DB trigger — the `expression-pipeline` producer registered by `sql/V194__expression_register_producer.sql` holds exactly one kind (`expression_evaluation`), so Expression cannot write lifecycle or admission kinds. Outcome classes match the Lilac vocabulary: `accepted`, `duplicate-equivalent`, `conflict`, `refused`.
+
+`ResolutionReceiptWriter` takes an injectable connection factory and never mutates the producer registry or boundary; the DB is the per-write authority. Admission receipts remain append-only and are never touched by Expression.
+
+## E7 live SOLScript evaluator adapter
+
+`expression.solscript_adapter` binds the E4 evaluation envelope to the real in-memory `ResolutionInterpreter` (python/SOLScript). Live dispositions map into the E4 wire vocabulary; context-gate outcomes become explicit results: `context_required` → `unevaluable`, `context_mismatch` → `refused`, unknown context keys on framed propositions → `refused` (`invalid_context`). Propositions absent from the interpreter are `pending` (`proposition_not_in_interpreter`) rather than silently refused, and interpreter exceptions fail closed. `evaluate_bundle_with_interpreter()` and `replay_bundle_with_interpreter()` produce E4 envelopes pinned to `solscript-resolution-interpreter-v32`; the adapter never mutates interpreter state, invokes transitions, or persists — the E6 writer remains the only persistence path.
 
 ## Validate
 

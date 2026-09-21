@@ -1,7 +1,8 @@
 /**
  * vision-srv — TypeSpec Operations
  *
- * Reverse-engineered from python/vision-srv/src/vision_srv/main.py (FastAPI).
+ * Reverse-engineered from python/vision/losm-host (FastAPI).
+ * Includes vision-srv wire-compat surface under /api (compat.py).
  */
 import "@typespec/http";
 import "@typespec/rest";
@@ -16,6 +17,15 @@ namespace org.nexus.visionsrv {
   @get
   @doc("Liveness probe.")
   op health(): unknown;
+
+  // ========================================================================
+  // Receipts (/api/receipts) — Deliverable 1
+  // ========================================================================
+
+  @route("/api/receipts/ingest")
+  @post
+  @doc("Ingest an execution receipt.")
+  op ingestReceipt(@body body: ReceiptIngestRequest): ReceiptIngestResponse | unknown;
 
   // ========================================================================
   // Work requests (/api/work-requests)
@@ -88,4 +98,36 @@ namespace org.nexus.visionsrv {
   @post
   @doc("Create an artifact.")
   op createArtifact(@body body: unknown): ArtifactResponse | unknown;
+
+  // ========================================================================
+  // Kernel (/kernel) — Deliverable 1
+  // ========================================================================
+
+  @route("/kernel/validate-graph")
+  @post
+  @doc("Validate a graph using the kernel constraint system.")
+  op validateGraph(@body body: KernelGraph): KernelValidateResponse | unknown;
+
+  // ========================================================================
+  // Receipt-writer contract documentation — Deliverable 2
+  // ========================================================================
+
+  /**
+   * RECEIPT-WRITER CONTRACT (portable across Python/JVM)
+   *
+   * External emitters MUST use conduit POST /api/receipts (C1 single persistence path).
+   * The ported JVM vision kernel writes idempotently:
+   *   - unique constraint on vision.receipts.id
+   *   - ON CONFLICT DO NOTHING semantics
+   *   - no "one process exists" assumptions (multi-instance safe)
+   *
+   * DELETE /api/receipts/{plan_id} hardening (ruling fcec95a2):
+   *   - ruled target shape: types allowlist or dedicated /api/receipts/unblock route
+   *   - capture the ruled target shape in TypeSpec marked as such
+   *
+   * Receipt type families:
+   *   - vision.receipts: 18-type CHECK enum (chk_vision_receipts_type)
+   *   - execution.receipts: 19-type CHECK enum (chk_execution_receipts_type, superset with EXECUTION_COMPLETE)
+   *   - JVM writer MUST target the correct table
+   */
 }

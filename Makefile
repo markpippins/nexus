@@ -201,6 +201,7 @@ mesh-test:
 	@python3 -m pytest bin/tests/test_mesh_register_probe.py bin/tests/test_sonar_preflight.py \
 		bin/tests/test_drive_guard.py bin/tests/test_vdci_backup.py \
 		bin/tests/test_pg_escape_hatch.py bin/tests/test_adapter_health_probe.py \
+		bin/tests/test_fleet_blackboard_digest.py \
 		bin/tests/test_boot_attest.py \
 	bin/tests/test_migration_commit_lint.py \
 	bin/tests/test_resolver_soak_report.py \

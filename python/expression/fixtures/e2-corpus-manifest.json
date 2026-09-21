@@ -1,0 +1,12 @@
+{
+  "corpus_revision": "expression-e2-corpus-v0.1",
+  "input_fixture": "e2-corpus.json",
+  "input_fingerprint": "069499dbedc9d68d87b4c23670cb68d76a920d1f7194c7194131e465ca4e9",
+  "artifact_fingerprint": "ad141f68258f1c801f928380b43bc79deb6a245caca11e4245ece9b113f36690",
+  "artifact_bytes": 9217,
+  "transcript_count": 2,
+  "redaction_cases": 1,
+  "authority_status": "non_authoritative",
+  "writes_performed": false,
+  "replay_rule": "canonical_json(build_corpus(load(input_fixture))) must reproduce artifact_fingerprint and artifact_bytes"
+}

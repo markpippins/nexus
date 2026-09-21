@@ -126,7 +126,7 @@ three-layer mesh and is retained as historical reference.
 PostgreSQL is canonical. The primary (`pgvector_db`, localhost:5432) hosts the
 live `nexus` database; **barium** (192.168.1.212 — Raspberry Pi,
 `pgvector/pgvector:pg17` Docker) is the canonical off-machine backup target and
-is kept at parity (nightly verified backups via `bin/pg-backup-to-barium.sh`;
+is kept at parity (nightly verified backups via `bin/pg-backup-to-vanadium.sh`;
 schema/seed migrations applied to both — see §7). The former backup server
 **Strontium** (172.16.30.2) has been down for repair since 2026-08-22 and is
 decommissioned from the backup role; it may return, but barium remains the

@@ -206,23 +206,44 @@ def ensure_nebula_work_request(
     dco_json: str | None,
     plan_id: str | None,
 ) -> str:
-    """Ensure the WR exists in nebula.work_requests_history; return its id.
+    """Ensure the WR exists (canonical-first) and return its id.
 
-    execution.requests.source_wr_id has an FK to
-    nebula.work_requests_history(id), so the WR must be present on the
-    nebula side before mirroring. Keyed by legacy_id = vision wr_id (the
-    convention used by add_work_request in db_adapter.py) OR by the WR
-    uuid itself. Idempotent: re-runs reuse the existing row.
+    W4 repoint (plan 8261650 stage 2, spec 7e8c0222, DBA pin 76572fb3).
+    The WR is ensured on the canonical ``resolution.work_request`` store
+    (resolve-then-bind). ``execution.requests.source_wr_id`` currently has an
+    FK to ``nebula.work_requests_history(id)``; until the DBA's V193 retargets
+    it to ``resolution.work_request(id)`` at the Stage-6 go, we keep a derived
+    nebula bridge row SHARING the canonical uuid so the FK binding stays valid
+    and the two rows are identity-linked, not accidentally divergent.
 
-    T26 Item B: the entity_key is derived at birth and persisted, and an
-    already-active row with the same entity_key is reused (idempotent
-    emission) instead of inserting a duplicate.
+    Contract (DBA pin 76572fb3):
+      1. Resolve canonical first: ``SELECT id FROM resolution.work_request
+         WHERE legacy_id = %s OR id = %s::uuid``. If found, return it — no
+         write at all.
+      2. On miss, INSERT canonical: ``legacy_id = 'vision.work_requests:' ||
+         wr_uuid`` (crosswalk style), ``business_status='DRAFT'``, ``dco_json``,
+         ``created_by='cascade-admission'`` (fixes the T26 NULL-created_by
+         lesson), ``context.plan_id`` + ``context.entity_key`` preserved,
+         ``plan_id`` column NULL (W3 disposition 767abf1b carries over).
+      3. Bridge nebula write: ``INSERT INTO nebula.work_requests_history ...
+         ON CONFLICT (id) DO NOTHING`` using the SAME uuid the canonical row
+         got, so the FK stays valid during the window and the rows are
+         identity-linked. Return the canonical id.
+      4. Entity-key active-reuse: check canonical (``context->>'entity_key'``
+         + active bitemporal window) before insert, mirroring today's nebula
+         logic.
+      5. ``mirror_to_execution_requests`` is untouched — ``source_wr_id`` =
+         the returned (canonical-first) id; the FK still validates because the
+         bridge row shares the uuid.
     """
     now = datetime.datetime.utcnow().isoformat() + "Z"
     entity_key = _derive_entity_key(dco_json, wr_id)
+    legacy_id = f"vision.work_requests:{wr_uuid}"
+
     with pg_conn.cursor() as cur:
+        # 1. Resolve canonical first — no write if already present.
         cur.execute(
-            "SELECT id FROM nebula.work_requests_history "
+            "SELECT id FROM resolution.work_request "
             "WHERE legacy_id = %s OR id = %s::uuid LIMIT 1",
             (wr_id, wr_uuid),
         )
@@ -230,36 +251,69 @@ def ensure_nebula_work_request(
         if row:
             return str(row[0])
 
+        # 4. Entity-key active-reuse on the canonical store (bitemporal window).
         if entity_key:
             cur.execute(
-                "SELECT id FROM nebula.work_requests_history "
-                "WHERE entity_key = %s "
+                "SELECT id FROM resolution.work_request "
+                "WHERE context->>'entity_key' = %s "
                 "AND now() >= valid_from AND now() < valid_until LIMIT 1",
                 (entity_key,),
             )
             row = cur.fetchone()
             if row:
-                _log("WR %s entity_key already active — reusing %s (idempotent emission)",
+                _log("WR %s entity_key already active — reusing canonical %s (idempotent emission)",
                      wr_uuid[:8], str(row[0]))
                 return str(row[0])
 
+        # 2. INSERT canonical. Build context with plan_id + entity_key (767abf1b
+        #    disposition: plan_id preserved at context.plan_id, column NULL).
+        import json as _json
+        dco = {}
+        if dco_json:
+            try:
+                dco = _json.loads(dco_json) if isinstance(dco_json, str) else dco_json
+                if not isinstance(dco, dict):
+                    dco = {}
+            except (_json.JSONDecodeError, AttributeError):
+                dco = {}
+        intent = dco.get("intent") if isinstance(dco.get("intent"), dict) else {}
+        constraints = dco.get("constraints") if isinstance(dco.get("constraints"), dict) else {}
+        context = {}
+        if intent:
+            context["intent"] = intent
+        if constraints:
+            context["constraints"] = constraints
+        if plan_id:
+            context["plan_id"] = plan_id
+        if entity_key:
+            context["entity_key"] = entity_key
+        context["work_request_uuid"] = wr_uuid
+
+        cur.execute(
+            """INSERT INTO resolution.work_request
+                   (id, title, business_status, intent, context, constraints,
+                    created_by, dco_json, legacy_id, plan_id, created_at, updated_at)
+               VALUES (%s::uuid, %s, 'DRAFT', %s, %s, %s, 'cascade-admission',
+                       %s, %s, NULL, %s, %s)
+               ON CONFLICT (id) DO NOTHING""",
+            (wr_uuid, title, intent.get("type"),
+             _json.dumps(context), _json.dumps(constraints),
+             dco_json, legacy_id, now, now),
+        )
+
+        # 3. Bridge nebula write sharing the canonical uuid (FK stays valid).
         cur.execute(
             """INSERT INTO nebula.work_requests_history
                    (id, legacy_id, plan_id, title, business_status, dco_json,
                     created_at, updated_at, entity_key)
                VALUES (%s::uuid, %s, %s, %s, 'DRAFT', %s, %s, %s, %s)
                ON CONFLICT (id) DO NOTHING""",
-            (wr_uuid, wr_id, plan_id, title, dco_json, now, now, entity_key),
+            (wr_uuid, legacy_id, None, title, dco_json, now, now, entity_key),
         )
         pg_conn.commit()
 
-        cur.execute(
-            "SELECT id FROM nebula.work_requests_history "
-            "WHERE legacy_id = %s OR id = %s::uuid LIMIT 1",
-            (wr_id, wr_uuid),
-        )
-        row = cur.fetchone()
-        return str(row[0]) if row else wr_uuid
+        # Return the canonical id (the bridge row shares the same uuid).
+        return wr_uuid
 
 
 def mirror_to_execution_requests(pg_conn: Any, wr_uuid: str) -> bool:

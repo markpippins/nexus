@@ -159,7 +159,22 @@ ROLLBACK TO SAVEPOINT sp_ext_test_uuid;
 --    fallback ids candidate_state.py / database_loader.py derive, so a
 --    DB-seeded interpreter and a from-scratch interpreter agree.
 --    Everything is get-or-create by name — existing rows are preserved.
+--
+--    CROSS-DOMAIN DEPENDENCY: resolution.* is owned by the separate
+--    resolution chain (schemas/migrations/resolution/). Brand-new
+--    environments that have not run it yet do not have resolution.concept,
+--    so this seed is skipped (NOTICE) — the deterministic uuid5 ids mean
+--    the runtime's get-or-create path recreates identical rows on first
+--    use. Environments that DO carry resolution.* are seeded exactly as
+--    before (purely additive, idempotent).
 -- ----------------------------------------------------------------------------
+
+DO $$
+BEGIN
+  IF to_regclass('resolution.concept') IS NULL THEN
+    RAISE NOTICE '0003: resolution.concept absent (resolution chain not applied) — skipping cross-domain candidate-state seed';
+    RETURN;
+  END IF;
 
 -- Concepts. ON CONFLICT (name) DO NOTHING : if the logical concept already
 -- exists (e.g. nexus PromotionCandidate at its historical id), keep it.
@@ -251,3 +266,6 @@ WHERE NOT EXISTS (
     SELECT 1 FROM resolution.concept_relationship_binding
     WHERE concept_relationship_id = 'bdfcd10d-d31a-505f-8d79-de9a2fb163fb'
 );
+
+END
+$$;

@@ -16,7 +16,7 @@
 #      reads this stamp and alerts ("backup stale") if no fresh success
 #      appears within STALE_HOURS — that is the SUCCESS side of the alert.
 #   6. Failure -> best-effort incident record to nebula tagged to:sysadmin
-#      (same channel as pg-backup-to-barium.sh; guarded, never blocks).
+#      (same channel as pg-backup-to-vanadium.sh; guarded, never blocks).
 #
 # Restore (all DBs):
 #   gunzip < all__YYYYMMDD_HHMMSS.sql.gz | docker exec -i my-mysql mysql -uroot -prootpass

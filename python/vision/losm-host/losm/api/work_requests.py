@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -10,8 +11,6 @@ from sqlalchemy.orm import Session
 from losm_store.models import (
     PlanningTask,
     WorkStatus,
-    GovernanceEvent,
-    LifecycleEvent as LifecycleEventModel,
 )
 from losm_store.governed_triggers import GovernedTriggerAdapter
 from losm_store.repository import (
@@ -19,6 +18,13 @@ from losm_store.repository import (
     get_work_request_by_wr_id,
     list_work_requests,
     update_work_request,
+)
+from losm_store.canonical_bridge import (
+    dual_write_enabled,
+    canonical_update_for_status,
+    mirror_update_work_request,
+    mirror_insert_lifecycle_event,
+    mirror_insert_governance_event,
 )
 from losm_store.session import SessionLocal, get_db
 
@@ -149,19 +155,22 @@ def transition_wr(wr_id: str, payload: TransitionRequest, db: Session = Depends(
         refusal_id = "transition-refused:" + hashlib.sha256(
             refusal_material.encode("utf-8")
         ).hexdigest()
-        governance = GovernanceEvent(
+        governance_event_id = str(uuid.uuid4())
+        governance_payload = {
+            "from_state": str(from_state),
+            "requested_state": payload.to_state,
+            "actor": payload.actor,
+            "reason": payload.reason,
+            "validation_reason": validation.reason,
+        }
+        mirror_insert_governance_event(
+            db,
+            event_id=governance_event_id,
             event_type="TRANSITION_REFUSED",
             work_request_id=str(wr_id),
-            payload={
-                "from_state": str(from_state),
-                "requested_state": payload.to_state,
-                "actor": payload.actor,
-                "reason": payload.reason,
-                "validation_reason": validation.reason,
-            },
+            lineage_parent=None,
+            payload=governance_payload,
         )
-        db.add(governance)
-        db.flush()
         adapter.emit(
             db,
             adapter.lifecycle_refused(
@@ -176,20 +185,38 @@ def transition_wr(wr_id: str, payload: TransitionRequest, db: Session = Depends(
         db.commit()
         raise HTTPException(status_code=400, detail=validation.reason)
 
-    wr.status = payload.to_state
-    lifecycle = LifecycleEventModel(
+    # W2a: canonical-first status mutation (mapped via STATUS_MAP), then the
+    # bitemporal mirror update (verbatim losm state) + raw lifecycle event —
+    # all in the same transaction. The refusal path above is unchanged.
+    if dual_write_enabled():
+        canonical_update_for_status(
+            db,
+            wr_id=str(wr_id),
+            new_status_value=payload.to_state,
+        )
+    mirror_update_work_request(
+        db,
+        wr_id=str(wr_id),
+        intent=None,
+        constraints=None,
+        priority=None,
+        context_data=None,
+        status=payload.to_state,
+    )
+    lifecycle_event_id = str(uuid.uuid4())
+    mirror_insert_lifecycle_event(
+        db,
+        event_id=lifecycle_event_id,
         wr_id=str(wr_id),
         from_state=from_state,
         to_state=payload.to_state,
         actor=payload.actor,
         reason=payload.reason,
     )
-    db.add(lifecycle)
-    db.flush()
     adapter.emit(
         db,
         adapter.lifecycle_committed(
-            event_id=str(lifecycle.event_id),
+            event_id=lifecycle_event_id,
             wr_id=str(wr_id),
             from_state=str(from_state),
             to_state=payload.to_state,
@@ -198,7 +225,8 @@ def transition_wr(wr_id: str, payload: TransitionRequest, db: Session = Depends(
         ),
     )
     db.commit()
-    db.refresh(wr)
+    db.expire_all()
+    wr = get_work_request_by_wr_id(db, wr_id)
 
     return WorkRequestResponse.from_orm_with_metadata(wr)
 

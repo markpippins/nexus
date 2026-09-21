@@ -150,6 +150,8 @@ def extract_explicit_observations(
                     "input_fingerprint": fingerprint,
                     "disposition": "unreviewed",
                     "authority_status": "non_authoritative",
+                    "modality": "reported",
+                    "temporal_scope": {"valid_from": None, "valid_to": None, "as_of": None},
                 }
             )
         for match in _VERSION_RE.finditer(text):
@@ -165,6 +167,8 @@ def extract_explicit_observations(
                     "input_fingerprint": fingerprint,
                     "disposition": "unreviewed",
                     "authority_status": "non_authoritative",
+                    "modality": "reported",
+                    "temporal_scope": {"valid_from": None, "valid_to": None, "as_of": None},
                 }
             )
         for match in _DECISION_RE.finditer(text):
@@ -180,6 +184,8 @@ def extract_explicit_observations(
                     "input_fingerprint": fingerprint,
                     "disposition": "unreviewed",
                     "authority_status": "non_authoritative",
+                    "modality": "reported",
+                    "temporal_scope": {"valid_from": None, "valid_to": None, "as_of": None},
                 }
             )
     return sorted(observations, key=lambda item: item["observation_id"])

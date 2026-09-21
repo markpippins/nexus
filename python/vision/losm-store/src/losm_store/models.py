@@ -35,8 +35,13 @@ class PlanningTask(Base):
     __tablename__ = "work_requests_losm"
     __table_args__ = _table_args()
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    wr_id = Column(String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
+    # W2a substrate correction: the view's integer ``id`` is PER-VERSION (the
+    # bitemporal base close+reopen allocates a new id per version), so ORM
+    # identity must key on the stable business key ``wr_id`` — otherwise any
+    # post-update refresh of an expired instance raises ObjectDeletedError.
+    # ``id`` stays mapped (read-only) because response shapes expose it.
+    id = Column(Integer, nullable=True)
+    wr_id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     parent_request_id = Column(String(36), nullable=True)
     intent = Column(Text, nullable=False)
     constraints = Column(JSON, nullable=True)
