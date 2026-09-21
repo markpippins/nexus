@@ -75,6 +75,10 @@ Expression's current observation vocabulary is explicit and documented in `expre
 
 `ResolutionReceiptWriter` takes an injectable connection factory and never mutates the producer registry or boundary; the DB is the per-write authority. Admission receipts remain append-only and are never touched by Expression.
 
+## E7 live SOLScript evaluator adapter
+
+`expression.solscript_adapter` binds the E4 evaluation envelope to the real in-memory `ResolutionInterpreter` (python/SOLScript). Live dispositions map into the E4 wire vocabulary; context-gate outcomes become explicit results: `context_required` → `unevaluable`, `context_mismatch` → `refused`, unknown context keys on framed propositions → `refused` (`invalid_context`). Propositions absent from the interpreter are `pending` (`proposition_not_in_interpreter`) rather than silently refused, and interpreter exceptions fail closed. `evaluate_bundle_with_interpreter()` and `replay_bundle_with_interpreter()` produce E4 envelopes pinned to `solscript-resolution-interpreter-v32`; the adapter never mutates interpreter state, invokes transitions, or persists — the E6 writer remains the only persistence path.
+
 ## Validate
 
 From the worktree root:
