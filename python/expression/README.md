@@ -67,7 +67,13 @@ Expression's current observation vocabulary is explicit and documented in `expre
 
 `expression.e5` builds a deterministic, write-free E5 artifact from one E4 evaluation envelope. The artifact separates three layers: compact evaluation receipts owned canonically by Resolution, a regenerable graph projection, and a Keychains context manifest containing only source/read-set/evaluator identities and references. It does not store source content, call PostgreSQL, call MongoDB, write the graph, or mutate authority.
 
-`rollback_slice()` appends rollback lineage without deleting the prior artifact. `replay_slice()` rebuilds the artifact from the same pinned bundle, read set, and source run and compares fingerprints. Retention is explicit (`bounded_review_fixture` or `operational_review`); arbitrary indefinite retention is rejected. The live persistence adapter remains a follow-up once the Resolution write API is pinned.
+`rollback_slice()` appends rollback lineage without deleting the prior artifact. `replay_slice()` rebuilds the artifact from the same pinned bundle, read set, and source run and compares fingerprints. Retention is explicit (`bounded_review_fixture` or `operational_review`); arbitrary indefinite retention is rejected.
+
+## E6 live Resolution persistence
+
+`expression.persistence` is the E6 writer: it turns one E5 artifact's canonical receipts into real `resolution.receipt` rows using the V139 R4/Q3 contract shared with the Lilac adapter. Idempotency is `(source_system='expression', source_receipt_id)` with `payload_fingerprint` equivalence; the same id with a different fingerprint is a fail-closed `conflict` carrying both fingerprints. Producer grants are enforced by the DB trigger — the `expression-pipeline` producer registered by `sql/V194__expression_register_producer.sql` holds exactly one kind (`expression_evaluation`), so Expression cannot write lifecycle or admission kinds. Outcome classes match the Lilac vocabulary: `accepted`, `duplicate-equivalent`, `conflict`, `refused`.
+
+`ResolutionReceiptWriter` takes an injectable connection factory and never mutates the producer registry or boundary; the DB is the per-write authority. Admission receipts remain append-only and are never touched by Expression.
 
 ## Validate
 

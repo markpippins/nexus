@@ -15,6 +15,13 @@ from .evaluator import (
     replay_evaluation,
 )
 from .e5 import build_e5_slice, replay_slice, rollback_slice
+from .persistence import (
+    EXPRESSION_KIND,
+    ExpressionPersistenceError,
+    ResolutionReceiptWriter,
+    receipt_payload,
+    receipt_source_id,
+)
 from .pipeline import (
     build_candidate_links,
     build_expression_bundle,
@@ -53,6 +60,11 @@ __all__ = [
     "build_e5_slice",
     "replay_slice",
     "rollback_slice",
+    "EXPRESSION_KIND",
+    "ExpressionPersistenceError",
+    "ResolutionReceiptWriter",
+    "receipt_payload",
+    "receipt_source_id",
     "build_proposition_candidates",
     "extract_explicit_observations",
     "segment_transcript",
