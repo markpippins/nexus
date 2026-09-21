@@ -22,7 +22,6 @@ from .persistence import (
     receipt_payload,
     receipt_source_id,
 )
-from .e5 import build_e5_slice, replay_slice, rollback_slice
 from .pipeline import (
     build_candidate_links,
     build_expression_bundle,
@@ -66,9 +65,6 @@ __all__ = [
     "ResolutionReceiptWriter",
     "receipt_payload",
     "receipt_source_id",
-    "build_e5_slice",
-    "replay_slice",
-    "rollback_slice",
     "build_proposition_candidates",
     "extract_explicit_observations",
     "segment_transcript",
