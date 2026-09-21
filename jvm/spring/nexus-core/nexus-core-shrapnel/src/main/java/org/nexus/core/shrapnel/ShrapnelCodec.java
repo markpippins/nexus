@@ -128,7 +128,7 @@ public final class ShrapnelCodec {
                     PreparedStatement ps = con.prepareStatement(
                             "INSERT INTO shrapnel.field (is_calculated, field_index, label, name, property_name, field_type_code)"
                                     + " VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (property_name) DO UPDATE SET name = EXCLUDED.name",
-                            Statement.RETURN_GENERATED_KEYS);
+                            new String[]{"id"});
                     ps.setBoolean(1, (Boolean) f.get("is_calculated"));
                     ps.setInt(2, (Integer) f.get("field_index"));
                     Object label = f.get("label");
@@ -138,15 +138,15 @@ public final class ShrapnelCodec {
                     ps.setInt(6, (Integer) f.get("field_type_code"));
                     return ps;
                 }, kh);
-                fieldIds.put((String) f.get("property_name"), kh.getKey().longValue());
+                fieldIds.put((String) f.get("property_name"), generatedId(kh));
             }
 
             // ---- STEP 2: create object_instance ----
             KeyHolder oiKh = new GeneratedKeyHolder();
             jdbc.update(con -> con.prepareStatement(
                     "INSERT INTO shrapnel.object_instance DEFAULT VALUES",
-                    Statement.RETURN_GENERATED_KEYS), oiKh);
-            long objectId = oiKh.getKey().longValue();
+                    new String[]{"id"}), oiKh);
+            long objectId = generatedId(oiKh);
 
             // ---- STEP 3: for each value: value + value_<type> + OAV ----
             for (Map<String, Object> f : fieldSpecs) {
@@ -163,11 +163,11 @@ public final class ShrapnelCodec {
                 jdbc.update(con -> {
                     PreparedStatement ps = con.prepareStatement(
                             "INSERT INTO shrapnel.value (value_type_code) VALUES (?)",
-                            Statement.RETURN_GENERATED_KEYS);
+                            new String[]{"id"});
                     ps.setInt(1, typeCode);
                     return ps;
                 }, vKh);
-                long valueId = vKh.getKey().longValue();
+                long valueId = generatedId(vKh);
 
                 jdbc.update(con -> {
                     PreparedStatement ps = con.prepareStatement(
@@ -183,6 +183,27 @@ public final class ShrapnelCodec {
 
             return new EncodeResult(objectId, fieldSpecs);
         });
+    }
+
+    /**
+     * Extract the single BIGINT generated key named "id" from a KeyHolder.
+     *
+     * PostgreSQL reports EVERY returned column for generated-keys retrieval,
+     * so GeneratedKeyHolder.getKey() (single-key assertion) throws there once
+     * the target table carries more than one column (shrapnel.field gained
+     * created_at/updated_at in migration 0006). H2, which the test suite
+     * boots on, reports only the identity column — this is why the encode
+     * path 500'd live-only while CI stayed green. Fix: request the "id"
+     * column explicitly (prepareStatement(sql, new String[]{"id"})) and
+     * extract it by name.
+     */
+    private static long generatedId(org.springframework.jdbc.support.KeyHolder kh) {
+        Number id = (Number) kh.getKeys().get("id");
+        if (id == null) {
+            throw new IllegalStateException(
+                    "no generated key 'id' returned by driver: " + kh.getKeys());
+        }
+        return id.longValue();
     }
 
     private static void setStorageValue(PreparedStatement ps, int idx, Object v, int typeCode) {
