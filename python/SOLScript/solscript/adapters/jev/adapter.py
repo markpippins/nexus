@@ -559,37 +559,46 @@ class JevKnowledgeBase(KnowledgeBase):
         }
     
     def _make_judgment_cache_key(self, key: str, context: Dict[str, Any]) -> JudgmentCacheKey:
-        """Create a full JudgmentCacheKey per Jev 4 doctrine:
-        (state_hash, question, expected_outcome_type, model_version, policy_version_hash, adapter_backend)"""
-        state_str = json.dumps(context, sort_keys=True, default=str)[:1000]
-        state_hash = hashlib.sha256(state_str.encode()).hexdigest()[:16]
+            """Create a full JudgmentCacheKey per Jev 4 doctrine.
         
-        read_set_digest = context.get("read_set_digest", "")
-        if read_set_digest:
-            state_hash = hashlib.sha256((state_hash + read_set_digest).encode()).hexdigest()[:16]
+            NOTE: read_set_digest is NOT part of the cache key — it's stored separately
+            in CacheEntry for stale read-set detection."""
+            # Exclude read_set_digest from cache key computation so that
+            # stale read-set detection works via validation comparison
+            cache_context = {k: v for k, v in context.items() if k != "read_set_digest"}
+            state_str = json.dumps(cache_context, sort_keys=True, default=str)[:1000]
+            state_hash = hashlib.sha256(state_str.encode()).hexdigest()[:16]
         
-        model_version = getattr(self.adapter.config, 'model_version', 'jev-latest')
-        if hasattr(self.adapter.config, 'ollama') and hasattr(self.adapter.config.ollama, 'model'):
-            model_version = self.adapter.config.ollama.model
+            model_version = getattr(self.adapter.config, 'model_version', 'jev-latest')
+            if hasattr(self.adapter.config, 'ollama') and hasattr(self.adapter.config.ollama, 'model'):
+                model_version = self.adapter.config.ollama.model
         
-        policy_version_hash = context.get("policy_version_hash", "policy-v1")
-        adapter_backend = self.adapter.get_backend_identity()
+            policy_version_hash = context.get("policy_version_hash", "policy-v1")
+            adapter_backend = self.adapter.get_backend_identity()
         
-        return JudgmentCacheKey(
-            state_hash=state_hash,
-            question=key,
-            expected_outcome_type=self.default_primitive,
-            model_version=model_version,
-            policy_version_hash=policy_version_hash,
-            adapter_backend=adapter_backend,
-        )
-    
+            return JudgmentCacheKey(
+                state_hash=state_hash,
+                question=key,
+                expected_outcome_type=self.default_primitive,
+                model_version=model_version,
+                policy_version_hash=policy_version_hash,
+                adapter_backend=adapter_backend,
+            )
+
     def _make_cache_key(self, key: str, context: Dict[str, Any]) -> str:
         """Create cache key string from JudgmentCacheKey."""
         return self._make_judgment_cache_key(key, context).to_string()
     
     def _compute_read_set_digest(self, context: Dict[str, Any]) -> str:
-        """Compute SHA-256 digest of the read-set for stale detection."""
+        """Compute SHA-256 digest of the read-set for stale detection.
+        
+        If read_set_digest is explicitly provided in context, use it directly.
+        Otherwise compute from the context data (excluding metadata fields)."""
+        # Use explicitly provided digest if available
+        if "read_set_digest" in context:
+            return context["read_set_digest"]
+        
+        # Otherwise compute from context data
         read_set_data = {
             k: v for k, v in context.items() 
             if not k.startswith("_") and k not in ["read_set_digest", "policy_version_hash"]
@@ -843,32 +852,6 @@ class JevKnowledgeBase(KnowledgeBase):
             retryable=True,
         )
     
-    def _make_judgment_cache_key(self, key: str, context: Dict[str, Any]) -> JudgmentCacheKey:
-        """Create a full JudgmentCacheKey per Jev 4 doctrine."""
-        state_str = json.dumps(context, sort_keys=True, default=str)[:1000]
-        state_hash = hashlib.sha256(state_str.encode()).hexdigest()[:16]
-        
-        read_set_digest = context.get("read_set_digest", "")
-        if read_set_digest:
-            state_hash = hashlib.sha256((state_hash + read_set_digest).encode()).hexdigest()[:16]
-        
-        model_version = getattr(self.adapter.config, 'model_version', 'jev-latest')
-        if hasattr(self.adapter.config, 'ollama') and hasattr(self.adapter.config.ollama, 'model'):
-            model_version = self.adapter.config.ollama.model
-        
-        policy_version_hash = context.get("policy_version_hash", "policy-v1")
-        adapter_backend = self.adapter.get_backend_identity()
-        
-        return JudgmentCacheKey(
-            state_hash=state_hash,
-            question=key,
-            expected_outcome_type=self.default_primitive,
-            model_version=model_version,
-            policy_version_hash=policy_version_hash,
-            adapter_backend=adapter_backend,
-        )
-    
-    def _compute_read_set_digest(self, context: Dict[str, Any]) -> str:
         """Compute SHA-256 digest of the read-set for stale detection."""
         read_set_data = {
             k: v for k, v in context.items() 
@@ -1029,13 +1012,15 @@ class SyncJevKnowledgeBase(KnowledgeBase):
         }
     
     def _make_judgment_cache_key(self, key: str, context: Dict[str, Any]) -> JudgmentCacheKey:
-        """Create a full JudgmentCacheKey per Jev 4 doctrine."""
-        state_str = json.dumps(context, sort_keys=True, default=str)[:1000]
-        state_hash = hashlib.sha256(state_str.encode()).hexdigest()[:16]
+        """Create a full JudgmentCacheKey per Jev 4 doctrine.
         
-        read_set_digest = context.get("read_set_digest", "")
-        if read_set_digest:
-            state_hash = hashlib.sha256((state_hash + read_set_digest).encode()).hexdigest()[:16]
+        NOTE: read_set_digest is NOT part of the cache key — it's stored separately
+        in CacheEntry for stale read-set detection."""
+        # Exclude read_set_digest from cache key computation so that
+        # stale read-set detection works via validation comparison
+        cache_context = {k: v for k, v in context.items() if k != "read_set_digest"}
+        state_str = json.dumps(cache_context, sort_keys=True, default=str)[:1000]
+        state_hash = hashlib.sha256(state_str.encode()).hexdigest()[:16]
         
         model_version = getattr(self.adapter.config, 'model_version', 'jev-latest')
         if hasattr(self.adapter.config, 'ollama') and hasattr(self.adapter.config.ollama, 'model'):
@@ -1057,6 +1042,15 @@ class SyncJevKnowledgeBase(KnowledgeBase):
         return self._make_judgment_cache_key(key, context).to_string()
     
     def _compute_read_set_digest(self, context: Dict[str, Any]) -> str:
+        """Compute SHA-256 digest of the read-set for stale detection.
+        
+        If read_set_digest is explicitly provided in context, use it directly.
+        Otherwise compute from the context data (excluding metadata fields)."""
+        # Use explicitly provided digest if available
+        if "read_set_digest" in context:
+            return context["read_set_digest"]
+        
+        # Otherwise compute from context data
         read_set_data = {
             k: v for k, v in context.items() 
             if not k.startswith("_") and k not in ["read_set_digest", "policy_version_hash"]
@@ -1187,14 +1181,27 @@ class SyncJevKnowledgeBase(KnowledgeBase):
         return record
     
     def query(self, key: str, context: Dict[str, Any]) -> Optional[Any]:
-        """Synchronous query — runs async internally."""
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+        """Synchronous query — runs async internally.
         
-        return loop.run_until_complete(self._async_query(key, context))
+        Handles both cases: when an event loop is running (e.g., in pytest-asyncio)
+        and when no loop exists."""
+        try:
+            loop = asyncio.get_running_loop()
+            # If we get here, a loop is running — we can't use run_until_complete
+            # Create a new thread to run the async query
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, self._async_query(key, context))
+                return future.result()
+        except RuntimeError:
+            # No running loop, safe to use get_event_loop
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            return loop.run_until_complete(self._async_query(key, context))
     
     async def _async_query(self, key: str, context: Dict[str, Any]) -> Optional[Any]:
         judgment_key = self._make_judgment_cache_key(key, context)
