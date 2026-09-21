@@ -1,5 +1,8 @@
 emit:
+  - "@typespec/openapi3"
   - "@typespec/http-client-python"
 options:
+  "@typespec/openapi3":
+    emitter-output-dir: "{project-root}/tsp-output/schema"
   "@typespec/http-client-python":
     emitter-output-dir: "{project-root}/../../../../python/conduit/generated"
