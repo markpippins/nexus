@@ -1,0 +1,76 @@
+{
+  "timestamp": "2026-09-21T15:00:00Z",
+  "surface": "/api compat (vision-srv wire contract per 5d8e10fd)",
+  "matching": [
+    {
+      "method": "DELETE",
+      "route": "/api/work-requests/{param}"
+    },
+    {
+      "method": "GET",
+      "route": "/api/artifacts"
+    },
+    {
+      "method": "GET",
+      "route": "/api/branches"
+    },
+    {
+      "method": "GET",
+      "route": "/api/work-requests"
+    },
+    {
+      "method": "GET",
+      "route": "/api/work-requests/{param}"
+    },
+    {
+      "method": "GET",
+      "route": "/api/work-requests/{param}/dag"
+    },
+    {
+      "method": "GET",
+      "route": "/api/work-requests/{param}/dag/path/{param}"
+    },
+    {
+      "method": "GET",
+      "route": "/api/work-requests/{param}/dag/validate"
+    },
+    {
+      "method": "PATCH",
+      "route": "/api/work-requests/{param}"
+    },
+    {
+      "method": "POST",
+      "route": "/api/artifacts"
+    },
+    {
+      "method": "POST",
+      "route": "/api/branches"
+    },
+    {
+      "method": "POST",
+      "route": "/api/work-requests"
+    }
+  ],
+  "only_in_typespec": [
+    {
+      "method": "GET",
+      "route": "/health"
+    },
+    {
+      "method": "POST",
+      "route": "/api/receipts/ingest"
+    },
+    {
+      "method": "POST",
+      "route": "/kernel/validate-graph"
+    }
+  ],
+  "only_in_losm": [],
+  "counts": {
+    "typespec": 15,
+    "losm_host_compat": 12,
+    "matching": 12,
+    "typespec_only": 3,
+    "losm_compat_only": 0
+  }
+}
