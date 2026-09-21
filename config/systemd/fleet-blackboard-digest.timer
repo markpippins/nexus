@@ -1,0 +1,14 @@
+[Unit]
+Description=daily fleet blackboard digest timer (adoption-drift time series)
+# 12:55 UTC (08:55 ET) — before the 13:05 lease-probe, 13:25 resolver-probe,
+# 13:45 drift-check wave; the morning probes then observe a freshly-rendered
+# blackboard. Persistent=true catches up after downtime (missed series points
+# matter — the whole point is the time series).
+
+[Timer]
+OnCalendar=*-*-* 12:55:00 UTC
+Persistent=true
+Unit=fleet-blackboard-digest.service
+
+[Install]
+WantedBy=timers.target

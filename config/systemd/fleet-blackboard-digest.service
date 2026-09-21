@@ -1,0 +1,19 @@
+[Unit]
+Description=nexus daily fleet blackboard digest → agent record (DBA, adoption-drift time series)
+# Oneshot runner: renders the coordination blackboard digest for EVERY fleet
+# role (continuity.blackboard, V192 companion view) and files ONE nebula agent
+# record per run, so adoption drift becomes a queryable time series.
+# READ-ONLY on the blackboard: never advances a role's inbox/todo checkpoints —
+# that is the deliberate, human-reviewed R17.1 act of a real session.
+# Exits 0 on completed runs by design — degraded renders are data (journal
+# lines carry the reason), not unit failures.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/fleet-blackboard-digest.py
+# Pin surfaces explicitly (explicit config, not a default accident).
+Environment=NEXUS_BLACKBOARD_DSN=postgresql://pguser:pgpass@localhost:5432/nexus
+Environment=NEBULA_URL=http://localhost:3101
+# Role list: unset = live discovery (blackboard view UNION agent_records),
+# fallback to the governed-role canon when the DB is unreachable. Override:
+# FLEET_BLACKBOARD_FALLBACK_ROLES=role1,role2
