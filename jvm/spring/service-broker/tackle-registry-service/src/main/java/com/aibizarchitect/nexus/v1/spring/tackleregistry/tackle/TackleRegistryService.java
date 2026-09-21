@@ -20,9 +20,11 @@ public class TackleRegistryService {
 
     private final JdbcTemplate jdbc;
     private final JsonMapper json = JsonMapper.builder().build();
+    private final TackleApiKeyEncryptor apiKeyEncryptor;
 
-    public TackleRegistryService(JdbcTemplate jdbc) {
+    public TackleRegistryService(JdbcTemplate jdbc, TackleApiKeyEncryptor apiKeyEncryptor) {
         this.jdbc = jdbc;
+        this.apiKeyEncryptor = apiKeyEncryptor;
     }
 
     @SuppressWarnings("unchecked")
@@ -34,6 +36,10 @@ public class TackleRegistryService {
         }
     }
 
+    private String decryptApiKey(String apiKey) {
+        return apiKeyEncryptor.decrypt(apiKey);
+    }
+
     // ── Reads ──────────────────────────────────────────────────────
 
     public List<TackleRecords.Provider> providers() {
@@ -41,7 +47,7 @@ public class TackleRegistryService {
                 "SELECT id, name, type, endpoint_url, api_key, config_json FROM providers ORDER BY name",
                 (rs, i) -> new TackleRecords.Provider(
                         rs.getString("id"), rs.getString("name"), rs.getString("type"),
-                        rs.getString("endpoint_url"), rs.getString("api_key"),
+                        rs.getString("endpoint_url"), decryptApiKey(rs.getString("api_key")),
                         parseJson(rs.getString("config_json"))));
     }
 
@@ -108,7 +114,7 @@ public class TackleRegistryService {
                 """, (rs, i) -> new TackleRecords.ResolvedRoleConfig(
                         rs.getString("role"), rs.getString("model_identifier"),
                         rs.getString("provider_id"), rs.getString("provider_name"),
-                        rs.getString("provider_type"), rs.getString("api_key"),
+                        rs.getString("provider_type"), decryptApiKey(rs.getString("api_key")),
                         rs.getString("endpoint_url"), rs.getString("harness_name"),
                         fallbacks(role)),
                 role);
