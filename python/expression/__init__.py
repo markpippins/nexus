@@ -1,6 +1,12 @@
 """Expression v0.1 deterministic transcript observation POC."""
 
 from .compatibility import adapt_observation, adapt_records
+from .contract import (
+    canonicalize_bundle,
+    canonicalize_tag_bundle,
+    contract_fingerprint,
+    contract_manifest,
+)
 from .tag_adapter import adapt_tag_record, adapt_tag_records, attach_projected_tags
 from .evaluator import (
     build_evaluation_request,
@@ -24,6 +30,10 @@ __all__ = [
     "EXPLICIT_KINDS",
     "OBSERVATION_KIND_EXPECTATIONS",
     "adapt_observation",
+    "canonicalize_bundle",
+    "canonicalize_tag_bundle",
+    "contract_fingerprint",
+    "contract_manifest",
     "adapt_records",
     "adapt_tag_record",
     "adapt_tag_records",
