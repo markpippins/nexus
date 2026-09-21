@@ -180,20 +180,46 @@ model ProjectedTagConflict {
 model CompatibilityObservation {
   observation_id: string;
   source_identity: string;
-  source_kind: "harvest" | "harvest_candidate" | "source_observation";
+  source_kind: "harvest" | "harvest_candidate" | "source_observation" | "cross_reference";
   source_schema: string;
   source_id: string;
   source_content_hash: string;
+  source_revision: string;
+  source_status?: string;
   content: string;
   disposition: ObservationDisposition;
   authority_status: "non_authoritative";
+  supersedes_source_identity?: string;
+}
+
+model CompatibilityIdentityCandidate {
+  mention_id: string;
+  candidate_id?: string;
+  method: "stable_source_id" | "registered_alias" | "identity_collision";
+  status: "proposed" | "ambiguous";
+  evidence: string[];
+}
+
+model CompatibilityUnresolvedIdentity {
+  mention_id?: string;
+  source_identity?: string;
+  status: "unresolved";
+  reason: string;
 }
 
 model CompatibilityConflict {
   source_identity: string;
   observation_ids: string[];
+  hashes: string[];
   status: "conflict";
   reason: string;
+}
+
+model CompatibilitySupersession {
+  newer_source_identity: string;
+  older_source_identity: string;
+  status: "declared" | "dangling";
+  evidence_observation_id: string;
 }
 
 model TagProjectionBundle {
@@ -210,7 +236,10 @@ model CompatibilityBundle {
   contract_revision: string;
   adapter_revision: string;
   observations: CompatibilityObservation[];
+  identity_candidates: CompatibilityIdentityCandidate[];
+  unresolved_identities: CompatibilityUnresolvedIdentity[];
   conflicts: CompatibilityConflict[];
+  supersession_links: CompatibilitySupersession[];
   authority_status: "non_authoritative";
   boundary: ExpressionBoundary;
 }
