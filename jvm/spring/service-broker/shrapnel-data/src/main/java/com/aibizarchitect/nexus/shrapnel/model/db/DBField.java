@@ -24,7 +24,7 @@ public class DBField implements IField {
 
 	@ManyToOne
 	@JoinColumn(name = "field_type_code")
-	public DBFieldType fieldType;
+	private FieldTypeEnum fieldType;
 
 	@Id
 	@GeneratedValue(strategy = GenerationType.AUTO)
@@ -48,6 +48,6 @@ public class DBField implements IField {
 
 	@Override
 	public FieldTypeEnum getType() {
-		return Objects.isNull(this.fieldType) ? null : FieldTypeEnum.from(this.fieldType.getCode());
+		return fieldType;
 	}
 }

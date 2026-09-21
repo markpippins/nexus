@@ -18,7 +18,7 @@ public class Value {
 
 	@ManyToOne
 	@JoinColumn(name = "value_type_code")
-	public ValueType valueType;
+	private ValueTypeEnum valueType;
 
 	@Id
 	@GeneratedValue(strategy = GenerationType.AUTO)
@@ -26,6 +26,6 @@ public class Value {
 	private Long id;
 
 	public ValueTypeEnum getType() {
-		return Objects.isNull(this.valueType) ? null : ValueTypeEnum.from(this.valueType.getCode());
+		return valueType;
 	}
 }
