@@ -263,12 +263,19 @@ CREATE TRIGGER trg_field_set_updated_at
 -- Reintroduce the shrapnel->resolution metadata-sync trigger (originated in
 -- the python V-series; captured verbatim from the live catalog):
 -- AFTER INSERT OR UPDATE OF property_name, field_type_code, delegating to
--- resolution.sync_shrapnel_field(NEW.id).
-CREATE TRIGGER trg_sync_field_metadata_to_resolution
-    AFTER INSERT OR UPDATE OF property_name, field_type_code
-    ON shrapnel.field
-    FOR EACH ROW
-    EXECUTE FUNCTION shrapnel.sync_field_metadata_to_resolution();
+-- resolution.sync_shrapnel_field(NEW.id). Only databases that carry the
+-- V-series bridge (wrapper function + resolution.sync_shrapnel_field) get
+-- the trigger back — e.g. sol has neither and never had the trigger.
+DO $$
+BEGIN
+    IF to_regprocedure('shrapnel.sync_field_metadata_to_resolution()') IS NOT NULL THEN
+        CREATE TRIGGER trg_sync_field_metadata_to_resolution
+            AFTER INSERT OR UPDATE OF property_name, field_type_code
+            ON shrapnel.field
+            FOR EACH ROW
+            EXECUTE FUNCTION shrapnel.sync_field_metadata_to_resolution();
+    END IF;
+END $$;
 
 -- ----------------------------------------------------------------------------
 -- 8. Recreate the 0005-era views (verbatim from 0005_stereotype_api.sql)
