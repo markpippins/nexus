@@ -163,6 +163,40 @@ def advance_checkpoints(conn, role: str, model: str | None = None,
     return n
 
 
+def advance_role_checkpoints(role: str, dsn: str, model: str | None = None,
+                             conn_factory=None,
+                             kinds: tuple[str, ...] = ("inbox", "todo")) -> dict:
+    """Standalone end-of-turn advance (session-protocol v2, R17.1).
+
+    Checkpoints only — no digest, no other boot work. Returns
+      {status: ok, advanced: n} | {status: degraded, reason}
+    and never raises on environmental conditions. conn_factory is
+    injectable for hermetic tests (defaults to real psycopg2, 5s timeout);
+    psycopg2 absent without an injected factory degrades honestly rather
+    than crashing (CI-hermeticity pitfall #15).
+    """
+    try:
+        import psycopg2  # noqa: F401 — needed by the default factory only
+    except ImportError:
+        if conn_factory is None:
+            return {"status": "degraded", "reason": "psycopg2 unavailable"}
+    if conn_factory is None:
+        def conn_factory(dsn_, _psycopg2=psycopg2):
+            return _psycopg2.connect(dsn_, connect_timeout=5)
+    try:
+        conn = conn_factory(dsn)
+        try:
+            n = advance_checkpoints(conn, role, model, kinds=kinds)
+        finally:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+        return {"status": "ok", "advanced": n}
+    except Exception as e:  # noqa: BLE001 — degraded, never turn-fatal
+        return {"status": "degraded", "reason": f"{e.__class__.__name__}: {e}"}
+
+
 # ── render ───────────────────────────────────────────────────────────────────
 
 def render_digest(rows: list[dict], role: str) -> dict:

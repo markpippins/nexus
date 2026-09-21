@@ -88,13 +88,15 @@ def _install_fake_blackboard(result=None, render_error=None,
                 "advance": advance, "model": model}
             return result or dict(_OK_RESULT)
 
-        def _advance(conn, role, model=None, kinds=("inbox", "todo")):
-            captured["advance_args"] = {"role": role, "model": model}
-            return 2
+        def _advance(role, dsn, model=None, conn_factory=None,
+                     kinds=("inbox", "todo")):
+            captured["advance_args"] = {"role": role, "dsn": dsn,
+                                        "model": model}
+            return {"status": "ok", "advanced": 2}
 
         mod.render_role_digest = _render
         mod.RedisCache = _FakeCache
-        mod.advance_checkpoints = _advance
+        mod.advance_role_checkpoints = _advance
 
     sys.modules["continuity"] = pkg
     sys.modules["continuity.blackboard"] = mod
@@ -364,19 +366,35 @@ class TestEndOfTurnAdvance(unittest.TestCase):
             self.assertEqual(step["status"], "skipped")
         finally:
             cleanup()
-        # advance raises -> degraded
+        # module result degraded (e.g. pg unreachable) -> degraded, boot alive
         cleanup2 = _install_fake_blackboard()
         try:
-            def _boom(*a, **k):
-                raise RuntimeError("pg gone")
-            sys.modules["continuity.blackboard"].advance_checkpoints = _boom
+            def _degraded(role, dsn, model=None, conn_factory=None, kinds=None):
+                return {"status": "degraded", "reason": "psycopg2 unavailable"}
+            sys.modules["continuity.blackboard"].advance_role_checkpoints \
+                = _degraded
             b2 = _boot(blackboard_advance_only=True)
             with contextlib.redirect_stdout(io.StringIO()):
                 b2.blackboard_advance_step()
             step = [s for s in b2.steps if s["step"] == "blackboard-advance"][0]
             self.assertEqual(step["status"], "degraded")
+            self.assertIn("psycopg2", step["detail"])
         finally:
             cleanup2()
+
+    def test_ba3b_advance_threads_role_and_model(self):
+        """BA3b: the advance call carries (role, model) for attribution."""
+        cleanup = _install_fake_blackboard()
+        try:
+            b = _boot(blackboard_advance_only=True)
+            with contextlib.redirect_stdout(io.StringIO()):
+                b.blackboard_advance_step()
+            args = sys.modules["continuity.blackboard"]._captured[
+                "advance_args"]
+            self.assertEqual(args["role"], "dba")
+            self.assertEqual(args["model"], "freebuff/buffy")
+        finally:
+            cleanup()
 
     def test_ba4_advance_only_skips_full_boot(self):
         """--blackboard-advance-only must NOT run lease/inbox/clock-in steps."""

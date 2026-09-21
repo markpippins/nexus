@@ -246,5 +246,40 @@ class EntryPointTest(unittest.TestCase):
         self.assertIn("last_reviewed_at = now()", sqls)
 
 
+class AdvanceRoleCheckpointsTest(unittest.TestCase):
+    """Session-protocol v2 standalone advance (R17.1)."""
+
+    def _conn(self):
+        conn = mock.MagicMock()
+        cu = conn.cursor.return_value.__enter__.return_value
+        cu.rowcount = 1
+        return conn, cu
+
+    def test_ok_advances_inbox_and_todo(self):
+        conn, cu = self._conn()
+        r = bb.advance_role_checkpoints(
+            "dba", "postgresql://x", model="freebuff/buffy",
+            conn_factory=lambda dsn: conn)
+        self.assertEqual(r, {"status": "ok", "advanced": 2})
+        sqls = " ".join(c[0][0] for c in cu.execute.call_args_list)
+        self.assertIn("coordination_checkpoints", sqls)
+        self.assertIn("ON CONFLICT", sqls)
+
+    def test_psycopg2_absent_degrades_not_raises(self):
+        # No injected factory + psycopg2 import fails -> honest degraded dict.
+        with mock.patch.dict(sys.modules, {"psycopg2": None}):
+            r = bb.advance_role_checkpoints("dba", "postgresql://x")
+        self.assertEqual(r["status"], "degraded")
+        self.assertIn("psycopg2", r["reason"])
+
+    def test_pg_error_degraded_never_raises(self):
+        def _boom(dsn):
+            raise RuntimeError("pg gone")
+        r = bb.advance_role_checkpoints("dba", "postgresql://x",
+                                        conn_factory=_boom)
+        self.assertEqual(r["status"], "degraded")
+        self.assertIn("RuntimeError", r["reason"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

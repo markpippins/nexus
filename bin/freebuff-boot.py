@@ -416,23 +416,23 @@ class Boot:
             return
         sys.path.insert(0, os.path.join(SCRIPT_DIR, "..", "python"))
         try:
-            from continuity.blackboard import advance_checkpoints
+            from continuity.blackboard import advance_role_checkpoints
         except Exception as e:  # noqa: BLE001 — absence is a skip
             self.record("blackboard-advance", "skipped",
                         f"blackboard module not importable ({e.__class__.__name__})")
             return
         try:
-            import psycopg2
             dsn = os.environ.get(
                 "NEXUS_BLACKBOARD_DSN",
                 "postgresql://pguser:pgpass@localhost:5432/nexus")
-            conn = psycopg2.connect(dsn, connect_timeout=5)
-            try:
-                n = advance_checkpoints(conn, self.role, self.model)
-            finally:
-                conn.close()
-            self.record("blackboard-advance", "ok",
-                        f"{n} checkpoint(s) advanced to now() by {self.role}")
+            r = advance_role_checkpoints(self.role, dsn, model=self.model)
+            if r["status"] == "ok":
+                self.record("blackboard-advance", "ok",
+                            f"{r['advanced']} checkpoint(s) advanced to now() "
+                            f"by {self.role}")
+            else:
+                self.record("blackboard-advance", "degraded",
+                            r.get("reason", "unknown"))
         except Exception as e:  # noqa: BLE001 — keep the turn alive
             self.record("blackboard-advance", "degraded",
                         f"advance error: {e.__class__.__name__}")
