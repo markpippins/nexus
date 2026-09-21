@@ -1,0 +1,666 @@
+openapi: 3.0.3
+info:
+  title: nexus-core-shrapnel — JVM Shrapnel EAV Object Store Port
+  version: 1.0.8049c69a
+  description: 'JVM port of shrapnel inside the nexus-core monolith (Spring, JdbcTemplate over the shrapnel schema): encode/decode
+    EAV objects, fields, field types, stereotypes. Routes mounted at /api/shrapnel/*; mirrors the typescript/shrapnel surface;
+    contract-first via typespec/v1/shrapnel.
+
+
+    Endpoint inventory generated from source route registrations by `nexus/tools/api-docs/`. Request/response bodies are generic;
+    field-level contracts live in the service code and its README.'
+servers:
+- url: http://localhost:8092
+tags:
+- name: shrapnel
+paths:
+  /api/shrapnel/encode:
+    post:
+      tags:
+      - shrapnel
+      operationId: post_shrapnel_encode
+      responses:
+        '201':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      summary: encode (routes/encode.js)
+  /api/shrapnel/field-types:
+    get:
+      tags:
+      - shrapnel
+      operationId: get_shrapnel_field_types
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      summary: field types (routes/field-types.js)
+  /api/shrapnel/field-types/{code}:
+    get:
+      tags:
+      - shrapnel
+      operationId: get_shrapnel_field_types_code
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: code
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/shrapnel/fields:
+    get:
+      tags:
+      - shrapnel
+      operationId: get_shrapnel_fields
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      summary: fields (routes/fields.js)
+    post:
+      tags:
+      - shrapnel
+      operationId: post_shrapnel_fields
+      responses:
+        '201':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/shrapnel/fields/{id}:
+    get:
+      tags:
+      - shrapnel
+      operationId: get_shrapnel_fields_id
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/shrapnel/health:
+    get:
+      tags:
+      - shrapnel
+      operationId: get_shrapnel_health
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      summary: health (routes/health.js)
+  /api/shrapnel/objects:
+    get:
+      tags:
+      - shrapnel
+      operationId: get_shrapnel_objects
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      summary: objects (routes/objects.js)
+    post:
+      tags:
+      - shrapnel
+      operationId: post_shrapnel_objects
+      responses:
+        '201':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/shrapnel/objects/{id}:
+    delete:
+      tags:
+      - shrapnel
+      operationId: delete_shrapnel_objects_id
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags:
+      - shrapnel
+      operationId: get_shrapnel_objects_id
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/shrapnel/objects/{id}/classify:
+    post:
+      tags:
+      - shrapnel
+      operationId: post_shrapnel_objects_id_classify
+      responses:
+        '201':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/shrapnel/objects/{id}/conformance:
+    get:
+      tags:
+      - shrapnel
+      operationId: get_shrapnel_objects_id_conformance
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/shrapnel/objects/{id}/values:
+    get:
+      tags:
+      - shrapnel
+      operationId: get_shrapnel_objects_id_values
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/shrapnel/stereotypes:
+    get:
+      tags:
+      - shrapnel
+      operationId: get_shrapnel_stereotypes
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      summary: stereotypes (routes/stereotypes.js)
+  /api/shrapnel/stereotypes/revisions:
+    post:
+      tags:
+      - shrapnel
+      operationId: post_shrapnel_stereotypes_revisions
+      responses:
+        '201':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/shrapnel/stereotypes/{name}:
+    get:
+      tags:
+      - shrapnel
+      operationId: get_shrapnel_stereotypes_name
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/shrapnel/stereotypes/{name}/chain:
+    get:
+      tags:
+      - shrapnel
+      operationId: get_shrapnel_stereotypes_name_chain
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/shrapnel/stereotypes/{name}/contract:
+    get:
+      tags:
+      - shrapnel
+      operationId: get_shrapnel_stereotypes_name_contract
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+components:
+  schemas:
+    JsonBody:
+      type: object
+      additionalProperties: true
+      description: Generic JSON body (fields are service-specific).
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Machine-readable error code (e.g. not_found, validation_failed).
+        message:
+          type: string
+          description: Human-readable error detail.
+      additionalProperties: true
+x-generated-by: nexus/tools/api-docs/gen_openapi.py

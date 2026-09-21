@@ -33,6 +33,23 @@ IMPORT_RE = re.compile(
 DEFAULT_EXPORT_RE = re.compile(r"^\s*export\s+default\s+([A-Za-z_$][\w$]*)")
 FASTAPI_RE = re.compile(r"@(app|router)\.(get|post|put|patch|delete|options)\s*\(\s*['\"]([^'\"]+)")
 
+# Spring (Java): class-level @RequestMapping("/base") + method-level
+# @GetMapping/@PostMapping/@PutMapping/@PatchMapping/@DeleteMapping("/path").
+# Single-line annotations only (repo convention); array-valued paths are not
+# handled (none in the codebase).
+SPRING_MAPPING_RE = re.compile(
+    r"@(Get|Post|Put|Patch|Delete)Mapping\s*\(\s*(?:value\s*=\s*)?['\"]([^'\"]+)['\"]")
+SPRING_MAPPING_NOARG_RE = re.compile(r"@(Get|Post|Put|Patch|Delete)Mapping\s*(?:\(\s*\))?$")
+SPRING_REQMAPPING_PATH_RE = re.compile(
+    r"@RequestMapping\s*\(\s*(?:value\s*=\s*)?['\"]([^'\"]+)['\"]")
+
+# JVM port modules covered by the apidocs drift machinery. Keys follow the
+# "<base>/<service>" shape; values are repo-root-relative module dirs.
+JVM_SERVICES = {
+    "jvm/nexus-core-aegis": "jvm/spring/nexus-core/nexus-core-aegis",
+    "jvm/nexus-core-shrapnel": "jvm/spring/nexus-core/nexus-core-shrapnel",
+}
+
 KNOWN_EXTS = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
 
 
@@ -264,6 +281,63 @@ def extract_fastapi(lines):
     return out
 
 
+def _spring_join(base, path):
+    if not path.startswith("/"):
+        path = "/" + path
+    if not base or base == "/":
+        return path
+    return base.rstrip("/") + path
+
+
+def extract_spring(lines):
+    """Extract Spring @RequestMapping/@XxxMapping routes from Java source lines.
+
+    The class-level @RequestMapping value is remembered as the base path for
+    subsequent method mappings in the file. @ExceptionHandler-only advice
+    classes contribute nothing (no mapping annotations).
+    """
+    out = []
+    base = ""
+    for i, raw in enumerate(lines):
+        s = raw.strip()
+        if s.startswith("@RequestMapping"):
+            pm = SPRING_REQMAPPING_PATH_RE.search(s)
+            if pm and "method" not in s:
+                base = pm.group(1)
+            continue
+        m = SPRING_MAPPING_RE.search(s)
+        if m:
+            out.append({
+                "method": m.group(1).upper(),
+                "path": _spring_join(base, m.group(2)),
+                "summary": comment_above(lines, i),
+            })
+            continue
+        m2 = SPRING_MAPPING_NOARG_RE.search(s)
+        if m2:
+            out.append({
+                "method": m2.group(1).upper(),
+                "path": base or "/",
+                "summary": comment_above(lines, i),
+            })
+    return out
+
+
+def process_spring_service(svc_path, name):
+    """Endpoint inventory for a JVM Spring module (src/main/java/**/*.java)."""
+    endpoints = []
+    for dirpath, dirnames, filenames in os.walk(svc_path):
+        dirnames[:] = [d for d in dirnames if d not in ("target", ".git")]
+        for fn in sorted(filenames):
+            if not fn.endswith(".java") or "test" in fn.lower():
+                continue
+            fp = os.path.join(dirpath, fn)
+            with open(fp, encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+            endpoints.extend(extract_spring(lines))
+    return dedupe(endpoints)
+
+
 def process_service(svc_path, name):
     files = {}
     fastapi = []
@@ -321,6 +395,10 @@ def main():
             full = os.path.join(d, name)
             if os.path.isdir(full) and name.endswith("-srv"):
                 result[f"{base}/{name}"] = process_service(full, name)
+    for key, rel in sorted(JVM_SERVICES.items()):
+        full = os.path.join(args.root, rel)
+        if os.path.isdir(full):
+            result[key] = process_spring_service(full, key)
     with open(args.out, "w") as f:
         json.dump(result, f, indent=1)
     for k, v in result.items():
