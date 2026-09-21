@@ -117,7 +117,6 @@ POSTGRESQL_DEPENDENT_SERVICES=(
     "cpf-api.service"
     "execution-srv.service"
     "cascade-srv.service"
-    "vision-srv-py.service"
     # Tackle stack — AI config registry backed by tackle schema
     "tackle-srv.service"
     "tackle-mcp.service"
