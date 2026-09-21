@@ -36,6 +36,36 @@ public class AegisStore {
             "name", "description", "version", "tla_plus_source", "tla_plus_module",
             "metadata", "tags", "is_active", "expires_at", "main_concept_id");
 
+    /**
+     * Per-table body-column allowlists — the JVM twin of the TS
+     * childHandlers(table, createCols, updateCols) arguments in
+     * typescript/aegis-srv/src/routes.ts. Both the table name and every
+     * interpolated column identifier MUST come from these static constants;
+     * request-body keys never reach SQL text (CodeQL java/sql-injection),
+     * and unknown body keys are dropped exactly like the TS pick().
+     */
+    private static final Map<String, List<String>> CHILD_TABLE_COLS = Map.ofEntries(
+            Map.entry("constant", List.of("name", "type", "value", "description", "constraints")),
+            Map.entry("variable", List.of("name", "type", "initial_value", "domain", "description", "constraints", "attribute_id")),
+            Map.entry("state", List.of("name", "description", "variable_assignments", "constraints", "is_initial", "is_terminal", "concept_id", "attribute_value_id")),
+            Map.entry("transition", List.of("name", "description", "guard_expression", "action", "weak_fairness", "strong_fairness", "temporal_conditions", "priority", "from_state_id", "to_state_id", "guard_rule_id", "transition_rule_id", "state_transition_id")),
+            Map.entry("invariant", List.of("name", "expression", "description", "is_type_invariant", "rule_id", "expression_id")),
+            Map.entry("property", List.of("name", "type", "expression", "description", "is_verified", "verified_at", "verified_by")),
+            Map.entry("temporal_property", List.of("name", "operator", "expression", "description")),
+            Map.entry("concept_mapping", List.of("tla_name", "concept_id", "mapping_type", "mapping_expression", "cardinality")),
+            Map.entry("attribute_mapping", List.of("tla_variable", "attribute_id", "conversion_function", "default_value")),
+            Map.entry("relationship_mapping", List.of("tla_relationship", "relationship_id", "mapping_type", "constraints")),
+            Map.entry("execution_log", List.of("entity_id", "from_state_id", "to_state_id", "transition_id", "trigger_event", "trigger_user", "context")));
+
+    /** Validate a child table against the allowlist; returns its column list. */
+    public static List<String> childColumns(String table) {
+        List<String> cols = CHILD_TABLE_COLS.get(table);
+        if (cols == null) {
+            throw new IllegalArgumentException("unknown aegis child table: " + table);
+        }
+        return cols;
+    }
+
     private final JdbcTemplate jdbc;
     private final NamedParameterJdbcTemplate named;
     private final DataSource dataSource;
@@ -113,12 +143,14 @@ public class AegisStore {
         return v != null && v.matches("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
     }
 
-    /** Pick only allowed, present columns out of the request body. */
+    /** Pick only allowed, present columns out of the request body.
+     *  Mirrors TS pick(): explicit nulls ARE kept (!== undefined), absent
+     *  keys and unknown keys are dropped. */
     public static LinkedHashMap<String, Object> pick(Map<String, Object> body, List<String> allowed) {
         LinkedHashMap<String, Object> out = new LinkedHashMap<>();
         if (body == null) return out;
         for (String k : allowed) {
-            if (body.containsKey(k) && body.get(k) != null) out.put(k, body.get(k));
+            if (body.containsKey(k)) out.put(k, body.get(k));
         }
         return out;
     }
@@ -325,17 +357,20 @@ public class AegisStore {
     // ── Child CRUD (generic, mirroring childHandlers) ────────────────────
 
     public List<Map<String, Object>> listChildren(String table, String registryId) {
+        childColumns(table); // table must be allowlisted
         return q(
                 "SELECT * FROM aegis." + table + " WHERE registry_id = ? ORDER BY created_at",
                 UUID.fromString(registryId));
     }
 
     public Map<String, Object> createChild(String table, String registryId, LinkedHashMap<String, Object> body) {
-        if (body.isEmpty()) throw new NoFieldsException();
+        List<String> allowed = childColumns(table);
+        LinkedHashMap<String, Object> bodyCols = pick(body, allowed);
+        if (bodyCols.isEmpty()) throw new NoFieldsException();
         // Mirrors the TS childHandlers.create: INSERT (registry_id, <body cols>)
         // RETURNING *. No timestamp injection — PG defaults (created_at now())
         // apply, and child tables have no updated_at column.
-        LinkedHashMap<String, Object> coerced = jsonbCoerced(body);
+        LinkedHashMap<String, Object> coerced = jsonbCoerced(bodyCols);
         StringBuilder cols = new StringBuilder("registry_id");
         StringBuilder marks = new StringBuilder("?");
         int i = 0;
@@ -378,6 +413,7 @@ public class AegisStore {
     }
 
     public boolean childExists(String table, String registryId, String childId) {
+        childColumns(table); // table must be allowlisted
         List<Map<String, Object>> rows = q(
                 "SELECT id FROM aegis." + table + " WHERE id = ? AND registry_id = ?",
                 UUID.fromString(childId), UUID.fromString(registryId));
@@ -385,6 +421,7 @@ public class AegisStore {
     }
 
     public Map<String, Object> getChild(String table, String registryId, String childId) {
+        childColumns(table); // table must be allowlisted
         List<Map<String, Object>> rows = q(
                 "SELECT * FROM aegis." + table + " WHERE id = ? AND registry_id = ?",
                 UUID.fromString(childId), UUID.fromString(registryId));
@@ -393,14 +430,16 @@ public class AegisStore {
 
     public Map<String, Object> updateChild(String table, String registryId, String childId,
                                            LinkedHashMap<String, Object> body) {
-        if (body.isEmpty()) throw new NoFieldsException();
+        List<String> allowed = childColumns(table);
+        LinkedHashMap<String, Object> bodyCols = pick(body, allowed);
+        if (bodyCols.isEmpty()) throw new NoFieldsException();
         // Mirrors the TS childHandlers.update: SET <body cols only>.
-        MapSqlParameterSource params = new MapSqlParameterSource(jsonbCoerced(body));
+        MapSqlParameterSource params = new MapSqlParameterSource(jsonbCoerced(bodyCols));
         params.addValue("id", UUID.fromString(childId));
         params.addValue("registry_id", UUID.fromString(registryId));
         StringBuilder set = new StringBuilder();
         int i = 0;
-        for (String col : body.keySet()) {
+        for (String col : bodyCols.keySet()) {
             if (i > 0) set.append(", ");
             set.append(col).append(" = :").append(col);
             i++;
@@ -413,6 +452,7 @@ public class AegisStore {
     }
 
     public int deleteChild(String table, String registryId, String childId) {
+        childColumns(table); // table must be allowlisted
         return jdbc.update("DELETE FROM aegis." + table + " WHERE id = ? AND registry_id = ?",
                 UUID.fromString(childId), UUID.fromString(registryId));
     }

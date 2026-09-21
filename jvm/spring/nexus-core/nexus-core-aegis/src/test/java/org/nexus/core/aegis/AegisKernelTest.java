@@ -1,6 +1,7 @@
 package org.nexus.core.aegis;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
 import java.util.Map;
@@ -10,6 +11,7 @@ import org.nexus.core.aegis.kernel.AegisDigest;
 import org.nexus.core.aegis.kernel.ModelChecker;
 import org.nexus.core.aegis.kernel.TlcParser;
 import org.nexus.core.aegis.kernel.WindCompiler;
+import org.nexus.core.aegis.store.AegisStore;
 
 /**
  * Kernel behavior tests for the JVM aegis port — mirrors the intent of the
@@ -36,6 +38,31 @@ class AegisKernelTest {
         String digest = AegisDigest.digestJson(Map.of("k", "v"));
         assertThat(digest).startsWith("sha256:").hasSize("sha256:".length() + 64);
         assertThat(digest).isEqualTo(AegisDigest.digestJson(Map.of("k", "v")));
+    }
+
+    @Test
+    void canonicalJsonIntegralDoublesBeyondLongRangeStayExact() {
+        // JS prints integral doubles < 1e21 in full decimal form; the old
+        // (long) cast truncated any integral double >= 2^53. 2^60 must render
+        // exactly, not as the 2^53-wrapped value.
+        double twoPow60 = Math.pow(2, 60);
+        assertThat(AegisDigest.canonicalJson(Map.of("n", twoPow60)))
+                .isEqualTo("{\"n\":1152921504606846976}");
+        // Normal integral and fractional doubles are unchanged.
+        assertThat(AegisDigest.canonicalJson(Map.of("a", 2.0d))).isEqualTo("{\"a\":2}");
+        assertThat(AegisDigest.canonicalJson(Map.of("a", 2.5d))).isEqualTo("{\"a\":2.5}");
+    }
+
+    @Test
+    void childColumnAllowlistsMirrorTsChildHandlers() {
+        // Every TS childHandlers table must be allowlisted with identical
+        // columns; unknown tables are refused before any SQL is built.
+        assertThat(AegisStore.childColumns("constant"))
+                .containsExactly("name", "type", "value", "description", "constraints");
+        assertThat(AegisStore.childColumns("variable"))
+                .contains("attribute_id");
+        assertThatThrownBy(() -> AegisStore.childColumns("pg_catalog.pg_shadow"))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

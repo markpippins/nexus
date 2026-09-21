@@ -80,7 +80,11 @@ public final class AegisDigest {
             return;
         }
         if (d == Math.rint(d) && Math.abs(d) < 1e21) {
-            sb.append((long) d);
+            // JS prints integral doubles < 1e21 in full decimal notation.
+            // Exact BigDecimal rendering (no narrowing cast): doubles in
+            // [2^53, 1e21) are integral but overflow (long), which would
+            // truncate and break byte-parity (CodeQL java/tainted-numeric-cast).
+            sb.append(new java.math.BigDecimal(d).toPlainString());
         } else {
             sb.append(d);
         }
