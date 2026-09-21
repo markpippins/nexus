@@ -139,13 +139,18 @@ class TestWorkRequestEntityKeyBirth(unittest.TestCase):
             "entity_key must be preserved into context at birth (disposition 767abf1b)")
 
     def test_ensure_nebula_work_request_persists_and_dedups(self):
-        # W4 scope — cascade admission_subscriber still writes the nebula surface
-        # until W4 repoints. Unchanged until then.
+        # W4 (plan 8261650 stage 2, spec 7e8c0222, DBA pin 76572fb3): the
+        # cascade admission subscriber is now canonical-first. The WR is
+        # ensured on resolution.work_request (resolve-then-bind); a derived
+        # nebula bridge row shares the same uuid so the execution.requests FK
+        # stays valid until the DBA's V193 retargets it at the Stage-6 go.
         import cascade.admission_subscriber as sub
 
         wr_id = f"wr-t26-cascade-{uuid_mod.uuid4().hex[:12]}"
         self._synthetic_legacy_ids.append(wr_id)
         wr_uuid = str(uuid_mod.uuid4())
+        legacy_id = f"vision.work_requests:{wr_uuid}"
+        self._synthetic_legacy_ids.append(legacy_id)  # canonical prefix — tearDown cleans it
         dco_json = self._make_dco_json(wr_id)
         expected = _canonical_key(wr_id)
 
@@ -154,24 +159,31 @@ class TestWorkRequestEntityKeyBirth(unittest.TestCase):
         second = sub.ensure_nebula_work_request(
             self._conn, wr_uuid, wr_id, "t", dco_json, None)
 
-        self.assertEqual(first, second, "re-emission must reuse the same row id")
+        self.assertEqual(first, second, "re-emission must reuse the same (canonical) row id")
+        self.assertEqual(first, wr_uuid, "the canonical-first id is the wr uuid (shared across stores)")
 
         with self._conn.cursor() as cur:
+            # Canonical row: exactly one, entity_key in context.
             cur.execute(
-                "SELECT count(*) FROM nebula.work_requests_history "
-                "WHERE legacy_id = %s",
-                (wr_id,),
+                "SELECT count(*) FROM resolution.work_request WHERE legacy_id = %s",
+                (legacy_id,),
             )
-            total = cur.fetchone()[0]
+            c_total = cur.fetchone()[0]
             cur.execute(
-                "SELECT entity_key FROM nebula.work_requests_history "
-                "WHERE legacy_id = %s",
-                (wr_id,),
+                "SELECT context->>'entity_key' FROM resolution.work_request WHERE legacy_id = %s",
+                (legacy_id,),
             )
-            keys = [r[0] for r in cur.fetchall()]
+            c_entity_key = cur.fetchone()[0]
+            # Bridge nebula row: exactly one, shares the uuid, same entity_key.
+            cur.execute(
+                "SELECT count(*) FROM nebula.work_requests_history WHERE id = %s::uuid",
+                (wr_uuid,),
+            )
+            n_total = cur.fetchone()[0]
 
-        self.assertEqual(total, 1, "double-submit must not create a duplicate row")
-        self.assertEqual(keys, [expected], "persisted entity_key must equal the canonical key")
+        self.assertEqual(c_total, 1, "double-submit must not create a duplicate canonical row")
+        self.assertEqual(c_entity_key, expected, "canonical entity_key must equal the canonical key")
+        self.assertEqual(n_total, 1, "bridge nebula row must share the canonical uuid (FK window)")
 
     def test_exclusion_constraint_rejects_overlapping_entity_key(self):
         """B.4 violation path: the 045 gist constraint rejects an overlapping
