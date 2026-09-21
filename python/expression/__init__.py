@@ -1,6 +1,7 @@
 """Expression v0.1 deterministic transcript observation POC."""
 
 from .compatibility import adapt_observation, adapt_records
+from .corpus import artifact_bytes, build_corpus, canonical_json, redact_text
 from .contract import (
     canonicalize_bundle,
     canonicalize_tag_bundle,
@@ -29,6 +30,10 @@ from .taxonomy import (
 __all__ = [
     "EXPLICIT_KINDS",
     "OBSERVATION_KIND_EXPECTATIONS",
+    "artifact_bytes",
+    "build_corpus",
+    "canonical_json",
+    "redact_text",
     "adapt_observation",
     "canonicalize_bundle",
     "canonicalize_tag_bundle",

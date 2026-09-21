@@ -303,6 +303,8 @@ model CanonicalExpressionObservation {
   reference_kind?: string;
   verb?: string;
   disposition: "unreviewed";
+  modality: Modality;
+  temporal_scope?: Record<unknown>;
   authority_status: "non_authoritative";
 }
 

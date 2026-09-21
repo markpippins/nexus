@@ -78,6 +78,10 @@ def _normalize_observation(observation: dict[str, Any]) -> dict[str, Any]:
         "extractor_revision": observation["extractor_revision"],
         "input_fingerprint": observation["input_fingerprint"],
         "disposition": observation["disposition"],
+        "modality": observation.get("modality", "reported"),
+        "temporal_scope": observation.get(
+            "temporal_scope", {"valid_from": None, "valid_to": None, "as_of": None}
+        ),
         "authority_status": observation["authority_status"],
     }
     for field in ("reference_kind", "verb"):

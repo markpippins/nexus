@@ -15,9 +15,14 @@ This package is the first executable Expression slice. It provides:
 - an explicit compatibility and storage boundary: Expression converges with existing harvest/semantics/KG material, keeps observations regenerable staging data, and leaves canonical identity, lineage, disposition, and evaluation joins in Resolution;
 - a read-only compatibility adapter for `nebula.harvests`/`harvest_candidates` and `semantics.source_observation` records, preserving source identities and surfacing conflicting hashes instead of overwriting history;
 - a composable source-tag/metadata projection adapter that preserves namespaces and source revisions, attaches only by stable identity, and never creates a governed SOL tag;
-- an E1 canonical contract normalizer and semantic fingerprint shared by Python and future TypeScript consumers.
+- an E1 canonical contract normalizer and semantic fingerprint shared by Python and future TypeScript consumers;
+- a bounded E2 redacted corpus builder with deterministic replay and committed input/artifact fingerprints.
 
 It deliberately does **not** perform identity resolution, semantic inference, graph writes, proposition admission, or authority changes. Candidate links remain `proposed` or `ambiguous`; they are not confirmations. The evaluator callback is a seam for SOLScript/Resolution and is not an admission path.
+
+## E2 corpus boundary
+
+`expression.corpus` builds the committed `fixtures/e2-corpus.json` through a deterministic redaction policy: control bytes are removed, secret-shaped values are replaced, and prompt-injection markers are labeled and replaced. It emits canonical Expression bundles without database, graph, Aspects, Resolution, or authority writes. `fixtures/e2-corpus-manifest.json` records the input fingerprint, generated artifact fingerprint, byte count, and replay rule. The corpus is synthetic/redacted architecture material, not a live transcript authority.
 
 ## E1 canonical contract and Aspects boundary
 
