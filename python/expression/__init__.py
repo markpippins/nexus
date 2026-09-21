@@ -14,6 +14,7 @@ from .evaluator import (
     evaluate_bundle,
     replay_evaluation,
 )
+from .e5 import build_e5_slice, replay_slice, rollback_slice
 from .pipeline import (
     build_candidate_links,
     build_expression_bundle,
@@ -49,6 +50,9 @@ __all__ = [
     "evaluate_bundle",
     "expected_observation_contract",
     "replay_evaluation",
+    "build_e5_slice",
+    "replay_slice",
+    "rollback_slice",
     "build_proposition_candidates",
     "extract_explicit_observations",
     "segment_transcript",

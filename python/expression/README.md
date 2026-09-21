@@ -32,6 +32,12 @@ The active v0.1 vocabulary is deliberately limited to `reference`, `version`, an
 
 The TypeSpec `CanonicalExpressionBundle` mirrors this normalized shape. The package remains model-only (`emit: []`) until the workspace registers the correct generated-client emitter; the committed semantic fingerprint and reconciliation tests are the interim E1 boundary, not an implied generated API. `canonicalize_tag_bundle()` explicitly maps the Python/Aspects adapter field `namespace` to the TypeSpec field `tag_namespace` and rejects any pre-populated governed tag id. Aspects therefore receives a stable projected-tag candidate, not an accidental authority claim.
 
+## E4 evaluator boundary
+
+E4 wraps the existing SOLScript/Resolution evaluator seam without making Expression an authority. Requests pin the Expression contract, source, ontology, evaluator, authority owner, and read-set fingerprints; `mutation_policy` is always `forbidden`. Archived Resolution dispositions map to the stable wire vocabulary (`Asserted` → `asserted`, `Disputed` → `disputed`, `Rejected` → `rejected`, `Pending` → `pending`, `Proposed` → `advisory`, `Stale` → `stale`, `Retracted` → `refused`). Missing read sets are `unevaluable`; unavailable evaluators are `pending`; uncertain/advisory results remain non-authoritative; unsupported outcomes fail closed to `refused`.
+
+Callbacks receive deep copies, and the adapter never invokes transition, persistence, admission, or graph APIs. Replay compares evaluation fingerprints using the same pinned inputs.
+
 ## E3 compatibility boundary
 
 The E3 adapter accepts already-fetched records shaped like `nebula.harvests`, `nebula.harvest_candidates`, `semantics.source_observation`, and `nebula.cross_references`. It preserves stable source identity before considering registered aliases. A stable match yields a `proposed` candidate; an alias collision yields `ambiguous`; missing identity is `unresolved`; a changed hash under the same identity is `conflict`; and supersession is recorded as `declared` or `dangling` lineage evidence. None of these outcomes resolves canonical identity or changes source state. Resolution remains canonical for identity, lineage, disposition, and evaluation joins.
@@ -56,6 +62,12 @@ Source tags and metadata are represented as `ProjectedTagObservation` values. Th
 ## Taxonomy and contract drift
 
 Expression's current observation vocabulary is explicit and documented in `expression.taxonomy` and the TypeSpec `ExpressionTaxonomy` model. The POC currently expects `reference`, `version`, and `speech_act` observations to remain `unreviewed` and `non_authoritative`. Adding a new observation kind should be accompanied by an explicit taxonomy entry before the kind is treated as part of the contract. `validate_observations()` is a contract-gate helper: it reports mismatches relative to the current taxonomy instead of silently accepting new vocabulary.
+
+## E5 bounded persistence and projection boundary
+
+`expression.e5` builds a deterministic, write-free E5 artifact from one E4 evaluation envelope. The artifact separates three layers: compact evaluation receipts owned canonically by Resolution, a regenerable graph projection, and a Keychains context manifest containing only source/read-set/evaluator identities and references. It does not store source content, call PostgreSQL, call MongoDB, write the graph, or mutate authority.
+
+`rollback_slice()` appends rollback lineage without deleting the prior artifact. `replay_slice()` rebuilds the artifact from the same pinned bundle, read set, and source run and compares fingerprints. Retention is explicit (`bounded_review_fixture` or `operational_review`); arbitrary indefinite retention is rejected. The live persistence adapter remains a follow-up once the Resolution write API is pinned.
 
 ## Validate
 

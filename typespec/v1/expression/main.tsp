@@ -261,9 +261,12 @@ enum EvaluationDisposition {
   Rejected: "rejected",
   Disputed: "disputed",
   InsufficientEvidence: "insufficient_evidence",
+  Pending: "pending",
   Unevaluable: "unevaluable",
-  Stale: "stale",
   Refused: "refused",
+  Uncertain: "uncertain",
+  Advisory: "advisory",
+  Stale: "stale",
 }
 
 model EvaluationRequest {
@@ -272,19 +275,22 @@ model EvaluationRequest {
   transcript_id: string;
   proposition: PropositionCandidate;
   read_set?: Record<unknown>;
+  read_set_fingerprint?: string;
   evaluator_revision: string;
   ontology_revision: string;
   authority_owner: string;
   authority_status: "evaluation_only";
+  mutation_policy: "forbidden";
   request_fingerprint: string;
 }
 
 model EvaluationResult {
   proposition_id: string;
   disposition: EvaluationDisposition;
-  reason_code: string;
+  reason_code?: string;
   reason?: string;
-  request_fingerprint: string;
+  authority_status: "evaluation_only" | "advisory";
+  request_fingerprint?: string;
 }
 
 model EvaluationEnvelope {
@@ -293,7 +299,9 @@ model EvaluationEnvelope {
   evaluator_revision: string;
   ontology_revision: string;
   authority_owner: string;
+  read_set_fingerprint?: string;
   authority_status: "evaluation_only";
+  mutation_policy: "forbidden";
   results: EvaluationResult[];
   evaluation_fingerprint: string;
 }
@@ -396,4 +404,56 @@ model GraphProjection {
   edge_count: int32;
   round_trip_verified: boolean;
   rollback_of?: string;
+}
+
+/** E5 compact receipt retained by Resolution; it is not an authority grant. */
+model CanonicalEvaluationReceipt {
+  receipt_id: string;
+  source_namespace: string;
+  source_run_id: string;
+  target_id: string;
+  evaluation_fingerprint: string;
+  request_fingerprint?: string;
+  disposition: EvaluationDisposition;
+  reason_code?: string;
+  authority_status: "evaluation_only";
+  canonical_owner: "resolution";
+  recording_policy: "receipt_only";
+}
+
+model KeychainEvaluationContext {
+  schema_version: int32;
+  checkpoint_class: "evaluation";
+  source_run_id: string;
+  source_fingerprint: string;
+  read_set_fingerprint?: string;
+  evaluator_revision: string;
+  ontology_revision: string;
+  authority_owner: string;
+  source_refs: Record<unknown>[];
+  retention_class: string;
+  source_content_stored: false;
+  authority_status: "context_only";
+  context_fingerprint: string;
+}
+
+model E5RollbackLineage {
+  status: "not_applicable" | "rolled_back";
+  rollback_of?: string;
+  rollback_id?: string;
+  reason?: string;
+  lineage: string[];
+}
+
+/** Bounded E5 artifact: canonical receipt plus regenerable projections. */
+model ExpressionE5Artifact {
+  e5_revision: string;
+  source_fingerprint: string;
+  source_run_id: string;
+  canonical_receipts: CanonicalEvaluationReceipt[];
+  graph_projection: Record<unknown>;
+  keychain_context: KeychainEvaluationContext;
+  rollback: E5RollbackLineage;
+  write_policy: Record<unknown>;
+  artifact_fingerprint: string;
 }
