@@ -13,7 +13,7 @@ This package is the first executable Expression slice. It provides:
 - a pure evaluator adapter with explicit read-set/evaluator/ontology identity;
 - deterministic replay comparison and fail-closed refusal/unevaluable results;
 - an explicit compatibility and storage boundary: Expression converges with existing harvest/semantics/KG material, keeps observations regenerable staging data, and leaves canonical identity, lineage, disposition, and evaluation joins in Resolution;
-- a read-only compatibility adapter for `nebula.harvests`/`harvest_candidates` and `semantics.source_observation` records, preserving source identities and surfacing conflicting hashes instead of overwriting history;
+- a read-only compatibility adapter for harvests, harvest candidates, semantics observations, and cross-reference material, preserving source identities, emitting proposed/ambiguous identity candidates, and surfacing missing identity, conflicting hashes, and supersession lineage instead of overwriting history;
 - a composable source-tag/metadata projection adapter that preserves namespaces and source revisions, attaches only by stable identity, and never creates a governed SOL tag;
 - an E1 canonical contract normalizer and semantic fingerprint shared by Python and future TypeScript consumers;
 - a bounded E2 redacted corpus builder with deterministic replay and committed input/artifact fingerprints.
@@ -31,6 +31,12 @@ It deliberately does **not** perform identity resolution, semantic inference, gr
 The active v0.1 vocabulary is deliberately limited to `reference`, `version`, and `speech_act`. Candidate links are only `proposed` or `ambiguous`; `confirmed` belongs to a governed Resolution/Aspects path. Proposition candidates carry `predicate_status: unresolved` and cannot claim a governed relation. Projected tags retain `governed_tag_id: null` and `authority_status: projected`; Aspects owns later binding.
 
 The TypeSpec `CanonicalExpressionBundle` mirrors this normalized shape. The package remains model-only (`emit: []`) until the workspace registers the correct generated-client emitter; the committed semantic fingerprint and reconciliation tests are the interim E1 boundary, not an implied generated API. `canonicalize_tag_bundle()` explicitly maps the Python/Aspects adapter field `namespace` to the TypeSpec field `tag_namespace` and rejects any pre-populated governed tag id. Aspects therefore receives a stable projected-tag candidate, not an accidental authority claim.
+
+## E3 compatibility boundary
+
+The E3 adapter accepts already-fetched records shaped like `nebula.harvests`, `nebula.harvest_candidates`, `semantics.source_observation`, and `nebula.cross_references`. It preserves stable source identity before considering registered aliases. A stable match yields a `proposed` candidate; an alias collision yields `ambiguous`; missing identity is `unresolved`; a changed hash under the same identity is `conflict`; and supersession is recorded as `declared` or `dangling` lineage evidence. None of these outcomes resolves canonical identity or changes source state. Resolution remains canonical for identity, lineage, disposition, and evaluation joins.
+
+The adapter is deliberately compatible with the consolidated Resolution direction: it reads legacy/source-shaped material but does not recreate a legacy table or claim that harvest storage is canonical. It returns deterministic staging data only.
 
 ## Compatibility and storage boundary
 
