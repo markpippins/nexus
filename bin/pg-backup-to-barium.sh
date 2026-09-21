@@ -149,39 +149,67 @@ log "remote checksum verification OK"
 # ------------------------------------------------------------- retention --
 # GFS: newest RETAIN_DAILY always kept; beyond that keep Sundays (weekly,
 # RETAIN_WEEKLY) and month-firsts (monthly, RETAIN_MONTHLY); hard age cap.
-ssh_remote bash -s <<REMOTE_EOF
+# Shipped via a QUOTED heredoc: nothing expands on the local side; the few
+# values the block needs travel as argv: $1 REMOTE_DIR, $2 RETAIN_DAILY,
+# $3 RETAIN_WEEKLY, $4 RETAIN_MONTHLY, $5 MAX_AGE_DAYS, $6+ database names.
+# Date math decodes YYYYMMDD via `date -d "<y>-01-01 +N months +M days"`
+# (PG-safe, no substring arithmetic on date strings) and is fail-closed:
+# an undecodable stamp is skipped, never deleted blindly. The previous
+# unquoted heredoc mangled quoting AND put $( ) inside $(( )) — the greedy
+# close made every remote prune abort on its first file, so remote GFS
+# retention was a silent no-op (nothing was ever deleted remotely).
+ssh_remote bash -s -- "$REMOTE_DIR" "$RETAIN_DAILY" "$RETAIN_WEEKLY" \
+  "$RETAIN_MONTHLY" "$MAX_AGE_DAYS" $DBS <<'REMOTE_EOF'
 set -u
-cd "$REMOTE_DIR" || exit 1
+REMOTE_DIR="$1"; RETAIN_DAILY="$2"; RETAIN_WEEKLY="$3"; RETAIN_MONTHLY="$4"; MAX_AGE_DAYS="$5"
+shift 5
+DBS="$*"
+cd "$REMOTE_DIR" || { echo "retention: cannot cd $REMOTE_DIR" >&2; exit 3; }
 deleted=0
-for pat in '*__.dump' 'globals__*.sql.gz'; do :; done   # patterns handled below
-prune_gfs() {
-  local glob="\$1"
-  local daily=$RETAIN_DAILY weeks_left=$RETAIN_WEEKLY months_left=$RETAIN_MONTHLY n=0
-  local -A wk_seen mo_seen
-  for f in \$(ls -1 \$glob 2>/dev/null | sort -r); do
-    n=\$((n+1))
-    local stamp="\${f#*__}"; stamp="\${stamp%.*}"
-    local d="\${stamp:0:8}"
-    local age=$(( (\$(date +%s) - \$(date -d "\${d:0:4}-\${d:4:2}-\${d:6:2}" +%s)) / 86400 ))
-    if [ "\$age" -gt $MAX_AGE_DAYS ]; then rm -f "\$f"; deleted=\$((deleted+1)); continue; fi
-    [ "\$n" -le "\$daily" ] && continue
-    local dow=\$(date -d "\${d:0:4}-\${d:4:2}-\${d:6:2}" +%u)   # 7 = Sunday
-    local mo=\${d:0:6}
-    if [ "\${d:6:2}" = "01" ] && [ -z "\${mo_seen[\$mo]:-}" ]; then
-      mo_seen[\$mo]=1
-      if [ "\$months_left" -gt 0 ]; then months_left=\$((months_left-1)); continue; fi
-    elif [ "\$dow" = "7" ] && [ -z "\${wk_seen[\$mo]:-}" ]; then
-      wk_seen[\$mo]=1
-      if [ "\$weeks_left" -gt 0 ]; then weeks_left=\$((weeks_left-1)); continue; fi
-    fi
-    rm -f "\$f"; deleted=\$((deleted+1))
-  done
+
+pgsql2epoch() {  # YYYYMMDD -> UTC epoch seconds; nonzero on undecodable stamp
+  case "$1" in
+    [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;;
+    *) return 1 ;;
+  esac
+  date -u -d "${1:0:4}-01-01 +$((10#${1:4:2}-1)) months +$((10#${1:6:2}-1)) days" +%s
 }
-for db in $DBS; do prune_gfs "\${db}__*.dump"; done
+
+prune_gfs() {
+  local glob="$1"
+  local daily="$RETAIN_DAILY" weeks_left="$RETAIN_WEEKLY" months_left="$RETAIN_MONTHLY" n=0 f stamp d age dow mo
+  local -A wk_seen mo_seen
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    stamp="${f#*__}"; stamp="${stamp%.*}"
+    d="${stamp:0:8}"
+    # two-step: fallible substitution OUTSIDE arithmetic, so a bad stamp is
+    # an ordinary command failure we can skip on (never a parse abort).
+    # Count only decodable files: an undecodable name sorts ahead of dated
+    # files and must not consume a keep slot.
+    now=$(date -u +%s)
+    epoch=$(pgsql2epoch "$d") || { echo "retention: skip undecodable $f" >&2; continue; }
+    n=$((n+1))
+    age=$(( (now - epoch) / 86400 ))
+    if [ "$age" -gt "$MAX_AGE_DAYS" ]; then rm -f -- "$f"; deleted=$((deleted+1)); continue; fi
+    [ "$n" -le "$daily" ] && continue
+    dow=$(date -u -d "${d:0:4}-${d:4:2}-${d:6:2}" +%u)   # 7 = Sunday
+    mo="${d:0:6}"
+    if [ "${d:6:2}" = "01" ] && [ -z "${mo_seen[$mo]:-}" ]; then
+      mo_seen[$mo]=1
+      if [ "$months_left" -gt 0 ]; then months_left=$((months_left-1)); continue; fi
+    elif [ "$dow" = "7" ] && [ -z "${wk_seen[$mo]:-}" ]; then
+      wk_seen[$mo]=1
+      if [ "$weeks_left" -gt 0 ]; then weeks_left=$((weeks_left-1)); continue; fi
+    fi
+    rm -f -- "$f"; deleted=$((deleted+1))
+  done < <(ls -1 $glob 2>/dev/null | sort -r)
+}
+for db in $DBS; do prune_gfs "${db}__*.dump"; done
 prune_gfs "manifest__*.txt"
 prune_gfs "globals__*.sql.gz"
 df -h / | tail -1
-echo "retention: removed \$deleted file(s)"
+echo "retention: removed $deleted file(s)"
 REMOTE_EOF
 log "retention applied"
 
