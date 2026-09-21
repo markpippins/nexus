@@ -269,6 +269,95 @@ model EvaluationEnvelope {
   evaluation_fingerprint: string;
 }
 
+/** The exact source span shape emitted by the deterministic v0.1 extractor. */
+model CanonicalSourceRef {
+  segment_id: string;
+  transcript_id: string;
+  text_hash: string;
+  start_turn: int32;
+  end_turn: int32;
+}
+
+/** The E1 canonical segment shape; text remains source-linked staging material. */
+model CanonicalTranscriptSegment {
+  segment_id: string;
+  transcript_id: string;
+  ordinal: int32;
+  role?: string;
+  text: string;
+  text_hash: string;
+  start_turn: int32;
+  end_turn: int32;
+  turn_count: int32;
+  boundary_reason: string;
+}
+
+/** Canonical active observation shape; no authority is implied. */
+model CanonicalExpressionObservation {
+  observation_id: string;
+  kind: "reference" | "version" | "speech_act";
+  value: string;
+  source: CanonicalSourceRef;
+  extractor_revision: string;
+  input_fingerprint: string;
+  reference_kind?: string;
+  verb?: string;
+  disposition: "unreviewed";
+  modality: Modality;
+  temporal_scope?: Record<unknown>;
+  authority_status: "non_authoritative";
+}
+
+/** Candidate links are intentionally narrower than future governed bindings. */
+model CanonicalCandidateLink {
+  mention_id: string;
+  candidate_id: string;
+  method: string;
+  status: "proposed" | "ambiguous";
+  evidence: string[];
+}
+
+/** Free-form predicate tokens remain unresolved until the relation gate. */
+model CanonicalPropositionCandidate {
+  proposition_id: string;
+  subject_ref: string;
+  predicate: "mentions_decision_language";
+  predicate_status: "unresolved";
+  object_ref?: string;
+  source_observation_ids: string[];
+  modality: Modality;
+  status: "candidate";
+  required_read_set?: Record<unknown>;
+}
+
+model ExpressionContractManifest {
+  contract_revision: string;
+  fingerprint_version: int32;
+  authority_status: "non_authoritative";
+  observation_storage: "staging";
+  observation_regenerable: true;
+  active_observation_kinds: string[];
+  active_candidate_link_statuses: string[];
+  candidate_predicate_status: "unresolved";
+  aspects_boundary: Record<unknown>;
+  canonical_owners: Record<unknown>;
+  contract_fingerprint: string;
+}
+
+/** Canonical E1 envelope used for Python/TypeScript reconciliation. */
+model CanonicalExpressionBundle {
+  contract_revision: string;
+  contract_fingerprint: string;
+  source_fingerprint: string;
+  transcript_id: string;
+  segments: CanonicalTranscriptSegment[];
+  observations: CanonicalExpressionObservation[];
+  candidate_links: CanonicalCandidateLink[];
+  proposition_candidates: CanonicalPropositionCandidate[];
+  authority_status: "non_authoritative";
+  boundary: ExpressionBoundary;
+}
+
 model GraphProjection {
   projection_id: string;
   generation: string;

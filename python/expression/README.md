@@ -14,9 +14,23 @@ This package is the first executable Expression slice. It provides:
 - deterministic replay comparison and fail-closed refusal/unevaluable results;
 - an explicit compatibility and storage boundary: Expression converges with existing harvest/semantics/KG material, keeps observations regenerable staging data, and leaves canonical identity, lineage, disposition, and evaluation joins in Resolution;
 - a read-only compatibility adapter for `nebula.harvests`/`harvest_candidates` and `semantics.source_observation` records, preserving source identities and surfacing conflicting hashes instead of overwriting history;
-- a composable source-tag/metadata projection adapter that preserves namespaces and source revisions, attaches only by stable identity, and never creates a governed SOL tag.
+- a composable source-tag/metadata projection adapter that preserves namespaces and source revisions, attaches only by stable identity, and never creates a governed SOL tag;
+- an E1 canonical contract normalizer and semantic fingerprint shared by Python and future TypeScript consumers;
+- a bounded E2 redacted corpus builder with deterministic replay and committed input/artifact fingerprints.
 
 It deliberately does **not** perform identity resolution, semantic inference, graph writes, proposition admission, or authority changes. Candidate links remain `proposed` or `ambiguous`; they are not confirmations. The evaluator callback is a seam for SOLScript/Resolution and is not an admission path.
+
+## E2 corpus boundary
+
+`expression.corpus` builds the committed `fixtures/e2-corpus.json` through a deterministic redaction policy: control bytes are removed, secret-shaped values are replaced, and prompt-injection markers are labeled and replaced. It emits canonical Expression bundles without database, graph, Aspects, Resolution, or authority writes. `fixtures/e2-corpus-manifest.json` records the input fingerprint, generated artifact fingerprint, byte count, and replay rule. The corpus is synthetic/redacted architecture material, not a live transcript authority.
+
+## E1 canonical contract and Aspects boundary
+
+`expression.contract` is the E1 contract gate. `canonicalize_bundle()` converts the internal extraction dictionaries into the exact v0.1 wire shape and rejects contract, authority, candidate-link, or boundary drift. `contract_manifest()` and `contract_fingerprint()` fingerprint semantic fields rather than source formatting or file paths.
+
+The active v0.1 vocabulary is deliberately limited to `reference`, `version`, and `speech_act`. Candidate links are only `proposed` or `ambiguous`; `confirmed` belongs to a governed Resolution/Aspects path. Proposition candidates carry `predicate_status: unresolved` and cannot claim a governed relation. Projected tags retain `governed_tag_id: null` and `authority_status: projected`; Aspects owns later binding.
+
+The TypeSpec `CanonicalExpressionBundle` mirrors this normalized shape. The package remains model-only (`emit: []`) until the workspace registers the correct generated-client emitter; the committed semantic fingerprint and reconciliation tests are the interim E1 boundary, not an implied generated API. `canonicalize_tag_bundle()` explicitly maps the Python/Aspects adapter field `namespace` to the TypeSpec field `tag_namespace` and rejects any pre-populated governed tag id. Aspects therefore receives a stable projected-tag candidate, not an accidental authority claim.
 
 ## Compatibility and storage boundary
 

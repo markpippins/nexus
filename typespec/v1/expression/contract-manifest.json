@@ -1,0 +1,29 @@
+{
+  "active_candidate_link_statuses": [
+    "ambiguous",
+    "proposed"
+  ],
+  "active_observation_kinds": [
+    "reference",
+    "speech_act",
+    "version"
+  ],
+  "aspects_boundary": {
+    "binding_owner": "aspects",
+    "governed_tag_id": null,
+    "projected_tag_authority_status": "projected"
+  },
+  "authority_status": "non_authoritative",
+  "candidate_predicate_status": "unresolved",
+  "canonical_owners": {
+    "disposition": "resolution",
+    "evaluation": "solscript_resolution",
+    "identity": "resolution",
+    "lineage": "resolution"
+  },
+  "contract_fingerprint": "ef05fa44c48dfae6a7ef2d019019c5364990674b8c62a6431d46ec69bd64e637",
+  "contract_revision": "expression-v0.1",
+  "fingerprint_version": 1,
+  "observation_regenerable": true,
+  "observation_storage": "staging"
+}
