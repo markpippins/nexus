@@ -67,15 +67,38 @@ class StructuralBattery(unittest.TestCase):
 
     def test_s2_wr_t26_hyphen_form_is_known(self):
         # The canonical test vocabulary (engineer-ii T26 entity-key suite,
-        # #393 companion) writes wr-t26-<hex> ids — the prefix normalizes to
-        # 'wr-t26' and must NOT be flagged unknown. The SQL must carry the
-        # hyphen-form branch (pinned by inspecting the emitted query).
+        # #393 companion) writes wr-t26-<hex> ids; WorkRequestFactory (live
+        # W3 path) writes wr-<plan>-<epoch>-<hex> ids. Both hyphen-form
+        # members of the wr- family normalize via the S2 regex branch
+        # (pinned by inspecting the emitted query) and must NOT be flagged
+        # unknown.
         def q(sql):
-            self.assertIn("wr-t26-%", sql, "S2 SQL lost the hyphen-form normalization")
-            return [("wr-t26",)]
+            self.assertIn("^wr-", sql, "S2 SQL lost the hyphen-form normalization regex")
+            self.assertIn("wr-<plan>-<hex>", sql, "S2 SQL lost the normalized prefix label")
+            return [("wr-<plan>-<hex>",)]
 
         verdict, msg = mod.s2_prefix_set(q, dict(CTXT))
         self.assertEqual(verdict, mod.PASS)
+
+    def test_s2_wr_factory_shape_normalized(self):
+        """Live W3a proof row (wr-8261645-1789964248-61f58e9c) normalizes."""
+        import re
+        sql_captured = {}
+
+        def q(sql):
+            sql_captured["sql"] = sql
+            return [("wr-<plan>-<hex>",)]
+
+        verdict, _ = mod.s2_prefix_set(q, dict(CTXT))
+        self.assertEqual(verdict, mod.PASS)
+        # extract the regex from the SQL and pin both real shapes against it
+        m = re.search(r"'\^wr-.*\$'", sql_captured["sql"])
+        self.assertIsNotNone(m, "no wr- regex found in S2 SQL")
+        pat = re.compile(m.group(0).strip("'"))
+        self.assertTrue(pat.match("wr-t26-5e2e2b8aa222"))
+        self.assertTrue(pat.match("wr-8261645-1789964248-61f58e9c"))
+        self.assertFalse(pat.match("vision.work_requests:abc"))
+        self.assertFalse(pat.match("wr-not-a-real-shape"))
 
     def test_s3_counts_unlinked_vision_rows(self):
         ok = self.run_check("S3", [scalar(0)])

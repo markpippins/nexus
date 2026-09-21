@@ -57,7 +57,16 @@ BASELINE = {
 
 # wr-t26: canonical test-vocabulary prefix (engineer-ii T26 entity-key suite,
 # PR #393 companion f84d1b64) — writes canonical WRs with wr-t26-<hex> ids.
-KNOWN_PREFIXES = {"vision.work_requests", "nebula.work_requests_history", "wr-t26"}
+KNOWN_PREFIXES = {
+    "vision.work_requests",
+    "nebula.work_requests_history",
+    "wr-t26",
+    # Live-path conduit writes (W3-repointed db_adapter): WorkRequestFactory
+    # derives wr-<plan_id>-<epoch>-<hex> ids - the wr-<plan_id>- family is the
+    # real production vocabulary of the canonical writer (R2 W3a closure,
+    # wr-8261645-1789964248-61f58e9c). We accept the documented shape via the
+    # s2 regex branch below rather than enumerating every plan id.
+}
 KNOWN_STATUSES = {"COMPLETED", "DRAFT"}
 SILENT_ELSE_SENTINEL = "NEW"  # V186-VOCAB-001: any row with this is a regressor
 
@@ -85,14 +94,17 @@ def s1_legacy_coverage(q, ctx):
 
 def s2_prefix_set(q, ctx):
     # Prefix = everything before the first ':' (surfaces like
-    # 'vision.work_requests:<id>') OR before the 4th '-' for the hyphen-form
-    # canonical test vocabulary (wr-t26-<hex> ids; 'wr-t26' is the prefix).
+    # 'vision.work_requests:<id>') OR the wr-<plan_id>- hyphen family
+    # (WorkRequestFactory: wr-<plan>-<epoch>-<hex>; wr-t26 is the fixed
+    # test-vocabulary member of that family).
     rows = q("""SELECT DISTINCT CASE
-                    WHEN legacy_id LIKE 'wr-t26-%' THEN 'wr-t26'
+                    WHEN legacy_id ~ '^wr-([0-9]+|[a-z0-9]+)-([0-9]+-)?[0-9a-f]{8,16}$'
+                        THEN 'wr-<plan>-<hex>'
                     ELSE split_part(legacy_id, ':', 1) END
                  FROM resolution.work_request""")
+    known = KNOWN_PREFIXES | {"wr-<plan>-<hex>"}
     seen = {r[0] for r in rows}
-    unknown = seen - KNOWN_PREFIXES
+    unknown = seen - known
     return ((PASS if not unknown else FAIL),
             f"prefixes: {sorted(seen)}" + (f" — UNKNOWN: {sorted(unknown)}" if unknown else ""))
 
