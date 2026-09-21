@@ -134,7 +134,8 @@ class Boot:
                  dry_run: bool, strict: bool, want_digest: bool = False,
                  want_conn: bool = False, want_attest_scan: bool = True,
                  want_calendar: bool = True, want_consolidate: bool = True,
-                 want_blackboard: bool = False, blackboard_advance: bool = False):
+                 want_blackboard: bool = True, blackboard_advance: bool = False,
+                 blackboard_advance_only: bool = False):
         self.role = role
         self.model = model
         self.channel = channel
@@ -152,6 +153,7 @@ class Boot:
         self.want_consolidate = want_consolidate
         self.want_blackboard = want_blackboard
         self.blackboard_advance = blackboard_advance
+        self.blackboard_advance_only = blackboard_advance_only
         self.lease_instant: str | None = None  # captured at clock-in (Q2 anchor)
         # --attest payload: (cites_id, evidence list, session_id) or None
         self.attest_cmd: tuple | None = None
@@ -392,6 +394,50 @@ class Boot:
     def attest_record(self) -> None:
         if not self.attest_cmd:
             return
+        self._attest_record_impl()
+
+    # 7b ─ end-of-turn checkpoint advance (session-protocol step, R17 pair)
+    def blackboard_advance_step(self) -> None:
+        """End-of-turn: advance the role's inbox/todo checkpoints to now().
+
+        Session-protocol v2 (operator directive 2026-09-21): pairs with the
+        R17 end-of-turn inbox check — after reviewing the inbox, the agent
+        records 'reviewed up to T' on the blackboard. Standalone: renders
+        NOTHING (no boot digest re-print), mutates ONLY the checkpoint rows,
+        and never fails the turn.
+
+        Deliberate act, not automatic: runs only when the agent invokes the
+        shim with --blackboard-advance-only (the session-protocol step), or
+        full-boot --blackboard-advance. --dry-run -> zero mutation.
+        """
+        if self.dry_run:
+            self.record("blackboard-advance", "skipped",
+                        "dry-run: checkpoints not advanced (zero-mutation stance)")
+            return
+        sys.path.insert(0, os.path.join(SCRIPT_DIR, "..", "python"))
+        try:
+            from continuity.blackboard import advance_checkpoints
+        except Exception as e:  # noqa: BLE001 — absence is a skip
+            self.record("blackboard-advance", "skipped",
+                        f"blackboard module not importable ({e.__class__.__name__})")
+            return
+        try:
+            import psycopg2
+            dsn = os.environ.get(
+                "NEXUS_BLACKBOARD_DSN",
+                "postgresql://pguser:pgpass@localhost:5432/nexus")
+            conn = psycopg2.connect(dsn, connect_timeout=5)
+            try:
+                n = advance_checkpoints(conn, self.role, self.model)
+            finally:
+                conn.close()
+            self.record("blackboard-advance", "ok",
+                        f"{n} checkpoint(s) advanced to now() by {self.role}")
+        except Exception as e:  # noqa: BLE001 — keep the turn alive
+            self.record("blackboard-advance", "degraded",
+                        f"advance error: {e.__class__.__name__}")
+
+    def _attest_record_impl(self):
         cites_id, evidence, session_id = self.attest_cmd
         if self.dry_run:
             self.record("attest-record", "skipped",
@@ -575,21 +621,22 @@ class Boot:
         except Exception as e:  # noqa: BLE001 — surface as degraded, keep booting
             self.record("digest", "degraded", f"assembly error: {e}")
 
-    # 7 ─ coordination blackboard digest (optional, --blackboard) -----------
+    # 7 ─ coordination blackboard digest (default-on, --no-blackboard opts out)
     def blackboard_step(self) -> None:
         """Print the per-role coordination blackboard digest (V192 companion).
 
         Thread 88385a46 slice 2: at session start, render the role's buckets
         from nebula.v_coordination_blackboard (To Do policy ac2d1382) with a
-        Redis TTL cache. Inert until V192 applies; --blackboard-advance also
+        Redis TTL cache. DEFAULT-ON since the V192 rollout (operator directive
+        2026-09-21): --no-blackboard opts out. --blackboard-advance also
         advances the role's inbox/todo checkpoints (the deliberate agent act
         the V192 design requires — never automatic).
 
         Degrades, never fails the boot (census lesson):
-        - flag off                    -> step absent
-        - view absent (V192 inert)    -> [skipped] inert-skip
-        - PG down / module absent     -> [degraded]
-        - --dry-run                   -> [skipped] (zero-mutation stance)
+        - flag opted out             -> step absent
+        - view absent (V192 inert)   -> [skipped] inert-skip
+        - PG down / module absent    -> [degraded]/[skipped]
+        - --dry-run                  -> [skipped] (zero-mutation stance)
         """
         if not self.want_blackboard:
             return
@@ -647,6 +694,9 @@ class Boot:
         self.calendar_step()
         self.consolidate_step()
         self.blackboard_step()
+        self.blackboard_advance_only = getattr(self, "blackboard_advance_only", False)
+        if self.blackboard_advance_only:
+            self.blackboard_advance_step()
         self.forums()
         self.procedures()
         return self.report()
@@ -692,16 +742,23 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--no-consolidate", action="store_false", dest="consolidate",
                     help="skip the consolidation step (default-on, dormant until V184 "
                          "applies): no fold-back attempt at boot")
-    ap.add_argument("--blackboard", action="store_true",
+    ap.add_argument("--blackboard", action="store_true", default=True,
                     help="print the per-role coordination blackboard digest at "
                          "session start (V192 companion, thread 88385a46): To Do "
                          "policy buckets + inbox fold across the role's checkpoint "
-                         "boundary, Redis-cached. Inert until V192 applies")
+                         "boundary, Redis-cached. DEFAULT-ON since the V192 rollout")
+    ap.add_argument("--no-blackboard", action="store_false", dest="blackboard",
+                    help="skip the blackboard digest (default-on): no render at boot")
     ap.add_argument("--blackboard-advance", action="store_true",
                     help="with --blackboard: also advance the role's inbox/todo "
                          "checkpoints to now() after a successful render (the "
                          "deliberate 'seen everything up to T' act — explicit, "
                          "never automatic)")
+    ap.add_argument("--blackboard-advance-only", action="store_true",
+                    help="END-OF-TURN session-protocol step: advance the role's "
+                         "inbox/todo checkpoints without the full boot (no digest, "
+                         "no lease, no clock-in). Run after the R17 inbox review; "
+                         "mutates only coordination_checkpoints")
     ap.add_argument("--no-attest-scan", action="store_true",
                     help="skip the default read-only attest-scan (open V179 chains)")
     ap.add_argument("--attest", metavar="CITES_ID",
@@ -730,7 +787,8 @@ def main(argv: list[str]) -> int:
         want_calendar=args.calendar,
         want_consolidate=args.consolidate,
         want_blackboard=args.blackboard,
-        blackboard_advance=args.blackboard_advance)
+        blackboard_advance=args.blackboard_advance,
+        blackboard_advance_only=args.blackboard_advance_only)
 
     if args.attest:
         if not args.evidence:
@@ -740,6 +798,13 @@ def main(argv: list[str]) -> int:
         boot.attest_cmd = (args.attest,
                            [e.strip() for e in args.evidence.split(",") if e.strip()],
                            args.attest_session)
+    if args.blackboard_advance_only:
+        # End-of-turn protocol step: advance checkpoints, print the report, exit.
+        # Deliberately NOT the full boot — no lease, no clock-in, no inbox pull.
+        boot.steps = []
+        boot.blackboard_advance_step()
+        return boot.report()
+
     code = boot.run()
     if args.json:
         print(json.dumps({"role": args.role, "model": args.model, "channel": args.channel,
