@@ -7,7 +7,10 @@ every step disposition is pinned. The digest must never fail the boot.
 
 Pins the wiring contract (thread 88385a46 slice 2):
 
-  B1  flag off -> step absent (blackboard_step returns without recording)
+  B1  opted out (--no-blackboard) -> step absent (blackboard_step returns
+      without recording)
+  B1d default-on: Boot() with no blackboard kwarg has want_blackboard True
+      (V192 rollout, operator directive 2026-09-21)
   B2  --blackboard renders: format printed, digest JSON printed, [ok] line
       carries the cache disposition
   B3  inert view (status "inert-skip") -> [skipped], boot continues
@@ -18,6 +21,13 @@ Pins the wiring contract (thread 88385a46 slice 2):
   B8  --blackboard-advance threads advance=True through to the module
   B9  default advance is False (render-only; checkpoint advance is explicit)
   B10 run() invokes the step between consolidate and forums (order pinned)
+
+End-of-turn advance (session protocol v2):
+  BA1 advance_only mode: blackboard_advance_step records [ok] with the count,
+      renders no digest, and mutates only checkpoints
+  BA2 --dry-run -> [skipped], advance_checkpoints never called
+  BA3 module absence -> [skipped]; PG error -> [degraded]; never raises
+  BA4 --blackboard-advance-only runs ONLY the advance step (no full boot)
 """
 
 import contextlib
@@ -78,8 +88,15 @@ def _install_fake_blackboard(result=None, render_error=None,
                 "advance": advance, "model": model}
             return result or dict(_OK_RESULT)
 
+        def _advance(role, dsn, model=None, conn_factory=None,
+                     kinds=("inbox", "todo")):
+            captured["advance_args"] = {"role": role, "dsn": dsn,
+                                        "model": model}
+            return {"status": "ok", "advanced": 2}
+
         mod.render_role_digest = _render
         mod.RedisCache = _FakeCache
+        mod.advance_role_checkpoints = _advance
 
     sys.modules["continuity"] = pkg
     sys.modules["continuity.blackboard"] = mod
@@ -104,15 +121,26 @@ def _steps(boot):
 
 
 class TestFlagPlumbing(unittest.TestCase):
-    def test_b1_flag_off_step_absent(self):
-        """B1: without --blackboard the step is absent entirely."""
+    def test_b1_flag_opted_out_step_absent(self):
+        """B1: with --no-blackboard the step is absent entirely."""
         cleanup = _install_fake_blackboard()
         try:
-            b = _boot()
+            b = _boot(want_blackboard=False)
             with contextlib.redirect_stdout(io.StringIO()):
                 b.blackboard_step()
             self.assertEqual([s for s in b.steps if s["step"] == "blackboard"],
                              [])
+        finally:
+            cleanup()
+
+    def test_b1d_default_on(self):
+        """B1d: blackboard defaults ON (V192 rollout) — explicit kwarg wins."""
+        cleanup = _install_fake_blackboard()
+        try:
+            b = _boot()  # no want_blackboard kwarg
+            self.assertTrue(b.want_blackboard)
+            b2 = _boot(want_blackboard=False)  # opt-out still honored
+            self.assertFalse(b2.want_blackboard)
         finally:
             cleanup()
 
@@ -251,6 +279,12 @@ class TestArgParsing(unittest.TestCase):
             def run(self):
                 return 0
 
+            def blackboard_advance_step(self):
+                pass
+
+            def report(self):
+                return 0
+
         with mock.patch.object(freebuff_boot, "Boot", StubBoot):
             rc = freebuff_boot.main(list(argv))
         return rc, captured
@@ -258,7 +292,7 @@ class TestArgParsing(unittest.TestCase):
     def test_flags_default_off(self):
         rc, captured = self._main_captures("--role", "dba")
         self.assertEqual(rc, 0)
-        self.assertFalse(captured.get("want_blackboard"))
+        self.assertTrue(captured.get("want_blackboard"))  # default-on
         self.assertFalse(captured.get("blackboard_advance"))
 
     def test_flags_parse_and_reach_boot(self):
@@ -267,6 +301,18 @@ class TestArgParsing(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertTrue(captured.get("want_blackboard"))
         self.assertTrue(captured.get("blackboard_advance"))
+
+    def test_no_blackboard_opts_out(self):
+        rc, captured = self._main_captures("--role", "dba", "--no-blackboard")
+        self.assertEqual(rc, 0)
+        self.assertFalse(captured.get("want_blackboard"))
+
+    def test_advance_only_reaches_boot(self):
+        rc, captured = self._main_captures(
+            "--role", "dba", "--blackboard-advance-only")
+        self.assertEqual(rc, 0)
+        self.assertTrue(captured.get("blackboard_advance_only"))
+        self.assertFalse(captured.get("blackboard_advance"))
 
 
 class TestRunOrderWiring(unittest.TestCase):
@@ -279,6 +325,87 @@ class TestRunOrderWiring(unittest.TestCase):
         i2 = src.index("self.blackboard_step()")
         i3 = src.index("self.forums()")
         self.assertTrue(i1 < i2 < i3)
+
+
+class TestEndOfTurnAdvance(unittest.TestCase):
+    """BA1–BA4: the standalone end-of-turn checkpoint advance."""
+
+    def test_ba1_advance_ok(self):
+        cleanup = _install_fake_blackboard()
+        try:
+            b = _boot(blackboard_advance_only=True)
+            with contextlib.redirect_stdout(io.StringIO()):
+                b.blackboard_advance_step()
+            steps = [s for s in b.steps if s["step"] == "blackboard-advance"]
+            self.assertEqual(len(steps), 1)
+            self.assertEqual(steps[0]["status"], "ok")
+            self.assertIn("advanced", steps[0]["detail"])
+        finally:
+            cleanup()
+
+    def test_ba2_dry_run_zero_mutation(self):
+        cleanup = _install_fake_blackboard()
+        try:
+            b = _boot(dry_run=True, blackboard_advance_only=True)
+            with contextlib.redirect_stdout(io.StringIO()):
+                b.blackboard_advance_step()
+            step = [s for s in b.steps if s["step"] == "blackboard-advance"][0]
+            self.assertEqual(step["status"], "skipped")
+            self.assertIn("zero-mutation", step["detail"])
+        finally:
+            cleanup()
+
+    def test_ba3_module_absent_skips_pg_error_degrades(self):
+        # module absent -> skip
+        cleanup = _install_fake_blackboard(import_error=True)
+        try:
+            b = _boot(blackboard_advance_only=True)
+            with contextlib.redirect_stdout(io.StringIO()):
+                b.blackboard_advance_step()
+            step = [s for s in b.steps if s["step"] == "blackboard-advance"][0]
+            self.assertEqual(step["status"], "skipped")
+        finally:
+            cleanup()
+        # module result degraded (e.g. pg unreachable) -> degraded, boot alive
+        cleanup2 = _install_fake_blackboard()
+        try:
+            def _degraded(role, dsn, model=None, conn_factory=None, kinds=None):
+                return {"status": "degraded", "reason": "psycopg2 unavailable"}
+            sys.modules["continuity.blackboard"].advance_role_checkpoints \
+                = _degraded
+            b2 = _boot(blackboard_advance_only=True)
+            with contextlib.redirect_stdout(io.StringIO()):
+                b2.blackboard_advance_step()
+            step = [s for s in b2.steps if s["step"] == "blackboard-advance"][0]
+            self.assertEqual(step["status"], "degraded")
+            self.assertIn("psycopg2", step["detail"])
+        finally:
+            cleanup2()
+
+    def test_ba3b_advance_threads_role_and_model(self):
+        """BA3b: the advance call carries (role, model) for attribution."""
+        cleanup = _install_fake_blackboard()
+        try:
+            b = _boot(blackboard_advance_only=True)
+            with contextlib.redirect_stdout(io.StringIO()):
+                b.blackboard_advance_step()
+            args = sys.modules["continuity.blackboard"]._captured[
+                "advance_args"]
+            self.assertEqual(args["role"], "dba")
+            self.assertEqual(args["model"], "freebuff/buffy")
+        finally:
+            cleanup()
+
+    def test_ba4_advance_only_skips_full_boot(self):
+        """--blackboard-advance-only must NOT run lease/inbox/clock-in steps."""
+        import inspect
+        src = inspect.getsource(freebuff_boot.main)
+        i = src.index("blackboard_advance_only")
+        early = src[:i]
+        # the early-exit branch returns before boot.run()
+        branch = src[i:src.index("code = boot.run()")]
+        self.assertIn("return boot.report()", branch)
+        self.assertNotIn("boot.run()", branch)
 
 
 if __name__ == "__main__":
