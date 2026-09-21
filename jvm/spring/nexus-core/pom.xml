@@ -49,6 +49,7 @@
         <module>nexus-core-meep</module>
         <module>nexus-core-wrp</module>
         <module>nexus-core-aegis</module>
+        <module>nexus-core-shrapnel</module>
         <module>nexus-core-app</module>
     </modules>
 
@@ -94,6 +95,11 @@
             <dependency>
                 <groupId>org.nexus.core</groupId>
                 <artifactId>nexus-core-aegis</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.nexus.core</groupId>
+                <artifactId>nexus-core-shrapnel</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
