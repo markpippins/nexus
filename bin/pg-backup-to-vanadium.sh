@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# pg-backup-to-barium.sh — off-machine PostgreSQL backup pipeline.
+# pg-backup-to-vanadium.sh — off-machine PostgreSQL backup pipeline.
 #
-# Context (2026-08-22): strontium (old replication target) is down for repair,
-# ETA unknown. barium (Raspberry Pi, aarch64, pgvector/pgvector:pg17 Docker)
-# is the designated backup PG server until further notice. Logical dumps are
-# architecture-neutral, so x86→ARM is a non-issue for this pipeline.
+# Context: the replication target is VANADIUM since 2026-09-05 (per
+# /home/codex/dev/pgsql/pg-backup.env, pg-backup.env REMOTE_HOST). Target
+# history: strontium (down for repair, 2026-08) → barium (2026-08-25;
+# disk-full forensics, now retired from backup duty entirely) → vanadium.
+# Logical dumps are architecture-neutral, so cross-arch is a non-issue.
 #
 # What this does (per run):
 #   1. Full custom-format dump (-Fc) of EVERY non-template database
@@ -12,36 +13,37 @@
 #   2. Cluster globals (roles/tablespaces) via pg_dumpall --globals-only.
 #   3. Integrity gate: every archive must pass `pg_restore --list`.
 #   4. sha256 manifest for all artifacts.
-#   5. rsync artifacts to barium:$REMOTE_DIR/
-#   6. Verify checksums ON BARIUM (catches silent transfer corruption).
-#   7. GFS retention on barium (SD-card-sized): RETAIN_DAILY dailies +
-#      RETAIN_WEEKLY Sundays + RETAIN_MONTHLY month-starts, hard age cap.
+#   5. rsync artifacts to vanadium:$REMOTE_DIR/
+#   6. Verify checksums ON VANADIUM (catches silent transfer corruption).
+#   7. GFS retention on vanadium: RETAIN_DAILY dailies + RETAIN_WEEKLY
+#      Sundays + RETAIN_MONTHLY month-starts, hard age cap.
 #   8. Prune local spool (LOCAL_KEEP_DAYS) so titanium disk doesn't fill.
 #
 # Failure behavior: nonzero exit (visible to the systemd timer/journal) and
 # a best-effort incident record to nebula tagged to:sysadmin (guarded, never
 # blocks the backup itself).
 #
-# Schedule: user-level systemd timer (backup-pg-to-barium.timer), 03:30 daily,
-# Persistent=true catch-up — cron retired per architect decision 13600407.
+# Schedule: user-level systemd timer (backup-pg-to-vanadium.timer), 03:30
+# daily, Persistent=true catch-up — cron retired per architect decision
+# 13600407.
 #
 # Usage:
-#   pg-backup-to-barium.sh                 # normal run
-#   pg-backup-to-barium.sh --dry-run       # dump nothing; show plan + retention
-#   pg-backup-to-barium.sh --verify-last   # re-verify newest remote manifest
+#   pg-backup-to-vanadium.sh               # normal run
+#   pg-backup-to-vanadium.sh --dry-run     # dump nothing; show plan + retention
+#   pg-backup-to-vanadium.sh --verify-last # re-verify newest remote manifest
 
 set -u -o pipefail
 
 # ---------------------------------------------------------------- config ---
 CONTAINER="${CONTAINER:-pgvector_db}"
 PGUSER="${PGUSER:-pguser}"
-REMOTE_HOST="${REMOTE_HOST:-barium}"
+REMOTE_HOST="${REMOTE_HOST:-vanadium}"
 REMOTE_USER="${REMOTE_USER:-}"            # empty → ssh config default
-HOSTNAME_SHORT="$(hostname -s)"           # subdir on barium: /pg-backups/titanium
+HOSTNAME_SHORT="$(hostname -s)"           # subdir on vanadium: /pg-backups/titanium
 REMOTE_DIR="${REMOTE_DIR:-pg-backups/${HOSTNAME_SHORT}}"
 SPOOL_DIR="${SPOOL_DIR:-/home/codex/dev/pgsql/spool}"
-LOG_FILE="${LOG_FILE:-/home/codex/dev/pgsql/pg-backup-to-barium.log}"
-LOCK_FILE="/tmp/pg-backup-to-barium.lock"
+LOG_FILE="${LOG_FILE:-/home/codex/dev/pgsql/pg-backup-to-vanadium.log}"
+LOCK_FILE="/tmp/pg-backup-to-vanadium.lock"
 
 RETAIN_DAILY="${RETAIN_DAILY:-14}"
 RETAIN_WEEKLY="${RETAIN_WEEKLY:-5}"
@@ -68,7 +70,7 @@ ssh_remote() {
 incident() {  # best-effort alert; NEVER lets a notification failure kill us
   curl -s --max-time 5 -X POST "$NEBULA_URL" \
     -H 'Content-Type: application/json' \
-    -d "{\"recordType\":\"report\",\"role\":\"devops\",\"title\":\"pg-backup-to-barium FAILED ($TS)\",\"content\":\"Nightly PG backup to barium failed. See $LOG_FILE on titanium for detail.\",\"tags\":[\"to:sysadmin\",\"type:incident\",\"status:open\",\"source:pg-backup\"]}" \
+    -d "{\"recordType\":\"report\",\"role\":\"devops\",\"title\":\"pg-backup-to-vanadium FAILED ($TS)\",\"content\":\"Nightly PG backup to vanadium failed. See $LOG_FILE on titanium for detail.\",\"tags\":[\"to:sysadmin\",\"type:incident\",\"status:open\",\"source:pg-backup\"]}" \
     >/dev/null 2>&1 || true
 }
 
