@@ -261,9 +261,12 @@ enum EvaluationDisposition {
   Rejected: "rejected",
   Disputed: "disputed",
   InsufficientEvidence: "insufficient_evidence",
+  Pending: "pending",
   Unevaluable: "unevaluable",
-  Stale: "stale",
   Refused: "refused",
+  Uncertain: "uncertain",
+  Advisory: "advisory",
+  Stale: "stale",
 }
 
 model EvaluationRequest {
@@ -272,19 +275,22 @@ model EvaluationRequest {
   transcript_id: string;
   proposition: PropositionCandidate;
   read_set?: Record<unknown>;
+  read_set_fingerprint?: string;
   evaluator_revision: string;
   ontology_revision: string;
   authority_owner: string;
   authority_status: "evaluation_only";
+  mutation_policy: "forbidden";
   request_fingerprint: string;
 }
 
 model EvaluationResult {
   proposition_id: string;
   disposition: EvaluationDisposition;
-  reason_code: string;
+  reason_code?: string;
   reason?: string;
-  request_fingerprint: string;
+  authority_status: "evaluation_only" | "advisory";
+  request_fingerprint?: string;
 }
 
 model EvaluationEnvelope {
@@ -293,7 +299,9 @@ model EvaluationEnvelope {
   evaluator_revision: string;
   ontology_revision: string;
   authority_owner: string;
+  read_set_fingerprint?: string;
   authority_status: "evaluation_only";
+  mutation_policy: "forbidden";
   results: EvaluationResult[];
   evaluation_fingerprint: string;
 }

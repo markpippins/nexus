@@ -32,6 +32,12 @@ The active v0.1 vocabulary is deliberately limited to `reference`, `version`, an
 
 The TypeSpec `CanonicalExpressionBundle` mirrors this normalized shape. The package remains model-only (`emit: []`) until the workspace registers the correct generated-client emitter; the committed semantic fingerprint and reconciliation tests are the interim E1 boundary, not an implied generated API. `canonicalize_tag_bundle()` explicitly maps the Python/Aspects adapter field `namespace` to the TypeSpec field `tag_namespace` and rejects any pre-populated governed tag id. Aspects therefore receives a stable projected-tag candidate, not an accidental authority claim.
 
+## E4 evaluator boundary
+
+E4 wraps the existing SOLScript/Resolution evaluator seam without making Expression an authority. Requests pin the Expression contract, source, ontology, evaluator, authority owner, and read-set fingerprints; `mutation_policy` is always `forbidden`. Archived Resolution dispositions map to the stable wire vocabulary (`Asserted` → `asserted`, `Disputed` → `disputed`, `Rejected` → `rejected`, `Pending` → `pending`, `Proposed` → `advisory`, `Stale` → `stale`, `Retracted` → `refused`). Missing read sets are `unevaluable`; unavailable evaluators are `pending`; uncertain/advisory results remain non-authoritative; unsupported outcomes fail closed to `refused`.
+
+Callbacks receive deep copies, and the adapter never invokes transition, persistence, admission, or graph APIs. Replay compares evaluation fingerprints using the same pinned inputs.
+
 ## E3 compatibility boundary
 
 The E3 adapter accepts already-fetched records shaped like `nebula.harvests`, `nebula.harvest_candidates`, `semantics.source_observation`, and `nebula.cross_references`. It preserves stable source identity before considering registered aliases. A stable match yields a `proposed` candidate; an alias collision yields `ambiguous`; missing identity is `unresolved`; a changed hash under the same identity is `conflict`; and supersession is recorded as `declared` or `dangling` lineage evidence. None of these outcomes resolves canonical identity or changes source state. Resolution remains canonical for identity, lineage, disposition, and evaluation joins.
