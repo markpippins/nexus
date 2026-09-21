@@ -75,10 +75,22 @@ def find_services():
         if not os.path.isdir(d):
             continue
         for name in sorted(os.listdir(d)):
-            full = os.path.join(d, name)
+            full = os.path.join(ROOT, base, name)
             if os.path.isdir(full) and name.endswith("-srv") and name not in EXCLUDED:
                 services[f"{base}/{name}"] = full
+    # JVM port modules (Spring) — same drift discipline as the *-srv services.
+    for key, rel in er.JVM_SERVICES.items():
+        full = os.path.join(ROOT, rel)
+        if os.path.isdir(full):
+            services[key] = full
     return services
+
+
+def extract_surface(key, svc_dir):
+    """Route inventory for a service — Express/FastAPI or Spring (JVM ports)."""
+    if key.startswith("jvm/"):
+        return er.process_spring_service(svc_dir, key)
+    return er.process_service(svc_dir, key.split("/")[-1])
 
 
 def verify_all(services):
@@ -89,7 +101,7 @@ def verify_all(services):
         if not os.path.exists(spec_path):
             report[key] = {"status": "missing", "detail": "no committed openapi.yaml"}
             continue
-        endpoints = er.process_service(svc_dir, key.split("/")[-1])
+        endpoints = extract_surface(key, svc_dir)
         source_surface = {(e["method"], to_openapi_form(e["path"])) for e in endpoints}
         try:
             committed = committed_surface(spec_path)
@@ -123,7 +135,7 @@ def main():
         # rewrites of its committed FastAPI-native spec)
         inventory = {}
         for key, svc_dir in services.items():
-            inventory[key] = er.process_service(svc_dir, key.split("/")[-1])
+            inventory[key] = extract_surface(key, svc_dir)
         import tempfile
 
         tmp = os.path.join(tempfile.gettempdir(), "api_inventory_drift.json")

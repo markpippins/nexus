@@ -30,6 +30,8 @@ import urllib.request
 
 import yaml
 
+import extract_routes  # noqa: E402 — JVM_SERVICES module-dir registry
+
 # ── Service metadata: key = inventory key, port = default listen port ──────
 SERVICES = {
     "typescript/assembly-srv": {
@@ -166,6 +168,26 @@ SERVICES = {
         "fastapi": True,
         "fastapi_note": "OpenAPI spec captured live from the service's /openapi.json (FastAPI-native, "
                          "schema-complete); the table below is the source-route inventory.",
+    },
+    # ── JVM port modules (Spring; extracted by extract_routes.JVM_SERVICES) ──
+    # Specs live inside the module dirs; the ports mirror the TS services'
+    # route surfaces (aegis at /api/*, shrapnel namespaced at /api/shrapnel/*
+    # inside the nexus-core monolith, port 8092).
+    "jvm/nexus-core-aegis": {
+        "title": "nexus-core-aegis — JVM Aegis State-Machine Registry Port",
+        "port": 8092,
+        "desc": "JVM port of aegis-srv inside the nexus-core monolith (Spring, JdbcTemplate "
+                "over the aegis schema): TLA+ state-machine registries, validation and "
+                "model-check results, Wind compilations, and audited execution logs. "
+                "Mirrors the typescript/aegis-srv route surface; aligned via TypeSpec.",
+    },
+    "jvm/nexus-core-shrapnel": {
+        "title": "nexus-core-shrapnel — JVM Shrapnel EAV Object Store Port",
+        "port": 8092,
+        "desc": "JVM port of shrapnel inside the nexus-core monolith (Spring, JdbcTemplate "
+                "over the shrapnel schema): encode/decode EAV objects, fields, field types, "
+                "stereotypes. Routes mounted at /api/shrapnel/*; mirrors the "
+                "typescript/shrapnel surface; contract-first via typespec/v1/shrapnel.",
     },
 }
 
@@ -361,7 +383,14 @@ def main(argv=None):
         if only_list and not any(key.endswith(o) for o in only_list):
             summary[key] = "skipped (--only)"
             continue
-        svc_dir = os.path.join(args.root, key.split("/", 1)[0], key.split("/", 1)[1])
+        # JVM service keys ("jvm/nexus-core-aegis") map to their repo-relative
+        # module dir from extract_routes.JVM_SERVICES; TS/python keys map to
+        # <base>/<name> directly.
+        jvm_rel = extract_routes.JVM_SERVICES.get(key)
+        if jvm_rel:
+            svc_dir = os.path.join(args.root, jvm_rel)
+        else:
+            svc_dir = os.path.join(args.root, key.replace("/", os.sep))
         if not os.path.isdir(svc_dir):
             summary[key] = "missing dir"
             continue
