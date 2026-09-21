@@ -20,7 +20,9 @@ async function main() {
   const files = readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
   console.log(`[shrapnel migrate] found ${files.length} migration file(s): ${files.join(', ')}`);
 
-  // Ensure a migrations ledger exists
+  // Ensure a migrations ledger exists (the shrapnel schema itself is created
+  // by 0001_init.sql, so bootstrap it first on brand-new databases).
+  await pool.query(`CREATE SCHEMA IF NOT EXISTS shrapnel AUTHORIZATION pguser`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS shrapnel._migration_ledger (
       filename     text PRIMARY KEY,
