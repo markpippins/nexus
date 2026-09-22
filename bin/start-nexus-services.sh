@@ -88,8 +88,23 @@ ALL_SERVICES=(
     "tools-aggregator.service" # port 3210 — unified MCP tool-discovery aggregator (hosts command-router namespace: command_lookup/execute/completions, folded in from slash-command-mcp per D-2026-08-16-002)
     "service-broker-mcp.service" # port 3112 — service-broker MCP over SSE (auth/token tools)
     "substance.service"        # port 3115 — Segment Sets API (FastAPI)
-    "moleculer-search.service"  # port 4050 — Moleculer Search API (Google, registry)
-    "moleculer-solscript.service" # port 4060 — Moleculer SOLScript facade (resolution eval, NATS namespace solscript)
+    # ── Moleculer back ends: INTENTIONALLY OUT OF THE DEFAULT STACK ──────
+    # Operator directive 2026-09-22 (single-distro-per-machine; see
+    # jvm/ARCHITECTURE.md "Machine Topology Doctrine"). The moleculer tier is
+    # a helium-profile target, not a titanium one. The units are stopped and
+    # disabled on the host.
+    #
+    # They are commented out — not merely left disabled — because `disable`
+    # only removes the boot-time wants-symlink: `cmd_start_all` below issues
+    # an explicit `systemctl --user start` for every name in ALL_SERVICES, and
+    # an explicit start DOES revive a disabled unit. Leaving the names in this
+    # list therefore silently undoes the exclusion on every blanket `start`.
+    #
+    # To bring the tier back on a machine where it belongs: uncomment the
+    # entries here and in SERVICE_PORTS, then `systemctl --user enable --now`
+    # the units. Do not re-add them to titanium.
+    # "moleculer-search.service"  # port 4050 — Moleculer Search API (Google, registry)
+    # "moleculer-solscript.service" # port 4060 — Moleculer SOLScript facade (resolution eval, NATS namespace solscript)
     "ui-tools.service"          # port 3125 — UI Tools CRUD API (statusbar links)
     "ui-tools-mcp.service"       # port 3136 — UI Tools MCP (agent-facing link management)
     "semantics-srv.service"      # port 3160 — semantics REST API (semantics.* schema — type-level legend)
@@ -99,7 +114,7 @@ ALL_SERVICES=(
 
     # Consolidated runtime (re-homed fleet — P0-2 remediation)
     "nexus-control-edge.service" # port 8082 — single AdonisJS HTTP edge (all REST servers re-homed)
-    "nexus-broker.service"       # port 4080 — Moleculer worker tier (harness/pty/execution/solir)
+    # "nexus-broker.service"       # port 4080 — Moleculer worker tier (harness/pty/execution/solir) — see the moleculer note above; out of the default stack
 
     # API servers (non-UI services)
     "wind-srv.service"         # port 3300 — Wind IDE workflow API
@@ -170,14 +185,14 @@ SERVICE_PORTS=(
     ["tools-aggregator.service"]="3210"   # command-router namespace folded in (D-2026-08-16-002); :3220 retired
     ["service-broker-mcp.service"]="3112"
     ["nexus-control-edge.service"]="8082"
-    ["nexus-broker.service"]="4080"
+    # ["nexus-broker.service"]="4080"   # moleculer tier — out of the default stack (see ALL_SERVICES note)
     ["wind-srv.service"]="3300"
     ["mildred-dam-api.service"]="3140"
     ["voyager-srv.service"]="3114"
     # voyager.service — no HTTP health endpoint (NATS-based)
     ["substance.service"]="3115"
-    ["moleculer-search.service"]="4050"
-    ["moleculer-solscript.service"]="4060"
+    # ["moleculer-search.service"]="4050"   # moleculer tier — out of the default stack
+    # ["moleculer-solscript.service"]="4060" # moleculer tier — out of the default stack
     ["ui-tools.service"]="3125"
     ["ui-tools-mcp.service"]="3136"
     ["semantics-srv.service"]="3160"
