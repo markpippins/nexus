@@ -186,89 +186,100 @@ async def bind_projected_tags_to_governed(
     status: str = "proposed",
     bound_by: Optional[str] = None
 ) -> dict[str, Any]:
-    """Bind Expression projected tags to governed vocabulary.
-    
-    Matches projected tags to governed vocabulary by normalized_name and
-    creates tag bindings in the Aspects binding port.
-    
+    """Propose governed bindings for projected tags without mutating them.
+
+    Boundary rule (Aspect G1): this function is a caller between Expression
+    and Aspects, not an authority upgrade. It never rewrites projected
+    observations: every observation keeps ``authority_status == "projected"``
+    and ``governed_tag_id is None``, and the bundle keeps
+    ``authority_status == "non_authoritative"``, so the output still satisfies
+    ``expression.contract.canonicalize_tag_bundle``.
+
+    Matching is by normalized value against the governed vocabulary. Binding
+    outcomes are recorded in a separate ``bindings`` section plus a
+    ``binding_summary``; they are never folded back into the projections.
+
     Args:
-        tag_bundle: Output from adapt_tag_records() or attach_projected_tags()
+        tag_bundle: Output from adapt_tag_records(), attach_projected_tags(),
+            or canonicalize_tag_bundle()
         binding_port: AspectsBindingPort instance
-        status: Binding status (proposed, approved, rejected)
+        status: Requested binding status (proposed, approved, rejected)
         bound_by: Who/what created the binding
-    
+
     Returns:
-        Updated tag_bundle with governed_tag_id populated and binding metadata
+        A copy of tag_bundle with ``bindings`` and ``binding_summary`` added.
     """
-    if not BINDING_PORT_AVAILABLE:
-        raise RuntimeError("Binding port not available - aspects package not installed")
-    
-    updated_bundle = deepcopy(tag_bundle)
-    observations = updated_bundle.get("observations", [])
-    
+    if status not in {"proposed", "approved", "rejected"}:
+        raise ValueError(f"invalid binding status: {status!r}")
+    if (
+        binding_port is None
+        or not callable(getattr(binding_port, "list_governed_tags", None))
+        or not callable(getattr(binding_port, "create_binding", None))
+    ):
+        raise RuntimeError(
+            "binding_port must provide async list_governed_tags() and create_binding() "
+            "(AspectsBindingPort or compatible)"
+        )
+
+    observations = (
+        tag_bundle.get("observations")
+        or tag_bundle.get("projected_tags")
+        or []
+    )
+
     # Get all active governed tags for matching
     governed_tags = await binding_port.list_governed_tags(active_only=True)
     governed_by_normalized = {tag.normalized_name: tag for tag in governed_tags}
-    
+
+    bindings: list[dict[str, Any]] = []
+    summary = {"proposed": 0, "approved": 0, "rejected": 0, "unmatched": 0, "error": 0}
+
     for obs in observations:
         normalized = obs.get("normalized_value")
-        if not normalized:
+        governed_tag = governed_by_normalized.get(normalized) if normalized else None
+        if governed_tag is None:
+            summary["unmatched"] += 1
             continue
-        
-        # Match by normalized value
-        governed_tag = governed_by_normalized.get(normalized)
-        if governed_tag:
-            obs["governed_tag_id"] = str(governed_tag.id)
-            obs["governed_tag_name"] = governed_tag.name
-            obs["governed_tag_member_kind"] = governed_tag.member_kind
-            obs["authority_status"] = "governed"
-            
-            # Create binding in Aspects
-            try:
-                await binding_port.create_binding(
-                    governed_tag_id=governed_tag.id,
-                    source_identity=obs["source_identity"],
-                    source_revision=obs["source_revision"],
-                    namespace=obs["namespace"],
-                    tag_key=obs["key"],
-                    normalized_value=obs["normalized_value"],
-                    expression_observation_id=obs.get("tag_observation_id"),
-                    status="proposed",
-                    bound_by=bound_by or "auto-binding"
-                )
-                obs["binding_status"] = "proposed"
-            except Exception as e:
-                obs["binding_error"] = str(e)
-                obs["binding_status"] = "error"
-        else:
-            obs["governed_tag_id"] = None
-            obs["binding_status"] = "unmatched"
-    
-    # Update bundle metadata
-    updated_bundle["governed_tag_vocabulary_revision"] = "v1"
-    updated_bundle["authority_status"] = "mixed"  # some governed, some not
+
+        record = {
+            "tag_observation_id": obs.get("tag_observation_id"),
+            "source_identity": obs.get("source_identity"),
+            "source_revision": obs.get("source_revision"),
+            "namespace": obs.get("namespace"),
+            "key": obs.get("key"),
+            "normalized_value": normalized,
+            "governed_tag_id": str(governed_tag.id),
+            "governed_tag_name": governed_tag.name,
+            "status": status,
+            "bound_by": bound_by or "auto-binding",
+        }
+        try:
+            created = await binding_port.create_binding(
+                governed_tag_id=governed_tag.id,
+                source_identity=obs["source_identity"],
+                source_revision=obs["source_revision"],
+                namespace=obs["namespace"],
+                tag_key=obs["key"],
+                normalized_value=normalized,
+                expression_observation_id=obs.get("tag_observation_id"),
+                status=status,
+                bound_by=bound_by or "auto-binding",
+            )
+            record["binding_id"] = str(created.id)
+            record["binding_status"] = "created"
+            summary[status] += 1
+        except Exception as e:
+            # A binding failure must never corrupt the projected projection.
+            record["binding_status"] = "error"
+            record["binding_error"] = str(e)
+            summary["error"] += 1
+        bindings.append(record)
+
+    # Deliberately a shallow copy: observations are shared, not mutated.
+    updated_bundle = dict(tag_bundle)
+    updated_bundle["bindings"] = sorted(
+        bindings,
+        key=lambda item: (item.get("tag_observation_id") or "", item.get("governed_tag_id") or ""),
+    )
+    updated_bundle["binding_summary"] = summary
     return updated_bundle
-
-
-def attach_projected_tags(
-    compatibility_bundle: dict[str, Any], tag_bundle: dict[str, Any]
-) -> dict[str, Any]:
-    """Attach projected tags by stable source identity, never by display name."""
-    result = deepcopy(compatibility_bundle)
-    source_ids = {item.get("source_identity") for item in result.get("observations", [])}
-    attached: list[dict[str, Any]] = []
-    unresolved: list[dict[str, Any]] = []
-    for tag in tag_bundle.get("observations", []):
-        if tag.get("source_identity") in source_ids:
-            attached.append(tag)
-        else:
-            unresolved.append({
-                "tag_observation_id": tag.get("tag_observation_id"),
-                "source_identity": tag.get("source_identity"),
-                "status": "unresolved",
-                "reason": "no matching compatibility observation identity",
-            })
-    result["projected_tags"] = sorted(attached, key=lambda item: item["tag_observation_id"])
-    result["tag_conflicts"] = tag_bundle.get("conflicts", [])
-    result["unresolved_tag_observations"] = unresolved
-    return result
