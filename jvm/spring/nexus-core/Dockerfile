@@ -9,11 +9,14 @@
 #   docker build -f spring/nexus-core/Dockerfile -t nexus-vanadium/nexus-core .
 # nexus-core is a STANDALONE multi-module project (parent =
 # spring-boot-starter-parent from Central), so it does NOT need
-# jvm/spring/pom.xml installed first. It DOES consume the shared canonical
-# modules (com.aibizarchitect.nexus:core + adapters.spring —
-# BinaryData/ResponseError/PagedResponse), so jvm/shared/ is installed into
-# the local repo before the reactor build, exactly like the broker-gateway
-# image build.
+# jvm/spring/pom.xml installed first. It DOES consume two external Maven
+# reactors that must be installed into the local repo before its build:
+#   1. jvm/shared/ (com.aibizarchitect.nexus:core + adapters.spring —
+#      BinaryData/ResponseError/PagedResponse)
+#   2. jvm/spring/peb-kernel/ (org.nexus.peb:peb-api — imported by
+#      NexusCoreApplication; peb-kernel is its own standalone reactor,
+#      parent from Central, no dependency on shared/)
+# exactly like the broker-gateway image build.
 #
 # Runtime configuration (standard Spring env overrides, see
 # nexus-core-app/src/main/resources/application.properties):
@@ -28,6 +31,10 @@ WORKDIR /build
 # repo before nexus-core resolves.
 COPY shared/ shared/
 RUN --mount=type=cache,target=/root/.m2 mvn -B -q -f shared/pom.xml install -DskipTests
+# peb-api (org.nexus.peb) — separate standalone reactor, must be in the
+# local repo before nexus-core resolves its app-module dependency.
+COPY spring/peb-kernel/ spring/peb-kernel/
+RUN --mount=type=cache,target=/root/.m2 mvn -B -q -f spring/peb-kernel/pom.xml install -DskipTests
 # Standalone nexus-core reactor — parent POM resolves from Central.
 COPY spring/nexus-core/ spring/nexus-core/
 WORKDIR /build/spring/nexus-core
