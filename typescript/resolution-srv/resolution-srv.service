@@ -1,0 +1,35 @@
+[Unit]
+Description=Resolution SRV — REST API serving the resolution.* Postgres schema (port 3171)
+Documentation=https://github.com/nexus/typescript/resolution-srv
+After=network.target postgresql.service redis.service
+Wants=postgresql.service redis.service
+
+[Service]
+Type=simple
+User=codex
+Group=codex
+WorkingDirectory=/home/codex/dev/nexus/typescript/resolution-srv
+
+# ── Environment ────────────────────────────────────────────────────────
+Environment=RESOLUTION_SRV_PORT=3171
+Environment=RESOLUTION_SRV_SERVICE_ID=0
+Environment=NODE_ENV=production
+Environment=PATH=/home/codex/.nvm/versions/node/v24.15.0/bin:/usr/local/bin:/usr/bin:/bin
+
+# ── Executable ─────────────────────────────────────────────────────────
+ExecStart=/home/codex/.nvm/versions/node/v24.15.0/bin/npx tsx src/index.ts
+ExecReload=/bin/kill -HUP $MAINPID
+
+# ── Restart behavior ───────────────────────────────────────────────────
+Restart=on-failure
+RestartSec=3
+
+# ── Hardening ──────────────────────────────────────────────────────────
+NoNewPrivileges=true
+ProtectSystem=strict
+PrivateTmp=true
+ProtectHome=read-only
+ReadWritePaths=/home/codex/dev/nexus/typescript/resolution-srv /home/codex/.npm
+
+[Install]
+WantedBy=default.target
