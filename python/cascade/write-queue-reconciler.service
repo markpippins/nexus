@@ -1,0 +1,35 @@
+[Unit]
+Description=Cascade write-queue reconciler — drains nexus.write-queue.v1.> (thallium NATS) into canonical resolution schema
+Documentation=https://github.com/nexus/python/cascade/write_queue_reconciler.py
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=codex
+Group=codex
+WorkingDirectory=/home/codex/dev/nexus/python/cascade
+
+# ── Environment ────────────────────────────────────────────────────────
+# NATS bus lives on thallium (the nexus-core host); canonical PG is local.
+# NATS_URL MUST be explicit — the script default (localhost:4222) is wrong
+# on titanium since the bus moved to thallium (2026-09-22).
+Environment=NATS_URL=nats://192.168.1.82:4222
+Environment=DATABASE_URL=postgres://pguser:pgpass@localhost:5432/nexus
+Environment=WRITE_QUEUE_CAPABILITY=nexus.storage.canonical
+
+# ── Executable ─────────────────────────────────────────────────────────
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/python/cascade/write_queue_reconciler.py
+
+# ── Restart behavior ───────────────────────────────────────────────────
+# Persistent service, not a timer: the reconciler is a core-NATS tail
+# (no durable consumer yet), so intents published while it is down sit in
+# the JetStream stream (7d retention) and are applied only when it runs.
+Restart=on-failure
+RestartSec=5
+
+# ── Logging ────────────────────────────────────────────────────────────
+SyslogIdentifier=write-queue-reconciler
+
+[Install]
+WantedBy=default.target
