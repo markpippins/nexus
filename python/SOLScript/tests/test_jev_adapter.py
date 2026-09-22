@@ -228,9 +228,15 @@ class TestJevKnowledgeBase:
         """Test manual knowledge addition."""
         kb.add_knowledge("manual_fact", "known_value", {"context": "manual"})
         
-        # Query should return the manual knowledge (await since query is async)
+        # Query should return the manual knowledge (query is async; run it on a
+        # private loop — asyncio.run leaves the global loop unset and breaks
+        # legacy get_event_loop callers in later tests)
         import asyncio
-        result = asyncio.run(kb.query("manual_fact", {"context": "manual"}))
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(kb.query("manual_fact", {"context": "manual"}))
+        finally:
+            loop.close()
         assert result == "known_value"
 
 

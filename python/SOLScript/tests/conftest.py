@@ -33,6 +33,25 @@ def _uid() -> str:
     return str(uuid.uuid4())
 
 
+@pytest.fixture(autouse=True)
+def _ensure_legacy_event_loop():
+    """Guarantee a usable global event loop for legacy asyncio callers.
+
+    Some tests (pytest-asyncio mode=strict, asyncio.run, private-loop helpers)
+    leave the process-global loop unset or set-and-closed when they finish.
+    Legacy helpers in this package call the deprecated
+    ``asyncio.get_event_loop().run_until_complete(...)`` pattern, which raises
+    ``RuntimeError: There is no current event loop`` once the global loop has
+    been unset. This fixture makes sure every test starts with a healthy loop
+    and removes it afterwards so no closed loop is ever left behind.
+    """
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    yield
+    asyncio.set_event_loop(None)
+    loop.close()
+
+
 @pytest.fixture
 def interp() -> ResolutionInterpreter:
     """A fresh interpreter with no data loaded."""

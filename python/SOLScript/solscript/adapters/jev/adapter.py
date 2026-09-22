@@ -1194,14 +1194,15 @@ class SyncJevKnowledgeBase(KnowledgeBase):
                 future = executor.submit(asyncio.run, self._async_query(key, context))
                 return future.result()
         except RuntimeError:
-            # No running loop, safe to use get_event_loop
+            # No running loop. Run the coroutine on a fresh private loop and
+            # always close it — never call asyncio.set_event_loop, which leaks
+            # global loop state (a closed loop left set breaks any later
+            # asyncio.run / get_event_loop caller in the same process).
+            loop = asyncio.new_event_loop()
             try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            
-            return loop.run_until_complete(self._async_query(key, context))
+                return loop.run_until_complete(self._async_query(key, context))
+            finally:
+                loop.close()
     
     async def _async_query(self, key: str, context: Dict[str, Any]) -> Optional[Any]:
         judgment_key = self._make_judgment_cache_key(key, context)
