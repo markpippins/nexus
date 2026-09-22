@@ -1367,29 +1367,35 @@ BEGIN
     VALUES (
         'builder-workflow',
         'Builder: Implementation Workflow',
-        'How the Builder picks up pending plans, implements them, and handles blockers.',
+        'How the Builder claims tickets, picks up pending plans, implements them, and handles blockers.',
         '## Builder Workflow\n'
         '\n'
         '### 1. Query Pipeline State\n'
         'Use \`conduit-mcp_query_conduit_state\` to find pending plans. Check for blocked plans first — if any exist, stop and alert.\n'
         '\n'
-        '### 2. Read Plan Details\n'
-        'Use \`conduit-mcp_get_plan_receipts\` to review plan receipts and confirm its lifecycle state. Read the .md file from filesystem for the implementation spec (goal, files, AC, deps).\n'
+        '### 2. Claim the ticket (session-based)\n'
+        'Use \`conduit-mcp_claim_ticket\` with \`plan_id\`, \`role=builder\`, and your \`session_id\` (from the timeclock/boot shim). Same-session re-claim is an idempotent refresh; a fresh claim held by another session is REFUSED with holder details (\`force=true\` takes over, transition-audited). Claims release automatically when the holder session ends; \`conduit-mcp_release_ticket\` releases early. Until you claim, the ticket is unreserved — claim before implementing.\n'
         '\n'
-        '### 3. Implement\n'
+        '### 3. Read Plan Details\n'
+        'Use \`conduit-mcp_get_plan_receipts\` to review the receipt chain and confirm lifecycle state. The implementation spec is the plan''s \`goal\` + \`acceptanceCriteria\` (via \`query_conduit_state\` or \`GET :3101/api/plans\`); there is **no \`.md\` file** for API-created plans (\`fileName\` is empty). Cross-reference \`filesAffected\` from the DB row if \`/state\` omits it. If the plan''s ACs embed start conditions (e.g., "waits on ST.01"), verify they are met before implementing — several backlog plans are open but not startable by their own ACs.\n'
+        '\n'
+        '### 4. Implement\n'
         'Modify code according to the plan goal, files affected, and acceptance criteria. Use \`conduit-mcp_agent_heartbeat\` to report liveness.\n'
         '\n'
-        '### 4. Handle Blockers\n'
+        '### 5. Handle Blockers\n'
         'If implementation cannot proceed: \`conduit-mcp_issue_receipt\` with type BLOCK. Report the issue to the user.\n'
         '\n'
-        '### 5. Report Completion\n'
-        'Use \`conduit-mcp_agent_finished\` when the plan is implemented. The pipeline manager handles receipt advancement automatically.\n'
+        '### 6. Report Completion (receipt-driven)\n'
+        '\`conduit-mcp_agent_finished\` is a status marker only — it does **not** advance the pipeline. The pipeline advances via receipts: \`conduit-mcp_issue_receipt\` with \`type=IMPLEMENTATION\`, \`agent_role=builder\`, and \`artifact_path\` pointing at your deliverable (agent record id, PR, or thread). \`advanceTicketsOnReceipt\` then closes the builder ticket and spawns the reviewer ticket. Verify: \`get_plan_receipts\` shows IMPLEMENTATION; \`/state\` shows derived=IMPLEMENTATION; reviewer ticket open.\n'
         '\n'
         '### Continuous Execution Rule\n'
-        'The Builder works through all available plans without pausing. Only stops on: true blocker, logical impossibility, or user interrupt. Does NOT ask for approval between plans.',
+        'The Builder works through all available plans without pausing. Only stops on: true blocker, logical impossibility, or user interrupt. Does NOT ask for approval between plans.\n'
+        '\n'
+        '### Tool notes (2026-09-22)\n'
+        'Removed tools: \`create_proposed_plan\`, \`promote_plan\`. Live and absent from older cards: the \`runtime_*\` WorkRequest family (\`runtime_list_work_requests\`, \`runtime_get_work_request\`, \`runtime_get_work_request_events\`, \`runtime_transition\`, \`runtime_tick\`, \`runtime_submit_work_request\`), plus \`validate_implementation_plan\`, \`issue_compile_verdict\`, \`run_compile_gate\`, \`bootstrap_unclaimed_plans\`. See the \`conduit-mcp-tools\` card.',
         ARRAY['builder', 'workflow', 'implementation', 'plans'],
-        ARRAY['builder workflow', 'implement plan', 'pending plans', 'blocker'],
-        ARRAY['conduit-mcp_query_conduit_state', 'conduit-mcp_get_plan_receipts', 'conduit-mcp_agent_heartbeat', 'conduit-mcp_issue_receipt', 'conduit-mcp_agent_finished']
+        ARRAY['builder workflow', 'implement plan', 'pending plans', 'claim ticket', 'blocker'],
+        ARRAY['conduit-mcp_query_conduit_state', 'conduit-mcp_get_plan_receipts', 'conduit-mcp_claim_ticket', 'conduit-mcp_release_ticket', 'conduit-mcp_agent_heartbeat', 'conduit-mcp_issue_receipt']
     )
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
@@ -3956,6 +3962,48 @@ BEGIN
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
         v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'design-synthesist', 'engineer', 'layout-mechanic', 'lead-engineer', 'operator', 'reviewer'];
+        FOREACH v_role IN ARRAY v_roles LOOP
+            INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
+            VALUES (v_memory_id, v_role, NOW(), NULL);
+        END LOOP;
+    END IF;
+    -- ──────────────────────────────────────────────────────────
+    -- 57. Reviewer: Merge Gate and Pipeline Review Workflow
+    -- ──────────────────────────────────────────────────────────
+    v_memory_id := NULL;
+    INSERT INTO ${SQL}.memory (slug, title, summary, body_md, tags, triggers, mcp_tools)
+    VALUES (
+        'reviewer-workflow',
+        'Reviewer: Merge Gate and Pipeline Review Workflow',
+        'The Reviewer''s governing duty (git merge gate / PR-queue owner) plus the conduit-pipeline review steps and loop pathology.',
+        '## Reviewer Workflow\n'
+        '\n'
+        '### 0. Merge gate (primary duty — operator-governed, 2026-09-22)\n'
+        'Each turn: check the GitHub forum queue (R8.1). Merge green PRs in sequence; ping Engineering when checks fail; delay merges where prerequisites are unmet. THEN run the in-pipeline review steps below for conduit plans. The critic owns code analysis; you own the merge — act on critic findings + CI results, do not re-run the analysis.\n'
+        '\n'
+        '### 1. Find review work\n'
+        '\`conduit-mcp_query_conduit_state\`: review work = plans with \`derivedStatus=IMPLEMENTATION\` and an open reviewer ticket. Reviewer tickets spawn automatically when a builder issues IMPLEMENTATION.\n'
+        '\n'
+        '### 2. Claim the ticket (session-based)\n'
+        'Use \`conduit-mcp_claim_ticket\` with \`plan_id\`, \`role=reviewer\`, and your \`session_id\`. Claims are transition-audited; a fresh foreign claim is refused with holder details (takeover after staleness, or \`force=true\`). Release with \`conduit-mcp_release_ticket\` if you hand the review off.\n'
+        '\n'
+        '### 3. Review\n'
+        'Fetch the deliverable from the IMPLEMENTATION receipt''s \`artifact_path\` — it names the artifact type ("nebula agent record …", PR, thread) and its location. Agent records: \`GET :3101/api/agent-records/{id}\`. Check each acceptance criterion against the artifact; record met/partial/unmet with evidence.\n'
+        '\n'
+        '### 4. Verdict (receipt-driven)\n'
+        'Issue \`conduit-mcp_issue_receipt\`: \`REVIEW_PASS\` (terminal — plan completes, nothing further spawns) or \`REVIEW_REJECT\` (reviewer ticket → failed; **a new builder ticket spawns**). The summary must say *what* to change, not just that it fails. The \`REVIEW\` type is vestigial (completes no ticket) — go straight to PASS/REJECT after IMPLEMENTATION.\n'
+        '\n'
+        '### 5. Loop pathology (know this)\n'
+        '\`REVIEW_REJECT\` routes to the **builder**, never the planner — a blueprint defect (unmeetable AC, conflated end-state) will bounce between builder and reviewer without converging. If the defect is in the blueprint, reject with an explicit instruction to seek planner revision via \`update_plan\`, and notify the planner directly. (Couples with ripple-before-blueprint, ruling 77028c99: blueprint defects should be visible at mint time via \`nebula.assess_ripple\`; the reviewer-side rejection is the backstop.)\n'
+        '',
+        ARRAY['reviewer', 'workflow', 'merge-gate', 'pr-queue', 'plans'],
+        ARRAY['reviewer workflow', 'review plan', 'REVIEW_PASS', 'REVIEW_REJECT', 'merge gate'],
+        ARRAY['conduit-mcp_query_conduit_state', 'conduit-mcp_get_plan_receipts', 'conduit-mcp_claim_ticket', 'conduit-mcp_release_ticket', 'conduit-mcp_issue_receipt']
+    )
+    ON CONFLICT (slug) DO NOTHING
+    RETURNING id INTO v_memory_id;
+    IF v_memory_id IS NOT NULL THEN
+        v_roles := ARRAY['reviewer'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);

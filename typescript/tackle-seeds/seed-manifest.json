@@ -1,5 +1,5 @@
 {
-  "card_count": 56,
+  "card_count": 57,
   "cards": [
     {
       "body_md": "## Agent Config Role Definition\n\nEach agent role .md file (in .opencode/agents/) MUST include a message block in its frontmatter:\n\n```yaml\n---\nassumes_role: <role>\nmessage:\n  inbox_query:\n    - tags contain \"to:<role>\"\n    - tags contain \"status:open\"\n  record_types: [list of valid record types for this role]\n  auto_present: true\n  enrich_context: true\n---\n```\n\n### Fields\n- assumes_role: The role this agent config activates (engineer, architect, planner, etc.)\n- inbox_query: Tag filters for inbox querying\n- record_types: Valid agent record types this role may write\n- auto_present: Whether to surface inbox items on every turn start\n- enrich_context: Whether to load linked system/subsystem/plan data on boot\n\n### Valid record_type values\nreport, analysis, assessment, inspection, prompt, response, engineering_log, architecture_note, decision",
@@ -80,13 +80,14 @@
       ]
     },
     {
-      "body_md": "## Builder Workflow\n\n### 1. Query Pipeline State\nUse `conduit-mcp_query_conduit_state` to find pending plans. Check for blocked plans first \u2014 if any exist, stop and alert.\n\n### 2. Read Plan Details\nUse `conduit-mcp_get_plan_receipts` to review plan receipts and confirm its lifecycle state. Read the .md file from filesystem for the implementation spec (goal, files, AC, deps).\n\n### 3. Implement\nModify code according to the plan goal, files affected, and acceptance criteria. Use `conduit-mcp_agent_heartbeat` to report liveness.\n\n### 4. Handle Blockers\nIf implementation cannot proceed: `conduit-mcp_issue_receipt` with type BLOCK. Report the issue to the user.\n\n### 5. Report Completion\nUse `conduit-mcp_agent_finished` when the plan is implemented. The pipeline manager handles receipt advancement automatically.\n\n### Continuous Execution Rule\nThe Builder works through all available plans without pausing. Only stops on: true blocker, logical impossibility, or user interrupt. Does NOT ask for approval between plans.",
+      "body_md": "## Builder Workflow\n\n### 1. Query Pipeline State\nUse `conduit-mcp_query_conduit_state` to find pending plans. Check for blocked plans first \u2014 if any exist, stop and alert.\n\n### 2. Claim the ticket (session-based)\nUse `conduit-mcp_claim_ticket` with `plan_id`, `role=builder`, and your `session_id` (from the timeclock/boot shim). Same-session re-claim is an idempotent refresh; a fresh claim held by another session is REFUSED with holder details (`force=true` takes over, transition-audited). Claims release automatically when the holder session ends; `conduit-mcp_release_ticket` releases early. Until you claim, the ticket is unreserved \u2014 claim before implementing.\n\n### 3. Read Plan Details\nUse `conduit-mcp_get_plan_receipts` to review the receipt chain and confirm lifecycle state. The implementation spec is the plan's `goal` + `acceptanceCriteria` (via `query_conduit_state` or `GET :3101/api/plans`); there is **no `.md` file** for API-created plans (`fileName` is empty). Cross-reference `filesAffected` from the DB row if `/state` omits it. If the plan's ACs embed start conditions (e.g., \"waits on ST.01\"), verify they are met before implementing \u2014 several backlog plans are open but not startable by their own ACs.\n\n### 4. Implement\nModify code according to the plan goal, files affected, and acceptance criteria. Use `conduit-mcp_agent_heartbeat` to report liveness.\n\n### 5. Handle Blockers\nIf implementation cannot proceed: `conduit-mcp_issue_receipt` with type BLOCK. Report the issue to the user.\n\n### 6. Report Completion (receipt-driven)\n`conduit-mcp_agent_finished` is a status marker only \u2014 it does **not** advance the pipeline. The pipeline advances via receipts: `conduit-mcp_issue_receipt` with `type=IMPLEMENTATION`, `agent_role=builder`, and `artifact_path` pointing at your deliverable (agent record id, PR, or thread). `advanceTicketsOnReceipt` then closes the builder ticket and spawns the reviewer ticket. Verify: `get_plan_receipts` shows IMPLEMENTATION; `/state` shows derived=IMPLEMENTATION; reviewer ticket open.\n\n### Continuous Execution Rule\nThe Builder works through all available plans without pausing. Only stops on: true blocker, logical impossibility, or user interrupt. Does NOT ask for approval between plans.\n\n### Tool notes (2026-09-22)\nRemoved tools: `create_proposed_plan`, `promote_plan`. Live and absent from older cards: the `runtime_*` WorkRequest family (`runtime_list_work_requests`, `runtime_get_work_request`, `runtime_get_work_request_events`, `runtime_transition`, `runtime_tick`, `runtime_submit_work_request`), plus `validate_implementation_plan`, `issue_compile_verdict`, `run_compile_gate`, `bootstrap_unclaimed_plans`. See the `conduit-mcp-tools` card.",
       "mcp_tools": [
         "conduit-mcp_query_conduit_state",
         "conduit-mcp_get_plan_receipts",
+        "conduit-mcp_claim_ticket",
+        "conduit-mcp_release_ticket",
         "conduit-mcp_agent_heartbeat",
-        "conduit-mcp_issue_receipt",
-        "conduit-mcp_agent_finished"
+        "conduit-mcp_issue_receipt"
       ],
       "roles": [
         "builder",
@@ -96,9 +97,9 @@
         "lead-engineer",
         "topologist"
       ],
-      "sha256": "69d21ce769629edd510e335e55046800f8cb96916ab69fbc03dfb83119cef819",
+      "sha256": "184200eede3740169cd594614c6b526f2e2a073eb5ef711f0840a5464c5efb87",
       "slug": "builder-workflow",
-      "summary": "How the Builder picks up pending plans, implements them, and handles blockers.",
+      "summary": "How the Builder claims tickets, picks up pending plans, implements them, and handles blockers.",
       "tags": [
         "builder",
         "workflow",
@@ -110,6 +111,7 @@
         "builder workflow",
         "implement plan",
         "pending plans",
+        "claim ticket",
         "blocker"
       ]
     },
@@ -1416,6 +1418,37 @@
       ]
     },
     {
+      "body_md": "## Reviewer Workflow\n\n### 0. Merge gate (primary duty \u2014 operator-governed, 2026-09-22)\nEach turn: check the GitHub forum queue (R8.1). Merge green PRs in sequence; ping Engineering when checks fail; delay merges where prerequisites are unmet. THEN run the in-pipeline review steps below for conduit plans. The critic owns code analysis; you own the merge \u2014 act on critic findings + CI results, do not re-run the analysis.\n\n### 1. Find review work\n`conduit-mcp_query_conduit_state`: review work = plans with `derivedStatus=IMPLEMENTATION` and an open reviewer ticket. Reviewer tickets spawn automatically when a builder issues IMPLEMENTATION.\n\n### 2. Claim the ticket (session-based)\nUse `conduit-mcp_claim_ticket` with `plan_id`, `role=reviewer`, and your `session_id`. Claims are transition-audited; a fresh foreign claim is refused with holder details (takeover after staleness, or `force=true`). Release with `conduit-mcp_release_ticket` if you hand the review off.\n\n### 3. Review\nFetch the deliverable from the IMPLEMENTATION receipt's `artifact_path` \u2014 it names the artifact type (\"nebula agent record \u2026\", PR, thread) and its location. Agent records: `GET :3101/api/agent-records/{id}`. Check each acceptance criterion against the artifact; record met/partial/unmet with evidence.\n\n### 4. Verdict (receipt-driven)\nIssue `conduit-mcp_issue_receipt`: `REVIEW_PASS` (terminal \u2014 plan completes, nothing further spawns) or `REVIEW_REJECT` (reviewer ticket \u2192 failed; **a new builder ticket spawns**). The summary must say *what* to change, not just that it fails. The `REVIEW` type is vestigial (completes no ticket) \u2014 go straight to PASS/REJECT after IMPLEMENTATION.\n\n### 5. Loop pathology (know this)\n`REVIEW_REJECT` routes to the **builder**, never the planner \u2014 a blueprint defect (unmeetable AC, conflated end-state) will bounce between builder and reviewer without converging. If the defect is in the blueprint, reject with an explicit instruction to seek planner revision via `update_plan`, and notify the planner directly. (Couples with ripple-before-blueprint, ruling 77028c99: blueprint defects should be visible at mint time via `nebula.assess_ripple`; the reviewer-side rejection is the backstop.)\n",
+      "mcp_tools": [
+        "conduit-mcp_query_conduit_state",
+        "conduit-mcp_get_plan_receipts",
+        "conduit-mcp_claim_ticket",
+        "conduit-mcp_release_ticket",
+        "conduit-mcp_issue_receipt"
+      ],
+      "roles": [
+        "reviewer"
+      ],
+      "sha256": "b94b9fba8991b116802f7623b1a57e393b43038647e6770c62ee6ccb6be52916",
+      "slug": "reviewer-workflow",
+      "summary": "The Reviewer's governing duty (git merge gate / PR-queue owner) plus the conduit-pipeline review steps and loop pathology.",
+      "tags": [
+        "reviewer",
+        "workflow",
+        "merge-gate",
+        "pr-queue",
+        "plans"
+      ],
+      "title": "Reviewer: Merge Gate and Pipeline Review Workflow",
+      "triggers": [
+        "reviewer workflow",
+        "review plan",
+        "REVIEW_PASS",
+        "REVIEW_REJECT",
+        "merge gate"
+      ]
+    },
+    {
       "body_md": "## Procedure\nAdding a new role to the system is deterministic: edit the canonical expectations file, emit the artifacts, and verify with the end-to-end check. No undocumented parallel hand-edits.\n\n### 1. Canonical edit\nAdd the role to `nexus/config/roles/roles.json` under `roles` \u2014 the key must match the name inserted into `tackle.roles`. Inherit `roleDefaults` unless the role is special (test/alias roles override surfaces to false).\n\n### 2. Emit artifacts\nFor a full agent role, create/update:\n- **tackle.roles row** \u2014 via the seed arrays (`tackle-mcp/src/db.ts` DEFAULT_ROLES, `conduit-mcp/src/db.ts` migration defaultRoles) or a migration; the live DB is canonical.\n- **Persona prompt** \u2014 `tackle.prompts` row (role, slug `opencode-persona`, version 1) in `schemas/migrations/tackle/` (pattern: `sysadmin_persona_v1.sql`); apply to the live DB.\n- **Harness agent file** \u2014 `config/harnesses/opencode/agents/<role>.md` (frontmatter: assumes_role, permissions; pattern: `sysadmin.md`).\n- **Procedure cards** \u2014 add the role to the role lists of the relevant `the canonical procedure-card table` cards (the role assignment join table assignments); then regenerate the seed: `python3 bin/regenerate_memory_seed.py --verify`.\n- **Assembly alias** \u2014 `assembly.users` row with alias = role name (pattern: builder seed in `assembly-migration.sql`).\n- **nebula role CHECK** \u2014 new `typescript/nebula-srv/migrations/0NN-allow-<role>.sql` mirroring `052-allow-sysadmin-dba-role.sql`; apply + replicate to barium.\n- **Governance** \u2014 add to `harness-srv/src/governance.ts` KNOWN_EXECUTORS only if the role issues receipts.\n\n### 3. Verify\nRun `python3 bin/verify-roles.py` \u2014 it checks every expected surface for every registered role (persona, procedure cards, assembly alias, harness file, nebula CHECK, governance). Exit 0 = all covered. Fix FAILs before closing.\n\n### 4. Close\nPost the walkthrough evidence on the role-creation thread and record an engineering log. Surface the new role to the architect for allowlist ratification if the case/naming deviates from convention.",
       "mcp_tools": [],
       "roles": [
@@ -1989,6 +2022,6 @@
       ]
     }
   ],
-  "role_count": 528,
+  "role_count": 529,
   "schema": "tackle"
 }
