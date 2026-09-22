@@ -77,7 +77,7 @@ COMPACT_RULES: list[tuple[re.Pattern, str]] = [
     (re.compile(r"^(dba|planner|analyst|engineer|architect|operator|devops|inspector)\b.*$"), r"\1"),
 ]
 
-TOKEN_RE = re.compile(r"^\[([^\]→]+)")
+TOKEN_RE = re.compile(r"^\[([^\]→]*)\]")  # full match = the whole [token]
 
 
 def normalize_token(title: str) -> str | None:
