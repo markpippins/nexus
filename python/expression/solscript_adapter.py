@@ -32,7 +32,7 @@ if (_SOLSCRIPT_ROOT / "solscript" / "interpreter.py").exists():
     if _solscript_path not in sys.path:
         sys.path.insert(0, _solscript_path)
 
-INTERPRETER_REVISION = "solscript-resolution-interpreter-v32"
+INTERPRETER_REVISION = "solscript-resolution-interpreter-v33-e84"
 
 
 def _disposition_to_outcome(disposition: Any) -> str:
@@ -63,7 +63,8 @@ def _disposition_to_outcome(disposition: Any) -> str:
 
 
 _CONTEXT_STATUS_OUTCOME = {
-    "not_scoped": "asserted",  # unframed propositions evaluate on merits
+    "not_scoped": None,  # type has no required dimensions; evaluate on merits
+    "unframed_required": "unevaluable",
     "scoped": None,  # fall through to the disposition
     "context_required": "unevaluable",
     "context_mismatch": "refused",

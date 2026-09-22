@@ -63,6 +63,12 @@ def loaded_population_fingerprint(population: dict[str, Any]) -> str:
             (val_id, val.dimension_id, val.value)
             for val_id, val in population.get("frame_dimension_values", {}).items()
         ),
+        "semantic_type_required_dimensions": sorted(
+            (type_id, sorted(dimension_ids))
+            for type_id, dimension_ids in population.get(
+                "semantic_type_required_dimensions", {}
+            ).items()
+        ),
     }
     return hashlib.sha256(
         repr(sorted(material.items())).encode("utf-8")
@@ -92,6 +98,9 @@ class LoadedInterpreter:
             "propositions": self._interpreter.propositions,
             "frame_dimensions": self._interpreter.frame_dimensions,
             "frame_dimension_values": self._interpreter.frame_dimension_values,
+            "semantic_type_required_dimensions": (
+                self._interpreter.semantic_type_required_dimensions
+            ),
         }
 
     def population_fingerprint(self) -> str:

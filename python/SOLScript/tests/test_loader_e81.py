@@ -56,6 +56,8 @@ class _FakeConnection:
         self._tables = tables
 
     async def fetch(self, sql: str, *params: Any) -> List[Dict[str, Any]]:
+        if "semantic_type_required_dimension" in sql:
+            return self._tables.get("required_dimensions", [])
         if "concept_attribute_value" in sql:
             return self._tables["disp_values"]
         if "proposition_assertion" in sql:
@@ -223,10 +225,16 @@ class LoaderPropositionTests(unittest.TestCase):
                     "disposition_value_id": disposition_value_id or uuid.UUID(disp_pending["id"]),
                     "value": None,
                     "grounding_status_value_id": None,
-                    "semantic_type_id": None,
+                    "semantic_type_id": uuid.UUID("e3cf4625-e7fe-4154-9f12-5cb9688efa7b"),
                 }
             ],
         }
+        tables["required_dimensions"] = [
+            {
+                "semantic_type_id": "e3cf4625-e7fe-4154-9f12-5cb9688efa7b",
+                "dimension_id": dim_id,
+            }
+        ]
         return tables, dim_id, dim_val_id
 
     def test_disposition_comes_from_vocabulary_not_default(self):
@@ -291,7 +299,11 @@ class LoaderPropositionTests(unittest.TestCase):
         loader = DatabaseLoader(interp, _make_pool(tables))
         asyncio.get_event_loop().run_until_complete(loader.load_propositions())
         prop = interp.propositions["fc000000-0000-4000-8000-0000000000c1"]
-        # Register the dimension so the gate can look it up.
+        # Register the type-level requirement and dimension so the E8.4
+        # class-level gate can look it up.
+        interp.register_semantic_type_required_dimension(
+            str(prop.semantic_type_id), prop.frame_values[0].dimension_id
+        )
         interp.frame_dimensions[_uid()] = FrameDimension(
             id=list({prop.frame_values[0].dimension_id})[0],
             name="migration_phase",
