@@ -281,5 +281,59 @@ class AdvanceRoleCheckpointsTest(unittest.TestCase):
         self.assertIn("RuntimeError", r["reason"])
 
 
+class RoleCanonicalizationTest(unittest.TestCase):
+    """Incident 2026-09-22: --role DBA failed the coordination_checkpoints
+    role FK (nebula.roles is lowercase) and the advance degraded silently.
+    All coordination surfaces must canonicalize role to lowercase."""
+
+    def test_canonical_role(self):
+        self.assertEqual(bb.canonical_role("DBA"), "dba")
+        self.assertEqual(bb.canonical_role(" Lead-Engineer "), "lead-engineer")
+        self.assertEqual(bb.canonical_role(""), "")
+        self.assertEqual(bb.canonical_role(None), "")
+
+    def test_advance_upsert_receives_lowercase_role(self):
+        conn = mock.MagicMock()
+        cu = conn.cursor.return_value.__enter__.return_value
+        cu.rowcount = 1
+        bb.advance_checkpoints(conn, "DBA", model="freebuff/codebuff")
+        for call in cu.execute.call_args_list:
+            self.assertEqual(call[0][1][0], "dba")  # params[0] is the role
+
+    def test_standalone_advance_canonicalizes(self):
+        conn = mock.MagicMock()
+        cu = conn.cursor.return_value.__enter__.return_value
+        cu.rowcount = 1
+        r = bb.advance_role_checkpoints(
+            "DBA", "postgresql://x", model="freebuff/codebuff",
+            conn_factory=lambda dsn: conn)
+        self.assertEqual(r, {"status": "ok", "advanced": 2})
+        for call in cu.execute.call_args_list:
+            self.assertEqual(call[0][1][0], "dba")
+
+    def test_fetch_rows_and_cache_key_canonicalized(self):
+        conn = mock.MagicMock()
+        cu = conn.cursor.return_value.__enter__.return_value
+        cu.fetchone.return_value = (True,)   # view_present
+        cu.description = [("item_kind",), ("bucket",), ("title",),
+                          ("status_rating",), ("created",), ("reason",)]
+        cu.fetchall.return_value = []
+        cache = mock.MagicMock()
+        cache.get.return_value = None
+        r = bb.render_role_digest("DBA", "postgresql://x", cache=cache,
+                                  conn_factory=lambda dsn: conn)
+        self.assertEqual(r["status"], "ok")
+        # the view read must use the canonical lowercase role
+        fetch_calls = [c for c in cu.execute.call_args_list
+                       if "v_coordination_blackboard" in c[0][0]]
+        self.assertEqual(len(fetch_calls), 1)
+        self.assertEqual(fetch_calls[0][0][1], ("dba",))
+        # the cache key must not fragment across case variants
+        setex_keys = [c[0][0] for c in cache.setex.call_args_list]
+        self.assertIn(bb.CACHE_PREFIX + "dba", setex_keys)
+        self.assertNotIn(bb.CACHE_PREFIX + "DBA", setex_keys)
+        self.assertEqual(r["digest"]["role"], "dba")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

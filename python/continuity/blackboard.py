@@ -132,6 +132,7 @@ def view_present(conn) -> bool:
 
 
 def fetch_role_rows(conn, role: str) -> list[dict]:
+    role = canonical_role(role)
     with conn.cursor() as cur:
         cur.execute(
             "SELECT item_kind, bucket, title, status_rating, created, reason "
@@ -142,11 +143,28 @@ def fetch_role_rows(conn, role: str) -> list[dict]:
         return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
+def canonical_role(role: str) -> str:
+    """Canonical form for coordination surfaces: lowercase, trimmed.
+
+    nebula.roles stores lowercase names (dba, lead-engineer,
+    design-synthesist) and nebula.coordination_checkpoints.role carries a
+    FK resolved against them — but callers pass harness-case roles (DBA).
+    Before this guard, the mixed-case upsert silently degraded session
+    bookkeeping (FK violation swallowed as 'degraded'). Canonicalizing
+    here covers every entry point: advance_checkpoints (upsert),
+    fetch_role_rows (view read), and the digest cache key.
+    """
+    return (role or "").strip().lower()
+
+
 def advance_checkpoints(conn, role: str, model: str | None = None,
                         kinds: tuple[str, ...] = ("inbox", "todo")) -> int:
     """The deliberate agent act: mark every kind reviewed up to now().
     Returns the number of checkpoint rows advanced. Upsert so roles created
-    after V192's born-seed still get a row."""
+    after V192's born-seed still get a row. Role is canonicalized
+    (lowercase) before the FK-resolved upsert — mixed-case input used to
+    fail the role FK and silently degrade the advance."""
+    role = canonical_role(role)
     n = 0
     with conn.cursor() as cur:
         for kind in kinds:
@@ -279,6 +297,7 @@ def render_role_digest(role: str, dsn: str, cache: RedisCache | None = None,
         def conn_factory(dsn_, _psycopg2=psycopg2):
             return _psycopg2.connect(dsn_, connect_timeout=5)
 
+    role = canonical_role(role)
     try:
         conn = conn_factory(dsn)
     except Exception as e:  # noqa: BLE001
