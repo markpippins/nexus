@@ -1,0 +1,466 @@
+[
+  {
+    "id": "noul_001",
+    "question": "Is the entity's readiness_score greater than 0.85?",
+    "expected_outcome_type": "noul",
+    "evidence_scope": {
+      "required_state_fields": ["readiness_score"],
+      "frame_dimensions": ["readiness"],
+      "evidence_completeness_threshold": 1.0
+    },
+    "reference_answer": {
+      "probability": 1.0,
+      "rationale": "readiness_score=0.92 > 0.85"
+    },
+    "split": "train",
+    "metadata": {
+      "difficulty": "easy",
+      "category": "threshold_comparison"
+    },
+    "choice_labels": null,
+    "score_rubric": null
+  },
+  {
+    "id": "noul_002",
+    "question": "Does the proposition 'entity has valid_license' hold given current state?",
+    "expected_outcome_type": "noul",
+    "evidence_scope": {
+      "required_state_fields": ["valid_license", "license_expiry"],
+      "frame_dimensions": ["compliance"],
+      "evidence_completeness_threshold": 1.0
+    },
+    "reference_answer": {
+      "probability": 0.0,
+      "rationale": "license_expiry=2024-01-15 < now"
+    },
+    "split": "train",
+    "metadata": {
+      "difficulty": "easy",
+      "category": "temporal_validity"
+    },
+    "choice_labels": null,
+    "score_rubric": null
+  },
+  {
+    "id": "noul_003",
+    "question": "Is the drift_type classified as 'transcript_drift' rather than 'concept_drift'?",
+    "expected_outcome_type": "noul",
+    "evidence_scope": {
+      "required_state_fields": ["drift_type", "drift_evidence"],
+      "frame_dimensions": ["drift_classification"],
+      "evidence_completeness_threshold": 0.9
+    },
+    "reference_answer": {
+      "probability": 0.85,
+      "rationale": "drift_evidence shows transcript pattern match 0.87"
+    },
+    "split": "eval",
+    "metadata": {
+      "difficulty": "medium",
+      "category": "drift_classification"
+    },
+    "choice_labels": null,
+    "score_rubric": null
+  },
+  {
+    "id": "noul_004",
+    "question": "Will the transition_guard for 'activate' pass given current entity state?",
+    "expected_outcome_type": "noul",
+    "evidence_scope": {
+      "required_state_fields": ["guard_conditions", "entity_attributes"],
+      "frame_dimensions": ["transition_validity"],
+      "evidence_completeness_threshold": 1.0
+    },
+    "reference_answer": {
+      "probability": 0.95,
+      "rationale": "all guard_conditions satisfied per rule R-204"
+    },
+    "split": "eval",
+    "metadata": {
+      "difficulty": "medium",
+      "category": "guard_evaluation"
+    },
+    "choice_labels": null,
+    "score_rubric": null
+  },
+  {
+    "id": "noul_005",
+    "question": "Is the representation 'customer_view' consistent with the canonical representation?",
+    "expected_outcome_type": "noul",
+    "evidence_scope": {
+      "required_state_fields": ["representation_comparison", "identity_match"],
+      "frame_dimensions": ["representation_consistency"],
+      "evidence_completeness_threshold": 0.85
+    },
+    "reference_answer": {
+      "probability": 0.72,
+      "rationale": "identity_match=0.72, below 0.85 threshold"
+    },
+    "split": "eval",
+    "metadata": {
+      "difficulty": "hard",
+      "category": "representation_consistency"
+    },
+    "choice_labels": null,
+    "score_rubric": null
+  },
+  {
+    "id": "noul_006",
+    "question": "Does the entity satisfy invariant 'unique_canonical_asset'?",
+    "expected_outcome_type": "noul",
+    "evidence_scope": {
+      "required_state_fields": ["asset_id", "canonical_asset_id", "duplicates"],
+      "frame_dimensions": ["asset_uniqueness"],
+      "evidence_completeness_threshold": 1.0
+    },
+    "reference_answer": {
+      "probability": 0.99,
+      "rationale": "no duplicates found in shrapnel facts"
+    },
+    "split": "train",
+    "metadata": {
+      "difficulty": "easy",
+      "category": "invariant_check"
+    },
+    "choice_labels": null,
+    "score_rubric": null
+  },
+  {
+    "id": "noul_007",
+    "question": "Is the evidence_completeness for proposition P-1042 above 0.9?",
+    "expected_outcome_type": "noul",
+    "evidence_scope": {
+      "required_state_fields": ["evidence_items", "required_evidence"],
+      "frame_dimensions": ["evidence_completeness"],
+      "evidence_completeness_threshold": 0.9
+    },
+    "reference_answer": {
+      "probability": 0.65,
+      "rationale": "7 of 12 required evidence items present"
+    },
+    "split": "eval",
+    "metadata": {
+      "difficulty": "medium",
+      "category": "evidence_completeness"
+    },
+    "choice_labels": null,
+    "score_rubric": null
+  },
+  {
+    "id": "noul_008",
+    "question": "Will the concept 'ServiceRequest' transition to 'Completed' within 24 hours?",
+    "expected_outcome_type": "noul",
+    "evidence_scope": {
+      "required_state_fields": ["current_state", "transition_history", "sla_deadline"],
+      "frame_dimensions": ["temporal_projection"],
+      "evidence_completeness_threshold": 0.8
+    },
+    "reference_answer": {
+      "probability": 0.78,
+      "rationale": "historical avg 18h, current 6h elapsed, no blockers"
+    },
+    "split": "eval",
+    "metadata": {
+      "difficulty": "hard",
+      "category": "temporal_projection"
+    },
+    "choice_labels": null,
+    "score_rubric": null
+  },
+  {
+    "id": "choice_001",
+    "question": "Classify the drift_type for the observed entity divergence.",
+    "expected_outcome_type": "choice",
+    "evidence_scope": {
+      "required_state_fields": ["drift_magnitude", "attribute_diffs", "temporal_pattern"],
+      "frame_dimensions": ["drift_classification"],
+      "evidence_completeness_threshold": 0.85
+    },
+    "reference_answer": {
+      "label_probabilities": {
+        "concept_drift": 0.12,
+        "transcript_drift": 0.78,
+        "schema_drift": 0.05,
+        "noise": 0.05
+      },
+      "top_label": "transcript_drift",
+      "flag_for_review": false
+    },
+    "split": "train",
+    "metadata": {
+      "difficulty": "easy",
+      "category": "drift_classification",
+      "reference_source": "cpf_compute rules"
+    },
+    "choice_labels": ["concept_drift", "transcript_drift", "schema_drift", "noise"],
+    "score_rubric": null
+  },
+  {
+    "id": "choice_002",
+    "question": "Classify the representation discrepancy severity.",
+    "expected_outcome_type": "choice",
+    "evidence_scope": {
+      "required_state_fields": ["identity_delta", "attribute_deltas", "relationship_deltas"],
+      "frame_dimensions": ["representation_quality"],
+      "evidence_completeness_threshold": 0.9
+    },
+    "reference_answer": {
+      "label_probabilities": {
+        "critical": 0.05,
+        "major": 0.25,
+        "minor": 0.60,
+        "cosmetic": 0.10
+      },
+      "top_label": "minor",
+      "flag_for_review": true
+    },
+    "split": "train",
+    "metadata": {
+      "difficulty": "medium",
+      "category": "representation_quality"
+    },
+    "choice_labels": ["critical", "major", "minor", "cosmetic"],
+    "score_rubric": null
+  },
+  {
+    "id": "choice_003",
+    "question": "Determine the readiness tier for the current evaluation frame.",
+    "expected_outcome_type": "choice",
+    "evidence_scope": {
+      "required_state_fields": ["readiness_score", "blocking_issues", "evidence_coverage"],
+      "frame_dimensions": ["readiness"],
+      "evidence_completeness_threshold": 0.8
+    },
+    "reference_answer": {
+      "label_probabilities": {
+        "ready": 0.15,
+        "nearly_ready": 0.55,
+        "needs_work": 0.25,
+        "blocked": 0.05
+      },
+      "top_label": "nearly_ready",
+      "flag_for_review": false
+    },
+    "split": "eval",
+    "metadata": {
+      "difficulty": "medium",
+      "category": "readiness_tiering"
+    },
+    "choice_labels": ["ready", "nearly_ready", "needs_work", "blocked"],
+    "score_rubric": null
+  },
+  {
+    "id": "choice_004",
+    "question": "Classify the proposition grounding_status.",
+    "expected_outcome_type": "choice",
+    "evidence_scope": {
+      "required_state_fields": ["grounding_evidence", "source_reliability", "corroboration_count"],
+      "frame_dimensions": ["grounding_quality"],
+      "evidence_completeness_threshold": 0.85
+    },
+    "reference_answer": {
+      "label_probabilities": {
+        "grounded": 0.70,
+        "partially_grounded": 0.20,
+        "ungrounded": 0.08,
+        "conflicted": 0.02
+      },
+      "top_label": "grounded",
+      "flag_for_review": false
+    },
+    "split": "eval",
+    "metadata": {
+      "difficulty": "hard",
+      "category": "grounding_classification"
+    },
+    "choice_labels": ["grounded", "partially_grounded", "ungrounded", "conflicted"],
+    "score_rubric": null
+  },
+  {
+    "id": "choice_005",
+    "question": "Determine the priority tier for candidate triage.",
+    "expected_outcome_type": "choice",
+    "evidence_scope": {
+      "required_state_fields": ["candidate_value", "urgency", "resource_cost", "dependency_risk"],
+      "frame_dimensions": ["triage_priority"],
+      "evidence_completeness_threshold": 0.8
+    },
+    "reference_answer": {
+      "label_probabilities": {
+        "P0_critical": 0.10,
+        "P1_high": 0.30,
+        "P2_medium": 0.45,
+        "P3_low": 0.15
+      },
+      "top_label": "P2_medium",
+      "flag_for_review": false
+    },
+    "split": "train",
+    "metadata": {
+      "difficulty": "medium",
+      "category": "triage_priority",
+      "reference_source": "PEB prioritization rules"
+    },
+    "choice_labels": ["P0_critical", "P1_high", "P2_medium", "P3_low"],
+    "score_rubric": null
+  },
+  {
+    "id": "choice_006",
+    "question": "Classify the transition outcome prediction.",
+    "expected_outcome_type": "choice",
+    "evidence_scope": {
+      "required_state_fields": ["transition_id", "pre_state", "guard_results", "historical_success_rate"],
+      "frame_dimensions": ["transition_prediction"],
+      "evidence_completeness_threshold": 0.9
+    },
+    "reference_answer": {
+      "label_probabilities": {
+        "committed": 0.75,
+        "refused": 0.15,
+        "rejected": 0.08,
+        "failed": 0.02
+      },
+      "top_label": "committed",
+      "flag_for_review": false
+    },
+    "split": "eval",
+    "metadata": {
+      "difficulty": "hard",
+      "category": "transition_prediction"
+    },
+    "choice_labels": ["committed", "refused", "rejected", "failed"],
+    "score_rubric": null
+  },
+  {
+    "id": "score_001",
+    "question": "Evaluate the overall readiness of the evaluation frame against the standard rubric.",
+    "expected_outcome_type": "score",
+    "evidence_scope": {
+      "required_state_fields": ["readiness_dimensions", "blocking_criteria", "evidence_matrix"],
+      "frame_dimensions": ["readiness", "completeness", "validity"],
+      "evidence_completeness_threshold": 0.85
+    },
+    "reference_answer": {
+      "expected_value": 0.82,
+      "legend": {
+        "excellent": ">0.90",
+        "good": "0.75-0.90",
+        "acceptable": "0.60-0.75",
+        "needs_improvement": "<0.60"
+      }
+    },
+    "split": "train",
+    "metadata": {
+      "difficulty": "medium",
+      "category": "readiness_rubric",
+      "reference_source": "standard readiness thresholds 0.85/0.75/0.70"
+    },
+    "choice_labels": null,
+    "score_rubric": "\nStandard Readiness Rubric:\n- Evidence completeness (weight 0.30): % of required evidence present\n- Validity score (weight 0.25): grounding_status distribution\n- Blocking criteria (weight 0.20): count of unresolved blockers\n- Consistency score (weight 0.15): representation consistency\n- Temporal currency (weight 0.10): evidence freshness\n"
+  },
+  {
+    "id": "score_002",
+    "question": "Score the representation quality against the canonical representation.",
+    "expected_outcome_type": "score",
+    "evidence_scope": {
+      "required_state_fields": ["identity_match", "attribute_fidelity", "relationship_preservation", "completeness"],
+      "frame_dimensions": ["representation_quality"],
+      "evidence_completeness_threshold": 0.9
+    },
+    "reference_answer": {
+      "expected_value": 0.76,
+      "legend": {
+        "faithful": ">0.85",
+        "mostly_faithful": "0.70-0.85",
+        "divergent": "0.50-0.70",
+        "unreliable": "<0.50"
+      }
+    },
+    "split": "eval",
+    "metadata": {
+      "difficulty": "hard",
+      "category": "representation_scoring"
+    },
+    "choice_labels": null,
+    "score_rubric": "\nRepresentation Quality Rubric:\n- Identity match (weight 0.40): canonical_asset_id alignment\n- Attribute fidelity (weight 0.30): attribute value preservation\n- Relationship preservation (weight 0.20): relationship integrity\n- Completeness (weight 0.10): no missing required attributes\n"
+  },
+  {
+    "id": "score_003",
+    "question": "Score the evidence quality for the proposition bundle.",
+    "expected_outcome_type": "score",
+    "evidence_scope": {
+      "required_state_fields": ["evidence_items", "source_diversity", "recency", "corroboration"],
+      "frame_dimensions": ["evidence_quality"],
+      "evidence_completeness_threshold": 0.8
+    },
+    "reference_answer": {
+      "expected_value": 0.68,
+      "legend": {
+        "strong": ">0.80",
+        "adequate": "0.60-0.80",
+        "weak": "0.40-0.60",
+        "insufficient": "<0.40"
+      }
+    },
+    "split": "eval",
+    "metadata": {
+      "difficulty": "hard",
+      "category": "evidence_scoring"
+    },
+    "choice_labels": null,
+    "score_rubric": "\nEvidence Quality Rubric:\n- Source diversity (weight 0.25): number of independent sources\n- Recency (weight 0.25): max age of evidence items\n- Corroboration (weight 0.30): cross-source agreement\n- Completeness (weight 0.20): coverage of required claim types\n"
+  },
+  {
+    "id": "score_004",
+    "question": "Evaluate the candidate package against the concept package readiness criteria.",
+    "expected_outcome_type": "score",
+    "evidence_scope": {
+      "required_state_fields": ["concept_coverage", "attribute_completeness", "relationship_integrity", "evidence_bundle"],
+      "frame_dimensions": ["concept_package_readiness"],
+      "evidence_completeness_threshold": 0.85
+    },
+    "reference_answer": {
+      "expected_value": 0.73,
+      "legend": {
+        "production_ready": ">0.85",
+        "staging_ready": "0.70-0.85",
+        "development": "0.50-0.70",
+        "incomplete": "<0.50"
+      }
+    },
+    "split": "train",
+    "metadata": {
+      "difficulty": "hard",
+      "category": "concept_package",
+      "reference_source": "Aspect A5 deliverable"
+    },
+    "choice_labels": null,
+    "score_rubric": "\nConcept Package Readiness Rubric (Aspect A5):\n- Concept coverage (weight 0.25): % of required concepts defined\n- Attribute completeness (weight 0.25): % of state attributes populated\n- Relationship integrity (weight 0.20): referential integrity of relationships\n- Evidence bundle (weight 0.30): grounding evidence per concept\n"
+  },
+  {
+    "id": "score_005",
+    "question": "Score the governance compliance of the current frame.",
+    "expected_outcome_type": "score",
+    "evidence_scope": {
+      "required_state_fields": ["policy_violations", "guard_compliance", "audit_trail_completeness", "authorization_status"],
+      "frame_dimensions": ["governance_compliance"],
+      "evidence_completeness_threshold": 0.9
+    },
+    "reference_answer": {
+      "expected_value": 0.91,
+      "legend": {
+        "fully_compliant": ">0.95",
+        "compliant": "0.85-0.95",
+        "minor_issues": "0.70-0.85",
+        "non_compliant": "<0.70"
+      }
+    },
+    "split": "train",
+    "metadata": {
+      "difficulty": "medium",
+      "category": "governance_compliance"
+    },
+    "choice_labels": null,
+    "score_rubric": "\nGovernance Compliance Rubric:\n- Policy violations (weight 0.30): count and severity\n- Guard compliance (weight 0.25): % of transitions passing guards\n- Audit trail (weight 0.20): completeness of decision trail\n- Authorization (weight 0.25): proper role/permission alignment\n"
+  }
+]
