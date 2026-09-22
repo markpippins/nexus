@@ -3191,7 +3191,7 @@ BEGIN
         '- To-do lifecycle (doctrine as of 2026-08-25): 0 Posted → 8 Approved → Requirement spawned (engineer converts) → Spec/Plan/WR refs linked in thread comments → 4 Accepted when the work is ratified. 8 is also used while the work is in flight; the final state is 4 Accepted or 5 Rejected.\n'
         '- Interim Scheme note: this is temporary doctrine for the miniature workflow pending Wind doctrine; commit messages and records reference this interim nature.\n'
         '\n'
-        'Rule of thumb: every substantive thread reply SHOULD advance the parent status in the same call.\n'
+        'Rule of thumb: every substantive thread reply SHOULD advance the parent status in the same call. For To Do threads this advance is a MUST — see card \`to-do-lifecycle-policy\` (the To Do lifecycle extends this vocabulary; pointer, not a fork).\n'
         '',
         ARRAY['reference', 'assembly', 'thread-status', 'messaging', 'ratings'],
         '{}',
@@ -3825,6 +3825,31 @@ BEGIN
         '**Guard.** Cast the anchor''s output explicitly AND re-cast inside the recursive term: \`SELECT path::VARCHAR(36) ... UNION ALL SELECT (parent_path || ''/'' || id)::VARCHAR(36) ...\`. The cast on the recursive term is the one people forget; the anchor cast alone does not fix it.\n'
         '\n'
         '- **Incident:** losm-store \`015\` (D3) — fix pattern in closed PR #369''s standby patch; disposition per the D1 incident ref.\n'
+        '\n'
+        '\n'
+        '## 23. The E2E skeleton must match the live surface''s KIND — a TABLE skeleton hides a VIEW-shaped live world\n'
+        '\n'
+        '**Symptom.** The migration applied cleanly in CI-style E2E and then **refused to exist on live**: \`V192\`''s \`FOREIGN KEY (role) REFERENCES nebula.roles(name)\` vanished at apply — no row in \`pg_constraint\` for the table the column lives on — while the throwaway-DB suite had verified the FK working, including refusals.\n'
+        '\n'
+        '**Mechanism.** Live \`nebula.roles\` is a **VIEW** over \`nebula.roles_history\` (the V175 bitemporal shape). PostgreSQL cannot create a foreign key referencing a view — the DDL is simply not valid against the live world. The E2E skeleton had rebuilt \`nebula.roles\` as a **base TABLE** (the pre-V175 shape), so the FK applied fine there and the suite proved logic against a world that no longer exists. Suite-green against the wrong surface kind; the divergence surfaced only at apply time. (Second strike of the same lesson family as pitfall 16 — that one was column drift; this one is **relation-kind drift**.)\n'
+        '\n'
+        '**Fix.** Where the referenced surface''s kind is uncertain or has changed shape across migrations, don''t declare the FK — enforce with a **procedural integrity trigger** that resolves the surface at write time (\`to_regclass\` + SELECT on whatever \`nebula.roles\` resolves to, table or view) and raises the same SQLSTATE the FK would (\`23503\` foreign_key_violation). Client behavior is then **identical on both shapes**, and the trigger survives future shape changes a declared FK cannot. Pre-flight for migration authors: check \`relkind\` (\`r\` = table, \`v\` = view) for every surface your DDL references, not just column lists.\n'
+        '\n'
+        '**Rule.** A skeleton reproduces the live world''s *kinds* (table vs view vs matview), not just its columns. When live has migrated a table to a view (or back), the skeleton must migrate with it — and the pre-flight checks relkind before trusting any constraint DDL.\n'
+        '\n'
+        '- **Incident:** V192 apply on live (2026-09-21): declarative FK refused against the roles VIEW; fixed via trigger-enforced integrity with 23503 parity (PR #403 lineage, R2 527b0d9b).\n'
+        '\n'
+        '## 24. A fresh-connection-per-query exec factory is an N×connection-setup seam — one shared connection with reconnect\n'
+        '\n'
+        '**Symptom.** A batch fold that processes N events (here: 8,283 \`vision.calendar_events\` through the consolidation intake) takes minutes under fleet load but the same code paths are fast in isolation. No query is slow; the *pattern* is.\n'
+        '\n'
+        '**Mechanism.** The default exec factory opened a **new PostgreSQL connection per query**: ~20 ms of TCP+auth per event, plus multi-second stalls when the server is under fleet load — N× (setup + teardown) dwarfs every actual query. The pattern hides because each unit test sees one query, and the seam (a factory closure) looks like an implementation detail.\n'
+        '\n'
+        '**Fix.** Open **one shared connection** per batch run in autocommit mode, with a **crash-safe reconnect wrapper** (on \`psycopg2.OperationalError\`/\`InterfaceError\`: close, reopen, retry once; a second failure fails the run honestly). Result on the live fold: **8,283 events in 11.4 s** versus a 120 s wrapper timeout blowout. Autocommit matters here: batch jobs that checkpoint per event must not hold a transaction open across the whole run (lock accumulation, and one bad event rolls back everything — see pitfall 11 for the transaction-shape trap in the opposite direction).\n'
+        '\n'
+        '**Rule.** Any \`conn_factory\`-style seam must be measured at the batch''s real N before shipping. One-connection-per-batch with reconnect is the house default for folds/imports/probes; per-query connections are for one-shot CLI calls only.\n'
+        '\n'
+        '- **Incident:** V192 apply package verification — the boot shim''s consolidate fold blew the wrapper timeout until the connection seam was fixed (PR #403 lineage, R2 527b0d9b).\n'
         '',
         ARRAY['sql', 'postgresql', 'pitfalls', 'debugging', 'query', 'jsonb', 'migration'],
         ARRAY['sql error', 'psql error', 'operator does not exist', 'invalid input syntax', 'jsonb', 'query fails', 'update 0', 'on conflict', 'trigger syntax', 'sql pitfall'],
@@ -3834,6 +3859,103 @@ BEGIN
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
         v_roles := ARRAY['analyst', 'architect', 'builder', 'critic', 'DBA', 'devops', 'engineer', 'engineer-ii', 'planner', 'reviewer', 'topologist'];
+        FOREACH v_role IN ARRAY v_roles LOOP
+            INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
+            VALUES (v_memory_id, v_role, NOW(), NULL);
+        END LOOP;
+    END IF;
+    -- ──────────────────────────────────────────────────────────
+    -- 56. To Do Forum Lifecycle Policy
+    -- ──────────────────────────────────────────────────────────
+    v_memory_id := NULL;
+    INSERT INTO ${SQL}.memory (slug, title, summary, body_md, tags, triggers, mcp_tools)
+    VALUES (
+        'to-do-lifecycle-policy',
+        'To Do Forum Lifecycle Policy',
+        'Computable lifecycle for To Do threads: the 0-8 vocabulary as transition-owned states, the 72h acknowledgment SLA (addressee session-origin), computed-on-read staleness, bidirectional supersession lineage, MUST-advance scoped to To Do threads, and coordination-checkpoint bucketing. Extends the thread-status-ratings card (pointer, not a fork).',
+        '## Purpose\n'
+        '\n'
+        'Computable lifecycle states for To Do forum threads — the state machine the coordination blackboard and the boot-shim R16 scan read. Doctrine thread: discussions \`ac2d1382\` (policy v0.1; ratified 2026-09-21 by the architect with two hardening conditions; operator dispositions on Q1-Q3 recorded in-thread). This card EXTENDS the \`thread-status-ratings\` vocabulary — it does not fork it.\n'
+        '\n'
+        '## Load when\n'
+        '\n'
+        '- Filing, picking up, completing, or closing a To Do thread.\n'
+        '- Running a lifecycle sweep over To Do threads (any sweeping role).\n'
+        '- Reading or advancing coordination checkpoints for the \`todo\` item kind.\n'
+        '\n'
+        '## Vocabulary (the 0-8 scale, To Do meanings)\n'
+        '\n'
+        '| rating | label | meaning for a To Do |\n'
+        '|---|---|---|\n'
+        '| 0 | Posted | no role has picked it up |\n'
+        '| 1 | Specified | scope pinned (addressee or author) |\n'
+        '| 2 | Planned | picked up — pickup MUST be a visible comment ("taking") or the status advance itself |\n'
+        '| 3 | Implemented | work done, awaiting acceptance |\n'
+        '| 4 | Accepted | \`Completed: ...\` ratified (implementer marks; requester may reopen) |\n'
+        '| 5 | Rejected | false alarm / wont-fix outcome |\n'
+        '| 6 | Reopened | regression or incomplete; needs another pass |\n'
+        '| 7 | Closed | archival wind-down (incl. superseded — see Supersession) |\n'
+        '| 8 | Approved | operator "in flight" mark (interim scheme, unchanged) |\n'
+        '\n'
+        '## Transition ownership (invariants I1/I2)\n'
+        '\n'
+        '- 0 -> 1 -> 2: the addressee (or the author for scoping). Pickup without a visible comment does not count — un-commented pickups are indistinguishable from silence to every observer.\n'
+        '- 2 -> 3: the executing role, via the completion reply.\n'
+        '- 3 -> 4: the implementer marks 4 in the \`Completed:\` reply. The REQUESTING role owns 5 (reject) and 6 (reopen).\n'
+        '- -> 7: the originating role — or any lifecycle sweep that attaches its evidence record id.\n'
+        '- No role closes another role''s binding-domain outcome without a thread (I1). Sweeps close nothing silently: every automated close cites its evidence record.\n'
+        '\n'
+        '## Acknowledgment SLA (ratified Q1)\n'
+        '\n'
+        'A To Do addressed to a role must show pickup (status >= 2, or a comment from the addressee''s role) within **72 hours of the later of**: thread posting or the addressee''s last session start. Past that it is **awaiting-pickup** — surfaced by the blackboard, never silently dropped. Every new session start re-surfaces the item, so the window measures attention opportunity elapsed without pickup; offline roles are not penalized by wall-clock.\n'
+        '\n'
+        '## Auto-stale criteria — computed on read, never stored (ratified Q3)\n'
+        '\n'
+        'All staleness is pure derivation over canonical surfaces (thread, comments, root-post rating, checkpoints). There is no stale flag to write, so staleness cannot drift from reality (blackboard hardening point 1: no new write paths).\n'
+        '\n'
+        '- **STALE-UNACKED**: rating <= 0, no comment by any addressee-role author, age > 14d.\n'
+        '- **STALE-SUPERSEDED**: carries a supersession pointer (see Supersession) — or cites a plan/PR/migration that a merged artifact explicitly superseded.\n'
+        '- **STALE-ORPHANED**: routed to a role that no longer exists in the ratified vocabulary — retarget or close.\n'
+        '- **COMPLETE-UNMARKED** (the V133 failure mode): the thread''s own verify conditions demonstrably pass on live per an attached verification record, but rating < 4 for > 7d — any role may then post the evidence and mark 4, pinging the original addressee. **Verifier duty (hardening 2): the marking role must have actually performed the verification — evidence means a verification record id or PR/commit, per tester-attestation doctrine (R8). Completion via evidence, never assertion.**\n'
+        '- **30d escalation**: STALE-UNACKED past 30d becomes a visible escalation in the operator''s blackboard view — visibility only, never auto-close; deliberate close stays a deliberate agent act with evidence.\n'
+        '\n'
+        '## Supersession — bidirectional lineage, never a silent delete\n'
+        '\n'
+        '1. Comment on the old thread: \`Superseded by <thread-id / PR / record id> — <one-line why>\` with \`statusRating: 7\` (or 4 if the superseding work already fulfilled the intent).\n'
+        '2. The superseding artifact links back: \`supersedes <thread-id>\`.\n'
+        '\n'
+        'Both directions are mandatory — a forward pointer without a back pointer is a half-trail. Sweep-generated closes cite the evidence record that justified them.\n'
+        '\n'
+        '## Status-advance-in-gesture — MUST on To Do threads only (hardening 1)\n'
+        '\n'
+        'Every substantive reply on a To Do thread MUST advance the parent status (the \`statusRating\` param on the comment POST). The thread-status-ratings SHOULD for non-To-Do threads is unchanged — no status-advance noise leaks onto discussions. Reason: the boot-shim R16 scan and the blackboard read the rating; an un-advanced thread is invisible to the attention filter. Un-advanced status is how V133 got lost.\n'
+        '\n'
+        '## Checkpoint wiring (the point of it all)\n'
+        '\n'
+        'Each role''s coordination checkpoints (the blackboard''s only write surface, advanced deliberately per item kind at review time) make "new since last review" exact. The blackboard view folds To Do threads into per-role buckets, all derived:\n'
+        '\n'
+        '- **action needed (you)**: rating 0/1 addressed to you, inside or past the SLA\n'
+        '- **in flight (someone)**: rating 2/3/8\n'
+        '- **verify candidate**: COMPLETE-UNMARKED hits\n'
+        '- **stale (triage)**: the STALE-* set\n'
+        '\n'
+        'Checkpoint advance = "I have seen everything in these buckets up to T." Classification is derived (read); closing and superseding stay deliberate agent acts (write).\n'
+        '\n'
+        '## Anti-patterns\n'
+        '\n'
+        '- Commenting "done" without advancing the status — invisible to the attention filter.\n'
+        '- Closing another role''s To Do without evidence, or closing a binding-domain outcome without a thread (I1/I2).\n'
+        '- Marking 4 from assertion: verification evidence (record id / PR / commit) is required.\n'
+        '- Superseding with a forward pointer only — the back pointer is mandatory.\n'
+        '- Storing staleness anywhere: it is computed on read, or it drifts.',
+        ARRAY['to-do', 'lifecycle', 'thread-status', 'messaging', 'blackboard'],
+        ARRAY['filing or picking up a to-do thread', 'running a to-do lifecycle sweep', 'reading or advancing coordination checkpoints for the todo kind'],
+        '{}'
+    )
+    ON CONFLICT (slug) DO NOTHING
+    RETURNING id INTO v_memory_id;
+    IF v_memory_id IS NOT NULL THEN
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'design-synthesist', 'engineer', 'layout-mechanic', 'lead-engineer', 'operator', 'reviewer'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);

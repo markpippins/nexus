@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from losm_store.models import GovernanceEvent, PlanningTask, ReceiptIngestRecord, WorkStatus
 from losm_store.session import SessionLocal
 from losm_store.ingestor import ExecutionReceiptIngestor
+from losm_store.canonical_bridge import mirror_insert_work_request
 
 
 @pytest.fixture(autouse=True)
@@ -59,14 +60,22 @@ def _make_receipt_payload(wr_id: str, result: str, executor_id: str = "test-exec
 
 
 def _create_task(db: Session, status: WorkStatus) -> PlanningTask:
-    task = PlanningTask(
-        wr_id=str(uuid.uuid4()),
+    # W2a substrate correction: work_requests_losm is a read-only view on
+    # live — seed via the bitemporal mirror primitive (history base), which
+    # the view then exposes on the open slice.
+    wr_id = str(uuid.uuid4())
+    mirror_insert_work_request(
+        db,
+        wr_id=wr_id,
         intent="Test task",
-        status=status,
-        created_at=datetime.utcnow(),
+        status=status.value,
+        constraints={},
+        priority=5,
+        context_data={},
     )
-    db.add(task)
     db.commit()
+    task = db.query(PlanningTask).filter(PlanningTask.wr_id == wr_id).first()
+    assert task is not None, "seeded task must be visible through the view"
     return task
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import uuid
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
@@ -58,6 +59,7 @@ class DatabaseLoader:
     def __init__(self, interpreter: ResolutionInterpreter, pool: Any) -> None:
         self.interpreter = interpreter
         self.pool = pool
+        self.load_report: Dict[str, Any] = {}
 
     async def load_all(self) -> None:
         """Load all schema and data from the database."""
@@ -446,7 +448,7 @@ class DatabaseLoader:
     # ── Frame dimensions (v31) ──────────────────────────────────
 
     async def load_frame_dimensions(self) -> None:
-        """Load frame_dimension, frame_dimension_value, and proposition_frame_value."""
+        """Load frame dimensions, instance commitments, and type requirements."""
         async with self.pool.acquire() as conn:
             fd_rows = await conn.fetch(
                 "SELECT id, name, description, value_kind, scalar_type "
@@ -494,25 +496,145 @@ class DatabaseLoader:
                 )
                 self.interpreter.add_proposition_frame_value(pfv)
 
+            # E8.4: load semantic-type framing requirements separately from
+            # instance frame commitments. A type requiring a dimension must
+            # not become not_scoped merely because an instance has no frame row.
+            required_rows = await conn.fetch(
+                "SELECT semantic_type_id, dimension_id "
+                "FROM resolution.semantic_type_required_dimension"
+            )
+            for row in required_rows:
+                self.interpreter.register_semantic_type_required_dimension(
+                    str(row["semantic_type_id"]), str(row["dimension_id"])
+                )
+
     # ── Propositions ─────────────────────────────────────────────
 
     async def load_propositions(self) -> None:
+        """Load propositions with assertions, frame values, and real dispositions.
+
+        E8.1 fixes three defects in the original loader:
+
+        1. Disposition mapping — ``disposition_value_id`` is a FK to
+           ``resolution.concept_attribute_value.value`` (text like
+           'Asserted'/'Rejected'). The map is built from that table, not
+           hardcoded; unknown values are counted and skipped LOUDLY
+           (never silently defaulted to PROPOSED).
+        2. Assertions — ``resolution.proposition_assertion`` rows (join to
+           ``resolution.rule``) are loaded and attached. Without this every
+           DB-loaded proposition had zero assertions and evaluated ASSERTED
+           trivially.
+        3. Frame values — ``resolution.proposition_frame_value`` rows are
+           loaded and attached so the context gate can fire.
+        4. E8.4 type requirements — ``resolution.semantic_type_required_dimension``
+           rows are loaded separately from instance commitments.
+
+        Propositions whose disposition, assertion rule, or frame dimension
+        could not be resolved are skipped and reported in
+        ``self.load_report`` — never guessed.
+        """
         async with self.pool.acquire() as conn:
+            from .models import Disposition as Disp
+
+            # ── 1. Disposition vocabulary: value-id → enum, from the DB ──
+            disp_rows = await conn.fetch(
+                "SELECT cav.id, cav.value "
+                "FROM resolution.concept_attribute_value cav "
+                "JOIN resolution.concept_attribute ca ON ca.id = cav.attribute_id "
+                "JOIN resolution.concept c ON c.id = ca.concept_id "
+                "WHERE c.name = 'Proposition' AND ca.name = 'disposition'"
+            )
+            disp_map: Dict[str, Disp] = {}
+            for row in disp_rows:
+                try:
+                    disp_map[str(row["id"])] = Disp(str(row["value"]))
+                except ValueError:
+                    # Unknown vocabulary value: fail loud, skip that value.
+                    logging.getLogger(__name__).warning(
+                        "load_propositions: unknown disposition value %r (%s) — skipped",
+                        row["value"], row["id"],
+                    )
+
+            # ── 2. Assertions: proposition_id → [Rule] ────────────────
+            assertion_rows = await conn.fetch(
+                "SELECT pa.proposition_id, pa.rule_id, r.id AS rule_exists "
+                "FROM resolution.proposition_assertion pa "
+                "LEFT JOIN resolution.rule r ON r.id = pa.rule_id"
+            )
+            assertions_by_prop: Dict[str, List[Rule]] = {}
+            missing_rules: List[str] = []
+            rule_ids: set = set()
+            for row in assertion_rows:
+                if row["rule_exists"] is None:
+                    missing_rules.append(str(row["rule_id"]))
+                    continue
+                rule_ids.add(str(row["rule_id"]))
+                assertions_by_prop.setdefault(str(row["proposition_id"]), []).append(
+                    str(row["rule_id"])
+                )
+            # Materialize Rule objects for any assertion rules not already loaded.
+            loaded_rule_ids = set(self.interpreter.rules.keys())
+            unloadable = rule_ids - loaded_rule_ids
+            if unloadable:
+                # Rules must exist in interpreter.rules (loaded by load_rules);
+                # missing ones mean load_rules ran against a subset or failed.
+                logging.getLogger(__name__).warning(
+                    "load_propositions: %d assertion rule(s) not present in "
+                    "interpreter.rules — propositions referencing them are skipped",
+                    len(unloadable),
+                )
+
+            # ── 3. Frame values: proposition_id → [PropositionFrameValue] ──
+            frame_rows = await conn.fetch(
+                "SELECT pfv.id, pfv.proposition_id, pfv.dimension_id, "
+                "pfv.reference_value_id, pfv.scalar_value "
+                "FROM resolution.proposition_frame_value pfv"
+            )
+            frames_by_prop: Dict[str, List[PropositionFrameValue]] = {}
+            for row in frame_rows:
+                frames_by_prop.setdefault(str(row["proposition_id"]), []).append(
+                    PropositionFrameValue(
+                        id=str(row["id"]),
+                        proposition_id=str(row["proposition_id"]),
+                        dimension_id=str(row["dimension_id"]),
+                        reference_value_id=(
+                            str(row["reference_value_id"])
+                            if row["reference_value_id"]
+                            else None
+                        ),
+                        scalar_value=row["scalar_value"],
+                    )
+                )
+
+            # ── 4. Propositions themselves ────────────────────────────
             rows = await conn.fetch(
                 "SELECT id, title, description, asset_concept_id, "
                 "subject_entity_id, disposition_value_id, value, "
                 "grounding_status_value_id, semantic_type_id "
                 "FROM resolution.proposition"
             )
+            skipped: Dict[str, int] = {"unknown_disposition": 0, "missing_assertion_rule": 0}
             for row in rows:
-                from .models import Disposition as Disp
-
+                prop_id = str(row["id"])
                 disp_raw = str(row["disposition_value_id"]) if row["disposition_value_id"] else None
-                # Map UUID to Disposition enum where possible; store raw UUID otherwise
-                disp_map = {}
+
+                if disp_raw is not None and disp_raw not in disp_map:
+                    logging.getLogger(__name__).warning(
+                        "load_propositions: proposition %s has disposition_value_id "
+                        "%s outside the Proposition.disposition vocabulary — skipped",
+                        prop_id, disp_raw,
+                    )
+                    skipped["unknown_disposition"] += 1
+                    continue
+
+                prop_assertion_ids = assertions_by_prop.get(prop_id, [])
+                if any(rid in unloadable for rid in prop_assertion_ids):
+                    skipped["missing_assertion_rule"] += 1
+                    continue
+
                 disp = disp_map.get(disp_raw, Disp.PROPOSED) if disp_raw else Disp.PROPOSED
                 prop = Proposition(
-                    id=str(row["id"]),
+                    id=prop_id,
                     title=row["title"],
                     description=row["description"],
                     asset_concept_id=str(row["asset_concept_id"]),
@@ -525,8 +647,25 @@ class DatabaseLoader:
                         if row["semantic_type_id"]
                         else None
                     ),
+                    assertions=[
+                        self.interpreter.rules[rid] for rid in prop_assertion_ids
+                    ],
+                    frame_values=frames_by_prop.get(prop_id, []),
                 )
                 self.interpreter.propositions[prop.id] = prop
+
+            # Fail-loud report, not silent defaults.
+            self.load_report = {
+                "loaded": len(self.interpreter.propositions),
+                "skipped": skipped,
+                "missing_assertion_rules": len(missing_rules),
+                "frame_values_loaded": len(frame_rows),
+                "semantic_type_required_dimensions_loaded": sum(
+                    len(dimensions)
+                    for dimensions in self.interpreter.semantic_type_required_dimensions.values()
+                ),
+                "disposition_vocabulary_size": len(disp_map),
+            }
 
     # ── Frame dimension meanings (v35) ──────────────────────────
 

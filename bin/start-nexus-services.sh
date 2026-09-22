@@ -55,7 +55,6 @@ ALL_SERVICES=(
     "cascade-admission-subscriber.service" # NATS → WR_VALIDATED + execution.requests mirror (ADR-006)
 
     # API servers
-    "vision-srv-py.service"    # port 8003 — Vision Python
     "losm-host.service"        # port 8006 — LOSM Host (FastAPI)
     "image-server.service"     # Image hosting
 
@@ -143,7 +142,6 @@ SERVICE_PORTS=(
     ["role-memory-srv.service"]="3500"
     # wrp-bridge-daemon — no HTTP health endpoint
     # cascade-admission-subscriber — no HTTP health endpoint
-    ["vision-srv-py.service"]="8003"
     ["losm-host.service"]="8006"
     # image-server — no HTTP health endpoint
     ["address-tts.service"]="8600"

@@ -111,30 +111,58 @@ ssh -o BatchMode=yes "$BAR_HOST" "cd $REMOTE_DIR && sha256sum -c manifest__${TS}
 log "remote checksum verification OK"
 
 # GFS retention on vanadium (same policy as the PG tier)
-ssh -o BatchMode=yes "$BAR_HOST" bash -s <<REMOTE_EOF
+# QUOTED heredoc: nothing expands locally; parameters travel as argv:
+# $1 REMOTE_DIR, $2 RETAIN_DAILY, $3 RETAIN_WEEKLY, $4 RETAIN_MONTHLY,
+# $5 MAX_AGE_DAYS, $6+ glob patterns. Date math decodes YYYYMMDD via
+# PG-safe `date -d "<y>-01-01 +N months +M days"`; fail-closed on garbage.
+# (The previous unquoted heredoc mangled quoting and its nested
+# $(( $(date ...) )) greedy-closed, so remote pruning aborted on the
+# first file every run — a silent no-op.)
+ssh -o BatchMode=yes "$BAR_HOST" bash -s -- "$REMOTE_DIR" "$RETAIN_DAILY" \
+  "$RETAIN_WEEKLY" "$RETAIN_MONTHLY" "$MAX_AGE_DAYS" \
+  'jenkins_home__*.tgz' 'sonar-data__*.tgz' 'sonar-ext__*.tgz' 'sonar-db__*.dump' 'manifest__*.txt' <<'REMOTE_EOF'
 set -u
-cd "$REMOTE_DIR" || exit 0
+REMOTE_DIR="$1"; RETAIN_DAILY="$2"; RETAIN_WEEKLY="$3"; RETAIN_MONTHLY="$4"; MAX_AGE_DAYS="$5"
+shift 5
+cd "$REMOTE_DIR" || { echo "retention: cannot cd $REMOTE_DIR" >&2; exit 3; }
 deleted=0
-prune() {
-  local n=0 weeks_left=$RETAIN_WEEKLY months_left=$RETAIN_MONTHLY
-  local -A wk mo
-  for f in \$(ls -1 \$1 2>/dev/null | sort -r); do
-    n=\$((n+1))
-    local stamp="\${f#*__}"; stamp="\${stamp%.*}"; local d="\${stamp:0:8}"
-    local age=$(( (\$(date +%s) - \$(date -d "\${d:0:4}-\${d:4:2}-\${d:6:2}" +%s)) / 86400 ))
-    [ "\$age" -gt $MAX_AGE_DAYS ] && { rm -f "\$f"; deleted=\$((deleted+1)); continue; }
-    [ "\$n" -le $RETAIN_DAILY ] && continue
-    local dow=\$(date -d "\${d:0:4}-\${d:4:2}-\${d:6:2}" +%u); local m=\${d:0:6}
-    if [ "\${d:6:2}" = "01" ]; then
-      [ -z "\${mo[\$m]:-}" ] && [ $RETAIN_MONTHLY -gt 0 ] && { mo[\$m]=1; months_left=\$((months_left-1)); continue; }
-    elif [ "\$dow" = "7" ]; then
-      [ -z "\${wk[\$m]:-}" ] && [ $RETAIN_WEEKLY -gt 0 ] && { wk[\$m]=1; weeks_left=\$((weeks_left-1)); continue; }
-    fi
-    rm -f "\$f"; deleted=\$((deleted+1))
-  done
+
+pgsql2epoch() {  # YYYYMMDD -> UTC epoch seconds; nonzero on undecodable stamp
+  case "$1" in
+    [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;;
+    *) return 1 ;;
+  esac
+  date -u -d "${1:0:4}-01-01 +$((10#${1:4:2}-1)) months +$((10#${1:6:2}-1)) days" +%s
 }
-for g in 'jenkins_home__*.tgz' 'sonar-data__*.tgz' 'sonar-ext__*.tgz' 'sonar-db__*.dump' 'manifest__*.txt'; do prune "\$g"; done
-echo "retention removed \$deleted"
+
+prune() {
+  local glob="$1"
+  local daily="$RETAIN_DAILY" weeks_left="$RETAIN_WEEKLY" months_left="$RETAIN_MONTHLY" n=0 f stamp d age dow m
+  local -A wk mo
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    stamp="${f#*__}"; stamp="${stamp%.*}"; d="${stamp:0:8}"
+    # two-step: fallible substitution OUTSIDE arithmetic, so a bad stamp is
+    # an ordinary command failure we can skip on (never a parse abort).
+    # Count only decodable files: an undecodable name sorts ahead of dated
+    # files and must not consume a keep slot.
+    now=$(date -u +%s)
+    epoch=$(pgsql2epoch "$d") || { echo "retention: skip undecodable $f" >&2; continue; }
+    n=$((n+1))
+    age=$(( (now - epoch) / 86400 ))
+    if [ "$age" -gt "$MAX_AGE_DAYS" ]; then rm -f -- "$f"; deleted=$((deleted+1)); continue; fi
+    [ "$n" -le "$daily" ] && continue
+    dow=$(date -u -d "${d:0:4}-${d:4:2}-${d:6:2}" +%u); m="${d:0:6}"
+    if [ "${d:6:2}" = "01" ]; then
+      [ -z "${mo[$m]:-}" ] && [ "$RETAIN_MONTHLY" -gt 0 ] && { mo[$m]=1; months_left=$((months_left-1)); continue; }
+    elif [ "$dow" = "7" ]; then
+      [ -z "${wk[$m]:-}" ] && [ "$RETAIN_WEEKLY" -gt 0 ] && { wk[$m]=1; weeks_left=$((weeks_left-1)); continue; }
+    fi
+    rm -f -- "$f"; deleted=$((deleted+1))
+  done < <(ls -1 $glob 2>/dev/null | sort -r)
+}
+for g in "$@"; do prune "$g"; done
+echo "retention removed $deleted"
 REMOTE_EOF
 
 find "$SPOOL_DIR" -type f -mtime +"$LOCAL_KEEP_DAYS" -delete

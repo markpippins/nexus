@@ -617,4 +617,29 @@ namespace org.nexus.jev.inquiry {
       category: "corrupted_entry"
     },
     };
+
+  // ── SolScript seam (InferenceEngine.external_knowledge_base) ─────────
+
+  /**
+   * The SOLScript seam — already exists as a stub in
+   * python/SOLScript/solscript/inference_engine.py:
+   *
+   *   InferenceEngine.external_knowledge_base: KnowledgeBase | None
+   *   KnowledgeBase.query(target_key, context) → Any
+   *
+   * This contract maps JevInquiry to the KnowledgeBase query protocol.
+   */
+  model SolScriptJevSeam {
+    /** The unbounded query key (proposition ID or question hash). */
+    queryKey: string;
+
+    /** Context from the evaluation frame (state, frame values, provenance). */
+    context: Record<unknown>;
+
+    /** Expected return type maps to JevPrimitive. */
+    expectedReturnType: JevPrimitive;
+
+    /** The full inquiry for provenance/replay. */
+    inquiry: JevInquiry;
+  }
 }
