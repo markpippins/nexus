@@ -96,8 +96,33 @@ def main():
             print("ERROR: --content is required (or pipe via stdin)", file=sys.stderr)
             sys.exit(2)
 
-    # Parse tags
-    tag_list = [t.strip() for t in args.tags.split(",") if t.strip()]
+    # Parse tags. Accepts BOTH house forms: comma-separated
+    # (--tags to:architect,type:status-update) and a JSON array string
+    # (--tags '["to:architect","type:status-update"]'). Previously the JSON
+    # form was silently comma-split into mangled elements (quotes and bracket
+    # fragments stored in nebula.agent_records.tags), which broke tag routing
+    # and inbox filters — 185 records affected, repaired 2026-09-22 with backup
+    # in nebula.agent_records_tags_repair_20260922. This guard makes the JSON
+    # form parse correctly and rejects any element that still carries JSON
+    # punctuation instead of silently storing it.
+    raw_tags = (args.tags or "").strip()
+    tag_list: list[str] = []
+    if raw_tags:
+        if raw_tags.startswith("["):
+            try:
+                parsed = json.loads(raw_tags)
+                if not isinstance(parsed, list) or not all(isinstance(t, str) for t in parsed):
+                    raise ValueError("JSON tags must be an array of strings")
+                tag_list = [t.strip() for t in parsed if t.strip()]
+            except (json.JSONDecodeError, ValueError) as exc:
+                print(f"ERROR: --tags looks like JSON but does not parse as a string array: {exc}", file=sys.stderr)
+                sys.exit(2)
+        else:
+            tag_list = [t.strip() for t in raw_tags.split(",") if t.strip()]
+    bad = [t for t in tag_list if '"' in t or t.startswith("[") or t.endswith("]")]
+    if bad:
+        print(f"ERROR: refusing to store malformed tags {bad} — use comma-separated or JSON array form", file=sys.stderr)
+        sys.exit(2)
 
     payload = {
         "recordType": args.record_type,
