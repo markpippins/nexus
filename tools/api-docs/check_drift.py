@@ -49,6 +49,7 @@ EXCLUDED = {"semantics-srv", "pty-srv", "terrain-srv", "resolution-srv"}
 # these keys are never regenerated (see --update below).
 MOLLECULER_MIRRORS = {
     "moleculer/voyager": "typescript/voyager-srv",
+    "moleculer/cascade": "typescript/cascade-srv",
 }
 
 
