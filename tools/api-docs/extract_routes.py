@@ -50,6 +50,22 @@ JVM_SERVICES = {
     "jvm/nexus-core-shrapnel": "jvm/spring/nexus-core/nexus-core-shrapnel",
 }
 
+# Moleculer apps (moleculer-web gateways). Keys follow the "<base>/<app>"
+# shape; values are repo-root-relative module dirs. Their route surface is not
+# Express `router.get(...)` calls but the gateway's `aliases:` map
+# (`"GET /path": "svc.action"`) relative to each route's `path:` prefix —
+# parsed by process_moleculer_service() below. Which incumbent contract each
+# app is pinned to lives in check_drift.MOLLECULER_MIRRORS.
+MOLLECULER_SERVICES = {
+    "moleculer/voyager": "moleculer/voyager",
+}
+
+# moleculer-web alias entries: "GET /path": "svc.action" (single-quoted forms
+# too; both appear in the codebase).
+ALIAS_RE = re.compile(r"['\"](GET|POST|PUT|PATCH|DELETE)\s+(/[^'\"]*)['\"]\s*:\s*['\"]([^'\"]+)['\"]")
+ALIASES_OPEN_RE = re.compile(r"\baliases\s*:\s*\{")
+ROUTE_PATH_RE = re.compile(r"\bpath\s*:\s*['\"]([^'\"]*)['\"]")
+
 KNOWN_EXTS = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
 
 
@@ -135,6 +151,62 @@ def merge_imports(lines):
             merged.append(line)
         i += 1
     return merged
+
+
+def join_route_path(prefix, path):
+    """Join a moleculer-web route `path:` prefix with an alias path."""
+    if not prefix or prefix == "/":
+        return path if path.startswith("/") else "/" + path
+    return prefix.rstrip("/") + "/" + path.lstrip("/")
+
+
+def process_moleculer_service(svc_dir, key):
+    """Route inventory for a moleculer-web app (aliases map, not Express verbs).
+
+    Walks services/ for .ts/.js gateway files and reads each `aliases: {...}`
+    block, prefixing its entries with the enclosing route's `path:` value.
+    Commented-out alias lines are skipped (they would otherwise parse as live
+    endpoints and show up as phantom drift).
+    """
+    files = []
+    scan_root = os.path.join(svc_dir, "services")
+    if not os.path.isdir(scan_root):
+        scan_root = svc_dir
+    for root, dirs, names in os.walk(scan_root):
+        dirs[:] = [d for d in dirs if d not in ("node_modules", "dist", "test", "__tests__", "coverage")]
+        for name in sorted(names):
+            if name.endswith((".ts", ".js", ".mjs")) and not name.endswith(".d.ts"):
+                files.append(os.path.join(root, name))
+
+    endpoints = []
+    for fp in files:
+        with open(fp, encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        prefix = None
+        in_aliases = False
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith("//") or stripped.startswith("*"):
+                continue
+            if in_aliases:
+                if stripped.startswith("}"):
+                    in_aliases = False
+                    continue
+                am = ALIAS_RE.search(line)
+                if am:
+                    endpoints.append({
+                        "method": am.group(1).upper(),
+                        "path": join_route_path(prefix or "", am.group(2)),
+                        "summary": comment_above(lines, i),
+                    })
+                continue
+            if ALIASES_OPEN_RE.search(line):
+                in_aliases = True
+                continue
+            pm = ROUTE_PATH_RE.search(line)
+            if pm:
+                prefix = pm.group(1)
+    return dedupe(endpoints)
 
 
 def parse_file(fp, rel):
@@ -399,6 +471,10 @@ def main():
         full = os.path.join(args.root, rel)
         if os.path.isdir(full):
             result[key] = process_spring_service(full, key)
+    for key, rel in sorted(MOLLECULER_SERVICES.items()):
+        full = os.path.join(args.root, rel)
+        if os.path.isdir(full):
+            result[key] = process_moleculer_service(full, key)
     with open(args.out, "w") as f:
         json.dump(result, f, indent=1)
     for k, v in result.items():
