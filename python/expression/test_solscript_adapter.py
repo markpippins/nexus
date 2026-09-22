@@ -153,7 +153,7 @@ class SolscriptAdapterTests(unittest.TestCase):
         result = envelope["results"][0]
         self.assertEqual(result["disposition"], "asserted")
         self.assertEqual(result["authority_status"], "advisory")
-        self.assertEqual(envelope["evaluator_revision"], "solscript-resolution-interpreter-v32")
+        self.assertEqual(envelope["evaluator_revision"], "solscript-resolution-interpreter-v33-e84")
         self.assertEqual(envelope["authority_status"], "evaluation_only")
         self.assertEqual(envelope["mutation_policy"], "forbidden")
 
@@ -168,12 +168,85 @@ class SolscriptAdapterTests(unittest.TestCase):
         self.assertEqual(envelope["results"][0]["disposition"], "pending")
         self.assertEqual(envelope["results"][0]["reason_code"], "proposition_not_in_interpreter")
 
-    def test_unknown_context_key_is_ignored_for_unframed_propositions(self):
-        # Unframed propositions ignore context keys (no frame gate applies);
-        # only framed propositions raise for unknown keys. This test pins
-        # that unframed evaluation stays on the merits.
+    def test_unknown_context_key_is_refused_even_for_unframed_propositions(self):
+        # E8.4 removes the silent discard of caller context. An unknown key
+        # cannot be used to establish a valid evaluation context.
         evaluator = solscript_evaluator(self.interpreter, context={"no-such-dimension": "x"})
         result = evaluator(
+            self.bundle["proposition_candidates"][0], {"request_fingerprint": "r"}
+        )
+        self.assertEqual(result["disposition"], "refused")
+        self.assertEqual(result["reason_code"], "invalid_context")
+
+    def test_required_type_without_instance_frame_is_unevaluable(self):
+        from solscript.models import FrameDimension
+
+        self.interpreter.frame_dimensions["dim-required"] = FrameDimension(
+            id="dim-required", name="migration_phase", description=None,
+            value_kind="typed_scalar", scalar_type="text",
+        )
+        self.prop.semantic_type_id = "type-target"
+        self.interpreter.register_semantic_type_required_dimension(
+            "type-target", "dim-required"
+        )
+        result = solscript_evaluator(self.interpreter)(
+            self.bundle["proposition_candidates"][0], {"request_fingerprint": "r"}
+        )
+        self.assertEqual(result["disposition"], "unevaluable")
+        self.assertEqual(result["reason_code"], "context_unframed_required")
+
+    def test_required_type_without_context_is_unevaluable(self):
+        from solscript.models import FrameDimension, PropositionFrameValue
+
+        self.interpreter.frame_dimensions["dim-required"] = FrameDimension(
+            id="dim-required", name="migration_phase", description=None,
+            value_kind="typed_scalar", scalar_type="text",
+        )
+        self.prop.semantic_type_id = "type-target"
+        self.prop.frame_values.append(PropositionFrameValue(
+            id="pfv-required", proposition_id=self.prop.id,
+            dimension_id="dim-required", scalar_value="pre_migration",
+        ))
+        self.interpreter.register_semantic_type_required_dimension(
+            "type-target", "dim-required"
+        )
+        result = solscript_evaluator(self.interpreter)(
+            self.bundle["proposition_candidates"][0], {"request_fingerprint": "r"}
+        )
+        self.assertEqual(result["disposition"], "unevaluable")
+        self.assertEqual(result["reason_code"], "context_context_required")
+
+    def test_supplementary_contradiction_is_refused(self):
+        from solscript.models import FrameDimension, PropositionFrameValue
+
+        self.interpreter.frame_dimensions["dim-supplementary"] = FrameDimension(
+            id="dim-supplementary", name="as_of_version", description=None,
+            value_kind="typed_scalar", scalar_type="text",
+        )
+        self.prop.frame_values.append(PropositionFrameValue(
+            id="pfv-supplementary", proposition_id=self.prop.id,
+            dimension_id="dim-supplementary", scalar_value="v1",
+        ))
+        result = solscript_evaluator(
+            self.interpreter, context={"as_of_version": "v9"}
+        )(
+            self.bundle["proposition_candidates"][0], {"request_fingerprint": "r"}
+        )
+        self.assertEqual(result["disposition"], "refused")
+        self.assertEqual(result["reason_code"], "context_context_mismatch")
+
+    def test_supplementary_absence_is_allowed(self):
+        from solscript.models import FrameDimension, PropositionFrameValue
+
+        self.interpreter.frame_dimensions["dim-supplementary"] = FrameDimension(
+            id="dim-supplementary", name="as_of_version", description=None,
+            value_kind="typed_scalar", scalar_type="text",
+        )
+        self.prop.frame_values.append(PropositionFrameValue(
+            id="pfv-supplementary", proposition_id=self.prop.id,
+            dimension_id="dim-supplementary", scalar_value="v1",
+        ))
+        result = solscript_evaluator(self.interpreter)(
             self.bundle["proposition_candidates"][0], {"request_fingerprint": "r"}
         )
         self.assertEqual(result["disposition"], "asserted")

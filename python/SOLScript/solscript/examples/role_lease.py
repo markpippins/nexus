@@ -1,6 +1,6 @@
-"""RoleLease — frame-scoped evaluation of a "may consume work" proposition.
+"""RoleLease — class-level frame requirement for a "may consume work" proposition.
 
-Demonstrates the v31/v32 frame discipline end-to-end on the role-lease
+Demonstrates the E8.4 frame discipline end-to-end on the role-lease
 authority identity (the lease the Duality/PEB admission chain keys on):
 
   * A `RoleLease` concept with a state attribute (`status`) and budget
@@ -11,9 +11,9 @@ authority identity (the lease the Duality/PEB admission chain keys on):
     `channel = interactive`, with assertions over the lease entity
     (ACTIVE + budget remaining).
 
-The v32 gate then refuses to evaluate the claim unless the supplied context
-matches the declared frame — exactly the fail-closed behavior the Duality
-subscriber audit found missing on the operator/harness backends:
+The E8.4 gate then refuses to evaluate the claim unless the supplied context
+matches its required semantic type frame — exactly the fail-closed behavior
+the Duality subscriber audit found missing on the operator/harness backends:
 
     context               → (disposition, all_passed, context_status)
     --------------------    ------------------------------------------
@@ -219,8 +219,14 @@ def build_role_lease_interpreter() -> Tuple[ResolutionInterpreter, Proposition, 
         subject_entity_id=lease.id,
         disposition=Disposition.PENDING,
         assertions=[assertion],
+        semantic_type_id="role-lease-consume",
     )
     interp.add_proposition(prop)
+    # E8.4: channel is required by the semantic type; the instance frame
+    # commitment alone must not be the source of the requirement.
+    interp.register_semantic_type_required_dimension(
+        "role-lease-consume", channel_dim.id
+    )
 
     frame = PropositionFrameValue(
         id=_uid(),

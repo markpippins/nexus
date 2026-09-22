@@ -50,9 +50,13 @@ class ResolutionInterpreter:
         self.representations: Dict[str, Representation] = {}
         self.relationships: Dict[str, ConceptRelationship] = {}
         self.state_transitions: Dict[str, ConceptStateTransition] = {}
-        # v31: frame discipline
+        # v31/v32: frame discipline
         self.frame_dimensions: Dict[str, FrameDimension] = {}
         self.frame_dimension_values: Dict[str, FrameDimensionValue] = {}
+        # E8.4: semantic-type requirements are class-level framing rules.
+        # A proposition's instance frame values are commitments, not the
+        # definition of whether its type requires framing.
+        self.semantic_type_required_dimensions: Dict[str, set[str]] = {}
         # v35: frame semantics — propositions describing what a dimension means
         self.frame_dimension_meanings: Dict[str, FrameDimensionMeaning] = {}
 
@@ -407,30 +411,50 @@ class ResolutionInterpreter:
 
     # ── Proposition evaluation ───────────────────────────────────
 
+    def register_semantic_type_required_dimension(
+        self, semantic_type_id: str, dimension_id: str
+    ) -> None:
+        """Register one class-level required frame dimension for a type."""
+        self.semantic_type_required_dimensions.setdefault(
+            str(semantic_type_id), set()
+        ).add(str(dimension_id))
+
     def evaluate_proposition(
         self,
         prop: Proposition,
         context: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Disposition, bool, str]:
-        """Evaluate a proposition with optional frame-context discipline (v32).
+        """Evaluate a proposition with class-level frame-context discipline (E8.4).
 
         Returns (disposition, all_passed, context_status) where:
-          context_status: 'not_scoped' | 'context_required' | 'context_mismatch' | 'scoped'
+          context_status: 'not_scoped' | 'unframed_required' |
+          'context_required' | 'context_mismatch' | 'scoped'
         """
-        # ── Context gate: frame discipline (v31/v32) ─────────────
-        framed_count = len(prop.frame_values)
+        # ── Context gate: class-level type requirements (E8.4) ─────
+        required_dimensions = self.semantic_type_required_dimensions.get(
+            str(prop.semantic_type_id), set()
+        ) if prop.semantic_type_id else set()
+        instance_dimensions = {frame.dimension_id for frame in prop.frame_values}
 
-        if framed_count > 0:
-            if context is None:
-                # Refuse — framed but no context supplied
-                return (None, False, "context_required")  # type: ignore[return-value]
+        # A required type with incomplete instance commitments is not
+        # unframed-on-merits. This removes the v32 free pass where declaring
+        # no frame rows made an incomplete proposition look not_scoped.
+        if not required_dimensions.issubset(instance_dimensions):
+            if required_dimensions:
+                return (None, False, "unframed_required")  # type: ignore[return-value]
+            # No required dimensions: instance frame values are supplementary.
+            context_status = "not_scoped"
+        else:
+            context_status = "scoped"
 
-            if not isinstance(context, dict):
-                raise ValueError(
-                    f"evaluate_proposition: context must be a dict, got {type(context).__name__}"
-                )
+        if context is not None and not isinstance(context, dict):
+            raise ValueError(
+                f"evaluate_proposition: context must be a dict, got {type(context).__name__}"
+            )
 
-            # Unknown keys in context raise for framed propositions
+        if context is not None:
+            # Unknown keys are invalid whenever a caller supplies context;
+            # unframed propositions no longer silently discard commitments.
             for key in context:
                 dim = self.get_frame_dimension_by_name(key)
                 if dim is None:
@@ -438,40 +462,41 @@ class ResolutionInterpreter:
                         f"evaluate_proposition: context key '{key}' names no known frame_dimension"
                     )
 
-            # Every framed dimension must be covered AND matched
+            # Required dimensions must be supplied and matched. Supplementary
+            # instance values are checked only when the caller supplies that
+            # dimension; absence is not grounds for refusal.
             for pfv in prop.frame_values:
                 dim = self.frame_dimensions.get(pfv.dimension_id)
                 if dim is None:
-                    return (None, False, "context_required")  # type: ignore[return-value]
+                    if pfv.dimension_id in required_dimensions:
+                        return (None, False, "context_required")  # type: ignore[return-value]
+                    continue
 
                 ctx_val = context.get(dim.name)
                 if ctx_val is None:
-                    return (None, False, "context_required")  # type: ignore[return-value]
+                    if pfv.dimension_id in required_dimensions:
+                        return (None, False, "context_required")  # type: ignore[return-value]
+                    continue
 
                 if dim.value_kind == "governed_reference":
-                    fdv = self.frame_dimension_values.get(
-                        pfv.reference_value_id or ""
-                    )
+                    fdv = self.frame_dimension_values.get(pfv.reference_value_id or "")
                     if fdv is None or fdv.value != str(ctx_val):
                         return (None, False, "context_mismatch")  # type: ignore[return-value]
-
                 elif dim.value_kind == "typed_scalar":
                     scalar_type = dim.scalar_type or "text"
                     scalar = pfv.scalar_value
                     try:
                         if scalar_type == "integer":
-                            if int(ctx_val) != int(scalar):  # type: ignore[arg-type]
-                                return (None, False, "context_mismatch")  # type: ignore[return-value]
+                            mismatch = int(ctx_val) != int(scalar)  # type: ignore[arg-type]
                         elif scalar_type == "numeric":
-                            if float(ctx_val) != float(scalar):  # type: ignore[arg-type]
-                                return (None, False, "context_mismatch")  # type: ignore[return-value]
+                            mismatch = float(ctx_val) != float(scalar)  # type: ignore[arg-type]
                         elif scalar_type == "boolean":
-                            if bool(ctx_val) != (scalar in ("true", "True", "1")):
-                                return (None, False, "context_mismatch")  # type: ignore[return-value]
+                            mismatch = bool(ctx_val) != (scalar in ("true", "True", "1"))
                         else:  # text / timestamp
-                            if str(ctx_val) != str(scalar):
-                                return (None, False, "context_mismatch")  # type: ignore[return-value]
+                            mismatch = str(ctx_val) != str(scalar)
                     except (ValueError, TypeError):
+                        mismatch = True
+                    if mismatch:
                         return (None, False, "context_mismatch")  # type: ignore[return-value]
                 else:
                     raise ValueError(
@@ -479,9 +504,15 @@ class ResolutionInterpreter:
                         f"unrecognized value_kind {dim.value_kind}"
                     )
 
-            context_status = "scoped"
-        else:
-            context_status = "not_scoped"
+            # A supplied context matching a supplementary commitment is still
+            # a scoped evaluation; a required type was scoped above.
+            if context_status == "not_scoped" and prop.frame_values:
+                context_status = "scoped"
+
+        elif required_dimensions:
+            # Required dimensions exist and the instance is complete, but no
+            # caller context was provided.
+            return (None, False, "context_required")  # type: ignore[return-value]
 
         # ── Assertion evaluation ─────────────────────────────────
         entity = self.entities.get(prop.subject_entity_id)

@@ -29,6 +29,8 @@ class _Conn:
         self._tables = tables
 
     async def fetch(self, sql: str, *params):
+        if "semantic_type_required_dimension" in sql:
+            return self._tables["required_dimensions"]
         if "concept_attribute_value" in sql:
             return self._tables["disp_values"]
         if "proposition_assertion" in sql:
@@ -68,6 +70,7 @@ _RULE_ID = "d1a00000-0000-4000-8000-00000000c001"
 _MIGRATION_DIM = "d1a00000-0000-4000-8000-000000000001"
 _ASOF_DIM = "d1a00000-0000-4000-8000-000000000002"
 _PRE_MIG = "bb229925-8ced-4753-9b28-55dab47e36bd"
+_TARGET_TYPE = "e3cf4625-e7fe-4154-9f12-5cb9688efa7b"
 
 
 def _build_tables() -> dict:
@@ -106,7 +109,7 @@ def _build_tables() -> dict:
                 "disposition_value_id": uuid.UUID(rejected_disp_id),
                 "value": None,
                 "grounding_status_value_id": None,
-                "semantic_type_id": None,
+                "semantic_type_id": uuid.UUID(_TARGET_TYPE),
             }
         ],
         "dims": [
@@ -115,6 +118,9 @@ def _build_tables() -> dict:
         ],
         "dim_values": [
             {"id": _PRE_MIG, "dimension_id": _MIGRATION_DIM, "value": "pre_migration", "description": None},
+        ],
+        "required_dimensions": [
+            {"semantic_type_id": _TARGET_TYPE, "dimension_id": _MIGRATION_DIM},
         ],
     }
 
@@ -238,15 +244,16 @@ class LoadedInterpreterTests(unittest.TestCase):
 
     def test_context_gate_outcomes_surface_through_envelope(self):
         self.loaded.register_candidate("digest-fc-001", _FC_ID)
-        # Missing as_of_version → context_required → unevaluable (E7 mapping)
+        # Required migration_phase matches; supplementary as_of_version may
+        # be absent without refusing under E8.4, so the assertion runs.
         envelope = self.loaded.evaluate_bundle(
             self.bundle,
             read_set=self.read_set,
             ontology_revision="ontology-e8",
             context={"migration_phase": "pre_migration"},
         )
-        self.assertEqual(envelope["results"][0]["disposition"], "unevaluable")
-        # Mismatched scalar → context_mismatch → refused (E7 mapping)
+        self.assertEqual(envelope["results"][0]["disposition"], "rejected")
+        # Mismatched supplementary scalar → context_mismatch → refused.
         envelope2 = self.loaded.evaluate_bundle(
             self.bundle,
             read_set=self.read_set,

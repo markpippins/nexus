@@ -448,7 +448,7 @@ class DatabaseLoader:
     # ── Frame dimensions (v31) ──────────────────────────────────
 
     async def load_frame_dimensions(self) -> None:
-        """Load frame_dimension, frame_dimension_value, and proposition_frame_value."""
+        """Load frame dimensions, instance commitments, and type requirements."""
         async with self.pool.acquire() as conn:
             fd_rows = await conn.fetch(
                 "SELECT id, name, description, value_kind, scalar_type "
@@ -496,6 +496,18 @@ class DatabaseLoader:
                 )
                 self.interpreter.add_proposition_frame_value(pfv)
 
+            # E8.4: load semantic-type framing requirements separately from
+            # instance frame commitments. A type requiring a dimension must
+            # not become not_scoped merely because an instance has no frame row.
+            required_rows = await conn.fetch(
+                "SELECT semantic_type_id, dimension_id "
+                "FROM resolution.semantic_type_required_dimension"
+            )
+            for row in required_rows:
+                self.interpreter.register_semantic_type_required_dimension(
+                    str(row["semantic_type_id"]), str(row["dimension_id"])
+                )
+
     # ── Propositions ─────────────────────────────────────────────
 
     async def load_propositions(self) -> None:
@@ -513,7 +525,9 @@ class DatabaseLoader:
            DB-loaded proposition had zero assertions and evaluated ASSERTED
            trivially.
         3. Frame values — ``resolution.proposition_frame_value`` rows are
-           loaded and attached so the v31/v32 context gate can fire.
+           loaded and attached so the context gate can fire.
+        4. E8.4 type requirements — ``resolution.semantic_type_required_dimension``
+           rows are loaded separately from instance commitments.
 
         Propositions whose disposition, assertion rule, or frame dimension
         could not be resolved are skipped and reported in
@@ -646,6 +660,10 @@ class DatabaseLoader:
                 "skipped": skipped,
                 "missing_assertion_rules": len(missing_rules),
                 "frame_values_loaded": len(frame_rows),
+                "semantic_type_required_dimensions_loaded": sum(
+                    len(dimensions)
+                    for dimensions in self.interpreter.semantic_type_required_dimensions.values()
+                ),
                 "disposition_vocabulary_size": len(disp_map),
             }
 
