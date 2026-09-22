@@ -1,0 +1,72 @@
+# Nexus Core Image build gate
+#
+# The nexus-core container image (jvm/spring/nexus-core/Dockerfile) is not
+# built by any deployment pipeline — it is built by hand on target hosts
+# (thallium arm64, per the 2026-09-22 rebuild). That let a real drift class
+# reach a deployment: nexus-core-app grew an org.nexus.peb:peb-api dependency
+# (imported by NexusCoreApplication) while peb-api lives in jvm/spring/peb-kernel,
+# a separate standalone Maven reactor the Dockerfile never provisioned. The
+# image build failed ONLY when someone rebuilt on a host (PR #454 fixed the
+# Dockerfile; the drift itself was invisible to CI).
+#
+# This gate builds the image with the same command hosts use — context jvm/,
+# -f spring/nexus-core/Dockerfile — so reactor provisioning, dependency
+# resolution, and jar assembly are proven on every change to:
+#   - jvm/spring/nexus-core/**    (the image's own project)
+#   - jvm/spring/peb-kernel/**    (external reactor the app consumes)
+#   - jvm/shared/**               (external reactor: com.aibizarchitect.nexus)
+#   - the Dockerfile itself
+#
+# The build IS the test: if a new dependency stops resolving from the
+# provisioned reactors, this goes red exactly where the peb-api drift would
+# have been caught — at merge time, not at deployment time.
+#
+# Deliberately build-only, no boot smoke: the app boots with
+# spring.jpa.hibernate.ddl-auto=validate (fleet-wide fail-fast posture,
+# #404/#425) and validates at startup, so booting requires a fully
+# provisioned nexus schema (peb migrations applied out-of-band, execution
+# schema present). An empty/unreachable DB fails boot BY DESIGN — wiring a
+# schema-provisioned Postgres into CI is a separate, larger decision.
+
+name: Nexus Core Image Build
+
+on:
+  push:
+    branches: [ main, master, dev, feature/* ]
+    paths:
+      - 'jvm/spring/nexus-core/**'
+      - 'jvm/spring/peb-kernel/**'
+      - 'jvm/shared/**'
+      - '.github/workflows/nexus-core-image.yml'
+  pull_request:
+    branches: [ main, master, dev, feature/* ]
+    paths:
+      - 'jvm/spring/nexus-core/**'
+      - 'jvm/spring/peb-kernel/**'
+      - 'jvm/shared/**'
+      - '.github/workflows/nexus-core-image.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-image:
+    name: "Docker build (context jvm/)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # No push, no registry: the gate only proves the image builds.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: jvm
+          file: jvm/spring/nexus-core/Dockerfile
+          push: false
+          tags: nexus-core/nexus-core:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
