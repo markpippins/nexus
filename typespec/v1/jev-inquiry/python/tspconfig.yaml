@@ -1,0 +1,14 @@
+# jev-inquiry is a contract-only package: it defines the JevInquiry model
+# vocabulary and the SOLScript KnowledgeBase seam, but declares no @service
+# and no HTTP operations. The parent typespec/v1/tspconfig.yaml emits
+# @typespec/http-client-python (and java), which require at least one SDK
+# client and fail with `no-sdk-clients` on this package.
+#
+# Contract-only packages therefore emit the OpenAPI schema projection only.
+emit:
+  - "@typespec/openapi3"
+options:
+  "@typespec/openapi3":
+    emitter-output-dir: "{output-dir}/schema"
+    openapi-versions:
+      - 3.1.0
