@@ -30,8 +30,8 @@ export interface PlanCard {
   scope?: SweepScope;
   promptRef?: string; // prompt number this plan was spawned from
   priority?: number;
-  /** Per-role ticket detail: role → { status, id, created_at, expires_at, objective } */
-  ticketStatuses?: Record<string, { status: string; id: string; created_at: string; expires_at?: string; objective?: string }>;
+  /** Per-role ticket detail: role → { status, id, created_at, expires_at, objective, claimedAt?, claimedSession? } */
+  ticketStatuses?: Record<string, { status: string; id: string; created_at: string; expires_at?: string; objective?: string; claimedAt?: string; claimedSession?: string }>;
   /** Derived status from the receipt chain (PLAN_CREATE, IMPLEMENTATION, REVIEW_PASS, etc.) */
   derivedStatus?: string;
 }

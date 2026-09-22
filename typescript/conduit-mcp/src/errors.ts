@@ -11,7 +11,9 @@ export type ErrorCode =
   | "NEBULA_UNAVAILABLE"
   | "NOT_FOUND"
   | "CIR_SDM_REJECTED"
-  | "CIR_SDM_UNAVAILABLE";
+  | "CIR_SDM_UNAVAILABLE"
+  | "TICKET_CLAIM_CONFLICT"
+  | "NO_CLAIMABLE_TICKET";
 
 export interface AppError {
   error: {

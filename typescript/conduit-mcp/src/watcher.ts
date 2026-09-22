@@ -166,15 +166,15 @@ export class PipelineWatcher {
     const allPlanIds = [...placed];
     if (allPlanIds.length > 0) {
       const ticketRows = await qAll(
-        `SELECT plan_id, role, status, id, created_at, expires_at, objective FROM vision.tickets
+        `SELECT plan_id, role, status, id, created_at, expires_at, objective, claimed_at, session_id FROM vision.tickets
          WHERE plan_id = ANY(@planIds)
          AND status IN ('open','claimed','completed','failed','expired','stale','cancelled','abandoned')
          ORDER BY plan_id, role`,
         { planIds: allPlanIds }
-      ) as Array<{ plan_id: string; role: string; status: string; id: string; created_at: string; expires_at: string | null; objective: string | null }>;
+      ) as Array<{ plan_id: string; role: string; status: string; id: string; created_at: string; expires_at: string | null; objective: string | null; claimed_at: string | null; session_id: string | null }>;
 
-      // Build map: plan_id → { role: { status, id, created_at, expires_at, objective } }
-      const ticketMap = new Map<string, Record<string, { status: string; id: string; created_at: string; expires_at?: string; objective?: string }>>();
+      // Build map: plan_id → { role: { status, id, created_at, expires_at, objective, claimedAt?, claimedSession? } }
+      const ticketMap = new Map<string, Record<string, { status: string; id: string; created_at: string; expires_at?: string; objective?: string; claimedAt?: string; claimedSession?: string }>>();
       for (const t of ticketRows) {
         if (!ticketMap.has(t.plan_id)) ticketMap.set(t.plan_id, {});
         ticketMap.get(t.plan_id)![t.role] = {
@@ -183,6 +183,8 @@ export class PipelineWatcher {
           created_at: t.created_at,
           expires_at: t.expires_at || undefined,
           objective: t.objective || undefined,
+          claimedAt: t.claimed_at || undefined,
+          claimedSession: t.session_id || undefined,
         };
       }
 
