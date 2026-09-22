@@ -41,6 +41,10 @@ from pathlib import Path
 
 DEFAULT_HOST = "helium"
 DEFAULT_TIMEOUT = 5.0
+# The ssh/docker leg gets its own budget: it is a two-host round-trip
+# (connection + remote command) and must not starve just because the HTTP
+# checks use a shorter timeout.
+DEFAULT_SSH_TIMEOUT = 10.0
 DEFAULT_MIN_DISK_FREE_GB = 2.0
 DEFAULT_CONTAINERS = ["nexus-core", "helium-mongo", "helium-redis", "helium-nats"]
 DEFAULT_OLLAMA_PORT = 11434
@@ -80,9 +84,16 @@ def fetch_json(url: str, timeout: float) -> dict:
 
 
 def fetch_docker_states(ssh_host: str, timeout: float) -> dict:
-    """One SSH round-trip returning {container_name: state} for running containers."""
+    """One SSH round-trip returning {container_name: state} for running containers.
+
+    Forces IPv4 (-4). 2026-09-21: after helium's reimage its name resolved to
+    both the new LAN IPv4 (192.168.1.229) and a stale public IPv6 from before
+    the reimage; ssh preferred the dead v6 path, and whether the run passed
+    depended on how fast v6 failed — the probe flapped incident/recovery for
+    a day (51/53 transitions). Pinning the family makes the leg deterministic.
+    """
     cmd = [
-        "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+        "ssh", "-4", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
         ssh_host,
         "docker ps --format '{{.Names}}\\t{{.State}}'",
     ]
@@ -131,9 +142,9 @@ def check_actuator(fetch, url, timeout, min_disk_free_gb):
     return {"name": "actuator", "status": STATUS_OK, "detail": detail}
 
 
-def check_containers(fetch_states, ssh_host, timeout, expected):
+def check_containers(fetch_states, ssh_host, timeout, expected, ssh_timeout=DEFAULT_SSH_TIMEOUT):
     try:
-        states = fetch_states(ssh_host, timeout)
+        states = fetch_states(ssh_host, ssh_timeout)
     except Exception as exc:
         return [{"name": f"container:{c}", "status": STATUS_FAIL,
                  "detail": f"ssh/docker probe failed: {exc}"} for c in expected]
@@ -262,6 +273,8 @@ def build_parser():
     p = argparse.ArgumentParser(description="helium nexus-core health probe")
     p.add_argument("--host", default=DEFAULT_HOST)
     p.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
+    p.add_argument("--ssh-timeout", type=float, default=DEFAULT_SSH_TIMEOUT,
+                   help="subprocess budget for the docker-over-ssh round-trip")
     p.add_argument("--min-disk-free-gb", type=float, default=DEFAULT_MIN_DISK_FREE_GB)
     p.add_argument("--containers", default=",".join(DEFAULT_CONTAINERS))
     p.add_argument("--state-file", type=Path, default=DEFAULT_STATE_FILE)
@@ -281,8 +294,10 @@ def run_probe(args, fetch=None, fetch_states=None, poster=None):
     ollama_url = f"http://{args.host}:{DEFAULT_OLLAMA_PORT}"
 
     results = [check_actuator(fetch, actuator_url, args.timeout, args.min_disk_free_gb)]
-    results += check_containers(fetch_states, args.host, args.timeout,
-                                [c.strip() for c in args.containers.split(",") if c.strip()])
+    results += check_containers(
+        fetch_states, args.host, args.timeout,
+        [c.strip() for c in args.containers.split(",") if c.strip()],
+        ssh_timeout=getattr(args, "ssh_timeout", DEFAULT_SSH_TIMEOUT))
     results.append(check_ollama(fetch, ollama_url, args.timeout))
 
     overall = aggregate(results)
