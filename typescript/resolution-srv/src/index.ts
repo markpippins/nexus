@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { loadEnv } from "./env";
+import { globalLimiter } from "./limiter";
 import { healthRouter } from "./routes/health";
 import { resolutionRouter } from "./routes/resolution";
 import { startHeartbeat } from "heartbeat-client";
@@ -29,6 +30,9 @@ process.on("uncaughtException", (err: Error & { code?: string }) => {
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// ── Global rate limit (covers /health and /api uniformly) ────────────
+app.use(globalLimiter);
 
 // ── Health ───────────────────────────────────────────────────────────
 app.use("/health", healthRouter);
