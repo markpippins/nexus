@@ -8,13 +8,21 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-import asyncpg
+try:
+    import asyncpg
+    _ASYNCPG_AVAILABLE = True
+except ImportError:  # the port is usable via dependency injection without the driver
+    _ASYNCPG_AVAILABLE = False
+    asyncpg = None
 
-from solscript.adapters.contract import SolStoragePort
+try:
+    from solscript.adapters.contract import SolStoragePort
+except ImportError:
+    SolStoragePort = None
 
 
 @dataclass
@@ -52,6 +60,49 @@ class TagBinding:
     bound_by: Optional[str]
     created_at: datetime
     expired_at: Optional[datetime]
+
+
+# ── Binding lifecycle (Aspect G2) ────────────────────────────────────────
+# Explicit state machine for tag bindings: a binding is proposed by the
+# Expression-side adapter, decided (approved/rejected) by governance, and
+# eventually expired. Nothing else is a legal status, and expiring sets
+# expired_at so active_only queries stop returning it.
+BINDING_STATUSES = ("proposed", "approved", "rejected", "expired")
+
+ALLOWED_TRANSITIONS = {
+    "proposed": {"approved", "rejected", "expired"},
+    "approved": {"expired"},
+    "rejected": {"expired"},
+    "expired": set(),
+}
+
+
+def validate_binding_transition(current: str, new_status: str) -> None:
+    """Raise ValueError unless current -> new_status is a legal transition."""
+    if current not in BINDING_STATUSES:
+        raise ValueError(f"unknown binding status: {current!r}")
+    if new_status not in BINDING_STATUSES:
+        raise ValueError(f"unknown binding status: {new_status!r}")
+    if new_status not in ALLOWED_TRANSITIONS[current]:
+        raise ValueError(
+            f"illegal binding transition: {current!r} -> {new_status!r}; "
+            f"allowed: {sorted(ALLOWED_TRANSITIONS[current]) or 'none'}"
+        )
+
+
+def _row_to_tag_binding(row: Any) -> TagBinding:
+    """Map an asyncpg Row to TagBinding, tolerating tb.id AS binding_id aliases.
+
+    2026-09-21 (Aspect G2): list_bindings aliased ``tb.id AS binding_id`` but
+    constructed ``TagBinding(**dict(row))`` whose field is ``id`` — a
+    guaranteed TypeError on the first governed binding ever listed (review
+    record bc724f6b finding 4). Centralizing the row mapping makes that class
+    of aliasing bug impossible to reintroduce silently.
+    """
+    data = dict(row)
+    if "id" not in data and "binding_id" in data:
+        data["id"] = data.pop("binding_id")
+    return TagBinding(**data)
 
 
 class AspectsBindingPort:
@@ -200,7 +251,7 @@ class AspectsBindingPort:
         
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(query, *params)
-            return [TagBinding(**dict(row)) for row in rows]
+            return [_row_to_tag_binding(row) for row in rows]
     
     async def create_binding(
         self,
@@ -214,7 +265,15 @@ class AspectsBindingPort:
         bound_by: Optional[str] = None,
         status: str = "proposed"
     ) -> TagBinding:
-        """Create a new tag binding."""
+        """Create a new tag binding.
+
+        The initial status must be a non-terminal binding status; 'expired'
+        is rejected because a binding that has never existed cannot expire.
+        """
+        if status not in {"proposed", "approved", "rejected"}:
+            raise ValueError(
+                f"initial binding status must be proposed/approved/rejected, got {status!r}"
+            )
         query = """
             INSERT INTO aspects.tag_binding (
                 governed_tag_id, source_identity, source_revision, namespace,
@@ -264,16 +323,30 @@ class AspectsBindingPort:
         status: str,
         bound_by: Optional[str] = None
     ) -> Optional[TagBinding]:
-        """Update binding status."""
-        query = """
-            UPDATE aspects.tag_binding
-            SET status = $2, bound_by = COALESCE($3, bound_by)
-            WHERE id = $1 AND expired_at IS NULL
-            RETURNING id, governed_tag_id, source_identity, source_revision,
-                      namespace, tag_key, normalized_value, expression_observation_id,
-                      status, bound_by, created_at, expired_at
+        """Update binding status through the explicit lifecycle machine.
+
+        proposed -> approved | rejected | expired; approved/rejected -> expired.
+        Expiring stamps expired_at so active_only queries stop returning the
+        binding. Unknown statuses and illegal transitions fail closed.
         """
         async with self.pool.acquire() as conn:
+            current = await conn.fetchrow(
+                "SELECT status FROM aspects.tag_binding WHERE id = $1 AND expired_at IS NULL",
+                binding_id,
+            )
+            if not current:
+                return None
+            validate_binding_transition(current["status"], status)
+            query = """
+                UPDATE aspects.tag_binding
+                SET status = $2,
+                    bound_by = COALESCE($3, bound_by),
+                    expired_at = CASE WHEN $2 = 'expired' THEN now() ELSE expired_at END
+                WHERE id = $1 AND expired_at IS NULL
+                RETURNING id, governed_tag_id, source_identity, source_revision,
+                          namespace, tag_key, normalized_value, expression_observation_id,
+                          status, bound_by, created_at, expired_at
+            """
             row = await conn.fetchrow(query, binding_id, status, bound_by)
             if not row:
                 return None
