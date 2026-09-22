@@ -7,6 +7,8 @@ import { validateReceipt, receiptProvenanceMetadata } from "./receipts";
 import {
   createTicketIfMissing,
   advanceTicketsOnReceipt,
+  claimTicket,
+  releaseTicket,
   getPlan,
   getPlanById,
   upsertPlan,
@@ -157,6 +159,42 @@ export const toolDefinitions: MCPToolDefinition[] = [
         },
       },
       required: ["role", "state"],
+    },
+  },
+  {
+    name: "claim_ticket",
+    description:
+      "Claim a plan's open ticket for your session (manual builders/reviewers). Rules: unclaimed open/stale ticket → claimed; same session → idempotent refresh (re-claim periodically to keep the claim fresh); fresh claim held by another session → refused with holder details (pass force=true to take over a stale claim). Claims release automatically when the holder session ends, and stale claims (default 30m without a refresh) can be taken over.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        plan_id: { type: "string", description: 'Plan number (e.g. "8261654")' },
+        role: { type: "string", description: "Ticket role to claim (builder, reviewer, critic, …)" },
+        session_id: { type: "string", description: "Your session ID (from boot shim / timeclock)" },
+        staleMinutes: {
+          type: "number",
+          description: "Freshness window for takeover decisions (default 30 minutes)",
+        },
+        force: {
+          type: "boolean",
+          description: "Take over the claim even if fresh (default false; takeover is transition-audited)",
+        },
+      },
+      required: ["plan_id", "role", "session_id"],
+    },
+  },
+  {
+    name: "release_ticket",
+    description:
+      "Release your session's claim on a plan ticket (claimed → open) so another agent can pick it up. Only the claiming session can release.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        plan_id: { type: "string", description: 'Plan number (e.g. "8261654")' },
+        role: { type: "string", description: "Ticket role" },
+        session_id: { type: "string", description: "Your session ID (must match the claim)" },
+      },
+      required: ["plan_id", "role", "session_id"],
     },
   },
   {
@@ -792,6 +830,55 @@ export function registerToolHandlers(
         args.pid || null,
       );
       return { acknowledged: true, timestamp: new Date().toISOString() };
+    },
+    claim_ticket: async (args: {
+      plan_id: string;
+      role: string;
+      session_id: string;
+      staleMinutes?: number;
+      force?: boolean;
+    }) => {
+      const errs = validate(args, [
+        { field: "plan_id", type: "string", required: true },
+        { field: "role", type: "string", required: true },
+        { field: "session_id", type: "string", required: true },
+      ]);
+      if (errs.length > 0)
+        throw createError("INVALID_ARGUMENTS", "Validation failed", errs);
+      try {
+        const result = await claimTicket(args.plan_id, args.role, args.session_id, {
+          staleMinutes: args.staleMinutes,
+          force: args.force,
+        });
+        return { claimed: true, plan_id: args.plan_id, role: args.role, ...result };
+      } catch (e: any) {
+        if (e?.code === "TICKET_CLAIM_CONFLICT" || e?.code === "NO_CLAIMABLE_TICKET") {
+          throw createError(e.code, e.message, e.details);
+        }
+        throw e;
+      }
+    },
+    release_ticket: async (args: {
+      plan_id: string;
+      role: string;
+      session_id: string;
+    }) => {
+      const errs = validate(args, [
+        { field: "plan_id", type: "string", required: true },
+        { field: "role", type: "string", required: true },
+        { field: "session_id", type: "string", required: true },
+      ]);
+      if (errs.length > 0)
+        throw createError("INVALID_ARGUMENTS", "Validation failed", errs);
+      try {
+        const result = await releaseTicket(args.plan_id, args.role, args.session_id);
+        return { released: result.released, plan_id: args.plan_id, role: args.role, ticketId: result.ticketId };
+      } catch (e: any) {
+        if (e?.code === "TICKET_CLAIM_CONFLICT") {
+          throw createError(e.code, e.message, e.details);
+        }
+        throw e;
+      }
     },
     agent_finished: async (args: {
       role: string;

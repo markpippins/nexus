@@ -4297,6 +4297,177 @@ export async function resetAbandonedTickets(): Promise<number> {
   });
 }
 
+// ── Manual ticket claims (walk-through D3, 2026-09-22) ─────────────
+// No tool could claim a ticket: manual builders/reviewers worked silently
+// unclaimed, with no reservation and no double-work guard. claimTicket
+// completes the session-claim model the rest of this file already
+// implements (releaseSessionTickets, detectStaleTickets, and
+// advanceTicketsOnReceipt's 'claimed' handling). Claims follow the house
+// convention: status='claimed' + session_id + claimed_at + last_activity,
+// transition-recorded (ADR-016). When tickets migrate to the canonical
+// store (Lilac wave, plan 8261639), these functions move with the store.
+
+/** Local claim errors (db-layer; createError lives in errors.ts for the
+ * MCP layer and importing it here would risk a layering cycle). */
+function claimError(code: string, message: string, extra?: Record<string, unknown>): Error {
+  const e = new Error(message) as Error & { code: string; details?: Record<string, unknown> };
+  e.code = code;
+  if (extra) e.details = extra;
+  return e;
+}
+
+/** Pure claim decision — exported for hermetic tests.
+ *
+ *  none      — ticket absent or in a non-claimable status (completed/failed/expired/…)
+ *  claim     — open or stale ticket, unclaimed → claim it
+ *  refresh   — same session re-claiming its own live claim (idempotent heartbeat)
+ *  conflict  — fresh claim held by a DIFFERENT session (refuse unless forced)
+ *  takeover  — claim held by another session but stale (older than staleMinutes)
+ */
+export function decideClaimAction(input: {
+  ticketStatus: string | null;
+  claimedSessionId: string | null;
+  lastActivity: string | null; // freshness anchor of the live claim
+  requestedSessionId: string;
+  nowMs: number;
+  staleMinutes: number;
+}): { action: "claim" | "refresh" | "conflict" | "takeover" | "none"; holder?: string; holderSince?: string } {
+  if (!input.ticketStatus) return { action: "none" };
+  if (input.ticketStatus !== "claimed") {
+    if (input.ticketStatus === "open" || input.ticketStatus === "stale") return { action: "claim" };
+    return { action: "none" };
+  }
+  if (input.claimedSessionId === input.requestedSessionId) return { action: "refresh" };
+  const anchor = input.lastActivity ? Date.parse(input.lastActivity) : NaN;
+  const ageMs = Number.isNaN(anchor) ? 0 : input.nowMs - anchor;
+  if (ageMs < input.staleMinutes * 60_000) {
+    return {
+      action: "conflict",
+      holder: input.claimedSessionId || "(unknown session)",
+      holderSince: input.lastActivity || undefined,
+    };
+  }
+  return {
+    action: "takeover",
+    holder: input.claimedSessionId || "(unknown session)",
+    holderSince: input.lastActivity || undefined,
+  };
+}
+
+export async function claimTicket(
+  planId: string,
+  role: string,
+  sessionId: string,
+  opts: { staleMinutes?: number; force?: boolean } = {},
+): Promise<{ ticketId: string; action: string; tookOverFrom?: string }> {
+  const staleMinutes = opts.staleMinutes ?? 30;
+  return withTransaction(async (client) => {
+    const ticket = await tOne(
+      client,
+      `SELECT id, status, session_id, claimed_at, last_activity
+       FROM ${VISION_SCHEMA}.tickets
+       WHERE plan_id = @planId AND role = @role AND status IN ('open','claimed','stale')
+       ORDER BY CASE status WHEN 'open' THEN 0 WHEN 'stale' THEN 1 ELSE 2 END, created_at ASC
+       LIMIT 1`,
+      { planId, role },
+    );
+    if (!ticket) {
+      throw claimError(
+        "NO_CLAIMABLE_TICKET",
+        `No open/claimed/stale ${role} ticket for plan ${planId}`,
+      );
+    }
+    const decision = decideClaimAction({
+      ticketStatus: ticket.status,
+      claimedSessionId: ticket.session_id || null,
+      lastActivity: ticket.last_activity || ticket.claimed_at || null,
+      requestedSessionId: sessionId,
+      nowMs: Date.now(),
+      staleMinutes,
+    });
+    if (decision.action === "conflict" && !opts.force) {
+      throw claimError(
+        "TICKET_CLAIM_CONFLICT",
+        `Ticket ${ticket.id} is claimed by ${decision.holder} since ${decision.holderSince} (fresh within ${staleMinutes}m). Re-claim from that session, wait for staleness, or pass force=true to take over.`,
+        { holder: decision.holder, holderSince: decision.holderSince },
+      );
+    }
+    if (decision.action === "none") {
+      throw claimError("NO_CLAIMABLE_TICKET", `Ticket ${ticket.id} is ${ticket.status} — nothing to claim`);
+    }
+    const now = new Date().toISOString();
+    await tRun(
+      client,
+      `UPDATE ${VISION_SCHEMA}.tickets
+       SET status = 'claimed', session_id = @sessionId, claimed_at = @now, last_activity = @now
+       WHERE id = @ticketId`,
+      { sessionId, now, ticketId: ticket.id },
+    );
+    await recordTransition({
+      client,
+      aggregateType: "ticket",
+      aggregateId: ticket.id,
+      eventType: "transition.committed",
+      actor: "conduit-mcp",
+      authority: "system",
+      payload: {
+        from_status: ticket.status,
+        to_status: "claimed",
+        reason: decision.action === "takeover" ? "claim_takeover" : decision.action === "refresh" ? "claim_refresh" : "manual_claim",
+        session_id: sessionId,
+        ...(decision.action === "takeover" ? { took_over_from: decision.holder } : {}),
+      },
+    });
+    return {
+      ticketId: ticket.id,
+      action: decision.action,
+      ...(decision.action === "takeover" ? { tookOverFrom: decision.holder } : {}),
+    };
+  });
+}
+
+/** Release a manual claim — only the claiming session may release its own. */
+export async function releaseTicket(
+  planId: string,
+  role: string,
+  sessionId: string,
+): Promise<{ released: boolean; ticketId?: string }> {
+  return withTransaction(async (client) => {
+    const ticket = await tOne(
+      client,
+      `SELECT id, status, session_id FROM ${VISION_SCHEMA}.tickets
+       WHERE plan_id = @planId AND role = @role AND status = 'claimed'
+       ORDER BY created_at ASC LIMIT 1`,
+      { planId, role },
+    );
+    if (!ticket) return { released: false };
+    if (ticket.session_id && ticket.session_id !== sessionId) {
+      throw claimError(
+        "TICKET_CLAIM_CONFLICT",
+        `Ticket ${ticket.id} is claimed by another session (${ticket.session_id}) — only the holder can release`,
+      );
+    }
+    const now = new Date().toISOString();
+    await tRun(
+      client,
+      `UPDATE ${VISION_SCHEMA}.tickets SET status = 'open', session_id = NULL,
+        claimed_at = NULL, last_activity = @now
+       WHERE id = @ticketId`,
+      { now, ticketId: ticket.id },
+    );
+    await recordTransition({
+      client,
+      aggregateType: "ticket",
+      aggregateId: ticket.id,
+      eventType: "transition.committed",
+      actor: "conduit-mcp",
+      authority: "system",
+      payload: { from_status: "claimed", to_status: "open", reason: "manual_release", session_id: sessionId },
+    });
+    return { released: true, ticketId: ticket.id };
+  });
+}
+
 // ── Stale / expired detection ───────────────────────────────────────
 
 const DEFAULT_STALE_SECONDS = 6 * 3600;
