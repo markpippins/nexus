@@ -24,6 +24,20 @@ Inherits from: `../ARCHITECTURE.md`
 
 See parent ARCHITECTURE.md for service topology. This file defines platform-level defaults only.
 
+## Machine Topology Doctrine (operator, 2026-09-22)
+
+**One nexus distro per machine.** Titanium runs at most ONE of TypeSpec,
+Moleculer, or the JVM tier at a time — as a rule, not even two. Multi-distro
+experiments belong on **helium**. Moleculer is the gradual replacement target
+for much of `nexus/typescript`. Nexus Core JVM runs on helium (container,
+probe-watched from titanium); titanium's 8092 is freed.
+
+Consequences: titanium deployment work (units, ports, rollouts) must not
+assume JVM co-location with TS services; the fat-jar rollout's nexus-core-*
+group targets the helium container image, not a titanium unit; cross-machine
+references (gateway defaults, registry entries) must name their host
+explicitly rather than assuming localhost.
+
 ## Port Allocation
 
 > **Status: DRAFT — pending roundtable ratification** (decision thread in the
@@ -43,12 +57,12 @@ See parent ARCHITECTURE.md for service topology. This file defines platform-leve
 | 8085 | service-registry | Spring Boot | ONLINE |
 | 8090 | atlas | Spring Boot | ONLINE |
 | 8091 | quarkus-broker-gateway | Quarkus | ONLINE (dev mode; own config still says 8090) |
-| 8092 | nexus-core-app | Spring Boot | ONLINE |
+| 8092 | — (freed 2026-09-22) | — | nexus-core JVM **retired on titanium** per the single-distro doctrine; now runs on **helium** `192.168.1.229:8092` (container `nexus-core/nexus-core:latest`, db vanadium, terrain id 140, probe-watched) |
 | 8098 | peb-kernel (`python3 -m peb_kernel.main`) | Python | ONLINE — **Python owns 8098** |
 | 9093 | helidon/user-access-service | Helidon MP | ONLINE |
 | 9095-9097 | ballerina-ci-gateway / sonar-sync / jenkins-sync | Java (tooling) | ONLINE |
 
-Free in the Spring/Quarkus band: 8083, 8086-8089, 8093-8097, 8099.
+Free in the Spring/Quarkus band on titanium: 8083, 8086-8089, 8092, 8093-8097, 8099.
 
 ### Proposed assignments (decision items D1-D3)
 
