@@ -17,14 +17,19 @@ WorkingDirectory=/home/codex/dev/nexus/python/cascade
 Environment=NATS_URL=nats://192.168.1.82:4222
 Environment=DATABASE_URL=postgres://pguser:pgpass@localhost:5432/nexus
 Environment=WRITE_QUEUE_CAPABILITY=nexus.storage.canonical
+Environment=WRITE_QUEUE_DURABLE=write_queue_reconciler
+Environment=WRITE_QUEUE_STREAM=WRITE_QUEUE
 
 # ── Executable ─────────────────────────────────────────────────────────
 ExecStart=/usr/bin/python3 /home/codex/dev/nexus/python/cascade/write_queue_reconciler.py
 
 # ── Restart behavior ───────────────────────────────────────────────────
-# Persistent service, not a timer: the reconciler is a core-NATS tail
-# (no durable consumer yet), so intents published while it is down sit in
-# the JetStream stream (7d retention) and are applied only when it runs.
+# Persistent service, not a timer. Since PR #452 the reconciler is a
+# JetStream DURABLE consumer (explicit acks): intents published while it
+# is down are BACK-FILLED from the WRITE_QUEUE stream on restart. It
+# still runs persistently so reconciliation is timely rather than batchy.
+# SINGLE INSTANCE ONLY: the durable consumer has no queue group — a
+# second instance would compete for the same deliveries.
 Restart=on-failure
 RestartSec=5
 
