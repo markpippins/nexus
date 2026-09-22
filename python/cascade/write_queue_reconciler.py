@@ -23,6 +23,23 @@ nats_envelope producer both publish CanonicalEnvelope-wrapped entries on this
 stream, so this reconciler accepts both the snake_case CanonicalEnvelope
 wrapper and a bare WriteQueueEntry payload.
 
+Consumption model (2026-09-22): JetStream DURABLE PUSH consumer with
+EXPLICIT acks. The original implementation used a plain core-NATS
+subscription — a live tail: intents published while the reconciler was
+down sat unprocessed in the WRITE_QUEUE stream and were never applied.
+With the durable consumer the stream is the source of truth: every
+message is held server-side until explicitly acked/termed, so a restart
+BACK-FILLS everything missed during downtime. Ack discipline:
+  ack  → message fully handled (applied, classified, or deduped)
+  term → message can never succeed (malformed JSON, not a write-queue
+         entry, missing writeId) — removed server-side, no redelivery
+  nak  → unexpected internal failure — loud redelivery; at-least-once
+         is safe because staging is idempotent (write_id PK) and the
+         interpreter path is keyed on write_id
+Config: WRITE_QUEUE_DURABLE (default write_queue_reconciler),
+WRITE_QUEUE_STREAM (default WRITE_QUEUE), WRITE_QUEUE_ACK_WAIT_S (60),
+WRITE_QUEUE_MAX_DELIVER (-1 = retry forever, loud).
+
 Usage::
 
     DATABASE_URL=postgres://pguser:pgpass@localhost:5432/nexus \\
@@ -304,6 +321,7 @@ async def run_reconciler() -> None:
         sys.exit(1)
     try:
         import nats
+        from nats.js.api import AckPolicy, ConsumerConfig, DeliverPolicy
     except ImportError as e:
         _log("FATAL: %s — install with: pip install nats-py", e)
         sys.exit(1)
@@ -323,45 +341,86 @@ async def run_reconciler() -> None:
 
     async def on_message(msg: Any) -> None:
         nonlocal processed
+        # ── Ack discipline (JetStream EXPLICIT) ─────────────────────────
+        # term: can never succeed → no redelivery.
         try:
             data: dict[str, Any] = json.loads(msg.data.decode())
         except json.JSONDecodeError as e:
-            _log("invalid JSON on %s: %s", msg.subject, e)
+            _log("invalid JSON on %s: %s — term", msg.subject, e)
+            await msg.term()
             return
 
         unwrapped = _unwrap(data)
         if unwrapped is None:
-            return  # not a write-queue entry; ignore
+            _log("not a write-queue entry on %s — term", msg.subject)
+            await msg.term()
+            return
         entry, subject = unwrapped
         intent = _get_intent(entry)
         write_id = str(intent.get("writeId") or entry.get("correlationId") or "")
         if not write_id:
-            _log("entry on %s missing writeId — skipping", subject or msg.subject)
+            _log("entry on %s missing writeId — term (cannot be processed or deduped)", subject or msg.subject)
+            await msg.term()
             return
 
+        # duplicate already handled this session → ack (nothing to do).
         if write_id in _seen:
             _log("duplicate writeId %s — skipping (dedup)", write_id[:8])
+            await msg.ack()
             return
 
-        outcome, detail = _classify(intent, pg_conn, write_id)
-        if outcome == RESULT:
-            applied, apply_detail = _apply(intent, pg_conn)
-            produced = write_id if applied else None
-            if not applied:
-                outcome = PARTIAL_APPLICATION
-                detail = apply_detail
-        else:
-            produced = None
+        # ── Process; unexpected failure = nak (loud redelivery, at-least-
+        # once; staging is idempotent via write_id PK) ──────────────────
+        try:
+            outcome, detail = _classify(intent, pg_conn, write_id)
+            if outcome == RESULT:
+                applied, apply_detail = _apply(intent, pg_conn)
+                produced = write_id if applied else None
+                if not applied:
+                    outcome = PARTIAL_APPLICATION
+                    detail = apply_detail
+            else:
+                produced = None
 
-        _remember(write_id)
-        processed += 1
-        _log("write %s (%s) → %s %s", write_id[:8], intent.get("verb"), outcome, detail or "")
+            _remember(write_id)
+            processed += 1
+            _log("write %s (%s) → %s %s", write_id[:8], intent.get("verb"), outcome, detail or "")
 
-        if nc and outcome in (RESULT, PARTIAL_APPLICATION, STALE_VERSION,
-                              CONFLICTING_MUTATION, DUPLICATE_SUBMISSION):
-            await _emit_reconciled(nc, entry, outcome, write_id, produced)
+            if nc and outcome in (RESULT, PARTIAL_APPLICATION, STALE_VERSION,
+                                  CONFLICTING_MUTATION, DUPLICATE_SUBMISSION):
+                await _emit_reconciled(nc, entry, outcome, write_id, produced)
+            await msg.ack()
+        except Exception as e:
+            _log("processing failure for %s: %s — nak (redelivery)", write_id[:8], e)
+            try:
+                await msg.nak()
+            except Exception:
+                pass
 
-    sub = await nc.subscribe(SUBJECT, cb=on_message)
+    # JetStream durable push consumer (explicit acks, backfill-on-restart).
+    # DeliverPolicy.ALL matters only at consumer creation; afterwards the
+    # consumer resumes from its ack floor, which is what back-fills downtime.
+    js = nc.jetstream()
+    durable = os.getenv("WRITE_QUEUE_DURABLE", "write_queue_reconciler")
+    stream = os.getenv("WRITE_QUEUE_STREAM", "WRITE_QUEUE")
+    ack_wait_s = int(os.getenv("WRITE_QUEUE_ACK_WAIT_S", "60"))
+    max_deliver = int(os.getenv("WRITE_QUEUE_MAX_DELIVER", "-1"))
+    cfg = ConsumerConfig(
+        durable_name=durable,
+        deliver_policy=DeliverPolicy.ALL,
+        ack_policy=AckPolicy.EXPLICIT,
+        ack_wait=ack_wait_s,
+        max_deliver=max_deliver,
+    )
+    try:
+        ci = await js.consumer_info(stream, durable)
+        _log("existing durable '%s': %d pending / %d awaiting-ack — backfilling if pending > 0",
+             durable, ci.num_pending, ci.num_ack_pending)
+    except Exception:
+        _log("no existing durable '%s' — creating on subscribe", durable)
+
+    sub = await js.subscribe(SUBJECT, cb=on_message, manual_ack=True, config=cfg)
+    _log("durable consumer '%s' attached to %s (explicit acks)", durable, SUBJECT)
     try:
         await _shutdown.wait()
     except asyncio.CancelledError:
