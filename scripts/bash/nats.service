@@ -1,0 +1,30 @@
+[Unit]
+Description=NATS — JetStream message bus via Docker
+Documentation=https://github.com/nexus/bin/start-nats-docker.sh
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=codex
+Group=codex
+
+# ── Environment ────────────────────────────────────────────────────────
+Environment=PATH=/usr/bin:/bin:/usr/local/bin
+
+# ── Executable ─────────────────────────────────────────────────────────
+ExecStart=/home/codex/dev/nexus/bin/start-nats-docker.sh
+ExecStop=-/usr/bin/docker stop atomic-nats
+ExecStopPost=-/usr/bin/docker rm atomic-nats
+
+# ── Restart behavior ───────────────────────────────────────────────────
+Restart=on-failure
+RestartSec=5
+
+# ── Timeouts ───────────────────────────────────────────────────────────
+TimeoutStartSec=60
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target
