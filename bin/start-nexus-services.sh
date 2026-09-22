@@ -93,6 +93,7 @@ ALL_SERVICES=(
     "ui-tools.service"          # port 3125 — UI Tools CRUD API (statusbar links)
     "ui-tools-mcp.service"       # port 3136 — UI Tools MCP (agent-facing link management)
     "semantics-srv.service"      # port 3160 — semantics REST API (semantics.* schema — type-level legend)
+    "resolution-srv.service"     # port 3171 — resolution REST API (resolution.* schema — canonical governance store, read-only v1)
     "semantics-mcp.service"      # port 3161 — semantics MCP (→ semantics-srv)
     "apidocs-srv.service"        # port 3180 — API docs index (Swagger UI + ReDoc over all *-srv specs)
 
@@ -180,6 +181,7 @@ SERVICE_PORTS=(
     ["ui-tools.service"]="3125"
     ["ui-tools-mcp.service"]="3136"
     ["semantics-srv.service"]="3160"
+    ["resolution-srv.service"]="3171"
     ["semantics-mcp.service"]="3161"
     ["apidocs-srv.service"]="3180"
     ["nebula-ui.service"]="4210"
