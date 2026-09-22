@@ -13,6 +13,10 @@ Excluded services:
     - semantics-srv  — its openapi.yaml is derived from the TABLES registry by
                        its own generator (scripts/generate-openapi.ts), not from
                        route extraction
+    - resolution-srv — registry-driven dynamic routes (GET /api/<table> from
+                       src/tables.ts); route extraction cannot enumerate the
+                       concrete table list, so the surface is documented by its
+                       TypeSpec contract (typespec/v1/resolution-srv) instead
     - pty-srv        — RETIRED (M3); WebSocket-only, intentionally no openapi.yaml (tree retained until M3 close-out)
     - terrain-srv    — retired
 
@@ -37,7 +41,7 @@ import extract_routes as er  # noqa: E402
 import gen_openapi as go     # noqa: E402
 
 # Services whose openapi.yaml is NOT produced by the generic extractor pipeline.
-EXCLUDED = {"semantics-srv", "pty-srv", "terrain-srv"}
+EXCLUDED = {"semantics-srv", "pty-srv", "terrain-srv", "resolution-srv"}
 
 
 def to_openapi_form(p):

@@ -1,8 +1,24 @@
 import { Router } from "express";
+import rateLimit from "express-rate-limit";
 import { getDb } from "../db";
 import { TABLES, TableMeta } from "../tables";
 
 export const resolutionRouter = Router();
+
+// Global read limiter — resolution.* is the canonical governance store; this
+// caps resource-exhaustion floods across every registry route while leaving
+// normal operator/agent reads well clear of the ceiling (same pattern as
+// wind-srv's limiters). The 405 method guard sits behind it too, so write
+// probing is throttled as well.
+const readLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "resolution-srv read rate limit exceeded" },
+});
+
+resolutionRouter.use(readLimiter);
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 

@@ -12,6 +12,7 @@
     "heartbeat-client": "file:../heartbeat-client",
     "cors": "^2.8.5",
     "express": "^4.21.0",
+    "express-rate-limit": "^7.4.1",
     "pg": "^8.21.0"
   },
   "devDependencies": {
