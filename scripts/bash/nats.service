@@ -15,6 +15,17 @@ Environment=PATH=/usr/bin:/bin:/usr/local/bin
 
 # ── Executable ─────────────────────────────────────────────────────────
 ExecStart=/home/codex/dev/nexus/bin/start-nats-docker.sh
+
+# ── Self-healing JetStream bootstrap ─────────────────────────────────
+# Ensure the WRITE_QUEUE stream exists (durable file-backed config) after
+# the server is up. Retry-wrapped: JetStream accepts connections before it
+# finishes loading storage. NO leading dash — a bootstrap failure fails the
+# unit loudly, because a missing write-queue stream would silently drop
+# reconciliation intents (the producer's core-NATS fallback path loses
+# them). Requires nats-py for the unit user (python3 -m pip install --user
+# --break-system-packages nats-py).
+ExecStartPost=/bin/sh -c 'for i in 1 2 3 4 5 6; do /usr/bin/python3 /home/codex/dev/nexus/bin/ensure-write-queue-stream.py --nats nats://127.0.0.1:4222 && exit 0; sleep 2; done; exit 1'
+
 ExecStop=-/usr/bin/docker stop atomic-nats
 ExecStopPost=-/usr/bin/docker rm atomic-nats
 
