@@ -271,7 +271,7 @@ def test_first_run_already_failing_alerts(tmp_path):
     posted = []
     fetch = ok_routes_fetcher()
     fetch.mapping[f"{BASE}/api/meep/health"] = http404(f"{BASE}/api/meep/health")
-    out = mod.run_probe(make_args(state_file=Path("/tmp/never.json"),
+    out = mod.run_probe(make_args(state_file=tmp_path / "state.json",
                                   no_jetstream=True),
                         fetch=fetch, fetch_states=all_running(),
                         fetch_js=ok_jetstream(), poster=alert_recorder(posted))
