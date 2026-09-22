@@ -1,7 +1,7 @@
 """TypeSafe System One adapter — implements the `system_one` API backed by ollama.
 
 This adapter provides the same interface as the hosted TypeSafe jev model,
-but backed by a local ollama endpoint on helium. The adapter is backend-
+but backed by a local ollama endpoint on thallium. The adapter is backend-
 replaceable: swap in jev-hosted or jev-self-hosted later with zero call-site churn.
 
 Reference: Architect assessment `1564cb0a` — the adapter, not the SDK, is the
@@ -222,8 +222,8 @@ class JevNonOutcomeResult:
 @dataclass
 class OllamaConfig:
     """Configuration for the ollama backend."""
-    base_url: str = "http://helium:11434"  # Default helium ollama endpoint
-    model: str = "qwen2.5-coder:latest"    # Default model
+    base_url: str = "http://thallium:11434"  # Default thallium ollama endpoint
+    model: str = "qwen2.5-coder:3b"    # Default model
     timeout_seconds: float = 30.0
     max_retries: int = 2
     temperature: float = 0.1  # Low temperature for calibrated judgments
@@ -272,7 +272,7 @@ class TypeSafeAdapter(ABC):
 # ── Ollama Adapter Implementation ──────────────────────────────────────
 
 class OllamaTypeSafeAdapter(TypeSafeAdapter):
-    """TypeSafe adapter backed by ollama on helium.
+    """TypeSafe adapter backed by ollama on thallium.
     
     Implements the three primitives by prompting an LLM with structured
     output formats. This is the spike implementation — the same interface
@@ -295,7 +295,7 @@ class OllamaTypeSafeAdapter(TypeSafeAdapter):
             await self.client.aclose()
     
     def get_backend_identity(self) -> str:
-        return f"ollama-helium:{self.config.ollama.model}"
+        return f"ollama-thallium:{self.config.ollama.model}"
     
     async def health_check(self) -> bool:
         if not self.client:
@@ -406,18 +406,19 @@ Return ONLY a JSON object:
         return ""
     
     def _summarize_state(self, state: Dict[str, Any]) -> str:
-        """Summarize state for prompt context (truncated)."""
+        """Summarize state for prompt context - include full values for judgment."""
         summary = {}
         for k, v in state.items():
             if isinstance(v, (str, int, float, bool)):
                 summary[k] = v
             elif isinstance(v, dict):
-                summary[k] = f"<dict with {len(v)} keys>"
+                # Include full dict values for proper judgment (don't truncate)
+                summary[k] = v
             elif isinstance(v, list):
-                summary[k] = f"<list of {len(v)} items>"
+                summary[k] = v
             else:
                 summary[k] = str(v)[:100]
-        return json.dumps(summary, indent=2)[:2000]
+        return json.dumps(summary, indent=2, default=str)[:5000]
     
     async def _call_ollama(self, prompt: str) -> str:
         """Call ollama API with the prompt."""
@@ -957,8 +958,8 @@ class JevKnowledgeBase(KnowledgeBase):
 # ── Factory for easy integration ────────────────────────────────────────
 
 async def create_jev_adapter(
-    ollama_url: str = "http://helium:11434",
-    model: str = "qwen2.5-coder:latest",
+    ollama_url: str = "http://thallium:11434",
+    model: str = "qwen2.5-coder:3b",
 ) -> tuple[OllamaTypeSafeAdapter, JevKnowledgeBase]:
     """Factory to create adapter and knowledge base for SOLScript integration.
     
@@ -1327,8 +1328,8 @@ class SyncJevKnowledgeBase(KnowledgeBase):
 
 
 def create_sync_jev_knowledge_base(
-    ollama_url: str = "http://helium:11434",
-    model: str = "qwen2.5-coder:latest",
+    ollama_url: str = "http://thallium:11434",
+    model: str = "qwen2.5-coder:3b",
 ) -> SyncJevKnowledgeBase:
     """Create a synchronous JevKnowledgeBase for immediate use."""
     config = JevAdapterConfig(
