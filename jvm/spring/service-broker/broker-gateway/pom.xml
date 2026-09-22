@@ -135,9 +135,8 @@
                         <goals>
                             <goal>repackage</goal>
                         </goals>
-                        <configuration>
-                            <classifier>exec</classifier>
-                        </configuration>
+                        <!-- No classifier: the main artifact IS the boot jar (atlas-consistent),
+                             so `java -jar target/broker-gateway-*.jar` works without a -exec suffix. -->
                     </execution>
                 </executions>
             </plugin>
