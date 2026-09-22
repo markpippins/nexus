@@ -3,7 +3,10 @@ server:
 
 javax.sql.DataSource.user-access-ds:
   dataSourceClassName: org.postgresql.ds.PGSimpleDataSource
-  dataSource.url: jdbc:postgresql://localhost:5432/nexus
-  dataSource.user: pguser
-  dataSource.password: pgpass
+  # Env-driven (USER_ACCESS_PG_URL) for multi-machine deployment; fallback = local default.
+  # Credentials externalized — USER_ACCESS_PG_USERNAME / USER_ACCESS_PG_PASSWORD env vars; no secrets in the repository.
+  # MP Config property expressions: ${VAR} resolves from env/system sources; unset = empty (matches the Spring ${VAR:} idiom).
+  dataSource.url: ${USER_ACCESS_PG_URL:jdbc:postgresql://localhost:5432/nexus}
+  dataSource.user: ${USER_ACCESS_PG_USERNAME:}
+  dataSource.password: ${USER_ACCESS_PG_PASSWORD:}
   maximumPoolSize: 5
