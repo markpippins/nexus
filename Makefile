@@ -291,6 +291,40 @@ seed-guard-test:
 	@echo "[seed-guard] running wr-conf-006 full suite (AC1-AC5)..."
 	@python3 -m pytest python/nexus_core/wrp/tests/test_conformance_seed_guard.py -v
 
+# ─── SDK drift guard (TypeSpec python clients) ────────────────────────────
+# Backed by nexus/.github/workflows/sdk-drift-guard.yml — same commands
+# locally and in CI.
+#
+#   make sdk-drift-install    install the pinned TypeSpec toolchain
+#   make sdk-drift-check      CI gate: regen-diff; exit 1 on drift (needs tsp)
+#   make sdk-drift-stamp      cheap fallback: contract-hash stamps (no tsp)
+#   make sdk-drift-update-stamp  refresh stamps after verifying a regen
+#   make sdk-drift-test       hermetic unit tests for the checker
+#
+# History: a regenerated python SDK sat stranded in a stash-pop incident
+# (2026-09-22) because nothing compared generated trees to the TypeSpec
+# contract. This guard makes that drift loud.
+
+sdk-drift-install:
+	@echo "[sdk-drift] installing pinned TypeSpec toolchain (typespec/v1)..."
+	cd typespec/v1 && npm install --no-audit --no-fund
+
+sdk-drift-check:
+	@echo "[sdk-drift] regen-diff: fresh tsp compile vs committed generated trees..."
+	@python3 bin/check_sdk_drift.py --mode regen
+
+sdk-drift-stamp:
+	@echo "[sdk-drift] stamp check: TypeSpec contract hashes vs committed stamps..."
+	@python3 bin/check_sdk_drift.py --mode stamp
+
+sdk-drift-update-stamp:
+	@echo "[sdk-drift] refreshing TypeSpec contract stamps..."
+	@python3 bin/check_sdk_drift.py --update-stamp
+
+sdk-drift-test:
+	@echo "[sdk-drift] running checker unit tests..."
+	@python3 -m pytest bin/tests/test_check_sdk_drift.py -v
+
 # ─── API docs (tools/api-docs) ───────────────────────────────────────────────
 # Backed by nexus/.github/workflows/apidocs.yml — same commands locally and
 # in CI. Extracts the live route inventory from source and verifies every
