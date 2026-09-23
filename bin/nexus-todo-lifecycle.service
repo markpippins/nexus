@@ -1,0 +1,35 @@
+# Source of truth for ~/.config/systemd/user/nexus-todo-lifecycle.service
+#
+# Deploy:
+#   cp bin/nexus-todo-lifecycle.service ~/.config/systemd/user/
+#   cp bin/nexus-todo-lifecycle.timer   ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now nexus-todo-lifecycle.timer
+# (or: make todo-lifecycle-install-timer)
+#
+# Why this file is in the repo: same doctrine as nexus-helium-core-probe.service
+# and bin/sdk-drift-stamp.service — host-only units drift from the corpus (the
+# 2026-09-21 helium probe incident, where the deployed ExecStart was invisible
+# to the repo for three days). The sweep script's docstring previously claimed
+# deployed units; those units did not exist on the host, so this commit is the
+# fix, not a mirage.
+#
+# ExecStart targets the absolute repo path on the primary checkout host. The
+# script writes agent records via bin/post-agent-record.py; a failing run
+# exits non-zero BEFORE any write, so a missing daily record in the
+# series:nexus-todo-lifecycle time series is itself the alert.
+#
+# Failure model: exit 0 = sweep ran (closes are gated + capped); nonzero =
+# tool error (unit shows failed). Drift-found is not an error condition here —
+# the sweep's job is to classify and act, and every run files an apply record.
+
+[Unit]
+Description=Nexus To Do forum lifecycle sweep (ratified policy card, gated auto-closes)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/todo_lifecycle_sweep.py --apply --cap 10
+
+[Install]
+WantedBy=default.target
