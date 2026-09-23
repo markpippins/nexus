@@ -13,6 +13,15 @@ currently-connected subscribers, nothing was stored. An observation window
 with no subscriber is unprovable — so "zero traffic observed" could never
 be evidenced. The canary adds cumulative counters on both sides.
 
+## Precondition gate
+
+Every baseline/window capture MUST begin with `bin/assert_moleculer_ports.sh`
+(exit 0): it proves no moleculer app is running locally on titanium (mapped
+ports 4050/4060/4080/4100/4106/4109/4114/4170 unbound, no host runner, units
+disabled), so the moleculer side of any comparison is attributable to a real
+deployed twin — not an accidental local process. A capture under an operator
+exception (`NEXUS_MOLECULER_EXCEPTION_DOC`) must cite the exception window.
+
 ## Endpoints (both in-memory; a restart resets the window — see below)
 
 | Side | Endpoint | Shape |

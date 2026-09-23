@@ -42,6 +42,26 @@
 | NATS broker | `nats://localhost:4222` (services default via `NATS_URL` env, `nats://localhost:4222`) |
 | Namespaces | one per service family: `search`, `solscript`, `broker`, `voyager`, `cascade`, `kernel`, `draft`, `knowledge` |
 
+## Host posture on titanium (DBA gate, 2026-09-23)
+
+Moleculer does **not run locally** on titanium — enforced, not assumed:
+
+- The candidate-tier lane runs **containerized** (`cand-broker` on host
+  `:14080`, NATS mesh on `:4222`) — outside the moleculer band.
+- Both launch units (`moleculer-search.service`, `moleculer-solscript.service`)
+  are **disabled-by-default**; there are no system-level moleculer units.
+- The gate is executable: `bin/assert_moleculer_ports.sh` fails loudly if any
+  mapped port above is bound, a moleculer runner is on the host (containerized
+  runners are detected via `/proc/<pid>/cgroup` and permitted), or a unit is
+  enabled. Wire it into canary runs and CI before anything that depends on
+  "no local moleculer" being true.
+- Exception path (documented, time-boxed): a locally-running canary app needs
+  an operator-approved exception — point
+  `NEXUS_MOLECULER_EXCEPTION_DOC` at a file containing
+  `EXCEPTION-UNTIL: <ISO date>`; the gate passes with a loud notice inside
+  the window and fails again the day after. Canary evidence produced under
+  an exception must cite the window.
+
 ## Freeze discipline
 
 - The M1 cutover manifest (`M1-SERVICE-MANIFEST.md`, frozen 2026-09-09) is the
