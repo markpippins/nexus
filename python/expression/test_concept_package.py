@@ -190,7 +190,7 @@ def test_concept_package_validation():
     from expression.concept_package import validate_concept_package, ConceptPackage, ConceptPackageFilter
     from datetime import datetime
     
-    # Valid package
+    # Valid package (fingerprint assigned canonically — G4)
     pkg = ConceptPackage(
         package_id="test-pkg",
         package_name="test",
@@ -201,8 +201,9 @@ def test_concept_package_validation():
         metadata_stream_id=None,
         created_at=datetime.utcnow(),
         boundary={},
-        fingerprint="45920f16df44db9779bc6382b9a64a55",
+        fingerprint="",
     )
+    pkg.fingerprint = _package_fingerprint(pkg)
     
     from expression.concept_package import validate_concept_package
     errors = validate_concept_package(pkg)
@@ -288,3 +289,178 @@ def test_concept_package_fingerprint_deterministic():
     
     assert pkg1.fingerprint == pkg2.fingerprint
     assert len(pkg1.fingerprint) == 32
+
+
+# --- G4 regression tests (review record bc724f6b, finding 6) ---
+
+
+def _g4_filter(**overrides) -> ConceptPackageFilter:
+    defaults = dict(
+        concept_scope=["deployment"],
+        member_kinds=["reference"],
+        tag_filters={"deployment": ["production"]},
+    )
+    defaults.update(overrides)
+    return ConceptPackageFilter(**defaults)
+
+
+def _g4_bundle() -> dict:
+    return {
+        "observations": [
+            {
+                "observation_id": "obs-1",
+                "kind": "reference",
+                "value": "PR #123",
+                "tags": {"deployment": ["production"]},
+                "metadata": {"env": "prod"},
+                "concept_scope": ["deployment"],
+            },
+            {
+                "observation_id": "obs-2",
+                "kind": "version",
+                "value": "v2.3.4",
+                "tags": {"deployment": ["staging"]},
+                "metadata": {"env": "staging"},
+                "concept_scope": ["deployment"],
+            },
+            {
+                "observation_id": "obs-3",
+                "kind": "reference",
+                "value": "PR #456",
+            },
+        ],
+        "candidate_links": [
+            {"link_id": "link-1", "source_observation_ids": ["obs-1"]},
+            {"link_id": "link-2", "source_observation_ids": ["obs-2"]},
+            {"link_id": "link-3", "source_observation_ids": ["obs-1", "obs-2"]},
+        ],
+        "proposition_candidates": [
+            {"proposition_id": "prop-1", "source_observation_ids": ["obs-1"]},
+            {"proposition_id": "prop-2", "source_observation_ids": ["obs-2"]},
+        ],
+    }
+
+
+def test_g4_created_package_validates_clean():
+    """Review finding 6 reproduction: create then validate passes."""
+    pkg = create_concept_package(
+        package_name="g4-pkg",
+        package_version="1.0.0",
+        filter_spec=_g4_filter(),
+        expression_bundle=_g4_bundle(),
+    )
+    assert pkg.fingerprint == _package_fingerprint(pkg)
+    assert validate_concept_package(pkg) == []
+
+
+def test_g4_bundle_tamper_breaks_fingerprint():
+    pkg = create_concept_package(
+        package_name="g4-pkg",
+        package_version="1.0.0",
+        filter_spec=_g4_filter(),
+        expression_bundle=_g4_bundle(),
+    )
+    pkg.expression_bundle["observations"][0]["value"] = "tampered"
+    errors = validate_concept_package(pkg)
+    assert any("fingerprint mismatch" in e.lower() for e in errors)
+
+
+def test_g4_filter_tamper_breaks_fingerprint():
+    pkg = create_concept_package(
+        package_name="g4-pkg",
+        package_version="1.0.0",
+        filter_spec=_g4_filter(),
+        expression_bundle=_g4_bundle(),
+    )
+    pkg.filter_spec.member_kinds = ["version"]
+    errors = validate_concept_package(pkg)
+    assert any("fingerprint mismatch" in e.lower() for e in errors)
+
+
+def test_g4_fingerprint_order_insensitive():
+    a = create_concept_package(
+        package_name="g4-pkg",
+        package_version="1.0.0",
+        filter_spec=_g4_filter(member_kinds=["reference", "version"]),
+        expression_bundle=_g4_bundle(),
+    )
+    b = create_concept_package(
+        package_name="g4-pkg",
+        package_version="1.0.0",
+        filter_spec=_g4_filter(member_kinds=["version", "reference"]),
+        expression_bundle=_g4_bundle(),
+    )
+    assert a.fingerprint == b.fingerprint
+
+
+def test_g4_digest_is_sha256():
+    import hashlib
+    from expression.concept_package import _digest
+
+    assert _digest("x") == hashlib.sha256(b"x").hexdigest()
+
+
+def test_g4_export_import_round_trip_validates_clean():
+    pkg = create_concept_package(
+        package_name="g4-pkg",
+        package_version="1.0.0",
+        filter_spec=_g4_filter(),
+        expression_bundle=_g4_bundle(),
+    )
+    imported = import_concept_package(export_concept_package(pkg))
+    assert imported.fingerprint == pkg.fingerprint
+    assert validate_concept_package(imported) == []
+
+
+def test_g4_member_kinds_scope_and_tag_filters_apply():
+    filtered = filter_expression_bundle(_g4_bundle(), _g4_filter())
+    obs_ids = [o["observation_id"] for o in filtered["observations"]]
+    # obs-1: reference + deployment scope + production tag -> kept
+    # obs-2: version kind -> dropped by member_kinds
+    # obs-3: reference but no scope/tag -> dropped fail-closed
+    assert obs_ids == ["obs-1"]
+
+
+def test_g4_links_and_props_drop_dangling_sources():
+    filtered = filter_expression_bundle(_g4_bundle(), _g4_filter())
+    link_ids = [l["link_id"] for l in filtered["candidate_links"]]
+    # link-1 (obs-1 kept) survives; link-2 and link-3 reference dropped obs-2
+    assert link_ids == ["link-1"]
+    prop_ids = [p["proposition_id"] for p in filtered["proposition_candidates"]]
+    assert prop_ids == ["prop-1"]
+
+
+def test_g4_inclusion_ledger_restricts_observations():
+    ledger_only = filter_expression_bundle(
+        _g4_bundle(), ConceptPackageFilter(inclusion_ledger=["obs-1", "obs-3"])
+    )
+    assert [o["observation_id"] for o in ledger_only["observations"]] == ["obs-1", "obs-3"]
+
+    combined = filter_expression_bundle(
+        _g4_bundle(),
+        ConceptPackageFilter(concept_scope=["deployment"], inclusion_ledger=["obs-1", "obs-3"]),
+    )
+    # obs-3 has no concept_scope -> dropped fail-closed even though ledgered
+    assert [o["observation_id"] for o in combined["observations"]] == ["obs-1"]
+
+
+def test_g4_metadata_filters_fail_closed():
+    prod = filter_expression_bundle(
+        _g4_bundle(), ConceptPackageFilter(metadata_filters={"env": ["prod"]})
+    )
+    assert [o["observation_id"] for o in prod["observations"]] == ["obs-1"]
+
+    missing_key = filter_expression_bundle(
+        _g4_bundle(), ConceptPackageFilter(metadata_filters={"nope": ["x"]})
+    )
+    assert missing_key["observations"] == []
+
+
+def test_g4_tag_filter_accepts_list_form():
+    bundle = _g4_bundle()
+    bundle["observations"][0]["tags"] = ["deployment:production"]
+    filtered = filter_expression_bundle(
+        bundle, ConceptPackageFilter(tag_filters={"deployment": ["production"]})
+    )
+    # obs-1 has the namespaced tag; obs-3 has no tags -> dropped fail-closed
+    assert [o["observation_id"] for o in filtered["observations"]] == ["obs-1"]

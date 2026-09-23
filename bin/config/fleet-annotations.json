@@ -7,7 +7,7 @@
     {
       "name": "nexus-core",
       "default_port": 8092,
-      "description": "read-only JVM projection monolith (Spring Boot) — docker/nexus-core compose; actuator health",
+      "description": "read-only JVM projection monolith (Spring Boot) \u2014 docker/nexus-core compose; actuator health",
       "framework": "Spring Boot",
       "service_type": "REST API"
     }
@@ -16,23 +16,33 @@
     {
       "hostname": "titanium",
       "environment": "Production",
-      "description": "primary nexus host — canonical PG, all core services, operator workstation (x86)",
+      "description": "primary nexus host \u2014 canonical PG, all core services, operator workstation (x86)",
       "os": "Linux",
       "server_type": "Physical",
-      "services": ["nebula-srv", "assembly-srv", "conduit-mcp", "tackle-mcp", "nebula-mcp", "wind-srv", "role-memory-srv"]
+      "services": [
+        "nebula-srv",
+        "assembly-srv",
+        "conduit-mcp",
+        "tackle-mcp",
+        "nebula-mcp",
+        "wind-srv",
+        "role-memory-srv"
+      ]
     },
     {
       "hostname": "helium",
       "environment": "Production",
-      "description": "read-only JVM experimental node (banana-pi) — nexus-core :8092 (Spring Boot) + helium-mongo; calendar emitter",
+      "description": "read-only JVM experimental node (banana-pi) \u2014 nexus-core :8092 (Spring Boot) + helium-mongo; calendar emitter",
       "os": "Linux",
       "server_type": "Physical",
-      "services": ["nexus-core"]
+      "services": [
+        "nexus-core"
+      ]
     },
     {
       "hostname": "vanadium",
       "environment": "Production",
-      "description": "lab node (pi4) — sonar runner, CI backup target, PG replication target; calendar emitter",
+      "description": "lab node (pi4) \u2014 sonar runner, CI backup target, PG replication target; calendar emitter",
       "os": "Linux",
       "server_type": "Physical",
       "services": []
@@ -40,7 +50,7 @@
     {
       "hostname": "osmium",
       "environment": "Production",
-      "description": "ansible control node (Orange Pi Zero, armv7) — fleet inventory source of truth ~/devops/ansible; calendar emitter",
+      "description": "ansible control node (Orange Pi Zero, armv7) \u2014 fleet inventory source of truth ~/devops/ansible; calendar emitter",
       "os": "Linux",
       "server_type": "Physical",
       "services": []
@@ -48,7 +58,7 @@
     {
       "hostname": "rubidium",
       "environment": "Development",
-      "description": "pi3 — powered down (fleet consolidation in progress)",
+      "description": "pi3 \u2014 powered down (fleet consolidation in progress)",
       "os": "Linux",
       "server_type": "Physical",
       "services": []
@@ -56,7 +66,7 @@
     {
       "hostname": "iridium",
       "environment": "Development",
-      "description": "pi4 — powered down (fleet consolidation in progress)",
+      "description": "pi4 \u2014 powered down (fleet consolidation in progress)",
       "os": "Linux",
       "server_type": "Physical",
       "services": []
@@ -64,15 +74,18 @@
     {
       "hostname": "barium",
       "environment": "Development",
-      "description": "pi4 — powered down (fleet consolidation in progress); former PG replication target (R9 chain)",
+      "description": "pi4 \u2014 standby lab node (pi4) \u2014 CI/backup/PG replication target; calendar emitter",
       "os": "Linux",
       "server_type": "Physical",
-      "services": []
+      "services": [
+        "calendar-emitter"
+      ],
+      "status": "ACTIVE"
     },
     {
       "hostname": "thallium",
       "environment": "Development",
-      "description": "pi4 — powered down (fleet consolidation in progress)",
+      "description": "pi4 \u2014 powered down (fleet consolidation in progress)",
       "os": "Linux",
       "server_type": "Physical",
       "services": []
@@ -80,7 +93,7 @@
     {
       "hostname": "deuterium",
       "environment": "Development",
-      "description": "pi4 — powered down (fleet consolidation in progress)",
+      "description": "pi4 \u2014 powered down (fleet consolidation in progress)",
       "os": "Linux",
       "server_type": "Physical",
       "services": []
@@ -88,7 +101,7 @@
     {
       "hostname": "cesium",
       "environment": "Development",
-      "description": "pi4 — powered down (fleet consolidation in progress)",
+      "description": "pi4 \u2014 powered down (fleet consolidation in progress)",
       "os": "Linux",
       "server_type": "Physical",
       "services": []
@@ -96,7 +109,7 @@
     {
       "hostname": "lithium",
       "environment": "Development",
-      "description": "pi4 — powered down (fleet consolidation in progress)",
+      "description": "pi4 \u2014 powered down (fleet consolidation in progress)",
       "os": "Linux",
       "server_type": "Physical",
       "services": []
@@ -104,7 +117,7 @@
     {
       "hostname": "radium",
       "environment": "Development",
-      "description": "pi4 — powered down (fleet consolidation in progress)",
+      "description": "pi4 \u2014 powered down (fleet consolidation in progress)",
       "os": "Linux",
       "server_type": "Physical",
       "services": []
@@ -112,7 +125,7 @@
     {
       "hostname": "sodium",
       "environment": "Development",
-      "description": "nano — powered down (fleet consolidation in progress)",
+      "description": "nano \u2014 powered down (fleet consolidation in progress)",
       "os": "Linux",
       "server_type": "Physical",
       "services": []
@@ -120,7 +133,7 @@
     {
       "hostname": "thorium",
       "environment": "Development",
-      "description": "c4 — powered down (fleet consolidation in progress)",
+      "description": "c4 \u2014 powered down (fleet consolidation in progress)",
       "os": "Linux",
       "server_type": "Physical",
       "services": []
@@ -128,7 +141,7 @@
     {
       "hostname": "entropy",
       "environment": "Development",
-      "description": "reserve node — containerized python services under evaluation (no routable address verified yet — sync reports it unaddressable until the manifest states one)",
+      "description": "reserve node \u2014 containerized python services under evaluation (no routable address verified yet \u2014 sync reports it unaddressable until the manifest states one)",
       "os": "Linux",
       "server_type": "Physical",
       "services": []

@@ -12,6 +12,7 @@ lives beside its incumbent and is cut over only behind a contract gate.
 | `voyager/` | 4114 | `typescript/voyager-srv` (:3114) | **`typescript/voyager-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed, not cut over |
 | `cascade/` | 4106 | `typescript/cascade-srv` (:3106) | **`typescript/cascade-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed 24/24, not cut over |
 | `kernel/` | 4100 | `typescript/kernel-srv` (:8100) | **`typescript/kernel-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed 25/25, not cut over |
+| `draft/` | 4170 | `typescript/draft-srv` (:3170) | **`typescript/draft-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed 15/15, not cut over (drivers copied verbatim; X-Nexus-Internal gate replicated) |
 
 ## Contract coverage
 

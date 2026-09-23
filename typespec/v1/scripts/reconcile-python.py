@@ -23,6 +23,15 @@ Usage:
 The manifest below is the authoritative list of Python services. A service in
 the manifest with no `typespec/v1/<service>/python/` directory is reported as
 "unmodeled" (not an error) until its contract exists.
+
+Exit codes:
+    0  every modeled service's routes/tools are fully covered (no missing,
+       no extra, non-empty source scan) — per python-conventions.md
+    1  any coverage gap: MISSING routes/tools, EXTRA contract-only
+       routes/tools, or a NO-SOURCE scan (source scan found nothing while a
+       contract exists — stale src_root or moved service; the proof is
+       vacuous and must not read as OK)
+    2  usage error (unknown --service)
 """
 
 import argparse
@@ -353,7 +362,8 @@ def reconcile(entry: dict) -> dict:
     name, kind = entry["name"], entry["type"]
     tsp_dir = os.path.join(TSP_DIR, name, "python")
     modeled = os.path.isdir(tsp_dir)
-    result = {"name": name, "type": kind, "modeled": modeled, "missing": [], "extra": []}
+    result = {"name": name, "type": kind, "modeled": modeled, "missing": [], "extra": [],
+              "no_source": False}
     if not modeled:
         return result
     if kind == "rest":
@@ -373,7 +383,39 @@ def reconcile(entry: dict) -> dict:
     result["extra"] = sorted(contract - src)
     result["covered"] = len(src) - len(result["missing"])
     result["total"] = len(src)
+    # A modeled service whose source scan finds NOTHING while its contract
+    # declares operations is not "OK 0/0" — the scan is vacuous (stale
+    # src_root, moved service, or scanner gap) and must be surfaced as its
+    # own status, never silently OK.
+    result["no_source"] = len(src) == 0 and len(contract) > 0
     return result
+
+
+def status_of(r: dict) -> str:
+    """Honest summary status — must agree with the detail section.
+
+    OK        no missing, no extra, source scan non-empty
+    GAPS      missing and/or extra (extras are coverage gaps too: the
+              contract declares surface the source does not have)
+    NO-SOURCE modeled, contract non-empty, but the source scan found 0
+              routes/tools — the comparison proved nothing
+    UNMODELED no contract dir (documented as not-an-error)
+    """
+    if not r.get("modeled"):
+        return "UNMODELED"
+    if r.get("no_source"):
+        return "NO-SOURCE"
+    if r["missing"] or r["extra"]:
+        return "GAPS"
+    return "OK"
+
+
+def exit_code_for(results: list[dict]) -> int:
+    """0 only when every modeled service is honestly OK; 1 on any gap."""
+    for r in results:
+        if status_of(r) in ("GAPS", "NO-SOURCE"):
+            return 1
+    return 0
 
 
 def main() -> int:
@@ -390,44 +432,50 @@ def main() -> int:
     results = [reconcile(e) for e in entries]
     if args.json:
         print(json.dumps(results, indent=2))
-        return 0
+        return exit_code_for(results)
 
     total_missing = 0
+    total_extra = 0
     total_covered = 0
     total_declared = 0
-    print(f"{'SERVICE':<22} {'TYPE':<6} {'STATUS':<10} {'COVERED':<8} {'DECLARED':<9} {'MISSING':<7}")
-    print("-" * 70)
+    print(f"{'SERVICE':<22} {'TYPE':<6} {'STATUS':<10} {'COVERED':<8} {'DECLARED':<9} {'MISSING':<7} {'EXTRA':<6}")
+    print("-" * 78)
     for r in results:
         if not r["modeled"]:
-            status = "UNMODELED"
-            cov = decl = miss = "-"
+            cov = decl = miss = extra = "-"
         else:
             total_covered += r.get("covered", 0)
             total_declared += r.get("total", 0)
             total_missing += len(r["missing"])
+            total_extra += len(r["extra"])
             cov = f"{r.get('covered', 0)}/{r.get('total', 0)}"
             decl = str(r.get("total", 0))
             miss = str(len(r["missing"]))
-            status = "OK" if not r["missing"] else "GAPS"
-        print(f"{r['name']:<22} {r['type']:<6} {status:<10} {cov:<8} {decl:<9} {miss:<7}")
+            extra = str(len(r["extra"]))
+        status = status_of(r)
+        print(f"{r['name']:<22} {r['type']:<6} {status:<10} {cov:<8} {decl:<9} {miss:<7} {extra:<6}")
 
-    print("-" * 70)
+    print("-" * 78)
     print(f"TOTAL modeled: {sum(1 for r in results if r['modeled'])}/{len(results)} | "
-          f"declared {total_declared} | covered {total_covered} | missing {total_missing}")
+          f"declared {total_declared} | covered {total_covered} | missing {total_missing} | extra {total_extra}")
     print()
 
     for r in results:
+        if r.get("no_source"):
+            print(f"  NO-SOURCE {r['name']}: source scan found 0 routes/tools while the "
+                  f"contract declares {len(r['extra'])} — check src_root (stale manifest "
+                  f"entry: {next(e['src_root'] for e in MANIFEST if e['name'] == r['name'])})")
         for m in r["missing"]:
             print(f"  MISSING  {r['name']}: {m}")
         for x in r["extra"]:
             print(f"  EXTRA    {r['name']}: {x} (in contract, not in source)")
 
-    if total_missing == 0:
+    code = exit_code_for(results)
+    if code == 0:
         print("COVERAGE COMPLETE: every modeled route/tool has a matching contract operation.")
-        return 0
-    if args.service:
-        return 1 if total_missing else 0
-    return 0
+    else:
+        print("COVERAGE GAPS DETECTED: see MISSING / EXTRA / NO-SOURCE above.")
+    return code
 
 
 if __name__ == "__main__":
