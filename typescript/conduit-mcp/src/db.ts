@@ -3663,6 +3663,26 @@ export async function getPlansGroupedByStatus(): Promise<PlansByStatus> {
     }
   }
 
+  // W-B5 (architect ruling, 2026-09-22): surface archived plans in their own
+  // bucket instead of omitting them (audit gap — 5 legacy plans were
+  // invisible to /state). Archived = soft-deleted rows whose canonical
+  // implementation_plans status is 'archived' (the archive mechanism marks
+  // both). Not receipt-derived: archived is a nebula-side disposition, so
+  // the override is deliberate.
+  const archivedRows = await qAll(`
+    SELECT p.*
+    FROM nebula.plans p
+    JOIN nebula.implementation_plans i
+      ON i.plan_number::text = p.id
+     AND (i.valid_until IS NULL OR i.valid_until > now())
+    WHERE p.deleted <> 0 AND i.status = 'archived'
+  `) as PlanRow[];
+  for (const plan of archivedRows) {
+    if (!result.archived.some((a) => a.id === plan.id)) {
+      result.archived.push({ ...plan, derived_status: "ARCHIVED" });
+    }
+  }
+
   return result;
 }
 
@@ -4399,25 +4419,32 @@ export async function claimTicket(
     await tRun(
       client,
       `UPDATE ${VISION_SCHEMA}.tickets
-       SET status = 'claimed', session_id = @sessionId, claimed_at = @now, last_activity = @now
+       SET status = 'claimed', session_id = @sessionId,
+         claimed_at = @now::timestamptz, last_activity = @now
        WHERE id = @ticketId`,
       { sessionId, now, ticketId: ticket.id },
     );
-    await recordTransition({
-      client,
-      aggregateType: "ticket",
-      aggregateId: ticket.id,
-      eventType: "transition.committed",
-      actor: "conduit-mcp",
-      authority: "system",
-      payload: {
-        from_status: ticket.status,
-        to_status: "claimed",
-        reason: decision.action === "takeover" ? "claim_takeover" : decision.action === "refresh" ? "claim_refresh" : "manual_claim",
-        session_id: sessionId,
-        ...(decision.action === "takeover" ? { took_over_from: decision.holder } : {}),
-      },
-    });
+    // Kernel policy: transition.committed forbids no-op transitions
+    // (from_status must differ from to_status) — a same-session refresh is
+    // claimed→claimed, so it gets a timestamp bump only; the claim/takeover
+    // paths transition recorded statuses.
+    if (decision.action !== "refresh") {
+      await recordTransition({
+        client,
+        aggregateType: "ticket",
+        aggregateId: ticket.id,
+        eventType: "transition.committed",
+        actor: "conduit-mcp",
+        authority: "system",
+        payload: {
+          from_status: ticket.status,
+          to_status: "claimed",
+          reason: decision.action === "takeover" ? "claim_takeover" : "manual_claim",
+          session_id: sessionId,
+          ...(decision.action === "takeover" ? { took_over_from: decision.holder } : {}),
+        },
+      });
+    }
     return {
       ticketId: ticket.id,
       action: decision.action,
