@@ -155,6 +155,22 @@ def fetch_threads(dsn: str) -> tuple[list[dict], set[str]]:
     return rows, roles
 
 
+def live_audit_comments(dsn: str, post_id: str) -> int:
+    """Count live retrofit audit comments on a thread (0 = not yet retrofitted)."""
+    import psycopg2
+    with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT count(*) FROM assembly.comments
+            WHERE post_id = %s
+              AND text LIKE '%%Routing retrofit (%%automated, DBA)%%'
+              AND expiration_dt = 'infinity'
+            """,
+            (post_id,),
+        )
+        return int(cur.fetchone()[0])
+
+
 def poster_id(assembly_url: str) -> str:
     users = http_json(f"{assembly_url}/api/users")
     return next(u["id"] for u in users
@@ -196,7 +212,8 @@ def main(argv=None) -> int:
     ap.add_argument("--explicit", type=str, default=None,
                     help="JSON file {thread_id: role} planner overrides")
     ap.add_argument("--decision-thread", default="")
-    ap.add_argument("--cap", type=int, default=50)
+    ap.add_argument("--cap", type=int, default=50,
+                    help="max retitles per run; 0 = no cap (apply everything planned)")
     ap.add_argument("--assembly-url", default=DEFAULT_ASSEMBLY)
     ap.add_argument("--nebula-url", default=DEFAULT_NEBULA)
     ap.add_argument("--dsn", default=os.environ.get("SRCDSN") or DEFAULT_DSN)
@@ -221,8 +238,25 @@ def main(argv=None) -> int:
     if args.explicit and Path(args.explicit).is_file():
         explicit = json.loads(Path(args.explicit).read_text())
 
+    # Idempotency guard: threads already carrying a live retrofit audit comment
+    # were routed by a previous pass — never re-plan them. (Regression: passes
+    # 2..8 of the 2026-09-23 campaign re-processed the same oldest-50 threads
+    # because the explicit-id check ignored current routed status, stacking 7
+    # duplicate audit comments per thread; the duplicates were soft-expired
+    # via expiration_dt and this guard added.)
+    def retrofitted(tid: str) -> bool:
+        try:
+            return bool(live_audit_comments(args.dsn, tid))
+        except Exception:
+            # Fail-closed: an unreachable probe must not let a re-plan stack
+            # duplicate audit comments again. Deferring a thread to the next
+            # pass self-heals; duplicates do not.
+            return True
+
     plan: list[dict] = []
     for r in rows:
+        if retrofitted(r["id"]):
+            continue
         p = plan_for(r["title"], r["token"], r["bucket"], roles)
         if r["id"] in explicit:
             role = explicit[r["id"]]
@@ -265,8 +299,9 @@ def main(argv=None) -> int:
     print(f"evidence record: {ev_id}")
 
     pid = poster_id(args.assembly_url)
+    batch = plan if args.cap <= 0 else plan[: args.cap]
     applied, failed = [], []
-    for p in plan[: args.cap]:
+    for p in batch:
         try:
             out = retitle(args.assembly_url, p["id"], p["new_title"])
             audit_comment(args.assembly_url, pid, p["id"], p["kind"],
@@ -278,9 +313,8 @@ def main(argv=None) -> int:
 
     apply_id = post_record(args.nebula_url,
                            f"Token retrofit campaign {stamp} — applied ({len(applied)})",
-                           f"Evidence {ev_id}; decision {args.decision_thread}; "
-                           f"applied {len(applied)}; failed {len(failed)}",
-                           ["to:dba", "dba", "token-retrofit", "type:change"])
+                           f"Evidence {ev_id}; decision {args.decision_thread}; "                        f"applied {len(applied)}; failed {len(failed)}",
+                        ["to:dba", "dba", "token-retrofit", "type:change"])
     Path(args.state).write_text(json.dumps(
         {"last_run": stamp, "evidence": ev_id, "apply": apply_id,
          "applied": [a for a, _ in applied]}, indent=2))
