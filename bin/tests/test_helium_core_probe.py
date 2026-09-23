@@ -66,7 +66,7 @@ def make_args(**kw):
         host="helium", timeout=1.0, min_disk_free_gb=2.0,
         containers="nexus-core,helium-mongo,helium-redis,helium-nats",
         state_file=Path("/tmp/probe-test-state.json"), dry_run=True,
-        no_alert=False,
+        no_alert=False, no_actuator=False,
     )
     defaults.update(kw)
     return type("Args", (), defaults)()
@@ -222,6 +222,30 @@ def test_strongest_tag_ordering():
 # --------------------------------------------------------------------------
 # run_probe end-to-end with stubs
 # --------------------------------------------------------------------------
+
+def test_no_actuator_skips_the_retired_tier_but_keeps_the_infra(tmp_path):
+    """Retirement shape (2026-09-22): the JVM tier is stopped, helium-mongo/
+    redis/nats + ollama stay watched. With --no-actuator the dead :8092 target
+    must not appear in the check set at all, and the run must come back ok."""
+    sf = tmp_path / "state.json"
+    posted = []
+    fetch = StubFetcher({VERSION_URL: {"version": "0.34.1"},
+                         TAGS_URL: {"models": [{"name": "nomic-embed-text"}]}})
+    rc = mod.run_probe(
+        make_args(state_file=sf, no_actuator=True,
+                  containers="helium-mongo,helium-redis,helium-nats"),
+        fetch=fetch, fetch_states=all_running(), poster=alert_recorder(posted))
+    assert rc == 0
+    assert posted == []
+    state = json.loads(sf.read_text())
+    names = [c["name"] for c in state["checks"]]
+    assert "actuator" not in names                 # retired tier not probed
+    assert "container:nexus-core" not in names      # nor its container
+    assert names == ["container:helium-mongo", "container:helium-redis",
+                     "container:helium-nats", "ollama"]
+    assert state["overall"] == "ok"
+    assert ACTUATOR_URL not in fetch.calls          # never even dialled
+
 
 def test_first_run_healthy_no_alert_but_state_saved(tmp_path):
     sf = tmp_path / "state.json"

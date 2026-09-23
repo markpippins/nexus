@@ -43,6 +43,16 @@ import gen_openapi as go     # noqa: E402
 # Services whose openapi.yaml is NOT produced by the generic extractor pipeline.
 EXCLUDED = {"semantics-srv", "pty-srv", "terrain-srv", "resolution-srv"}
 
+# Moleculer ports pinned to an INCUMBENT service's committed openapi.yaml.
+# The port carries NO spec of its own: one contract, two implementations, one
+# gate. Drift here means the alias map moved, not that a spec is stale — so
+# these keys are never regenerated (see --update below).
+MOLLECULER_MIRRORS = {
+    "moleculer/voyager": "typescript/voyager-srv",
+    "moleculer/cascade": "typescript/cascade-srv",
+    "moleculer/kernel": "typescript/kernel-srv",
+}
+
 
 def to_openapi_form(p):
     """Normalize an extractor path to OpenAPI {param} form.
@@ -87,37 +97,71 @@ def find_services():
         full = os.path.join(ROOT, rel)
         if os.path.isdir(full):
             services[key] = full
+    # Moleculer apps (moleculer-web gateways).
+    for key, rel in er.MOLLECULER_SERVICES.items():
+        full = os.path.join(ROOT, rel)
+        if os.path.isdir(full):
+            services[key] = full
     return services
 
 
 def extract_surface(key, svc_dir):
-    """Route inventory for a service — Express/FastAPI or Spring (JVM ports)."""
+    """Route inventory for a service — Express/FastAPI, Moleculer, or Spring."""
+    if key in er.MOLLECULER_SERVICES:
+        return er.process_moleculer_service(svc_dir, key)
     if key.startswith("jvm/"):
         return er.process_spring_service(svc_dir, key)
     return er.process_service(svc_dir, key.split("/")[-1])
+
+
+def contract_dir(key, svc_dir):
+    """Where the spec this service is judged against lives.
+
+    For a moleculer port that is the incumbent service's dir (the port is a
+    second implementation of an existing contract); for everything else it is
+    the service's own dir.
+    """
+    mirror = MOLLECULER_MIRRORS.get(key)
+    if mirror:
+        return os.path.join(ROOT, mirror)
+    return svc_dir
 
 
 def verify_all(services):
     """Compute the per-service drift report: {key: {status, ...}}."""
     report = {}
     for key, svc_dir in sorted(services.items()):
-        spec_path = os.path.join(svc_dir, "openapi.yaml")
+        contract = MOLLECULER_MIRRORS.get(key)
+        spec_path = os.path.join(contract_dir(key, svc_dir), "openapi.yaml")
         if not os.path.exists(spec_path):
-            report[key] = {"status": "missing", "detail": "no committed openapi.yaml"}
+            report[key] = {
+                "status": "missing",
+                "detail": "no committed openapi.yaml" + (f" at contract {contract}" if contract else ""),
+                "contract": contract or key,
+            }
             continue
         endpoints = extract_surface(key, svc_dir)
         source_surface = {(e["method"], to_openapi_form(e["path"])) for e in endpoints}
         try:
             committed = committed_surface(spec_path)
         except Exception as e:
-            report[key] = {"status": "unparseable", "detail": str(e)}
+            report[key] = {"status": "unparseable", "detail": str(e), "contract": contract or key}
             continue
         missing = sorted(source_surface - committed)  # in source, absent from committed spec
         extra = sorted(committed - source_surface)    # in committed spec, absent from source
         if missing or extra:
-            report[key] = {"status": "drift", "missing": missing, "extra": extra}
+            report[key] = {
+                "status": "drift",
+                "missing": missing,
+                "extra": extra,
+                "contract": contract or key,
+            }
         else:
-            report[key] = {"status": "ok", "endpoints": len(source_surface)}
+            report[key] = {
+                "status": "ok",
+                "endpoints": len(source_surface),
+                "contract": contract or key,
+            }
     return report
 
 
@@ -145,8 +189,17 @@ def main():
         tmp = os.path.join(tempfile.gettempdir(), "api_inventory_drift.json")
         with open(tmp, "w") as f:
             json.dump(inventory, f)
-        targets = [k.split("/")[-1] for k in problems]
-        go.main(["--inventory", tmp, "--root", ROOT, "--only", ",".join(targets)])
+        # Mirrored moleculer ports are judged against the INCUMBENT's spec:
+        # regenerating that spec from the incumbent's routes cannot fix an
+        # alias-map drift, it would only rewrite an unchanged spec. Report and
+        # skip instead, so --update never masks a port/contract divergence.
+        mirrored = {k: v for k, v in problems.items() if k in MOLLECULER_MIRRORS}
+        for k, v in sorted(mirrored.items()):
+            print(f"  ! {k}: cannot regenerate — judged against {v.get('contract')} "
+                  f"(fix the gateway alias map, not the spec)")
+        targets = [k.split("/")[-1] for k in problems if k not in MOLLECULER_MIRRORS]
+        if targets:
+            go.main(["--inventory", tmp, "--root", ROOT, "--only", ",".join(targets)])
         # re-verify to confirm the refresh landed
         report = verify_all(services)
         problems = {k: v for k, v in report.items() if v["status"] != "ok"}
@@ -161,13 +214,15 @@ def main():
     if not args.quiet:
         for key, v in sorted(report.items()):
             if v["status"] == "ok":
-                print(f"OK   {key}: {v['endpoints']} endpoints")
+                suffix = f" (contract {v['contract']})" if v.get("contract") and v["contract"] != key else ""
+                print(f"OK   {key}: {v['endpoints']} endpoints{suffix}")
             elif v["status"] == "missing":
                 print(f"FAIL {key}: no committed openapi.yaml")
             elif v["status"] == "unparseable":
                 print(f"FAIL {key}: openapi.yaml does not parse: {v['detail']}")
             else:
-                print(f"FAIL {key}: drift")
+                where = f" vs contract {v['contract']}" if v.get("contract") != key else ""
+                print(f"FAIL {key}: drift{where}")
                 for m in v["missing"]:
                     print(f"       in source, not in spec: {m[0]} {m[1]}")
                 for m in v["extra"]:

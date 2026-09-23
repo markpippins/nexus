@@ -3663,6 +3663,26 @@ export async function getPlansGroupedByStatus(): Promise<PlansByStatus> {
     }
   }
 
+  // W-B5 (architect ruling, 2026-09-22): surface archived plans in their own
+  // bucket instead of omitting them (audit gap — 5 legacy plans were
+  // invisible to /state). Archived = soft-deleted rows whose canonical
+  // implementation_plans status is 'archived' (the archive mechanism marks
+  // both). Not receipt-derived: archived is a nebula-side disposition, so
+  // the override is deliberate.
+  const archivedRows = await qAll(`
+    SELECT p.*
+    FROM nebula.plans p
+    JOIN nebula.implementation_plans i
+      ON i.plan_number::text = p.id
+     AND (i.valid_until IS NULL OR i.valid_until > now())
+    WHERE p.deleted <> 0 AND i.status = 'archived'
+  `) as PlanRow[];
+  for (const plan of archivedRows) {
+    if (!result.archived.some((a) => a.id === plan.id)) {
+      result.archived.push({ ...plan, derived_status: "ARCHIVED" });
+    }
+  }
+
   return result;
 }
 

@@ -20,6 +20,14 @@ services:
     image: nexus-core/nexus-core:latest
     container_name: nexus-core
     restart: unless-stopped
+    # Memory cap. The deployed helium container was found running with NO limit
+    # (`docker inspect` → HostConfig.Memory=0) on a 3.7 GiB board that also runs
+    # ollama, helium-mongo/nats/redis and the capped candidate stack
+    # (cand-broker is held to 1 GiB). Unlimited, the JVM sizes its default max
+    # heap at ~25% of the HOST (≈925 MiB) and is the most likely OOM-killer
+    # neighbour for the other containers. Measured steady state is ~367 MiB, so
+    # 1 GiB leaves generous headroom while bounding the blast radius.
+    mem_limit: ${NEXUS_CORE_MEM_LIMIT:-1g}
     environment:
       # Vanadium backup/replica PG by default (nexus DB, execution schema
       # is set via search_path inside the app). Override in .env to retarget.

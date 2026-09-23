@@ -9,15 +9,19 @@
  * Phase 2: Receipts + Plans (coming)
  * Phase 3: Work Requests + Governance (coming)
  *
- * CONSOLIDATION NOTE (Plan 8261651): Routes updated to match consolidated
- * kernel (losm-host, port 3106) where receipts/sessions/breaker share the
- * /api prefix with NO sub-path prefixes. Router prefixes from main.py:
- *   receipts_router: "/api"  (NOT "/api/receipts")
- *   sessions_router: "/api"  (NOT "/api/sessions")
- *   breaker_router: "/api"   (NOT "/api/breaker")
- *   state_router: "/state/"
- *   replay_router: "/replay/"
- *   admin_router: "/admin/"
+ * ROUTE CONTRACT (live, verified 2026-09-22 against the deployed Python
+ * conduit FastAPI :3103 openapi.json): callers MUST match the LIVE contract,
+ * not the planned consolidated one. The pre-consolidation bare-/api forms
+ * (e.g. GET /api/{plan_id}/latest-type) are served by NO deployed server —
+ * the client treated their 404s as null, which silently zeroed receipt
+ * validation and insertion fleet-wide ("current state is none"; Conduit
+ * walk-through finding, 2026-09-22). Live router prefixes:
+ *   receipts_router: "/api/receipts"
+ *   sessions_router: "/api/sessions"
+ *   breaker_router:  "/api/breaker"
+ * Plan 8261651 tracks the consolidated no-prefix forms; when a server that
+ * actually serves them is deployed, repoint here under test — never
+ * pre-empt the server (this file did once; it froze the pipeline).
  *   delta_router: "/delta/"
  */
 
@@ -71,44 +75,44 @@ async function patch(path: string, body: Record<string, any>): Promise<any> {
 }
 
 // ── Sessions ───────────────────────────────────────────────────
-// Router: sessions_router (prefix="/api")
+// Router: sessions_router (live prefix="/api/sessions")
 
 export async function getAllSessions(): Promise<any[]> {
-  const data = await get("/api");
+  const data = await get("/api/sessions/");
   return data?.sessions || data || [];
 }
 
 export async function getSession(sessionId: string): Promise<any> {
-  return get(`/api/${encodeURIComponent(sessionId)}`);
+  return get(`/api/sessions/${encodeURIComponent(sessionId)}`);
 }
 
 export async function getRunningSessions(): Promise<any[]> {
-  const data = await get("/api/running");
+  const data = await get("/api/sessions/running");
   return data?.sessions || data || [];
 }
 
 export async function getStaleSessions(thresholdSeconds: number = 3600): Promise<any[]> {
-  const data = await get(`/api/stale?threshold_seconds=${thresholdSeconds}`);
+  const data = await get(`/api/sessions/stale?threshold_seconds=${thresholdSeconds}`);
   return data?.sessions || data || [];
 }
 
 export async function updateSessionCost(sessionId: string, costUsd: number): Promise<any> {
-  return patch(`/api/${encodeURIComponent(sessionId)}/cost`, { cost_usd: costUsd });
+  return patch(`/api/sessions/${encodeURIComponent(sessionId)}/cost`, { cost_usd: costUsd });
 }
 
 export async function updateSessionHeartbeat(sessionId: string): Promise<any> {
-  return post(`/api/${encodeURIComponent(sessionId)}/heartbeat`);
+  return post(`/api/sessions/${encodeURIComponent(sessionId)}/heartbeat`);
 }
 
 export async function killSession(sessionId: string): Promise<any> {
-  return post(`/api/${encodeURIComponent(sessionId)}/kill`);
+  return post(`/api/sessions/${encodeURIComponent(sessionId)}/kill`);
 }
 
 // ── Circuit Breaker ─────────────────────────────────────────────
-// Router: breaker_router (prefix="/api")
+// Router: breaker_router (live prefix="/api/breaker")
 
 export async function getBreaker(): Promise<any> {
-  return get("/api/breaker");
+  return get("/api/breaker/");
 }
 
 export async function tripBreaker(input: {
@@ -117,7 +121,7 @@ export async function tripBreaker(input: {
   source?: string;
   retryAfter?: number;
 }): Promise<any> {
-  return post("/api/trip", {
+  return post("/api/breaker/trip", {
     reason: input.error,
     detail: input.detail,
     retryAfter: input.retryAfter,
@@ -125,11 +129,11 @@ export async function tripBreaker(input: {
 }
 
 export async function clearBreaker(): Promise<any> {
-  return post("/api/reset");
+  return post("/api/breaker/reset");
 }
 
 export async function setConduitPaused(paused: boolean): Promise<any> {
-  return post(paused ? "/api/pause" : "/api/resume");
+  return post(paused ? "/api/breaker/pause" : "/api/breaker/resume");
 }
 
 export async function isConduitPaused(): Promise<boolean> {
@@ -138,7 +142,7 @@ export async function isConduitPaused(): Promise<boolean> {
 }
 
 export async function getFailureRecoveryConfig(): Promise<any> {
-  return get("/api/failure-recovery");
+  return get("/api/breaker/failure-recovery");
 }
 
 export async function saveFailureRecoveryConfig(config: {
@@ -148,22 +152,22 @@ export async function saveFailureRecoveryConfig(config: {
   push_back_to_pending?: boolean;
   circuit_breaker_retry_after?: number;
 }): Promise<any> {
-  return post("/api/failure-recovery", config);
+  return post("/api/breaker/failure-recovery", config);
 }
 
 // ── Receipts ───────────────────────────────────────────────────
-// Router: receipts_router (prefix="/api")
+// Router: receipts_router (live prefix="/api/receipts")
 
 export async function getPlanReceipts(planId: string): Promise<{ plan_id: string; count: number; receipts: any[] }> {
-  return get(`/api/${encodeURIComponent(planId)}`);
+  return get(`/api/receipts/${encodeURIComponent(planId)}`);
 }
 
 export async function getReceiptsRaw(planId: string): Promise<{ plan_id: string; count: number; receipts: any[] }> {
-  return get(`/api/${encodeURIComponent(planId)}/raw`);
+  return get(`/api/receipts/${encodeURIComponent(planId)}/raw`);
 }
 
 export async function getLatestReceiptType(planId: string): Promise<string | null> {
-  const data = await get(`/api/${encodeURIComponent(planId)}/latest-type`);
+  const data = await get(`/api/receipts/${encodeURIComponent(planId)}/latest-type`);
   return data?.latest_type ?? null;
 }
 
@@ -185,7 +189,7 @@ export async function insertReceipt(r: {
   source_channel?: string;
   correlation_id?: string;
 }): Promise<{ ok: boolean; id: string; plan_id: string }> {
-  return post("/api", {
+  return post("/api/receipts/", {
     id: r.id,
     plan_id: r.plan_id,
     type: r.type,
@@ -207,7 +211,7 @@ export async function deleteReceiptsByPlanAndType(
   planId: string,
   types: string[],
 ): Promise<number> {
-  const data = await del(`/api/${encodeURIComponent(planId)}?types=${types.join(",")}`);
+  const data = await del(`/api/receipts/${encodeURIComponent(planId)}?types=${types.join(",")}`);
   return data?.deleted ?? 0;
 }
 

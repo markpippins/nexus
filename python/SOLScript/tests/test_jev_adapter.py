@@ -31,8 +31,8 @@ class TestOllamaConfig:
     
     def test_default_config(self):
         config = OllamaConfig()
-        assert config.base_url == "http://helium:11434"
-        assert config.model == "qwen2.5-coder:latest"
+        assert config.base_url == "http://thallium:11434"
+        assert config.model == "qwen2.5-coder:3b"
         assert config.timeout_seconds == 30.0
         assert config.max_retries == 2
         assert config.temperature == 0.1
@@ -73,7 +73,7 @@ class TestOllamaTypeSafeAdapter:
     
     def test_backend_identity(self, adapter):
         identity = adapter.get_backend_identity()
-        assert identity == "ollama-helium:test-model"
+        assert identity == "ollama-thallium:test-model"
     
     def test_build_prompt_noul(self, adapter):
         state = {"entity": "test", "value": 42}

@@ -25,6 +25,7 @@ import {
   resolveWrUuid,
 } from "./db";
 import * as api from "./conduit-client";
+import { enforceRouteContractAtBoot } from "./route-contract-guard";
 import {
   gateWrTransition,
   recordGovernedDecisions,
@@ -1325,6 +1326,15 @@ process.on("SIGTERM", () => process.exit(0));
 async function start() {
   claimPidFile();
   await watcher.initialize();
+
+  // Route-contract guard (PR #448 lesson, 2026-09-22): verify the client's
+  // required routes are actually served by the deployed Python conduit
+  // BEFORE serving tools. The silent failure mode (404 → null → "current
+  // state is none") froze the entire builder backlog; drift now fails at
+  // boot (strict default → exit, systemd restarts loudly). Unreachable
+  // server warns and continues — that failure mode throws real errors per
+  // call and was never silent. CONDUIT_ROUTE_GUARD=warn|off to soften.
+  await enforceRouteContractAtBoot(KERNEL_API_URL);
 
   // T23 Step 8: log the CIR-SDM enforcement posture at startup (shadow vs
   // enforced) so the gate's state is auditable (ruling 4a57c089). A failed

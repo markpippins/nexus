@@ -1,0 +1,35 @@
+# Source of truth for ~/.config/systemd/user/nexus-helium-core-probe.service
+#
+# Deploy:
+#   cp bin/nexus-helium-core-probe.service ~/.config/systemd/user/
+#   cp bin/helium_core_probe.py ~/opt/helium-core-probe/
+#   systemctl --user daemon-reload
+#   rm -f ~/.cache/helium-core-probe/state.json   # reset baseline when the check set changes
+#   systemctl --user enable --now nexus-helium-core-probe.timer
+#
+# Why this file is in the repo: the unit previously existed ONLY on the host
+# (found 2026-09-22), so the deployed probe's ExecStart line was invisible to the
+# corpus — the same drift class that let the script itself diverge from
+# bin/helium_core_probe.py for three days (the 2026-09-21 IPv4/timeout fix was
+# applied in place and never committed).
+#
+# NOTE: no timer unit is committed here — the timer is *contained* in the unit
+# name prefix (nexus-helium-core-probe.timer) and lives on the host; add it here
+# if it ever needs to change. 5-minute cadence, Persistent=true.
+
+[Unit]
+Description=Helium infra health probe (containers + ollama, transition alerts to sysadmin)
+After=network-online.target
+
+[Service]
+Type=oneshot
+# exit 1 = target unhealthy (probe did its job, alert posted) — not a probe failure
+SuccessExitStatus=0 1
+# --no-actuator + the reduced container set retire the nexus-core JVM tier from
+# this probe's scope (tier stopped 2026-09-22 for the moleculer-on-helium test;
+# terrain id 140 marked activeFlag=false). helium-mongo / helium-redis /
+# helium-nats / ollama remain watched.
+ExecStart=/usr/bin/python3 /home/codex/opt/helium-core-probe/helium_core_probe.py --containers helium-mongo,helium-redis,helium-nats --no-actuator
+
+[Install]
+WantedBy=default.target
