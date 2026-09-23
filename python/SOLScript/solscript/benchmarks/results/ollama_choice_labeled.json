@@ -1,0 +1,86 @@
+[
+  {
+    "id": "choice_001",
+    "top": "transcript_drift",
+    "ref": "transcript_drift",
+    "match": "MATCH",
+    "flag": "True",
+    "probs": {
+      "concept_drift": 0.0,
+      "transcript_drift": 0.62,
+      "schema_drift": 0.0,
+      "noise": 0.38
+    },
+    "status": "ok"
+  },
+  {
+    "id": "choice_002",
+    "top": "cosmetic",
+    "ref": "minor",
+    "match": "DIFF",
+    "flag": "False",
+    "probs": {
+      "critical": 0.0,
+      "major": 0.0,
+      "minor": 0.0,
+      "cosmetic": 1.0
+    },
+    "status": "ok"
+  },
+  {
+    "id": "choice_003",
+    "top": "blocked",
+    "ref": "nearly_ready",
+    "match": "DIFF",
+    "flag": "False",
+    "probs": {
+      "ready": 0.0,
+      "nearly_ready": 0.0,
+      "needs_work": 0.22,
+      "blocked": 0.78
+    },
+    "status": "ok"
+  },
+  {
+    "id": "choice_004",
+    "top": "grounded",
+    "ref": "grounded",
+    "match": "MATCH",
+    "flag": "False",
+    "probs": {
+      "grounded": 0.9,
+      "partially_grounded": 0.0,
+      "ungrounded": 0.0,
+      "conflicted": 0.0
+    },
+    "status": "ok"
+  },
+  {
+    "id": "choice_005",
+    "top": "P2_medium",
+    "ref": "P2_medium",
+    "match": "MATCH",
+    "flag": "True",
+    "probs": {
+      "P0_critical": 0.0,
+      "P1_high": 0.0,
+      "P2_medium": 0.6,
+      "P3_low": 0.4
+    },
+    "status": "ok"
+  },
+  {
+    "id": "choice_006",
+    "top": "committed",
+    "ref": "committed",
+    "match": "MATCH",
+    "flag": "False",
+    "probs": {
+      "committed": 0.9,
+      "refused": 0.05,
+      "rejected": 0.05,
+      "failed": 0.0
+    },
+    "status": "ok"
+  }
+]

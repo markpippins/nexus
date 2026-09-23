@@ -1,0 +1,299 @@
+[
+  {
+    "id": "noul_001",
+    "type": "noul",
+    "ts": {
+      "type": "noul",
+      "noul": 0.99
+    },
+    "ref": "1.0",
+    "status": "ok"
+  },
+  {
+    "id": "noul_002",
+    "type": "noul",
+    "ts": {
+      "type": "noul",
+      "noul": 0.03
+    },
+    "ref": "0.0",
+    "status": "ok"
+  },
+  {
+    "id": "noul_003",
+    "type": "noul",
+    "ts": {
+      "type": "noul",
+      "noul": 0.98
+    },
+    "ref": "0.85",
+    "status": "ok"
+  },
+  {
+    "id": "noul_004",
+    "type": "noul",
+    "ts": {
+      "type": "noul",
+      "noul": 0.85
+    },
+    "ref": "0.95",
+    "status": "ok"
+  },
+  {
+    "id": "noul_005",
+    "type": "noul",
+    "ts": {
+      "type": "noul",
+      "noul": 0.72
+    },
+    "ref": "0.72",
+    "status": "ok"
+  },
+  {
+    "id": "noul_006",
+    "type": "noul",
+    "ts": {
+      "type": "noul",
+      "noul": 0.94
+    },
+    "ref": "0.99",
+    "status": "ok"
+  },
+  {
+    "id": "noul_007",
+    "type": "noul",
+    "ts": {
+      "type": "noul",
+      "noul": 0.03
+    },
+    "ref": "0.65",
+    "status": "ok"
+  },
+  {
+    "id": "noul_008",
+    "type": "noul",
+    "ts": {
+      "type": "noul",
+      "noul": 0.75
+    },
+    "ref": "0.78",
+    "status": "ok"
+  },
+  {
+    "id": "choice_001",
+    "type": "choice",
+    "ts": {
+      "type": "choice",
+      "choice": "transcript_drift",
+      "confidence": 1.0,
+      "probabilities": {
+        "concept_drift": 0.0,
+        "noise": 0.0,
+        "transcript_drift": 1.0,
+        "schema_drift": 0.0
+      }
+    },
+    "ref": "transcript_drift",
+    "status": "ok"
+  },
+  {
+    "id": "choice_002",
+    "type": "choice",
+    "ts": {
+      "type": "choice",
+      "choice": "minor",
+      "confidence": 0.33,
+      "probabilities": {
+        "cosmetic": 0.48,
+        "critical": 0.0,
+        "major": 0.02,
+        "minor": 0.5
+      }
+    },
+    "ref": "minor",
+    "status": "ok"
+  },
+  {
+    "id": "choice_003",
+    "type": "choice",
+    "ts": {
+      "type": "choice",
+      "choice": "nearly_ready",
+      "confidence": 0.63,
+      "probabilities": {
+        "nearly_ready": 0.71,
+        "ready": 0.01,
+        "blocked": 0.24,
+        "needs_work": 0.04
+      }
+    },
+    "ref": "nearly_ready",
+    "status": "ok"
+  },
+  {
+    "id": "choice_004",
+    "type": "choice",
+    "ts": {
+      "type": "choice",
+      "choice": "grounded",
+      "confidence": 0.97,
+      "probabilities": {
+        "conflicted": 0.0,
+        "partially_grounded": 0.01,
+        "ungrounded": 0.01,
+        "grounded": 0.98
+      }
+    },
+    "ref": "grounded",
+    "status": "ok"
+  },
+  {
+    "id": "choice_005",
+    "type": "choice",
+    "ts": {
+      "type": "choice",
+      "choice": "P2_medium",
+      "confidence": 0.96,
+      "probabilities": {
+        "P2_medium": 0.97,
+        "P1_high": 0.01,
+        "P0_critical": 0.0,
+        "P3_low": 0.02
+      }
+    },
+    "ref": "P2_medium",
+    "status": "ok"
+  },
+  {
+    "id": "choice_006",
+    "type": "choice",
+    "ts": {
+      "type": "choice",
+      "choice": "committed",
+      "confidence": 0.91,
+      "probabilities": {
+        "rejected": 0.01,
+        "failed": 0.06,
+        "refused": 0.0,
+        "committed": 0.93
+      }
+    },
+    "ref": "committed",
+    "status": "ok"
+  },
+  {
+    "id": "score_001",
+    "type": "score",
+    "ts": {
+      "type": "score",
+      "score": 0.32,
+      "confidence": 0.68,
+      "legend": {
+        "0": "excellent",
+        "1": "good",
+        "2": "acceptable",
+        "3": "needs_improvement"
+      },
+      "probabilities": {
+        "0": 0.71,
+        "1": 0.28,
+        "2": 0.01,
+        "3": 0.0
+      }
+    },
+    "ref": "0.82",
+    "status": "ok"
+  },
+  {
+    "id": "score_002",
+    "type": "score",
+    "ts": {
+      "type": "score",
+      "score": 0.91,
+      "confidence": 0.91,
+      "legend": {
+        "0": "faithful",
+        "1": "mostly_faithful",
+        "2": "divergent",
+        "3": "unreliable"
+      },
+      "probabilities": {
+        "0": 0.09,
+        "1": 0.91,
+        "2": 0.0,
+        "3": 0.0
+      }
+    },
+    "ref": "0.76",
+    "status": "ok"
+  },
+  {
+    "id": "score_003",
+    "type": "score",
+    "ts": {
+      "type": "score",
+      "score": 0.01,
+      "confidence": 0.99,
+      "legend": {
+        "0": "strong",
+        "1": "adequate",
+        "2": "weak",
+        "3": "insufficient"
+      },
+      "probabilities": {
+        "0": 0.99,
+        "1": 0.01,
+        "2": 0.0,
+        "3": 0.0
+      }
+    },
+    "ref": "0.68",
+    "status": "ok"
+  },
+  {
+    "id": "score_004",
+    "type": "score",
+    "ts": {
+      "type": "score",
+      "score": 1.18,
+      "confidence": 0.7,
+      "legend": {
+        "0": "production_ready",
+        "1": "staging_ready",
+        "2": "development",
+        "3": "incomplete"
+      },
+      "probabilities": {
+        "0": 0.06,
+        "1": 0.72,
+        "2": 0.2,
+        "3": 0.02
+      }
+    },
+    "ref": "0.73",
+    "status": "ok"
+  },
+  {
+    "id": "score_005",
+    "type": "score",
+    "ts": {
+      "type": "score",
+      "score": 0.11,
+      "confidence": 0.89,
+      "legend": {
+        "0": "fully_compliant",
+        "1": "compliant",
+        "2": "minor_issues",
+        "3": "non_compliant"
+      },
+      "probabilities": {
+        "0": 0.9,
+        "1": 0.09,
+        "2": 0.01,
+        "3": 0.0
+      }
+    },
+    "ref": "0.91",
+    "status": "ok"
+  }
+]
