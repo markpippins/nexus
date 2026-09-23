@@ -20,9 +20,13 @@ on:
     branches: [main, master, feature/*]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   v198-st01-promotion-batch-e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     services:
       postgres:

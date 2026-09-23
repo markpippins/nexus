@@ -13,6 +13,7 @@ jobs:
   cir1:
     name: "CIR-1: Phantom references"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,6 +34,7 @@ jobs:
   cir2:
     name: "CIR-2: Cross-layer isolation"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -47,6 +49,7 @@ jobs:
   cir3:
     name: "CIR-3: Execution semantics contract"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,6 +64,7 @@ jobs:
   cir4:
     name: "CIR-4: Static derived state"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -75,6 +79,7 @@ jobs:
   cir5:
     name: "CIR-5: Single Canonical Authority"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -89,6 +94,7 @@ jobs:
   pgv-diff:
     name: "PGV: CI topology diff"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: go/wrp/ccnf-ref

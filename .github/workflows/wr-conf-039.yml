@@ -26,6 +26,7 @@ jobs:
   v186-work-request:
     name: "wr-conf-039: V186 absorb E2E"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     services:
       postgres:
         image: postgres:17
