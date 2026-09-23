@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: nebula-srv — Nebula Knowledge-Graph API
-  version: 1.0.f0673a1a
+  version: 1.0.142a001b
   description: 'Canonical asset graph: systems, subsystems, features, documents, harvests, agent records, projections, knowledge
     graph, and cross-references.
 
@@ -16,6 +16,7 @@ tags:
 - name: architect-specs
 - name: artifact-provenance
 - name: assessments
+- name: attestations
 - name: audit
 - name: candidates
 - name: cascade
@@ -808,6 +809,38 @@ paths:
         required: true
         schema:
           type: string
+  /api/attestations:
+    get:
+      tags:
+      - attestations
+      operationId: get_attestations
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      summary: 84ca2388 — canonical rows are record_type=assessment with type:approval + status:done; legacy rows carry type:attestation.
+        Intent/status-upd
   /api/audit:
     get:
       tags:

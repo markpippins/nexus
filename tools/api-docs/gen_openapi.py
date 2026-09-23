@@ -366,7 +366,7 @@ def build_api_md(meta, endpoints, kind):
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Generate OpenAPI + API.md per *-srv from the endpoint inventory.")
     ap.add_argument("--inventory", default="/tmp/api_inventory.json")
-    ap.add_argument("--root", default="/home/codex/dev/nexus")
+    ap.add_argument("--root", default=os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")), help="repo root (defaults to the tree this script lives in, not a hardcoded checkout)")
     ap.add_argument("--skip-fastapi", action="store_true", help="do not fetch vision-srv's live FastAPI spec")
     ap.add_argument("--only", default="", help="comma-separated service names to regenerate (default: all)")
     args = ap.parse_args(argv)

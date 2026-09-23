@@ -9,7 +9,7 @@ Tackle role memory and orchestration: AI config, sessions, roles, scheduler, mem
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/audit-trail` | Browsable surface over the V155/V156 statement-level audit categories (REGISTRY_AUDIT, NEBULA_AUDIT) stored in tackle.system_logs. Every route here is strictly read-only: the audit trail is append-only by design, and V157's erase guard refuses audit-row deletion unless a transaction explicitly opts  |
+| GET | `/audit-trail` | GET /audit-trail — filtered listing with bounded default page |
 | GET | `/audit-trail/recent` | GET /audit-trail/recent — convenience window (default last 24h, max 500) |
 | GET | `/config/ai` | Full snapshot |
 | POST | `/config/ai/bundle` |  |
@@ -104,6 +104,7 @@ python3 tools/api-docs/gen_openapi.py --inventory /tmp/api_inventory.json   # (v
 ```
 
 <!-- API-SPEC-BEGIN -->
+
 
 
 

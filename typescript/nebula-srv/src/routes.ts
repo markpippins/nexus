@@ -8,6 +8,7 @@ import { randomUUID } from 'crypto';
 import * as bs from './block-segmentation.service';
 import * as bsRedis from './services/block-segmentation-redis.service';
 import { CrossReferenceType } from './crossref-taxonomy';
+import { attestationsLimiter } from './limiter';
 
 const execFileAsync = promisify(execFile);
 
@@ -5018,7 +5019,7 @@ export function createRoutes(pool: Pool): Router {
   // match is exact and index-backed (GIN on tags, migration 055) instead
   // of a bounded newest-N scan. Tester role is hardcoded: attestation is
   // the tester's binding output (roundtable invariant I2).
-  router.get('/attestations', async (req: Request, res: Response) => {
+  router.get('/attestations', attestationsLimiter, async (req: Request, res: Response) => {
     try {
       const prRaw = req.query.pr;
       if (prRaw === undefined || Array.isArray(prRaw)) {
