@@ -335,6 +335,15 @@ sdk-drift-install-timer:
 	@systemctl --user enable --now sdk-drift-stamp.timer
 	@systemctl --user list-timers sdk-drift-stamp.timer --no-pager | head -3
 
+# Daily To Do lifecycle sweep (units are committed: bin/nexus-todo-lifecycle.*).
+todo-lifecycle-install-timer:
+	@echo "[todo-lifecycle] installing nexus-todo-lifecycle.timer (daily 07:15 UTC)..."
+	@mkdir -p $(HOME)/.config/systemd/user
+	@cp bin/nexus-todo-lifecycle.service bin/nexus-todo-lifecycle.timer $(HOME)/.config/systemd/user/
+	@systemctl --user daemon-reload
+	@systemctl --user enable --now nexus-todo-lifecycle.timer
+	@systemctl --user list-timers nexus-todo-lifecycle.timer --no-pager | head -3
+
 # ─── API docs (tools/api-docs) ───────────────────────────────────────────────
 # Backed by nexus/.github/workflows/apidocs.yml — same commands locally and
 # in CI. Extracts the live route inventory from source and verifies every
