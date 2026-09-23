@@ -449,3 +449,6 @@ lead-engineer-grant-e2e-test:
 applied-grants-preflight-e2e-test:
 	@echo "[applied-grants-preflight-e2e-test] V180 rediff-gate E2E (apply / refuse-reapply / changed-spec; throwaway DB)..."
 	python3 -m pytest python/nexus_core/wrp/tests/test_v180_applied_grants_e2e.py -v
+v198-st01-promotion-batch-e2e-test:
+	@echo "[v198-st01-promotion-batch-e2e-test] V198 ST.01 promotion batch + candidate-set keys E2E (preflights, R2.4 negative fixtures, R3 invariant, key semantics, atomic claim, throwaway DB, wr-conf-045)..."
+	@python3 -m pytest python/nexus_core/wrp/tests/test_v198_st01_promotion_batch_e2e.py -v
