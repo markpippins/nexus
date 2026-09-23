@@ -97,6 +97,22 @@ def test_snapshot_tree_stable_relative_paths(tmp_path: Path):
     assert csd.snapshot_tree(tmp_path / "does-not-exist") == {}
 
 
+def test_snapshot_tree_ignores_local_bytecode(tmp_path: Path):
+    """Regression (JVM extension, 2026-09-23): a host that imported the
+    generated SDK leaves __pycache__/*.pyc in the tree; a fresh regen never
+    produces them, so the guard false-DRIFTed ('23 missing') on pristine
+    committed trees. Bytecode is untracked residue — never part of the
+    judged surface."""
+    (tmp_path / "org").mkdir()
+    (tmp_path / "org" / "client.py").write_text("# generated\n")
+    cache = tmp_path / "org" / "__pycache__"
+    cache.mkdir()
+    (cache / "client.cpython-313.pyc").write_bytes(b"\x00bytecode")
+    (tmp_path / "loose.pyc").write_bytes(b"\x00stray")
+    snap = csd.snapshot_tree(tmp_path)
+    assert list(snap) == ["org/client.py"]
+
+
 # -------------------------------------------------------------- stamp mode
 
 def test_stamp_round_trip_and_drift(tree: Path):
@@ -185,3 +201,114 @@ def test_main_returns_2_when_tsp_missing(monkeypatch, tmp_path: Path, capsys):
     with pytest.raises(SystemExit) as ei:
         csd.find_tsp(tmp_path)
     assert str(ei.value).startswith("2")
+
+
+# --------------------------------------------------- JVM / emitter mapping
+
+def test_java_preset_emitter_mapping():
+    """The JVM provider must compile with the java emitter and read its
+    fresh output from out/java (the subdir the preset declares)."""
+    pre = csd.PRESETS["peb-kernel-spring"]
+    assert pre["emitters"] == [("@typespec/http-client-java", "java")]
+    prov = csd.provider_from_preset("peb-kernel-spring", REPO)
+    assert csd.fresh_output_subdir(prov, 0) == "java"
+
+
+def test_fresh_output_subdir_fallback_and_python_providers():
+    for name in ("conduit-kernel", "peb-kernel"):
+        prov = csd.provider_from_preset(name, REPO)
+        assert csd.fresh_output_subdir(prov, 0) == "python"
+    # out-of-range index falls back to the historical python default
+    prov = csd.provider_from_preset("peb-kernel-spring", REPO)
+    assert csd.fresh_output_subdir(prov, 5) == "python"
+
+
+def _java_provider(root: Path, staged: bool) -> "csd.Provider":
+    """A peb-kernel-spring-shaped provider over a fake tree: gitignored
+    staging tree present or absent, java emitter mapping."""
+    spec = root / "typespec" / "v1" / "peb-kernel" / "spring"
+    spec.mkdir(parents=True, exist_ok=True)
+    (spec / "main.tsp").write_text("model Peb {}\n")
+    gen_dirs = []
+    if staged:
+        staging = root / "typespec" / "v1" / "staging" / "jvm" / "spring" / "peb-kernel"
+        staging.mkdir(parents=True, exist_ok=True)
+        gen_dirs.append(staging)
+    return csd.Provider(
+        name="peb-kernel-spring",
+        spec_dir=spec,
+        generated_dirs=gen_dirs,
+        extra_dirs=[],
+        emitters=[("@typespec/http-client-java", "java")],
+    )
+
+
+def _fake_regenerate(java_content: str, python_decoy: str = ""):
+    """Stand-in for regenerate(): builds a scratch tree with out/java (what
+    the java emitter really writes) and optionally a decoy out/python."""
+    def _regen(prov: "csd.Provider", root: Path):
+        scratch = root / "typespec" / "v1" / f".sdkdrift-{prov.name}"
+        out = scratch / "out"
+        (out / "java" / "src").mkdir(parents=True)
+        (out / "java" / "src" / "PebClient.java").write_text(java_content)
+        if python_decoy:
+            (out / "python").mkdir(parents=True, exist_ok=True)
+            (out / "python" / "PebClient.java").write_text(python_decoy)
+        return scratch, out
+    return _regen
+
+
+def test_check_regen_diffs_emitter_mapped_subdir(monkeypatch, tmp_path: Path):
+    """Regression (JVM extension, 2026-09-23): check_regen once hardcoded
+    fresh_root/'python' for every generated tree, so the java provider's
+    diff read an EMPTY directory and reported the whole staged tree as
+    'missing' — a permanent false DRIFT. The diff must read the subdir the
+    preset's emitter mapping declares."""
+    root = tmp_path / "repo"
+    prov = _java_provider(root, staged=True)
+    staged = prov.generated_dirs[0]
+    (staged / "src").mkdir()
+    (staged / "src" / "PebClient.java").write_text("// staged v1\n")
+    monkeypatch.setattr(csd, "regenerate", _fake_regenerate("// staged v1\n", python_decoy="// DECOY\n"))
+
+    ok, lines = csd.check_regen(prov, root)
+    assert ok, lines
+    assert any("identical" in ln for ln in lines)
+
+
+def test_check_regen_detects_real_java_drift(monkeypatch, tmp_path: Path):
+    root = tmp_path / "repo"
+    prov = _java_provider(root, staged=True)
+    staged = prov.generated_dirs[0]
+    (staged / "src").mkdir()
+    (staged / "src" / "PebClient.java").write_text("// staged STALE\n")
+    monkeypatch.setattr(csd, "regenerate", _fake_regenerate("// fresh\n"))
+
+    ok, lines = csd.check_regen(prov, root)
+    assert not ok
+    assert any("DRIFT" in ln and "1 modified" in ln for ln in lines)
+
+
+def test_check_regen_staging_absent_is_skip_not_drift(monkeypatch, tmp_path: Path):
+    """JVM staging trees are gitignored and disposable: an absent reference
+    tree is an ok skip (stamp mode guards the contract), never a failure."""
+    root = tmp_path / "repo"
+    prov = _java_provider(root, staged=False)
+    assert prov.generated_dirs == []  # staged tree absent -> no reference
+    # make it a regen-eligible provider WITH a declared generated dir that
+    # does not exist on disk (the real preset shape when staging is wiped):
+    prov.generated_dirs = [root / "typespec" / "v1" / "staging" / "jvm" / "spring" / "peb-kernel"]
+    monkeypatch.setattr(csd, "regenerate", _fake_regenerate("// fresh\n"))
+
+    ok, lines = csd.check_regen(prov, root)
+    assert ok, lines
+    assert any("reference tree absent" in ln for ln in lines)
+
+
+def test_every_provider_has_a_committed_stamp():
+    """Adding a provider without committing its stamp makes stamp-mode hosts
+    (no tsp toolchain) fail with 'no stamp recorded' — the stamp must land
+    in the same change as the preset."""
+    for name in (*csd.PRESETS.keys(), *csd.STAMP_ONLY):
+        assert (REPO / "bin" / "sdk-type-stamps" / f"{name}.sha256").is_file(), \
+            f"{name} has no committed stamp"
