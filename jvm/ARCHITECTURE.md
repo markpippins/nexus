@@ -104,5 +104,5 @@ Free in the Spring/Quarkus band on titanium: 8083, 8086-8089, 8093-8097, 8099 (8
 5. **Moleculer tier alignment:** moleculer services register on the NATS mesh
    (`:4222`) in their namespace and expose REST via moleculer-web on their
    port; they do NOT claim JVM-band ports (8080-8099) or the shared 8085.
-   Moleculer ports (4050/4060/4080; canary twins 4100/4106/4114/4170) are
+   Moleculer ports (4050/4060/4080; canary twins 4100/4106/4109/4114/4170) are
    recorded in `moleculer/PORT-MAP.md`.

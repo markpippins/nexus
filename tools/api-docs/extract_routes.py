@@ -61,6 +61,7 @@ MOLLECULER_SERVICES = {
     "moleculer/cascade": "moleculer/cascade",
     "moleculer/kernel": "moleculer/kernel",
     "moleculer/draft": "moleculer/draft",
+    "moleculer/knowledge": "moleculer/knowledge",
 }
 
 # moleculer-web alias entries: "GET /path": "svc.action" (single-quoted forms
