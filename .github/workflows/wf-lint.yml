@@ -1,4 +1,4 @@
-# Workflow lint family — one harness, four rules, one gate
+# Workflow lint family — one harness, five rules, one gate
 #
 # bin/wf_lint.py generalizes the PG pin lint (PR #474) into a small rule
 # family sharing one scanner. Rules:
@@ -14,6 +14,11 @@
 #                  of EOL warn (node/python/go tables; java floor 17)
 #   action-ref     floating `uses:` refs (@main / bare) fail; @vN tag pins
 #                  are the house convention and pass
+#   job-hardening  every job carries timeout-minutes (GitHub default 360 —
+#                  a wedged job holds a runner for hours) and the file
+#                  declares a permissions block (house: contents: read
+#                  above jobs:). Structural rule; caller jobs (uses:)
+#                  exempt from the timeout half.
 #
 # This workflow SUPERSEDES pg-pin-lint.yml (same job naming role in branch
 # protection terms: nothing required references either). Its rules and the
@@ -56,7 +61,7 @@ permissions:
 
 jobs:
   wf-lint:
-    name: "workflow lint family (pg pins, dead bases, EOL runtimes, action refs)"
+    name: "workflow lint family (pg pins, dead bases, EOL runtimes, action refs, job hardening)"
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

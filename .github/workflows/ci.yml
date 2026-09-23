@@ -10,9 +10,13 @@ on:
   pull_request:
     branches: [ main, master, dev, feature/* ]
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Set up JDK 21
@@ -27,6 +31,7 @@ jobs:
   # and publish its reports as a CI artifact on every PR / push.
   conformance-verifier:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: build
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

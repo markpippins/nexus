@@ -14,6 +14,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   e2e:
     name: "wr-conf-035: V180 applied-grants pre-flight E2E (throwaway DB)"

@@ -13,6 +13,10 @@ real-world findings that motivated the family:
     tests never rot.
   - action-ref: floating branch refs and bare uses: fail; @v4 tag pins pass
     (house convention) unless WF_LINT_REQUIRE_SHA=1.
+  - job-hardening: structural (first scan_file rule) — jobs without
+    timeout-minutes fail (GitHub default 360 min), workflows without a
+    permissions block fail; caller jobs exempt from timeout; nested
+    timeout-minutes does not count; allow marker works on the anchor line.
 
 Run:
   python3 -m pytest bin/tests/test_wf_lint.py -v
@@ -259,6 +263,140 @@ class WfLintTest(unittest.TestCase):
         proc = self._run(self.tree, {"WF_LINT_REQUIRE_SHA": "1"})
         self.assertEqual(1, proc.returncode)
         self.assertIn("not a full 40-hex SHA", proc.stderr)
+
+    # -- job-hardening (structural) ----------------------------------------------
+
+    def test_job_without_timeout_fails_at_job_header(self):
+        self._write(
+            ".github/workflows/t.yml",
+            "on: push\n"
+            "permissions:\n"
+            "  contents: read\n"
+            "jobs:\n"
+            "  build:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - uses: actions/checkout@v4\n",
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("[job-hardening]", proc.stderr)
+        self.assertIn("no timeout-minutes", proc.stderr)
+        self.assertIn("file=.github/workflows/t.yml,line=5", proc.stdout)  # job header
+        self.assertIn("default is 360", proc.stderr)
+
+    def test_job_with_timeout_and_top_permissions_passes(self):
+        self._write(
+            ".github/workflows/ok.yml",
+            "on: push\n"
+            "permissions:\n"
+            "  contents: read\n"
+            "jobs:\n"
+            "  build:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    timeout-minutes: 10\n"
+            "    steps:\n"
+            "      - uses: actions/checkout@v4\n",
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertNotIn("[job-hardening]", proc.stderr)
+
+    def test_missing_permissions_block_fails_anchored_on_trigger(self):
+        self._write(
+            ".github/workflows/np.yml",
+            "name: No Perms\n"
+            "on: push\n"
+            "jobs:\n"
+            "  a:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    timeout-minutes: 5\n"
+            "    steps: []\n",
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("declares no permissions block", proc.stderr)
+        self.assertIn("file=.github/workflows/np.yml,line=2", proc.stdout)  # the on: line
+
+    def test_job_level_permissions_satisfies_rule(self):
+        self._write(
+            ".github/workflows/jp.yml",
+            "on: push\n"
+            "jobs:\n"
+            "  a:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    timeout-minutes: 5\n"
+            "    permissions:\n"
+            "      contents: read\n"
+            "    steps: []\n",
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+    def test_caller_job_exempt_from_timeout_check(self):
+        self._write(
+            ".github/workflows/caller.yml",
+            "on: push\n"
+            "permissions:\n"
+            "  contents: read\n"
+            "jobs:\n"
+            "  call:\n"
+            "    uses: ./.github/workflows/reusable.yml\n"
+            "    with:\n"
+            "      env: prod\n",
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertNotIn("[job-hardening]", proc.stderr)
+
+    def test_nested_timeout_does_not_count(self):
+        # timeout-minutes nested under strategy: is NOT a job-level timeout
+        self._write(
+            ".github/workflows/nested.yml",
+            "on: push\n"
+            "permissions:\n"
+            "  contents: read\n"
+            "jobs:\n"
+            "  a:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    strategy:\n"
+            "      matrix:\n"
+            "        timeout-minutes: 5\n"
+            "    steps: []\n",
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("no timeout-minutes", proc.stderr)
+
+    def test_allow_marker_on_anchor_lines(self):
+        # marker on the job header suppresses that job's timeout finding;
+        # marker on the on: line suppresses the permissions finding
+        self._write(
+            ".github/workflows/allow.yml",
+            "on: push # wf-lint-allow: job-hardening — token restricted at repo level\n"
+            "jobs:\n"
+            "  a: # wf-lint-allow: job-hardening — upstream reusable gate owns the bound\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps: []\n",
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("2 allow-marker line(s)", proc.stdout)
+
+    def test_non_workflow_yaml_not_scanned_by_job_hardening(self):
+        self._write(
+            "tools/config.yml",
+            "jobs:\n"
+            "  a:\n"
+            "    runs-on: nowhere\n",
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+    def test_file_without_jobs_section_is_ignored(self):
+        self._write(".github/workflows/empty.yml", "name: placeholder\n")
+        proc = self._run(self.tree)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
 
     # -- real repo -----------------------------------------------------------------
 

@@ -20,9 +20,13 @@ on:
     branches: [main, master, feature/*]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   v191-users-bcrypt-e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     services:
       postgres:
