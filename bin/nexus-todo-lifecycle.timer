@@ -1,0 +1,17 @@
+# Source of truth for ~/.config/systemd/user/nexus-todo-lifecycle.timer
+#
+# Daily 03:15 EDT (07:15 UTC) — matches the script docstring's "daily 03:15
+# local"; the fixed UTC form keeps the run independent of DST drift, after the
+# 01:30 assembly digest and before business hours. Persistent=true catches up
+# if the machine was off at the scheduled time.
+
+[Unit]
+Description=Run the To Do lifecycle sweep daily at 07:15 UTC (03:15 EDT)
+
+[Timer]
+OnCalendar=*-*-* 07:15:00 UTC
+Persistent=true
+Unit=nexus-todo-lifecycle.service
+
+[Install]
+WantedBy=timers.target
