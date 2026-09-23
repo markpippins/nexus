@@ -1,33 +1,91 @@
-"""Command-line review bundle generator for Expression."""
+"""CLI for Expression metadata stream projection."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
-from .pipeline import build_expression_bundle
+from .metadata_stream import (
+    project_metadata_stream,
+    export_metadata_stream,
+    validate_metadata_stream,
+)
+from .pipeline import extract_explicit_observations
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build a non-authoritative Expression review bundle")
-    parser.add_argument("transcript", type=Path, help="Transcript JSON containing transcript_id and turns")
-    parser.add_argument("--candidates", type=Path, help="Optional JSON alias catalog: {candidate_id: [alias, ...]}")
-    parser.add_argument("--output", type=Path, help="Write bundle JSON here instead of stdout")
+    parser = argparse.ArgumentParser(
+        description="Expression metadata stream projection CLI"
+    )
+    parser.add_argument(
+        "input",
+        type=Path,
+        help="Input transcript JSON file",
+    )
+    parser.add_argument(
+        "-o", "--output",
+        type=Path,
+        help="Output JSON file (default: stdout)",
+    )
+    parser.add_argument(
+        "--extractor-revision",
+        default="expression-metadata-v0.1",
+        help="Extractor revision identifier",
+    )
+    parser.add_argument(
+        "--stream-id",
+        help="Custom stream ID (generated if not provided)",
+    )
+    parser.add_argument(
+        "--validate",
+        action="store_true",
+        help="Validate the output stream",
+    )
+    parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print JSON output",
+    )
+    
     args = parser.parse_args()
-
-    transcript = json.loads(args.transcript.read_text(encoding="utf-8"))
-    candidates = None
-    if args.candidates:
-        candidates = json.loads(args.candidates.read_text(encoding="utf-8"))
-    bundle = build_expression_bundle(transcript, candidates=candidates)
-    rendered = json.dumps(bundle, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    
+    # Load transcript
+    with args.input.open() as f:
+        transcript = json.load(f)
+    
+    # Project metadata stream
+    from expression.metadata_stream import project_metadata_stream
+    stream = project_metadata_stream(
+        transcript,
+        extractor_revision=args.extractor_revision,
+        stream_id=args.stream_id,
+    )
+    
+    # Validate if requested
+    if args.validate:
+        from expression.metadata_stream import validate_metadata_stream
+        errors = validate_metadata_stream(stream)
+        if errors:
+            print("Validation errors:", file=sys.stderr)
+            for err in errors:
+                print(f"  - {err}", file=sys.stderr)
+            return 1
+    
+    # Export
+    from expression.metadata_stream import export_metadata_stream
+    output = export_metadata_stream(stream)
+    
     if args.output:
-        args.output.write_text(rendered, encoding="utf-8")
+        with args.output.open("w") as f:
+            json.dump(output, f, indent=2 if args.pretty else None)
     else:
-        print(rendered, end="")
+        json.dump(output, sys.stdout, indent=2 if args.pretty else None)
+        print()
+    
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())
