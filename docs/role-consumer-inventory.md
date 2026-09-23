@@ -8,7 +8,7 @@ Role-plane classification and canonical naming were adopted earlier; this is the
 ## Canonical role set (nebula.v_role_capabilities / wind.v_roles — 8 roles)
 
 `analyst, architect, builder, engineer, inspector, planner, reviewer, topologist`
-(plus runtime personas not in the canonical set: critic, operator, sysadmin,
+(plus runtime personas not in the canonical set: critic, operator, sysadmin, engineer-iii,
 devops, engineer-ii, DBA, auditor, epistemologist, claim-extractor, bp, test,
 audit-probe — see per-surface usage below).
 

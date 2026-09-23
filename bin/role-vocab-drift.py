@@ -4,7 +4,8 @@
 Three-way pairwise check, exit 1 on any drift:
 
   LIVE   nebula.agent_records_history.agent_records_role_check (read-only)
-  PIN    the ROLE-VOCAB PIN in sql/V190__scratch_role_vocabulary_widening.sql
+  PIN    the ROLE-VOCAB PIN in the sql/ migration carrying the marker
+         (exactly one repo-wide; discovery is dynamic)
   BOOT   sql/ci-bootstrap/nexus-ci-bootstrap.sql's agent_records_role_check
 
 Chain of custody for the role vocabulary:
@@ -34,10 +35,34 @@ import sys
 
 _REPO_ROOT = os.path.abspath(os.path.join(
     os.path.dirname(__file__), ".."))
-V190_PATH = os.path.join(_REPO_ROOT, "sql",
-                         "V190__scratch_role_vocabulary_widening.sql")
 BOOT_PATH = os.path.join(_REPO_ROOT, "sql", "ci-bootstrap",
                          "nexus-ci-bootstrap.sql")
+
+
+def _pin_path():
+    """Locate the sql/ file carrying the ROLE-VOCAB PIN marker.
+
+    The marker MOVES between widening migrations (V190 -> V197 -> ...), so
+    discovery is dynamic; exactly one may exist (wr-conf-042 P3 enforces).
+    """
+    hits = []
+    sql_dir = os.path.join(_REPO_ROOT, "sql")
+    for base, _dirs, files in os.walk(sql_dir):
+        for name in files:
+            if not name.endswith(".sql"):
+                continue
+            path = os.path.join(base, name)
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    if "ROLE-VOCAB PIN" in fh.read():
+                        hits.append(path)
+            except OSError:
+                continue
+    if len(hits) != 1:
+        raise RuntimeError(
+            "ROLE-VOCAB PIN marker must exist in exactly one sql/ file; "
+            "found %d: %s" % (len(hits), ", ".join(hits) or "none"))
+    return hits[0]
 
 DSN = os.environ.get(
     "NEXUS_PG_DSN", "postgresql://pguser:pgpass@localhost:5432/nexus")
@@ -51,7 +76,7 @@ def _vocab(text: str):
 
 
 def load_pin() -> str:
-    with open(V190_PATH, encoding="utf-8") as fh:
+    with open(_pin_path(), encoding="utf-8") as fh:
         text = fh.read()
     mk = text.find("ROLE-VOCAB PIN")
     if mk < 0:

@@ -39,7 +39,7 @@ function roleLeaseRecordTags(baseTags: string[], role: string, model: string | n
     (typeof model === 'string' && model.trim().startsWith('test/'))
   if (!synthetic) return baseTags
   const REAL_TO =
-    /^to:(architect|engineer|engineer-ii|planner|reviewer|analyst|devops|topologist|inspector|critic)$/
+    /^to:(architect|engineer|engineer-ii|engineer-iii|planner|reviewer|analyst|devops|topologist|inspector|critic)$/
   const domain = baseTags.filter((t) => !REAL_TO.test(t))
   return [...domain, 'to:wr-conf-observer']
 }

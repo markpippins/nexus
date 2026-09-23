@@ -25,7 +25,8 @@ sys.modules[_spec.name] = rvd  # dataclass/py readability; exec below
 _spec.loader.exec_module(rvd)
 
 V24 = ["architect", "planner", "builder", "reviewer", "critic", "analyst",
-       "inspector", "engineer", "engineer-ii", "devops", "topologist",
+       "inspector", "engineer", "engineer-ii", "engineer-iii", "devops",
+       "topologist",
        "auditor", "dba", "epistemologist", "operator", "sysadmin", "DBA",
        "tester", "analyst-ii", "design-synthesist", "layout-mechanic",
        "ontologist", "lead-engineer", "sound-technician"]

@@ -38,7 +38,8 @@ def _writable_roles():
     config/roles/roles.json nebulaCheck=true, plus registered active roles)."""
     registry = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "config", "roles", "roles.json")
-    fallback = {"architect", "engineer", "engineer-ii", "devops", "topologist",
+    fallback = {"architect", "engineer", "engineer-ii", "engineer-iii",
+                "devops", "topologist",
                 "planner", "reviewer", "analyst", "inspector", "critic"}
     try:
         with open(registry) as f:
@@ -52,7 +53,7 @@ def _writable_roles():
     except Exception:
         return fallback
     # Registered active roles not (yet) in the registry are still writable.
-    for extra in ("engineer-ii", "analyst-ii", "dba"):
+    for extra in ("engineer-ii", "engineer-iii", "analyst-ii", "dba"):
         roles[extra] = True
     return set(roles)
 

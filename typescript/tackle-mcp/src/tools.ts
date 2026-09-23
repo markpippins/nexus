@@ -234,7 +234,7 @@ export const toolDefinitions: MCPToolDefinition[] = [
     inputSchema: {
       type: "object",
       properties: {
-        role: { type: "string", description: "Role name: planner, builder, reviewer, critic, analyst, architect, inspector, engineer, engineer-ii, devops, topologist, rover" },
+        role: { type: "string", description: "Role name: planner, builder, reviewer, critic, analyst, architect, inspector, engineer, engineer-ii, engineer-iii, devops, topologist, rover" },
       },
       required: ["role"],
     },
@@ -246,7 +246,7 @@ export const toolDefinitions: MCPToolDefinition[] = [
       type: "object",
       properties: {
         id: { type: "string", description: "Role config ID (e.g. 'rc-builder')" },
-        role: { type: "string", description: "Role name: planner, builder, reviewer, critic, analyst, architect, inspector, engineer, engineer-ii, devops, topologist, rover" },
+        role: { type: "string", description: "Role name: planner, builder, reviewer, critic, analyst, architect, inspector, engineer, engineer-ii, engineer-iii, devops, topologist, rover" },
         provider_id: { type: "string", description: "Provider ID for the primary model" },
         harness_id: { type: "string", description: "Harness ID for the primary model" },
         model_id: { type: "string", description: "Primary model ID" },
