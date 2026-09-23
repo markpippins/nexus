@@ -41,16 +41,36 @@ DSN = os.environ.get("CONDUIT_PG_DSN",
                      "postgresql://pguser:pgpass@localhost:5432/postgres")
 
 
+def _find_pin_migration():
+    """Locate the migration carrying the ROLE-VOCAB PIN marker (dynamic since
+    V197: the marker lives in exactly one sql/ file — wr-conf-042's parity
+    suite P3 enforces uniqueness, so discovery here is safe and stays
+    correct as the pin moves in future widenings)."""
+    sql_dir = os.path.join(_REPO_ROOT, "sql")
+    hits = []
+    for name in sorted(os.listdir(sql_dir)):
+        if not name.endswith(".sql"):
+            continue
+        with open(os.path.join(sql_dir, name), encoding="utf-8") as fh:
+            if "ROLE-VOCAB PIN" in fh.read():
+                hits.append(os.path.join(sql_dir, name))
+    if len(hits) != 1:
+        raise RuntimeError(
+            "ROLE-VOCAB PIN marker must exist in exactly one sql/ file, found %d: %r"
+            % (len(hits), hits))
+    return hits[0]
+
+
 def _load_pin_roles():
-    """Derive the vocabulary from the ROLE-VOCAB PIN in the migration itself
+    """Derive the vocabulary from the ROLE-VOCAB PIN in its owning migration
     (single in-repo copy — wr-conf-042's parity suite enforces bootstrap
     parity; deriving here keeps the E2E from carrying a second list that
     could silently drift)."""
-    with open(V190_PATH, encoding="utf-8") as fh:
+    with open(_find_pin_migration(), encoding="utf-8") as fh:
         text = fh.read()
     mk = text.find("ROLE-VOCAB PIN")
     if mk < 0:
-        raise RuntimeError("ROLE-VOCAB PIN marker missing from V190")
+        raise RuntimeError("ROLE-VOCAB PIN marker missing")
     arr = text.find("ARRAY[", mk)
     close = text.find("]", arr)
     roles = sorted({r for r in re.findall(r"'([^']*)'", text[arr:close]) if r})

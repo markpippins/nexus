@@ -4,7 +4,8 @@
 Three-way pairwise check, exit 1 on any drift:
 
   LIVE   nebula.agent_records_history.agent_records_role_check (read-only)
-  PIN    the ROLE-VOCAB PIN in sql/V190__scratch_role_vocabulary_widening.sql
+  PIN    the ROLE-VOCAB PIN in the sql/ migration carrying the marker
+         (exactly one repo-wide; discovery is dynamic)
   BOOT   sql/ci-bootstrap/nexus-ci-bootstrap.sql's agent_records_role_check
 
 Chain of custody for the role vocabulary:

@@ -158,16 +158,34 @@ BEGIN
     END IF;
 END $$;
 
--- Historical 24-role swap: reachable ONLY on the pre-V197 state (the
+-- Historical-state repair swap: reachable ONLY on the pre-V197 state (the
 -- tolerance DO above RETURNs on the widened state, so replay on a 25-role
--- mirror can no longer regress it to 24).
-
-ALTER TABLE scratch.agent_records_history
-    DROP CONSTRAINT agent_records_role_check;
-
-ALTER TABLE scratch.agent_records_history
-    ADD CONSTRAINT agent_records_role_check
-    CHECK (((role = ''::text) OR (role = ANY (ARRAY['architect'::text, 'planner'::text, 'builder'::text, 'reviewer'::text, 'critic'::text, 'analyst'::text, 'inspector'::text, 'engineer'::text, 'engineer-ii'::text, 'devops'::text, 'topologist'::text, 'auditor'::text, 'dba'::text, 'epistemologist'::text, 'operator'::text, 'sysadmin'::text, 'DBA'::text, 'tester'::text, 'analyst-ii'::text, 'design-synthesist'::text, 'layout-mechanic'::text, 'ontologist'::text, 'lead-engineer'::text, 'sound-technician'::text]))));
+-- mirror can no longer regress it).
+--
+-- V197 (2026-09-23): the swap no longer hardcodes a role list — it COPIES
+-- nebula's live (preflight-validated) constraint definition verbatim, which
+-- is what this migration always claimed to do ("swaps scratch's CHECK to
+-- it"). Parity is then true by construction at every vocabulary generation,
+-- and the E2E that applies this file against a pin-derived skeleton holds
+-- regardless of where the pin currently lives.
+DO $$
+DECLARE
+    live_def text;
+BEGIN
+    SELECT pg_get_constraintdef(con.oid)
+      INTO live_def
+      FROM pg_constraint con
+      JOIN pg_class c      ON c.oid = con.conrelid
+      JOIN pg_namespace n  ON n.oid = c.relnamespace
+     WHERE n.nspname = 'nebula'
+       AND c.relname = 'agent_records_history'
+       AND con.conname = 'agent_records_role_check';
+    EXECUTE 'ALTER TABLE scratch.agent_records_history '
+         || 'DROP CONSTRAINT agent_records_role_check';
+    -- pg_get_constraintdef returns the full 'CHECK (...)' form — append as-is.
+    EXECUTE 'ALTER TABLE scratch.agent_records_history '
+         || 'ADD CONSTRAINT agent_records_role_check ' || live_def;
+END $$;
 
 COMMIT;
 

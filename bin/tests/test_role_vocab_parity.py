@@ -126,11 +126,25 @@ class Parity(unittest.TestCase):
 
     # ── P2 detail: the swap DDL must include the newest widening ──
     def test_swap_ddl_matches_pin(self):
-        self.assertEqual(
-            _vocab(self.swap_text), _vocab(self.pin_text),
-            "the pin migration's ADD CONSTRAINT differs from its own pin — "
-            "the migration would refuse itself at apply time",
-        )
+        # Two sanctioned swap shapes in the pin migration:
+        #   static  — an ADD CONSTRAINT whose ARRAY carries the pin literals
+        #   dynamic (V197+) — the ADD CONSTRAINT interpolates a literal_list
+        #              BUILT from the pin array (unnest(target_vocab));
+        #              parity holds by construction, so assert the chain.
+        if "literal_list" in self.swap_text:
+            self.assertIn("SELECT string_agg(", self.v190,
+                          "dynamic swap must build literal_list from the pin array")
+            self.assertIn("unnest(target_vocab)", self.v190,
+                          "literal_list must derive from the pin array (target_vocab)")
+            self.assertEqual(
+                self.v190.count("ADD CONSTRAINT agent_records_role_check"), 2,
+                "dynamic swap must rebuild BOTH nebula and scratch constraints")
+        else:
+            self.assertEqual(
+                _vocab(self.swap_text), _vocab(self.pin_text),
+                "the pin migration's ADD CONSTRAINT differs from its own pin — "
+                "the migration would refuse itself at apply time",
+            )
     def test_exactly_one_pin_marker_repo_wide(self):
         self.assertEqual(
             [os.path.relpath(self.pin_path, _REPO_ROOT)],
