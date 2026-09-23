@@ -6,12 +6,17 @@
 # caught at merge time anywhere in the jvm/ tree — the same drift class that
 # hid the nexus-core peb-api gap until a host rebuild (PR #454).
 #
-# Build contexts differ by family (each Dockerfile documents its own):
-#   - jvm/-root context: service-registry, broker-gateway (they install the
-#     spring parent POM and shared/ modules themselves)
-#   - standalone contexts: the service-broker services carry their own
-#     Maven wrapper and build self-contained
-#   - helidon: Oracle JDK base, two variants (classic + jlink)
+# Build contexts (each Dockerfile documents its own):
+#   - jvm/-root context: every image — they install the spring parent POM
+#     (and shared/ or sibling reactors) themselves, mirroring the host build.
+#     Updated 2026-09-23: ALL per-service-broker-module Dockerfiles were
+#     DELETED — those modules have no main class (W1 facade ruling: they run
+#     in-process inside broker-gateway), so per-module images were never
+#     runnable, and the standalone-context Dockerfiles depended on a Maven
+#     wrapper this repo does not carry. Matrix: service-registry,
+#     broker-gateway, helidon classic (jlink variant removed — phantom
+#     profile, see Dockerfile header note).
+#   - helidon: eclipse-temurin base, two variants (classic + jlink)
 #
 # nexus-core is NOT duplicated here — it has its own workflow with narrower
 # path filters and a documented build-only rationale (see nexus-core-image.yml).
@@ -20,11 +25,13 @@
 # hide the state of the other images — this workflow doubles as the standing
 # fleet build audit.
 #
-# Known pre-existing smells this gate will expose empirically (NOT fixed here):
-#   - social-media builds on openjdk:21-jdk-slim (official openjdk images are
-#     discontinued; base-image migration is its own PR)
-#   - Dockerfile.jlink runs on debian:stretch-slim (EOL Debian runtime base)
-#   - helidon builds depend on container-registry.oracle.com availability
+# Fixed 2026-09-23 (was on the punch list below): the four slim-tagged
+# module Dockerfiles and social-media's openjdk:21-jdk-slim one were deleted
+# outright (non-bootable modules — no main class); Dockerfile.jlink removed
+# (activated a -Pjlink-image profile that does not exist in the pom); the
+# helidon classic build now pre-seeds shared/ + broker-service-spi before
+# the service reactor; broker-gateway's -exec.jar glob fixed to the
+# unclassified boot jar.
 
 name: JVM Images Build
 
@@ -48,18 +55,8 @@ jobs:
   build:
     name: "docker build: ${{ matrix.name }}"
     runs-on: ubuntu-latest
-    # TEMPORARY (2026-09-22 fleet audit): 8/9 images fail to build from main
-    # — 5x base-image tags that no longer exist on Docker Hub (eclipse-temurin
-    # 21-jdk-slim x4, openjdk 21 x1), 1x broker-gateway -exec.jar churn
-    # (in-flight fat-jar pilot), 2x helidon missing shared/ reactor
-    # provisioning (same class as the nexus-core peb-api gap, PR #454).
-    # Updated 2026-09-23: the 4x eclipse-temurin 21-jdk-slim pins are fixed
-    # (retagged to 21-jdk). Remaining: social-media openjdk:21-jdk-slim
-    # (base-image migration, its own PR), broker-gateway -exec.jar churn
-    # (in-flight fat-jar pilot), helidon shared/ provisioning (PR #454 class).
-    # continue-on-error keeps this audit visible WITHOUT blocking merges
-    # until the punch list lands; FLIP TO FALSE once the matrix is green.
-    continue-on-error: true
+    # Punch list landed 2026-09-23: gate is ENFORCING (continue-on-error
+    # removed). Every remaining cell must build green at merge time.
     strategy:
       fail-fast: false
       matrix:
@@ -70,27 +67,9 @@ jobs:
           - name: broker-gateway
             context: jvm
             dockerfile: jvm/spring/service-broker/broker-gateway/Dockerfile
-          - name: broker-discovery-service
-            context: jvm/spring/service-broker/broker-discovery-service
-            dockerfile: jvm/spring/service-broker/broker-discovery-service/Dockerfile
-          - name: user-service
-            context: jvm/spring/service-broker/user-service
-            dockerfile: jvm/spring/service-broker/user-service/Dockerfile
-          - name: login-service
-            context: jvm/spring/service-broker/login-service
-            dockerfile: jvm/spring/service-broker/login-service/Dockerfile
-          - name: user-access-service
-            context: jvm/spring/service-broker/user-access-service
-            dockerfile: jvm/spring/service-broker/user-access-service/Dockerfile
-          - name: social-media
-            context: jvm/spring/service-broker/social-media
-            dockerfile: jvm/spring/service-broker/social-media/Dockerfile
           - name: helidon-user-access-service
-            context: jvm/helidon/user-access-service
+            context: jvm
             dockerfile: jvm/helidon/user-access-service/Dockerfile
-          - name: helidon-user-access-service-jlink
-            context: jvm/helidon/user-access-service
-            dockerfile: jvm/helidon/user-access-service/Dockerfile.jlink
     steps:
       - uses: actions/checkout@v4
 

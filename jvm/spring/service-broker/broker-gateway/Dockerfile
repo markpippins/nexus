@@ -19,13 +19,15 @@ RUN --mount=type=cache,target=/root/.m2 mvn -B -q -f spring-parent.pom.xml -N in
 COPY shared/ shared/
 RUN --mount=type=cache,target=/root/.m2 mvn -B -q -f shared/pom.xml install -DskipTests
 # Broker reactor: build gateway plus its internal dependencies (-am), exactly
-# like the documented host build. Produces the boot-executable -exec.jar.
+# like the documented host build. The pom repackages WITHOUT the exec
+# classifier ("the main artifact IS the boot jar", atlas-consistent), so the
+# bootable jar is the unclassified one — exclude the original-*.jar thin copy.
 # The service-broker aggregator also declares module ../atlas (i.e. spring/atlas).
 COPY spring/atlas/ spring/atlas/
 COPY spring/service-broker/ spring/service-broker/
 WORKDIR /build/spring/service-broker
 RUN --mount=type=cache,target=/root/.m2 mvn -B clean package -DskipTests -pl broker-gateway -am \
- && JAR=$(ls broker-gateway/target/*-exec.jar | head -1) \
+ && JAR=$(ls broker-gateway/target/*.jar | grep -v original | head -1) \
  && ln -s "$(basename "$JAR")" broker-gateway/target/app.jar
 
 FROM eclipse-temurin:21-jre
