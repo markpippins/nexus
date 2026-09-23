@@ -12,6 +12,12 @@ services:
     environment:
       NEXUS_PG_DSN: ${NEXUS_PG_DSN}
       HEARTBEAT_REGISTRY_URL: ${HEARTBEAT_REGISTRY_URL:-}
+    # Prevent unbounded log growth (same as candidate-stack/helium)
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     # No ports exposed; emits heartbeats to registry via NATS
 
   # Core services — can be enabled if barium is promoted to active tier
@@ -26,6 +32,11 @@ services:
   #     NEXUS_PG_DSN: ${NEXUS_PG_DSN}
   #   ports:
   #     - "${NEXUS_CORE_HOST_PORT:-8092}:8092"
+  #   logging:
+  #     driver: json-file
+  #     options:
+  #       max-size: "10m"
+  #       max-file: "3"
 
   # PostgreSQL (local instance for standalone operation; can be disabled if using remote PG)
   # postgres:
@@ -40,6 +51,11 @@ services:
   #     - barium-pgdata:/var/lib/postgresql/data
   #   ports:
   #     - "${PG_HOST_PORT:-5432}:5432"
+  #   logging:
+  #     driver: json-file
+  #     options:
+  #       max-size: "10m"
+  #       max-file: "3"
 
   # Redis (for calendar emitter and local caching)
   # redis:
@@ -48,6 +64,11 @@ services:
   #   restart: unless-stopped
   #   ports:
   #     - "${REDIS_HOST_PORT:-6379}:6379"
+  #   logging:
+  #     driver: json-file
+  #     options:
+  #       max-size: "10m"
+  #       max-file: "3"
 
 volumes:
   # barium-pgdata:
