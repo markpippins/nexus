@@ -1,0 +1,28 @@
+# Source of truth for ~/.config/systemd/user/sdk-drift-stamp.service
+#
+# Deploy:
+#   cp bin/sdk-drift-stamp.service ~/.config/systemd/user/
+#   cp bin/sdk-drift-stamp.timer   ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now sdk-drift-stamp.timer
+#
+# Why this file is in the repo: same doctrine as nexus-helium-core-probe.service —
+# host-only units drift from the corpus (the 2026-09-21 helium probe incident,
+# where the deployed ExecStart was invisible to the repo for three days).
+#
+# ExecStart targets the worktree-agnostic repo path via the wrapper; the wrapper
+# resolves the repo root from its own location, so any checkout clone works.
+# This host uses the stamp mode (no tsp toolchain required); CI runs the
+# authoritative regen-diff (sdk-drift-guard.yml).
+
+[Unit]
+Description=SDK stamp drift check (TypeSpec contract hashes vs generated-client stamps)
+After=network-online.target
+
+[Service]
+Type=oneshot
+# exit 0 = ok or drift-found-and-recorded (the check did its job); 2 = tool error
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/sdk_drift_stamp_wrap.py
+
+[Install]
+WantedBy=default.target

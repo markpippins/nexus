@@ -1,0 +1,84 @@
+name: SDK Drift Guard
+
+# Generated TypeSpec python clients must match their contract.
+#
+# History (2026-09-22): a regenerated python SDK (conduit-kernel + peb) sat
+# stranded in a stash-pop incident because nothing compared the generated
+# trees against the committed TypeSpec. This workflow makes that drift loud
+# at push time.
+#
+# Primary check (regen): fresh `tsp compile` with the PINNED toolchain
+# (typespec/v1/package.json; lockfile is gitignored, so exact pins matter)
+# diffed against python/conduit/generated and python/peb-kernel/generated.
+# Byte-identity required — same standard as the seed-guard.
+#
+# Fallback (stamp): on hosts/paths where tsp is unavailable, the checker
+# compares TypeSpec contract hashes against bin/sdk-type-stamps/. CI uses
+# regen; the stamp mode exists for boot-time checks on dev machines.
+
+on:
+  push:
+    branches: [main, master, feature/*, dev]
+    paths:
+      - 'typespec/v1/**'
+      - 'python/conduit/generated/**'
+      - 'python/peb-kernel/generated/**'
+      - 'bin/check_sdk_drift.py'
+      - 'bin/sdk-type-stamps/**'
+      - '.github/workflows/sdk-drift-guard.yml'
+  pull_request:
+    branches: [main, master, feature/*]
+    paths:
+      - 'typespec/v1/**'
+      - 'python/conduit/generated/**'
+      - 'python/peb-kernel/generated/**'
+      - 'bin/check_sdk_drift.py'
+      - 'bin/sdk-type-stamps/**'
+      - '.github/workflows/sdk-drift-guard.yml'
+  workflow_dispatch:
+  schedule:
+    # Daily 6:30 AM UTC — catches drift even without pushes (e.g. emitter
+    # registry changes are pinned, but a manual generated-tree edit was not
+    # committed).
+    - cron: '30 6 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  regen-diff:
+    name: "regen-diff: tsp compile vs committed generated trees"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test deps
+        run: python3 -m pip install --quiet pytest
+      - name: Checker unit tests (hermetic)
+        run: make sdk-drift-test
+        shell: bash
+      - name: Install pinned TypeSpec toolchain
+        run: make sdk-drift-install
+        shell: bash
+      - name: Regen-diff (byte-identity vs fresh compile)
+        run: make sdk-drift-check
+        shell: bash
+
+  stamp-fallback:
+    name: "stamp check: contract hashes (no-tsp fallback path)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Stamp check (also proves the fallback mode stays functional)
+        run: make sdk-drift-stamp
+        shell: bash

@@ -52,6 +52,7 @@ import sys
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(SCRIPT_DIR, "..", "python", "nebula-mcp-client"))
@@ -546,6 +547,38 @@ class Boot:
             exit_code = 1
         return exit_code
 
+    # 5b ─ SDK stamp drift (TypeSpec-edited-but-not-regenerated) -----------
+    def sdk_drift_step(self) -> None:
+        """Cheap stamp check: does any TypeSpec contract hash differ from the
+        stamps committed next to the generated clients? Catches the
+        'TypeSpec edited, SDK not regenerated' drift on machines without the
+        tsp toolchain (CI's regen-diff is the authoritative byte-identity
+        check). Degraded (never blocks boot); strict mode counts it."""
+        checker = Path(SCRIPT_DIR).parent / "bin" / "check_sdk_drift.py"
+        if not checker.exists():
+            self.record("sdk-drift-stamp", "skipped",
+                        "bin/check_sdk_drift.py not present in this checkout")
+            return
+        try:
+            res = subprocess.run(
+                [sys.executable, str(checker), "--mode", "stamp"],
+                capture_output=True, text=True, timeout=60, cwd=str(Path(SCRIPT_DIR).parent),
+            )
+        except Exception as e:
+            self.record("sdk-drift-stamp", "degraded",
+                        f"checker failed to run: {type(e).__name__}: {str(e)[:120]}")
+            return
+        if res.returncode == 0:
+            last = next((ln for ln in res.stdout.splitlines() if ln.startswith("ok ")), "")
+            self.record("sdk-drift-stamp", "ok", last or "all provider stamps match")
+        elif res.returncode == 1:
+            drift = [ln for ln in res.stdout.splitlines() if ln.startswith("DRIFT")]
+            self.record("sdk-drift-stamp", "degraded",
+                        "; ".join(d[:160] for d in drift) or "TypeSpec drift detected")
+        else:
+            self.record("sdk-drift-stamp", "degraded",
+                        f"tool error (exit {res.returncode}): {(res.stderr or '')[-160:]}")
+
     # 6 ─ continuity digest preview (optional, --digest) -------------------
     def digest_preview(self) -> None:
         """Print the role continuity digest preview (v0, read-only).
@@ -691,6 +724,7 @@ class Boot:
         self.attest_scan()
         self.attest_record()
         self.clock_in()
+        self.sdk_drift_step()
         self.calendar_step()
         self.consolidate_step()
         self.blackboard_step()

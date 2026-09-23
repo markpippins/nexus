@@ -59,6 +59,7 @@ JVM_SERVICES = {
 MOLLECULER_SERVICES = {
     "moleculer/voyager": "moleculer/voyager",
     "moleculer/cascade": "moleculer/cascade",
+    "moleculer/kernel": "moleculer/kernel",
 }
 
 # moleculer-web alias entries: "GET /path": "svc.action" (single-quoted forms
