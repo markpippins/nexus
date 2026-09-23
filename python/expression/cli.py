@@ -41,49 +41,46 @@ def main() -> int:
     parser.add_argument(
         "--validate",
         action="store_true",
-        help="Validate the output stream",
+        help="Validate the output stream before emitting it (non-zero exit on errors)",
     )
     parser.add_argument(
         "--pretty",
         action="store_true",
         help="Pretty-print JSON output",
     )
-    
+
     args = parser.parse_args()
-    
+
     # Load transcript
     with args.input.open() as f:
         transcript = json.load(f)
-    
+
     # Project metadata stream
-    from expression.metadata_stream import project_metadata_stream
     stream = project_metadata_stream(
         transcript,
         extractor_revision=args.extractor_revision,
         stream_id=args.stream_id,
     )
-    
+
     # Validate if requested
     if args.validate:
-        from expression.metadata_stream import validate_metadata_stream
         errors = validate_metadata_stream(stream)
         if errors:
             print("Validation errors:", file=sys.stderr)
             for err in errors:
                 print(f"  - {err}", file=sys.stderr)
             return 1
-    
+
     # Export
-    from expression.metadata_stream import export_metadata_stream
     output = export_metadata_stream(stream)
-    
+
     if args.output:
         with args.output.open("w") as f:
             json.dump(output, f, indent=2 if args.pretty else None)
     else:
         json.dump(output, sys.stdout, indent=2 if args.pretty else None)
         print()
-    
+
     return 0
 
 
