@@ -53,7 +53,7 @@ class PebTransactionEndpointOperations:
     @overload
     async def submit(
         self, request: _models.PebTransactionRequest, *, content_type: str = "application/json", **kwargs: Any
-    ) -> _models.AdmissionResponse:
+    ) -> _models.PebAdmissionResult:
         """Submit a transaction to the PEB governance engine.
           The toolName field determines which admission path and engine is invoked:
 
@@ -69,15 +69,15 @@ class PebTransactionEndpointOperations:
         :keyword content_type: Body Parameter content-type. Content type parameter for JSON body.
          Default value is "application/json".
         :paramtype content_type: str
-        :return: AdmissionResponse. The AdmissionResponse is compatible with MutableMapping
-        :rtype: ~org.nexus.peb.models.AdmissionResponse
+        :return: PebAdmissionResult. The PebAdmissionResult is compatible with MutableMapping
+        :rtype: ~org.nexus.peb.models.PebAdmissionResult
         :raises ~corehttp.exceptions.HttpResponseError:
         """
 
     @overload
     async def submit(
         self, request: JSON, *, content_type: str = "application/json", **kwargs: Any
-    ) -> _models.AdmissionResponse:
+    ) -> _models.PebAdmissionResult:
         """Submit a transaction to the PEB governance engine.
           The toolName field determines which admission path and engine is invoked:
 
@@ -93,15 +93,15 @@ class PebTransactionEndpointOperations:
         :keyword content_type: Body Parameter content-type. Content type parameter for JSON body.
          Default value is "application/json".
         :paramtype content_type: str
-        :return: AdmissionResponse. The AdmissionResponse is compatible with MutableMapping
-        :rtype: ~org.nexus.peb.models.AdmissionResponse
+        :return: PebAdmissionResult. The PebAdmissionResult is compatible with MutableMapping
+        :rtype: ~org.nexus.peb.models.PebAdmissionResult
         :raises ~corehttp.exceptions.HttpResponseError:
         """
 
     @overload
     async def submit(
         self, request: IO[bytes], *, content_type: str = "application/json", **kwargs: Any
-    ) -> _models.AdmissionResponse:
+    ) -> _models.PebAdmissionResult:
         """Submit a transaction to the PEB governance engine.
           The toolName field determines which admission path and engine is invoked:
 
@@ -117,14 +117,14 @@ class PebTransactionEndpointOperations:
         :keyword content_type: Body Parameter content-type. Content type parameter for binary body.
          Default value is "application/json".
         :paramtype content_type: str
-        :return: AdmissionResponse. The AdmissionResponse is compatible with MutableMapping
-        :rtype: ~org.nexus.peb.models.AdmissionResponse
+        :return: PebAdmissionResult. The PebAdmissionResult is compatible with MutableMapping
+        :rtype: ~org.nexus.peb.models.PebAdmissionResult
         :raises ~corehttp.exceptions.HttpResponseError:
         """
 
     async def submit(
         self, request: Union[_models.PebTransactionRequest, JSON, IO[bytes]], **kwargs: Any
-    ) -> _models.AdmissionResponse:
+    ) -> _models.PebAdmissionResult:
         """Submit a transaction to the PEB governance engine.
           The toolName field determines which admission path and engine is invoked:
 
@@ -137,8 +137,8 @@ class PebTransactionEndpointOperations:
 
         :param request: Is one of the following types: PebTransactionRequest, JSON, IO[bytes] Required.
         :type request: ~org.nexus.peb.models.PebTransactionRequest or JSON or IO[bytes]
-        :return: AdmissionResponse. The AdmissionResponse is compatible with MutableMapping
-        :rtype: ~org.nexus.peb.models.AdmissionResponse
+        :return: PebAdmissionResult. The PebAdmissionResult is compatible with MutableMapping
+        :rtype: ~org.nexus.peb.models.PebAdmissionResult
         :raises ~corehttp.exceptions.HttpResponseError:
         """
         error_map: MutableMapping = {
@@ -153,7 +153,7 @@ class PebTransactionEndpointOperations:
         _params = kwargs.pop("params", {}) or {}
 
         content_type: Optional[str] = kwargs.pop("content_type", _headers.pop("Content-Type", None))
-        cls: ClsType[_models.AdmissionResponse] = kwargs.pop("cls", None)
+        cls: ClsType[_models.PebAdmissionResult] = kwargs.pop("cls", None)
 
         content_type = content_type or "application/json"
         _content = None
@@ -191,7 +191,7 @@ class PebTransactionEndpointOperations:
         if _stream:
             deserialized = response.iter_bytes() if _decompress else response.iter_raw()
         else:
-            deserialized = _deserialize(_models.AdmissionResponse, response.json())
+            deserialized = _deserialize(_models.PebAdmissionResult, response.json())
 
         if cls:
             return cls(pipeline_response, deserialized, {})  # type: ignore
