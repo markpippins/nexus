@@ -234,9 +234,35 @@ def snapshot_tree(root: Path) -> dict[str, str]:
     if not root.exists():
         return snap
     for p in sorted(root.rglob("*")):
-        if p.is_file():
-            snap[p.relative_to(root).as_posix()] = hashlib.sha256(p.read_bytes()).hexdigest()
+        if not p.is_file():
+            continue
+        # Local bytecode residue (a host that imported the generated SDK):
+        # gitignored everywhere, never committed, and never produced by a
+        # fresh tsp regen — including it made the guard report a false
+        # DRIFT ("23 missing") on pristine committed trees (2026-09-23).
+        rel_parts = p.relative_to(root).parts
+        if "__pycache__" in rel_parts or p.suffix.lower() in {".pyc", ".pyo"}:
+            continue
+        snap[p.relative_to(root).as_posix()] = hashlib.sha256(p.read_bytes()).hexdigest()
     return snap
+
+
+def fresh_output_subdir(prov: Provider, index: int) -> str:
+    """The scratch subdir where emitter #index's output lands.
+
+    Emitter-driven, per the preset's (emitter, subdir) mapping: the java
+    emitters write to out/java, the python emitters to out/python. History
+    (JVM extension, 2026-09-23): check_regen once hardcoded fresh_root /
+    "python" for every generated tree, so the java provider's diff read an
+    empty directory and reported the entire staged tree as "missing" — a
+    false DRIFT that made the JVM surface permanently red.
+
+    Falls back to "python" for ad-hoc providers (parse_provider defaults to
+    the python emitter mapping) or unpaired generated dirs.
+    """
+    if index < len(prov.emitters):
+        return prov.emitters[index][1]
+    return "python"
 
 
 def diff_trees(committed: dict[str, str], fresh: dict[str, str]) -> tuple[list[str], list[str], list[str]]:
@@ -312,8 +338,8 @@ def check_regen(prov: Provider, root: Path) -> tuple[bool, list[str]]:
                 if lst:
                     lines.append(f"  {mark} ... and {len(lst)} more")
 
-        for gdir in prov.generated_dirs:
-            report("generated", gdir, fresh_root / "python")
+        for i, gdir in enumerate(prov.generated_dirs):
+            report("generated", gdir, fresh_root / fresh_output_subdir(prov, i))
         for edir in prov.extra_dirs:
             report("schema", edir, fresh_root / "schema")
     finally:
