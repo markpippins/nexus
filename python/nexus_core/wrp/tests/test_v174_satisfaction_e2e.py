@@ -17,6 +17,7 @@ asserts the invariants live:
   - view remains non-NULL in satisfying_providers with zero active
   - idempotent re-apply
 """
+import datetime
 import os
 import sys
 import unittest
@@ -33,6 +34,27 @@ V174_PATH = os.path.join(_REPO_ROOT, "sql", "V174__satisfaction_states.sql")
 
 DSN = os.environ.get("CONDUIT_PG_DSN",
                      "postgresql://pguser:pgpass@localhost:5432/postgres")
+
+
+def _days_ago(n: int) -> str:
+    """Fixture observation timestamp N days before THIS run (UTC, ISO-8601 Z).
+
+    The V174 freshness window is ``interval '7 days'``
+    (sql/V174__satisfaction_states.sql), so fixture timestamps must be
+    computed relative to the clock, not hardcoded: the original literal
+    ``2026-09-16T00:00:00Z`` aged out of the 7-day window at
+    2026-09-23T00:00:00Z and every 'fresh' cell started failing repo-wide
+    (both open PRs went red in the same hour, 6 minutes past the boundary).
+    1 day ago = fresh with 6 days of slack; 30 days ago = stale with 23.
+    """
+    t = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=n)
+    return t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# 'fresh' observation (was 2026-09-16T00:00:00Z — 7 days before authoring)
+FRESH = _days_ago(1)
+# 'aged out' observation (was 2026-09-01T00:00:00Z — 22 days before authoring)
+STALE = _days_ago(30)
 
 SKELETON_SQL = """
 CREATE SCHEMA nebula;
@@ -155,7 +177,7 @@ WHERE capability = %s;
     def test_fresh_active_pass_still_satisfied(self):
         cap = self.db.add_capability("cap-a")
         self.db.add_adapter(cap, "postgresql", "active",
-                            evidence=[_obs("PASS", "2026-09-16T00:00:00Z")],
+                            evidence=[_obs("PASS", FRESH)],
                             checked=True)
         self.assertEqual(self.state("cap-a"), "satisfied")
 
@@ -164,7 +186,7 @@ WHERE capability = %s;
         # V174 note: staleness prefers the EMBEDDED observed_at over
         # last_checked_at, so the aging must happen in the evidence itself
         self.db.add_adapter(cap, "postgresql", "active",
-                            evidence=[_obs("PASS", "2026-09-01T00:00:00Z")],
+                            evidence=[_obs("PASS", STALE)],
                             checked=False)  # NULL checked → fallback path
         self.assertEqual(self.state("cap-b"), "satisfied-stale")
 
@@ -173,22 +195,22 @@ WHERE capability = %s;
         # the age of the last successful PASS — observed_at is the truth
         cap = self.db.add_capability("cap-b2")
         self.db.add_adapter(cap, "postgresql", "active",
-                            evidence=[_obs("PASS", "2026-09-01T00:00:00Z"),
-                                      _obs("SKIP", "2026-09-16T00:00:00Z")],
+                            evidence=[_obs("PASS", STALE),
+                                      _obs("SKIP", FRESH)],
                             checked=True)  # last_checked_at = now()
         self.assertEqual(self.state("cap-b2"), "satisfied-stale")
 
     def test_degraded_only_still_unsatisfied(self):
         cap = self.db.add_capability("cap-c")
         self.db.add_adapter(cap, "postgresql", "degraded",
-                            evidence=[_obs("FAIL", "2026-09-16T00:00:00Z")],
+                            evidence=[_obs("FAIL", FRESH)],
                             checked=True)
         self.assertEqual(self.state("cap-c"), "unsatisfied")
 
     def test_satisfying_providers_never_null(self):
         cap = self.db.add_capability("cap-d")
         self.db.add_adapter(cap, "postgresql", "degraded",
-                            evidence=[_obs("FAIL", "2026-09-16T00:00:00Z")],
+                            evidence=[_obs("FAIL", FRESH)],
                             checked=True)
         row = self.db.sql("""
 SELECT satisfied, satisfying_providers
@@ -202,43 +224,42 @@ FROM nebula.v_capability_satisfaction WHERE capability='cap-d';
     def test_fresh_unreachable_verdicts_unreachable(self):
         cap = self.db.add_capability("cap-e")
         self.db.add_adapter(cap, "mysql", "degraded",
-                            evidence=[_obs("UNREACHABLE", "2026-09-16T00:00:00Z")],
+                            evidence=[_obs("UNREACHABLE", FRESH)],
                             checked=True)
         self.assertEqual(self.state("cap-e"), "unreachable")
 
     def test_unreachable_ages_out_to_unsatisfied(self):
         cap = self.db.add_capability("cap-f")
         self.db.add_adapter(cap, "mysql", "degraded",
-                            evidence=[_obs("UNREACHABLE",
-                                           "2026-09-01T00:00:00Z")],
+                            evidence=[_obs("UNREACHABLE", STALE)],
                             checked=False)  # last_checked NULL → stale
         self.assertEqual(self.state("cap-f"), "unsatisfied")
 
     def test_fresh_refused_verdicts_refused(self):
         cap = self.db.add_capability("cap-g")
         self.db.add_adapter(cap, "http", "declared",
-                            evidence=[_obs("REFUSED", "2026-09-16T00:00:00Z")],
+                            evidence=[_obs("REFUSED", FRESH)],
                             checked=True)
         self.assertEqual(self.state("cap-g"), "refused")
 
     def test_refused_ages_out_to_unsatisfied(self):
         cap = self.db.add_capability("cap-h")
         self.db.add_adapter(cap, "http", "declared",
-                            evidence=[_obs("REFUSED", "2026-09-01T00:00:00Z")],
+                            evidence=[_obs("REFUSED", STALE)],
                             checked=False)
         self.assertEqual(self.state("cap-h"), "unsatisfied")
 
     def test_fail_at_any_age_verdicts_unsatisfied(self):
         cap = self.db.add_capability("cap-i")
         self.db.add_adapter(cap, "postgresql", "declared",
-                            evidence=[_obs("FAIL", "2026-09-01T00:00:00Z")],
+                            evidence=[_obs("FAIL", STALE)],
                             checked=False)
         self.assertEqual(self.state("cap-i"), "unsatisfied")
 
     def test_skip_at_any_age_verdicts_unknown(self):
         cap = self.db.add_capability("cap-j")
         self.db.add_adapter(cap, "convex", "declared",
-                            evidence=[_obs("SKIP", "2026-09-16T00:00:00Z")],
+                            evidence=[_obs("SKIP", FRESH)],
                             checked=True)
         self.assertEqual(self.state("cap-j"), "unknown")
 
@@ -259,11 +280,10 @@ FROM nebula.v_capability_satisfaction WHERE capability='cap-d';
         # (freshest) column.
         cap = self.db.add_capability("cap-l")
         self.db.add_adapter(cap, "postgresql", "active",
-                            evidence=[_obs("PASS", "2026-09-01T00:00:00Z")],
+                            evidence=[_obs("PASS", STALE)],
                             checked=False)  # aged out
         self.db.add_adapter(cap, "mysql", "degraded",
-                            evidence=[_obs("UNREACHABLE",
-                                           "2026-09-16T00:00:00Z")],
+                            evidence=[_obs("UNREACHABLE", FRESH)],
                             checked=True)
         row = self.db.sql("""
 SELECT satisfaction_state, degraded_adapters
@@ -277,8 +297,7 @@ FROM nebula.v_capability_satisfaction WHERE capability='cap-l';
         # freshest observation decides: UNREACHABLE → 'unreachable'
         cap = self.db.add_capability("cap-l2")
         self.db.add_adapter(cap, "mysql", "degraded",
-                            evidence=[_obs("UNREACHABLE",
-                                           "2026-09-16T00:00:00Z")],
+                            evidence=[_obs("UNREACHABLE", FRESH)],
                             checked=True)
         self.assertEqual(self.state("cap-l2"), "unreachable")
 
@@ -286,10 +305,10 @@ FROM nebula.v_capability_satisfaction WHERE capability='cap-l';
         # oldest FAIL + fresher SKIP → freshest observation (SKIP) decides
         cap = self.db.add_capability("cap-m")
         self.db.add_adapter(cap, "postgresql", "declared",
-                            evidence=[_obs("FAIL", "2026-09-01T00:00:00Z")],
+                            evidence=[_obs("FAIL", STALE)],
                             checked=False)
         self.db.add_adapter(cap, "convex", "declared",
-                            evidence=[_obs("SKIP", "2026-09-16T00:00:00Z")],
+                            evidence=[_obs("SKIP", FRESH)],
                             checked=True)
         self.assertEqual(self.state("cap-m"), "unknown")
 
@@ -298,7 +317,7 @@ FROM nebula.v_capability_satisfaction WHERE capability='cap-l';
     def test_vocabulary_gate_clean_on_live_data(self):
         cap = self.db.add_capability("cap-n")
         self.db.add_adapter(cap, "postgresql", "active",
-                            evidence=[_obs("PASS", "2026-09-16T00:00:00Z")],
+                            evidence=[_obs("PASS", FRESH)],
                             checked=True)
         bad = self.db.sql("""
 SELECT count(*) FROM nebula.v_capability_satisfaction
