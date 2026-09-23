@@ -19,6 +19,9 @@
 | 4060 | `solscript` facade (resolution-domain evaluation API) | `solscript` | JVM `@nexus/solscript` (no direct legacy HTTP twin) | OFFLINE (systemd `moleculer-solscript.service`; built, not running) |
 | 4080 | `nexus-broker` worker tier (`worker.harness`, `worker.pty`, `worker.execution`, `keychain-snapshot`) | `broker` | `harness-srv :3420`, `execution-srv :3110`, `pty-srv :3121` (**retired M3** → `worker.pty-transport` WS `:3130`) | ONLINE — partial cutovers |
 | 4114 | `voyager` (canary twin of `typescript/voyager-srv`) | `voyager` | `typescript/voyager-srv :3114` (read-only filesystem/entity voyager; contract pinned to incumbent `openapi.yaml`) | CANARY — merged (PR #453), canary-diffed byte-identical, **not cut over / not deployed** |
+| 4106 | `cascade` (canary twin of `typescript/cascade-srv`) | `cascade` | `typescript/cascade-srv :3106` (pipeline telemetry + lineage; contract pinned to incumbent `openapi.yaml`; first ported write path — PATCH subscriber toggle gated for cutover) | CANARY — merged (PR #457), canary-diffed byte-identical, **not cut over / not deployed** |
+| 4100 | `kernel` (canary twin of `typescript/kernel-srv`) | `kernel` | `typescript/kernel-srv :8100` (resolution kernel: transitions, receipts, pg_notify SSE; contract pinned to incumbent `openapi.yaml`) | CANARY — merged (PR #463), canary-diffed byte-identical, **not cut over / not deployed** |
+| 4170 | `draft` (canary twin of `typescript/draft-srv`) | `draft` | `typescript/draft-srv :3140` (DB workbench API behind `data-explorer-ui`'s server-to-server proxy; fail-closed `X-Nexus-Internal` gate replicated; contract pinned to incumbent `openapi.yaml`) | CANARY — PR pending, canary-diffed byte-identical, **not cut over / not deployed** |
 
 ## Shared infrastructure (NOT moleculer-owned — do not claim)
 
@@ -35,7 +38,7 @@
 | Component | Address |
 |-----------|---------|
 | NATS broker | `nats://localhost:4222` (services default via `NATS_URL` env, `nats://localhost:4222`) |
-| Namespaces | one per service family: `search`, `solscript`, `broker`, `voyager` |
+| Namespaces | one per service family: `search`, `solscript`, `broker`, `voyager`, `cascade`, `kernel`, `draft` |
 
 ## Freeze discipline
 
@@ -45,6 +48,11 @@
 - Any port change ratified in `jvm/ARCHITECTURE.md` must be mirrored here and
   in the owning service's config + launch units in the same change; the
   terrain registry entry follows at the next registration heartbeat.
-- Canary/deployment ports (4114) are the exception to one-live-authority: a
-  canary twin may co-listen on its 41xx twin while its incumbent stays live,
-  and must be removed from the map when cutover completes (dead routes die).
+- Canary/deployment ports (4100/4106/4114/4170) are the exception to
+  one-live-authority: a canary twin may co-listen on its 41xx twin while its
+  incumbent stays live, and must be removed from the map when cutover completes
+  (dead routes die). Canary rows in this table require architect ratification
+  under Ruling 4 (port map is architect-owned). The 4114 voyager row was the
+  originally ratified exception (decision 8ae4761b / port-map ping 422bc879);
+  rows 4100/4106/4170 (PRs #457/#463 + the draft PR) follow the same pattern
+  and are submitted for ratification in the same amendment.
