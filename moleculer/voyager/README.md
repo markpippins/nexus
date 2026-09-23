@@ -6,7 +6,7 @@ signals + edge hints, entities, metadata spans, stats).
 
 **Parity contract:** `typescript/voyager-srv/openapi.yaml` (17 endpoints). The
 port carries **no spec of its own** — it is pinned to the incumbent's committed
-contract by `tools/api-docs/check_drift.py` (`MOLLECULER_MIRRORS`), so
+contract by `tools/api-docs/check_drift.py` (`MOLECULER_MIRRORS`), so
 `make apidocs-validate` fails CI if the gateway alias map gains, loses or
 renames a path, exactly as it would for a renamed Express route.
 

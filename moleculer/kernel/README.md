@@ -11,7 +11,7 @@ incumbent's committed `openapi.yaml` by the CI drift gate — the same
 | Source | `typescript/kernel-srv` | `moleculer/kernel` |
 | Port | `:8100` | `:4100` (canary twin) |
 | Contract | `typescript/kernel-srv/openapi.yaml` (14 endpoints) | shared — no spec of its own |
-| Gate | `make apidocs-validate` | same (`check_drift.MOLLECULER_MIRRORS`) |
+| Gate | `make apidocs-validate` | same (`check_drift.MOLECULER_MIRRORS`) |
 
 ## Layout
 

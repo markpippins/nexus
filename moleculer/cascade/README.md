@@ -5,7 +5,7 @@ causation lineage, analytics, subscriber registry, assessment resolutions.
 
 **Parity contract:** `typescript/cascade-srv/openapi.yaml` (12 endpoints). No
 spec of its own — pinned to the incumbent's committed contract by
-`tools/api-docs/check_drift.py` (`MOLLECULER_MIRRORS`), so
+`tools/api-docs/check_drift.py` (`MOLECULER_MIRRORS`), so
 `make apidocs-validate` fails CI if the alias map diverges. Second app on this
 gate; see `../voyager/` for the pattern and `../README.md` for the traps.
 

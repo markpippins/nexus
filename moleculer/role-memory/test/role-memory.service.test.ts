@@ -11,7 +11,7 @@
  *   - envelopes: {error} shape (NOT kernel's {status:"error"})
  *
  * NOT COVERED HERE — the route surface. That is enforced by the apidocs
- * drift gate (MOLLECULER_MIRRORS → typescript/role-memory-srv/openapi.yaml)
+ * drift gate (MOLECULER_MIRRORS → typescript/role-memory-srv/openapi.yaml)
  * and the live canary diff.
  *
  * The ./store module is mocked wholesale: these tests drive the extracted

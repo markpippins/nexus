@@ -20,7 +20,7 @@ lives beside its incumbent and is cut over only behind a contract gate.
 
 `tools/api-docs/check_drift.py` treats a moleculer app as a second
 implementation of an existing contract when it appears in
-`MOLLECULER_MIRRORS` (key → incumbent service): the app carries no
+`MOLECULER_MIRRORS` (key → incumbent service): the app carries no
 `openapi.yaml` of its own, its gateway alias map is compared against the
 incumbent's committed spec, and `--update` refuses to "fix" the port by
 rewriting that spec. `voyager/` is the first app wired this way.

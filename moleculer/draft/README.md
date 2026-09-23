@@ -14,7 +14,7 @@ under active development.
 | Source | `typescript/draft-srv` | `moleculer/draft` |
 | Port | `:3170` (loopback bind) | `:4170` (canary twin) |
 | Contract | `typescript/draft-srv/openapi.yaml` (6 endpoints) | shared — no spec of its own |
-| Gate | `make apidocs-validate` | same (`check_drift.MOLLECULER_MIRRORS`) |
+| Gate | `make apidocs-validate` | same (`check_drift.MOLECULER_MIRRORS`) |
 | Auth | `X-Nexus-Internal` fleet secret, fail-closed | **replicated exactly** |
 
 ## Layout

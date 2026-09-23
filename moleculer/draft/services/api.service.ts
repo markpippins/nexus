@@ -6,7 +6,7 @@ import ApiGateway from "moleculer-web";
  *
  * The alias map is the ENTIRE parity surface: checked against
  * typescript/draft-srv/openapi.yaml by `make apidocs-validate`
- * (check_drift.MOLLECULER_MIRRORS) — a renamed alias fails CI exactly like a
+ * (check_drift.MOLECULER_MIRRORS) — a renamed alias fails CI exactly like a
  * renamed Express route.
  *
  * Route shape mirrors the incumbent (index.ts):

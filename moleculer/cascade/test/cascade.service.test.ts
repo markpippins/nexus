@@ -12,7 +12,7 @@
  *
  * NOT COVERED HERE — the route surface. That is enforced by the apidocs drift
  * gate (`make apidocs-validate`), which reads this app's gateway alias map
- * against typescript/cascade-srv/openapi.yaml (check_drift.MOLLECULER_MIRRORS).
+ * against typescript/cascade-srv/openapi.yaml (check_drift.MOLECULER_MIRRORS).
  * Duplicating it in jest would only create a second place to drift.
  *
  * No database, no broker, no HTTP bind. The SQL itself is pinned by the

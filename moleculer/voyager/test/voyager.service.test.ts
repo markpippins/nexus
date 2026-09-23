@@ -9,7 +9,7 @@
  *
  * NOT COVERED HERE — the route surface. That is enforced by the apidocs drift
  * gate (`make apidocs-validate`), which reads this app's gateway alias map
- * against typescript/voyager-srv/openapi.yaml (check_drift.MOLLECULER_MIRRORS)
+ * against typescript/voyager-srv/openapi.yaml (check_drift.MOLECULER_MIRRORS)
  * and fails CI on any added/removed/renamed path. Duplicating that assertion
  * in jest would only create a second place to drift.
  *

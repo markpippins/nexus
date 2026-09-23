@@ -7,7 +7,7 @@ import ApiGateway from "moleculer-web";
  * The alias map below is the ENTIRE parity surface: it is extracted by
  * tools/api-docs/extract_routes.py and checked against
  * typescript/voyager-srv/openapi.yaml by `make apidocs-validate`
- * (MOLLECULER_MIRRORS) — so a path renamed here fails CI exactly like a
+ * (MOLECULER_MIRRORS) — so a path renamed here fails CI exactly like a
  * renamed Express route does. Alias order is significant: literal
  * `/by-id/:param` paths must precede `/:id`.
  *
