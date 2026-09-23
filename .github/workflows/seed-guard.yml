@@ -62,7 +62,7 @@ jobs:
           cache: 'pip'
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
       - name: Install test deps
         run: python3 -m pip install --quiet pytest psycopg2-binary
       - name: Bootstrap tackle schema from committed manifest
