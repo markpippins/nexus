@@ -1,6 +1,7 @@
 """Hermetic tests for merge_pr.py — pure functions only, no I/O."""
 
 import importlib.util
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -253,6 +254,22 @@ def test_evaluate_attestation_lookup_failure_fails_closed():
     gate3 = gates[2]
     assert not gate3.passed
     assert "fail closed" in gate3.detail
+
+
+def test_evaluate_gh_failure_yields_single_fail_closed_gate():
+    """gh unavailable (e.g. outside a repo): clean refusal, no traceback."""
+    def boom(*args):
+        raise subprocess.CalledProcessError(
+            1, ["gh", "pr", "view"], stderr="not a git repository (or any parent)"
+        )
+
+    gates, pr = merge_pr.evaluate(491, run_json=boom, http_get=lambda url: {}, env={})
+    assert len(gates) == 1
+    assert gates[0].name == "github pr lookup"
+    assert not gates[0].passed
+    assert "gh lookup failed" in gates[0].detail
+    assert "fail closed" in gates[0].detail
+    assert pr == {}
 
 
 def test_format_report_marks_and_verdict():

@@ -209,6 +209,14 @@ def parse_iso_to_ms(iso: str) -> int:
 
 # ── Full evaluation ──────────────────────────────────────────────────────
 
+def _exc_brief(exc: Exception) -> str:
+    """One-line, stderr-first summary of an exception for gate details."""
+    stderr = getattr(exc, "stderr", None)
+    if stderr:
+        return f"{getattr(exc, 'cmd', 'command')}: {str(stderr).strip()[:140]}"
+    return repr(exc)[:160]
+
+
 def evaluate(
     pr_number: int,
     run_json: Callable[..., Any] = _gh_json,
@@ -218,7 +226,17 @@ def evaluate(
     env = os.environ if env is None else env
     gates: List[GateResult] = []
 
-    pr = fetch_pr_state(pr_number, run_json)
+    try:
+        pr = fetch_pr_state(pr_number, run_json)
+    except Exception as exc:
+        # e.g. gh invoked outside a git repository, or auth failure —
+        # a governance gate must fail closed with a clean report, never
+        # a traceback.
+        return (
+            [GateResult("github pr lookup", False,
+                        f"gh lookup failed: {_exc_brief(exc)} (fail closed)")],
+            {},
+        )
     ready = (
         pr.get("state") == "OPEN"
         and not pr.get("isDraft")
