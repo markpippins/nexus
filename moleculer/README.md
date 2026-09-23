@@ -13,6 +13,7 @@ lives beside its incumbent and is cut over only behind a contract gate.
 | `cascade/` | 4106 | `typescript/cascade-srv` (:3106) | **`typescript/cascade-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed 24/24, not cut over |
 | `kernel/` | 4100 | `typescript/kernel-srv` (:8100) | **`typescript/kernel-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed 25/25, not cut over |
 | `draft/` | 4170 | `typescript/draft-srv` (:3170) | **`typescript/draft-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed 15/15, not cut over (drivers copied verbatim; X-Nexus-Internal gate replicated) |
+| `knowledge/` | 4109 | `typescript/knowledge-srv` (:3109) | **`typescript/knowledge-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed 28/28, not cut over (no auth gate on incumbent — CORS only; registry heartbeat deliberately not ported) |
 
 ## Contract coverage
 

@@ -52,6 +52,7 @@ MOLLECULER_MIRRORS = {
     "moleculer/cascade": "typescript/cascade-srv",
     "moleculer/kernel": "typescript/kernel-srv",
     "moleculer/draft": "typescript/draft-srv",
+    "moleculer/knowledge": "typescript/knowledge-srv",
 }
 
 
