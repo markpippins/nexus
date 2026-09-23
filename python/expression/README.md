@@ -9,7 +9,7 @@ This package is the first executable Expression slice. It provides:
 - source hashes, extraction revision, input fingerprint, and `unreviewed` disposition on every observation;
 - conservative candidate links from an explicit alias catalog;
 - non-authoritative proposition candidates describing source language;
-- source-owned metadata stream projection through `expression.cli` (with the review-bundle builder still available programmatically via `expression.pipeline.build_expression_bundle`);
+- dual CLI surfaces through `expression.cli`: source-owned metadata stream projection (default) and the original review-bundle generator (`--bundle`);
 - a pure evaluator adapter with explicit read-set/evaluator/ontology identity;
 - deterministic replay comparison and fail-closed refusal/unevaluable results;
 - an explicit compatibility and storage boundary: Expression converges with existing harvest/semantics/KG material, keeps observations regenerable staging data, and leaves canonical identity, lineage, disposition, and evaluation joins in Resolution;
@@ -95,8 +95,10 @@ From the worktree root:
 
 ```bash
 PYTHONPATH=python python3 -m unittest discover -s python/expression -p 'test_*.py' -v
-# Metadata stream projection (validate + pretty-print):
+# Metadata stream projection (default surface; validate + pretty-print):
 PYTHONPATH=python python3 -m expression.cli python/expression/fixtures/sample.json --validate --pretty
+# Review bundle (legacy surface, same invocation shape as before the CLI swap):
+PYTHONPATH=python python3 -m expression.cli python/expression/fixtures/sample.json --bundle
 ```
 
 Validate the TypeSpec contract without emitter packages:
