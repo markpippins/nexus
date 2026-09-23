@@ -464,3 +464,211 @@ def test_g4_tag_filter_accepts_list_form():
     )
     # obs-1 has the namespaced tag; obs-3 has no tags -> dropped fail-closed
     assert [o["observation_id"] for o in filtered["observations"]] == ["obs-1"]
+
+
+# --- G5 regression tests (review record bc724f6b, finding 7) ---
+
+import pytest
+
+from expression.concept_package import SnapshotPin, capture_snapshot_context, verify_snapshots
+
+
+def _g5_tag_bundle(**overrides) -> dict:
+    bundle = {
+        "contract_revision": "expression-v0.1",
+        "adapter_revision": "tag-adapter-v2",
+        "observations": [
+            {
+                "observation_id": "obs-1",
+                "tag_namespace": "expr",
+                "key": "deployment",
+                "normalized_value": "production",
+                "authority_status": "projected",
+            },
+        ],
+        "conflicts": [],
+        "authority_status": "non_authoritative",
+        "governed_tag_vocabulary_revision": "vocab-2026-09-22",
+    }
+    bundle.update(overrides)
+    return bundle
+
+
+def test_g5_capture_snapshot_context():
+    pin = capture_snapshot_context(_g5_tag_bundle())
+    assert pin.vocabulary_revision == "vocab-2026-09-22"
+    assert pin.projection_revision == "tag-adapter-v2"
+    assert pin.vocabulary_fingerprint
+    assert pin.projection_fingerprint
+    assert pin.captured_at is not None
+
+
+def test_g5_capture_fails_without_vocabulary_revision():
+    bundle = _g5_tag_bundle()
+    del bundle["governed_tag_vocabulary_revision"]
+    with pytest.raises(ValueError, match="cannot pin vocabulary"):
+        capture_snapshot_context(bundle)
+
+
+def test_g5_capture_fails_without_adapter_revision():
+    bundle = _g5_tag_bundle()
+    del bundle["adapter_revision"]
+    with pytest.raises(ValueError, match="cannot pin projection"):
+        capture_snapshot_context(bundle)
+
+
+def test_g5_pinned_package_validates_clean():
+    pkg = create_concept_package(
+        package_name="g5-pkg",
+        package_version="1.0.0",
+        filter_spec=ConceptPackageFilter(concept_scope=["deployment"], member_kinds=["reference"]),
+        expression_bundle=_g4_bundle(),
+        tag_bundle=_g5_tag_bundle(),
+    )
+    pin = pkg.snapshot_pin
+    assert pin is not None
+    assert pkg.filter_spec.vocabulary_snapshot == (
+        f"vocab-2026-09-22:{pin.vocabulary_fingerprint[:16]}"
+    )
+    assert pkg.filter_spec.projection_snapshot == (
+        f"tag-adapter-v2:{pin.projection_fingerprint[:16]}"
+    )
+    assert validate_concept_package(pkg) == []
+
+
+def test_g5_pins_enter_fingerprint():
+    unpinned = create_concept_package(
+        package_name="g5-pkg",
+        package_version="1.0.0",
+        filter_spec=ConceptPackageFilter(concept_scope=["deployment"]),
+        expression_bundle=_g4_bundle(),
+    )
+    pinned = create_concept_package(
+        package_name="g5-pkg",
+        package_version="1.0.0",
+        filter_spec=ConceptPackageFilter(concept_scope=["deployment"]),
+        expression_bundle=_g4_bundle(),
+        tag_bundle=_g5_tag_bundle(),
+    )
+    assert unpinned.snapshot_pin is None
+    assert pinned.snapshot_pin is not None
+    assert unpinned.fingerprint != pinned.fingerprint
+
+    pinned_other_vocab = create_concept_package(
+        package_name="g5-pkg",
+        package_version="1.0.0",
+        filter_spec=ConceptPackageFilter(concept_scope=["deployment"]),
+        expression_bundle=_g4_bundle(),
+        tag_bundle=_g5_tag_bundle(governed_tag_vocabulary_revision="vocab-older"),
+    )
+    assert pinned.fingerprint != pinned_other_vocab.fingerprint
+
+
+def test_g5_pinning_without_tag_bundle_fails_closed():
+    with pytest.raises(ValueError, match="require the tag bundle"):
+        create_concept_package(
+            package_name="g5-pkg",
+            package_version="1.0.0",
+            filter_spec=ConceptPackageFilter(vocabulary_snapshot="vocab-2026-09-22:abcdef"),
+            expression_bundle=_g4_bundle(),
+        )
+
+
+def test_g5_pin_strings_without_context_fail_validation():
+    pkg = create_concept_package(
+        package_name="g5-pkg",
+        package_version="1.0.0",
+        filter_spec=ConceptPackageFilter(concept_scope=["deployment"]),
+        expression_bundle=_g4_bundle(),
+    )
+    pkg.filter_spec.vocabulary_snapshot = "vocab-2026-09-22:0123456789abcdef"
+    # fingerprint must be recomputed to isolate the pin-context failure
+    pkg.fingerprint = _package_fingerprint(pkg)
+    errors = validate_concept_package(pkg)
+    assert any("without captured snapshot context" in e for e in errors)
+
+
+def test_g5_verify_snapshots_detects_vocabulary_drift():
+    pkg = create_concept_package(
+        package_name="g5-pkg",
+        package_version="1.0.0",
+        filter_spec=ConceptPackageFilter(),
+        expression_bundle=_g4_bundle(),
+        tag_bundle=_g5_tag_bundle(),
+        vocabulary_content={"tags": ["deployment", "environment"]},
+    )
+    assert verify_snapshots(pkg) == []
+    drifted = verify_snapshots(
+        pkg,
+        tag_bundle=_g5_tag_bundle(),
+        vocabulary_content={"tags": ["deployment"]},
+    )
+    assert any("vocabulary fingerprint" in e for e in drifted)
+
+
+def test_g5_verify_snapshots_detects_projection_drift():
+    pkg = create_concept_package(
+        package_name="g5-pkg",
+        package_version="1.0.0",
+        filter_spec=ConceptPackageFilter(),
+        expression_bundle=_g4_bundle(),
+        tag_bundle=_g5_tag_bundle(),
+    )
+    drifted_bundle = _g5_tag_bundle(
+        observations=[
+            {
+                "observation_id": "obs-1",
+                "tag_namespace": "expr",
+                "key": "deployment",
+                "normalized_value": "staging",
+                "authority_status": "projected",
+            },
+        ],
+    )
+    drifted = verify_snapshots(pkg, tag_bundle=drifted_bundle)
+    assert any("projection fingerprint" in e for e in drifted)
+
+
+def test_g5_verify_snapshots_without_bundle_clean_for_pinned():
+    pkg = create_concept_package(
+        package_name="g5-pkg",
+        package_version="1.0.0",
+        filter_spec=ConceptPackageFilter(),
+        expression_bundle=_g4_bundle(),
+        tag_bundle=_g5_tag_bundle(),
+    )
+    assert verify_snapshots(pkg) == []
+
+
+def test_g5_export_import_round_trips_pins():
+    pkg = create_concept_package(
+        package_name="g5-pkg",
+        package_version="1.0.0",
+        filter_spec=ConceptPackageFilter(),
+        expression_bundle=_g4_bundle(),
+        tag_bundle=_g5_tag_bundle(),
+    )
+    imported = import_concept_package(export_concept_package(pkg))
+    assert imported.snapshot_pin is not None
+    assert imported.snapshot_pin.vocabulary_revision == pkg.snapshot_pin.vocabulary_revision
+    assert imported.snapshot_pin.vocabulary_fingerprint == pkg.snapshot_pin.vocabulary_fingerprint
+    assert imported.snapshot_pin.projection_fingerprint == pkg.snapshot_pin.projection_fingerprint
+    assert imported.fingerprint == pkg.fingerprint
+    assert validate_concept_package(imported) == []
+
+
+def test_g5_legacy_unpinned_package_still_validates():
+    pkg = ConceptPackage(
+        package_id="legacy",
+        package_name="legacy",
+        package_version="1.0.0",
+        package_revision="2024-01-01T00:00:00Z",
+        filter_spec=ConceptPackageFilter(),
+        expression_bundle={"observations": [], "candidate_links": [], "proposition_candidates": []},
+        metadata_stream_id=None,
+        created_at=datetime.utcnow(),
+        boundary={},
+        fingerprint="",
+    )
+    pkg.fingerprint = _package_fingerprint(pkg)
+    assert validate_concept_package(pkg) == []

@@ -64,6 +64,22 @@ class ConceptPackage:
     boundary: Dict[str, Any]
     provenance: Dict[str, Any] = field(default_factory=dict)
     fingerprint: str = ""
+    snapshot_pin: Optional["SnapshotPin"] = None
+
+
+@dataclass
+class SnapshotPin:
+    """Immutable vocabulary/projection snapshot capture (Aspect G5).
+
+    Captured from the projected tag bundle a package was built against.
+    The filter_spec snapshot strings are derived from this pin, and both
+    travel in the package fingerprint so drift is tamper-evident.
+    """
+    vocabulary_revision: Optional[str] = None
+    vocabulary_fingerprint: Optional[str] = None
+    projection_revision: Optional[str] = None
+    projection_fingerprint: Optional[str] = None
+    captured_at: Optional[datetime] = None
 
 
 def _digest(value: str) -> str:
@@ -87,6 +103,64 @@ def _normalized(value: Any) -> Any:
     return value
 
 
+_SNAPSHOT_PIN_SEPARATOR = ":"
+
+
+def _pin_string(revision: Optional[str], fingerprint: Optional[str]) -> Optional[str]:
+    """Render a snapshot pin as '<revision>:<fingerprint16>' (G5)."""
+    if revision is None or fingerprint is None:
+        return None
+    return f"{revision}{_SNAPSHOT_PIN_SEPARATOR}{fingerprint[:16]}"
+
+
+def capture_snapshot_context(
+    tag_bundle: dict[str, Any],
+    vocabulary_content: Optional[Any] = None,
+) -> SnapshotPin:
+    """Capture the immutable vocabulary/projection identity for a package (G5).
+
+    The projection identity derives from the projected tag bundle the package
+    was built against (contract/adapter revisions, observations, conflicts);
+    the vocabulary identity derives from the governed vocabulary revision the
+    bundle references. Pass ``vocabulary_content`` to fingerprint the actual
+    vocabulary payload so content-level drift is caught even when the
+    revision string is unchanged.
+    """
+    if not isinstance(tag_bundle, dict):
+        raise ValueError("tag_bundle must be a projected tag bundle dict")
+
+    projection_revision = tag_bundle.get("adapter_revision")
+    if not projection_revision:
+        raise ValueError("tag_bundle is missing adapter_revision; cannot pin projection")
+
+    projection_payload = {
+        "contract_revision": tag_bundle.get("contract_revision"),
+        "adapter_revision": projection_revision,
+        "observations": tag_bundle.get("observations", []),
+        "conflicts": tag_bundle.get("conflicts", []),
+        "authority_status": tag_bundle.get("authority_status"),
+    }
+    projection_fingerprint = _digest(json.dumps(projection_payload, sort_keys=True))[:32]
+
+    vocabulary_revision = tag_bundle.get("governed_tag_vocabulary_revision")
+    if vocabulary_content is not None:
+        vocabulary_fingerprint = _digest(json.dumps(vocabulary_content, sort_keys=True))[:32]
+    elif vocabulary_revision:
+        vocabulary_fingerprint = _digest(str(vocabulary_revision))[:32]
+    else:
+        raise ValueError(
+            "tag_bundle carries no governed_tag_vocabulary_revision; cannot pin vocabulary"
+        )
+
+    return SnapshotPin(
+        vocabulary_revision=str(vocabulary_revision),
+        vocabulary_fingerprint=vocabulary_fingerprint,
+        projection_revision=str(projection_revision),
+        projection_fingerprint=projection_fingerprint,
+        captured_at=datetime.utcnow(),
+    )
+
+
 def _package_fingerprint(pkg: "ConceptPackage") -> str:
     """Canonical package fingerprint over package content.
 
@@ -106,10 +180,18 @@ def _package_fingerprint(pkg: "ConceptPackage") -> str:
             "tag_filters": _normalized(pkg.filter_spec.tag_filters),
             "metadata_filters": _normalized(pkg.filter_spec.metadata_filters),
             "inclusion_ledger": _normalized(pkg.filter_spec.inclusion_ledger),
+            "vocabulary_snapshot": _normalized(pkg.filter_spec.vocabulary_snapshot),
+            "projection_snapshot": _normalized(pkg.filter_spec.projection_snapshot),
             "vocabulary_snapshot": pkg.filter_spec.vocabulary_snapshot,
             "projection_snapshot": pkg.filter_spec.projection_snapshot,
             "relationship_limitations": pkg.filter_spec.relationship_limitations,
         },
+        "snapshot_pin": {
+            "vocabulary_revision": pkg.snapshot_pin.vocabulary_revision,
+            "vocabulary_fingerprint": pkg.snapshot_pin.vocabulary_fingerprint,
+            "projection_revision": pkg.snapshot_pin.projection_revision,
+            "projection_fingerprint": pkg.snapshot_pin.projection_fingerprint,
+        } if pkg.snapshot_pin is not None else None,
         "expression_bundle_fingerprint": _digest(json.dumps(pkg.expression_bundle, sort_keys=True)),
         "metadata_stream_id": pkg.metadata_stream_id,
     }, sort_keys=True)
@@ -123,6 +205,8 @@ def create_concept_package(
     transcript: Optional[dict[str, Any]] = None,
     expression_bundle: Optional[dict[str, Any]] = None,
     metadata_stream: Optional[Any] = None,
+    tag_bundle: Optional[dict[str, Any]] = None,
+    vocabulary_content: Optional[Any] = None,
 ) -> "ConceptPackage":
     """Create a reproducible concept package on Expression IR.
     
@@ -170,6 +254,24 @@ def create_concept_package(
     
     package_revision = datetime.utcnow().isoformat() + "Z"
     
+    # G5: snapshot pinning. Pins are captured from the tag bundle the
+    # package was built against; declaring pins without the bundle would
+    # leave them unenforceable strings, so that fails closed.
+    snapshot_pin: Optional[SnapshotPin] = None
+    if tag_bundle is not None:
+        snapshot_pin = capture_snapshot_context(tag_bundle, vocabulary_content=vocabulary_content)
+        filter_spec.vocabulary_snapshot = _pin_string(
+            snapshot_pin.vocabulary_revision, snapshot_pin.vocabulary_fingerprint
+        )
+        filter_spec.projection_snapshot = _pin_string(
+            snapshot_pin.projection_revision, snapshot_pin.projection_fingerprint
+        )
+    elif filter_spec.vocabulary_snapshot or filter_spec.projection_snapshot:
+        raise ValueError(
+            "snapshot pins require the tag bundle they were captured from; "
+            "pass tag_bundle=... so the pins can be enforced"
+        )
+
     # G4: assign the canonical content fingerprint via the same
     # _package_fingerprint used by validate_concept_package, so a created
     # package validates by construction.
@@ -188,6 +290,7 @@ def create_concept_package(
             "created_at": datetime.utcnow().isoformat() + "Z",
         },
         fingerprint="",
+        snapshot_pin=snapshot_pin,
     )
     pkg.fingerprint = _package_fingerprint(pkg)
     return pkg
@@ -351,6 +454,14 @@ def export_concept_package(pkg: "ConceptPackage") -> dict[str, Any]:
         "boundary": pkg.boundary,
         "provenance": pkg.provenance,
         "fingerprint": pkg.fingerprint,
+        "snapshot_pin": {
+            "vocabulary_revision": pkg.snapshot_pin.vocabulary_revision,
+            "vocabulary_fingerprint": pkg.snapshot_pin.vocabulary_fingerprint,
+            "projection_revision": pkg.snapshot_pin.projection_revision,
+            "projection_fingerprint": pkg.snapshot_pin.projection_fingerprint,
+            "captured_at": pkg.snapshot_pin.captured_at.isoformat() + "Z"
+                if isinstance(pkg.snapshot_pin.captured_at, datetime) else pkg.snapshot_pin.captured_at,
+        } if pkg.snapshot_pin is not None else None,
     }
 
 
@@ -369,6 +480,18 @@ def import_concept_package(data: dict[str, Any]) -> "ConceptPackage":
         relationship_limitations=data["filter_spec"].get("relationship_limitations"),
     )
     
+    pin_data = data.get("snapshot_pin")
+    snapshot_pin = SnapshotPin(
+        vocabulary_revision=pin_data.get("vocabulary_revision"),
+        vocabulary_fingerprint=pin_data.get("vocabulary_fingerprint"),
+        projection_revision=pin_data.get("projection_revision"),
+        projection_fingerprint=pin_data.get("projection_fingerprint"),
+        captured_at=(
+            datetime.fromisoformat(pin_data["captured_at"].replace("Z", "+00:00"))
+            if pin_data.get("captured_at") else None
+        ),
+    ) if pin_data else None
+
     pkg = ConceptPackage(
         package_id=data["package_id"],
         package_name=data["package_name"],
@@ -381,8 +504,71 @@ def import_concept_package(data: dict[str, Any]) -> "ConceptPackage":
         boundary=data["boundary"],
         provenance=data.get("provenance", {}),
         fingerprint=data.get("fingerprint", ""),
+        snapshot_pin=snapshot_pin,
     )
     return pkg
+
+
+def _verify_snapshot_pins(pkg: "ConceptPackage") -> list[str]:
+    """Verify the package's pins against its captured snapshot context (G5)."""
+    errors: list[str] = []
+    pin = pkg.snapshot_pin
+    if pin is None:
+        if pkg.filter_spec.vocabulary_snapshot or pkg.filter_spec.projection_snapshot:
+            errors.append(
+                "snapshot pins present without captured snapshot context; "
+                "recreate the package with tag_bundle=..."
+            )
+        return errors
+
+    expected_vocab = _pin_string(pin.vocabulary_revision, pin.vocabulary_fingerprint)
+    expected_proj = _pin_string(pin.projection_revision, pin.projection_fingerprint)
+    if expected_vocab is not None and pkg.filter_spec.vocabulary_snapshot != expected_vocab:
+        errors.append(
+            "vocabulary snapshot pin does not match captured snapshot context"
+        )
+    if expected_proj is not None and pkg.filter_spec.projection_snapshot != expected_proj:
+        errors.append(
+            "projection snapshot pin does not match captured snapshot context"
+        )
+    return errors
+
+
+def verify_snapshots(
+    pkg: "ConceptPackage",
+    tag_bundle: Optional[dict[str, Any]] = None,
+    vocabulary_content: Optional[Any] = None,
+) -> list[str]:
+    """Re-verify a package's snapshot pins (Aspect G5).
+
+    Without a tag bundle: verifies pin-shape integrity (pins must match the
+    captured snapshot context). With a tag bundle: re-captures the context
+    and reports drift when the live projection/vocabulary identity no longer
+    matches the pinned one.
+    """
+    errors = _verify_snapshot_pins(pkg)
+    if errors:
+        return errors
+
+    if tag_bundle is None:
+        return errors
+
+    pin = pkg.snapshot_pin
+    if pin is None:
+        return ["package has no snapshot pin to verify against the tag bundle"]
+
+    live = capture_snapshot_context(tag_bundle, vocabulary_content=vocabulary_content)
+    if live.vocabulary_fingerprint != pin.vocabulary_fingerprint:
+        errors.append(
+            "snapshot drift: live vocabulary fingerprint "
+            f"{live.vocabulary_fingerprint} != pinned {pin.vocabulary_fingerprint}"
+        )
+    if live.projection_fingerprint != pin.projection_fingerprint:
+        errors.append(
+            "snapshot drift: live projection fingerprint "
+            f"{live.projection_fingerprint} != pinned {pin.projection_fingerprint}"
+        )
+    return errors
 
 
 def validate_concept_package(pkg: "ConceptPackage") -> List[str]:
@@ -402,6 +588,9 @@ def validate_concept_package(pkg: "ConceptPackage") -> List[str]:
     expected_fp = _package_fingerprint(pkg)
     if pkg.fingerprint != expected_fp:
         errors.append("Package fingerprint mismatch")
+
+    # G5: verify snapshot pins against the captured snapshot context
+    errors.extend(_verify_snapshot_pins(pkg))
     
     # Validate expression bundle structure
     bundle = pkg.expression_bundle
