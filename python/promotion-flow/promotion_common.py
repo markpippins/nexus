@@ -17,7 +17,7 @@ FORUM = os.environ.get("ASSEMBLY_SRV", "http://localhost:3107")
 STATE_DIR = os.environ.get(
     "PROMOTION_STATE_DIR", "/home/codex/dev/nexus/state/promotion-flow"
 )
-ENGINEER_USER_CANDIDATES = ("engineer", "engineer-ii")
+ENGINEER_USER_CANDIDATES = ("engineer", "engineer-ii", "engineer-iii")
 OLLAMA = os.environ.get("OLLAMA_HOST", "http://192.168.1.202:11434")
 
 

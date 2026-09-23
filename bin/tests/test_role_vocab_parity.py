@@ -3,23 +3,25 @@
 
 No database, no network — three in-repo files are compared:
 
-  PIN   sql/V190__scratch_role_vocabulary_widening.sql, under the
-        ROLE-VOCAB PIN marker (the marker-designated in-repo authority)
+  PIN   the sql/*.sql migration carrying the ROLE-VOCAB PIN marker
+        (the marker-designated in-repo authority; currently
+        V197__role_vocabulary_widening_engineer_iii.sql — the marker
+        MOVED there from V190 per the widening recipe)
   BOOT  sql/ci-bootstrap/nexus-ci-bootstrap.sql's agent_records_role_check
-  V190  the pin inside V190's own swap DDL (pin == swap-target consistency)
+  SWAP  the pin migration's own swap DDL (pin == swap-target consistency)
 
-Pins the contract from R1 e9711b15:
+Pins the contract from R1 e9711b15 (amended 2026-09-23, V197):
 
   P1  bootstrap CHECK literals == pin literals  (born-clean: every fresh
       deploy carries the authoritative vocabulary at birth)
-  P2  V190's swap-DDL literals == pin literals  (the migration cannot
-      claim one vocabulary and install another)
+  P2  the pin migration's swap-DDL literals == pin literals  (the
+      migration cannot claim one vocabulary and install another)
   P3  exactly ONE ROLE-VOCAB PIN marker exists repo-wide (authority is
       unique; a future widening migration must move the marker, not add
       a second one)
   P4  the pin carries the ratified-12 trio (ontologist / lead-engineer /
-      sound-technician) — the actual G1 defect this unit closes; catches
-      an accidental pin regression to the stale list
+      sound-technician) and engineer-iii (the V197 widening) — catches
+      an accidental pin regression to a stale list
   P5  the bootstrap CHECK literally names agent_records_role_check on
       nebula.agent_records_history (guards against renames silently
       orphaning this suite)
@@ -32,7 +34,7 @@ import unittest
 
 _REPO_ROOT = os.path.abspath(os.path.join(
     os.path.dirname(__file__), "..", ".."))
-V190_PATH = os.path.join(_REPO_ROOT, "sql", "V190__scratch_role_vocabulary_widening.sql")
+SQL_DIR = os.path.join(_REPO_ROOT, "sql")
 BOOT_PATH = os.path.join(_REPO_ROOT, "sql", "ci-bootstrap", "nexus-ci-bootstrap.sql")
 
 LITERAL_RE = re.compile(r"'([^']*)'")
@@ -41,6 +43,16 @@ LITERAL_RE = re.compile(r"'([^']*)'")
 def _read(path):
     with open(path, encoding="utf-8") as fh:
         return fh.read()
+
+
+def _find_pin_file():
+    """The sql/*.sql file carrying the ROLE-VOCAB PIN marker (exactly one)."""
+    hits = []
+    for base, _dirs, files in os.walk(SQL_DIR):
+        for name in files:
+            if name.endswith(".sql") and "ROLE-VOCAB PIN" in _read(os.path.join(base, name)):
+                hits.append(os.path.join(base, name))
+    return hits
 
 
 def _literals(text):
@@ -61,12 +73,21 @@ def _vocab(text):
 class Parity(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.v190 = _read(V190_PATH)
         cls.boot = _read(BOOT_PATH)
+
+        # ── locate the pin file dynamically (the marker MOVES between
+        #    widening migrations; exactly-one is asserted in P3) ──
+        pin_files = _find_pin_file()
+        if len(pin_files) != 1:
+            raise AssertionError(
+                "ROLE-VOCAB PIN marker must exist in exactly one sql/ file; "
+                "found: %r" % pin_files)
+        cls.pin_path = pin_files[0]
+        cls.v190 = _read(cls.pin_path)  # legacy attr name: the pin file
 
         # ── locate the pin block: marker → END of the first ARRAY[...] ──
         mk = cls.v190.find("ROLE-VOCAB PIN")
-        cls.assertGreater(cls, mk, 0, "ROLE-VOCAB PIN marker missing from V190")
+        cls.assertGreater(cls, mk, 0, "ROLE-VOCAB PIN marker missing from the pin file")
         arr = cls.v190.find("ARRAY[", mk)
         cls.assertGreater(cls, arr, 0, "pin ARRAY not found after marker")
         close = cls.v190.find("]", arr)
@@ -93,39 +114,30 @@ class Parity(unittest.TestCase):
             "fresh deploys would be born-regressed",
         )
 
-    # ── P2 ──
-    def test_swap_ddl_matches_pin(self):
-        self.assertEqual(
-            _vocab(self.swap_text), _vocab(self.pin_text),
-            "V190's ADD CONSTRAINT differs from its own pin — the migration "
-            "would refuse itself at apply time",
-        )
-
-    # ── P3 ──
-    def test_exactly_one_pin_marker_repo_wide(self):
-        hits = []
-        for base, _dirs, files in os.walk(os.path.join(_REPO_ROOT, "sql")):
-            for name in files:
-                if not name.endswith(".sql"):
-                    continue
-                path = os.path.join(base, name)
-                try:
-                    with open(path, encoding="utf-8") as fh:
-                        if "ROLE-VOCAB PIN" in fh.read():
-                            hits.append(os.path.relpath(path, _REPO_ROOT))
-                except OSError:
-                    continue
-        self.assertEqual(
-            hits, [os.path.relpath(V190_PATH, _REPO_ROOT)],
-            "ROLE-VOCAB PIN marker must exist in exactly one sql/ file",
-        )
-
     # ── P4 ──
-    def test_pin_carries_the_g1_trio(self):
+    def test_pin_carries_the_g1_trio_and_current_widenings(self):
         pin = set(_literals(self.pin_text))
         for role in ("ontologist", "lead-engineer", "sound-technician"):
             self.assertIn(role, pin,
                           "pin lost a ratified-12 role — G1 regression")
+        # V197 widening (2026-09-23): engineer-iii must be present.
+        self.assertIn("engineer-iii", pin,
+                      "pin lost engineer-iii — V197 widening regression")
+
+    # ── P2 detail: the swap DDL must include the newest widening ──
+    def test_swap_ddl_matches_pin(self):
+        self.assertEqual(
+            _vocab(self.swap_text), _vocab(self.pin_text),
+            "the pin migration's ADD CONSTRAINT differs from its own pin — "
+            "the migration would refuse itself at apply time",
+        )
+    def test_exactly_one_pin_marker_repo_wide(self):
+        self.assertEqual(
+            [os.path.relpath(self.pin_path, _REPO_ROOT)],
+            ["sql/V197__role_vocabulary_widening_engineer_iii.sql"],
+            "ROLE-VOCAB PIN marker home changed — update this assertion when "
+            "the marker moves again",
+        )
 
     # ── P5 ──
     def test_bootstrap_check_is_on_the_canonical_table(self):

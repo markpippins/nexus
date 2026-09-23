@@ -35,22 +35,14 @@
 -- =============================================================================
 
 -- =============================================================================
--- ROLE-VOCAB PIN — the marker-designated in-repo authority (2026-09-20).
+-- ROLE VOCAB PIN MARKER MOVED 2026-09-23 (V197) — see V197 (this tombstone intentionally avoids the exact marker string)
 --
--- The pinned role list below is THE authoritative role vocabulary in the
--- repository. Consumers:
---   * V190's own preflight (live nebula CHECK must equal this pin at apply
---     time — the drift gate below)
---   * wr-conf-042 CI: sql/ci-bootstrap/nexus-ci-bootstrap.sql's
---     agent_records_role_check must carry EXACTLY these literals (born-clean
---     assertion, enforced on every PR)
---   * bin/role-vocab-drift.py (on-box): live nebula == pin == bootstrap
---
--- WIDENING THE VOCABULARY: copy this marker comment into the new migration
--- with the new pin, update the bootstrap to the same list, and REMOVE the
--- marker from this file — exactly ONE authoritative pin may exist at any
--- time (wr-conf-042 fails the build otherwise). Nebula's live constraint and
--- this pin must move together.
+-- The marker-designated in-repo authority now lives in
+-- sql/V197__role_vocabulary_widening_engineer_iii.sql (25 roles, adding
+-- engineer-iii), per this file's own widening recipe: exactly ONE marker
+-- may exist repo-wide (wr-conf-042 enforces). This migration's swap below
+-- is replay-tolerant: on a database already widened to 25 roles it no-ops
+-- with a NOTICE instead of refusing.
 -- =============================================================================
 
 BEGIN;
@@ -63,6 +55,7 @@ BEGIN;
 DO $$
 DECLARE
     live_def text;
+    live_vocab text[];
 BEGIN
     SELECT pg_get_constraintdef(con.oid)
       INTO live_def
@@ -82,43 +75,93 @@ BEGIN
     -- definition and the pin, sort them, and require set equality. The
     -- zero-or-more class captures the '' escape hatch at `role = ''::text`
     -- ('+' would miss it and make every comparison look drifted).
-    IF (
-        SELECT array_agg(x ORDER BY x)
-          FROM unnest(ARRAY(
-              SELECT (regexp_matches(live_def, '''([^'']*)''', 'g'))[1]
-          )) AS x
-    ) IS DISTINCT FROM (
-        SELECT array_agg(x ORDER BY x)
-          FROM unnest(ARRAY[
-              '', 'architect', 'planner', 'builder', 'reviewer', 'critic',
-              'analyst', 'inspector', 'engineer', 'engineer-ii', 'devops',
-              'topologist', 'auditor', 'dba', 'epistemologist', 'operator',
-              'sysadmin', 'DBA', 'tester', 'analyst-ii', 'design-synthesist',
-              'layout-mechanic', 'ontologist', 'lead-engineer',
-              'sound-technician'
-          ]) AS x
+    --
+    -- Replay tolerance (V197, 2026-09-23): accept the pre-widening 24-role
+    -- set (V190's own historical state) OR the post-V197 25-role set (a
+    -- fresh deploy bootstrapped with the widened vocabulary). Anything else
+    -- is drift without a migration — refuse loudly.
+    SELECT array_agg(x ORDER BY x)
+      INTO live_vocab
+      FROM unnest(ARRAY(
+          SELECT (regexp_matches(live_def, '''([^'']*)''', 'g'))[1]
+      )) AS x;
+
+    IF live_vocab IS DISTINCT FROM (
+        SELECT array_agg(x ORDER BY x) FROM unnest(ARRAY[
+            '', 'architect', 'planner', 'builder', 'reviewer', 'critic',
+            'analyst', 'inspector', 'engineer', 'engineer-ii', 'devops',
+            'topologist', 'auditor', 'dba', 'epistemologist', 'operator',
+            'sysadmin', 'DBA', 'tester', 'analyst-ii', 'design-synthesist',
+            'layout-mechanic', 'ontologist', 'lead-engineer',
+            'sound-technician'
+        ]) AS x
+    ) AND live_vocab IS DISTINCT FROM (
+        SELECT array_agg(x ORDER BY x) FROM unnest(ARRAY[
+            '', 'architect', 'planner', 'builder', 'reviewer', 'critic',
+            'analyst', 'inspector', 'engineer', 'engineer-ii', 'engineer-iii',
+            'devops', 'topologist', 'auditor', 'dba', 'epistemologist',
+            'operator', 'sysadmin', 'DBA', 'tester', 'analyst-ii',
+            'design-synthesist', 'layout-mechanic', 'ontologist',
+            'lead-engineer', 'sound-technician'
+        ]) AS x
     ) THEN
         RAISE EXCEPTION
-            'V190 PREFLIGHT FAIL: nebula live role vocabulary has drifted from the pinned 24-role set (live: %). Update V190''s pin together with nebula, then re-apply.',
+            'V190 PREFLIGHT FAIL: nebula live role vocabulary matches neither the historical 24-role set nor the widened 25-role set (live: %). The vocabulary drifted without a migration — see the pin marker in V197.',
             left(live_def, 300);
     END IF;
 END $$;
 
 -- -----------------------------------------------------------------------------
--- Preflight 2: the scratch target must exist. (A missing table means a
--- foreign topology — refuse rather than guess.)
+-- Swap scratch's CHECK to the pinned (nebula-equal) set — replay-tolerant:
+-- on a database already widened by V197, no-op with a NOTICE instead of
+-- regressing the mirror back to 24 roles.
 -- -----------------------------------------------------------------------------
 DO $$
+DECLARE
+    scratch_def text;
+    scratch_vocab text[];
 BEGIN
     IF to_regclass('scratch.agent_records_history') IS NULL THEN
         RAISE EXCEPTION
             'V190 PREFLIGHT FAIL: scratch.agent_records_history does not exist on this database';
     END IF;
+
+    SELECT pg_get_constraintdef(con.oid)
+      INTO scratch_def
+      FROM pg_constraint con
+      JOIN pg_class c      ON c.oid = con.conrelid
+      JOIN pg_namespace n  ON n.oid = c.relnamespace
+     WHERE n.nspname = 'scratch'
+       AND c.relname = 'agent_records_history'
+       AND con.conname = 'agent_records_role_check';
+
+    IF scratch_def IS NOT NULL THEN
+        SELECT array_agg(x ORDER BY x)
+          INTO scratch_vocab
+          FROM unnest(ARRAY(
+              SELECT (regexp_matches(scratch_def, '''([^'']*)''', 'g'))[1]
+          )) AS x;
+        IF scratch_vocab = (
+            SELECT array_agg(x ORDER BY x) FROM unnest(ARRAY[
+                '', 'architect', 'planner', 'builder', 'reviewer', 'critic',
+                'analyst', 'inspector', 'engineer', 'engineer-ii',
+                'engineer-iii', 'devops', 'topologist', 'auditor', 'dba',
+                'epistemologist', 'operator', 'sysadmin', 'DBA', 'tester',
+                'analyst-ii', 'design-synthesist', 'layout-mechanic',
+                'ontologist', 'lead-engineer', 'sound-technician'
+            ]) AS x
+        ) THEN
+            RAISE NOTICE
+                'V190: scratch mirror already carries the widened 25-role vocabulary (V197 applied) — skipping the historical swap entirely.';
+            RETURN;
+        END IF;
+    END IF;
 END $$;
 
--- -----------------------------------------------------------------------------
--- Swap scratch's CHECK to the pinned (nebula-equal) set.
--- -----------------------------------------------------------------------------
+-- Historical 24-role swap: reachable ONLY on the pre-V197 state (the
+-- tolerance DO above RETURNs on the widened state, so replay on a 25-role
+-- mirror can no longer regress it to 24).
+
 ALTER TABLE scratch.agent_records_history
     DROP CONSTRAINT agent_records_role_check;
 

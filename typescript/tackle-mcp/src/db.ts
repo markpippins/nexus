@@ -1675,7 +1675,7 @@ const DEFAULT_MODELS: Array<{ id: string; name: string; harnessId: string; provi
   { id: "mod-codex-gpt4o", name: "GPT-4o (via Codex)", harnessId: "harn-codex-cli", providerId: "prov-codex", modelId: "gpt-4o" },
 ];
 
-const ALL_ROLES = ["planner", "builder", "reviewer", "critic", "analyst", "architect", "inspector", "engineer", "engineer-ii", "devops", "topologist", "rover"] as const;
+const ALL_ROLES = ["planner", "builder", "reviewer", "critic", "analyst", "architect", "inspector", "engineer", "engineer-ii", "engineer-iii", "devops", "topologist", "rover"] as const;
 
 export async function seedDefaultAIConfig(force?: boolean): Promise<{
   seeded: boolean; providers: number; harnesses: number; models: number; roles: number; message: string;

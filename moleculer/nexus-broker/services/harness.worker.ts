@@ -116,7 +116,7 @@ function opencodeModelId(providerId: string, modelIdentifier: string, override?:
 
 const KNOWN_EXECUTORS = new Set([
   "planner", "builder", "reviewer", "analyst",
-  "critic", "inspector", "architect", "engineer", "engineer-ii", "leased-builder",
+  "critic", "inspector", "architect", "engineer", "engineer-ii", "engineer-iii", "leased-builder",
   "watchdog",
 ]);
 
