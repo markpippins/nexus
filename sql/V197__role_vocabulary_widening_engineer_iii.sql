@@ -90,11 +90,13 @@ BEGIN
             'V197 PREFLIGHT FAIL: nebula.agent_records_history.agent_records_role_check not found — source of truth missing';
     END IF;
 
+    -- Set-based comparison (the house convention: bin/role-vocab-drift.py's
+    -- _vocab is a set) — robust against textual duplicates across replay
+    -- generations, while still refusing genuinely different vocabularies.
     SELECT array_agg(x ORDER BY x)
       INTO live_vocab
-      FROM unnest(ARRAY(
-          SELECT (regexp_matches(live_def, '''([^'']*)''', 'g'))[1]
-      )) AS x;
+      FROM (SELECT DISTINCT (regexp_matches(live_def, '''([^'']*)''', 'g'))[1] AS x
+            FROM generate_series(1,1)) sub;
 
     IF live_vocab IS DISTINCT FROM (SELECT array_agg(x ORDER BY x) FROM unnest(prior_vocab) AS x)
        AND live_vocab IS DISTINCT FROM (SELECT array_agg(x ORDER BY x) FROM unnest(target_vocab) AS x) THEN
@@ -106,21 +108,24 @@ BEGIN
     IF live_vocab = (SELECT array_agg(x ORDER BY x) FROM unnest(target_vocab) AS x) THEN
         RAISE NOTICE
             'V197: nebula already carries the widened 25-role vocabulary — idempotent no-op (nothing to do).';
-        COMMIT;
         RETURN;
     END IF;
 
     -- Build the literal list ONCE: 'role'::text, ... — used by both swaps.
+    -- The '' structural escape is emitted separately (as role = ''::text),
+    -- NEVER inside the array — otherwise the rebuilt constraint carries a
+    -- duplicate '' and re-apply preflights refuse (idempotency breaks).
     SELECT string_agg(quote_literal(r) || '::text', ', ' ORDER BY ord)
       INTO literal_list
-      FROM unnest(target_vocab) WITH ORDINALITY AS t(r, ord);
+      FROM unnest(target_vocab) WITH ORDINALITY AS t(r, ord)
+      WHERE r <> '';
 
     -- ── widen nebula (source of truth) ──
     ALTER TABLE nebula.agent_records_history
         DROP CONSTRAINT agent_records_role_check;
     EXECUTE 'ALTER TABLE nebula.agent_records_history '
          || 'ADD CONSTRAINT agent_records_role_check '
-         || 'CHECK (((role = ''''::text) OR (role = ANY (' || literal_list || ')))))';
+         || 'CHECK (((role = ''''::text) OR (role = ANY (ARRAY[' || literal_list || ']))))';
 
     -- ── widen scratch's mirror (keep it in lockstep, V190's defect class) ──
     IF to_regclass('scratch.agent_records_history') IS NOT NULL THEN
@@ -135,9 +140,8 @@ BEGIN
         IF scratch_def IS NOT NULL THEN
             SELECT array_agg(x ORDER BY x)
               INTO scratch_vocab
-              FROM unnest(ARRAY(
-                  SELECT (regexp_matches(scratch_def, '''([^'']*)''', 'g'))[1]
-              )) AS x;
+              FROM (SELECT DISTINCT (regexp_matches(scratch_def, '''([^'']*)''', 'g'))[1] AS x
+                    FROM generate_series(1,1)) sub;
             IF scratch_vocab = (SELECT array_agg(x ORDER BY x) FROM unnest(target_vocab) AS x) THEN
                 RAISE NOTICE 'V197: scratch mirror already widened — skipping.';
             ELSE
@@ -145,7 +149,7 @@ BEGIN
                     DROP CONSTRAINT agent_records_role_check;
                 EXECUTE 'ALTER TABLE scratch.agent_records_history '
                      || 'ADD CONSTRAINT agent_records_role_check '
-                     || 'CHECK (((role = ''''::text) OR (role = ANY (' || literal_list || ')))))';
+                     || 'CHECK (((role = ''''::text) OR (role = ANY (ARRAY[' || literal_list || ']))))';
             END IF;
         END IF;
     END IF;
