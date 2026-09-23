@@ -78,12 +78,15 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       # No push, no registry: the gate only proves the image builds.
+      # load: true — also loads into the local daemon so the exported tar
+      # (consumed by the parked boot-smoke job) has an image to save.
       - name: Build image
         uses: docker/build-push-action@v6
         with:
           context: jvm
           file: jvm/spring/nexus-core/Dockerfile
           push: false
+          load: true
           tags: nexus-core/nexus-core:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
