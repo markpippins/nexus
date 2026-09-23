@@ -1,0 +1,38 @@
+{
+  "authority_boundary": {
+    "aspects_owns": [
+      "governed_tag_vocabulary",
+      "tag_binding"
+    ],
+    "binding_approval_required_for_governed_identity": true,
+    "expression_authority_status": "non_authoritative",
+    "projected_tags_pre_populated_governed_tag_id": null
+  },
+  "binding_lifecycle": {
+    "approved": [
+      "expired"
+    ],
+    "expired": [],
+    "proposed": [
+      "approved",
+      "expired",
+      "rejected"
+    ],
+    "rejected": [
+      "expired"
+    ]
+  },
+  "binding_owner": "aspects",
+  "binding_statuses": [
+    "approved",
+    "expired",
+    "proposed",
+    "rejected"
+  ],
+  "binding_table": "aspects.tag_binding",
+  "contract_fingerprint": "c4be38758210222e8e7528f9074db717451b7c6e3e05047021c50a9be42ddfe7",
+  "contract_revision": "aspects-v0.1",
+  "fingerprint_version": 1,
+  "projected_tag_authority_status": "projected",
+  "vocabulary_table": "aspects.governed_tag_vocabulary"
+}
