@@ -153,6 +153,28 @@ def test_provider_from_preset_wiring(tree: Path):
         assert any(e[0] == "@typespec/http-client-python" for e in pre["emitters"])
 
 
+# ------------------------------------------------- mode selection / units
+
+def test_effective_run_mode_forces_stamp_without_reference_tree(tmp_path: Path):
+    bare = csd.Provider(name="x", spec_dir=tmp_path)          # no generated/extra dirs
+    with_tree = csd.Provider(name="y", spec_dir=tmp_path,
+                             generated_dirs=[tmp_path / "gen"])
+    assert csd.effective_run_mode(bare, "regen") == "stamp"
+    assert csd.effective_run_mode(with_tree, "regen") == "regen"
+    assert csd.effective_run_mode(with_tree, "stamp") == "stamp"
+
+
+def test_preset_topology_matches_repo_layout(tree: Path):
+    # the two python providers protect committed trees; the java one protects
+    # the gitignored staging tree; the rest are stamp-only
+    py = [n for n, p in csd.PRESETS.items() if all("staging" not in g for g in p["generated"])]
+    assert set(py) == {"conduit-kernel", "peb-kernel"}
+    assert csd.PRESETS["peb-kernel-spring"]["generated"] == ["typespec/v1/staging/jvm/spring/peb-kernel"]
+    for name in csd.STAMP_ONLY:
+        assert name in csd.STAMP_ONLY_PRESETS, f"{name} missing from STAMP_ONLY_PRESETS"
+    assert set(csd.STAMP_ONLY) == set(csd.STAMP_ONLY_PRESETS)
+
+
 # ------------------------------------------------------------- exit mapping
 
 def test_main_returns_2_when_tsp_missing(monkeypatch, tmp_path: Path, capsys):

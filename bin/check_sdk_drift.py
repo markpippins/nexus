@@ -64,6 +64,43 @@ PRESETS: dict[str, dict] = {
             ("@typespec/http-client-python", "python"),
         ],
     },
+    # Java emitters. Reference staging trees are deliberately gitignored
+    # (typespec/v1/.gitignore: "contents are disposable emitter output",
+    # Wave-4 folder hygiene) — only staging/.gitkeep is committed. Regen
+    # mode therefore diffs the ON-DISK staged tree vs fresh compile and
+    # skips providers whose staged tree does not currently exist (stamp
+    # mode still guards their TypeSpec contracts).
+    "peb-kernel-spring": {
+        "spec": "typespec/v1/peb-kernel/spring",
+        "generated": ["typespec/v1/staging/jvm/spring/peb-kernel"],
+        "extras": [],
+        "emitters": [
+            ("@typespec/http-client-java", "java"),
+        ],
+    },
+}
+
+# Java-emitter providers with NO staged reference tree yet (Wave-4 wiped
+# their disposable output). Stamp mode guards their contracts; regen
+# byte-identity activates automatically once a tree is staged again.
+STAMP_ONLY = [
+    "service-registry-spring",
+    "service-broker-spring",
+    "service-broker-file-service",
+    "service-broker-helidon",
+    "service-broker-quarkus",
+    "core-jvm-shared",
+    "terrain-spring",
+]
+
+STAMP_ONLY_PRESETS: dict[str, dict] = {
+    "service-registry-spring": {"spec": "typespec/v1/service-registry/spring"},
+    "service-broker-spring": {"spec": "typespec/v1/service-broker/spring"},
+    "service-broker-file-service": {"spec": "typespec/v1/service-broker/spring/file-service"},
+    "service-broker-helidon": {"spec": "typespec/v1/service-broker/helidon"},
+    "service-broker-quarkus": {"spec": "typespec/v1/service-broker/quarkus"},
+    "core-jvm-shared": {"spec": "typespec/v1/core"},
+    "terrain-spring": {"spec": "typespec/v1/terrain/spring"},
 }
 
 DEFAULT_STAMP_DIR = "bin/sdk-type-stamps"
@@ -119,6 +156,11 @@ def provider_from_preset(name: str, root: Path) -> Provider:
         extra_dirs=[resolve(root, e) for e in pre["extras"]],
         emitters=[(e, sub) for e, sub in pre["emitters"]],
     )
+
+
+def stamp_only_provider(name: str, root: Path) -> Provider:
+    pre = STAMP_ONLY_PRESETS[name]
+    return Provider(name=name, spec_dir=resolve(root, pre["spec"]))
 
 
 # --------------------------------------------------------------------------
@@ -241,6 +283,13 @@ def check_regen(prov: Provider, root: Path) -> tuple[bool, list[str]]:
 
         def report(label: str, committed_dir: Path, fresh_dir: Path) -> None:
             nonlocal ok
+            if not committed_dir.exists():
+                # Gitignored staging never staged (or wiped by policy):
+                # nothing to diff against; the stamp check guards the
+                # provider's TypeSpec contract instead.
+                lines.append(f"ok {prov.name}/{label}: reference tree absent "
+                             f"({committed_dir}) -- skipped; stamp mode guards this provider")
+                return
             committed = snapshot_tree(committed_dir)
             fresh = snapshot_tree(fresh_dir)
             if not committed and not fresh:
@@ -273,6 +322,15 @@ def check_regen(prov: Provider, root: Path) -> tuple[bool, list[str]]:
     return ok, lines
 
 
+def effective_run_mode(prov: Provider, mode: str) -> str:
+    """Stamp-only providers (no reference tree at all) never run the regen
+    diff — there is nothing to diff against; their TypeSpec contract is
+    guarded by the stamp check."""
+    if not prov.generated_dirs and not prov.extra_dirs:
+        return "stamp"
+    return mode
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--mode", choices=["auto", "regen", "stamp"], default="auto")
@@ -288,6 +346,7 @@ def main() -> int:
         providers = [parse_provider(p, root) for p in args.provider]
     else:
         providers = [provider_from_preset(name, root) for name in PRESETS]
+        providers += [stamp_only_provider(name, root) for name in STAMP_ONLY]
 
     if args.update_stamp:
         for prov in providers:
@@ -295,7 +354,6 @@ def main() -> int:
             print(f"stamp updated: {sp}")
         return 0
 
-    stamp_dir = resolve(root, args.stamp_dir)
     mode = args.mode
     if mode == "auto":
         try:
@@ -305,9 +363,12 @@ def main() -> int:
             mode = "stamp"
         print(f"mode: {mode}")
 
+    stamp_dir = resolve(root, args.stamp_dir)
     all_ok = True
     for prov in providers:
-        if mode == "regen":
+        # Stamp-only providers (no reference tree) never run the regen diff.
+        run_mode = effective_run_mode(prov, mode)
+        if run_mode == "regen":
             try:
                 ok, lines = check_regen(prov, root)
             except SystemExit as e:

@@ -300,6 +300,7 @@ seed-guard-test:
 #   make sdk-drift-stamp      cheap fallback: contract-hash stamps (no tsp)
 #   make sdk-drift-update-stamp  refresh stamps after verifying a regen
 #   make sdk-drift-test       hermetic unit tests for the checker
+#   make sdk-drift-install-timer  install + enable the daily systemd user timer
 #
 # History: a regenerated python SDK sat stranded in a stash-pop incident
 # (2026-09-22) because nothing compared generated trees to the TypeSpec
@@ -324,6 +325,15 @@ sdk-drift-update-stamp:
 sdk-drift-test:
 	@echo "[sdk-drift] running checker unit tests..."
 	@python3 -m pytest bin/tests/test_check_sdk_drift.py -v
+
+# Daily no-tsp drift check (units are committed: bin/sdk-drift-stamp.*).
+sdk-drift-install-timer:
+	@echo "[sdk-drift] installing sdk-drift-stamp.timer (daily 06:10 UTC)..."
+	@mkdir -p $(HOME)/.config/systemd/user $(HOME)/.cache/sdk-drift-stamp
+	@cp bin/sdk-drift-stamp.service bin/sdk-drift-stamp.timer $(HOME)/.config/systemd/user/
+	@systemctl --user daemon-reload
+	@systemctl --user enable --now sdk-drift-stamp.timer
+	@systemctl --user list-timers sdk-drift-stamp.timer --no-pager | head -3
 
 # ─── API docs (tools/api-docs) ───────────────────────────────────────────────
 # Backed by nexus/.github/workflows/apidocs.yml — same commands locally and
