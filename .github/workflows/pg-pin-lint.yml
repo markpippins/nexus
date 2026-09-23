@@ -1,0 +1,57 @@
+# PG pin fleet-standard lint
+#
+# Fails any workflow pinning a postgres image below the fleet standard
+# (PG 17): the drift class the fleet audit found (9 workflows silently on
+# postgres:16 while the fleet standard moved to 17; the same class had
+# bitten before — PR #300 failed restoring a PG17 bootstrap on a 16
+# service). bin/lint_postgres_pins.py scans .github/workflows for
+# postgres:<major> / pgvector:pg<major> pins; whole-line comments are
+# ignored (the historical PR #300 note in wr-conf-025.yml), and
+# '# pg-pin-allow: <reason>' is the documented per-line escape.
+#
+# Deliberately BLOCKING (no continue-on-error): a lint that cannot go red
+# cannot guard anything. NOTE — until PR #470 (the 16->17 pin migration)
+# merges, main carries exactly 9 violations and this lint is red by
+# design on main and on PRs forked from it. Merge order: #470 first.
+
+name: PG Pin Fleet Standard
+
+on:
+  push:
+    branches: [ main, master, dev, feature/* ]
+    paths:
+      - '.github/workflows/**'
+      - 'bin/lint_postgres_pins.py'
+      - 'bin/tests/test_lint_postgres_pins.py'
+      - '.github/workflows/pg-pin-lint.yml'
+  pull_request:
+    branches: [ main, master, dev, feature/* ]
+    paths:
+      - '.github/workflows/**'
+      - 'bin/lint_postgres_pins.py'
+      - 'bin/tests/test_lint_postgres_pins.py'
+      - '.github/workflows/pg-pin-lint.yml'
+  workflow_dispatch:
+  schedule:
+    # Weekly — catches standard-drift even without workflow churn.
+    - cron: '17 4 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  pg-pin-lint:
+    name: "workflow postgres pins >= fleet standard (17)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test deps
+        run: python3 -m pip install --quiet pytest
+      - name: Lint unit tests
+        run: python3 -m pytest bin/tests/test_lint_postgres_pins.py -q
+      - name: Lint workflow pins (fails below PG 17)
+        run: python3 bin/lint_postgres_pins.py .github/workflows
