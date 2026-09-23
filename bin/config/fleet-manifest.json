@@ -4,7 +4,7 @@
     {
       "name": "nexus-core",
       "default_port": 8092,
-      "description": "read-only JVM projection monolith (Spring Boot) — docker/nexus-core compose; actuator health",
+      "description": "read-only JVM projection monolith (Spring Boot) \u2014 docker/nexus-core compose; actuator health",
       "framework": "Spring Boot",
       "service_type": "REST API"
     }
@@ -12,17 +12,19 @@
   "fleet": [
     {
       "hostname": "barium",
-      "description": "pi4 — powered down (fleet consolidation in progress); former PG replication target (R9 chain)",
-      "status": "OFFLINE",
+      "description": "pi4 \u2014 standby lab node (pi4) \u2014 CI/backup/PG replication target; calendar emitter",
+      "status": "ACTIVE",
       "ip_address": "192.168.1.212",
       "environment": "Development",
-      "services": [],
+      "services": [
+        "calendar-emitter"
+      ],
       "os": "Linux",
       "server_type": "Physical"
     },
     {
       "hostname": "cesium",
-      "description": "pi4 — powered down (fleet consolidation in progress)",
+      "description": "pi4 \u2014 powered down (fleet consolidation in progress)",
       "status": "OFFLINE",
       "ip_address": "192.168.1.64",
       "environment": "Development",
@@ -32,7 +34,7 @@
     },
     {
       "hostname": "deuterium",
-      "description": "pi4 — powered down (fleet consolidation in progress)",
+      "description": "pi4 \u2014 powered down (fleet consolidation in progress)",
       "status": "OFFLINE",
       "ip_address": "192.168.1.91",
       "environment": "Development",
@@ -42,7 +44,7 @@
     },
     {
       "hostname": "entropy",
-      "description": "reserve node — containerized python services under evaluation (no routable address verified yet — sync reports it unaddressable until the manifest states one)",
+      "description": "reserve node \u2014 containerized python services under evaluation (no routable address verified yet \u2014 sync reports it unaddressable until the manifest states one)",
       "status": "OFFLINE",
       "environment": "Development",
       "services": [],
@@ -51,7 +53,7 @@
     },
     {
       "hostname": "helium",
-      "description": "read-only JVM experimental node (banana-pi) — nexus-core :8092 (Spring Boot) + helium-mongo; calendar emitter",
+      "description": "read-only JVM experimental node (banana-pi) \u2014 nexus-core :8092 (Spring Boot) + helium-mongo; calendar emitter",
       "status": "ACTIVE",
       "ip_address": "192.168.1.229",
       "environment": "Production",
@@ -63,7 +65,7 @@
     },
     {
       "hostname": "iridium",
-      "description": "pi4 — powered down (fleet consolidation in progress)",
+      "description": "pi4 \u2014 powered down (fleet consolidation in progress)",
       "status": "OFFLINE",
       "ip_address": "192.168.1.207",
       "environment": "Development",
@@ -73,7 +75,7 @@
     },
     {
       "hostname": "lithium",
-      "description": "pi4 — powered down (fleet consolidation in progress)",
+      "description": "pi4 \u2014 powered down (fleet consolidation in progress)",
       "status": "OFFLINE",
       "ip_address": "192.168.1.131",
       "environment": "Development",
@@ -83,7 +85,7 @@
     },
     {
       "hostname": "osmium",
-      "description": "ansible control node (Orange Pi Zero, armv7) — fleet inventory source of truth ~/devops/ansible; calendar emitter",
+      "description": "ansible control node (Orange Pi Zero, armv7) \u2014 fleet inventory source of truth ~/devops/ansible; calendar emitter",
       "status": "ACTIVE",
       "ip_address": "192.168.1.162",
       "environment": "Production",
@@ -93,7 +95,7 @@
     },
     {
       "hostname": "radium",
-      "description": "pi4 — powered down (fleet consolidation in progress)",
+      "description": "pi4 \u2014 powered down (fleet consolidation in progress)",
       "status": "OFFLINE",
       "ip_address": "192.168.1.124",
       "environment": "Development",
@@ -103,7 +105,7 @@
     },
     {
       "hostname": "rubidium",
-      "description": "pi3 — powered down (fleet consolidation in progress)",
+      "description": "pi3 \u2014 powered down (fleet consolidation in progress)",
       "status": "OFFLINE",
       "ip_address": "192.168.1.253",
       "environment": "Development",
@@ -113,7 +115,7 @@
     },
     {
       "hostname": "sodium",
-      "description": "nano — powered down (fleet consolidation in progress)",
+      "description": "nano \u2014 powered down (fleet consolidation in progress)",
       "status": "OFFLINE",
       "ip_address": "192.168.1.185",
       "environment": "Development",
@@ -123,7 +125,7 @@
     },
     {
       "hostname": "thallium",
-      "description": "pi4 — powered down (fleet consolidation in progress)",
+      "description": "pi4 \u2014 powered down (fleet consolidation in progress)",
       "status": "OFFLINE",
       "ip_address": "192.168.1.82",
       "environment": "Development",
@@ -133,7 +135,7 @@
     },
     {
       "hostname": "thorium",
-      "description": "c4 — powered down (fleet consolidation in progress)",
+      "description": "c4 \u2014 powered down (fleet consolidation in progress)",
       "status": "OFFLINE",
       "ip_address": "192.168.1.200",
       "environment": "Development",
@@ -143,7 +145,7 @@
     },
     {
       "hostname": "titanium",
-      "description": "primary nexus host — canonical PG, all core services, operator workstation (x86)",
+      "description": "primary nexus host \u2014 canonical PG, all core services, operator workstation (x86)",
       "status": "ACTIVE",
       "ip_address": "192.168.1.120",
       "environment": "Production",
@@ -161,7 +163,7 @@
     },
     {
       "hostname": "vanadium",
-      "description": "lab node (pi4) — sonar runner, CI backup target, PG replication target; calendar emitter",
+      "description": "lab node (pi4) \u2014 sonar runner, CI backup target, PG replication target; calendar emitter",
       "status": "ACTIVE",
       "ip_address": "192.168.1.209",
       "environment": "Production",
@@ -171,7 +173,7 @@
     }
   ],
   "retire": {
-    "_comment": "Derived: hosts removed from the declared source (osmium ansible dir) are retired here on the next conversion. Never deleted from the registry — provenance kept.",
+    "_comment": "Derived: hosts removed from the declared source (osmium ansible dir) are retired here on the next conversion. Never deleted from the registry \u2014 provenance kept.",
     "hostnames": [
       "beryllium",
       "bohrium",
