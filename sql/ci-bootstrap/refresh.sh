@@ -21,7 +21,7 @@ OUT="$(dirname "$0")/nexus-ci-bootstrap.sql"
 BODY="$(mktemp /tmp/ci-bootstrap-body.XXXXXX)"
 trap 'rm -f "$BODY"' EXIT
 
-SCHEMAS=(execution vision nebula conduit semantics terrain peb registry resolution wind cascade tackle)
+SCHEMAS=(aegis shrapnel execution vision nebula conduit semantics terrain peb registry resolution wind cascade tackle assembly kernel duality)
 SCHEMA_ARGS=(); for s in "${SCHEMAS[@]}"; do SCHEMA_ARGS+=(--schema="$s"); done
 VALUES_LIST=$(printf "('%s')," "${SCHEMAS[@]}"); VALUES_LIST="${VALUES_LIST%,}"
 NOT_IN=$(printf "'%s'," "${SCHEMAS[@]}"); NOT_IN="${NOT_IN%,}"
@@ -77,12 +77,41 @@ PGPASSWORD="${PGPASSWORD:-}" pg_dump -h "$HOST" -p "$PORT" -U "$USER" -d "$DB" \
   --exclude-table=nebula.harvest_candidate_embeddings_history \
   --exclude-table=semantics.source_observation_embeddings > "$BODY"
 
+# pg_dump 17.x emits \restrict/\unrestrict psql meta-commands with a RANDOM
+# per-run token (psql meta-command-injection guard). They make the artifact
+# non-deterministic run-to-run; strip them — this dump is generated from our
+# own trusted DB, not an untrusted file.
+sed -i '/^\\restrict /d; /^\\unrestrict /d' "$BODY"
+
+# Closure verification: every real source schema referenced anywhere in the
+# dump body must be in SCHEMAS() (public is always present in a fresh DB).
+# A missed inclusion breaks the restore — proven empirically 2026-09-22 when
+# aegis, shrapnel, assembly, kernel and duality each broke a clean-room apply
+# at a different object. Fail the REFRESH at the source (fix = one list edit)
+# instead of failing CI (fix = forensic archaeology).
+REAL_SCHEMAS=$($PSQL -AtAc "SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg\\_%' AND nspname <> 'information_schema'" 2>/dev/null || true)
+INC=" ${SCHEMAS[*]} public "
+MISSING_REFS=""
+for s in $REAL_SCHEMAS; do
+  case "$INC" in *" $s "*) continue ;; esac
+  if grep -qE "(^|[^a-zA-Z0-9_])$s\\." "$BODY"; then
+    MISSING_REFS="$MISSING_REFS $s"
+  fi
+done
+if [ -n "$MISSING_REFS" ]; then
+  echo "ERROR: dump body references schema(s) missing from SCHEMAS():$MISSING_REFS" >&2
+  echo "Add each to SCHEMAS() AND the prelude CREATE SCHEMA list, then re-run." >&2
+  exit 1
+fi
+
 {
   cat <<'PRELUDE'
 -- nexus CI bootstrap — complete global schemas for DB-backed tests
 -- Extracted from a live nexus DB via pg_dump --schema-only; regenerate with
 -- refresh.sh when conduit adapter global reads/writes change.
 CREATE SCHEMA IF NOT EXISTS execution;
+CREATE SCHEMA IF NOT EXISTS aegis;
+CREATE SCHEMA IF NOT EXISTS shrapnel;
 CREATE SCHEMA IF NOT EXISTS vision;
 CREATE SCHEMA IF NOT EXISTS nebula;
 CREATE SCHEMA IF NOT EXISTS conduit;
@@ -94,7 +123,11 @@ CREATE SCHEMA IF NOT EXISTS resolution;
 CREATE SCHEMA IF NOT EXISTS wind;
 CREATE SCHEMA IF NOT EXISTS cascade;
 CREATE SCHEMA IF NOT EXISTS tackle;
+CREATE SCHEMA IF NOT EXISTS assembly;
+CREATE SCHEMA IF NOT EXISTS kernel;
+CREATE SCHEMA IF NOT EXISTS duality;
 CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS citext;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 PRELUDE
   # Public functions referenced by dumped views/triggers (closure above) —

@@ -2,6 +2,8 @@
 -- Extracted from a live nexus DB via pg_dump --schema-only; regenerate with
 -- refresh.sh when conduit adapter global reads/writes change.
 CREATE SCHEMA IF NOT EXISTS execution;
+CREATE SCHEMA IF NOT EXISTS aegis;
+CREATE SCHEMA IF NOT EXISTS shrapnel;
 CREATE SCHEMA IF NOT EXISTS vision;
 CREATE SCHEMA IF NOT EXISTS nebula;
 CREATE SCHEMA IF NOT EXISTS conduit;
@@ -13,7 +15,11 @@ CREATE SCHEMA IF NOT EXISTS resolution;
 CREATE SCHEMA IF NOT EXISTS wind;
 CREATE SCHEMA IF NOT EXISTS cascade;
 CREATE SCHEMA IF NOT EXISTS tackle;
+CREATE SCHEMA IF NOT EXISTS assembly;
+CREATE SCHEMA IF NOT EXISTS kernel;
+CREATE SCHEMA IF NOT EXISTS duality;
 CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS citext;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE OR REPLACE FUNCTION public.notify_member_expired()
  RETURNS trigger
@@ -32,14 +38,77 @@ BEGIN
 END;
 $function$
 ;
+CREATE OR REPLACE FUNCTION public.regexp_match(citext, citext)
+ RETURNS text[]
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT
+AS $function$
+    SELECT pg_catalog.regexp_match( $1::pg_catalog.text, $2::pg_catalog.text, 'i' );
+$function$
+;
+CREATE OR REPLACE FUNCTION public.regexp_match(citext, citext, text)
+ RETURNS text[]
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT
+AS $function$
+    SELECT pg_catalog.regexp_match( $1::pg_catalog.text, $2::pg_catalog.text, CASE WHEN pg_catalog.strpos($3, 'c') = 0 THEN  $3 || 'i' ELSE $3 END );
+$function$
+;
+CREATE OR REPLACE FUNCTION public.regexp_replace(citext, citext, text)
+ RETURNS text
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT
+AS $function$
+    SELECT pg_catalog.regexp_replace( $1::pg_catalog.text, $2::pg_catalog.text, $3, 'i');
+$function$
+;
+CREATE OR REPLACE FUNCTION public.regexp_replace(citext, citext, text, text)
+ RETURNS text
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT
+AS $function$
+    SELECT pg_catalog.regexp_replace( $1::pg_catalog.text, $2::pg_catalog.text, $3, CASE WHEN pg_catalog.strpos($4, 'c') = 0 THEN  $4 || 'i' ELSE $4 END);
+$function$
+;
+CREATE OR REPLACE FUNCTION public.regexp_split_to_array(citext, citext)
+ RETURNS text[]
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT
+AS $function$
+    SELECT pg_catalog.regexp_split_to_array( $1::pg_catalog.text, $2::pg_catalog.text, 'i' );
+$function$
+;
+CREATE OR REPLACE FUNCTION public.regexp_split_to_array(citext, citext, text)
+ RETURNS text[]
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT
+AS $function$
+    SELECT pg_catalog.regexp_split_to_array( $1::pg_catalog.text, $2::pg_catalog.text, CASE WHEN pg_catalog.strpos($3, 'c') = 0 THEN  $3 || 'i' ELSE $3 END );
+$function$
+;
+CREATE OR REPLACE FUNCTION public.split_part(citext, citext, integer)
+ RETURNS text
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT
+AS $function$
+    SELECT (pg_catalog.regexp_split_to_array( $1::pg_catalog.text, pg_catalog.regexp_replace($2::pg_catalog.text, '([^a-zA-Z_0-9])', E'\\\\\\1', 'g'), 'i'))[$3];
+$function$
+;
+CREATE OR REPLACE FUNCTION public.strpos(citext, citext)
+ RETURNS integer
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT
+AS $function$
+    SELECT pg_catalog.strpos( pg_catalog.lower( $1::pg_catalog.text ), pg_catalog.lower( $2::pg_catalog.text ) );
+$function$
+;
 --
 -- PostgreSQL database dump
 --
 
-\restrict 0HIwe3Psx6fkmkqebO0G4oYVXiGKxQEhA2OhXP87VwRTOuqjNi2y2OHHC03DcLk
 
 -- Dumped from database version 17.10 (Debian 17.10-1.pgdg12+1)
--- Dumped by pg_dump version 17.11 (Debian 17.11-0+deb13u1)
+-- Dumped by pg_dump version 17.10 (Debian 17.10-1.pgdg12+1)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -54,6 +123,25 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
+-- Name: aegis; Type: SCHEMA; Schema: -; Owner: -
+--
+
+
+
+--
+-- Name: SCHEMA aegis; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON SCHEMA aegis IS 'State Machine Registry for TLA+ formal methods bridging to Resolution schema';
+
+
+--
+-- Name: assembly; Type: SCHEMA; Schema: -; Owner: -
+--
+
+
+
+--
 -- Name: cascade; Type: SCHEMA; Schema: -; Owner: -
 --
 
@@ -66,9 +154,28 @@ SET row_security = off;
 
 
 --
+-- Name: duality; Type: SCHEMA; Schema: -; Owner: -
+--
+
+
+
+--
 -- Name: execution; Type: SCHEMA; Schema: -; Owner: -
 --
 
+
+
+--
+-- Name: kernel; Type: SCHEMA; Schema: -; Owner: -
+--
+
+
+
+--
+-- Name: SCHEMA kernel; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON SCHEMA kernel IS 'Semantic Kernel — authoritative state machine. Owns the immutable event log.';
 
 
 --
@@ -109,6 +216,12 @@ COMMENT ON SCHEMA resolution IS 'SOL sandbox: greenfield redevelopment of semant
 
 
 --
+-- Name: shrapnel; Type: SCHEMA; Schema: -; Owner: -
+--
+
+
+
+--
 -- Name: tackle; Type: SCHEMA; Schema: -; Owner: -
 --
 
@@ -130,6 +243,1013 @@ COMMENT ON SCHEMA resolution IS 'SOL sandbox: greenfield redevelopment of semant
 -- Name: wind; Type: SCHEMA; Schema: -; Owner: -
 --
 
+
+
+--
+-- Name: event_type; Type: TYPE; Schema: kernel; Owner: -
+--
+
+CREATE TYPE kernel.event_type AS ENUM (
+    'intent.created',
+    'intent.updated',
+    'intent.archived',
+    'transition.requested',
+    'transition.committed',
+    'transition.rejected',
+    'artifact.created',
+    'artifact.updated',
+    'receipt.issued',
+    'policy.violated',
+    'observation.captured',
+    'notification.emitted',
+    'assessment.started',
+    'assessment.completed',
+    'assessment.accepted',
+    'assessment.rejected',
+    'agenda.created',
+    'agenda.activated',
+    'agenda.decision_recorded',
+    'agenda.closed',
+    'specification.created',
+    'specification.revised',
+    'specification.superseded',
+    'work_request.created',
+    'work_request.dispatched',
+    'work_request.completed',
+    'work_request.failed',
+    'deliberation.required',
+    'recommendation',
+    'receipt.failed'
+);
+
+
+--
+-- Name: TYPE event_type; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON TYPE kernel.event_type IS 'Canonical event types. Extensible — additive only, never removed.';
+
+
+--
+-- Name: create_registry_revision(uuid, text); Type: FUNCTION; Schema: aegis; Owner: -
+--
+
+CREATE FUNCTION aegis.create_registry_revision(p_registry_id uuid, p_created_by text DEFAULT NULL::text) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_registry aegis.registry%ROWTYPE;
+    v_revision_number bigint;
+    v_source text;
+    v_model jsonb;
+    v_source_digest text;
+    v_model_digest text;
+    v_revision_id uuid;
+    v_previous uuid;
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended(p_registry_id::text, 148));
+    SELECT * INTO v_registry
+    FROM aegis.registry
+    WHERE id = p_registry_id
+    FOR SHARE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'registry not found: %', p_registry_id USING ERRCODE = 'foreign_key_violation';
+    END IF;
+
+    SELECT COALESCE(max(revision_number), 0) + 1,
+           (array_agg(id ORDER BY revision_number DESC))[1]
+      INTO v_revision_number, v_previous
+    FROM aegis.registry_revision
+    WHERE registry_id = p_registry_id;
+
+    v_source := COALESCE(v_registry.tla_plus_source, '');
+    v_source_digest := 'sha256:' || encode(public.digest(convert_to(v_source, 'UTF8'), 'sha256'), 'hex');
+
+    SELECT jsonb_build_object(
+        'registry', to_jsonb(v_registry) - 'tla_plus_source',
+        'constants', COALESCE((SELECT jsonb_agg(to_jsonb(x) ORDER BY x.created_at, x.id) FROM aegis.constant x WHERE x.registry_id = p_registry_id), '[]'::jsonb),
+        'variables', COALESCE((SELECT jsonb_agg(to_jsonb(x) ORDER BY x.created_at, x.id) FROM aegis.variable x WHERE x.registry_id = p_registry_id), '[]'::jsonb),
+        'states', COALESCE((SELECT jsonb_agg(to_jsonb(x) ORDER BY x.created_at, x.id) FROM aegis.state x WHERE x.registry_id = p_registry_id), '[]'::jsonb),
+        'transitions', COALESCE((SELECT jsonb_agg(to_jsonb(x) ORDER BY x.created_at, x.id) FROM aegis.transition x WHERE x.registry_id = p_registry_id), '[]'::jsonb),
+        'invariants', COALESCE((SELECT jsonb_agg(to_jsonb(x) ORDER BY x.created_at, x.id) FROM aegis.invariant x WHERE x.registry_id = p_registry_id), '[]'::jsonb),
+        'properties', COALESCE((SELECT jsonb_agg(to_jsonb(x) ORDER BY x.created_at, x.id) FROM aegis.property x WHERE x.registry_id = p_registry_id), '[]'::jsonb),
+        'temporal_properties', COALESCE((SELECT jsonb_agg(to_jsonb(x) ORDER BY x.created_at, x.id) FROM aegis.temporal_property x WHERE x.registry_id = p_registry_id), '[]'::jsonb),
+        'concept_mappings', COALESCE((SELECT jsonb_agg(to_jsonb(x) ORDER BY x.created_at, x.id) FROM aegis.concept_mapping x WHERE x.registry_id = p_registry_id), '[]'::jsonb),
+        'attribute_mappings', COALESCE((SELECT jsonb_agg(to_jsonb(x) ORDER BY x.created_at, x.id) FROM aegis.attribute_mapping x WHERE x.registry_id = p_registry_id), '[]'::jsonb),
+        'relationship_mappings', COALESCE((SELECT jsonb_agg(to_jsonb(x) ORDER BY x.created_at, x.id) FROM aegis.relationship_mapping x WHERE x.registry_id = p_registry_id), '[]'::jsonb)
+    ) INTO v_model;    v_model_digest := 'sha256:' || encode(public.digest(convert_to(v_model::text, 'UTF8'), 'sha256'), 'hex');
+
+    -- Idempotent snapshot: an unchanged authoring head maps to the same
+    -- immutable revision, including when a migration/backfill is re-run.
+    SELECT id INTO v_revision_id
+    FROM aegis.registry_revision
+    WHERE registry_id = p_registry_id
+      AND source_digest = v_source_digest
+      AND model_digest = v_model_digest
+    ORDER BY revision_number DESC
+    LIMIT 1;
+    IF FOUND THEN
+        RETURN v_revision_id;
+    END IF;
+
+    INSERT INTO aegis.registry_revision
+
+        (registry_id, revision_number, source, source_digest, model, model_digest, created_by, supersedes_revision_id)
+    VALUES
+        (p_registry_id, v_revision_number, v_source, v_source_digest, v_model, v_model_digest, p_created_by, v_previous)
+    RETURNING id INTO v_revision_id;
+
+    RETURN v_revision_id;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION create_registry_revision(p_registry_id uuid, p_created_by text); Type: COMMENT; Schema: aegis; Owner: -
+--
+
+COMMENT ON FUNCTION aegis.create_registry_revision(p_registry_id uuid, p_created_by text) IS 'Creates an immutable content-addressed snapshot of the current registry authoring state';
+
+
+--
+-- Name: forbid_model_check_result_mutation(); Type: FUNCTION; Schema: aegis; Owner: -
+--
+
+CREATE FUNCTION aegis.forbid_model_check_result_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RAISE EXCEPTION 'aegis.model_check_result is append-only: % blocked for result %', TG_OP, OLD.id
+        USING ERRCODE = 'restrict_violation';
+END;
+$$;
+
+
+--
+-- Name: forbid_registry_revision_mutation(); Type: FUNCTION; Schema: aegis; Owner: -
+--
+
+CREATE FUNCTION aegis.forbid_registry_revision_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RAISE EXCEPTION 'aegis.registry_revision is immutable: % blocked for revision %', TG_OP, OLD.id
+        USING ERRCODE = 'restrict_violation';
+END;
+$$;
+
+
+--
+-- Name: forbid_wind_bridge_mapping_mutation(); Type: FUNCTION; Schema: aegis; Owner: -
+--
+
+CREATE FUNCTION aegis.forbid_wind_bridge_mapping_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RAISE EXCEPTION 'aegis.% is immutable: % blocked for row %', TG_TABLE_NAME, TG_OP, OLD.id
+        USING ERRCODE = 'restrict_violation';
+END;
+$$;
+
+
+--
+-- Name: forbid_wind_compilation_mutation(); Type: FUNCTION; Schema: aegis; Owner: -
+--
+
+CREATE FUNCTION aegis.forbid_wind_compilation_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RAISE EXCEPTION 'aegis.% is immutable: % blocked for row %', TG_TABLE_NAME, TG_OP, OLD.id
+        USING ERRCODE = 'restrict_violation';
+END;
+$$;
+
+
+--
+-- Name: generate_tla_plus(uuid); Type: FUNCTION; Schema: aegis; Owner: -
+--
+
+CREATE FUNCTION aegis.generate_tla_plus(p_registry_id uuid) RETURNS text
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_registry_name TEXT;
+    v_tla_text TEXT;
+    v_constants TEXT;
+    v_variables TEXT;
+    v_states TEXT;
+    v_transitions TEXT;
+    v_invariants TEXT;
+    v_properties TEXT;
+BEGIN
+    -- Get registry name
+    SELECT name INTO v_registry_name
+    FROM aegis.registry
+    WHERE id = p_registry_id;
+
+    IF v_registry_name IS NULL THEN
+        RETURN '-- Registry not found';
+    END IF;
+
+    -- Build TLA+ constants section
+    WITH constants_agg AS (
+        SELECT string_agg(
+            '    ' || name || ' : ' || type ||
+            CASE WHEN value IS NOT NULL THEN ' = ' || value::text ELSE '' END,
+            E'\n'
+        ) AS constants_text
+        FROM aegis.constant
+        WHERE registry_id = p_registry_id
+    )
+    SELECT COALESCE(constants_text, '') INTO v_constants FROM constants_agg;
+
+    -- Build TLA+ variables section
+    WITH vars_agg AS (
+        SELECT string_agg(
+            '    ' || name || ' : ' || type ||
+            CASE WHEN initial_value IS NOT NULL THEN ' = ' || initial_value::text ELSE '' END,
+            E'\n'
+        ) AS variables_text
+        FROM aegis.variable
+        WHERE registry_id = p_registry_id
+    )
+    SELECT COALESCE(variables_text, '') INTO v_variables FROM vars_agg;
+
+    -- Build TLA+ states section
+    WITH states_agg AS (
+        SELECT string_agg(
+            '    /\\ ' || name || E'\n' ||
+            COALESCE(array_to_string(
+                (SELECT array_agg('    /\\ ' || key || ' = ' || value::text)
+                 FROM jsonb_each_text(variable_assignments)), E'\n'), ''),
+            E'\n'
+        ) AS states_text
+        FROM aegis.state
+        WHERE registry_id = p_registry_id
+    )
+    SELECT COALESCE(states_text, '') INTO v_states FROM states_agg;
+
+    -- Build TLA+ transitions section
+    WITH transitions_agg AS (
+        SELECT string_agg(
+            '    ' || name || ' == ' || COALESCE(guard_expression, 'TRUE'),
+            E'\n    \\/\n'
+        ) AS transitions_text
+        FROM aegis.transition
+        WHERE registry_id = p_registry_id
+    )
+    SELECT COALESCE(transitions_text, '') INTO v_transitions FROM transitions_agg;
+
+    -- Build TLA+ invariants section
+    WITH invariants_agg AS (
+        SELECT string_agg(
+            '    /\\ ' || expression,
+            E'\n'
+        ) AS invariants_text
+        FROM aegis.invariant
+        WHERE registry_id = p_registry_id
+    )
+    SELECT COALESCE(invariants_text, '') INTO v_invariants FROM invariants_agg;
+
+    -- Build TLA+ properties section
+    WITH properties_agg AS (
+        SELECT string_agg(
+            '    ' || name || ' == ' ||
+            CASE WHEN operator IS NOT NULL THEN operator || expression ELSE expression END,
+            E'\n'
+        ) AS properties_text
+        FROM aegis.temporal_property
+        WHERE registry_id = p_registry_id
+    )
+    SELECT COALESCE(properties_text, '') INTO v_properties FROM properties_agg;
+
+    -- Assemble TLA+ specification
+    v_tla_text := '---- MODULE ' || v_registry_name || ' ----' || E'\n\n';
+
+    IF v_constants != '' THEN
+        v_tla_text := v_tla_text || 'CONSTANTS' || E'\n' || v_constants || E'\n\n';
+    END IF;
+
+    IF v_variables != '' THEN
+        v_tla_text := v_tla_text || 'VARIABLES' || E'\n' || v_variables || E'\n\n';
+    END IF;
+
+    IF v_states != '' THEN
+        v_tla_text := v_tla_text || 'States ==' || E'\n' || v_states || E'\n\n';
+    END IF;
+
+    IF v_transitions != '' THEN
+        v_tla_text := v_tla_text || 'Next ==' || E'\n' || v_transitions || E'\n\n';
+    END IF;
+
+    IF v_invariants != '' THEN
+        v_tla_text := v_tla_text || 'Invariant ==' || E'\n' || v_invariants || E'\n\n';
+    END IF;
+
+    IF v_properties != '' THEN
+        v_tla_text := v_tla_text || 'Properties ==' || E'\n' || v_properties || E'\n\n';
+    END IF;
+
+    v_tla_text := v_tla_text || '=========================================' || E'\n';
+
+    RETURN v_tla_text;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION generate_tla_plus(p_registry_id uuid); Type: COMMENT; Schema: aegis; Owner: -
+--
+
+COMMENT ON FUNCTION aegis.generate_tla_plus(p_registry_id uuid) IS 'Generates TLA+ specification from registry data';
+
+
+--
+-- Name: update_timestamp(); Type: FUNCTION; Schema: aegis; Owner: -
+--
+
+CREATE FUNCTION aegis.update_timestamp() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: validate_registry(uuid); Type: FUNCTION; Schema: aegis; Owner: -
+--
+
+CREATE FUNCTION aegis.validate_registry(p_registry_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_result JSONB;
+    v_errors JSONB[];
+    v_warnings JSONB[];
+    v_suggestions JSONB[];
+    v_state_count INTEGER;
+    v_transition_count INTEGER;
+    v_start_state_exists BOOLEAN;
+    v_end_state_exists BOOLEAN;
+BEGIN
+    v_errors := ARRAY[]::JSONB[];
+    v_warnings := ARRAY[]::JSONB[];
+    v_suggestions := ARRAY[]::JSONB[];
+
+    -- Check if registry exists
+    IF NOT EXISTS (SELECT 1 FROM aegis.registry WHERE id = p_registry_id) THEN
+        RETURN jsonb_build_object(
+            'is_valid', false,
+            'errors', jsonb_build_array('Registry not found'),
+            'warnings', '[]'::jsonb,
+            'suggestions', '[]'::jsonb
+        );
+    END IF;
+
+    -- Check for states
+    SELECT COUNT(*) INTO v_state_count
+    FROM aegis.state
+    WHERE registry_id = p_registry_id;
+
+    IF v_state_count = 0 THEN
+        v_warnings := v_warnings || jsonb_build_object(
+            'type', 'no_states',
+            'message', 'No states defined for this registry'
+        );
+        v_suggestions := v_suggestions || jsonb_build_object(
+            'type', 'add_states',
+            'message', 'Consider adding at least one initial state'
+        );
+    END IF;
+
+    -- Check for initial state
+    SELECT EXISTS (
+        SELECT 1 FROM aegis.state
+        WHERE registry_id = p_registry_id AND is_initial = true
+    ) INTO v_start_state_exists;
+
+    IF NOT v_start_state_exists AND v_state_count > 0 THEN
+        v_warnings := v_warnings || jsonb_build_object(
+            'type', 'no_initial_state',
+            'message', 'No initial state marked'
+        );
+        v_suggestions := v_suggestions || jsonb_build_object(
+            'type', 'mark_initial',
+            'message', 'Mark one state as initial'
+        );
+    END IF;
+
+    -- Check for terminal state
+    SELECT EXISTS (
+        SELECT 1 FROM aegis.state
+        WHERE registry_id = p_registry_id AND is_terminal = true
+    ) INTO v_end_state_exists;
+
+    IF NOT v_end_state_exists AND v_state_count > 1 THEN
+        v_warnings := v_warnings || jsonb_build_object(
+            'type', 'no_terminal_state',
+            'message', 'No terminal state marked'
+        );
+        v_suggestions := v_suggestions || jsonb_build_object(
+            'type', 'mark_terminal',
+            'message', 'Consider marking a terminal state'
+        );
+    END IF;
+
+    -- Check for transitions
+    SELECT COUNT(*) INTO v_transition_count
+    FROM aegis.transition
+    WHERE registry_id = p_registry_id;
+
+    IF v_transition_count = 0 AND v_state_count > 1 THEN
+        v_warnings := v_warnings || jsonb_build_object(
+            'type', 'no_transitions',
+            'message', 'No transitions defined between states'
+        );
+        v_suggestions := v_suggestions || jsonb_build_object(
+            'type', 'add_transitions',
+            'message', 'Add transitions between states to enable state changes'
+        );
+    END IF;
+
+    -- Check for unreachable states
+    IF v_state_count > 1 AND v_transition_count > 0 THEN
+        -- This is a simplified check; in production, would do reachability analysis
+        v_warnings := v_warnings || jsonb_build_object(
+            'type', 'reachability',
+            'message', 'Consider performing full reachability analysis'
+        );
+    END IF;
+
+    -- Build result
+    v_result := jsonb_build_object(
+        'is_valid', true,
+        'errors', COALESCE(array_to_json(v_errors)::jsonb, '[]'::jsonb),
+        'warnings', COALESCE(array_to_json(v_warnings)::jsonb, '[]'::jsonb),
+        'suggestions', COALESCE(array_to_json(v_suggestions)::jsonb, '[]'::jsonb),
+        'summary', jsonb_build_object(
+            'state_count', v_state_count,
+            'transition_count', v_transition_count,
+            'has_initial_state', v_start_state_exists,
+            'has_terminal_state', v_end_state_exists
+        )
+    );
+
+    -- Store validation result
+    INSERT INTO aegis.validation_result (
+        registry_id, is_valid, errors, warnings, suggestions
+    ) VALUES (
+        p_registry_id,
+        (v_result->>'is_valid')::BOOLEAN,
+        v_result->'errors',
+        v_result->'warnings',
+        v_result->'suggestions'
+    );
+
+    RETURN v_result;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION validate_registry(p_registry_id uuid); Type: COMMENT; Schema: aegis; Owner: -
+--
+
+COMMENT ON FUNCTION aegis.validate_registry(p_registry_id uuid) IS 'Validates a state machine registry and returns validation results';
+
+
+--
+-- Name: validate_wind_bridge_mapping(); Type: FUNCTION; Schema: aegis; Owner: -
+--
+
+CREATE FUNCTION aegis.validate_wind_bridge_mapping() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_tackle_task_id uuid;
+    v_source_state_id uuid;
+    v_mapped_task_id uuid;
+    v_revision_model jsonb;
+BEGIN
+    SELECT t.tackle_task_id INTO v_tackle_task_id
+    FROM wind.tasks t WHERE t.id = NEW.wind_task_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'wind task % does not exist', NEW.wind_task_id USING ERRCODE = 'foreign_key_violation';
+    END IF;
+
+    IF TG_TABLE_NAME = 'wind_task_mapping' THEN
+        IF NEW.is_check_only IS DISTINCT FROM (v_tackle_task_id IS NULL) THEN
+            RAISE EXCEPTION 'is_check_only for Wind task % does not match tackle_task_id nullability', NEW.wind_task_id
+                USING ERRCODE = 'check_violation';
+        END IF;
+        SELECT model INTO v_revision_model
+        FROM aegis.registry_revision
+        WHERE id = NEW.registry_revision_id AND registry_id = NEW.registry_id;
+        IF v_revision_model IS NULL OR NOT (v_revision_model->'states' @> jsonb_build_array(jsonb_build_object('id', NEW.state_id))) THEN
+            RAISE EXCEPTION 'state % is not present in registry revision %', NEW.state_id, NEW.registry_revision_id
+                USING ERRCODE = 'check_violation';
+        END IF;
+    ELSE
+        SELECT from_state_id INTO v_source_state_id
+        FROM aegis.transition
+        WHERE id = NEW.transition_id AND registry_id = NEW.registry_id;
+        SELECT wind_task_id INTO v_mapped_task_id
+        FROM aegis.wind_task_mapping
+        WHERE registry_id = NEW.registry_id
+          AND registry_revision_id = NEW.registry_revision_id
+          AND state_id = v_source_state_id;
+        IF v_mapped_task_id IS NULL OR v_mapped_task_id <> NEW.wind_task_id THEN
+            RAISE EXCEPTION 'transition % outcome task % does not match source state % mapping',
+                NEW.transition_id, NEW.wind_task_id, v_source_state_id USING ERRCODE = 'check_violation';
+        END IF;
+        SELECT model INTO v_revision_model
+        FROM aegis.registry_revision
+        WHERE id = NEW.registry_revision_id AND registry_id = NEW.registry_id;
+        IF v_revision_model IS NULL OR NOT (v_revision_model->'transitions' @> jsonb_build_array(jsonb_build_object('id', NEW.transition_id))) THEN
+            RAISE EXCEPTION 'transition % is not present in registry revision %', NEW.transition_id, NEW.registry_revision_id
+                USING ERRCODE = 'check_violation';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: validate_wind_compilation(); Type: FUNCTION; Schema: aegis; Owner: -
+--
+
+CREATE FUNCTION aegis.validate_wind_compilation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_revision aegis.registry_revision%ROWTYPE;
+    v_version_number integer;
+BEGIN
+    SELECT * INTO v_revision
+    FROM aegis.registry_revision
+    WHERE id = NEW.registry_revision_id AND registry_id = NEW.registry_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'registry revision % is not owned by registry %', NEW.registry_revision_id, NEW.registry_id
+            USING ERRCODE = 'foreign_key_violation';
+    END IF;
+    IF NEW.source_digest <> v_revision.source_digest OR NEW.model_digest <> v_revision.model_digest THEN
+        RAISE EXCEPTION 'compilation digests do not match registry revision %', NEW.registry_revision_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT version_number INTO v_version_number
+    FROM wind.workflow_versions
+    WHERE id = NEW.wind_workflow_version_id AND workflow_id = NEW.wind_workflow_id;
+    IF NEW.wind_workflow_version_number IS NULL THEN
+        NEW.wind_workflow_version_number := v_version_number;
+    ELSIF NEW.wind_workflow_version_number <> v_version_number THEN
+        RAISE EXCEPTION 'workflow version number does not match Wind workflow version %', NEW.wind_workflow_version_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: add_comment(uuid, uuid, text, uuid, text, text); Type: FUNCTION; Schema: assembly; Owner: -
+--
+
+CREATE FUNCTION assembly.add_comment(p_thread_id uuid, p_user_id uuid, p_body text, p_parent_id uuid DEFAULT NULL::uuid, p_role text DEFAULT NULL::text, p_model text DEFAULT NULL::text) RETURNS TABLE(id uuid, role text, model text)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_post_id uuid;
+    v_root_post_id uuid;
+BEGIN
+    -- Validate thread exists and is not expired
+    SELECT p.id INTO v_post_id
+    FROM assembly.posts p
+    JOIN assembly.forums f ON f.id = p.forum_uuid AND (f.expiration_dt = 'infinity'::timestamptz OR f.expiration_dt > now())
+    WHERE p.id = p_thread_id
+      AND (p.expiration_dt = 'infinity'::timestamptz OR p.expiration_dt > now())
+    LIMIT 1;
+
+    IF v_post_id IS NULL THEN
+        RAISE EXCEPTION 'Thread not found' USING ERRCODE = 'P0002';
+    END IF;
+
+    -- If parentId provided, validate it belongs to this thread
+    IF p_parent_id IS NOT NULL THEN
+        WITH RECURSIVE chain AS (
+            SELECT c.id, c.parent_id, c.post_id FROM assembly.comments c WHERE c.id = p_parent_id
+            UNION ALL
+            SELECT c.id, c.parent_id, c.post_id
+            FROM assembly.comments c
+            JOIN chain cc ON c.id = cc.parent_id
+        )
+        SELECT post_id INTO v_root_post_id FROM chain WHERE post_id IS NOT NULL LIMIT 1;
+
+        IF v_root_post_id IS NULL OR v_root_post_id != v_post_id THEN
+            RAISE EXCEPTION 'Parent comment not found or does not belong to this thread' USING ERRCODE = 'P0001';
+        END IF;
+
+        -- For threaded replies, null out post_id (comment attaches to parent)
+        v_post_id := NULL;
+    END IF;
+
+    RETURN QUERY
+    INSERT INTO assembly.comments (id, post_id, parent_id, text, posted_by_id, role, model, created)
+    VALUES (gen_random_uuid(), v_post_id, p_parent_id, p_body, p_user_id, p_role, p_model, now())
+    RETURNING assembly.comments.id, assembly.comments.role, assembly.comments.model;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION add_comment(p_thread_id uuid, p_user_id uuid, p_body text, p_parent_id uuid, p_role text, p_model text); Type: COMMENT; Schema: assembly; Owner: -
+--
+
+COMMENT ON FUNCTION assembly.add_comment(p_thread_id uuid, p_user_id uuid, p_body text, p_parent_id uuid, p_role text, p_model text) IS 'Add comment with thread/parent validation. Replaces forums.js:278-317 inline logic.';
+
+
+--
+-- Name: create_forum(text, text, text); Type: FUNCTION; Schema: assembly; Owner: -
+--
+
+CREATE FUNCTION assembly.create_forum(p_name text, p_slug text, p_description text DEFAULT NULL::text) RETURNS TABLE(id uuid, name text, slug text, description text, sort_order integer)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    next_order integer;
+BEGIN
+    SELECT COALESCE(MAX(f.sort_order), -1) + 1 INTO next_order
+    FROM assembly.forums f
+    WHERE f.expiration_dt = 'infinity'::timestamptz OR f.expiration_dt > now();
+
+    RETURN QUERY
+    INSERT INTO assembly.forums (id, name, slug, description, sort_order)
+    VALUES (gen_random_uuid(), p_name, p_slug, p_description, next_order)
+    RETURNING assembly.forums.id, assembly.forums.name::text, assembly.forums.slug::text, assembly.forums.description, assembly.forums.sort_order;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION create_forum(p_name text, p_slug text, p_description text); Type: COMMENT; Schema: assembly; Owner: -
+--
+
+COMMENT ON FUNCTION assembly.create_forum(p_name text, p_slug text, p_description text) IS 'Create a forum with auto-assigned sort_order. Replaces forums.js:354-357 inline logic.';
+
+
+--
+-- Name: create_thread(text, uuid, text, text, text, text, text); Type: FUNCTION; Schema: assembly; Owner: -
+--
+
+CREATE FUNCTION assembly.create_thread(p_forum_slug text, p_user_id uuid, p_title text, p_body text, p_source_url text DEFAULT NULL::text, p_role text DEFAULT NULL::text, p_model text DEFAULT NULL::text) RETURNS TABLE(id uuid, title text, role text, model text)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_forum_id uuid;
+BEGIN
+    SELECT f.id INTO v_forum_id
+    FROM assembly.forums f
+    WHERE f.slug = p_forum_slug
+      AND (f.expiration_dt = 'infinity'::timestamptz OR f.expiration_dt > now())
+    LIMIT 1;
+
+    IF v_forum_id IS NULL THEN
+        RAISE EXCEPTION 'Forum not found' USING ERRCODE = 'P0002';
+    END IF;
+
+    RETURN QUERY
+    INSERT INTO assembly.posts (id, forum_uuid, posted_by_id, title, text, source_url, role, model, created)
+    VALUES (gen_random_uuid(), v_forum_id, p_user_id, p_title, p_body, p_source_url, p_role, p_model, now())
+    RETURNING assembly.posts.id, assembly.posts.title::text, assembly.posts.role, assembly.posts.model;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION create_thread(p_forum_slug text, p_user_id uuid, p_title text, p_body text, p_source_url text, p_role text, p_model text); Type: COMMENT; Schema: assembly; Owner: -
+--
+
+COMMENT ON FUNCTION assembly.create_thread(p_forum_slug text, p_user_id uuid, p_title text, p_body text, p_source_url text, p_role text, p_model text) IS 'Create a thread with forum existence check. Replaces forums.js:107-127 inline logic.';
+
+
+--
+-- Name: escape_like(text); Type: FUNCTION; Schema: assembly; Owner: -
+--
+
+CREATE FUNCTION assembly.escape_like(p_input text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  SELECT replace(replace(replace(p_input, '\', '\\'), '%', '\%'), '_', '\_');
+$$;
+
+
+--
+-- Name: FUNCTION escape_like(p_input text); Type: COMMENT; Schema: assembly; Owner: -
+--
+
+COMMENT ON FUNCTION assembly.escape_like(p_input text) IS 'Escape special chars for LIKE/ILIKE patterns. Replaces JS escapeLike in search.js.';
+
+
+--
+-- Name: link_forum_agenda(uuid, uuid, text); Type: FUNCTION; Schema: assembly; Owner: -
+--
+
+CREATE FUNCTION assembly.link_forum_agenda(p_forum_id uuid, p_agenda_id uuid, p_label text DEFAULT NULL::text) RETURNS TABLE(forum_id uuid, agenda_id uuid, label text, created_at timestamp with time zone)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RETURN QUERY
+    INSERT INTO assembly.forum_agendas (forum_id, agenda_id, label)
+    VALUES (p_forum_id, p_agenda_id, p_label)
+    ON CONFLICT (forum_id, agenda_id)
+    DO UPDATE SET label = EXCLUDED.label, expiration_dt = 'infinity'
+    RETURNING assembly.forum_agendas.forum_id, assembly.forum_agendas.agenda_id, assembly.forum_agendas.label, assembly.forum_agendas.created_at;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION link_forum_agenda(p_forum_id uuid, p_agenda_id uuid, p_label text); Type: COMMENT; Schema: assembly; Owner: -
+--
+
+COMMENT ON FUNCTION assembly.link_forum_agenda(p_forum_id uuid, p_agenda_id uuid, p_label text) IS 'Link forum to agenda with upsert + expiration revival. Replaces bridges.js:13-19.';
+
+
+--
+-- Name: link_post_artifact(uuid, text, uuid, text); Type: FUNCTION; Schema: assembly; Owner: -
+--
+
+CREATE FUNCTION assembly.link_post_artifact(p_post_id uuid, p_artifact_type text, p_artifact_id uuid, p_label text DEFAULT NULL::text) RETURNS TABLE(post_id uuid, artifact_type text, artifact_id uuid, label text, created_at timestamp with time zone)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RETURN QUERY
+    INSERT INTO assembly.post_artifact_refs (post_id, artifact_type, artifact_id, label)
+    VALUES (p_post_id, p_artifact_type, p_artifact_id, p_label)
+    ON CONFLICT (post_id, artifact_type, artifact_id)
+    DO UPDATE SET label = EXCLUDED.label, expiration_dt = 'infinity'
+    RETURNING assembly.post_artifact_refs.post_id, assembly.post_artifact_refs.artifact_type, assembly.post_artifact_refs.artifact_id, assembly.post_artifact_refs.label, assembly.post_artifact_refs.created_at;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION link_post_artifact(p_post_id uuid, p_artifact_type text, p_artifact_id uuid, p_label text); Type: COMMENT; Schema: assembly; Owner: -
+--
+
+COMMENT ON FUNCTION assembly.link_post_artifact(p_post_id uuid, p_artifact_type text, p_artifact_id uuid, p_label text) IS 'Link post to artifact with upsert + expiration revival. Replaces bridges.js:63-69.';
+
+
+--
+-- Name: move_thread(uuid, uuid); Type: FUNCTION; Schema: assembly; Owner: -
+--
+
+CREATE FUNCTION assembly.move_thread(p_post_id uuid, p_forum_id uuid) RETURNS TABLE(id uuid, title text, forum_uuid uuid, created timestamp without time zone, updated timestamp without time zone, text text, url text, rating bigint, posted_by_id uuid, source_url text)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_forum_exists boolean;
+BEGIN
+    SELECT EXISTS(
+        SELECT 1 FROM assembly.forums f
+        WHERE f.id = p_forum_id
+          AND (f.expiration_dt = 'infinity'::timestamptz OR f.expiration_dt > now())
+    ) INTO v_forum_exists;
+
+    IF NOT v_forum_exists THEN
+        RAISE EXCEPTION 'Destination forum not found' USING ERRCODE = 'P0002';
+    END IF;
+
+    RETURN QUERY
+    UPDATE assembly.posts p
+    SET forum_uuid = p_forum_id, updated = now()
+    WHERE p.id = p_post_id
+      AND (p.expiration_dt = 'infinity'::timestamptz OR p.expiration_dt > now())
+    RETURNING p.id, p.title::text, p.forum_uuid, p.created, p.updated, p.text, p.url::text, p.rating, p.posted_by_id, p.source_url::text;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Post not found' USING ERRCODE = 'P0002';
+    END IF;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION move_thread(p_post_id uuid, p_forum_id uuid); Type: COMMENT; Schema: assembly; Owner: -
+--
+
+COMMENT ON FUNCTION assembly.move_thread(p_post_id uuid, p_forum_id uuid) IS 'Move thread to another forum with expiration guard. Replaces forums.js:431-439.';
+
+
+--
+-- Name: reorder_forums(uuid[]); Type: FUNCTION; Schema: assembly; Owner: -
+--
+
+CREATE FUNCTION assembly.reorder_forums(p_ordered_ids uuid[]) RETURNS integer
+    LANGUAGE sql
+    AS $$
+    WITH ordered AS (
+        SELECT id, (ordinality - 1)::integer AS sort_order
+        FROM unnest(p_ordered_ids) WITH ORDINALITY AS t(id, ordinality)
+    )
+    UPDATE assembly.forums AS f
+    SET sort_order = ordered.sort_order
+    FROM ordered
+    WHERE f.id = ordered.id;
+    SELECT array_length(p_ordered_ids, 1);
+$$;
+
+
+--
+-- Name: FUNCTION reorder_forums(p_ordered_ids uuid[]); Type: COMMENT; Schema: assembly; Owner: -
+--
+
+COMMENT ON FUNCTION assembly.reorder_forums(p_ordered_ids uuid[]) IS 'Reorder forums by UUID array. Index 1 = sort_order 0. Replaces forums.js:400-420.';
+
+
+--
+-- Name: search_comments(text, integer); Type: FUNCTION; Schema: assembly; Owner: -
+--
+
+CREATE FUNCTION assembly.search_comments(q text, lim integer DEFAULT 20) RETURNS TABLE(id uuid, body text, thread_id uuid, thread_title text, forum_slug text)
+    LANGUAGE sql
+    AS $$
+    SELECT c.id, c.text AS body, p.id AS thread_id, p.title AS thread_title, f.slug AS forum_slug
+    FROM assembly.comments c
+    JOIN assembly.posts p ON p.id = c.post_id AND (p.expiration_dt = 'infinity'::timestamptz OR p.expiration_dt > now())
+    JOIN assembly.forums f ON f.id = p.forum_uuid
+    WHERE c.text ILIKE ('%' || assembly.escape_like(q) || '%') ESCAPE '\'
+      AND (c.expiration_dt = 'infinity'::timestamptz OR c.expiration_dt > now())
+    LIMIT lim;
+$$;
+
+
+--
+-- Name: FUNCTION search_comments(q text, lim integer); Type: COMMENT; Schema: assembly; Owner: -
+--
+
+COMMENT ON FUNCTION assembly.search_comments(q text, lim integer) IS 'Search comments by body text with ILIKE. Replaces search.js comments query.';
+
+
+--
+-- Name: search_forums(text, integer); Type: FUNCTION; Schema: assembly; Owner: -
+--
+
+CREATE FUNCTION assembly.search_forums(q text, lim integer DEFAULT 20) RETURNS TABLE(id uuid, name text, slug text, description text)
+    LANGUAGE sql
+    AS $$
+    SELECT f.id, f.name, f.slug, f.description
+    FROM assembly.forums f
+    WHERE (f.name ILIKE ('%' || assembly.escape_like(q) || '%') ESCAPE '\'
+        OR f.description ILIKE ('%' || assembly.escape_like(q) || '%') ESCAPE '\'
+        OR f.slug ILIKE ('%' || assembly.escape_like(q) || '%') ESCAPE '\')
+      AND (f.expiration_dt = 'infinity'::timestamptz OR f.expiration_dt > now())
+    LIMIT lim;
+$$;
+
+
+--
+-- Name: FUNCTION search_forums(q text, lim integer); Type: COMMENT; Schema: assembly; Owner: -
+--
+
+COMMENT ON FUNCTION assembly.search_forums(q text, lim integer) IS 'Search forums by name/description/slug with ILIKE. Replaces search.js forum query.';
+
+
+--
+-- Name: search_posts(text, integer); Type: FUNCTION; Schema: assembly; Owner: -
+--
+
+CREATE FUNCTION assembly.search_posts(q text, lim integer DEFAULT 20) RETURNS TABLE(id uuid, title text, body text, forum_slug text)
+    LANGUAGE sql
+    AS $$
+    SELECT p.id, p.title, p.text AS body, f.slug AS forum_slug
+    FROM assembly.posts p
+    JOIN assembly.forums f ON f.id = p.forum_uuid
+    WHERE (p.title ILIKE ('%' || assembly.escape_like(q) || '%') ESCAPE '\'
+        OR p.text ILIKE ('%' || assembly.escape_like(q) || '%') ESCAPE '\')
+      AND (p.expiration_dt = 'infinity'::timestamptz OR p.expiration_dt > now())
+    LIMIT lim;
+$$;
+
+
+--
+-- Name: FUNCTION search_posts(q text, lim integer); Type: COMMENT; Schema: assembly; Owner: -
+--
+
+COMMENT ON FUNCTION assembly.search_posts(q text, lim integer) IS 'Search posts by title/body with ILIKE. Replaces search.js posts query.';
+
+
+--
+-- Name: soft_delete_comment(uuid); Type: FUNCTION; Schema: assembly; Owner: -
+--
+
+CREATE FUNCTION assembly.soft_delete_comment(p_comment_id uuid) RETURNS TABLE(id uuid)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RETURN QUERY
+    UPDATE assembly.comments
+    SET expiration_dt = now()
+    WHERE assembly.comments.id = p_comment_id
+      AND (assembly.comments.expiration_dt = 'infinity'::timestamptz OR assembly.comments.expiration_dt > now())
+    RETURNING assembly.comments.id;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Comment not found' USING ERRCODE = 'P0002';
+    END IF;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION soft_delete_comment(p_comment_id uuid); Type: COMMENT; Schema: assembly; Owner: -
+--
+
+COMMENT ON FUNCTION assembly.soft_delete_comment(p_comment_id uuid) IS 'Soft-expire a comment. Replaces forums.js:491 inline DELETE→UPDATE.';
+
+
+--
+-- Name: soft_delete_thread(uuid); Type: FUNCTION; Schema: assembly; Owner: -
+--
+
+CREATE FUNCTION assembly.soft_delete_thread(p_thread_id uuid) RETURNS TABLE(id uuid)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RETURN QUERY
+    UPDATE assembly.posts
+    SET expiration_dt = now()
+    WHERE assembly.posts.id = p_thread_id
+      AND (assembly.posts.expiration_dt = 'infinity'::timestamptz OR assembly.posts.expiration_dt > now())
+    RETURNING assembly.posts.id;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Thread not found' USING ERRCODE = 'P0002';
+    END IF;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION soft_delete_thread(p_thread_id uuid); Type: COMMENT; Schema: assembly; Owner: -
+--
+
+COMMENT ON FUNCTION assembly.soft_delete_thread(p_thread_id uuid) IS 'Soft-expire a thread. Replaces forums.js:444 inline DELETE→UPDATE.';
+
+
+--
+-- Name: unlink_forum_agenda(uuid, uuid); Type: FUNCTION; Schema: assembly; Owner: -
+--
+
+CREATE FUNCTION assembly.unlink_forum_agenda(p_forum_id uuid, p_agenda_id uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    UPDATE assembly.forum_agendas
+    SET expiration_dt = now()
+    WHERE forum_id = p_forum_id
+      AND agenda_id = p_agenda_id
+      AND (expiration_dt = 'infinity'::timestamptz OR expiration_dt > now());
+END;
+$$;
+
+
+--
+-- Name: FUNCTION unlink_forum_agenda(p_forum_id uuid, p_agenda_id uuid); Type: COMMENT; Schema: assembly; Owner: -
+--
+
+COMMENT ON FUNCTION assembly.unlink_forum_agenda(p_forum_id uuid, p_agenda_id uuid) IS 'Soft-expire a forum-agenda link. Replaces bridges.js:28.';
+
+
+--
+-- Name: unlink_post_artifact(uuid, text, uuid); Type: FUNCTION; Schema: assembly; Owner: -
+--
+
+CREATE FUNCTION assembly.unlink_post_artifact(p_post_id uuid, p_artifact_type text, p_artifact_id uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    UPDATE assembly.post_artifact_refs
+    SET expiration_dt = now()
+    WHERE post_id = p_post_id
+      AND artifact_type = p_artifact_type
+      AND artifact_id = p_artifact_id
+      AND (expiration_dt = 'infinity'::timestamptz OR expiration_dt > now());
+END;
+$$;
+
+
+--
+-- Name: FUNCTION unlink_post_artifact(p_post_id uuid, p_artifact_type text, p_artifact_id uuid); Type: COMMENT; Schema: assembly; Owner: -
+--
+
+COMMENT ON FUNCTION assembly.unlink_post_artifact(p_post_id uuid, p_artifact_type text, p_artifact_id uuid) IS 'Soft-expire a post-artifact link. Replaces bridges.js:78.';
 
 
 --
@@ -430,6 +1550,60 @@ $$;
 
 
 --
+-- Name: notify_comment_created(); Type: FUNCTION; Schema: duality; Owner: -
+--
+
+CREATE FUNCTION duality.notify_comment_created() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  thread_forum_slug TEXT;
+BEGIN
+  -- Resolve the post's forum so the subscriber can filter by forum
+  -- without an extra query. assembly.posts.forum_uuid → assembly.forums.id.
+  SELECT f.slug INTO thread_forum_slug
+    FROM assembly.posts p
+    JOIN assembly.forums f ON f.id = p.forum_uuid
+   WHERE p.id = NEW.post_id;
+
+  PERFORM pg_notify('kernel_transition',
+    json_build_object(
+      'event_type', 'assembly.comment.created',
+      'aggregate_id', NEW.id,
+      'payload', json_build_object(
+        'thread_id',   NEW.post_id,
+        'comment_id',  NEW.id,
+        'forum_slug',  thread_forum_slug,
+        'role',        NEW.role,
+        'posted_by_id',NEW.posted_by_id,
+        'parent_id',   NEW.parent_id,
+        'created_at',  NEW.created
+      )
+    )::text
+  );
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: session_events_notify(); Type: FUNCTION; Schema: duality; Owner: -
+--
+
+CREATE FUNCTION duality.session_events_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  PERFORM pg_notify(
+    'duality_session_events',
+    json_build_object('thread_id', NEW.thread_id::text, 'seq', NEW.seq)::text
+  );
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: check_attempt_consistency(); Type: FUNCTION; Schema: execution; Owner: -
 --
 
@@ -661,6 +1835,606 @@ BEGIN
     WHERE l.status = 'ACTIVE'
       AND l.expires_at < NOW()
     RETURNING l.id, l.request_id, l.executor_id, l.expires_at;
+END;
+$$;
+
+
+--
+-- Name: project_assessment_completed(); Type: FUNCTION; Schema: kernel; Owner: -
+--
+
+CREATE FUNCTION kernel.project_assessment_completed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.event_type = 'assessment.completed' THEN
+        INSERT INTO nebula.assessments (
+            id, observation_id, outcome, confidence,
+            impact_scope, open_questions, analysis_detail, created_at
+        ) VALUES (
+            NEW.aggregate_id::uuid,
+            (NEW.payload->>'observation_id')::uuid,
+            NEW.payload->>'outcome',
+            (NEW.payload->>'confidence')::numeric,
+            COALESCE(NEW.payload->'impact_scope', '{}'::jsonb),
+            COALESCE(NEW.payload->'open_questions', '[]'::jsonb),
+            NEW.payload->>'analysis_detail',
+            NEW.timestamp
+        )
+        ON CONFLICT (id) DO NOTHING;
+
+        UPDATE nebula.observations
+        SET assessed = true
+        WHERE id = (NEW.payload->>'observation_id')::uuid;
+    END IF;
+    RETURN NEW;
+END; $$;
+
+
+--
+-- Name: project_observation_captured(); Type: FUNCTION; Schema: kernel; Owner: -
+--
+
+CREATE FUNCTION kernel.project_observation_captured() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.event_type = 'observation.captured' THEN
+        INSERT INTO nebula.observations (
+            id, trigger_type, source_artifact_type, source_artifact_id,
+            payload, assessed, created_at
+        ) VALUES (
+            NEW.aggregate_id::uuid,
+            NEW.payload->>'trigger_type',
+            NEW.payload->>'source_artifact_type',
+            (NEW.payload->>'source_artifact_id')::uuid,
+            COALESCE(NEW.payload->'details', '{}'::jsonb),
+            false,
+            NEW.timestamp
+        )
+        ON CONFLICT (id) DO NOTHING;
+    END IF;
+    RETURN NEW;
+END; $$;
+
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: receipt; Type: TABLE; Schema: kernel; Owner: -
+--
+
+CREATE TABLE kernel.receipt (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    receipt_type text NOT NULL,
+    receipt_hash text NOT NULL,
+    event_id uuid NOT NULL,
+    issued_by text NOT NULL,
+    plan_number text,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT receipt_receipt_type_check CHECK ((receipt_type = ANY (ARRAY['proposed'::text, 'plan_create'::text, 'planning'::text, 'implementation'::text, 'review_pass'::text, 'review_reject'::text, 'transition_committed'::text, 'transition_rejected'::text, 'intent_registered'::text, 'artifact_registered'::text, 'policy_violated'::text, 'notification_sent'::text])))
+);
+
+
+--
+-- Name: TABLE receipt; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON TABLE kernel.receipt IS 'First-class receipt records. Every receipt is a verifiable, content-addressed
+     record that a specific event was committed. Receipts have independent identity
+     and lifecycle — they can be queried, linked to plans, and used as proof of
+     commitment outside the kernel.';
+
+
+--
+-- Name: COLUMN receipt.id; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.receipt.id IS 'Unique receipt identifier (UUID v4).';
+
+
+--
+-- Name: COLUMN receipt.receipt_type; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.receipt.receipt_type IS 'Type of receipt — identifies the lifecycle event being certified
+     (proposed, plan_create, transition_committed, etc.).';
+
+
+--
+-- Name: COLUMN receipt.receipt_hash; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.receipt.receipt_hash IS 'SHA-256 content hash of the receipt payload for integrity verification.';
+
+
+--
+-- Name: COLUMN receipt.event_id; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.receipt.event_id IS 'The transition event this receipt certifies. FK to kernel.transition_event.';
+
+
+--
+-- Name: COLUMN receipt.issued_by; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.receipt.issued_by IS 'Who issued this receipt — agent role (architect, planner, builder)
+     or system (kernel, conduit).';
+
+
+--
+-- Name: COLUMN receipt.plan_number; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.receipt.plan_number IS 'Optional reference to a conduit implementation plan number (e.g., 0053).';
+
+
+--
+-- Name: COLUMN receipt.metadata; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.receipt.metadata IS 'Receipt-type-specific metadata — shape varies by receipt_type.';
+
+
+--
+-- Name: COLUMN receipt.created_at; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.receipt.created_at IS 'When the receipt was issued (not when the event was committed).';
+
+
+--
+-- Name: sys_issue_receipt(text, text, uuid, text, text, jsonb); Type: FUNCTION; Schema: kernel; Owner: -
+--
+
+CREATE FUNCTION kernel.sys_issue_receipt(p_receipt_type text, p_receipt_hash text, p_event_id uuid, p_issued_by text, p_plan_number text DEFAULT NULL::text, p_metadata jsonb DEFAULT '{}'::jsonb) RETURNS kernel.receipt
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_receipt kernel.receipt;
+BEGIN
+    -- ── Admission Phase ──
+    -- Structural checks (policy-based checks can be added later)
+
+    IF length(trim(p_receipt_hash)) = 0 THEN
+        RAISE EXCEPTION 'RECEIPT_DENIED: receipt_hash is required'
+            USING HINT = 'Every receipt must have a content hash';
+    END IF;
+
+    IF length(trim(p_issued_by)) = 0 THEN
+        RAISE EXCEPTION 'RECEIPT_DENIED: issued_by is required'
+            USING HINT = 'Every receipt must specify an issuer';
+    END IF;
+
+    -- Verify the referenced event exists
+    IF NOT EXISTS (SELECT 1 FROM kernel.transition_event
+                   WHERE event_id = p_event_id) THEN
+        RAISE EXCEPTION 'RECEIPT_DENIED: event % does not exist', p_event_id
+            USING HINT = 'Cannot issue a receipt for a non-existent event';
+    END IF;
+
+    -- ── Commit Phase ──
+    INSERT INTO kernel.receipt (
+        receipt_type,
+        receipt_hash,
+        event_id,
+        issued_by,
+        plan_number,
+        metadata
+    ) VALUES (
+        p_receipt_type,
+        p_receipt_hash,
+        p_event_id,
+        p_issued_by,
+        p_plan_number,
+        p_metadata
+    )
+    RETURNING * INTO v_receipt;
+
+    -- ── Link back to the transition_event ──
+    UPDATE kernel.transition_event
+    SET receipt_id = v_receipt.id
+    WHERE event_id = p_event_id;
+
+    RETURN v_receipt;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION sys_issue_receipt(p_receipt_type text, p_receipt_hash text, p_event_id uuid, p_issued_by text, p_plan_number text, p_metadata jsonb); Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON FUNCTION kernel.sys_issue_receipt(p_receipt_type text, p_receipt_hash text, p_event_id uuid, p_issued_by text, p_plan_number text, p_metadata jsonb) IS 'Sole write surface for the receipt table. Issues a receipt linked to
+     an existing transition event and back-links the event to the receipt.
+
+     Args:
+       p_receipt_type: Type of receipt (proposed, plan_create, etc.)
+       p_receipt_hash: SHA-256 content hash for integrity verification
+       p_event_id:     The transition event this receipt certifies
+       p_issued_by:    Who issued this receipt (role or system)
+       p_plan_number:  Optional conduit plan reference
+       p_metadata:     Receipt-type-specific metadata (JSONB)
+
+     Returns: the committed receipt row.
+     Raises:  exception if validation fails.';
+
+
+--
+-- Name: transition_event; Type: TABLE; Schema: kernel; Owner: -
+--
+
+CREATE TABLE kernel.transition_event (
+    id bigint NOT NULL,
+    event_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    event_type kernel.event_type NOT NULL,
+    aggregate_type text NOT NULL,
+    aggregate_id text NOT NULL,
+    actor text NOT NULL,
+    authority text,
+    payload jsonb DEFAULT '{}'::jsonb NOT NULL,
+    receipt text,
+    causation_id uuid,
+    correlation_id uuid,
+    "timestamp" timestamp with time zone DEFAULT now() NOT NULL,
+    schema_version integer DEFAULT 1 NOT NULL,
+    receipt_id uuid,
+    CONSTRAINT ck_transition_event_receipt CHECK (((receipt IS NULL) OR (length(receipt) > 0)))
+);
+
+
+--
+-- Name: TABLE transition_event; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON TABLE kernel.transition_event IS 'Canonical append-only event log. Every state change is one row.
+     The runtime proposes; the kernel disposes.';
+
+
+--
+-- Name: COLUMN transition_event.event_id; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event.event_id IS 'Unique event identifier (UUID v4).';
+
+
+--
+-- Name: COLUMN transition_event.event_type; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event.event_type IS 'Type of event — identifies the lifecycle transition.';
+
+
+--
+-- Name: COLUMN transition_event.aggregate_type; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event.aggregate_type IS 'Domain entity type (e.g., intent, artifact, receipt, policy).';
+
+
+--
+-- Name: COLUMN transition_event.aggregate_id; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event.aggregate_id IS 'Identifier of the aggregate instance this event targets.';
+
+
+--
+-- Name: COLUMN transition_event.actor; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event.actor IS 'Entity that triggered this transition (agent, user, system).';
+
+
+--
+-- Name: COLUMN transition_event.authority; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event.authority IS 'Role or credential under which the actor operated (e.g., architect, planner).';
+
+
+--
+-- Name: COLUMN transition_event.payload; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event.payload IS 'Event-type-specific payload — shape varies by event_type.';
+
+
+--
+-- Name: COLUMN transition_event.receipt; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event.receipt IS 'Content-addressed hash of the event for integrity verification.';
+
+
+--
+-- Name: COLUMN transition_event.causation_id; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event.causation_id IS 'ID of the event that caused this event (causality chain).';
+
+
+--
+-- Name: COLUMN transition_event.correlation_id; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event.correlation_id IS 'Correlation ID grouping related events across aggregates.';
+
+
+--
+-- Name: COLUMN transition_event."timestamp"; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event."timestamp" IS 'When the event was committed (not when it was proposed).';
+
+
+--
+-- Name: COLUMN transition_event.schema_version; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event.schema_version IS 'Event schema version (additive only — never breaking).';
+
+
+--
+-- Name: COLUMN transition_event.receipt_id; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event.receipt_id IS 'Optional FK to kernel.receipt for full receipt lifecycle tracking.
+     The inline receipt TEXT hash remains for quick verification.';
+
+
+--
+-- Name: sys_transition(kernel.event_type, text, text, text, jsonb, text, text, uuid, uuid, timestamp with time zone); Type: FUNCTION; Schema: kernel; Owner: -
+--
+
+CREATE FUNCTION kernel.sys_transition(p_event_type kernel.event_type, p_aggregate_type text, p_aggregate_id text, p_actor text, p_payload jsonb DEFAULT '{}'::jsonb, p_authority text DEFAULT NULL::text, p_receipt text DEFAULT NULL::text, p_causation_id uuid DEFAULT NULL::uuid, p_correlation_id uuid DEFAULT NULL::uuid, p_timestamp timestamp with time zone DEFAULT now()) RETURNS kernel.transition_event
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_event kernel.transition_event;
+BEGIN
+    -- ── Admission Phase: authorization (extensible via trigger) ──
+    -- The BEFORE INSERT trigger on transition_event will perform
+    -- deeper authorization and validation checks.
+
+    -- ── Commit Phase: append the event ──
+    INSERT INTO kernel.transition_event (
+        event_id,
+        event_type,
+        aggregate_type,
+        aggregate_id,
+        actor,
+        authority,
+        payload,
+        receipt,
+        causation_id,
+        correlation_id,
+        timestamp,
+        schema_version
+    ) VALUES (
+        gen_random_uuid(),
+        p_event_type,
+        p_aggregate_type,
+        p_aggregate_id,
+        p_actor,
+        p_authority,
+        p_payload,
+        p_receipt,
+        p_causation_id,
+        p_correlation_id,
+        p_timestamp,
+        1
+    )
+    RETURNING * INTO v_event;
+
+    -- ── Reduction and Observation Phases are handled by triggers ──
+
+    RETURN v_event;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION sys_transition(p_event_type kernel.event_type, p_aggregate_type text, p_aggregate_id text, p_actor text, p_payload jsonb, p_authority text, p_receipt text, p_causation_id uuid, p_correlation_id uuid, p_timestamp timestamp with time zone); Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON FUNCTION kernel.sys_transition(p_event_type kernel.event_type, p_aggregate_type text, p_aggregate_id text, p_actor text, p_payload jsonb, p_authority text, p_receipt text, p_causation_id uuid, p_correlation_id uuid, p_timestamp timestamp with time zone) IS 'Sole write surface for the Semantic Kernel.
+     All state mutations — from any runtime, agent, or tool — must go through
+     this function. It enforces authorization (via BEFORE INSERT trigger),
+     appends to the immutable event log, and triggers NOTIFY so that Cascade
+     and projection workers can respond.
+
+     Args:
+       p_event_type:      Canonical event type
+       p_aggregate_type:  Domain entity type
+       p_aggregate_id:    Instance identifier
+       p_actor:           Who/what triggered this
+       p_payload:         Event-specific data (JSONB)
+       p_authority:       Role or credential (optional)
+       p_receipt:         Integrity hash (optional)
+       p_causation_id:    Parent event for causality chain (optional)
+       p_correlation_id:  Grouping ID for related events (optional)
+       p_timestamp:       Override timestamp (defaults to now())
+
+     Returns: the committed transition_event row.
+     Raises:  exception if authorization or validation fails (via trigger).';
+
+
+--
+-- Name: trg_authorize_receipt(); Type: FUNCTION; Schema: kernel; Owner: -
+--
+
+CREATE FUNCTION kernel.trg_authorize_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    -- Check 1: receipt_hash required
+    IF length(trim(NEW.receipt_hash)) = 0 THEN
+        RAISE EXCEPTION 'RECEIPT_DENIED: receipt_hash is required'
+            USING HINT = 'Every receipt must have a content hash';
+    END IF;
+
+    -- Check 2: issued_by required
+    IF length(trim(NEW.issued_by)) = 0 THEN
+        RAISE EXCEPTION 'RECEIPT_DENIED: issued_by is required'
+            USING HINT = 'Every receipt must specify an issuer';
+    END IF;
+
+    -- Check 3: referenced event must exist
+    IF NOT EXISTS (
+        SELECT 1 FROM kernel.transition_event
+        WHERE event_id = NEW.event_id
+    ) THEN
+        RAISE EXCEPTION 'RECEIPT_DENIED: event % does not exist', NEW.event_id
+            USING HINT = 'Cannot issue a receipt for a non-existent event';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trg_authorize_transition(); Type: FUNCTION; Schema: kernel; Owner: -
+--
+
+CREATE FUNCTION kernel.trg_authorize_transition() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE
+    v_rule  RECORD;
+    v_sql   TEXT;
+    v_pass  BOOLEAN;
+BEGIN
+    -- ──────────────────────────────────────────────────────────────────
+    --  Phase 1: Structural authorization (kernel invariants)
+    -- ──────────────────────────────────────────────────────────────────
+
+    -- Rule: Actor is required
+    IF NEW.actor IS NULL OR length(trim(NEW.actor)) = 0 THEN
+        RAISE EXCEPTION 'KERNEL_AUTH_DENIED: actor is required'
+            USING HINT = 'Every transition must specify an actor';
+    END IF;
+
+    -- Rule: Aggregate type and ID are required
+    IF NEW.aggregate_type IS NULL OR length(trim(NEW.aggregate_type)) = 0 THEN
+        RAISE EXCEPTION 'KERNEL_AUTH_DENIED: aggregate_type is required'
+            USING HINT = 'Every transition must specify an aggregate type';
+    END IF;
+
+    IF NEW.aggregate_id IS NULL OR length(trim(NEW.aggregate_id)) = 0 THEN
+        RAISE EXCEPTION 'KERNEL_AUTH_DENIED: aggregate_id is required'
+            USING HINT = 'Every transition must specify an aggregate instance';
+    END IF;
+
+    -- Rule: Past timestamps (5 sec clock skew tolerance)
+    IF NEW.timestamp > now() + INTERVAL '5 seconds' THEN
+        RAISE EXCEPTION 'KERNEL_AUTH_DENIED: future timestamp %', NEW.timestamp
+            USING HINT = 'Timestamps must not be in the future';
+    END IF;
+
+    -- ──────────────────────────────────────────────────────────────────
+    --  Phase 2: Policy rule evaluation (CUE-compiled)
+    -- ──────────────────────────────────────────────────────────────────
+    -- Evaluate all enabled rules matching this event type.
+    -- Rules with event_type = NULL apply to all transitions.
+
+    FOR v_rule IN
+        SELECT rule_name, compiled_sql, function_name, deny_reason
+        FROM kernel.policy_rule
+        WHERE enabled
+          AND (event_type IS NULL OR event_type = NEW.event_type)
+        ORDER BY priority ASC
+    LOOP
+        -- Dual eval path: function_name (compiled) or compiled_sql (dynamic)
+        IF v_rule.function_name IS NOT NULL THEN
+            -- Code-generated path: invoke the function with NEW as argument
+            v_sql := format('SELECT %s($1)', v_rule.function_name);
+            EXECUTE v_sql USING NEW INTO v_pass;
+        ELSE
+            -- Data-driven path: evaluate the compiled SQL predicate.
+            -- The predicate MUST reference the NEW record as $1.
+            -- Examples: "($1).authority IS NOT NULL"
+            --           "($1).receipt IS NOT NULL AND length(trim(($1).receipt)) > 0"
+            v_sql := format('SELECT %s', v_rule.compiled_sql);
+            EXECUTE v_sql USING NEW INTO v_pass;
+        END IF;
+
+        IF NOT v_pass OR v_pass IS NULL THEN
+            RAISE EXCEPTION 'KERNEL_POLICY_DENIED: %', v_rule.deny_reason
+                USING HINT = format('Policy rule "%s" rejected this transition',
+                           v_rule.rule_name);
+        END IF;
+    END LOOP;
+
+    RETURN NEW;
+END;
+$_$;
+
+
+--
+-- Name: FUNCTION trg_authorize_transition(); Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON FUNCTION kernel.trg_authorize_transition() IS 'BEFORE INSERT trigger: authorizes every transition before commit.
+     Phase 1 enforces structural invariants (actor, aggregate_type,
+     aggregate_id, timestamp sanity). Phase 2 evaluates all enabled
+     CUE-compiled policy rules from kernel.policy_rule. Rules matched
+     by event_type are evaluated in priority order. Dual eval path:
+     function_name (code-generated) or compiled_sql (data-driven).
+     The compiled_sql predicate MUST reference the NEW record as $1,
+     e.g.: "($1).authority IS NOT NULL".';
+
+
+--
+-- Name: trg_notify_transition(); Type: FUNCTION; Schema: kernel; Owner: -
+--
+
+CREATE FUNCTION kernel.trg_notify_transition() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_notify(
+        'kernel_transition_committed',
+        jsonb_build_object(
+            'event_id',         NEW.event_id::TEXT,
+            'event_type',       NEW.event_type::TEXT,
+            'aggregate_type',   NEW.aggregate_type,
+            'aggregate_id',     NEW.aggregate_id,
+            'actor',            NEW.actor,
+            'timestamp',        NEW.timestamp::TEXT,
+            'causation_id',     NEW.causation_id::TEXT,
+            'correlation_id',   NEW.correlation_id::TEXT
+        )::TEXT
+    );
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION trg_notify_transition(); Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON FUNCTION kernel.trg_notify_transition() IS 'AFTER INSERT trigger: notifies listeners that a transition was committed.
+     Cascade subscribes to kernel_transition_committed to orchestrate
+     downstream work. Projection workers subscribe to update derived views.';
+
+
+--
+-- Name: trg_policy_rule_updated_at(); Type: FUNCTION; Schema: kernel; Owner: -
+--
+
+CREATE FUNCTION kernel.trg_policy_rule_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
 END;
 $$;
 
@@ -2230,6 +4004,62 @@ BEGIN
     LIMIT p_limit;
 END;
 $$;
+
+
+--
+-- Name: grant_is_applied(text, jsonb); Type: FUNCTION; Schema: nebula; Owner: -
+--
+
+CREATE FUNCTION nebula.grant_is_applied(p_role text, p_spec jsonb) RETURNS boolean
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE
+    v_open  int;
+    v_match int;
+    v_open_spec jsonb;
+BEGIN
+    SELECT count(*) INTO v_open
+      FROM nebula.roles_history r
+     WHERE r.name = p_role
+       AND r.valid_until = '9999-12-31 00:00:00+00'::timestamptz
+       AND r.recorded_until_dt = '9999-12-31 00:00:00+00'::timestamptz;
+
+    IF v_open = 0 THEN
+        RETURN false;   -- nothing open -> not applied -> proceed
+    END IF;
+
+    -- The open row's GRANT spec (11 keys; carry-forward levels excluded —
+    -- they are inherited state, not granted state). Built key-for-key with
+    -- the same jsonb_build_object shape the grant files' pre-flight uses.
+    SELECT jsonb_build_object(
+               'owns_domains',             to_jsonb(r.owns_domains),
+               'can_greenlight',           to_jsonb(r.can_greenlight),
+               'can_create_questions',     to_jsonb(r.can_create_questions),
+               'can_create_agendas',       to_jsonb(r.can_create_agendas),
+               'can_resolve_questions',    to_jsonb(r.can_resolve_questions),
+               'can_verify_work_requests', to_jsonb(r.can_verify_work_requests),
+               'max_open_questions',       to_jsonb(r.max_open_questions),
+               'requires_approval_from',   to_jsonb(r.requires_approval_from),
+               'escalates_to',             to_jsonb(r.escalates_to),
+               'escalation_triggers',      to_jsonb(r.escalation_triggers),
+               'visibility_scope',         to_jsonb(r.visibility_scope)
+           ) INTO v_open_spec
+      FROM nebula.roles_history r
+     WHERE r.name = p_role
+       AND r.valid_until = '9999-12-31 00:00:00+00'::timestamptz
+       AND r.recorded_until_dt = '9999-12-31 00:00:00+00'::timestamptz;
+
+    -- rediff gate: exact grant-spec match on the open row = already applied
+    RETURN v_open_spec = p_spec;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION grant_is_applied(p_role text, p_spec jsonb); Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON FUNCTION nebula.grant_is_applied(p_role text, p_spec jsonb) IS 'TRUE iff role has an OPEN snapshot whose granted spec matches p_spec exactly. Same role + different spec = false (a NEW grant event is lawful). Fail-closed on absent roles: no open row = not applied.';
 
 
 --
@@ -3916,6 +5746,470 @@ COMMENT ON FUNCTION nebula.systems_update_trigger() IS 'DBA 2026-08-13: unattach
 
 
 --
+-- Name: tg_coordination_checkpoints_role_fk(); Type: FUNCTION; Schema: nebula; Owner: -
+--
+
+CREATE FUNCTION nebula.tg_coordination_checkpoints_role_fk() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM nebula.roles WHERE name = NEW.role) THEN
+        RAISE EXCEPTION 'insert or update on table "coordination_checkpoints" violates role-integrity constraint (no role % in nebula.roles)', NEW.role
+              USING ERRCODE = '23503',
+                    HINT = 'coordination_checkpoints.role must name an existing role (resolved through nebula.roles).';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: tg_coordination_checkpoints_touch(); Type: FUNCTION; Schema: nebula; Owner: -
+--
+
+CREATE FUNCTION nebula.tg_coordination_checkpoints_touch() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.updated_at := now();
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trg_adapters_audit(); Type: FUNCTION; Schema: nebula; Owner: -
+--
+
+CREATE FUNCTION nebula.trg_adapters_audit() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_cap text;
+BEGIN
+    SELECT c.name INTO v_cap FROM nebula.capabilities c
+    WHERE c.id = COALESCE(NEW.capability_id, OLD.capability_id);
+    PERFORM tackle.fn_nebula_audit_log(
+        TG_TABLE_NAME, TG_OP, 1,
+        COALESCE(v_cap, '?') || '/' ||
+        COALESCE(CASE WHEN TG_OP = 'DELETE' THEN OLD.provider ELSE NEW.provider END, '?'));
+    RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+
+--
+-- Name: trg_agent_connections_audit_del(); Type: FUNCTION; Schema: nebula; Owner: -
+--
+
+CREATE FUNCTION nebula.trg_agent_connections_audit_del() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    -- Unreachable while CON010 stands (delete is refused first); declared for
+    -- pattern completeness, matching V167.
+    PERFORM tackle.fn_nebula_audit_log(
+        'nebula.agent_connections', 'DELETE',
+        (SELECT count(*) FROM old_rows),
+        COALESCE((SELECT string_agg(r.role, ',') FROM old_rows r), ''));
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: trg_agent_connections_audit_ins(); Type: FUNCTION; Schema: nebula; Owner: -
+--
+
+CREATE FUNCTION nebula.trg_agent_connections_audit_ins() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM tackle.fn_nebula_audit_log(
+        'nebula.agent_connections', 'INSERT',
+        (SELECT count(*) FROM new_rows),
+        COALESCE((SELECT string_agg(r.role, ',') FROM new_rows r), ''));
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: trg_agent_connections_immutability(); Type: FUNCTION; Schema: nebula; Owner: -
+--
+
+CREATE FUNCTION nebula.trg_agent_connections_immutability() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'CON010: agent_connections is append-only (house bitemporal contract; supersede, never delete)'
+            USING ERRCODE = 'P0001';
+    END IF;
+    IF OLD.recorded_until_dt <> 'infinity'::timestamptz THEN
+        RAISE EXCEPTION 'CON011: recorded (superseded) connection rows are frozen'
+            USING ERRCODE = 'P0001';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trg_agent_connections_provenance(); Type: FUNCTION; Schema: nebula; Owner: -
+--
+
+CREATE FUNCTION nebula.trg_agent_connections_provenance() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.lease_ref IS NOT NULL THEN
+        IF NOT EXISTS (SELECT 1 FROM tackle.role_leases l WHERE l.id = NEW.lease_ref) THEN
+            RAISE EXCEPTION 'CON0001: lease_ref % does not exist in tackle.role_leases (provenance guard)', NEW.lease_ref
+                USING ERRCODE = 'P0001';
+        END IF;
+        -- lease/role agreement: a leased connection record belongs to the lease role
+        IF EXISTS (SELECT 1 FROM tackle.role_leases l
+                   WHERE l.id = NEW.lease_ref AND l.role IS NOT NULL AND l.role <> NEW.role) THEN
+            RAISE EXCEPTION 'CON0002: lease % role does not match connection record role % (provenance guard)', NEW.lease_ref, NEW.role
+                USING ERRCODE = 'P0001';
+        END IF;
+        -- NOTE: no non-empty-affordance requirement. "Leased but blind" —
+        -- zero tools, no cards, no inbox — is a valid and important record.
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trg_attestations_chain_guards(); Type: FUNCTION; Schema: nebula; Owner: -
+--
+
+CREATE FUNCTION nebula.trg_attestations_chain_guards() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.kind = 'attestation' THEN
+        -- G1: the authoring role cannot attest its own work
+        IF NEW.attester_role = NEW.requested_by THEN
+            RAISE EXCEPTION 'ATP0001: [G1-self-attestation] role % authored the work (%) and cannot attest it — verification must come from a second role',
+                NEW.attester_role, NEW.work_ref
+                USING ERRCODE = 'P0001';
+        END IF;
+        -- G2: an attestation with no citable evidence is void
+        IF jsonb_array_length(NEW.evidence) = 0
+           OR EXISTS (SELECT 1
+                      FROM jsonb_array_elements_text(NEW.evidence) AS e(e)
+                      WHERE btrim(e) = '') THEN
+            RAISE EXCEPTION 'ATP0002: [G2-evidence-free] attestation for % carries no citable evidence — ''tests pass'' without named runs/artifacts is not verification',
+                NEW.work_ref
+                USING ERRCODE = 'P0001';
+        END IF;
+        -- G3: the attester must hold can_verify_work_requests on live roles.
+        -- Missing role = capability absence = refusal (fail-closed; matches
+        -- the #308 resolver's absent-not-attestable semantics).
+        IF NOT EXISTS (
+            SELECT 1 FROM nebula.roles r
+            WHERE r.name = NEW.attester_role
+              AND r.can_verify_work_requests) THEN
+            RAISE EXCEPTION 'ATP0003: [G3-capability] role % does not hold can_verify_work_requests on live — not a valid attester',
+                NEW.attester_role
+                USING ERRCODE = 'P0001';
+        END IF;
+        -- ATP0005: an attestation that cites must cite the verification_request
+        -- for the same work_ref (physical chain integrity)
+        IF NEW.cites_id IS NOT NULL AND NOT EXISTS (
+            SELECT 1 FROM nebula.attestations c
+            WHERE c.attestation_id = NEW.cites_id
+              AND c.kind = 'verification_request'
+              AND c.work_ref = NEW.work_ref) THEN
+            RAISE EXCEPTION 'ATP0005: attestation cites a row that is not the verification_request for % — chains must link physically',
+                NEW.work_ref
+                USING ERRCODE = 'P0001';
+        END IF;
+    END IF;
+
+    IF NEW.kind = 'greenlight' THEN
+        -- G4: greenlight must cite an EXISTING kind='attestation' row for the
+        -- same work_ref. The subquery can only see attestations already
+        -- inserted — the DDL expression of event-identity: an attestation is
+        -- an event that happened, not a value the greenlight reconstructs.
+        IF NEW.cites_id IS NULL
+           OR NOT EXISTS (
+               SELECT 1 FROM nebula.attestations c
+               WHERE c.attestation_id = NEW.cites_id
+                 AND c.kind = 'attestation'
+                 AND c.work_ref = NEW.work_ref) THEN
+            RAISE EXCEPTION 'ATP0004: [greenlight_without_verification_attestation] greenlight for % cites no gate-passed attestation row for that work_ref — attestation is not self-declared',
+                NEW.work_ref
+                USING ERRCODE = 'P0001';
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trg_attestations_immutability(); Type: FUNCTION; Schema: nebula; Owner: -
+--
+
+CREATE FUNCTION nebula.trg_attestations_immutability() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'ATP010: attestations is append-only (house bitemporal contract; supersede, never delete)'
+            USING ERRCODE = 'P0001';
+    END IF;
+    IF OLD.recorded_until_dt <> 'infinity'::timestamptz THEN
+        RAISE EXCEPTION 'ATP011: recorded (superseded) attestation rows are frozen'
+            USING ERRCODE = 'P0001';
+    END IF;
+    -- ATP012: an open attestation is an event — only the supersede close may
+    -- change; every business column is frozen (evidence rewrites are refusals)
+    IF to_jsonb(NEW) - 'recorded_until_dt'
+       IS DISTINCT FROM to_jsonb(OLD) - 'recorded_until_dt' THEN
+        RAISE EXCEPTION 'ATP012: attestations are events — only the supersede close (recorded_until_dt) may change on an open row'
+            USING ERRCODE = 'P0001';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trg_blueprints_audit(); Type: FUNCTION; Schema: nebula; Owner: -
+--
+
+CREATE FUNCTION nebula.trg_blueprints_audit() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_keys text;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        PERFORM tackle.fn_nebula_audit_log(
+            'nebula.blueprints_history', 'DELETE', 1,
+            COALESCE(OLD.plan_number, OLD.id::text));
+        RETURN OLD;
+    END IF;
+    v_keys := COALESCE(NEW.plan_number, NEW.id::text);
+    PERFORM tackle.fn_nebula_audit_log(
+        'nebula.blueprints_history', TG_OP, 1, v_keys);
+    RETURN CASE WHEN TG_OP = 'INSERT' THEN NEW ELSE NEW END;
+END;
+$$;
+
+
+--
+-- Name: trg_capability_provenance(); Type: FUNCTION; Schema: nebula; Owner: -
+--
+
+CREATE FUNCTION nebula.trg_capability_provenance() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.registered_lease IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM tackle.role_leases l
+                       WHERE l.id = NEW.registered_lease) THEN
+        RAISE EXCEPTION 'CAP0001: registered_lease % does not reference an open lease',
+            NEW.registered_lease USING ERRCODE = 'P0001';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trg_caps_audit(); Type: FUNCTION; Schema: nebula; Owner: -
+--
+
+CREATE FUNCTION nebula.trg_caps_audit() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM tackle.fn_nebula_audit_log(
+        TG_TABLE_NAME, TG_OP, 1,
+        CASE WHEN TG_OP = 'DELETE' THEN COALESCE(OLD.name, OLD.id::text)
+             ELSE COALESCE(NEW.name, NEW.id::text) END);
+    RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+
+--
+-- Name: trg_plans_mirror_to_blueprints(); Type: FUNCTION; Schema: nebula; Owner: -
+--
+
+CREATE FUNCTION nebula.trg_plans_mirror_to_blueprints() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    INSERT INTO nebula.blueprints_history
+        (id, plan_number, title, payload, blueprint_status,
+         created_at, updated_at, valid_from, valid_until,
+         recorded_on_dt, recorded_until_dt, asset_id)
+    VALUES
+        (NEW.id,
+         NEW.plan_number,
+         NEW.title,
+         jsonb_build_object(
+             'goal',               NEW.goal,
+             'content',            NEW.content,
+             'files_affected',     to_jsonb(NEW.files_affected),
+             'acceptance_criteria', NEW.acceptance_criteria,
+             'dependencies',       to_jsonb(NEW.dependencies),
+             'tags',               to_jsonb(NEW.tags),
+             'spec_ref',           NEW.spec_id,
+             'requirement_ref',    NEW.requirement_id,
+             'project',            NEW.metadata->>'project'
+         ),
+         NEW.status,
+         NEW.created_at, NEW.updated_at,
+         NEW.valid_from, NEW.valid_until,
+         NEW.recorded_on_dt, NEW.recorded_until_dt,
+         NEW.asset_id)
+    ON CONFLICT (id) DO NOTHING;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION trg_plans_mirror_to_blueprints(); Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON FUNCTION nebula.trg_plans_mirror_to_blueprints() IS 'V171 write-through shim: legacy implementation_plans_history INSERTs are mirrored into nebula.blueprints_history. Legacy table is transitional (write-through, never authoritative); nebula-srv routes flip to blueprints in a follow-up PR, after which the mirror trigger retires.';
+
+
+--
+-- Name: trg_session_context_snapshot_audit_del(); Type: FUNCTION; Schema: nebula; Owner: -
+--
+
+CREATE FUNCTION nebula.trg_session_context_snapshot_audit_del() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM tackle.fn_nebula_audit_log(
+        'nebula.session_context_snapshots', 'DELETE',
+        (SELECT count(*) FROM old_rows),
+        COALESCE((SELECT string_agg(r.role, ',') FROM old_rows r), ''));
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: trg_session_context_snapshot_audit_ins(); Type: FUNCTION; Schema: nebula; Owner: -
+--
+
+CREATE FUNCTION nebula.trg_session_context_snapshot_audit_ins() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM tackle.fn_nebula_audit_log(
+        'nebula.session_context_snapshots', 'INSERT',
+        (SELECT count(*) FROM new_rows),
+        COALESCE((SELECT string_agg(r.role, ',') FROM new_rows r), ''));
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: trg_session_context_snapshot_audit_upd(); Type: FUNCTION; Schema: nebula; Owner: -
+--
+
+CREATE FUNCTION nebula.trg_session_context_snapshot_audit_upd() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM tackle.fn_nebula_audit_log(
+        'nebula.session_context_snapshots', 'UPDATE',
+        (SELECT count(*) FROM new_rows),
+        COALESCE((SELECT string_agg(r.role, ',') FROM new_rows r), ''));
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: trg_session_context_snapshot_immutability(); Type: FUNCTION; Schema: nebula; Owner: -
+--
+
+CREATE FUNCTION nebula.trg_session_context_snapshot_immutability() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'SNAP010: session_context_snapshots is append-only (house bitemporal contract; supersede, never delete)'
+            USING ERRCODE = 'P0001';
+    END IF;
+    -- recorded rows cannot be rewritten: recorded_until_dt closed ⇒ frozen
+    IF OLD.recorded_until_dt <> 'infinity'::timestamptz THEN
+        RAISE EXCEPTION 'SNAP011: recorded (superseded) snapshot rows are frozen'
+            USING ERRCODE = 'P0001';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trg_session_context_snapshot_no_truncate(); Type: FUNCTION; Schema: nebula; Owner: -
+--
+
+CREATE FUNCTION nebula.trg_session_context_snapshot_no_truncate() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RAISE EXCEPTION 'SNAP012: session_context_snapshots refuses TRUNCATE (append-only surface)'
+        USING ERRCODE = 'P0001';
+END;
+$$;
+
+
+--
+-- Name: trg_session_context_snapshot_provenance(); Type: FUNCTION; Schema: nebula; Owner: -
+--
+
+CREATE FUNCTION nebula.trg_session_context_snapshot_provenance() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.lease_ref IS NOT NULL THEN
+        IF NOT EXISTS (SELECT 1 FROM tackle.role_leases l WHERE l.id = NEW.lease_ref) THEN
+            RAISE EXCEPTION 'SNAP001: lease_ref % does not exist in tackle.role_leases (provenance guard)', NEW.lease_ref
+                USING ERRCODE = 'P0001';
+        END IF;
+        -- lease/role agreement: a leased snapshot belongs to the lease role
+        IF EXISTS (SELECT 1 FROM tackle.role_leases l
+                   WHERE l.id = NEW.lease_ref AND l.role IS NOT NULL AND l.role <> NEW.role) THEN
+            RAISE EXCEPTION 'SNAP002: lease % role does not match snapshot role % (provenance guard)', NEW.lease_ref, NEW.role
+                USING ERRCODE = 'P0001';
+        END IF;
+        -- FORM-CHECK ONLY (mirrors the WR guard precedent): liveness is the
+        -- writer's concern (Q1). The lease must merely exist.
+        IF NEW.read_set_manifest IS NULL THEN
+            RAISE EXCEPTION 'SNAP003: leased snapshot requires read_set_manifest (attestable-artifact rule); lease_ref %', NEW.lease_ref
+                USING ERRCODE = 'P0001';
+        END IF;
+    ELSE
+        -- unleased rows must not fake a manifest without a lease context
+        IF NEW.read_set_manifest IS NOT NULL THEN
+            RAISE EXCEPTION 'SNAP004: read_set_manifest requires a lease_ref (no scope without a lease)'
+                USING ERRCODE = 'P0001';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: update_updated_at(); Type: FUNCTION; Schema: nebula; Owner: -
 --
 
@@ -4470,6 +6764,200 @@ COMMENT ON FUNCTION resolution.admit_verified_execution_claim(p_peb_transaction_
 
 
 --
+-- Name: c2_trailing_gate(text, integer); Type: FUNCTION; Schema: resolution; Owner: -
+--
+
+CREATE FUNCTION resolution.c2_trailing_gate(p_producer text, p_hours integer DEFAULT 24) RETURNS jsonb
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE
+  v_since        timestamptz := now() - make_interval(hours => p_hours);
+  v_refusals     bigint;
+  v_shadow_bad   bigint;
+  v_result       jsonb;
+  v_ok           boolean;
+BEGIN
+  -- Leg 1: real-writer refusals for THIS producer (Q-A blast radius).
+  -- The declared canary namespace is excluded by identity (defense in
+  -- depth): the adapter never writes canary refusals here, and the gate
+  -- must not depend on that discipline holding.
+  SELECT count(*) INTO v_refusals
+  FROM resolution.producer_refusals
+  WHERE producer_id = p_producer
+    AND recorded_at >= v_since
+    AND source_receipt_id NOT LIKE 'rec-zz-redirect-%';
+
+  -- Leg 2: non-canary legacy_shadow_failed events. The declared canary
+  -- namespace ('rec-zz-redirect-' source_receipt_id prefix, C2) is excluded
+  -- by identity, never by inference. One legacy_shadow_failed event =
+  -- one jsonb array element on that day's soak_evidence row.
+  -- F1 (architect review 2026-09-07): window on the EVENT's own
+  -- `recorded_at` — the row is UPSERTed per day, so `created_at` is the
+  -- first event's time and late-in-day events would escape the window.
+  -- Malformed/missing event timestamps FAIL CLOSED: an unparseable stamp
+  -- raises InvalidDatetimeFormat (the gate ERRORS — never silently green);
+  -- a NULL/empty stamp is COALESCEd to now() = always in-window = counted.
+  -- The adapter always writes recorded_at; these branches are defensive.
+  SELECT count(*) INTO v_shadow_bad
+  FROM resolution.soak_evidence se,
+       jsonb_array_elements(
+         COALESCE(se.report->'legacy_shadow_failed', '[]'::jsonb)) ev
+  WHERE COALESCE(
+          CASE
+            WHEN ev->>'recorded_at' IS NULL OR ev->>'recorded_at' = ''
+              THEN NULL
+            ELSE (ev->>'recorded_at')::timestamptz
+          END, now())
+          >= now() - make_interval(hours => p_hours)
+    AND (ev->>'source_receipt_id') NOT LIKE 'rec-zz-redirect-%';
+
+  v_ok := (v_refusals = 0) AND (v_shadow_bad = 0);
+  v_result := jsonb_build_object(
+    'satisfied', v_ok,
+    'producer', p_producer,
+    'window_hours', p_hours,
+    'since', v_since,
+    'real_refusals', v_refusals,
+    'non_canary_shadow_failures', v_shadow_bad
+  );
+  RETURN v_result;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION c2_trailing_gate(p_producer text, p_hours integer); Type: COMMENT; Schema: resolution; Owner: -
+--
+
+COMMENT ON FUNCTION resolution.c2_trailing_gate(p_producer text, p_hours integer) IS 'Stage C C2 gate (d4c0a9ff): trailing-24h zero-alert check for a per-producer enforce flip. Leg 1 = real-writer refusals (producer_refusals); leg 2 = non-canary legacy_shadow_failed events (declared rec-zz-redirect- prefix excluded by identity), windowed on each EVENT''s recorded_at (F1: rows are upserted per day, so the row clock is not the event clock). Missing/malformed event timestamps fail closed. Satisfied iff both are zero in the window.';
+
+
+--
+-- Name: c6_retirement_gate(); Type: FUNCTION; Schema: resolution; Owner: -
+--
+
+CREATE FUNCTION resolution.c6_retirement_gate() RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_result jsonb := '{}'::jsonb;
+  v_ok     boolean := true;
+  v_missing_receipts bigint;
+  v_open_tickets bigint;
+  v_undisposed_tickets bigint;
+  v_green_days integer;
+  v_signoffs integer;
+BEGIN
+  -- 1. Canonical infra present.
+  DECLARE
+    v_infra boolean;
+  BEGIN
+    SELECT count(*) = 4 INTO v_infra FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'resolution'
+      AND c.relname IN ('receipt','ticket','ticket_transition','fanout_transition')
+      AND c.relkind = 'r';
+    v_result := jsonb_set(v_result, '{canonical_infra}', to_jsonb(v_infra));
+    v_ok := v_ok AND v_infra;
+  END;
+
+  -- 2. C4 import completeness for vision.receipts — mappable types ONLY.
+  -- The type list mirrors lilac.RECEIPT_KIND_BY_TYPE (drift fixture
+  -- lilac_drift.KIND_BY_TYPE): legacy-only types (e.g. PROPOSED) have no
+  -- ratified canonical kind and can never acquire twins, so counting them
+  -- would block the retirement gate forever.
+  IF to_regclass('vision.receipts') IS NOT NULL THEN
+    SELECT count(*) INTO v_missing_receipts
+    FROM vision.receipts v
+    WHERE v.type IN (
+      'PLAN_CREATE','PLANNING','IMPLEMENTATION','REVIEW','REVIEW_PASS',
+      'REVIEW_REJECT','CRITIQUE','CRITIQUE_PASS','CRITIQUE_REJECT','BLOCK',
+      'HOLD','CCNF_EXECUTION','REQUEUED','API_LIMIT','ABANDONED',
+      'CANCELLED','PLAN_BLOCK')
+      AND NOT EXISTS (
+      SELECT 1 FROM resolution.receipt r
+      WHERE r.source_receipt_id = v.id
+        AND r.source_system IN ('conduit', 'import:vision.receipts')
+    );
+  ELSE
+    v_missing_receipts := 0;  -- already retired
+  END IF;
+  v_result := jsonb_set(v_result, '{vision_receipts_missing_twin}', to_jsonb(v_missing_receipts));
+  v_ok := v_ok AND (v_missing_receipts = 0);
+
+  -- 3. Ticket seam drained.
+  IF to_regclass('vision.tickets') IS NOT NULL THEN
+    SELECT count(*) INTO v_open_tickets
+    FROM vision.tickets t WHERE t.status IN ('open','claimed','stale');
+    SELECT count(*) INTO v_undisposed_tickets
+    FROM vision.tickets t
+    WHERE NOT EXISTS (
+      SELECT 1 FROM resolution.migration_disposition d
+      WHERE d.source_schema = 'vision' AND d.source_table = 'tickets'
+        AND d.source_pk = t.id
+    );
+  ELSE
+    v_open_tickets := 0;
+    v_undisposed_tickets := 0;
+  END IF;
+  v_result := jsonb_set(v_result, '{vision_tickets_non_closed}', to_jsonb(v_open_tickets));
+  v_result := jsonb_set(v_result, '{vision_tickets_undisposed}', to_jsonb(v_undisposed_tickets));
+  v_ok := v_ok AND (v_open_tickets = 0) AND (v_undisposed_tickets = 0);
+
+  -- 4. Soak: >= 7 green days in trailing 30.
+  SELECT count(DISTINCT evidence_date) INTO v_green_days
+  FROM resolution.soak_evidence
+  WHERE green AND evidence_date > current_date - 30;
+  v_result := jsonb_set(v_result, '{green_soak_days}', to_jsonb(v_green_days));
+  v_ok := v_ok AND (v_green_days >= 7);
+
+  -- 5. Signoffs: operator + architect + dba (V146, three-signatory rule).
+  --    The dba row is written at Stage D verification time by the DBA,
+  --    after the live DB-layer freeze checks (zero direct writers,
+  --    direct-DML grants revoked, freeze DB-enforced) — never pre-staged.
+  SELECT count(*) INTO v_signoffs
+  FROM resolution.retirement_signoff WHERE role IN ('operator','architect','dba');
+  v_result := jsonb_set(v_result, '{binding_signoffs}', to_jsonb(v_signoffs));
+  v_ok := v_ok AND (v_signoffs = 3);
+
+  v_result := jsonb_set(v_result, '{satisfied}', to_jsonb(v_ok));
+  RETURN v_result;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION c6_retirement_gate(); Type: COMMENT; Schema: resolution; Owner: -
+--
+
+COMMENT ON FUNCTION resolution.c6_retirement_gate() IS 'C6 retirement gate (fence→soak→retire). V144 refuses to apply unless satisfied. Verifiable conditions: import completeness, ticket seam drained, 7 green soak days, operator+architect+dba signoff (three-signatory rule, V146 — dba signs at Stage D verification time, after DB-layer freeze checks).';
+
+
+--
+-- Name: candidate_set_key(uuid[], text); Type: FUNCTION; Schema: resolution; Owner: -
+--
+
+CREATE FUNCTION resolution.candidate_set_key(p_candidate_ids uuid[], p_eligibility_hash text) RETURNS text
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE
+    AS $$
+    SELECT encode(
+        digest(
+            (SELECT string_agg(lower(x::text), E'\n' ORDER BY lower(x::text))
+               FROM (SELECT DISTINCT unnest(p_candidate_ids) AS x) d)
+            || E'\n' || lower(p_eligibility_hash),
+            'sha256'),
+        'hex')
+$$;
+
+
+--
+-- Name: FUNCTION candidate_set_key(p_candidate_ids uuid[], p_eligibility_hash text); Type: COMMENT; Schema: resolution; Owner: -
+--
+
+COMMENT ON FUNCTION resolution.candidate_set_key(p_candidate_ids uuid[], p_eligibility_hash text) IS 'ST.01 S2 (V198, ruling R1.1/R1.3): set-order-independent, duplicate-collapsing, content-addressed set key. Same digest family as the C2 canonical_key backfill — one key discipline.';
+
+
+--
 -- Name: check_and_record_disagreement(uuid, text, uuid); Type: FUNCTION; Schema: resolution; Owner: -
 --
 
@@ -4690,6 +7178,84 @@ $$;
 
 
 --
+-- Name: claim_open_batch(uuid[], jsonb, integer); Type: FUNCTION; Schema: resolution; Owner: -
+--
+
+CREATE FUNCTION resolution.claim_open_batch(p_candidate_ids uuid[], p_eligibility_snapshot jsonb, p_envelope_version integer DEFAULT 1) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_id   uuid;
+    v_hash text;
+BEGIN
+    -- R1.2: canonical jsonb text is what gets hashed and stored.
+    v_hash := resolution.eligibility_hash(p_eligibility_snapshot);
+
+    INSERT INTO resolution.promotion_batch
+        (batch_key, envelope_version, eligibility_snapshot,
+         eligibility_canonical_text, eligibility_hash, created_by)
+    VALUES
+        (resolution.candidate_set_key(p_candidate_ids, v_hash),
+         p_envelope_version,
+         p_eligibility_snapshot,
+         p_eligibility_snapshot::text,
+         v_hash,
+         session_user)
+    ON CONFLICT (batch_key) WHERE status = 'open'
+    DO NOTHING
+    RETURNING id INTO v_id;
+
+    IF v_id IS NULL THEN
+        -- Lost the race: converge on the winner's open batch for this exact
+        -- set + snapshot.
+        SELECT id INTO v_id
+          FROM resolution.promotion_batch
+         WHERE batch_key = resolution.candidate_set_key(p_candidate_ids, v_hash)
+           AND status = 'open'
+         ORDER BY created_at
+         LIMIT 1;
+    END IF;
+
+    INSERT INTO resolution.promotion_batch_candidate (batch_id, candidate_id)
+    SELECT v_id, x
+      FROM unnest(p_candidate_ids) AS x
+    ON CONFLICT (batch_id, candidate_id) DO NOTHING;
+
+    RETURN v_id;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION claim_open_batch(p_candidate_ids uuid[], p_eligibility_snapshot jsonb, p_envelope_version integer); Type: COMMENT; Schema: resolution; Owner: -
+--
+
+COMMENT ON FUNCTION resolution.claim_open_batch(p_candidate_ids uuid[], p_eligibility_snapshot jsonb, p_envelope_version integer) IS 'ST.01 S3 (V198): atomic open-batch claim. Concurrency = the partial unique index; membership written in the same transaction.';
+
+
+--
+-- Name: close_open_batch(uuid, text); Type: FUNCTION; Schema: resolution; Owner: -
+--
+
+CREATE FUNCTION resolution.close_open_batch(p_batch_id uuid, p_status text) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF p_status NOT IN ('sealed', 'superseded') THEN
+        RAISE EXCEPTION 'V198: close_open_batch accepts only sealed|superseded (got %)', p_status;
+    END IF;
+    UPDATE resolution.promotion_batch
+       SET status = p_status, updated_at = now()
+     WHERE id = p_batch_id
+       AND status = 'open';
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'V198: batch % is not open (already sealed/superseded?)', p_batch_id;
+    END IF;
+END;
+$$;
+
+
+--
 -- Name: compile_condition(uuid, text); Type: FUNCTION; Schema: resolution; Owner: -
 --
 
@@ -4890,17 +7456,22 @@ CREATE FUNCTION resolution.compile_root(expr_id uuid, literal_root_ref text) RET
     LANGUAGE plpgsql
     AS $$
 DECLARE
-    v_kind       text;
-    v_quantifier text;
-    v_operator   text;
-    v_literal    text;
-    v_attr_id    uuid;
-    v_binding    resolution.concept_attribute_binding%ROWTYPE;
-    v_left_id    uuid;
-    v_right_id   uuid;
+    v_kind          text;
+    v_quantifier    text;
+    v_operator      text;
+    v_literal       text;
+    v_attr_id       uuid;
+    v_function_name text;
+    v_binding       resolution.concept_attribute_binding%ROWTYPE;
+    v_fn_binding    resolution.function_binding%ROWTYPE;
+    v_left_id       uuid;
+    v_right_id      uuid;
+    v_args          text[];
 BEGIN
-    SELECT kind, quantifier, operator, literal_value, attribute_id
-    INTO v_kind, v_quantifier, v_operator, v_literal, v_attr_id
+    SELECT kind, quantifier, operator, literal_value, attribute_id,
+           function_name
+    INTO v_kind, v_quantifier, v_operator, v_literal, v_attr_id,
+         v_function_name
     FROM resolution.expression WHERE id = expr_id;
 
     IF v_kind = 'relationship_ref' THEN
@@ -4912,15 +7483,54 @@ BEGIN
             RAISE EXCEPTION 'unknown quantifier %', v_quantifier;
         END IF;
     ELSIF v_kind = 'attribute_ref' THEN
-        SELECT * INTO v_binding FROM resolution.concept_attribute_binding WHERE attribute_id = v_attr_id;
-        IF NOT FOUND THEN RAISE EXCEPTION 'no concept_attribute_binding for attribute %', v_attr_id; END IF;
-        RETURN format('(SELECT %I FROM %I.%I WHERE id = %s)', v_binding.column_name, v_binding.schema_name, v_binding.table_name, literal_root_ref);
+        SELECT * INTO v_binding
+        FROM resolution.concept_attribute_binding
+        WHERE attribute_id = v_attr_id;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'no concept_attribute_binding for attribute %', v_attr_id;
+        END IF;
+        RETURN format('(SELECT %I FROM %I.%I WHERE id = %s)',
+            v_binding.column_name, v_binding.schema_name,
+            v_binding.table_name, literal_root_ref);
     ELSIF v_kind = 'proposition_ref' THEN
         RETURN resolution.compile_proposition_ref(expr_id);
+    ELSIF v_kind = 'function_call' THEN
+        SELECT * INTO v_fn_binding
+        FROM resolution.function_binding
+        WHERE function_name = v_function_name;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'no function_binding for function_name %', v_function_name;
+        END IF;
+
+        SELECT array_agg(
+            resolution.compile_root(eo.child_expression_id, literal_root_ref)
+            ORDER BY eo.position
+        )
+        INTO v_args
+        FROM resolution.expression_operand eo
+        WHERE eo.parent_expression_id = expr_id;
+
+        IF coalesce(array_length(v_args, 1), 0) <> v_fn_binding.arg_count THEN
+            RAISE EXCEPTION 'function % expects % arg(s), got %',
+                v_function_name, v_fn_binding.arg_count,
+                coalesce(array_length(v_args, 1), 0);
+        END IF;
+
+        RETURN format(v_fn_binding.sql_template, VARIADIC v_args);
     ELSIF v_kind = 'operator' THEN
-        SELECT child_expression_id INTO v_left_id  FROM resolution.expression_operand WHERE parent_expression_id = expr_id AND position = 1;
-        SELECT child_expression_id INTO v_right_id FROM resolution.expression_operand WHERE parent_expression_id = expr_id AND position = 2;
-        RETURN format('(%s %s %s)', resolution.compile_root(v_left_id, literal_root_ref), v_operator, resolution.compile_root(v_right_id, literal_root_ref));
+        SELECT child_expression_id INTO v_left_id
+        FROM resolution.expression_operand
+        WHERE parent_expression_id = expr_id AND position = 1;
+        SELECT child_expression_id INTO v_right_id
+        FROM resolution.expression_operand
+        WHERE parent_expression_id = expr_id AND position = 2;
+        IF v_left_id IS NULL OR v_right_id IS NULL THEN
+            RAISE EXCEPTION 'operator node % missing an operand', expr_id;
+        END IF;
+        RETURN format('(%s %s %s)',
+            resolution.compile_root(v_left_id, literal_root_ref),
+            v_operator,
+            resolution.compile_root(v_right_id, literal_root_ref));
     ELSIF v_kind = 'literal' THEN
         RETURN quote_literal(v_literal);
     ELSE
@@ -5081,6 +7691,40 @@ BEGIN
     RETURN QUERY SELECT (v_from_value IS NOT DISTINCT FROM v_to_value), v_from_value, v_to_value, v_from_repr.label, v_to_repr.label;
 END;
 $_$;
+
+
+--
+-- Name: eligibility_hash(jsonb); Type: FUNCTION; Schema: resolution; Owner: -
+--
+
+CREATE FUNCTION resolution.eligibility_hash(p_snapshot jsonb) RETURNS text
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE
+    AS $$
+    SELECT encode(digest(p_snapshot::text, 'sha256'), 'hex')
+$$;
+
+
+--
+-- Name: enforce_producer_grant(); Type: FUNCTION; Schema: resolution; Owner: -
+--
+
+CREATE FUNCTION resolution.enforce_producer_grant() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  PERFORM 1 FROM resolution.producer_registry p
+   WHERE p.producer_id = NEW.producer_id
+     AND p.state = 'active'
+     AND NEW.contract_version BETWEEN p.contract_version_min AND p.contract_version_max
+     AND NEW.kind = ANY (p.allowed_kinds);
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'producer grant refused: producer=% kind=% contract_version=%',
+      NEW.producer_id, NEW.kind, NEW.contract_version
+      USING ERRCODE = 'P0004';
+  END IF;
+  RETURN NEW;
+END;
+$$;
 
 
 --
@@ -5276,6 +7920,29 @@ $$;
 
 
 --
+-- Name: forbid_canonical_admission_mutation(); Type: FUNCTION; Schema: resolution; Owner: -
+--
+
+CREATE FUNCTION resolution.forbid_canonical_admission_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RAISE EXCEPTION
+        'resolution.receipt admission rows are append-only (Stage B, V132 parity): % blocked on peb_transaction_id %',
+        TG_OP, OLD.payload->>'peb_transaction_id'
+        USING ERRCODE = 'restrict_violation';
+END;
+$$;
+
+
+--
+-- Name: FUNCTION forbid_canonical_admission_mutation(); Type: COMMENT; Schema: resolution; Owner: -
+--
+
+COMMENT ON FUNCTION resolution.forbid_canonical_admission_mutation() IS 'Stage B (Q-C): canonical admission receipts are append-only (V132 parity); lifecycle rows unaffected (WHEN kind=admission).';
+
+
+--
 -- Name: is_stale(uuid); Type: FUNCTION; Schema: resolution; Owner: -
 --
 
@@ -5386,6 +8053,257 @@ BEGIN
     RETURN;
 END;
 $$;
+
+
+--
+-- Name: prevent_shrapnel_field_sync_evidence_mutation(); Type: FUNCTION; Schema: resolution; Owner: -
+--
+
+CREATE FUNCTION resolution.prevent_shrapnel_field_sync_evidence_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RAISE EXCEPTION 'shrapnel_field_sync_evidence is append-only';
+END;
+$$;
+
+
+--
+-- Name: read_shrapnel_state_member(text, text, timestamp with time zone); Type: FUNCTION; Schema: resolution; Owner: -
+--
+
+CREATE FUNCTION resolution.read_shrapnel_state_member(p_asset_id text, p_member_name text, p_as_of timestamp with time zone) RETURNS jsonb
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE
+    v_object_count integer;
+    v_field_count  integer;
+    v_type_code    smallint;
+    v_value        jsonb;
+    v_object_id    bigint;
+    v_value_id     bigint;
+    v_created_at   timestamptz;
+    v_reason       text;
+BEGIN
+    IF p_asset_id IS NULL OR btrim(p_asset_id) = '' THEN
+        RETURN jsonb_build_object(
+            'status', 'refusal',
+            'asset_id', p_asset_id,
+            'member_name', p_member_name,
+            'as_of', p_as_of,
+            'reason', 'asset_id is required'
+        );
+    END IF;
+
+    IF p_member_name IS NULL OR p_member_name NOT IN (
+        'asset_id',
+        'partial_implementation',
+        'detailed_analysis',
+        'inspection_or_ir_exists',
+        'system_mapped',
+        'has_open_questions',
+        'sandbox_scaffolded'
+    ) THEN
+        RETURN jsonb_build_object(
+            'status', 'refusal',
+            'asset_id', p_asset_id,
+            'member_name', p_member_name,
+            'as_of', p_as_of,
+            'reason', 'member_not_allowlisted'
+        );
+    END IF;
+
+    IF p_as_of IS NULL THEN
+        RETURN jsonb_build_object(
+            'status', 'refusal',
+            'asset_id', p_asset_id,
+            'member_name', p_member_name,
+            'reason', 'as_of is required'
+        );
+    END IF;
+
+    -- Find objects whose authoritative asset_id field matches. The EAV
+    -- joins are intentionally explicit; field names never become SQL
+    -- identifiers, and only the allow-listed member above is queried.
+    SELECT count(*), min(object_id), min(created_at)
+    INTO v_object_count, v_object_id, v_created_at
+    FROM (
+        SELECT oi.id AS object_id, oi.created_at
+        FROM shrapnel.object_instance oi
+        JOIN shrapnel.object_attribute_value asset_oav
+          ON asset_oav.object_id = oi.id
+        JOIN shrapnel.field asset_field
+          ON asset_field.id = asset_oav.field_id
+         AND asset_field.property_name = 'asset_id'
+        JOIN shrapnel.value asset_value
+          ON asset_value.id = asset_oav.value_id
+         AND asset_value.value_type_code = 2
+        JOIN shrapnel.value_string asset_text
+          ON asset_text.id = asset_value.id
+        WHERE asset_text.value = p_asset_id
+    ) matches;
+
+    IF v_object_count = 0 THEN
+        RETURN jsonb_build_object(
+            'status', 'unknown',
+            'asset_id', p_asset_id,
+            'member_name', p_member_name,
+            'as_of', p_as_of,
+            'reason', 'shrapnel_fact_not_found'
+        );
+    END IF;
+
+    IF v_object_count <> 1 THEN
+        RETURN jsonb_build_object(
+            'status', 'unavailable',
+            'asset_id', p_asset_id,
+            'member_name', p_member_name,
+            'as_of', p_as_of,
+            'reason', 'ambiguous_shrapnel_membership'
+        );
+    END IF;
+
+    -- The current EAV store has no valid_until column. Its created_at is the
+    -- only temporal boundary available, so an object created after the
+    -- caller's as_of is explicitly stale rather than silently visible.
+    IF v_created_at > p_as_of THEN
+        RETURN jsonb_build_object(
+            'status', 'stale',
+            'asset_id', p_asset_id,
+            'member_name', p_member_name,
+            'as_of', p_as_of,
+            'reason', 'shrapnel_fact_not_effective_at_as_of'
+        );
+    END IF;
+
+    -- Resolve the requested field and enforce its declared EAV type. The
+    -- approved state members are booleans; asset_id is text. A malformed or
+    -- duplicate value is unavailable, never silently false.
+    SELECT count(*), min(v.value_type_code), min(oav.value_id)
+    INTO v_field_count, v_type_code, v_value_id
+    FROM shrapnel.object_attribute_value oav
+    JOIN shrapnel.field f ON f.id = oav.field_id
+       AND f.property_name = p_member_name
+    JOIN shrapnel.value v ON v.id = oav.value_id
+    WHERE oav.object_id = v_object_id;
+
+    IF v_field_count = 0 THEN
+        RETURN jsonb_build_object(
+            'status', 'unavailable',
+            'asset_id', p_asset_id,
+            'member_name', p_member_name,
+            'as_of', p_as_of,
+            'reason', 'required_field_missing'
+        );
+    END IF;
+
+    IF v_field_count <> 1 THEN
+        RETURN jsonb_build_object(
+            'status', 'unavailable',
+            'asset_id', p_asset_id,
+            'member_name', p_member_name,
+            'as_of', p_as_of,
+            'reason', 'ambiguous_field_value'
+        );
+    END IF;
+
+    IF p_member_name = 'asset_id' AND v_type_code <> 2 THEN
+        v_reason := 'field_type_mismatch';
+    ELSIF p_member_name <> 'asset_id' AND v_type_code <> 4 THEN
+        v_reason := 'field_type_mismatch';
+    END IF;
+
+    IF v_reason IS NOT NULL THEN
+        RETURN jsonb_build_object(
+            'status', 'unavailable',
+            'asset_id', p_asset_id,
+            'member_name', p_member_name,
+            'as_of', p_as_of,
+            'reason', v_reason
+        );
+    END IF;
+
+    IF v_type_code = 2 THEN
+        SELECT to_jsonb(value) INTO v_value
+        FROM shrapnel.value_string WHERE id = v_value_id;
+    ELSE
+        SELECT to_jsonb(value) INTO v_value
+        FROM shrapnel.value_boolean WHERE id = v_value_id;
+    END IF;
+
+    IF v_value IS NULL THEN
+        RETURN jsonb_build_object(
+            'status', 'unavailable',
+            'asset_id', p_asset_id,
+            'member_name', p_member_name,
+            'as_of', p_as_of,
+            'reason', 'typed_value_missing'
+        );
+    END IF;
+
+    RETURN jsonb_build_object(
+        'status', 'resolved',
+        'asset_id', p_asset_id,
+        'member_name', p_member_name,
+        'as_of', p_as_of,
+        'value', v_value,
+        'source_refs', jsonb_build_array(
+            jsonb_build_object(
+                'source', 'shrapnel',
+                'object_id', v_object_id,
+                'field', p_member_name,
+                'created_at', v_created_at,
+                'as_of', p_as_of
+            )
+        ),
+        'reason', 'bridge_read_resolved'
+    );
+END;
+$$;
+
+
+--
+-- Name: FUNCTION read_shrapnel_state_member(p_asset_id text, p_member_name text, p_as_of timestamp with time zone); Type: COMMENT; Schema: resolution; Owner: -
+--
+
+COMMENT ON FUNCTION resolution.read_shrapnel_state_member(p_asset_id text, p_member_name text, p_as_of timestamp with time zone) IS 'Read-only, allow-listed, typed Shrapnel EAV state bridge. Shrapnel remains authoritative; Resolution stores no copied state value.';
+
+
+--
+-- Name: reconcile_shrapnel_field_metadata(); Type: FUNCTION; Schema: resolution; Owner: -
+--
+
+CREATE FUNCTION resolution.reconcile_shrapnel_field_metadata() RETURNS TABLE(processed integer, created integer, already_present integer)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_field_id bigint;
+    v_action text;
+BEGIN
+    processed := 0;
+    created := 0;
+    already_present := 0;
+
+    FOR v_field_id IN SELECT f.id FROM shrapnel.field f ORDER BY f.id LOOP
+        v_action := resolution.sync_shrapnel_field(v_field_id);
+        processed := processed + 1;
+        IF v_action = 'created' THEN
+            created := created + 1;
+        ELSE
+            already_present := already_present + 1;
+        END IF;
+    END LOOP;
+
+    RETURN NEXT;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION reconcile_shrapnel_field_metadata(); Type: COMMENT; Schema: resolution; Owner: -
+--
+
+COMMENT ON FUNCTION resolution.reconcile_shrapnel_field_metadata() IS 'Replay all Shrapnel field metadata through the v37 bridge; safe to rerun and produces append-only evidence.';
 
 
 --
@@ -5764,6 +8682,161 @@ $$;
 
 
 --
+-- Name: shrapnel_state_member_true(text, text, timestamp with time zone); Type: FUNCTION; Schema: resolution; Owner: -
+--
+
+CREATE FUNCTION resolution.shrapnel_state_member_true(p_asset_id text, p_member_name text, p_as_of timestamp with time zone) RETURNS boolean
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE
+    v_read jsonb;
+BEGIN
+    v_read := resolution.read_shrapnel_state_member(
+        p_asset_id, p_member_name, p_as_of
+    );
+    RETURN v_read->>'status' = 'resolved'
+       AND v_read->'value' = 'true'::jsonb;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION shrapnel_state_member_true(p_asset_id text, p_member_name text, p_as_of timestamp with time zone); Type: COMMENT; Schema: resolution; Owner: -
+--
+
+COMMENT ON FUNCTION resolution.shrapnel_state_member_true(p_asset_id text, p_member_name text, p_as_of timestamp with time zone) IS 'Fail-closed boolean projection of the Shrapnel state bridge for Resolution proposition evaluation; only resolved JSON boolean true returns true.';
+
+
+--
+-- Name: sync_shrapnel_field(bigint); Type: FUNCTION; Schema: resolution; Owner: -
+--
+
+CREATE FUNCTION resolution.sync_shrapnel_field(p_field_id bigint) RETURNS text
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_concept_id       uuid;
+    v_attr_id          uuid;
+    v_property_name    text;
+    v_type_code        smallint;
+    v_value_type       text;
+    v_fingerprint      text;
+    v_previous         text;
+    v_action           text;
+BEGIN
+    SELECT c.id INTO v_concept_id
+    FROM resolution.concept c
+    WHERE c.name = 'ShrapnelFact'
+      AND c.expired_at IS NULL
+    LIMIT 1;
+
+    IF v_concept_id IS NULL THEN
+        RAISE EXCEPTION 'ShrapnelFact concept is not registered';
+    END IF;
+
+    SELECT f.property_name, f.field_type_code::smallint
+    INTO v_property_name, v_type_code
+    FROM shrapnel.field f
+    WHERE f.id = p_field_id;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Shrapnel field % does not exist', p_field_id;
+    END IF;
+
+    IF v_property_name IS NULL OR btrim(v_property_name) = '' THEN
+        RAISE EXCEPTION 'Shrapnel field % has an empty property_name', p_field_id;
+    END IF;
+
+    v_value_type := CASE v_type_code
+        WHEN 1 THEN 'bigint'
+        WHEN 2 THEN 'text'
+        WHEN 3 THEN 'double precision'
+        WHEN 4 THEN 'boolean'
+        WHEN 5 THEN 'timestamptz'
+        WHEN 6 THEN 'jsonb'
+        WHEN 7 THEN 'uuid'
+        ELSE NULL
+    END;
+
+    IF v_value_type IS NULL THEN
+        RAISE EXCEPTION
+            'unsupported Shrapnel field_type_code % for field %',
+            v_type_code, p_field_id;
+    END IF;
+
+    v_fingerprint := md5(format('%s:%s:%s:%s',
+        v_concept_id, p_field_id, v_property_name, v_type_code));
+
+    -- A field identity cannot silently change shape after it has crossed the
+    -- bridge. Labels/names may evolve, but property_name/type changes require
+    -- a separately reviewed migration rather than an ambiguous re-sync.
+    SELECT e.metadata_fingerprint INTO v_previous
+    FROM resolution.shrapnel_field_sync_evidence e
+    WHERE e.field_id = p_field_id
+      AND e.metadata_fingerprint <> v_fingerprint
+    LIMIT 1;
+
+    IF v_previous IS NOT NULL THEN
+        RAISE EXCEPTION
+            'Shrapnel field % metadata changed after synchronization',
+            p_field_id;
+    END IF;
+
+    SELECT ca.id, ca.value_type
+    INTO v_attr_id, v_previous
+    FROM resolution.concept_attribute ca
+    WHERE ca.concept_id = v_concept_id
+      AND ca.name = v_property_name;
+
+    IF v_attr_id IS NULL THEN
+        INSERT INTO resolution.concept_attribute
+            (concept_id, name, description, value_type, is_state_attribute)
+        VALUES (
+            v_concept_id,
+            v_property_name,
+            'Synchronized from shrapnel.field metadata',
+            v_value_type,
+            false
+        )
+        RETURNING id INTO v_attr_id;
+        v_action := 'created';
+    ELSE
+        IF v_previous <> v_value_type THEN
+            RAISE EXCEPTION
+                'Shrapnel field % conflicts with ShrapnelFact attribute %: % vs %',
+                p_field_id, v_property_name, v_previous, v_value_type;
+        END IF;
+        v_action := 'already_present';
+    END IF;
+
+    INSERT INTO resolution.shrapnel_field_sync_evidence
+        (field_id, property_name, field_type_code, value_type,
+         concept_attribute_id, action, metadata_fingerprint, details)
+    VALUES (
+        p_field_id, v_property_name, v_type_code, v_value_type,
+        v_attr_id, v_action, v_fingerprint,
+        jsonb_build_object(
+            'source', 'shrapnel.field',
+            'target', 'resolution.concept_attribute',
+            'instance_values_copied', false,
+            'bridge_version', 'v37'
+        )
+    )
+    ON CONFLICT (field_id, metadata_fingerprint) DO NOTHING;
+
+    RETURN v_action;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION sync_shrapnel_field(p_field_id bigint); Type: COMMENT; Schema: resolution; Owner: -
+--
+
+COMMENT ON FUNCTION resolution.sync_shrapnel_field(p_field_id bigint) IS 'Replayable, additive, fail-closed metadata sync from shrapnel.field to ShrapnelFact; never copies EAV instance values.';
+
+
+--
 -- Name: validate_proposition_frame_value(); Type: FUNCTION; Schema: resolution; Owner: -
 --
 
@@ -5822,10 +8895,6 @@ BEGIN
 END;
 $$;
 
-
-SET default_tablespace = '';
-
-SET default_table_access_method = heap;
 
 --
 -- Name: asset_identity_claim; Type: TABLE; Schema: semantics; Owner: -
@@ -6725,6 +9794,793 @@ END $$;
 
 
 --
+-- Name: assert_extension_type_matches(); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.assert_extension_type_matches() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    expected_code smallint := TG_ARGV[0]::smallint;
+    actual_code   smallint;
+BEGIN
+    IF TG_WHEN <> 'BEFORE' THEN
+        RAISE EXCEPTION 'shrapnel.assert_extension_type_matches must be a BEFORE trigger (got %)', TG_WHEN;
+    END IF;
+
+    SELECT value_type_code INTO actual_code
+    FROM shrapnel.value
+    WHERE id = NEW.id;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION
+            'shrapnel.%: insert into extension for value_id=% but no parent row exists in shrapnel.value',
+            TG_TABLE_NAME, NEW.id;
+    END IF;
+
+    IF actual_code <> expected_code THEN
+        RAISE EXCEPTION
+            'shrapnel.%: type-match violation for value_id=%: extension requires value_type_code=% but parent has %',
+            TG_TABLE_NAME, NEW.id, expected_code, actual_code;
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION assert_extension_type_matches(); Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON FUNCTION shrapnel.assert_extension_type_matches() IS 'BEFORE INSERT/UPDATE guard that rejects a value_<type> extension row when the parent shrapnel.value row''s value_type_code does not match the type the extension represents.';
+
+
+--
+-- Name: assert_value_extension_fk_parity(); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.assert_value_extension_fk_parity() RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    ext text;
+    cnt integer;
+    bad text[] := '{}';
+BEGIN
+    FOREACH ext IN ARRAY ARRAY[
+        'value_long', 'value_string', 'value_double', 'value_boolean',
+        'value_timestamp', 'value_jsonb', 'value_uuid'
+    ]
+    LOOP
+        SELECT count(*) INTO cnt
+        FROM pg_constraint
+        WHERE conrelid = format('shrapnel.%s', ext)::regclass
+          AND contype = 'f'
+          AND confrelid = 'shrapnel.value'::regclass;
+        IF cnt = 0 THEN
+            bad := bad || ext;
+        END IF;
+    END LOOP;
+    IF array_length(bad, 1) IS NOT NULL THEN
+        RAISE EXCEPTION
+            'shrapnel value-extension FK parity broken for: %', array_to_string(bad, ', ');
+    END IF;
+END;
+$$;
+
+
+--
+-- Name: check_membership_evidence_present(); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.check_membership_evidence_present() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_field_id bigint;
+BEGIN
+  IF NEW.stereotype_revision_id IS NULL THEN
+    RETURN NEW;  -- unclassified object; nothing to prove
+  END IF;
+
+  SELECT id INTO v_field_id
+    FROM shrapnel.field
+   WHERE property_name = 'stereotype_conformance';
+
+  IF v_field_id IS NULL OR NOT EXISTS (
+    SELECT 1
+    FROM shrapnel.object_attribute_value oav
+    JOIN shrapnel.value v         ON v.id = oav.value_id AND v.value_type_code = 2
+    JOIN shrapnel.value_string vs ON vs.id = v.id AND vs.value = 'conformant'
+    WHERE oav.object_id = NEW.id
+      AND oav.field_id  = v_field_id
+  ) THEN
+    RAISE EXCEPTION 'object %: stereotype membership requires conformance evidence (OAV field ''stereotype_conformance'' = ''conformant'') recorded for the object; conformance is evaluable data, not an implicit default',
+      NEW.id USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: check_stereotype_acyclic(); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.check_stereotype_acyclic() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_cur          bigint;
+  v_seen         bigint[] := ARRAY[]::bigint[];
+  v_hops         integer := 0;
+  v_max          integer := 3;
+  v_parent_depth integer;
+BEGIN
+  IF NEW.parent_revision_id IS NULL THEN
+    NEW.depth := 0;
+    RETURN NEW;
+  END IF;
+
+  v_cur := NEW.parent_revision_id;
+  LOOP
+    IF v_cur = ANY (v_seen) THEN
+      RAISE EXCEPTION 'stereotype_revision %: cycle detected in extends chain',
+        NEW.id USING ERRCODE = '23514';
+    END IF;
+    v_seen := v_seen || v_cur;
+
+    SELECT parent_revision_id, depth INTO v_cur, v_parent_depth
+      FROM shrapnel.stereotype_revision WHERE id = v_cur;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'stereotype_revision %: parent revision % not found',
+        NEW.id, v_cur USING ERRCODE = '23503';
+    END IF;
+    IF v_cur IS NULL THEN
+      -- Reached the root of the pinned chain; its depth is authoritative.
+      NEW.depth := v_parent_depth + v_hops + 1;
+      EXIT;
+    END IF;
+    v_hops := v_hops + 1;
+  END LOOP;
+
+  IF NEW.depth > v_max THEN
+    RAISE EXCEPTION 'stereotype_revision %: depth % exceeds maximum % (C1 shallow-hierarchy doctrine)',
+      NEW.id, NEW.depth, v_max USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: check_stereotype_field_superset(); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.check_stereotype_field_superset() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_missing bigint[];
+BEGIN
+  IF NEW.parent_revision_id IS NULL THEN
+    RETURN NULL;
+  END IF;
+
+  SELECT array_agg(pf.field_id ORDER BY pf.field_id)
+    INTO v_missing
+    FROM shrapnel.stereotype_field pf
+    WHERE pf.stereotype_revision_id = NEW.parent_revision_id
+      AND pf.required
+      AND NOT EXISTS (
+        SELECT 1 FROM shrapnel.stereotype_field cf
+        WHERE cf.stereotype_revision_id = NEW.id
+          AND cf.field_id = pf.field_id
+      );
+
+  IF v_missing IS NOT NULL THEN
+    RAISE EXCEPTION 'stereotype_revision %: required fields % missing relative to parent revision % (child contract must be a superset)',
+      NEW.id, v_missing, NEW.parent_revision_id USING ERRCODE = '23514';
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: check_stereotype_field_superset_v2(); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.check_stereotype_field_superset_v2() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_missing bigint[];
+  v_weakened bigint[];
+BEGIN
+  IF NEW.parent_revision_id IS NULL THEN
+    RETURN NULL;
+  END IF;
+
+  SELECT array_agg(pf.field_id ORDER BY pf.field_id)
+    INTO v_missing
+    FROM shrapnel.stereotype_field pf
+    WHERE pf.stereotype_revision_id = NEW.parent_revision_id
+      AND pf.required
+      AND NOT EXISTS (
+        SELECT 1 FROM shrapnel.stereotype_field cf
+        WHERE cf.stereotype_revision_id = NEW.id
+          AND cf.field_id = pf.field_id
+      );
+  IF v_missing IS NOT NULL THEN
+    RAISE EXCEPTION 'stereotype_revision %: required fields % missing relative to parent revision % (child contract must be a superset)',
+      NEW.id, v_missing, NEW.parent_revision_id USING ERRCODE = '23514';
+  END IF;
+
+  SELECT array_agg(pf.field_id ORDER BY pf.field_id)
+    INTO v_weakened
+    FROM shrapnel.stereotype_field pf
+    WHERE pf.stereotype_revision_id = NEW.parent_revision_id
+      AND pf.required
+      AND EXISTS (
+        SELECT 1 FROM shrapnel.stereotype_field cf
+        WHERE cf.stereotype_revision_id = NEW.id
+          AND cf.field_id = pf.field_id
+          AND cf.required = false
+      );
+  IF v_weakened IS NOT NULL THEN
+    RAISE EXCEPTION 'stereotype_revision %: fields % downgraded from required to optional relative to parent revision % (required-flags are monotonic down the chain)',
+      NEW.id, v_weakened, NEW.parent_revision_id USING ERRCODE = '23514';
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: forbid_stereotype_field_mutation(); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.forbid_stereotype_field_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_revision_id bigint;
+BEGIN
+  v_revision_id := COALESCE(OLD.stereotype_revision_id, NEW.stereotype_revision_id);
+  IF EXISTS (
+    SELECT 1 FROM shrapnel.stereotype_revision r
+    WHERE r.id = v_revision_id
+      AND r.xmin::text::bigint <> (txid_current() % 4294967296)::bigint
+  ) THEN
+    RAISE EXCEPTION 'stereotype_field rows for revision % are frozen (append-only contract); % rejected',
+      v_revision_id, TG_OP USING ERRCODE = '23514';
+  END IF;
+  -- BEFORE ROW triggers MUST return the row to keep the operation alive:
+  -- returning NULL would silently cancel the INSERT/UPDATE/DELETE.
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: forbid_stereotype_revision_mutation(); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.forbid_stereotype_revision_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  RAISE EXCEPTION 'stereotype_revision % is append-only; % rejected',
+    COALESCE(OLD.id, NEW.id), TG_OP USING ERRCODE = '23514';
+END;
+$$;
+
+
+--
+-- Name: object_classify(bigint, bigint, text); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.object_classify(p_object_id bigint, p_revision_id bigint, p_disposition text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_stereotype_id bigint;
+  v_stereotype    text;
+  v_field_conf    bigint;
+  v_field_disp    bigint;
+  v_value_id      bigint;
+  v_missing       text[];
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM shrapnel.object_instance WHERE id = p_object_id) THEN
+    RAISE EXCEPTION 'object_classify: object % not found', p_object_id;
+  END IF;
+
+  SELECT s.id, s.name INTO v_stereotype_id, v_stereotype
+  FROM shrapnel.stereotype_revision r
+  JOIN shrapnel.stereotype s ON s.id = r.stereotype_id
+  WHERE r.id = p_revision_id;
+  IF v_stereotype_id IS NULL THEN
+    RAISE EXCEPTION 'object_classify: revision % not found', p_revision_id;
+  END IF;
+
+  -- Pre-check the EFFECTIVE contract (inherited + own requirements).
+  -- Failure aborts the whole call: conformance is evaluable data and is
+  -- never repaired by materializing defaults.
+  SELECT coalesce(array_agg(e.property_name ORDER BY e.property_name), ARRAY[]::text[])
+    INTO v_missing
+  FROM shrapnel.stereotype_effective_contract(p_revision_id) e
+  WHERE e.required
+    AND NOT EXISTS (
+      SELECT 1
+      FROM shrapnel.object_attribute_value oav
+      JOIN shrapnel.field f ON f.id = oav.field_id
+      WHERE oav.object_id = p_object_id
+        AND f.property_name = e.property_name
+    );
+  IF v_missing IS NOT NULL AND array_length(v_missing, 1) > 0 THEN
+    RAISE EXCEPTION 'object_classify: object % missing required members %; conformance is evaluable data, not an implicit default',
+      p_object_id, v_missing USING ERRCODE = '23514';
+  END IF;
+
+  -- Conformance-evidence OAV row (get-or-create) — satisfies the 0004
+  -- membership evidence gate within this same transaction.
+  SELECT id INTO v_field_conf FROM shrapnel.field
+   WHERE property_name = 'stereotype_conformance';
+  IF v_field_conf IS NULL THEN
+    INSERT INTO shrapnel.field
+      (is_calculated, field_index, label, name, property_name, field_type_code)
+    VALUES
+      (false, 0, 'StereoType Conformance', 'StereoType Conformance',
+       'stereotype_conformance', 2)
+    RETURNING id INTO v_field_conf;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM shrapnel.object_attribute_value
+    WHERE object_id = p_object_id AND field_id = v_field_conf
+  ) THEN
+    INSERT INTO shrapnel.value (value_type_code) VALUES (2)
+      RETURNING id INTO v_value_id;
+    INSERT INTO shrapnel.value_string (id, value) VALUES (v_value_id, 'conformant');
+    INSERT INTO shrapnel.object_attribute_value (object_id, field_id, value_id)
+      VALUES (p_object_id, v_field_conf, v_value_id);
+  END IF;
+
+  -- Disposition record (auditability of the classification act itself).
+  IF p_disposition IS NOT NULL AND btrim(p_disposition) <> '' THEN
+    SELECT id INTO v_field_disp FROM shrapnel.field
+     WHERE property_name = 'stereotype_conformance_disposition';
+    IF v_field_disp IS NULL THEN
+      INSERT INTO shrapnel.field
+        (is_calculated, field_index, label, name, property_name, field_type_code)
+      VALUES
+        (false, 0, 'StereoType Conformance Disposition',
+         'StereoType Conformance Disposition',
+         'stereotype_conformance_disposition', 2)
+      RETURNING id INTO v_field_disp;
+    END IF;
+    IF NOT EXISTS (
+      SELECT 1 FROM shrapnel.object_attribute_value
+      WHERE object_id = p_object_id AND field_id = v_field_disp
+    ) THEN
+      INSERT INTO shrapnel.value (value_type_code) VALUES (2)
+        RETURNING id INTO v_value_id;
+      INSERT INTO shrapnel.value_string (id, value) VALUES (v_value_id, p_disposition);
+      INSERT INTO shrapnel.object_attribute_value (object_id, field_id, value_id)
+        VALUES (p_object_id, v_field_disp, v_value_id);
+    END IF;
+  END IF;
+
+  -- Membership (the evidence gate trigger sees the row inserted above).
+  UPDATE shrapnel.object_instance
+     SET stereotype_id          = v_stereotype_id,
+         stereotype_revision_id = p_revision_id
+   WHERE id = p_object_id;
+
+  RETURN jsonb_build_object(
+    'object_id',   p_object_id,
+    'stereotype',  v_stereotype,
+    'revision_id', p_revision_id,
+    'disposition', p_disposition,
+    'classified',  true
+  );
+END;
+$$;
+
+
+--
+-- Name: object_conformance(bigint); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.object_conformance(p_object_id bigint) RETURNS jsonb
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE
+  v_stereotype text;
+  v_revision   bigint;
+  v_missing    text[];
+BEGIN
+  SELECT s.name, o.stereotype_revision_id
+    INTO v_stereotype, v_revision
+  FROM shrapnel.object_instance o
+  LEFT JOIN shrapnel.stereotype_revision r ON r.id = o.stereotype_revision_id
+  LEFT JOIN shrapnel.stereotype s          ON s.id = r.stereotype_id
+  WHERE o.id = p_object_id;
+
+  IF v_revision IS NULL THEN
+    RETURN jsonb_build_object('object_id', p_object_id, 'classified', false);
+  END IF;
+
+  SELECT coalesce(array_agg(e.property_name ORDER BY e.property_name), ARRAY[]::text[])
+    INTO v_missing
+  FROM shrapnel.stereotype_effective_contract(v_revision) e
+  WHERE e.required
+    AND NOT EXISTS (
+      SELECT 1
+      FROM shrapnel.object_attribute_value oav
+      JOIN shrapnel.field f ON f.id = oav.field_id
+      WHERE oav.object_id = p_object_id
+        AND f.property_name = e.property_name
+    );
+
+  RETURN jsonb_build_object(
+    'object_id',    p_object_id,
+    'classified',   true,
+    'stereotype',   v_stereotype,
+    'revision_id',  v_revision,
+    'conformant',   (v_missing IS NULL OR array_length(v_missing, 1) IS NULL),
+    'missing',      to_jsonb(coalesce(v_missing, ARRAY[]::text[]))
+  );
+END;
+$$;
+
+
+--
+-- Name: set_updated_at(); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.updated_at := now();
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: stereotype_canonical_contract(bigint, bigint, text, jsonb); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_canonical_contract(p_stereotype_id bigint, p_parent_revision_id bigint, p_extends_rationale text, p_fields jsonb) RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT 'sha256:' || encode(
+    sha256(
+      convert_to(
+        jsonb_build_object(
+          'stereotype_id',      p_stereotype_id,
+          'parent_revision_id', p_parent_revision_id,
+          'extends_rationale',  p_extends_rationale,
+          'fields', (
+            SELECT coalesce(jsonb_agg(e ORDER BY (e->>'id')::bigint), '[]'::jsonb)
+            FROM jsonb_array_elements(
+                   CASE WHEN jsonb_typeof(p_fields) = 'array' THEN p_fields
+                        ELSE '[]'::jsonb END) e
+          )
+        )::text,
+        'UTF8'
+      )
+    ),
+    'hex'
+  )
+$$;
+
+
+--
+-- Name: stereotype_chain(bigint); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_chain(p_revision_id bigint) RETURNS TABLE(name text, version integer, hop integer)
+    LANGUAGE sql STABLE
+    AS $$
+  WITH RECURSIVE walk AS (
+    SELECT r.id, r.stereotype_id, r.version, r.parent_revision_id, 0 AS hop
+    FROM shrapnel.stereotype_revision r
+    WHERE r.id = p_revision_id
+    UNION ALL
+    SELECT p.id, p.stereotype_id, p.version, p.parent_revision_id, w.hop + 1
+    FROM shrapnel.stereotype_revision p
+    JOIN walk w ON p.id = w.parent_revision_id
+  )
+  SELECT s.name, w.version, w.hop
+  FROM walk w
+  JOIN shrapnel.stereotype s ON s.id = w.stereotype_id
+  ORDER BY w.hop
+$$;
+
+
+--
+-- Name: stereotype_create_revision(text, bigint, text, text[], text[]); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_create_revision(p_name text, p_extends_revision bigint, p_rationale text, p_required_fields text[], p_optional_fields text[] DEFAULT NULL::text[]) RETURNS bigint
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_stereotype_id        bigint;
+  v_parent_stereotype_id bigint;
+  v_parent_depth         integer;
+  v_version              integer;
+  v_revision             bigint;
+  v_fields               jsonb := '[]'::jsonb;
+  v_fid                  bigint;
+  v_seen                 text[] := ARRAY[]::text[];
+  t                      record;
+BEGIN
+  IF p_name IS NULL OR btrim(p_name) = '' THEN
+    RAISE EXCEPTION 'stereotype_create_revision: name is required';
+  END IF;
+
+  -- Identity get-or-create.
+  SELECT id INTO v_stereotype_id FROM shrapnel.stereotype WHERE name = p_name;
+  IF v_stereotype_id IS NULL THEN
+    INSERT INTO shrapnel.stereotype (name) VALUES (p_name)
+    RETURNING id INTO v_stereotype_id;
+  END IF;
+
+  -- Parent validation (C1: rationale required when extending).
+  IF p_extends_revision IS NOT NULL THEN
+    IF p_rationale IS NULL OR btrim(p_rationale) = '' THEN
+      RAISE EXCEPTION 'stereotype_create_revision: extends requires a rationale (C1 shallow-hierarchy doctrine)';
+    END IF;
+    SELECT stereotype_id, depth INTO v_parent_stereotype_id, v_parent_depth
+    FROM shrapnel.stereotype_revision
+    WHERE id = p_extends_revision;
+    IF v_parent_stereotype_id IS NULL THEN
+      RAISE EXCEPTION 'stereotype_create_revision: parent revision % not found', p_extends_revision;
+    END IF;
+  END IF;
+
+  -- Next version (uq_sterev_identity_version arbitrates concurrent races).
+  SELECT coalesce(max(version), 0) + 1 INTO v_version
+  FROM shrapnel.stereotype_revision
+  WHERE stereotype_id = v_stereotype_id;
+
+  -- Fields: get-or-create by property_name (default String, code 2), then
+  -- build the full fields document [{id, required}] for the v2 fingerprint.
+  -- A field may not be declared twice in one call (required and optional
+  -- are mutually exclusive per field).
+  -- On nexus the field INSERT fires trg_sync_field_metadata_to_resolution
+  -- (present live); on sol no such trigger exists — both paths are correct.
+  FOR t IN
+    SELECT pn, true AS req FROM unnest(coalesce(p_required_fields, ARRAY[]::text[])) pn
+    UNION ALL
+    SELECT pn, false FROM unnest(coalesce(p_optional_fields, ARRAY[]::text[])) pn
+  LOOP
+    IF t.pn = ANY (v_seen) THEN
+      RAISE EXCEPTION 'stereotype_create_revision: field % declared more than once', t.pn;
+    END IF;
+    v_seen := v_seen || t.pn;
+
+    SELECT id INTO v_fid FROM shrapnel.field WHERE property_name = t.pn;
+    IF v_fid IS NULL THEN
+      INSERT INTO shrapnel.field
+        (is_calculated, field_index, label, name, property_name, field_type_code)
+      VALUES
+        (false, 0, t.pn, t.pn, t.pn, 2)
+      RETURNING id INTO v_fid;
+    END IF;
+    v_fields := v_fields || jsonb_build_object('id', v_fid, 'required', t.req);
+  END LOOP;
+
+  -- Revision row with the server-computed v2 fingerprint over the FULL field
+  -- document. The immediate acyclicity trigger recomputes depth; the deferred
+  -- fingerprint/superset/field-integrity triggers verify at COMMIT.
+  INSERT INTO shrapnel.stereotype_revision
+    (stereotype_id, version, parent_revision_id, parent_stereotype_id,
+     extends_rationale, depth, contract_fingerprint)
+  VALUES
+    (v_stereotype_id, v_version, p_extends_revision, v_parent_stereotype_id,
+     p_rationale, coalesce(v_parent_depth + 1, 0),
+     shrapnel.stereotype_canonical_contract(
+       v_stereotype_id, p_extends_revision, p_rationale, v_fields))
+  RETURNING id INTO v_revision;
+
+  INSERT INTO shrapnel.stereotype_field (stereotype_revision_id, field_id, required)
+  SELECT v_revision, (e->>'id')::bigint, (e->>'required')::boolean
+  FROM jsonb_array_elements(v_fields) e;
+
+  RETURN v_revision;
+END;
+$$;
+
+
+--
+-- Name: stereotype_depth_of(bigint); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_depth_of(p_revision_id bigint) RETURNS integer
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE
+  v_cur   bigint := p_revision_id;
+  v_depth integer := 0;
+  v_next  bigint;
+BEGIN
+  IF p_revision_id IS NULL THEN
+    RETURN 0;
+  END IF;
+  LOOP
+    SELECT parent_revision_id INTO v_next
+      FROM shrapnel.stereotype_revision WHERE id = v_cur;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'stereotype_depth_of: revision % not found', v_cur;
+    END IF;
+    EXIT WHEN v_next IS NULL;
+    v_depth := v_depth + 1;
+    v_cur   := v_next;
+  END LOOP;
+  RETURN v_depth;
+END;
+$$;
+
+
+--
+-- Name: stereotype_effective_contract(bigint); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_effective_contract(p_revision_id bigint) RETURNS TABLE(property_name text, required boolean, origin_revision bigint, origin_stereotype text, origin_version integer)
+    LANGUAGE sql STABLE
+    AS $$
+  WITH RECURSIVE walk AS (
+    SELECT r.id, r.stereotype_id, r.version, r.parent_revision_id, 0 AS hop
+    FROM shrapnel.stereotype_revision r
+    WHERE r.id = p_revision_id
+    UNION ALL
+    SELECT p.id, p.stereotype_id, p.version, p.parent_revision_id, w.hop + 1
+    FROM shrapnel.stereotype_revision p
+    JOIN walk w ON p.id = w.parent_revision_id
+  )
+  SELECT DISTINCT ON (f.property_name)
+         f.property_name,
+         sf.required,
+         w.id,
+         s.name,
+         w.version
+  FROM walk w
+  JOIN shrapnel.stereotype_field sf ON sf.stereotype_revision_id = w.id
+  JOIN shrapnel.field f             ON f.id = sf.field_id
+  JOIN shrapnel.stereotype s        ON s.id = w.stereotype_id
+  ORDER BY f.property_name, w.hop
+$$;
+
+
+--
+-- Name: stereotype_extends(bigint, text); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_extends(p_child_revision bigint, p_ancestor_name text) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM shrapnel.stereotype_chain(p_child_revision) c
+    WHERE c.hop > 0
+      AND c.name = p_ancestor_name
+  )
+$$;
+
+
+--
+-- Name: stereotype_fields_document(bigint); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_fields_document(p_revision_id bigint) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT coalesce(jsonb_agg(jsonb_build_object('id', sf.field_id, 'required', sf.required)
+                            ORDER BY sf.field_id), '[]'::jsonb)
+  FROM shrapnel.stereotype_field sf
+  WHERE sf.stereotype_revision_id = p_revision_id
+$$;
+
+
+--
+-- Name: stereotype_resolve(text); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_resolve(p_name text) RETURNS TABLE(stereotype_id bigint, head_revision_id bigint, version integer)
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT s.id, r.id, r.version
+  FROM shrapnel.stereotype s
+  JOIN shrapnel.stereotype_revision r ON r.stereotype_id = s.id
+  WHERE s.name = p_name
+  ORDER BY r.version DESC
+  LIMIT 1
+$$;
+
+
+--
+-- Name: stereotype_sort_ids(bigint[]); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_sort_ids(p bigint[]) RETURNS bigint[]
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  SELECT coalesce((SELECT array_agg(x ORDER BY x) FROM unnest(p) AS x), ARRAY[]::bigint[])
+$$;
+
+
+--
+-- Name: sync_field_metadata_to_resolution(); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.sync_field_metadata_to_resolution() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM resolution.sync_shrapnel_field(NEW.id);
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: verify_stereotype_fingerprint(); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.verify_stereotype_fingerprint() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_expected text;
+  v_fields   jsonb;
+BEGIN
+  SELECT coalesce(jsonb_agg(jsonb_build_object('id', sf.field_id, 'required', sf.required)
+                            ORDER BY sf.field_id), '[]'::jsonb)
+    INTO v_fields
+    FROM shrapnel.stereotype_field sf
+   WHERE sf.stereotype_revision_id = NEW.id;
+
+  v_expected := shrapnel.stereotype_canonical_contract(
+    NEW.stereotype_id, NEW.parent_revision_id, NEW.extends_rationale, v_fields);
+
+  IF v_expected <> NEW.contract_fingerprint THEN
+    RAISE EXCEPTION 'stereotype_revision %: contract_fingerprint mismatch (expected %, got %)',
+      NEW.id, v_expected, NEW.contract_fingerprint USING ERRCODE = '23514';
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: audit_log_categories(); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.audit_log_categories() RETURNS text[]
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT ARRAY['REGISTRY_AUDIT', 'NEBULA_AUDIT', 'KG_AUDIT']::text[];
+$$;
+
+
+--
+-- Name: FUNCTION audit_log_categories(); Type: COMMENT; Schema: tackle; Owner: -
+--
+
+COMMENT ON FUNCTION tackle.audit_log_categories() IS 'Canonical audit-category definition (V161): fully excepted from retention pruning and, via the V157 erase guard, from all unprincipled deletion. Every new audit category MUST be added here AND to the V157 guard list AND to clearLogs() — the retention policy table refuses a category missing from the guard list so the gap fails loud.';
+
+
+--
 -- Name: config_bundle_interactive_priority_pin(); Type: FUNCTION; Schema: tackle; Owner: -
 --
 
@@ -6773,6 +10629,577 @@ CREATE FUNCTION tackle.config_bundle_verified_gate() RETURNS trigger
           RETURN NEW;
         END;
         $$;
+
+
+--
+-- Name: fn_audit_arh_del(); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.fn_audit_arh_del() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE v_rows bigint; v_keys text;
+BEGIN
+  SELECT count(*),
+         string_agg(DISTINCT left(coalesce(r.role,'?'), 24) || '/' ||
+                    left(coalesce(r.record_type,'?'), 24), ', ')
+    INTO v_rows, v_keys
+  FROM deleted_rows r;
+  PERFORM tackle.fn_nebula_audit_log('agent_records_history', 'DELETE', v_rows, v_keys);
+  RETURN NULL;
+END; $$;
+
+
+--
+-- Name: fn_audit_arh_ins(); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.fn_audit_arh_ins() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE v_rows bigint; v_keys text;
+BEGIN
+  SELECT count(*),
+         string_agg(DISTINCT left(coalesce(r.role,'?'), 24) || '/' ||
+                    left(coalesce(r.record_type,'?'), 24), ', ')
+    INTO v_rows, v_keys
+  FROM inserted_rows r;
+  PERFORM tackle.fn_nebula_audit_log('agent_records_history', 'INSERT', v_rows, v_keys);
+  RETURN NULL;
+END; $$;
+
+
+--
+-- Name: fn_audit_arh_upd(); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.fn_audit_arh_upd() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE v_rows bigint; v_keys text;
+BEGIN
+  SELECT count(*),
+         string_agg(DISTINCT left(coalesce(r.role,'?'), 24) || '/' ||
+                    left(coalesce(r.record_type,'?'), 24), ', ')
+    INTO v_rows, v_keys
+  FROM updated_rows r;
+  PERFORM tackle.fn_nebula_audit_log('agent_records_history', 'UPDATE', v_rows, v_keys);
+  RETURN NULL;
+END; $$;
+
+
+--
+-- Name: fn_audit_ge_del(); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.fn_audit_ge_del() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE v_rows bigint; v_keys text;
+BEGIN
+  SELECT count(*),
+         string_agg(DISTINCT left(r.section, 24) || '/' || left(r.entity_id, 48), ', ')
+    INTO v_rows, v_keys
+  FROM deleted_rows r;
+  PERFORM tackle.fn_kg_audit_log('graph_entities', 'DELETE', v_rows, v_keys);
+  RETURN NULL;
+END; $$;
+
+
+--
+-- Name: fn_audit_ge_ins(); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.fn_audit_ge_ins() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE v_rows bigint; v_keys text;
+BEGIN
+  SELECT count(*),
+         string_agg(DISTINCT left(r.section, 24) || '/' || left(r.entity_id, 48), ', ')
+    INTO v_rows, v_keys
+  FROM inserted_rows r;
+  PERFORM tackle.fn_kg_audit_log('graph_entities', 'INSERT', v_rows, v_keys);
+  RETURN NULL;
+END; $$;
+
+
+--
+-- Name: fn_audit_ge_upd(); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.fn_audit_ge_upd() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE v_rows bigint; v_keys text;
+BEGIN
+  SELECT count(*),
+         string_agg(DISTINCT left(r.section, 24) || '/' || left(r.entity_id, 48), ', ')
+    INTO v_rows, v_keys
+  FROM updated_rows r;
+  PERFORM tackle.fn_kg_audit_log('graph_entities', 'UPDATE', v_rows, v_keys);
+  RETURN NULL;
+END; $$;
+
+
+--
+-- Name: fn_audit_goe_del(); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.fn_audit_goe_del() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE v_rows bigint; v_keys text;
+BEGIN
+  SELECT count(*),
+         string_agg(DISTINCT left(r.relation_type, 32) || ':' ||
+                    left(r.source_id, 40) || '->' || left(r.target_id, 40), ', ')
+    INTO v_rows, v_keys
+  FROM deleted_rows r;
+  PERFORM tackle.fn_kg_audit_log('graph_edges', 'DELETE', v_rows, v_keys);
+  RETURN NULL;
+END; $$;
+
+
+--
+-- Name: fn_audit_goe_ins(); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.fn_audit_goe_ins() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE v_rows bigint; v_keys text;
+BEGIN
+  SELECT count(*),
+         string_agg(DISTINCT left(r.relation_type, 32) || ':' ||
+                    left(r.source_id, 40) || '->' || left(r.target_id, 40), ', ')
+    INTO v_rows, v_keys
+  FROM inserted_rows r;
+  PERFORM tackle.fn_kg_audit_log('graph_edges', 'INSERT', v_rows, v_keys);
+  RETURN NULL;
+END; $$;
+
+
+--
+-- Name: fn_audit_goe_upd(); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.fn_audit_goe_upd() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE v_rows bigint; v_keys text;
+BEGIN
+  SELECT count(*),
+         string_agg(DISTINCT left(r.relation_type, 32) || ':' ||
+                    left(r.source_id, 40) || '->' || left(r.target_id, 40), ', ')
+    INTO v_rows, v_keys
+  FROM updated_rows r;
+  PERFORM tackle.fn_kg_audit_log('graph_edges', 'UPDATE', v_rows, v_keys);
+  RETURN NULL;
+END; $$;
+
+
+--
+-- Name: fn_audit_hh_del(); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.fn_audit_hh_del() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE v_rows bigint; v_keys text;
+BEGIN
+  SELECT count(*),
+         string_agg(DISTINCT left(coalesce(r.source_filename,'?'), 48), ', ')
+    INTO v_rows, v_keys
+  FROM deleted_rows r;
+  PERFORM tackle.fn_nebula_audit_log('harvests_history', 'DELETE', v_rows, v_keys);
+  RETURN NULL;
+END; $$;
+
+
+--
+-- Name: fn_audit_hh_ins(); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.fn_audit_hh_ins() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE v_rows bigint; v_keys text;
+BEGIN
+  SELECT count(*),
+         string_agg(DISTINCT left(coalesce(r.source_filename,'?'), 48), ', ')
+    INTO v_rows, v_keys
+  FROM inserted_rows r;
+  PERFORM tackle.fn_nebula_audit_log('harvests_history', 'INSERT', v_rows, v_keys);
+  RETURN NULL;
+END; $$;
+
+
+--
+-- Name: fn_audit_hh_upd(); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.fn_audit_hh_upd() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE v_rows bigint; v_keys text;
+BEGIN
+  SELECT count(*),
+         string_agg(DISTINCT left(coalesce(r.source_filename,'?'), 48), ', ')
+    INTO v_rows, v_keys
+  FROM updated_rows r;
+  PERFORM tackle.fn_nebula_audit_log('harvests_history', 'UPDATE', v_rows, v_keys);
+  RETURN NULL;
+END; $$;
+
+
+--
+-- Name: fn_audit_memory_del(); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.fn_audit_memory_del() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE v_rows int; v_keys text;
+BEGIN
+  SELECT count(*), string_agg(DISTINCT slug, ', ') INTO v_rows, v_keys FROM deleted_rows;
+  PERFORM tackle.fn_registry_audit_log('memory', 'DELETE', v_rows, v_keys);
+  RETURN NULL;
+END; $$;
+
+
+--
+-- Name: fn_audit_memory_ins(); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.fn_audit_memory_ins() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE v_rows int; v_keys text;
+BEGIN
+  SELECT count(*), string_agg(DISTINCT slug, ', ') INTO v_rows, v_keys FROM inserted_rows;
+  PERFORM tackle.fn_registry_audit_log('memory', 'INSERT', v_rows, v_keys);
+  RETURN NULL;
+END; $$;
+
+
+--
+-- Name: fn_audit_memory_upd(); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.fn_audit_memory_upd() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE v_rows int; v_keys text;
+BEGIN
+  SELECT count(*), string_agg(DISTINCT r.slug, ', ') INTO v_rows, v_keys FROM updated_rows r;
+  PERFORM tackle.fn_registry_audit_log('memory', 'UPDATE', v_rows, v_keys);
+  RETURN NULL;
+END; $$;
+
+
+--
+-- Name: fn_audit_rh_del(); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.fn_audit_rh_del() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE v_rows bigint; v_keys text;
+BEGIN
+  SELECT count(*),
+         string_agg(DISTINCT left(coalesce(r.name,'?'), 24), ', ')
+    INTO v_rows, v_keys
+  FROM deleted_rows r;
+  PERFORM tackle.fn_nebula_audit_log('roles_history', 'DELETE', v_rows, v_keys);
+  RETURN NULL;
+END; $$;
+
+
+--
+-- Name: fn_audit_rh_ins(); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.fn_audit_rh_ins() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE v_rows bigint; v_keys text;
+BEGIN
+  SELECT count(*),
+         string_agg(DISTINCT left(coalesce(r.name,'?'), 24), ', ')
+    INTO v_rows, v_keys
+  FROM inserted_rows r;
+  PERFORM tackle.fn_nebula_audit_log('roles_history', 'INSERT', v_rows, v_keys);
+  RETURN NULL;
+END; $$;
+
+
+--
+-- Name: fn_audit_rh_upd(); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.fn_audit_rh_upd() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE v_rows bigint; v_keys text;
+BEGIN
+  SELECT count(*),
+         string_agg(DISTINCT left(coalesce(r.name,'?'), 24), ', ')
+    INTO v_rows, v_keys
+  FROM updated_rows r;
+  PERFORM tackle.fn_nebula_audit_log('roles_history', 'UPDATE', v_rows, v_keys);
+  RETURN NULL;
+END; $$;
+
+
+--
+-- Name: fn_audit_rm_del(); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.fn_audit_rm_del() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE v_rows int; v_keys text;
+BEGIN
+  SELECT count(*), string_agg(DISTINCT role, ', ') INTO v_rows, v_keys FROM deleted_rows;
+  PERFORM tackle.fn_registry_audit_log('role_memory', 'DELETE', v_rows, v_keys);
+  RETURN NULL;
+END; $$;
+
+
+--
+-- Name: fn_audit_rm_ins(); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.fn_audit_rm_ins() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE v_rows int; v_keys text;
+BEGIN
+  SELECT count(*), string_agg(DISTINCT role, ', ') INTO v_rows, v_keys FROM inserted_rows;
+  PERFORM tackle.fn_registry_audit_log('role_memory', 'INSERT', v_rows, v_keys);
+  RETURN NULL;
+END; $$;
+
+
+--
+-- Name: fn_audit_rm_upd(); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.fn_audit_rm_upd() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE v_rows int; v_keys text;
+BEGIN
+  SELECT count(*), string_agg(DISTINCT r.role, ', ') INTO v_rows, v_keys FROM updated_rows r;
+  PERFORM tackle.fn_registry_audit_log('role_memory', 'UPDATE', v_rows, v_keys);
+  RETURN NULL;
+END; $$;
+
+
+--
+-- Name: fn_guard_audit_erase(); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.fn_guard_audit_erase() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_audit_rows bigint;
+BEGIN
+  SELECT count(*) INTO v_audit_rows
+  FROM deleted_rows
+  WHERE category IN ('REGISTRY_AUDIT', 'NEBULA_AUDIT', 'KG_AUDIT');
+
+  IF v_audit_rows > 0
+     AND COALESCE(current_setting('tackle.allow_audit_erase', true), 'off') <> 'on'
+  THEN
+    RAISE EXCEPTION
+      'audit-erase refused: % audit rows (REGISTRY_AUDIT/NEBULA_AUDIT/KG_AUDIT) in DELETE scope; to erase deliberately, run inside a transaction with SET LOCAL tackle.allow_audit_erase = ''on''',
+      v_audit_rows
+      USING ERRCODE = 'P0001';
+  END IF;
+  RETURN NULL;
+END; $$;
+
+
+--
+-- Name: fn_kg_audit_log(text, text, bigint, text); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.fn_kg_audit_log(p_table text, p_op text, p_rows bigint, p_keys text) RETURNS void
+    LANGUAGE sql
+    AS $$
+  INSERT INTO tackle.system_logs
+    (id, timestamp, level, category, message, source, details)
+  VALUES (
+    gen_random_uuid()::text,
+    now(),
+    'INFO',
+    'KG_AUDIT',
+    format('%s on %s (%s rows)%s', p_op, p_table, p_rows,
+           COALESCE(' [' || left(p_keys, 900) || ']', '')),
+    'kg-audit-trigger',
+    jsonb_build_object(
+      'table', p_table,
+      'op', p_op,
+      'row_count', p_rows,
+      'keys', p_keys,
+      'application_name', current_setting('application_name', true),
+      'client_addr', inet_client_addr()::text,
+      'txid', txid_current()
+    )
+  );
+$$;
+
+
+--
+-- Name: fn_nebula_audit_log(text, text, bigint, text); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.fn_nebula_audit_log(p_table text, p_op text, p_rows bigint, p_keys text) RETURNS void
+    LANGUAGE sql
+    AS $$
+  INSERT INTO tackle.system_logs
+    (id, timestamp, level, category, message, source, details)
+  VALUES (
+    gen_random_uuid()::text,
+    now(),
+    'INFO',
+    'NEBULA_AUDIT',
+    format('%s on %s (%s rows)%s', p_op, p_table, p_rows,
+           COALESCE(' [' || left(p_keys, 900) || ']', '')),
+    'nebula-audit-trigger',
+    jsonb_build_object(
+      'table', p_table,
+      'op', p_op,
+      'row_count', p_rows,
+      'keys', p_keys,
+      'application_name', current_setting('application_name', true),
+      'client_addr', inet_client_addr()::text,
+      'txid', txid_current()
+    )
+  );
+$$;
+
+
+--
+-- Name: fn_registry_audit_log(text, text, integer, text); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.fn_registry_audit_log(p_table text, p_op text, p_rows integer, p_keys text) RETURNS void
+    LANGUAGE sql
+    AS $$
+  INSERT INTO tackle.system_logs (level, category, message, source, details)
+  VALUES (
+    'INFO',
+    'REGISTRY_AUDIT',
+    format('%s on %s (%s rows)%s', p_op, p_table, p_rows,
+           COALESCE(' [' || p_keys || ']', '')),
+    'tackle-audit-trigger',
+    jsonb_build_object(
+      'table', p_table,
+      'op', p_op,
+      'row_count', p_rows,
+      'keys', p_keys,
+      'application_name', current_setting('application_name', true),
+      'client_addr', inet_client_addr()::text,
+      'txid', txid_current()
+    )
+  );
+$$;
+
+
+--
+-- Name: prune_system_logs(boolean, integer, integer); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.prune_system_logs(p_dry_run boolean DEFAULT false, p_batch_limit integer DEFAULT 5000, p_max_batches integer DEFAULT 200) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_batch        integer := 0;
+  v_deleted      bigint  := 0;
+  v_cutoff       timestamptz;
+  v_total_deleted bigint := 0;
+  v_total_scanned bigint;
+  v_report       jsonb;
+BEGIN
+  IF p_dry_run THEN
+    SELECT count(*) INTO v_total_scanned FROM tackle.system_logs s
+    WHERE EXISTS (
+      SELECT 1 FROM tackle.system_logs_retention_policy p
+      WHERE p.category = s.category AND p.enabled
+        AND s.timestamp < now() - make_interval(days => p.retain_days)
+    )
+      AND NOT (s.category = ANY (tackle.audit_log_categories()));
+    RETURN jsonb_build_object(
+      'dry_run', true, 'would_delete', v_total_scanned,
+      'audit_categories', tackle.audit_log_categories(),
+      'computed_at', now());
+  END IF;
+
+  FOR v_batch IN 1..p_max_batches LOOP
+    -- Recompute the cutoff per batch (cheap) and delete at most one batch.
+    DELETE FROM tackle.system_logs s
+    WHERE s.ctid IN (
+      SELECT s2.ctid FROM tackle.system_logs s2
+      JOIN tackle.system_logs_retention_policy p ON p.category = s2.category
+      WHERE p.enabled
+        AND s2.timestamp < now() - make_interval(days => p.retain_days)
+        AND NOT (s2.category = ANY (tackle.audit_log_categories()))
+      ORDER BY s2.timestamp
+      LIMIT p_batch_limit
+    );
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
+    v_total_deleted := v_total_deleted + v_deleted;
+    EXIT WHEN v_deleted < p_batch_limit;
+    PERFORM pg_sleep(0.1);
+  END LOOP;
+
+  v_report := jsonb_build_object(
+    'dry_run', false,
+    'deleted', v_total_deleted,
+    'batches', v_batch,
+    'audit_categories', tackle.audit_log_categories(),
+    'policy_rows', (SELECT count(*) FROM tackle.system_logs_retention_policy WHERE enabled),
+    'ran_at', now());
+
+  -- Self-observation: the run itself is attributable evidence.
+  INSERT INTO tackle.system_logs (id, "timestamp", level, category, message, source, details)
+  VALUES ('retention-run-' || to_char(now(), 'YYYYMMDD"T"HH24MISS"Z"'),
+          now(), 'INFO', 'SYSTEM',
+          'retention prune: ' || v_total_deleted || ' rows deleted (audit categories excepted)',
+          'tackle.prune_system_logs', v_report)
+  ON CONFLICT (id) DO NOTHING;
+  RETURN v_report;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION prune_system_logs(p_dry_run boolean, p_batch_limit integer, p_max_batches integer); Type: COMMENT; Schema: tackle; Owner: -
+--
+
+COMMENT ON FUNCTION tackle.prune_system_logs(p_dry_run boolean, p_batch_limit integer, p_max_batches integer) IS 'V161 retention pruning for tackle.system_logs: batched DELETE of rows whose category has an enabled policy and whose age exceeds retain_days. Audit categories (tackle.audit_log_categories()) are hard-excluded in the WHERE — double protection alongside the V157 erase guard. Dry-run mode returns the would-delete count without touching data.';
+
+
+--
+-- Name: recent_audit(interval, text, integer); Type: FUNCTION; Schema: tackle; Owner: -
+--
+
+CREATE FUNCTION tackle.recent_audit(p_max_age interval DEFAULT '24:00:00'::interval, p_table text DEFAULT NULL::text, p_limit integer DEFAULT 50) RETURNS TABLE("timestamp" timestamp with time zone, category text, audited_table text, operation text, row_count bigint, keys text, application_name text, client_addr text, txid bigint, message text)
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT t.timestamp, t.category, t.audited_table, t.operation,
+         t.row_count, t.keys, t.application_name, t.client_addr,
+         t.txid, t.message
+  FROM tackle.audit_trail t
+  WHERE t.timestamp > now() - p_max_age
+    AND (p_table IS NULL OR t.audited_table = p_table)
+  ORDER BY t.timestamp DESC
+  LIMIT GREATEST(LEAST(COALESCE(p_limit, 50), 500), 1);
+$$;
 
 
 --
@@ -7287,6 +11714,21 @@ BEGIN
          NOW(), '9999-12-31 23:59:59+00');
     RETURN NEW;
 END;
+$$;
+
+
+--
+-- Name: canonical_work_request_shape_active(); Type: FUNCTION; Schema: vision; Owner: -
+--
+
+CREATE FUNCTION vision.canonical_work_request_shape_active() RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT shape_version
+    FROM vision.work_request_shape_registry
+    WHERE ratification_state = 'ratified'
+      AND recorded_until_dt = 'infinity'::timestamptz
+    LIMIT 1;
 $$;
 
 
@@ -7931,6 +12373,380 @@ CREATE FUNCTION vision.receipts_assign_sequence() RETURNS trigger
 
 
 --
+-- Name: refuse_wr_struct_drop(); Type: FUNCTION; Schema: vision; Owner: -
+--
+
+CREATE FUNCTION vision.refuse_wr_struct_drop() RETURNS event_trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_obj   record;
+    v_hatch boolean;
+BEGIN
+    -- NB: event triggers have no TG_OP (that is a row-trigger variable); this
+    -- function fires only on the sql_drop event, so no event-type check is
+    -- needed (or valid) here.
+
+    BEGIN
+        v_hatch := COALESCE(
+            current_setting('vision.allow_wr_object_drop'::text, true)::boolean,
+            false);
+    EXCEPTION WHEN OTHERS THEN
+        v_hatch := false;
+    END;
+
+    IF v_hatch THEN
+        RETURN;
+    END IF;
+
+    FOR v_obj IN
+        SELECT * FROM pg_event_trigger_dropped_objects()
+        WHERE object_type IN ('table','view')
+          AND (
+               (schema_name = 'vision' AND object_identity IN (
+                    'vision.work_requests',
+                    'vision.work_requests_history',
+                    'vision.work_request_shape_registry',
+                    'vision.canonical_wr_landing_refusals',
+                    'vision.work_request_edges_history'))
+            OR (schema_name = 'conduit' AND object_identity IN (
+                    'conduit.work_request_events',
+                    'conduit.work_request_state'))
+          )
+    LOOP
+        RAISE EXCEPTION 'P1022: % is under the never-dropped clause (WP6 disposition retain/shelve; deliberate removal may set vision.allow_wr_object_drop=on, session-LOCAL)',
+            v_obj.object_identity
+            USING ERRCODE = 'P0001';
+    END LOOP;
+END;
+$$;
+
+
+--
+-- Name: trg_calendar_events_audit_ins(); Type: FUNCTION; Schema: vision; Owner: -
+--
+
+CREATE FUNCTION vision.trg_calendar_events_audit_ins() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM tackle.fn_nebula_audit_log(
+        'vision.calendar_events', 'INSERT',
+        (SELECT count(*) FROM new_rows),
+        COALESCE((SELECT string_agg(r.source_machine || '/' || r.source_emitter, ',')
+                  FROM new_rows r), ''));
+    RETURN NULL;
+END; $$;
+
+
+--
+-- Name: trg_calendar_events_audit_upd(); Type: FUNCTION; Schema: vision; Owner: -
+--
+
+CREATE FUNCTION vision.trg_calendar_events_audit_upd() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM tackle.fn_nebula_audit_log(
+        'vision.calendar_events', 'UPDATE',
+        (SELECT count(*) FROM old_rows),
+        COALESCE((SELECT string_agg(r.source_machine || '/' || r.source_emitter, ',')
+                  FROM old_rows r), ''));
+    RETURN NULL;
+END; $$;
+
+
+--
+-- Name: trg_calendar_no_delete(); Type: FUNCTION; Schema: vision; Owner: -
+--
+
+CREATE FUNCTION vision.trg_calendar_no_delete() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RAISE EXCEPTION 'CAL011: calendar surfaces are append-only — DELETE refused (supersede via bitemporal close)'
+        USING ERRCODE = 'P0001';
+END;
+$$;
+
+
+--
+-- Name: trg_calendar_no_truncate(); Type: FUNCTION; Schema: vision; Owner: -
+--
+
+CREATE FUNCTION vision.trg_calendar_no_truncate() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RAISE EXCEPTION 'CAL012: calendar surfaces refuse TRUNCATE (append-only)'
+        USING ERRCODE = 'P0001';
+END;
+$$;
+
+
+--
+-- Name: trg_canonical_wr_landing_guard(); Type: FUNCTION; Schema: vision; Owner: -
+--
+
+CREATE FUNCTION vision.trg_canonical_wr_landing_guard() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'vision'
+    AS $$
+DECLARE
+    v_shape  text;
+    v_hatch  boolean;
+    v_offend text;
+    v_k      text;
+    v_val    jsonb;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RETURN NULL;  -- tombstones are part of the bitemporal contract
+    END IF;
+
+    -- C2: the hatch is evaluated FIRST. A session that deliberately opts out
+    -- of the governed gate (vision.allow_ungated_wr_landing = on, session-
+    -- LOCAL) passes unimpeded — including pre-ratification, when no shape is
+    -- registered. This matches the documented legacy-hatch semantics.
+    BEGIN
+        v_hatch := COALESCE(
+            current_setting('vision.allow_ungated_wr_landing'::text, true)::boolean,
+            false);
+    EXCEPTION WHEN OTHERS THEN
+        v_hatch := false;
+    END;
+    IF v_hatch THEN
+        RETURN NEW;
+    END IF;
+
+    -- Canonical detection: does the write carry any canonical envelope column?
+    IF NEW.relation_payload IS NULL
+       AND NEW.business_key IS NULL
+       AND NEW.intent_payload IS NULL
+       AND NEW.lineage IS NULL
+       AND NEW.decomposition IS NULL
+       AND NEW.execution_linkage IS NULL
+       AND NEW.evidence_obligations IS NULL
+       AND NEW.inquiry IS NULL
+       AND NEW.shape_version IS NULL THEN
+        -- Legacy-shaped write. Pre-ratification (no active shape) the gate is
+        -- closed for canonical landing but legacy writes are admitted as
+        -- today (strict-gate policy: refusing legacy INSERTs pre-registration
+        -- would have stranded the 6 live rows' writers — see §7 evidence 2
+        -- and the regression suite's legacy-admission case).
+        v_shape := vision.canonical_work_request_shape_active();
+        IF v_shape IS NULL THEN
+            RETURN NEW;  -- no shape ratified: legacy writes pass untouched
+        END IF;
+        RETURN NEW;
+    END IF;
+
+    -- Canonical write: a ratified shape must exist and NEW.shape_version must
+    -- name it explicitly (C3). The stamp is enforced, not auto-filled: an
+    -- un-stamped canonical write is a shape-blind write.
+    v_shape := vision.canonical_work_request_shape_active();
+    IF v_shape IS NULL THEN
+        v_offend := 'P1021: no ratified canonical WorkRequest shape registered (seed vision.work_request_shape_registry v0.1 + WP2 acceptance first); deliberate ungated legacy writes may set vision.allow_ungated_wr_landing=on (session-LOCAL)';
+    ELSIF NEW.shape_version IS NULL THEN
+        v_offend := 'P1023: canonical landing requires an explicit shape_version matching the active ratified shape (got NULL)';
+    ELSIF NEW.shape_version <> v_shape THEN
+        v_offend := 'P1023: shape_version ' || NEW.shape_version || ' does not match the active ratified shape ' || v_shape;
+    -- C5: full v0.1 conformance (schemas/work-request/canonical-shape.v0.1.json)
+    ELSIF NEW.relation_payload IS NULL THEN
+        v_offend := 'P1020: relation_payload (original-field preservation) is required for canonical landing';
+    ELSIF jsonb_typeof(NEW.relation_payload) <> 'object' THEN
+        v_offend := 'P1020: relation_payload must be a JSON object';
+    ELSIF NEW.business_key IS NULL OR NEW.business_key = '' THEN
+        v_offend := 'P1020: business_key (non-empty string) is required for canonical landing';
+    ELSIF NEW.intent_payload IS NULL THEN
+        v_offend := 'P1020: intent_payload is required for canonical landing (WP1 v0.1 intent block)';
+    ELSIF jsonb_typeof(NEW.intent_payload) <> 'object' THEN
+        v_offend := 'P1020: intent_payload must be a JSON object';
+    ELSIF NOT (NEW.intent_payload ? 'problem_statement')
+          OR jsonb_typeof(NEW.intent_payload->'problem_statement') IS DISTINCT FROM 'string'
+          OR (NEW.intent_payload->>'problem_statement') = '' THEN
+        v_offend := 'P1020: intent_payload.problem_statement (non-empty string) is required';
+    ELSIF NOT (NEW.intent_payload ? 'desired_outcome')
+          OR jsonb_typeof(NEW.intent_payload->'desired_outcome') IS DISTINCT FROM 'string'
+          OR (NEW.intent_payload->>'desired_outcome') = '' THEN
+        v_offend := 'P1020: intent_payload.desired_outcome (non-empty string) is required';
+    ELSIF NEW.intent_payload ? 'priority'
+          AND (jsonb_typeof(NEW.intent_payload->'priority') IS DISTINCT FROM 'string'
+               OR NEW.intent_payload->>'priority' NOT IN ('low','medium','high')) THEN
+        v_offend := 'P1020: intent_payload.priority must be one of low|medium|high';
+    ELSIF EXISTS (
+        SELECT 1 FROM jsonb_object_keys(NEW.intent_payload) k
+        WHERE k NOT IN ('problem_statement','desired_outcome','priority')
+    ) THEN
+        v_offend := 'P1020: intent_payload key outside WP1 v0.1 envelope (problem_statement/desired_outcome/priority)';
+    -- lineage: optional, but when present must be an object with only
+    -- derived_from (array) and/or plan (string)
+    ELSIF NEW.lineage IS NOT NULL THEN
+        IF jsonb_typeof(NEW.lineage) <> 'object' THEN
+            v_offend := 'P1020: lineage must be a JSON object';
+        ELSIF EXISTS (
+            SELECT 1 FROM jsonb_object_keys(NEW.lineage) k
+            WHERE k NOT IN ('derived_from','plan')
+        ) THEN
+            v_offend := 'P1020: lineage key outside WP1 v0.1 envelope (derived_from/plan)';
+        ELSIF NEW.lineage ? 'derived_from'
+              AND jsonb_typeof(NEW.lineage->'derived_from') IS DISTINCT FROM 'array' THEN
+            v_offend := 'P1020: lineage.derived_from must be an array';
+        ELSIF NEW.lineage ? 'plan'
+              AND jsonb_typeof(NEW.lineage->'plan') IS DISTINCT FROM 'string' THEN
+            v_offend := 'P1020: lineage.plan must be a string';
+        END IF;
+    END IF;
+
+    IF v_offend IS NULL AND NEW.decomposition IS NOT NULL THEN
+        IF jsonb_typeof(NEW.decomposition) <> 'object'
+           OR (NEW.decomposition ? 'steps'
+               AND jsonb_typeof(NEW.decomposition->'steps') IS DISTINCT FROM 'array') THEN
+            v_offend := 'P1020: decomposition must be an object whose steps (when present) is an array';
+        END IF;
+    END IF;
+
+    -- C1 + C5: execution_linkage — key-aligned to the ratified artifact
+    -- (lease_ref / attempt_refs / receipt_refs) and strictly refs-only.
+    IF v_offend IS NULL AND NEW.execution_linkage IS NOT NULL THEN
+        IF jsonb_typeof(NEW.execution_linkage) <> 'object' THEN
+            v_offend := 'P1020: execution_linkage must be a JSON object';
+        ELSE
+            FOR v_k IN SELECT jsonb_object_keys(NEW.execution_linkage) LOOP
+                IF v_k NOT IN ('lease_ref','attempt_refs','receipt_refs') THEN
+                    v_offend := 'P1020: execution_linkage must be refs-only with artifact keys (lease_ref/attempt_refs/receipt_refs); got key ''' || v_k || '''';
+                    EXIT;
+                END IF;
+                v_val := NEW.execution_linkage -> v_k;
+                IF v_k = 'lease_ref' THEN
+                    IF jsonb_typeof(v_val) IS DISTINCT FROM 'string' THEN
+                        v_offend := 'P1020: execution_linkage.lease_ref must be a string ref';
+                        EXIT;
+                    END IF;
+                ELSE
+                    IF jsonb_typeof(v_val) IS DISTINCT FROM 'array' THEN
+                        v_offend := 'P1020: execution_linkage.' || v_k || ' must be an array of refs';
+                        EXIT;
+                    END IF;
+                    IF EXISTS (
+                        SELECT 1 FROM jsonb_array_elements(v_val) e
+                        WHERE jsonb_typeof(e) IS DISTINCT FROM 'string'
+                    ) THEN
+                        v_offend := 'P1020: execution_linkage.' || v_k || ' must contain only string refs (embedded execution state violates the ratified no-megatable principle)';
+                        EXIT;
+                    END IF;
+                END IF;
+            END LOOP;
+        END IF;
+    END IF;
+
+    IF v_offend IS NULL AND NEW.evidence_obligations IS NOT NULL THEN
+        IF jsonb_typeof(NEW.evidence_obligations) IS DISTINCT FROM 'array' THEN
+            v_offend := 'P1020: evidence_obligations must be an array (Decision B ev_requirements)';
+        END IF;
+    END IF;
+
+    -- inquiry: optional, but exactly the four pinned fields when present,
+    -- each with the artifact's type (no fifth field — WorkRequest-gravity guard).
+    IF v_offend IS NULL AND NEW.inquiry IS NOT NULL THEN
+        IF jsonb_typeof(NEW.inquiry) <> 'object' THEN
+            v_offend := 'P1020: inquiry must be a JSON object';
+        ELSE
+            FOR v_k IN SELECT jsonb_object_keys(NEW.inquiry) LOOP
+                IF v_k NOT IN ('read_set_scope','evaluator_ref','expected_outcome_type','evidence_requirements') THEN
+                    v_offend := 'P1020: inquiry must contain exactly read_set_scope/evaluator_ref/expected_outcome_type/evidence_requirements (no fifth field — WorkRequest-gravity guard); got key ''' || v_k || '''';
+                    EXIT;
+                END IF;
+                v_val := NEW.inquiry -> v_k;
+                IF v_k = 'read_set_scope' THEN
+                    IF jsonb_typeof(v_val) IS DISTINCT FROM 'object' THEN
+                        v_offend := 'P1020: inquiry.read_set_scope must be an object';
+                        EXIT;
+                    END IF;
+                ELSIF v_k = 'evidence_requirements' THEN
+                    IF jsonb_typeof(v_val) IS DISTINCT FROM 'array' THEN
+                        v_offend := 'P1020: inquiry.evidence_requirements must be an array';
+                        EXIT;
+                    END IF;
+                ELSIF jsonb_typeof(v_val) IS DISTINCT FROM 'string' THEN
+                    v_offend := 'P1020: inquiry.' || v_k || ' must be a string';
+                    EXIT;
+                END IF;
+            END LOOP;
+        END IF;
+    END IF;
+
+    IF v_offend IS NOT NULL THEN
+        -- No in-trigger logging: a row written here would roll back with the
+        -- aborted statement/transaction. The writer records refusals to
+        -- vision.canonical_wr_landing_refusals post-exception (C6 precedent).
+        RAISE EXCEPTION '%', v_offend USING ERRCODE = 'P0001';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trg_sessions_audit_ins(); Type: FUNCTION; Schema: vision; Owner: -
+--
+
+CREATE FUNCTION vision.trg_sessions_audit_ins() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM tackle.fn_nebula_audit_log(
+        'vision.sessions', 'INSERT',
+        (SELECT count(*) FROM new_rows),
+        COALESCE((SELECT string_agg(left(r.title, 60), ',') FROM new_rows r), ''));
+    RETURN NULL;
+END; $$;
+
+
+--
+-- Name: trg_sessions_audit_upd(); Type: FUNCTION; Schema: vision; Owner: -
+--
+
+CREATE FUNCTION vision.trg_sessions_audit_upd() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM tackle.fn_nebula_audit_log(
+        'vision.sessions', 'UPDATE',
+        (SELECT count(*) FROM old_rows),
+        COALESCE((SELECT string_agg(left(r.title, 60), ',') FROM old_rows r), ''));
+    RETURN NULL;
+END; $$;
+
+
+--
+-- Name: trg_work_request_shape_registry_single_ratified(); Type: FUNCTION; Schema: vision; Owner: -
+--
+
+CREATE FUNCTION vision.trg_work_request_shape_registry_single_ratified() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.ratification_state = 'ratified' THEN
+        IF EXISTS (
+            SELECT 1 FROM vision.work_request_shape_registry r
+            WHERE r.shape_version <> NEW.shape_version
+              AND r.ratification_state = 'ratified'
+              AND r.recorded_until_dt = 'infinity'::timestamptz
+        ) THEN
+            RAISE EXCEPTION 'P1030: another shape_version is already ratified (single-successor ratification; supersede the incumbent first)'
+                USING ERRCODE = 'P0001';
+        END IF;
+        IF NEW.ratified_at IS NULL THEN
+            NEW.ratified_at := now();
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: work_request_edges_delete_trigger(); Type: FUNCTION; Schema: vision; Owner: -
 --
 
@@ -8236,6 +13052,120 @@ $$;
 
 
 --
+-- Name: fn_node_requirements_audit(); Type: FUNCTION; Schema: wind; Owner: -
+--
+
+CREATE FUNCTION wind.fn_node_requirements_audit() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE v_rows bigint; v_keys text;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    SELECT count(*), '(statement-level)' INTO v_rows, v_keys FROM deleted_rows;
+  ELSIF TG_OP = 'UPDATE' THEN
+    SELECT count(*), string_agg(DISTINCT
+             coalesce(capability_key, '~') || '/' || coalesce(role_credential, '~'), ', ')
+      INTO v_rows, v_keys FROM updated_rows;
+  ELSE
+    SELECT count(*), string_agg(DISTINCT
+             coalesce(capability_key, '~') || '/' || coalesce(role_credential, '~'), ', ')
+      INTO v_rows, v_keys FROM inserted_rows;
+  END IF;
+  PERFORM tackle.fn_nebula_audit_log('node_requirements', TG_OP, v_rows, v_keys);
+  RETURN NULL;
+END; $$;
+
+
+--
+-- Name: forbid_compiled_artifact_mutation(); Type: FUNCTION; Schema: wind; Owner: -
+--
+
+CREATE FUNCTION wind.forbid_compiled_artifact_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_version_id uuid;
+    v_compilation_id uuid;
+BEGIN
+    IF TG_TABLE_NAME = 'workflow_versions' THEN
+        v_version_id := OLD.id;
+    ELSIF TG_TABLE_NAME = 'workflow_nodes' THEN
+        v_version_id := OLD.workflow_version_id;
+    ELSIF TG_TABLE_NAME = 'workflow_edges' THEN
+        v_version_id := OLD.workflow_version_id;
+    END IF;
+
+    SELECT id INTO v_compilation_id
+      FROM aegis.wind_compilation
+     WHERE wind_workflow_version_id = v_version_id
+     LIMIT 1;
+
+    IF FOUND THEN
+        RAISE EXCEPTION
+            'wind.% is immutable after Aegis compilation %, operation % blocked for version %',
+            TG_TABLE_NAME, v_compilation_id, TG_OP, v_version_id
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION forbid_compiled_artifact_mutation(); Type: COMMENT; Schema: wind; Owner: -
+--
+
+COMMENT ON FUNCTION wind.forbid_compiled_artifact_mutation() IS 'Blocks mutation of workflow versions, nodes, and edges referenced by immutable Aegis compilation lineage';
+
+
+--
+-- Name: forbid_execution_evidence_mutation(); Type: FUNCTION; Schema: wind; Owner: -
+--
+
+CREATE FUNCTION wind.forbid_execution_evidence_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RAISE EXCEPTION 'wind.% is append-only: % blocked for evidence row %',
+        TG_TABLE_NAME, TG_OP, OLD.id
+        USING ERRCODE = 'restrict_violation';
+END;
+$$;
+
+
+--
+-- Name: forbid_provider_registry_mutation(); Type: FUNCTION; Schema: wind; Owner: -
+--
+
+CREATE FUNCTION wind.forbid_provider_registry_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RAISE EXCEPTION 'wind.% is append-only: % blocked for row %', TG_TABLE_NAME, TG_OP, OLD.revision_id
+        USING ERRCODE = 'restrict_violation';
+END;
+$$;
+
+
+--
+-- Name: forbid_provider_rotation_mutation(); Type: FUNCTION; Schema: wind; Owner: -
+--
+
+CREATE FUNCTION wind.forbid_provider_rotation_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RAISE EXCEPTION 'wind.% is append-only: % blocked for row %', TG_TABLE_NAME, TG_OP, OLD.rotation_id
+        USING ERRCODE = 'restrict_violation';
+END;
+$$;
+
+
+--
 -- Name: trg_bridge_conduit_events(); Type: FUNCTION; Schema: wind; Owner: -
 --
 
@@ -8313,16 +13243,1025 @@ $$;
 
 
 --
--- Name: concept; Type: TABLE; Schema: resolution; Owner: -
+-- Name: attribute_mapping; Type: TABLE; Schema: aegis; Owner: -
 --
 
-CREATE TABLE resolution.concept (
+CREATE TABLE aegis.attribute_mapping (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
-    name text NOT NULL,
+    registry_id uuid NOT NULL,
+    tla_variable character varying(255) NOT NULL,
+    attribute_id uuid NOT NULL,
+    conversion_function text,
+    default_value jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE attribute_mapping; Type: COMMENT; Schema: aegis; Owner: -
+--
+
+COMMENT ON TABLE aegis.attribute_mapping IS 'Maps TLA+ variables to Resolution attributes';
+
+
+--
+-- Name: compiled_edge; Type: TABLE; Schema: aegis; Owner: -
+--
+
+CREATE TABLE aegis.compiled_edge (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    compilation_id uuid NOT NULL,
+    registry_id uuid NOT NULL,
+    registry_revision_id uuid NOT NULL,
+    transition_id uuid NOT NULL,
+    wind_workflow_version_id uuid NOT NULL,
+    wind_edge_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE compiled_edge; Type: COMMENT; Schema: aegis; Owner: -
+--
+
+COMMENT ON TABLE aegis.compiled_edge IS 'Immutable compilation lineage from a revision-scoped Aegis transition to a Wind workflow edge';
+
+
+--
+-- Name: compiled_node; Type: TABLE; Schema: aegis; Owner: -
+--
+
+CREATE TABLE aegis.compiled_node (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    compilation_id uuid NOT NULL,
+    registry_id uuid NOT NULL,
+    registry_revision_id uuid NOT NULL,
+    state_id uuid NOT NULL,
+    wind_workflow_version_id uuid NOT NULL,
+    wind_node_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE compiled_node; Type: COMMENT; Schema: aegis; Owner: -
+--
+
+COMMENT ON TABLE aegis.compiled_node IS 'Immutable compilation lineage from a revision-scoped Aegis state to a Wind workflow node';
+
+
+--
+-- Name: concept_mapping; Type: TABLE; Schema: aegis; Owner: -
+--
+
+CREATE TABLE aegis.concept_mapping (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    registry_id uuid NOT NULL,
+    tla_name character varying(255) NOT NULL,
+    concept_id uuid NOT NULL,
+    mapping_type character varying(50) NOT NULL,
+    mapping_expression text,
+    cardinality character varying(50) DEFAULT 'one_to_one'::character varying NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT concept_mapping_cardinality_check CHECK (((cardinality)::text = ANY ((ARRAY['one_to_one'::character varying, 'one_to_many'::character varying, 'many_to_one'::character varying])::text[])))
+);
+
+
+--
+-- Name: TABLE concept_mapping; Type: COMMENT; Schema: aegis; Owner: -
+--
+
+COMMENT ON TABLE aegis.concept_mapping IS 'Maps TLA+ concepts to Resolution concepts';
+
+
+--
+-- Name: constant; Type: TABLE; Schema: aegis; Owner: -
+--
+
+CREATE TABLE aegis.constant (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    registry_id uuid NOT NULL,
+    name character varying(255) NOT NULL,
+    type character varying(50) NOT NULL,
+    value jsonb,
+    description text,
+    constraints text[] DEFAULT '{}'::text[] NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE constant; Type: COMMENT; Schema: aegis; Owner: -
+--
+
+COMMENT ON TABLE aegis.constant IS 'TLA+ constant definitions';
+
+
+--
+-- Name: execution_log; Type: TABLE; Schema: aegis; Owner: -
+--
+
+CREATE TABLE aegis.execution_log (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    registry_id uuid NOT NULL,
+    entity_id uuid NOT NULL,
+    from_state_id uuid,
+    to_state_id uuid,
+    transition_id uuid,
+    trigger_event text,
+    trigger_user uuid,
+    context jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE execution_log; Type: COMMENT; Schema: aegis; Owner: -
+--
+
+COMMENT ON TABLE aegis.execution_log IS 'Log of state machine executions';
+
+
+--
+-- Name: invariant; Type: TABLE; Schema: aegis; Owner: -
+--
+
+CREATE TABLE aegis.invariant (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    registry_id uuid NOT NULL,
+    name character varying(255) NOT NULL,
+    expression text NOT NULL,
+    description text,
+    is_type_invariant boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    rule_id uuid,
+    expression_id uuid
+);
+
+
+--
+-- Name: TABLE invariant; Type: COMMENT; Schema: aegis; Owner: -
+--
+
+COMMENT ON TABLE aegis.invariant IS 'TLA+ invariant definitions';
+
+
+--
+-- Name: model_check_result; Type: TABLE; Schema: aegis; Owner: -
+--
+
+CREATE TABLE aegis.model_check_result (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    registry_id uuid NOT NULL,
+    property_id uuid,
+    status character varying(50) NOT NULL,
+    trace jsonb,
+    checked_properties text[] DEFAULT '{}'::text[] NOT NULL,
+    execution_time_ms integer,
+    checked_at timestamp with time zone DEFAULT now() NOT NULL,
+    checked_by uuid,
+    registry_revision_id uuid NOT NULL,
+    engine text NOT NULL,
+    engine_version text NOT NULL,
+    checker_config_digest text NOT NULL,
+    source_digest text NOT NULL,
+    model_digest text NOT NULL,
+    input_snapshot_digest text NOT NULL,
+    result_digest text NOT NULL,
+    safety_status text NOT NULL,
+    liveness_status text NOT NULL,
+    authority_level text DEFAULT 'advisory'::text NOT NULL,
+    reason text NOT NULL,
+    CONSTRAINT model_check_result_authority_level_check CHECK ((authority_level = 'advisory'::text)),
+    CONSTRAINT model_check_result_checker_config_digest_check CHECK (((checker_config_digest IS NULL) OR (checker_config_digest ~ '^sha256:[0-9a-f]{64}$'::text))),
+    CONSTRAINT model_check_result_input_snapshot_digest_check CHECK (((input_snapshot_digest IS NULL) OR (input_snapshot_digest ~ '^sha256:[0-9a-f]{64}$'::text))),
+    CONSTRAINT model_check_result_liveness_gate_check CHECK ((liveness_status <> 'verified'::text)),
+    CONSTRAINT model_check_result_liveness_status_check CHECK ((liveness_status = ANY (ARRAY['verified'::text, 'violated'::text, 'unknown'::text, 'stale'::text, 'invalid'::text, 'unavailable'::text]))),
+    CONSTRAINT model_check_result_model_digest_check CHECK (((model_digest IS NULL) OR (model_digest ~ '^sha256:[0-9a-f]{64}$'::text))),
+    CONSTRAINT model_check_result_result_digest_check CHECK (((result_digest IS NULL) OR (result_digest ~ '^sha256:[0-9a-f]{64}$'::text))),
+    CONSTRAINT model_check_result_safety_status_check CHECK ((safety_status = ANY (ARRAY['verified'::text, 'violated'::text, 'unknown'::text, 'stale'::text, 'invalid'::text, 'unavailable'::text]))),
+    CONSTRAINT model_check_result_source_digest_check CHECK (((source_digest IS NULL) OR (source_digest ~ '^sha256:[0-9a-f]{64}$'::text))),
+    CONSTRAINT model_check_result_status_check CHECK (((status)::text = ANY ((ARRAY['verified'::character varying, 'violated'::character varying, 'unknown'::character varying, 'stale'::character varying, 'invalid'::character varying, 'unavailable'::character varying])::text[]))),
+    CONSTRAINT model_check_result_verified_safety_check CHECK ((((status)::text <> 'verified'::text) OR (safety_status = 'verified'::text)))
+);
+
+
+--
+-- Name: TABLE model_check_result; Type: COMMENT; Schema: aegis; Owner: -
+--
+
+COMMENT ON TABLE aegis.model_check_result IS 'Append-only advisory verification evidence; never a lifecycle or PEB authority record';
+
+
+--
+-- Name: property; Type: TABLE; Schema: aegis; Owner: -
+--
+
+CREATE TABLE aegis.property (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    registry_id uuid NOT NULL,
+    name character varying(255) NOT NULL,
+    type character varying(50) NOT NULL,
+    expression text NOT NULL,
+    description text,
+    is_verified boolean DEFAULT false NOT NULL,
+    verified_at timestamp with time zone,
+    verified_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT property_type_check CHECK (((type)::text = ANY ((ARRAY['safety'::character varying, 'liveness'::character varying, 'fairness'::character varying])::text[])))
+);
+
+
+--
+-- Name: TABLE property; Type: COMMENT; Schema: aegis; Owner: -
+--
+
+COMMENT ON TABLE aegis.property IS 'TLA+ property definitions (safety/liveness)';
+
+
+--
+-- Name: registry; Type: TABLE; Schema: aegis; Owner: -
+--
+
+CREATE TABLE aegis.registry (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name character varying(255) NOT NULL,
+    description text,
+    version character varying(50) DEFAULT '1.0.0'::character varying NOT NULL,
+    tla_plus_source text,
+    tla_plus_module character varying(255),
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    tags text[] DEFAULT '{}'::text[] NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    expires_at timestamp with time zone,
+    main_concept_id uuid
+);
+
+
+--
+-- Name: TABLE registry; Type: COMMENT; Schema: aegis; Owner: -
+--
+
+COMMENT ON TABLE aegis.registry IS 'Main registry for TLA+ state machines';
+
+
+--
+-- Name: registry_revision; Type: TABLE; Schema: aegis; Owner: -
+--
+
+CREATE TABLE aegis.registry_revision (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    registry_id uuid NOT NULL,
+    revision_number bigint NOT NULL,
+    source text DEFAULT ''::text NOT NULL,
+    source_digest text NOT NULL,
+    model jsonb NOT NULL,
+    model_digest text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by text,
+    supersedes_revision_id uuid,
+    CONSTRAINT registry_revision_model_digest_check CHECK ((model_digest ~ '^sha256:[0-9a-f]{64}$'::text)),
+    CONSTRAINT registry_revision_source_digest_check CHECK ((source_digest ~ '^sha256:[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: TABLE registry_revision; Type: COMMENT; Schema: aegis; Owner: -
+--
+
+COMMENT ON TABLE aegis.registry_revision IS 'Immutable content-addressed snapshot of a mutable Aegis registry authoring state';
+
+
+--
+-- Name: relationship_mapping; Type: TABLE; Schema: aegis; Owner: -
+--
+
+CREATE TABLE aegis.relationship_mapping (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    registry_id uuid NOT NULL,
+    tla_relationship character varying(255) NOT NULL,
+    relationship_id uuid NOT NULL,
+    mapping_type character varying(50) NOT NULL,
+    constraints text[] DEFAULT '{}'::text[] NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE relationship_mapping; Type: COMMENT; Schema: aegis; Owner: -
+--
+
+COMMENT ON TABLE aegis.relationship_mapping IS 'Maps TLA+ relationships to Resolution relationships';
+
+
+--
+-- Name: state; Type: TABLE; Schema: aegis; Owner: -
+--
+
+CREATE TABLE aegis.state (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    registry_id uuid NOT NULL,
+    name character varying(255) NOT NULL,
+    description text,
+    variable_assignments jsonb DEFAULT '{}'::jsonb NOT NULL,
+    constraints text[] DEFAULT '{}'::text[] NOT NULL,
+    is_initial boolean DEFAULT false NOT NULL,
+    is_terminal boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    concept_id uuid,
+    attribute_value_id uuid
+);
+
+
+--
+-- Name: TABLE state; Type: COMMENT; Schema: aegis; Owner: -
+--
+
+COMMENT ON TABLE aegis.state IS 'TLA+ state definitions';
+
+
+--
+-- Name: temporal_property; Type: TABLE; Schema: aegis; Owner: -
+--
+
+CREATE TABLE aegis.temporal_property (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    registry_id uuid NOT NULL,
+    name character varying(255) NOT NULL,
+    operator character varying(10) NOT NULL,
+    expression text NOT NULL,
     description text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    expired_at timestamp with time zone
+    CONSTRAINT temporal_property_operator_check CHECK (((operator)::text = ANY ((ARRAY['[]'::character varying, '<>'::character varying, '->'::character varying, '~>'::character varying, '=>'::character varying])::text[])))
 );
+
+
+--
+-- Name: TABLE temporal_property; Type: COMMENT; Schema: aegis; Owner: -
+--
+
+COMMENT ON TABLE aegis.temporal_property IS 'TLA+ temporal logic properties';
+
+
+--
+-- Name: transition; Type: TABLE; Schema: aegis; Owner: -
+--
+
+CREATE TABLE aegis.transition (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    registry_id uuid NOT NULL,
+    name character varying(255) NOT NULL,
+    description text,
+    guard_expression text,
+    action jsonb DEFAULT '{}'::jsonb NOT NULL,
+    weak_fairness boolean DEFAULT false NOT NULL,
+    strong_fairness boolean DEFAULT false NOT NULL,
+    temporal_conditions text[] DEFAULT '{}'::text[] NOT NULL,
+    priority integer DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    from_state_id uuid,
+    to_state_id uuid,
+    guard_rule_id uuid,
+    transition_rule_id uuid,
+    state_transition_id uuid,
+    CONSTRAINT transition_states_different CHECK (((from_state_id IS NULL) OR (to_state_id IS NULL) OR (from_state_id <> to_state_id)))
+);
+
+
+--
+-- Name: TABLE transition; Type: COMMENT; Schema: aegis; Owner: -
+--
+
+COMMENT ON TABLE aegis.transition IS 'TLA+ transition definitions';
+
+
+--
+-- Name: validation_result; Type: TABLE; Schema: aegis; Owner: -
+--
+
+CREATE TABLE aegis.validation_result (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    registry_id uuid NOT NULL,
+    is_valid boolean NOT NULL,
+    errors jsonb DEFAULT '[]'::jsonb NOT NULL,
+    warnings jsonb DEFAULT '[]'::jsonb NOT NULL,
+    suggestions jsonb DEFAULT '[]'::jsonb NOT NULL,
+    validated_at timestamp with time zone DEFAULT now() NOT NULL,
+    validated_by uuid
+);
+
+
+--
+-- Name: TABLE validation_result; Type: COMMENT; Schema: aegis; Owner: -
+--
+
+COMMENT ON TABLE aegis.validation_result IS 'Results of state machine validation';
+
+
+--
+-- Name: variable; Type: TABLE; Schema: aegis; Owner: -
+--
+
+CREATE TABLE aegis.variable (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    registry_id uuid NOT NULL,
+    name character varying(255) NOT NULL,
+    type character varying(50) NOT NULL,
+    initial_value jsonb,
+    domain jsonb,
+    description text,
+    constraints text[] DEFAULT '{}'::text[] NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    attribute_id uuid
+);
+
+
+--
+-- Name: TABLE variable; Type: COMMENT; Schema: aegis; Owner: -
+--
+
+COMMENT ON TABLE aegis.variable IS 'TLA+ variable definitions';
+
+
+--
+-- Name: vw_registry_details; Type: VIEW; Schema: aegis; Owner: -
+--
+
+CREATE VIEW aegis.vw_registry_details AS
+SELECT
+    NULL::uuid AS registry_id,
+    NULL::character varying(255) AS registry_name,
+    NULL::text AS description,
+    NULL::character varying(50) AS version,
+    NULL::character varying(255) AS tla_plus_module,
+    NULL::timestamp with time zone AS created_at,
+    NULL::timestamp with time zone AS updated_at,
+    NULL::boolean AS is_active,
+    NULL::uuid AS main_concept_id,
+    NULL::text AS main_concept_name,
+    NULL::bigint AS state_count,
+    NULL::bigint AS transition_count,
+    NULL::bigint AS invariant_count,
+    NULL::bigint AS property_count;
+
+
+--
+-- Name: VIEW vw_registry_details; Type: COMMENT; Schema: aegis; Owner: -
+--
+
+COMMENT ON VIEW aegis.vw_registry_details IS 'Comprehensive view of registry details';
+
+
+--
+-- Name: vw_transition_flow; Type: VIEW; Schema: aegis; Owner: -
+--
+
+CREATE VIEW aegis.vw_transition_flow AS
+ SELECT t.id AS transition_id,
+    t.name AS transition_name,
+    t.registry_id,
+    r.name AS registry_name,
+    fs.name AS from_state_name,
+    ts.name AS to_state_name,
+    t.guard_expression,
+    t.priority,
+    t.weak_fairness,
+    t.strong_fairness,
+    (EXISTS ( SELECT 1
+           FROM aegis.invariant i
+          WHERE ((i.registry_id = r.id) AND (i.expression ~~ (('%'::text || (t.name)::text) || '%'::text))))) AS has_invariant,
+        CASE
+            WHEN ((t.from_state_id IS NOT NULL) AND (t.to_state_id IS NOT NULL)) THEN 'defined'::text
+            ELSE 'partial'::text
+        END AS completeness
+   FROM (((aegis.transition t
+     JOIN aegis.registry r ON ((r.id = t.registry_id)))
+     LEFT JOIN aegis.state fs ON ((fs.id = t.from_state_id)))
+     LEFT JOIN aegis.state ts ON ((ts.id = t.to_state_id)));
+
+
+--
+-- Name: VIEW vw_transition_flow; Type: COMMENT; Schema: aegis; Owner: -
+--
+
+COMMENT ON VIEW aegis.vw_transition_flow IS 'View of transition flow between states';
+
+
+--
+-- Name: wind_compilation; Type: TABLE; Schema: aegis; Owner: -
+--
+
+CREATE TABLE aegis.wind_compilation (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    registry_id uuid NOT NULL,
+    registry_revision_id uuid NOT NULL,
+    wind_workflow_id uuid NOT NULL,
+    wind_workflow_version_id uuid NOT NULL,
+    wind_workflow_version_number integer NOT NULL,
+    source_digest text NOT NULL,
+    model_digest text NOT NULL,
+    wind_graph_digest text NOT NULL,
+    compiler_version text NOT NULL,
+    compiler_config_digest text NOT NULL,
+    compiled_at timestamp with time zone DEFAULT now() NOT NULL,
+    compiled_by uuid,
+    status text DEFAULT 'succeeded'::text NOT NULL,
+    validation_result_id uuid,
+    validation_result_digest text,
+    CONSTRAINT wind_compilation_compiler_config_digest_check CHECK ((compiler_config_digest ~ '^sha256:[0-9a-f]{64}$'::text)),
+    CONSTRAINT wind_compilation_model_digest_check CHECK ((model_digest ~ '^sha256:[0-9a-f]{64}$'::text)),
+    CONSTRAINT wind_compilation_source_digest_check CHECK ((source_digest ~ '^sha256:[0-9a-f]{64}$'::text)),
+    CONSTRAINT wind_compilation_status_check CHECK ((status = ANY (ARRAY['succeeded'::text, 'failed'::text, 'stale'::text, 'invalid'::text]))),
+    CONSTRAINT wind_compilation_validation_digest_check CHECK (((validation_result_digest IS NULL) OR (validation_result_digest ~ '^sha256:[0-9a-f]{64}$'::text))),
+    CONSTRAINT wind_compilation_validation_pair_check CHECK (((validation_result_id IS NULL) OR (validation_result_digest IS NOT NULL))),
+    CONSTRAINT wind_compilation_wind_graph_digest_check CHECK ((wind_graph_digest ~ '^sha256:[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: TABLE wind_compilation; Type: COMMENT; Schema: aegis; Owner: -
+--
+
+COMMENT ON TABLE aegis.wind_compilation IS 'Immutable lineage record for compiling one Aegis registry revision into one Wind workflow version; status is advisory and does not grant runtime authority';
+
+
+--
+-- Name: wind_outcome_mapping; Type: TABLE; Schema: aegis; Owner: -
+--
+
+CREATE TABLE aegis.wind_outcome_mapping (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    registry_id uuid NOT NULL,
+    registry_revision_id uuid NOT NULL,
+    transition_id uuid NOT NULL,
+    wind_task_id uuid NOT NULL,
+    wind_outcome_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE wind_outcome_mapping; Type: COMMENT; Schema: aegis; Owner: -
+--
+
+COMMENT ON TABLE aegis.wind_outcome_mapping IS 'Revision-scoped mapping from an Aegis transition to one enumerable outcome of its source-state Wind task';
+
+
+--
+-- Name: wind_task_mapping; Type: TABLE; Schema: aegis; Owner: -
+--
+
+CREATE TABLE aegis.wind_task_mapping (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    registry_id uuid NOT NULL,
+    registry_revision_id uuid NOT NULL,
+    state_id uuid NOT NULL,
+    wind_task_id uuid NOT NULL,
+    is_check_only boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE wind_task_mapping; Type: COMMENT; Schema: aegis; Owner: -
+--
+
+COMMENT ON TABLE aegis.wind_task_mapping IS 'Revision-scoped design-time mapping from an Aegis state to a Wind task; check-only semantics are validated against wind.tasks.tackle_task_id';
+
+
+--
+-- Name: post_artifact_refs; Type: TABLE; Schema: assembly; Owner: -
+--
+
+CREATE TABLE assembly.post_artifact_refs (
+    post_id uuid NOT NULL,
+    artifact_type text NOT NULL,
+    artifact_id uuid NOT NULL,
+    label text,
+    created_at timestamp with time zone DEFAULT now(),
+    as_of_dt timestamp with time zone DEFAULT now() NOT NULL,
+    expiration_dt timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL,
+    CONSTRAINT post_artifact_refs_artifact_type_check CHECK ((artifact_type = ANY (ARRAY['requirement'::text, 'agenda_item'::text, 'spec'::text, 'implementation_plan'::text, 'harvest'::text, 'harvest_candidate'::text])))
+);
+
+
+--
+-- Name: artifact_refs_v; Type: VIEW; Schema: assembly; Owner: -
+--
+
+CREATE VIEW assembly.artifact_refs_v AS
+ SELECT post_id,
+    artifact_type,
+    artifact_id,
+    label,
+    created_at,
+    expiration_dt
+   FROM assembly.post_artifact_refs
+  WHERE ((expiration_dt = 'infinity'::timestamp with time zone) OR (expiration_dt > now()));
+
+
+--
+-- Name: VIEW artifact_refs_v; Type: COMMENT; Schema: assembly; Owner: -
+--
+
+COMMENT ON VIEW assembly.artifact_refs_v IS 'Post-artifact refs, filter by post_id. Replaces bridges.js:100 inline query.';
+
+
+--
+-- Name: comments; Type: TABLE; Schema: assembly; Owner: -
+--
+
+CREATE TABLE assembly.comments (
+    id uuid NOT NULL,
+    created timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    updated timestamp without time zone,
+    text text,
+    url character varying(1024),
+    rating bigint DEFAULT 0,
+    posted_by_id uuid NOT NULL,
+    post_id uuid,
+    parent_id uuid,
+    role text,
+    model text,
+    as_of_dt timestamp with time zone DEFAULT now() NOT NULL,
+    expiration_dt timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL,
+    CONSTRAINT chk_comment_attachment CHECK ((((post_id IS NOT NULL) AND (parent_id IS NULL)) OR ((post_id IS NULL) AND (parent_id IS NOT NULL))))
+);
+
+
+--
+-- Name: edits; Type: TABLE; Schema: assembly; Owner: -
+--
+
+CREATE TABLE assembly.edits (
+    id uuid NOT NULL,
+    created timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    updated timestamp without time zone,
+    text text NOT NULL,
+    post_id uuid,
+    comment_id uuid,
+    CONSTRAINT chk_edit_target CHECK ((((post_id IS NOT NULL) AND (comment_id IS NULL)) OR ((post_id IS NULL) AND (comment_id IS NOT NULL))))
+);
+
+
+--
+-- Name: forums; Type: TABLE; Schema: assembly; Owner: -
+--
+
+CREATE TABLE assembly.forums (
+    id uuid NOT NULL,
+    name character varying(255) NOT NULL,
+    description text,
+    slug character varying(255) NOT NULL,
+    as_of_dt timestamp with time zone DEFAULT now() NOT NULL,
+    expiration_dt timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL,
+    sort_order integer DEFAULT 0
+);
+
+
+--
+-- Name: posts; Type: TABLE; Schema: assembly; Owner: -
+--
+
+CREATE TABLE assembly.posts (
+    id uuid NOT NULL,
+    created timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    updated timestamp without time zone,
+    text text,
+    url character varying(1024),
+    rating bigint DEFAULT 0,
+    posted_by_id uuid NOT NULL,
+    posted_to_id uuid,
+    forum_id bigint,
+    source_url character varying(1024),
+    title character varying(512),
+    forum_uuid uuid,
+    model text,
+    role text,
+    as_of_dt timestamp with time zone DEFAULT now() NOT NULL,
+    expiration_dt timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: users; Type: TABLE; Schema: assembly; Owner: -
+--
+
+CREATE TABLE assembly.users (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    identifier character varying(255),
+    admin boolean DEFAULT false NOT NULL,
+    alias character varying(100) NOT NULL,
+    email character varying(255) NOT NULL,
+    password character varying(255) NOT NULL,
+    avatar_url character varying(255),
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: feed_posts_v; Type: VIEW; Schema: assembly; Owner: -
+--
+
+CREATE VIEW assembly.feed_posts_v AS
+ SELECT p.id AS post_id,
+    p.text,
+    p.created,
+    p.expiration_dt,
+    u.id AS user_id,
+    u.alias,
+    u.avatar_url,
+    f.id AS forum_id,
+    f.slug AS forum_slug,
+    f.name AS forum_name,
+    ( WITH RECURSIVE tree AS (
+                 SELECT comments.id
+                   FROM assembly.comments
+                  WHERE (comments.post_id = p.id)
+                UNION ALL
+                 SELECT c.id
+                   FROM (assembly.comments c
+                     JOIN tree t ON ((c.parent_id = t.id)))
+                )
+         SELECT count(*) AS count
+           FROM tree) AS comment_count
+   FROM ((assembly.posts p
+     JOIN assembly.users u ON ((u.id = p.posted_by_id)))
+     LEFT JOIN assembly.forums f ON (((f.id = p.forum_uuid) AND ((f.expiration_dt = 'infinity'::timestamp with time zone) OR (f.expiration_dt > now())))))
+  WHERE ((p.expiration_dt = 'infinity'::timestamp with time zone) OR (p.expiration_dt > now()))
+  ORDER BY p.created DESC;
+
+
+--
+-- Name: VIEW feed_posts_v; Type: COMMENT; Schema: assembly; Owner: -
+--
+
+COMMENT ON VIEW assembly.feed_posts_v IS 'Feed listing with recursive comment counts, replaces feed.js:9 inline query';
+
+
+--
+-- Name: forum_agendas; Type: TABLE; Schema: assembly; Owner: -
+--
+
+CREATE TABLE assembly.forum_agendas (
+    forum_id uuid NOT NULL,
+    agenda_id uuid NOT NULL,
+    label text,
+    created_at timestamp with time zone DEFAULT now(),
+    as_of_dt timestamp with time zone DEFAULT now() NOT NULL,
+    expiration_dt timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: forum_agendas_v; Type: VIEW; Schema: assembly; Owner: -
+--
+
+CREATE VIEW assembly.forum_agendas_v AS
+ SELECT forum_id,
+    agenda_id,
+    label,
+    created_at,
+    expiration_dt
+   FROM assembly.forum_agendas
+  WHERE ((expiration_dt = 'infinity'::timestamp with time zone) OR (expiration_dt > now()));
+
+
+--
+-- Name: VIEW forum_agendas_v; Type: COMMENT; Schema: assembly; Owner: -
+--
+
+COMMENT ON VIEW assembly.forum_agendas_v IS 'Forum-agenda links, filter by forum_id. Replaces bridges.js:49 inline query.';
+
+
+--
+-- Name: forum_list_v; Type: VIEW; Schema: assembly; Owner: -
+--
+
+CREATE VIEW assembly.forum_list_v AS
+ SELECT f.id,
+    f.name,
+    f.slug,
+    f.description,
+    f.sort_order,
+    f.expiration_dt,
+    COALESCE(pc.thread_count, (0)::bigint) AS thread_count,
+    COALESCE(cc.comment_count, (0)::bigint) AS comment_count
+   FROM ((assembly.forums f
+     LEFT JOIN ( SELECT p.forum_uuid,
+            count(*) AS thread_count
+           FROM assembly.posts p
+          GROUP BY p.forum_uuid) pc ON ((pc.forum_uuid = f.id)))
+     LEFT JOIN ( SELECT p.forum_uuid,
+            count(*) AS comment_count
+           FROM (assembly.comments c
+             JOIN assembly.posts p ON ((p.id = c.post_id)))
+          GROUP BY p.forum_uuid) cc ON ((cc.forum_uuid = f.id)))
+  WHERE ((f.expiration_dt = 'infinity'::timestamp with time zone) OR (f.expiration_dt > now()))
+  ORDER BY COALESCE(f.sort_order, 0), f.name;
+
+
+--
+-- Name: VIEW forum_list_v; Type: COMMENT; Schema: assembly; Owner: -
+--
+
+COMMENT ON VIEW assembly.forum_list_v IS 'Forum listing with thread/comment counts (V188: grouped-aggregate rewrite of the per-row count subqueries).';
+
+
+--
+-- Name: forum_members; Type: TABLE; Schema: assembly; Owner: -
+--
+
+CREATE TABLE assembly.forum_members (
+    forum_id uuid NOT NULL,
+    user_id uuid NOT NULL
+);
+
+
+--
+-- Name: interests; Type: TABLE; Schema: assembly; Owner: -
+--
+
+CREATE TABLE assembly.interests (
+    id uuid NOT NULL,
+    name character varying(255) NOT NULL
+);
+
+
+--
+-- Name: post_supporting_refs; Type: TABLE; Schema: assembly; Owner: -
+--
+
+CREATE TABLE assembly.post_supporting_refs (
+    post_id uuid,
+    comment_id uuid,
+    ref_type text NOT NULL,
+    ref_value text NOT NULL,
+    metadata jsonb DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT chk_supporting_target CHECK ((((post_id IS NOT NULL) AND (comment_id IS NULL)) OR ((post_id IS NULL) AND (comment_id IS NOT NULL)))),
+    CONSTRAINT post_supporting_refs_ref_type_check CHECK ((ref_type = ANY (ARRAY['spec'::text, 'cross_reference'::text, 'source_url'::text, 'evidence'::text, 'attachment'::text])))
+);
+
+ALTER TABLE ONLY assembly.post_supporting_refs REPLICA IDENTITY FULL;
+
+
+--
+-- Name: profile_interests; Type: TABLE; Schema: assembly; Owner: -
+--
+
+CREATE TABLE assembly.profile_interests (
+    profile_id uuid NOT NULL,
+    interest_id uuid NOT NULL
+);
+
+
+--
+-- Name: profiles; Type: TABLE; Schema: assembly; Owner: -
+--
+
+CREATE TABLE assembly.profiles (
+    id uuid NOT NULL,
+    first_name character varying(255),
+    last_name character varying(255),
+    city character varying(255),
+    state character varying(255),
+    profile_image_url character varying(1024),
+    user_id uuid
+);
+
+
+--
+-- Name: reactions; Type: TABLE; Schema: assembly; Owner: -
+--
+
+CREATE TABLE assembly.reactions (
+    id uuid NOT NULL,
+    created timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    reaction_type character varying(50) NOT NULL,
+    user_id uuid NOT NULL,
+    post_id uuid,
+    comment_id uuid,
+    CONSTRAINT chk_reaction_target CHECK ((((post_id IS NOT NULL) AND (comment_id IS NULL)) OR ((post_id IS NULL) AND (comment_id IS NOT NULL)))),
+    CONSTRAINT chk_reaction_type CHECK (((reaction_type)::text = ANY (ARRAY[('LIKE'::character varying)::text, ('LOVE'::character varying)::text, ('ANGER'::character varying)::text, ('SADNESS'::character varying)::text, ('SURPRISE'::character varying)::text])))
+);
+
+
+--
+-- Name: thread_list_v; Type: VIEW; Schema: assembly; Owner: -
+--
+
+CREATE VIEW assembly.thread_list_v AS
+ SELECT p.id AS post_id,
+    p.title,
+    p.created AS post_created,
+    p.text,
+    p.role,
+    p.model,
+    p.expiration_dt,
+    u.id AS user_id,
+    u.alias,
+    u.avatar_url,
+    f.id AS forum_id,
+    f.slug AS forum_slug,
+    f.name AS forum_name,
+    COALESCE(c.reply_count, (0)::bigint) AS reply_count,
+    c.last_reply_at,
+    c.last_reply_user_alias,
+    p.rating
+   FROM (((assembly.posts p
+     JOIN assembly.forums f ON (((f.id = p.forum_uuid) AND ((f.expiration_dt = 'infinity'::timestamp with time zone) OR (f.expiration_dt > now())))))
+     JOIN assembly.users u ON ((u.id = p.posted_by_id)))
+     LEFT JOIN ( SELECT cc.post_id,
+            count(*) AS reply_count,
+            max(cc.created) AS last_reply_at,
+            (array_agg(uu.alias ORDER BY cc.created DESC))[1] AS last_reply_user_alias
+           FROM (assembly.comments cc
+             JOIN assembly.users uu ON ((uu.id = cc.posted_by_id)))
+          GROUP BY cc.post_id) c ON ((c.post_id = p.id)))
+  WHERE ((p.expiration_dt = 'infinity'::timestamp with time zone) OR (p.expiration_dt > now()))
+  ORDER BY p.created DESC;
+
+
+--
+-- Name: VIEW thread_list_v; Type: COMMENT; Schema: assembly; Owner: -
+--
+
+COMMENT ON VIEW assembly.thread_list_v IS 'Thread listing per forum, replaces forums.js:45 inline query. Filter by forum_slug in WHERE clause.';
+
+
+--
+-- Name: user_by_id_v; Type: VIEW; Schema: assembly; Owner: -
+--
+
+CREATE VIEW assembly.user_by_id_v AS
+ SELECT id,
+    alias,
+    email,
+    avatar_url,
+    created_at
+   FROM assembly.users;
+
+
+--
+-- Name: VIEW user_by_id_v; Type: COMMENT; Schema: assembly; Owner: -
+--
+
+COMMENT ON VIEW assembly.user_by_id_v IS 'User detail, filter by id in WHERE clause. Replaces users.js:31 inline query.';
+
+
+--
+-- Name: user_followers; Type: TABLE; Schema: assembly; Owner: -
+--
+
+CREATE TABLE assembly.user_followers (
+    user_id uuid NOT NULL,
+    follower_id uuid NOT NULL
+);
+
+
+--
+-- Name: user_following; Type: TABLE; Schema: assembly; Owner: -
+--
+
+CREATE TABLE assembly.user_following (
+    user_id uuid NOT NULL,
+    following_id uuid NOT NULL
+);
+
+
+--
+-- Name: user_friends; Type: TABLE; Schema: assembly; Owner: -
+--
+
+CREATE TABLE assembly.user_friends (
+    user_id uuid NOT NULL,
+    friend_id uuid NOT NULL
+);
+
+
+--
+-- Name: user_list_v; Type: VIEW; Schema: assembly; Owner: -
+--
+
+CREATE VIEW assembly.user_list_v AS
+ SELECT id,
+    alias,
+    email,
+    avatar_url,
+    created_at
+   FROM assembly.users
+  ORDER BY alias;
+
+
+--
+-- Name: VIEW user_list_v; Type: COMMENT; Schema: assembly; Owner: -
+--
+
+COMMENT ON VIEW assembly.user_list_v IS 'All users ordered by alias, replaces users.js:9 inline query';
 
 
 --
@@ -8740,6 +14679,124 @@ CREATE TABLE conduit.work_requests (
 
 
 --
+-- Name: wre_ghost_archive; Type: TABLE; Schema: conduit; Owner: -
+--
+
+CREATE TABLE conduit.wre_ghost_archive (
+    event_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    work_request_id uuid NOT NULL,
+    event_type text NOT NULL,
+    event_version integer DEFAULT 1 NOT NULL,
+    correlation_id uuid,
+    causation_id uuid,
+    occurred_at timestamp with time zone DEFAULT now() NOT NULL,
+    payload jsonb DEFAULT '{}'::jsonb NOT NULL,
+    actor_type text DEFAULT 'system'::text NOT NULL,
+    actor_id text DEFAULT ''::text NOT NULL,
+    sequence_number bigint DEFAULT nextval('conduit.work_request_events_sequence_number_seq'::regclass) NOT NULL
+);
+
+
+--
+-- Name: TABLE wre_ghost_archive; Type: COMMENT; Schema: conduit; Owner: -
+--
+
+COMMENT ON TABLE conduit.wre_ghost_archive IS 'Historical residue: ghost work_request_events whose work_request_id matches no live vision.work_requests or conduit.work_requests UUID. Archived 2026-09-15 per To Do 9909b6d9 (architect directive; engineer impact analysis 0018435e). Append-only; do not re-insert.';
+
+
+--
+-- Name: session_events; Type: TABLE; Schema: duality; Owner: -
+--
+
+CREATE TABLE duality.session_events (
+    seq bigint NOT NULL,
+    thread_id uuid NOT NULL,
+    turn_id uuid,
+    watch_id uuid,
+    event_type text NOT NULL,
+    event_key text NOT NULL,
+    payload jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT session_events_event_type_check CHECK ((event_type = ANY (ARRAY['turn.accepted'::text, 'turn.started'::text, 'thinking'::text, 'comment.created'::text, 'turn.completed'::text, 'turn.failed'::text, 'turn.timed_out'::text, 'turn.cancelled'::text, 'watch.status'::text])))
+);
+
+
+--
+-- Name: session_events_seq_seq; Type: SEQUENCE; Schema: duality; Owner: -
+--
+
+CREATE SEQUENCE duality.session_events_seq_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: session_events_seq_seq; Type: SEQUENCE OWNED BY; Schema: duality; Owner: -
+--
+
+ALTER SEQUENCE duality.session_events_seq_seq OWNED BY duality.session_events.seq;
+
+
+--
+-- Name: session_turns; Type: TABLE; Schema: duality; Owner: -
+--
+
+CREATE TABLE duality.session_turns (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    thread_id uuid NOT NULL,
+    watch_id uuid,
+    role text NOT NULL,
+    execution_backend text DEFAULT 'operator'::text NOT NULL,
+    state text DEFAULT 'accepted'::text NOT NULL,
+    request_comment_id uuid,
+    response_comment_id uuid,
+    subscriber_id text,
+    job_id text,
+    execution_plan_version text,
+    failure_detail text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    accepted_at timestamp with time zone,
+    running_at timestamp with time zone,
+    completed_at timestamp with time zone,
+    failed_at timestamp with time zone,
+    timed_out_at timestamp with time zone,
+    cancelled_at timestamp with time zone,
+    lease_id uuid,
+    CONSTRAINT session_turns_execution_backend_check CHECK ((execution_backend = ANY (ARRAY['operator'::text, 'harness'::text, 'freebuff'::text]))),
+    CONSTRAINT session_turns_state_check CHECK ((state = ANY (ARRAY['accepted'::text, 'running'::text, 'completed'::text, 'failed'::text, 'timed_out'::text, 'cancelled'::text])))
+);
+
+
+--
+-- Name: session_watches; Type: TABLE; Schema: duality; Owner: -
+--
+
+CREATE TABLE duality.session_watches (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    thread_id uuid NOT NULL,
+    forum_slug text DEFAULT 'duality-sessions'::text NOT NULL,
+    role text NOT NULL,
+    lease_id uuid,
+    max_turns integer DEFAULT 20 NOT NULL,
+    turn_count integer DEFAULT 0 NOT NULL,
+    idle_timeout_ms integer DEFAULT 300000 NOT NULL,
+    last_activity timestamp with time zone DEFAULT now() NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    execution_backend text DEFAULT 'operator'::text NOT NULL,
+    closed_reason text,
+    CONSTRAINT session_watches_closed_reason_check CHECK ((closed_reason = ANY (ARRAY['lease_revoked'::text, 'lease_exhausted'::text, 'lease_expired'::text, 'turns'::text, 'agent'::text, 'idle'::text, 'natural'::text]))),
+    CONSTRAINT session_watches_execution_backend_check CHECK ((execution_backend = ANY (ARRAY['operator'::text, 'harness'::text, 'freebuff'::text]))),
+    CONSTRAINT session_watches_status_check CHECK ((status = ANY (ARRAY['active'::text, 'paused'::text, 'closed'::text, 'expired'::text])))
+);
+
+
+--
 -- Name: attempts; Type: TABLE; Schema: execution; Owner: -
 --
 
@@ -8792,8 +14849,7 @@ CREATE TABLE execution.receipts (
     lineage_source text,
     lineage_original_id text,
     issued_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT chk_execution_receipts_type CHECK ((type = ANY (ARRAY['ABANDONED'::text, 'API_LIMIT'::text, 'BLOCK'::text, 'CANCELLED'::text, 'CCNF_EXECUTION'::text, 'CRITIQUE'::text, 'CRITIQUE_PASS'::text, 'CRITIQUE_REJECT'::text, 'EXECUTION_COMPLETE'::text, 'HOLD'::text, 'IMPLEMENTATION'::text, 'PLANNING'::text, 'PLAN_BLOCK'::text, 'PLAN_CREATE'::text, 'PROPOSED'::text, 'REQUEUED'::text, 'REVIEW'::text, 'REVIEW_PASS'::text, 'REVIEW_REJECT'::text]))),
-    CONSTRAINT receipts_type_check CHECK ((type = ANY (ARRAY['API_LIMIT'::text, 'BLOCK'::text, 'CANCELLED'::text, 'EXECUTION_COMPLETE'::text, 'HOLD'::text, 'IMPLEMENTATION'::text, 'PLAN_CREATE'::text, 'PLANNING'::text, 'PROPOSED'::text, 'REQUEUED'::text, 'REVIEW'::text, 'REVIEW_PASS'::text, 'REVIEW_REJECT'::text])))
+    CONSTRAINT chk_execution_receipts_type CHECK ((type = ANY (ARRAY['ABANDONED'::text, 'API_LIMIT'::text, 'BLOCK'::text, 'CANCELLED'::text, 'CCNF_EXECUTION'::text, 'CRITIQUE'::text, 'CRITIQUE_PASS'::text, 'CRITIQUE_REJECT'::text, 'EXECUTION_COMPLETE'::text, 'HOLD'::text, 'IMPLEMENTATION'::text, 'PLANNING'::text, 'PLAN_BLOCK'::text, 'PLAN_CREATE'::text, 'PROPOSED'::text, 'REQUEUED'::text, 'REVIEW'::text, 'REVIEW_PASS'::text, 'REVIEW_REJECT'::text])))
 );
 
 
@@ -8820,6 +14876,464 @@ CREATE TABLE execution.requests (
     source_wr_id uuid,
     CONSTRAINT requests_status_check CHECK ((status = ANY (ARRAY['DRAFT'::text, 'COMPILED'::text, 'VALIDATED'::text, 'ADMITTED'::text, 'READY'::text, 'COMPLETED'::text, 'FAILED'::text, 'CANCELLED'::text])))
 );
+
+
+--
+-- Name: event_log; Type: TABLE; Schema: kernel; Owner: -
+--
+
+CREATE TABLE kernel.event_log (
+    id bigint NOT NULL,
+    event_id uuid NOT NULL,
+    event_type text NOT NULL,
+    aggregate_type text NOT NULL,
+    aggregate_id text NOT NULL,
+    actor text NOT NULL,
+    authority text,
+    payload jsonb DEFAULT '{}'::jsonb NOT NULL,
+    receipt text,
+    causation_id uuid,
+    correlation_id uuid,
+    event_timestamp timestamp with time zone NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    reducer_version text DEFAULT 'kernel.event_log@0.1'::text NOT NULL
+);
+
+
+--
+-- Name: TABLE event_log; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON TABLE kernel.event_log IS 'Derived projection of kernel.transition_event. Maintained by the
+     Cascade projection_updater subscriber. Append-only, idempotent,
+     denormalized for fast querying.';
+
+
+--
+-- Name: COLUMN event_log.received_at; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.event_log.received_at IS 'When the projection subscriber received and wrote this event.
+     Distinct from event_timestamp (when the event was committed).';
+
+
+--
+-- Name: COLUMN event_log.reducer_version; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.event_log.reducer_version IS 'Version of the reducer logic that produced this row. Enables
+     schema migration of projections.';
+
+
+--
+-- Name: event_log_id_seq; Type: SEQUENCE; Schema: kernel; Owner: -
+--
+
+ALTER TABLE kernel.event_log ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME kernel.event_log_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: intent; Type: TABLE; Schema: kernel; Owner: -
+--
+
+CREATE TABLE kernel.intent (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    goal text NOT NULL,
+    owner text NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    parent_intent_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    superseded_at timestamp with time zone,
+    CONSTRAINT intent_status_check CHECK ((status = ANY (ARRAY['active'::text, 'completed'::text, 'abandoned'::text, 'superseded'::text])))
+);
+
+
+--
+-- Name: TABLE intent; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON TABLE kernel.intent IS 'Root aggregate. Everything — events, receipts, artifacts, provenance —
+     hangs off an intent. Enables replay by objective rather than chronology.';
+
+
+--
+-- Name: policy_rule; Type: TABLE; Schema: kernel; Owner: -
+--
+
+CREATE TABLE kernel.policy_rule (
+    rule_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    rule_name text NOT NULL,
+    priority integer DEFAULT 500 NOT NULL,
+    event_type kernel.event_type,
+    cue_source text NOT NULL,
+    compiled_sql text NOT NULL,
+    function_name text,
+    compiler_version text DEFAULT 'cue-to-sql@0.1'::text NOT NULL,
+    doctrine_version text,
+    deny_reason text NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    created_by text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT ck_policy_rule_has_target CHECK ((((compiled_sql IS NOT NULL) AND (length(TRIM(BOTH FROM compiled_sql)) > 0)) OR ((function_name IS NOT NULL) AND (length(TRIM(BOTH FROM function_name)) > 0)))),
+    CONSTRAINT policy_rule_priority_check CHECK (((priority >= 0) AND (priority <= 1000)))
+);
+
+
+--
+-- Name: TABLE policy_rule; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON TABLE kernel.policy_rule IS 'CUE-compiled policy rules enforced by trg_authorize_transition.
+     Every rule preserves provenance from source (cue_source) through
+     compilation (compiler_version, doctrine_version) to executable
+     form (compiled_sql or function_name).';
+
+
+--
+-- Name: COLUMN policy_rule.rule_name; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.policy_rule.rule_name IS 'Human-readable rule identifier, e.g. "capability.required" or
+     "receipt.must_be_signed".';
+
+
+--
+-- Name: COLUMN policy_rule.priority; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.policy_rule.priority IS 'Evaluation order (0 = first, 1000 = last). Default 500.';
+
+
+--
+-- Name: COLUMN policy_rule.event_type; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.policy_rule.event_type IS 'If set, this rule only applies to transitions of this event type.
+     If NULL, applies to all event types.';
+
+
+--
+-- Name: COLUMN policy_rule.cue_source; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.policy_rule.cue_source IS 'The original CUE source that produced this rule. This is the
+     authoritative policy expression — compiled_sql is derived.';
+
+
+--
+-- Name: COLUMN policy_rule.compiled_sql; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.policy_rule.compiled_sql IS 'The CUE-compiled SQL predicate. Evaluated dynamically by the
+     trigger against the NEW transition_event row. Example:
+     "NEW.actor IS NOT NULL AND NEW.authority IN (''architect'',''planner'')"';
+
+
+--
+-- Name: COLUMN policy_rule.function_name; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.policy_rule.function_name IS 'Optional: schema-qualified function name for code-generated
+     enforcement. When set, the trigger invokes this function instead
+     of evaluating compiled_sql dynamically. Enables a migration path
+     from data-driven to compiled enforcement as rules stabilize.';
+
+
+--
+-- Name: COLUMN policy_rule.compiler_version; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.policy_rule.compiler_version IS 'Version of the CUE→SQL compiler that produced this rule. Enables
+     invalidation and recompilation when the compiler changes.';
+
+
+--
+-- Name: COLUMN policy_rule.doctrine_version; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.policy_rule.doctrine_version IS 'Which revision of the policy doctrine this rule was generated from.
+     Links back to the source of authority.';
+
+
+--
+-- Name: COLUMN policy_rule.deny_reason; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.policy_rule.deny_reason IS 'Human-readable message returned to the caller when this rule rejects
+     a transition. Surfaced as KERNEL_POLICY_DENIED.';
+
+
+--
+-- Name: COLUMN policy_rule.enabled; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.policy_rule.enabled IS 'If false, the rule is skipped during evaluation. Enables gradual
+     rollout and emergency disable without dropping rules.';
+
+
+--
+-- Name: COLUMN policy_rule.created_by; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.policy_rule.created_by IS 'Who authored this rule — agent role (architect, planner) or system
+     (peb, conduit).';
+
+
+--
+-- Name: transition_event_id_seq; Type: SEQUENCE; Schema: kernel; Owner: -
+--
+
+ALTER TABLE kernel.transition_event ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME kernel.transition_event_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: v_active_policy; Type: VIEW; Schema: kernel; Owner: -
+--
+
+CREATE VIEW kernel.v_active_policy AS
+ SELECT rule_id,
+    rule_name,
+    priority,
+    (event_type)::text AS event_type,
+    cue_source,
+    compiled_sql,
+    function_name,
+    compiler_version,
+    doctrine_version,
+    deny_reason,
+    enabled,
+    created_by,
+    created_at,
+    updated_at
+   FROM kernel.policy_rule
+  WHERE enabled
+  ORDER BY priority;
+
+
+--
+-- Name: v_aggregate_events; Type: VIEW; Schema: kernel; Owner: -
+--
+
+CREATE VIEW kernel.v_aggregate_events AS
+ SELECT aggregate_type,
+    aggregate_id,
+    count(*) AS event_count,
+    min("timestamp") AS first_seen,
+    max("timestamp") AS last_seen,
+    array_agg(DISTINCT (event_type)::text) AS event_types
+   FROM kernel.transition_event
+  GROUP BY aggregate_type, aggregate_id;
+
+
+--
+-- Name: VIEW v_aggregate_events; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON VIEW kernel.v_aggregate_events IS 'Summary of events per aggregate — useful for lifecycle inspection.';
+
+
+--
+-- Name: v_causality_chain; Type: VIEW; Schema: kernel; Owner: -
+--
+
+CREATE VIEW kernel.v_causality_chain AS
+ WITH RECURSIVE chain AS (
+         SELECT te.id,
+            te.event_id,
+            te.event_type,
+            te.aggregate_type,
+            te.aggregate_id,
+            te.actor,
+            te.causation_id,
+            te.correlation_id,
+            te."timestamp",
+            0 AS depth,
+            ARRAY[(te.event_id)::text] AS path
+           FROM kernel.transition_event te
+          WHERE (te.causation_id IS NULL)
+        UNION ALL
+         SELECT te.id,
+            te.event_id,
+            te.event_type,
+            te.aggregate_type,
+            te.aggregate_id,
+            te.actor,
+            te.causation_id,
+            te.correlation_id,
+            te."timestamp",
+            (c.depth + 1),
+            (c.path || (te.event_id)::text)
+           FROM (kernel.transition_event te
+             JOIN chain c ON ((c.event_id = te.causation_id)))
+          WHERE (NOT ((te.event_id)::text = ANY (c.path)))
+        )
+ SELECT id,
+    event_id,
+    event_type,
+    aggregate_type,
+    aggregate_id,
+    actor,
+    causation_id,
+    correlation_id,
+    "timestamp",
+    depth,
+    path
+   FROM chain;
+
+
+--
+-- Name: v_event_analytics; Type: VIEW; Schema: kernel; Owner: -
+--
+
+CREATE VIEW kernel.v_event_analytics AS
+ SELECT event_type,
+    aggregate_type,
+    count(*) AS event_count,
+    min(event_timestamp) AS first_seen,
+    max(event_timestamp) AS last_seen,
+    count(DISTINCT actor) AS unique_actors,
+    count(DISTINCT aggregate_id) AS unique_aggregates
+   FROM kernel.event_log
+  GROUP BY event_type, aggregate_type
+  ORDER BY event_type, aggregate_type;
+
+
+--
+-- Name: VIEW v_event_analytics; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON VIEW kernel.v_event_analytics IS 'Analytics summary: event counts grouped by type and aggregate.
+     Updated in real-time as the projection subscriber writes rows.';
+
+
+--
+-- Name: v_plan_receipts; Type: VIEW; Schema: kernel; Owner: -
+--
+
+CREATE VIEW kernel.v_plan_receipts AS
+ SELECT plan_number,
+    receipt_type,
+    count(*) AS receipt_count,
+    min(created_at) AS first_issued,
+    max(created_at) AS last_issued,
+    array_agg(DISTINCT issued_by) AS issuers,
+    array_agg(DISTINCT receipt_hash) AS hashes
+   FROM kernel.receipt r
+  WHERE (plan_number IS NOT NULL)
+  GROUP BY plan_number, receipt_type
+  ORDER BY plan_number;
+
+
+--
+-- Name: VIEW v_plan_receipts; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON VIEW kernel.v_plan_receipts IS 'Receipt summary grouped by plan number — useful for seeing
+     which receipts have been issued for each conduit plan.';
+
+
+--
+-- Name: v_policy_maturity; Type: VIEW; Schema: kernel; Owner: -
+--
+
+CREATE VIEW kernel.v_policy_maturity AS
+ SELECT count(*) AS total_rules,
+    count(*) FILTER (WHERE enabled) AS enabled_rules,
+    count(*) FILTER (WHERE (enabled AND (function_name IS NOT NULL))) AS compiled_enabled,
+    count(*) FILTER (WHERE (enabled AND (function_name IS NULL))) AS data_driven_enabled,
+    count(*) FILTER (WHERE (NOT enabled)) AS disabled_rules,
+        CASE
+            WHEN (count(*) FILTER (WHERE enabled) = 0) THEN NULL::numeric
+            ELSE round((((count(*) FILTER (WHERE (enabled AND (function_name IS NULL))))::numeric / (count(*) FILTER (WHERE enabled))::numeric) * (100)::numeric), 1)
+        END AS data_driven_pct,
+        CASE
+            WHEN (count(*) FILTER (WHERE enabled) = 0) THEN NULL::numeric
+            ELSE round((((count(*) FILTER (WHERE (enabled AND (function_name IS NOT NULL))))::numeric / (count(*) FILTER (WHERE enabled))::numeric) * (100)::numeric), 1)
+        END AS compiled_pct
+   FROM kernel.policy_rule;
+
+
+--
+-- Name: VIEW v_policy_maturity; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON VIEW kernel.v_policy_maturity IS 'Measures policy engine maturity: ratio of compiled-hardened rules to data-driven rules. Higher compiled_pct = narrower entrance. Track this over time.';
+
+
+--
+-- Name: v_receipt_chain; Type: VIEW; Schema: kernel; Owner: -
+--
+
+CREATE VIEW kernel.v_receipt_chain AS
+ SELECT r.id AS receipt_id,
+    r.receipt_type,
+    r.receipt_hash,
+    r.issued_by,
+    r.plan_number,
+    r.created_at AS receipt_created_at,
+    te.event_id,
+    (te.event_type)::text AS event_type,
+    te.aggregate_type,
+    te.aggregate_id,
+    te.actor,
+    te."timestamp" AS event_timestamp,
+    te.causation_id,
+    te.correlation_id
+   FROM (kernel.receipt r
+     JOIN kernel.transition_event te ON ((te.event_id = r.event_id)))
+  ORDER BY r.created_at DESC;
+
+
+--
+-- Name: VIEW v_receipt_chain; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON VIEW kernel.v_receipt_chain IS 'Joined view of receipts with their source transition events.
+     Useful for tracing which receipt certifies which event.';
+
+
+--
+-- Name: v_recent_events; Type: VIEW; Schema: kernel; Owner: -
+--
+
+CREATE VIEW kernel.v_recent_events AS
+ SELECT id,
+    event_id,
+    event_type,
+    aggregate_type,
+    aggregate_id,
+    actor,
+    authority,
+    event_timestamp,
+    received_at,
+    (received_at - event_timestamp) AS propagation_lag
+   FROM kernel.event_log
+  ORDER BY received_at DESC
+ LIMIT 100;
+
+
+--
+-- Name: VIEW v_recent_events; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON VIEW kernel.v_recent_events IS 'Last 100 projected events with propagation lag. Useful for
+     monitoring the kernel → NATS → subscriber pipeline latency.';
 
 
 --
@@ -8900,6 +15414,58 @@ CREATE VIEW nebula.active_specifications AS
    FROM (nebula.specifications_history s
      JOIN nebula.agendas_history a ON ((a.id = s.agenda_id)))
   WHERE ((now() >= s.valid_from) AND (now() < s.valid_until));
+
+
+--
+-- Name: adapters; Type: TABLE; Schema: nebula; Owner: -
+--
+
+CREATE TABLE nebula.adapters (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    capability_id uuid NOT NULL,
+    provider text NOT NULL,
+    provider_endpoint jsonb DEFAULT '{}'::jsonb NOT NULL,
+    adapter_status text DEFAULT 'declared'::text NOT NULL,
+    evidence jsonb DEFAULT '{}'::jsonb NOT NULL,
+    last_checked_at timestamp with time zone,
+    registered_by text,
+    registered_lease uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    valid_from timestamp with time zone DEFAULT now() NOT NULL,
+    valid_until timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL,
+    recorded_on_dt timestamp with time zone DEFAULT now() NOT NULL,
+    recorded_until_dt timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL,
+    CONSTRAINT adapters_adapter_status_check CHECK ((adapter_status = ANY (ARRAY['declared'::text, 'active'::text, 'degraded'::text, 'retired'::text]))),
+    CONSTRAINT chk_adapters_evidence_array CHECK ((jsonb_typeof(evidence) = 'array'::text))
+);
+
+
+--
+-- Name: TABLE adapters; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON TABLE nebula.adapters IS 'V172 supply-side binding: one adapter = one capability realized over one provider. Satisfaction = ANY adapter with adapter_status=active for the capability. Provider identity is data, not doctrine (operator ruling 4a71a56d: MySQL/Elasticsearch/etc. satisfy the same protocol).';
+
+
+--
+-- Name: COLUMN adapters.provider_endpoint; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON COLUMN nebula.adapters.provider_endpoint IS 'Refs-only endpoint descriptor (host refs, store ids). Never credentials — keychains own secrets.';
+
+
+--
+-- Name: COLUMN adapters.adapter_status; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON COLUMN nebula.adapters.adapter_status IS 'declared = registered but unverified; active = an observation evidenced satisfaction; degraded = active with qualification; retired = no longer provided. Transitions carry evidence JSONB — status without evidence is exactly what this registry exists to prevent.';
+
+
+--
+-- Name: COLUMN adapters.evidence; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON COLUMN nebula.adapters.evidence IS 'Array of observations, newest LAST, truncated to the most recent ADAPTER_PROBE_HISTORY (10). Each element: {kind, observed_at, observer, check?, result?, row_counts?, source?, synthetic?...}. Synthetic transitions (drills) MUST carry synthetic=true — a drill that pretends to be an observation poisons the evidence discipline. Enforced array-shaped by chk_adapters_evidence_array (V173): flat-object merges silently overwrite same-named keys across transitions (drill finding 2) and are structurally rejected from here on.';
 
 
 --
@@ -9009,6 +15575,42 @@ CREATE VIEW nebula.agendas AS
 
 
 --
+-- Name: agent_connections; Type: TABLE; Schema: nebula; Owner: -
+--
+
+CREATE TABLE nebula.agent_connections (
+    conn_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    session_id text,
+    role text NOT NULL,
+    model text,
+    channel text,
+    lease_ref uuid,
+    mcp_tools jsonb DEFAULT '[]'::jsonb NOT NULL,
+    procedure_cards jsonb,
+    inbox_status jsonb,
+    handoff_context jsonb,
+    keychains jsonb DEFAULT '{"available": false}'::jsonb NOT NULL,
+    as_of timestamp with time zone DEFAULT now() NOT NULL,
+    valid_until timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL,
+    recorded_on_dt timestamp with time zone DEFAULT now() NOT NULL,
+    recorded_until_dt timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT cks_agent_connections_cards CHECK (((procedure_cards IS NULL) OR (jsonb_typeof(procedure_cards) = 'object'::text))),
+    CONSTRAINT cks_agent_connections_handoff CHECK (((handoff_context IS NULL) OR (jsonb_typeof(handoff_context) = 'object'::text))),
+    CONSTRAINT cks_agent_connections_inbox CHECK (((inbox_status IS NULL) OR (jsonb_typeof(inbox_status) = 'object'::text))),
+    CONSTRAINT cks_agent_connections_keychains CHECK ((jsonb_typeof(keychains) = 'object'::text)),
+    CONSTRAINT cks_agent_connections_tools CHECK ((jsonb_typeof(mcp_tools) = 'array'::text))
+);
+
+
+--
+-- Name: TABLE agent_connections; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON TABLE nebula.agent_connections IS 'Session affordance census (DBA pre-stage, continuity 65fe85a8): what an execution context could actually see and do at session start — MCP tools registered, procedure-card visibility, inbox status, handoff/digest availability, keychain availability. Refs-only by design: the census records WHAT WAS AVAILABLE, never WHAT IT SAID. Append-only boot-time attestations; NOT APPLIED until adopted by the boot shim flow.';
+
+
+--
 -- Name: agent_records_history; Type: TABLE; Schema: nebula; Owner: -
 --
 
@@ -9084,6 +15686,90 @@ CREATE VIEW nebula.agent_records AS
     model
    FROM nebula.agent_records_history
   WHERE ((now() >= recorded_on_dt) AND (now() < recorded_until_dt) AND (now() >= valid_from) AND (now() < valid_until));
+
+
+--
+-- Name: agent_records_tags_repair_20260922; Type: TABLE; Schema: nebula; Owner: -
+--
+
+CREATE TABLE nebula.agent_records_tags_repair_20260922 (
+    id uuid,
+    old_tags text[]
+);
+
+
+--
+-- Name: roles_history; Type: TABLE; Schema: nebula; Owner: -
+--
+
+CREATE TABLE nebula.roles_history (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name text NOT NULL,
+    display_name text NOT NULL,
+    description text,
+    owns_domains text[] DEFAULT '{}'::text[] NOT NULL,
+    can_greenlight boolean DEFAULT false NOT NULL,
+    can_create_questions boolean DEFAULT false NOT NULL,
+    can_create_agendas boolean DEFAULT false NOT NULL,
+    can_resolve_questions boolean DEFAULT false NOT NULL,
+    can_verify_work_requests boolean DEFAULT false NOT NULL,
+    max_open_questions integer,
+    requires_approval_from text[],
+    cron_enabled boolean DEFAULT false NOT NULL,
+    cron_expression text,
+    cron_description text,
+    escalates_to text[],
+    escalation_triggers text[],
+    level_filter_primary text DEFAULT 'level <= 2'::text NOT NULL,
+    level_filter_allowed text DEFAULT 'level <= 3'::text NOT NULL,
+    visibility_scope text[] DEFAULT '{planner,all}'::text[] NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    valid_from timestamp with time zone DEFAULT now() NOT NULL,
+    valid_until timestamp with time zone DEFAULT '9999-12-31 00:00:00+00'::timestamp with time zone NOT NULL,
+    recorded_on_dt timestamp with time zone DEFAULT now() NOT NULL,
+    recorded_until_dt timestamp with time zone DEFAULT '9999-12-31 00:00:00+00'::timestamp with time zone NOT NULL,
+    CONSTRAINT roles_name_check CHECK ((name ~ '^[a-z0-9_-]+$'::text))
+);
+
+
+--
+-- Name: TABLE roles_history; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON TABLE nebula.roles_history IS 'Role definitions with capabilities, constraints, and cron configuration.';
+
+
+--
+-- Name: applied_grants; Type: VIEW; Schema: nebula; Owner: -
+--
+
+CREATE VIEW nebula.applied_grants AS
+ SELECT name AS role,
+    jsonb_build_object('owns_domains', to_jsonb(owns_domains), 'can_greenlight', to_jsonb(can_greenlight), 'can_create_questions', to_jsonb(can_create_questions), 'can_create_agendas', to_jsonb(can_create_agendas), 'can_resolve_questions', to_jsonb(can_resolve_questions), 'can_verify_work_requests', to_jsonb(can_verify_work_requests), 'max_open_questions', to_jsonb(max_open_questions), 'requires_approval_from', to_jsonb(requires_approval_from), 'escalates_to', to_jsonb(escalates_to), 'escalation_triggers', to_jsonb(escalation_triggers), 'visibility_scope', to_jsonb(visibility_scope)) AS spec,
+    owns_domains,
+    can_greenlight,
+    can_create_questions,
+    can_create_agendas,
+    can_resolve_questions,
+    can_verify_work_requests,
+    max_open_questions,
+    requires_approval_from,
+    escalates_to,
+    escalation_triggers,
+    level_filter_primary,
+    level_filter_allowed,
+    visibility_scope,
+    valid_from AS granted_at
+   FROM nebula.roles_history r
+  WHERE ((valid_until = '9999-12-31 00:00:00+00'::timestamp with time zone) AND (recorded_until_dt = '9999-12-31 00:00:00+00'::timestamp with time zone));
+
+
+--
+-- Name: VIEW applied_grants; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON VIEW nebula.applied_grants IS 'One row per OPEN granted role snapshot (sentinel-correct, spec-bearing). Rediff gate: grant_is_applied(role, spec) is TRUE only on exact spec match — a re-apply of the same grant is refused as GRANT-APPLIED; a changed capability is a NEW lawful grant event.';
 
 
 --
@@ -9293,6 +15979,67 @@ CREATE VIEW nebula.assessments AS
 
 
 --
+-- Name: attestations; Type: TABLE; Schema: nebula; Owner: -
+--
+
+CREATE TABLE nebula.attestations (
+    attestation_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    work_ref text NOT NULL,
+    kind text NOT NULL,
+    requested_by text NOT NULL,
+    attester_role text,
+    authority_role text,
+    evidence jsonb DEFAULT '[]'::jsonb NOT NULL,
+    cites_id uuid,
+    session_id text,
+    agent_record_id uuid,
+    txid text DEFAULT (pg_current_xact_id())::text NOT NULL,
+    recorded_on_dt timestamp with time zone DEFAULT now() NOT NULL,
+    recorded_until_dt timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL,
+    CONSTRAINT attestations_chain_shape_check CHECK ((((kind = 'verification_request'::text) AND (cites_id IS NULL)) OR (kind = 'attestation'::text) OR ((kind = 'greenlight'::text) AND (cites_id IS NOT NULL)))),
+    CONSTRAINT attestations_kind_check CHECK ((kind = ANY (ARRAY['verification_request'::text, 'attestation'::text, 'greenlight'::text]))),
+    CONSTRAINT attestations_role_shape_check CHECK ((((kind = 'attestation'::text) AND (attester_role IS NOT NULL) AND (authority_role IS NULL)) OR ((kind = 'greenlight'::text) AND (authority_role IS NOT NULL) AND (attester_role IS NULL)) OR (kind = 'verification_request'::text)))
+);
+
+
+--
+-- Name: attestation_lineage; Type: VIEW; Schema: nebula; Owner: -
+--
+
+CREATE VIEW nebula.attestation_lineage AS
+ WITH RECURSIVE chain AS (
+         SELECT a_1.attestation_id AS root_id,
+            a_1.attestation_id AS node_id,
+            0 AS depth,
+            ARRAY[a_1.attestation_id] AS path
+           FROM nebula.attestations a_1
+          WHERE (a_1.cites_id IS NULL)
+        UNION ALL
+         SELECT c.root_id,
+            n.attestation_id,
+            (c.depth + 1),
+            (c.path || n.attestation_id)
+           FROM (nebula.attestations n
+             JOIN chain c ON ((n.cites_id = c.node_id)))
+          WHERE (NOT (n.attestation_id = ANY (c.path)))
+        )
+ SELECT chain.root_id,
+    chain.node_id AS attestation_id,
+    chain.depth,
+    a.work_ref,
+    a.kind,
+    a.requested_by,
+    a.attester_role,
+    a.authority_role,
+    a.evidence,
+    a.cites_id,
+    a.txid,
+    a.recorded_on_dt
+   FROM (chain
+     JOIN nebula.attestations a ON ((a.attestation_id = chain.node_id)));
+
+
+--
 -- Name: audit_files_history; Type: TABLE; Schema: nebula; Owner: -
 --
 
@@ -9323,6 +16070,48 @@ CREATE VIEW nebula.audit_files AS
     valid_until
    FROM nebula.audit_files_history
   WHERE ((now() >= recorded_on_dt) AND (now() < recorded_until_dt) AND (now() >= valid_from) AND (now() < valid_until));
+
+
+--
+-- Name: blueprints_history; Type: TABLE; Schema: nebula; Owner: -
+--
+
+CREATE TABLE nebula.blueprints_history (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    plan_number text,
+    title text NOT NULL,
+    payload jsonb DEFAULT '{}'::jsonb NOT NULL,
+    blueprint_status text DEFAULT 'draft'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    valid_from timestamp with time zone DEFAULT now() NOT NULL,
+    valid_until timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL,
+    recorded_on_dt timestamp with time zone DEFAULT now() NOT NULL,
+    recorded_until_dt timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL,
+    asset_id uuid,
+    CONSTRAINT blueprints_history_blueprint_status_check CHECK ((blueprint_status = ANY (ARRAY['draft'::text, 'pending'::text, 'approved'::text, 'work_requested'::text, 'completed'::text, 'archived'::text])))
+);
+
+
+--
+-- Name: TABLE blueprints_history; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON TABLE nebula.blueprints_history IS 'Canonical blueprint surface (V171): implementation plans renamed per operator ruling 4a71a56d — blueprint is an asset_kind on semantics.canonical_asset. plan_number preserved verbatim: 431 Conduit receipts key on it. Legacy flat columns folded into payload JSONB (spec_ref/requirement_ref refs-only per the class-3 pattern).';
+
+
+--
+-- Name: COLUMN blueprints_history.plan_number; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON COLUMN nebula.blueprints_history.plan_number IS 'Legacy receipt key, UNIQUE, preserved verbatim from implementation_plans_history. New blueprint rows without a receipt past may have NULL plan_number.';
+
+
+--
+-- Name: COLUMN blueprints_history.payload; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON COLUMN nebula.blueprints_history.payload IS 'Blueprint instance data: goal, content, files_affected[], acceptance_criteria[], dependencies[], tags[], spec_ref, requirement_ref, project. Refs-only governance references — instance data is portable (Asset-envelopes doctrine: instance data projects, authority does not).';
 
 
 --
@@ -9391,8 +16180,11 @@ CREATE TABLE nebula.harvest_candidates_history (
     recorded_on_dt timestamp with time zone DEFAULT now() NOT NULL,
     recorded_until_dt timestamp with time zone DEFAULT '9999-12-31 00:00:00+00'::timestamp with time zone NOT NULL,
     asset_id uuid,
+    dedupe_key text,
+    severity_note text,
+    completion_reference text,
     CONSTRAINT harvest_candidates_status_check CHECK (((status IS NULL) OR (status = ANY (ARRAY['pending'::text, 'linked'::text, 'useful'::text, 'rejected'::text, 'promoted'::text, 'superseded'::text, 'approved'::text, 'struck'::text, 'reviewed'::text, 'discarded'::text, 'active'::text])))),
-    CONSTRAINT hc_type_check CHECK ((type = ANY (ARRAY['requirement'::text, 'principle'::text, 'rejected_alternative'::text, 'tension'::text, 'rationale'::text, 'mixed'::text])))
+    CONSTRAINT hc_type_check CHECK ((type = ANY (ARRAY['requirement'::text, 'principle'::text, 'rejected_alternative'::text, 'tension'::text, 'rationale'::text, 'mixed'::text, 'drift'::text])))
 );
 
 
@@ -9465,6 +16257,40 @@ CREATE VIEW nebula.candidate_status_summary AS
    FROM nebula.harvest_candidates_history
   GROUP BY status
   ORDER BY status;
+
+
+--
+-- Name: capabilities; Type: TABLE; Schema: nebula; Owner: -
+--
+
+CREATE TABLE nebula.capabilities (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name text NOT NULL,
+    description text,
+    protocol_spec jsonb DEFAULT '{}'::jsonb NOT NULL,
+    concept_id uuid,
+    registered_by text,
+    registered_lease uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    valid_from timestamp with time zone DEFAULT now() NOT NULL,
+    valid_until timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL,
+    recorded_on_dt timestamp with time zone DEFAULT now() NOT NULL,
+    recorded_until_dt timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: TABLE capabilities; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON TABLE nebula.capabilities IS 'V172 demand-side atom: a named protocol capability an installation may be required to satisfy. Provider-agnostic by design — the capability names the contract; adapters (nebula.adapters) bind it to concrete providers. concept_id is a SEAM for the pending ontologist ruling (thread 3fce57ce), not a live FK.';
+
+
+--
+-- Name: COLUMN capabilities.protocol_spec; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON COLUMN nebula.capabilities.protocol_spec IS 'Abstract protocol contract, refs-only (TypeSpec refs, spec URIs). Instance data and credentials are forbidden here per the Asset-envelopes doctrine: instance data projects, authority does not.';
 
 
 --
@@ -9581,6 +16407,35 @@ CREATE VIEW nebula.conversation_snapshots AS
     created_at
    FROM nebula.conversation_snapshots_history
   WHERE ((now() >= as_of_dt) AND (now() < expiration_dt));
+
+
+--
+-- Name: coordination_checkpoints; Type: TABLE; Schema: nebula; Owner: -
+--
+
+CREATE TABLE nebula.coordination_checkpoints (
+    role text NOT NULL,
+    item_kind text NOT NULL,
+    last_reviewed_at timestamp with time zone DEFAULT to_timestamp((0)::double precision) NOT NULL,
+    reviewed_by_model text,
+    note text,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT coordination_checkpoints_item_kind_check CHECK ((item_kind = ANY (ARRAY['inbox'::text, 'todo'::text, 'discussions'::text, 'issues'::text, 'change-log'::text])))
+);
+
+
+--
+-- Name: TABLE coordination_checkpoints; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON TABLE nebula.coordination_checkpoints IS 'Per-role, per-item-kind review checkpoint (blackboard V1, V192). The ONLY write surface of the coordination blackboard: advanced deliberately by an agent or boot shim at review time ("seen everything of this kind up to last_reviewed_at"). last_reviewed_at defaults to epoch = never reviewed. Never written by any pipeline.';
+
+
+--
+-- Name: COLUMN coordination_checkpoints.last_reviewed_at; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON COLUMN nebula.coordination_checkpoints.last_reviewed_at IS 'Review boundary: items of this kind created at/after this instant are NEW for the role. to_timestamp(0) = never reviewed.';
 
 
 --
@@ -9720,7 +16575,10 @@ CREATE VIEW nebula.harvest_candidates AS
     placement_reason,
     recorded_on_dt,
     recorded_until_dt,
-    asset_id
+    asset_id,
+    dedupe_key,
+    severity_note,
+    completion_reference
    FROM nebula.harvest_candidates_history
   WHERE ((now() >= recorded_on_dt) AND (now() < recorded_until_dt) AND (now() >= valid_from) AND (now() < valid_until));
 
@@ -9805,6 +16663,14 @@ CREATE TABLE nebula.harvests_history (
     run_metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
     file_size bigint,
     asset_id uuid,
+    stats_turns integer GENERATED ALWAYS AS (COALESCE(jsonb_array_length((docklang -> 'discourse_units'::text)), 0)) STORED,
+    stats_user_turns integer GENERATED ALWAYS AS (COALESCE(jsonb_array_length(jsonb_path_query_array(docklang, '$."discourse_units"[*]?(@."provenance"."role" == "user")'::jsonpath)), 0)) STORED,
+    stats_code_blocks integer GENERATED ALWAYS AS (COALESCE(((docklang #>> '{stats,by_type,code}'::text[]))::integer, 0)) STORED,
+    stats_block_density numeric GENERATED ALWAYS AS (
+CASE
+    WHEN (jsonb_array_length((docklang -> 'discourse_units'::text)) > 0) THEN (((docklang #>> '{stats,total_blocks}'::text[]))::numeric / (jsonb_array_length((docklang -> 'discourse_units'::text)))::numeric)
+    ELSE (0)::numeric
+END) STORED,
     CONSTRAINT chk_harvests_level CHECK (((level >= 1) AND (level <= 4)))
 );
 
@@ -9835,7 +16701,11 @@ CREATE VIEW nebula.harvests AS
     recorded_until_dt,
     valid_from,
     valid_until,
-    asset_id
+    asset_id,
+    stats_turns,
+    stats_user_turns,
+    stats_code_blocks,
+    stats_block_density
    FROM nebula.harvests_history
   WHERE ((now() >= recorded_on_dt) AND (now() < recorded_until_dt) AND (now() >= valid_from) AND (now() < valid_until));
 
@@ -9888,6 +16758,42 @@ COMMENT ON COLUMN nebula.implementation_notes.source_record_id IS 'FK to nebula.
 
 
 --
+-- Name: implementation_plans; Type: VIEW; Schema: nebula; Owner: -
+--
+
+CREATE VIEW nebula.implementation_plans AS
+ SELECT id,
+    plan_number,
+    ((payload ->> 'spec_ref'::text))::uuid AS spec_id,
+    ((payload ->> 'requirement_ref'::text))::uuid AS requirement_id,
+    title,
+    (payload ->> 'goal'::text) AS goal,
+    (payload ->> 'content'::text) AS content,
+    ARRAY( SELECT jsonb_array_elements_text(COALESCE((b.payload -> 'files_affected'::text), '[]'::jsonb)) AS jsonb_array_elements_text) AS files_affected,
+    COALESCE((payload -> 'acceptance_criteria'::text), '[]'::jsonb) AS acceptance_criteria,
+    ARRAY( SELECT jsonb_array_elements_text(COALESCE((b.payload -> 'dependencies'::text), '[]'::jsonb)) AS jsonb_array_elements_text) AS dependencies,
+    blueprint_status AS status,
+    ARRAY( SELECT jsonb_array_elements_text(COALESCE((b.payload -> 'tags'::text), '[]'::jsonb)) AS jsonb_array_elements_text) AS tags,
+    jsonb_build_object('project', (payload ->> 'project'::text)) AS metadata,
+    created_at,
+    updated_at,
+    valid_from,
+    valid_until,
+    recorded_on_dt,
+    recorded_until_dt,
+    asset_id
+   FROM nebula.blueprints_history b
+  WHERE ((now() >= recorded_on_dt) AND (now() < recorded_until_dt) AND (now() >= valid_from) AND (now() < valid_until));
+
+
+--
+-- Name: VIEW implementation_plans; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON VIEW nebula.implementation_plans IS 'V171 compat view: legacy implementation-plans column contract served from nebula.blueprints_history. Read-side only — writers should target nebula.blueprints_history (or rely on the mirror trigger) during the transition window.';
+
+
+--
 -- Name: implementation_plans_history; Type: TABLE; Schema: nebula; Owner: -
 --
 
@@ -9923,35 +16829,6 @@ ALTER TABLE ONLY nebula.implementation_plans_history REPLICA IDENTITY FULL;
 --
 
 COMMENT ON TABLE nebula.implementation_plans_history IS 'Detailed context-heavy implementation plans. Replaces nebula.plans.';
-
-
---
--- Name: implementation_plans; Type: VIEW; Schema: nebula; Owner: -
---
-
-CREATE VIEW nebula.implementation_plans AS
- SELECT id,
-    plan_number,
-    spec_id,
-    requirement_id,
-    title,
-    goal,
-    content,
-    files_affected,
-    acceptance_criteria,
-    dependencies,
-    status,
-    tags,
-    metadata,
-    created_at,
-    updated_at,
-    valid_from,
-    valid_until,
-    recorded_on_dt,
-    recorded_until_dt,
-    asset_id
-   FROM nebula.implementation_plans_history
-  WHERE ((now() >= recorded_on_dt) AND (now() < recorded_until_dt) AND (now() >= valid_from) AND (now() < valid_until));
 
 
 --
@@ -10273,6 +17150,70 @@ CREATE VIEW nebula.plans AS
 
 
 --
+-- Name: VIEW plans; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON VIEW nebula.plans IS 'V171 post-apply cascade repair: legacy plan read surface restored over the V171 compat view (nebula.implementation_plans -> blueprints_history). Shape per ci-bootstrap reconstruction.';
+
+
+--
+-- Name: receipt; Type: TABLE; Schema: resolution; Owner: -
+--
+
+CREATE TABLE resolution.receipt (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    producer_id text NOT NULL,
+    kind text NOT NULL,
+    source_system text NOT NULL,
+    source_receipt_id text NOT NULL,
+    payload_fingerprint text NOT NULL,
+    payload jsonb NOT NULL,
+    refs jsonb DEFAULT '{}'::jsonb NOT NULL,
+    contract_version integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE receipt; Type: COMMENT; Schema: resolution; Owner: -
+--
+
+COMMENT ON TABLE resolution.receipt IS 'Lilac canonical receipt stream (Q3): immutable, producer-registered, kind-discriminated. THE receipt.';
+
+
+--
+-- Name: receipt_unified_projection; Type: VIEW; Schema: resolution; Owner: -
+--
+
+CREATE VIEW resolution.receipt_unified_projection AS
+ SELECT source_receipt_id AS id,
+    (refs ->> 'plan_id'::text) AS plan_id,
+    ( SELECT m.legacy_type
+           FROM ( VALUES ('plan_create'::text,'PLAN_CREATE'::text), ('planning'::text,'PLANNING'::text), ('implementation'::text,'IMPLEMENTATION'::text), ('review'::text,'REVIEW'::text), ('review_pass'::text,'REVIEW_PASS'::text), ('review_reject'::text,'REVIEW_REJECT'::text), ('critique'::text,'CRITIQUE'::text), ('critique_pass'::text,'CRITIQUE_PASS'::text), ('critique_reject'::text,'CRITIQUE_REJECT'::text), ('block'::text,'BLOCK'::text), ('hold'::text,'HOLD'::text), ('ccnf_execution'::text,'CCNF_EXECUTION'::text), ('requeued'::text,'REQUEUED'::text), ('api_limit'::text,'API_LIMIT'::text), ('abandoned'::text,'ABANDONED'::text), ('cancelled'::text,'CANCELLED'::text), ('plan_block'::text,'PLAN_BLOCK'::text)) m(t, legacy_type)
+          WHERE (m.t = r.kind)) AS type,
+    (payload ->> 'agent_role'::text) AS agent_role,
+    (payload ->> 'session_id'::text) AS session_id,
+    (payload ->> 'artifact_path'::text) AS artifact_path,
+    COALESCE((payload ->> 'summary'::text), ''::text) AS summary,
+    (payload)::text AS metadata_json,
+    created_at,
+    (payload ->> 'ticket_id'::text) AS ticket_id,
+    COALESCE(((payload ->> 'tokens_used'::text))::integer, 0) AS tokens_used,
+    NULL::integer AS sequence,
+    created_at AS recorded_on_dt,
+    NULL::timestamp with time zone AS recorded_until_dt
+   FROM resolution.receipt r
+  WHERE ((kind <> 'admission'::text) AND ((refs ->> 'plan_id'::text) IS NOT NULL));
+
+
+--
+-- Name: VIEW receipt_unified_projection; Type: COMMENT; Schema: resolution; Owner: -
+--
+
+COMMENT ON VIEW resolution.receipt_unified_projection IS 'C5 typed projection of the canonical stream onto the unified contract (conduit lifecycle kinds with a plan ref only).';
+
+
+--
 -- Name: receipts; Type: TABLE; Schema: vision; Owner: -
 --
 
@@ -10342,7 +17283,36 @@ UNION ALL
     receipts.sequence,
     receipts.recorded_on_dt,
     receipts.recorded_until_dt
-   FROM vision.receipts;
+   FROM vision.receipts receipts
+UNION ALL
+ SELECT p.id,
+    p.plan_id,
+    p.type,
+    p.agent_role,
+    p.session_id,
+    p.artifact_path,
+    p.summary,
+    p.metadata_json,
+    p.created_at,
+    p.ticket_id,
+    p.tokens_used,
+    p.sequence,
+    p.recorded_on_dt,
+    p.recorded_until_dt
+   FROM resolution.receipt_unified_projection p
+  WHERE ((NOT (EXISTS ( SELECT 1
+           FROM (execution.receipts e
+             JOIN execution.requests rq ON ((rq.id = e.request_id)))
+          WHERE ((e.lineage_source = 'conduit'::text) AND (rq.source_plan_id = p.plan_id) AND (COALESCE(e.lineage_original_id, (e.id)::text) = p.id) AND (e.type = p.type))))) AND (NOT (EXISTS ( SELECT 1
+           FROM vision.receipts v
+          WHERE ((v.id = p.id) AND (v.plan_id = p.plan_id) AND (v.type = p.type))))));
+
+
+--
+-- Name: VIEW receipts_unified; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON VIEW nebula.receipts_unified IS 'C5 dual-read projection over resolution.receipt (Q1 8d30e540): legacy execution ∪ legacy vision ∪ canonical-minus-duplicates. NOT canonical. Re-pointed fully onto resolution.receipt at C6, which also retires the sequence-NULL defect.';
 
 
 --
@@ -10403,6 +17373,13 @@ CREATE VIEW nebula.plan_status AS
 
 
 --
+-- Name: VIEW plan_status; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON VIEW nebula.plan_status IS 'V171 post-apply cascade repair: receipt-derived status chain re-pointed at the restored nebula.plans (V110 definition verbatim).';
+
+
+--
 -- Name: plans_by_status; Type: VIEW; Schema: nebula; Owner: -
 --
 
@@ -10424,6 +17401,13 @@ CREATE VIEW nebula.plans_by_status AS
     updated_at,
     derived_status AS status
    FROM nebula.plan_status ps;
+
+
+--
+-- Name: VIEW plans_by_status; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON VIEW nebula.plans_by_status IS 'V171 post-apply cascade repair: conduit-mcp consumer surface (V110-era passthrough with derived_status AS status).';
 
 
 --
@@ -10667,48 +17651,6 @@ CREATE VIEW nebula.requirements AS
 
 
 --
--- Name: roles_history; Type: TABLE; Schema: nebula; Owner: -
---
-
-CREATE TABLE nebula.roles_history (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    name text NOT NULL,
-    display_name text NOT NULL,
-    description text,
-    owns_domains text[] DEFAULT '{}'::text[] NOT NULL,
-    can_greenlight boolean DEFAULT false NOT NULL,
-    can_create_questions boolean DEFAULT false NOT NULL,
-    can_create_agendas boolean DEFAULT false NOT NULL,
-    can_resolve_questions boolean DEFAULT false NOT NULL,
-    can_verify_work_requests boolean DEFAULT false NOT NULL,
-    max_open_questions integer,
-    requires_approval_from text[],
-    cron_enabled boolean DEFAULT false NOT NULL,
-    cron_expression text,
-    cron_description text,
-    escalates_to text[],
-    escalation_triggers text[],
-    level_filter_primary text DEFAULT 'level <= 2'::text NOT NULL,
-    level_filter_allowed text DEFAULT 'level <= 3'::text NOT NULL,
-    visibility_scope text[] DEFAULT '{planner,all}'::text[] NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    valid_from timestamp with time zone DEFAULT now() NOT NULL,
-    valid_until timestamp with time zone DEFAULT '9999-12-31 00:00:00+00'::timestamp with time zone NOT NULL,
-    recorded_on_dt timestamp with time zone DEFAULT now() NOT NULL,
-    recorded_until_dt timestamp with time zone DEFAULT '9999-12-31 00:00:00+00'::timestamp with time zone NOT NULL,
-    CONSTRAINT roles_name_check CHECK ((name ~ '^[a-z0-9_-]+$'::text))
-);
-
-
---
--- Name: TABLE roles_history; Type: COMMENT; Schema: nebula; Owner: -
---
-
-COMMENT ON TABLE nebula.roles_history IS 'Role definitions with capabilities, constraints, and cron configuration.';
-
-
---
 -- Name: roles; Type: VIEW; Schema: nebula; Owner: -
 --
 
@@ -10857,6 +17799,39 @@ CREATE VIEW nebula.segments AS
     created_at
    FROM nebula.segments_history
   WHERE ((now() >= as_of_dt) AND (now() < expiration_dt));
+
+
+--
+-- Name: session_context_snapshots; Type: TABLE; Schema: nebula; Owner: -
+--
+
+CREATE TABLE nebula.session_context_snapshots (
+    snapshot_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    role text NOT NULL,
+    model text,
+    lease_ref uuid,
+    read_set_manifest jsonb,
+    source_records jsonb DEFAULT '[]'::jsonb NOT NULL,
+    digest_payload jsonb NOT NULL,
+    level_filter_primary text,
+    level_filter_allowed text,
+    as_of timestamp with time zone DEFAULT now() NOT NULL,
+    valid_until timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL,
+    recorded_on_dt timestamp with time zone DEFAULT now() NOT NULL,
+    recorded_until_dt timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT cks_session_context_snapshots_digest CHECK ((jsonb_typeof(digest_payload) = 'object'::text)),
+    CONSTRAINT cks_session_context_snapshots_lease_scoped CHECK (((lease_ref IS NULL) OR (read_set_manifest IS NOT NULL))),
+    CONSTRAINT cks_session_context_snapshots_readset CHECK (((read_set_manifest IS NULL) OR (jsonb_typeof(read_set_manifest) = 'object'::text))),
+    CONSTRAINT cks_session_context_snapshots_sources CHECK ((jsonb_typeof(source_records) = 'array'::text))
+);
+
+
+--
+-- Name: TABLE session_context_snapshots; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON TABLE nebula.session_context_snapshots IS 'Role-adoption continuity: canonical cross-session context snapshots (discussions 65fe85a8). Canonical-first — projected to Mongo, never sourced from it. lease_ref NULL marks an unleased content blob (low-trust context); leased rows carry read_set_manifest (refs-only) and are attestable artifacts. NOT APPLIED until roundtable answers Q1-Q3.';
 
 
 --
@@ -11232,6 +18207,275 @@ CREATE VIEW nebula.user_preferences AS
 
 
 --
+-- Name: role_leases; Type: TABLE; Schema: tackle; Owner: -
+--
+
+CREATE TABLE tackle.role_leases (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    role text NOT NULL,
+    channel text DEFAULT 'interactive'::text NOT NULL,
+    model text,
+    window_start timestamp with time zone DEFAULT now() NOT NULL,
+    window_end timestamp with time zone NOT NULL,
+    budget_units integer,
+    consumed_units integer DEFAULT 0 NOT NULL,
+    status text DEFAULT 'ACTIVE'::text NOT NULL,
+    acquired_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    released_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    release_reason text,
+    CONSTRAINT role_leases_channel_check CHECK ((channel = ANY (ARRAY['interactive'::text, 'opencode'::text, 'ollama'::text, 'ui-fleet'::text, 'unknown'::text]))),
+    CONSTRAINT role_leases_release_reason_check CHECK ((release_reason = ANY (ARRAY['revoked'::text, 'exhausted'::text, 'expired'::text]))),
+    CONSTRAINT role_leases_status_check CHECK ((status = ANY (ARRAY['ACTIVE'::text, 'EXPIRED'::text, 'RELEASED'::text])))
+);
+
+
+--
+-- Name: v_agent_connections; Type: VIEW; Schema: nebula; Owner: -
+--
+
+CREATE VIEW nebula.v_agent_connections AS
+ SELECT c.conn_id,
+    c.session_id,
+    c.role,
+    c.model,
+    c.channel,
+    c.lease_ref,
+    l.status AS lease_status,
+    c.mcp_tools,
+    c.procedure_cards,
+    c.inbox_status,
+    c.handoff_context,
+    c.keychains,
+    c.as_of,
+    (c.lease_ref IS NOT NULL) AS is_leased,
+    ((jsonb_array_length(c.mcp_tools) > 0) OR COALESCE(((c.procedure_cards ->> 'available'::text))::boolean, false) OR COALESCE(((c.inbox_status ->> 'available'::text))::boolean, false) OR COALESCE(((c.handoff_context ->> 'digest_available'::text))::boolean, false)) AS has_affordances
+   FROM (nebula.agent_connections c
+     LEFT JOIN tackle.role_leases l ON ((l.id = c.lease_ref)))
+  WHERE ((current_setting('vision.session_role'::text, true) = c.role) AND (c.valid_until > now()) AND (c.recorded_until_dt = 'infinity'::timestamp with time zone));
+
+
+--
+-- Name: VIEW v_agent_connections; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON VIEW nebula.v_agent_connections IS 'Census read scope: session role bound via GUC vision.session_role (mirrors Q3 posture), bitemporal-current rows only. lease_status informational; has_affordances = false marks a "blind boot" — a session whose context had no reachable surfaces at all.';
+
+
+--
+-- Name: v_blueprints; Type: VIEW; Schema: nebula; Owner: -
+--
+
+CREATE VIEW nebula.v_blueprints AS
+ SELECT id,
+    plan_number,
+    title,
+    payload,
+    blueprint_status,
+    created_at,
+    updated_at,
+    valid_from,
+    valid_until,
+    recorded_on_dt,
+    recorded_until_dt,
+    asset_id,
+    (payload ->> 'project'::text) AS project
+   FROM nebula.blueprints_history
+  WHERE ((now() >= recorded_on_dt) AND (now() < recorded_until_dt) AND (now() >= valid_from) AND (now() < valid_until));
+
+
+--
+-- Name: VIEW v_blueprints; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON VIEW nebula.v_blueprints IS 'Blueprint read scope: bitemporal-current rows only. The JSONB payload is the envelope instance data; project surfaced as a convenience column (previously a fabricated literal in the legacy plans view).';
+
+
+--
+-- Name: v_capability_satisfaction; Type: VIEW; Schema: nebula; Owner: -
+--
+
+CREATE VIEW nebula.v_capability_satisfaction AS
+ SELECT capability_id,
+    capability,
+    description,
+    active_adapters,
+    degraded_adapters,
+    declared_adapters,
+    retired_adapters,
+    satisfied,
+    satisfying_providers,
+    concept_id,
+    last_observed_at,
+    (now() - last_observed_at) AS evidence_age,
+        CASE
+            WHEN (satisfied AND (last_observed_at IS NOT NULL) AND ((now() - last_observed_at) <= '7 days'::interval)) THEN 'satisfied'::text
+            WHEN satisfied THEN 'satisfied-stale'::text
+            ELSE
+            CASE (freshest ->> 1)
+                WHEN 'UNREACHABLE'::text THEN
+                CASE
+                    WHEN (((freshest ->> 0))::timestamp with time zone >= (now() - '7 days'::interval)) THEN 'unreachable'::text
+                    ELSE 'unsatisfied'::text
+                END
+                WHEN 'REFUSED'::text THEN
+                CASE
+                    WHEN (((freshest ->> 0))::timestamp with time zone >= (now() - '7 days'::interval)) THEN 'refused'::text
+                    ELSE 'unsatisfied'::text
+                END
+                WHEN 'FAIL'::text THEN 'unsatisfied'::text
+                WHEN 'PASS'::text THEN 'unsatisfied'::text
+                WHEN 'SKIP'::text THEN 'unknown'::text
+                ELSE
+                CASE
+                    WHEN ((freshest ->> 1) IS NULL) THEN 'unknown'::text
+                    ELSE 'unsatisfied'::text
+                END
+            END
+        END AS satisfaction_state,
+    freshest
+   FROM ( SELECT c.id AS capability_id,
+            c.name AS capability,
+            c.description,
+            count(a.id) FILTER (WHERE (a.adapter_status = 'active'::text)) AS active_adapters,
+            count(a.id) FILTER (WHERE (a.adapter_status = 'degraded'::text)) AS degraded_adapters,
+            count(a.id) FILTER (WHERE (a.adapter_status = 'declared'::text)) AS declared_adapters,
+            count(a.id) FILTER (WHERE (a.adapter_status = 'retired'::text)) AS retired_adapters,
+            (count(a.id) FILTER (WHERE (a.adapter_status = 'active'::text)) > 0) AS satisfied,
+            COALESCE(array_remove(array_agg(DISTINCT a.provider) FILTER (WHERE (a.adapter_status = 'active'::text)), NULL::text), '{}'::text[]) AS satisfying_providers,
+            c.concept_id,
+            max(COALESCE(pa.pass_observed_at,
+                CASE
+                    WHEN (pa.pass_count > 0) THEN a.last_checked_at
+                    ELSE NULL::timestamp with time zone
+                END)) FILTER (WHERE (a.adapter_status = ANY (ARRAY['active'::text, 'degraded'::text]))) AS last_observed_at,
+            (array_agg(jsonb_build_array(COALESCE((((a.evidence -> '-1'::integer) ->> 'observed_at'::text))::timestamp with time zone, a.last_checked_at), ((a.evidence -> '-1'::integer) ->> 'result'::text)) ORDER BY COALESCE((((a.evidence -> '-1'::integer) ->> 'observed_at'::text))::timestamp with time zone, a.last_checked_at) DESC NULLS LAST))[1] AS freshest
+           FROM ((nebula.capabilities c
+             LEFT JOIN nebula.adapters a ON (((a.capability_id = c.id) AND (a.recorded_until_dt = 'infinity'::timestamp with time zone) AND (a.valid_until = 'infinity'::timestamp with time zone))))
+             LEFT JOIN LATERAL ( SELECT max(((e.value ->> 'observed_at'::text))::timestamp with time zone) FILTER (WHERE (((e.value ->> 'result'::text) = 'PASS'::text) AND ((e.value ->> 'observed_at'::text) IS NOT NULL))) AS pass_observed_at,
+                    count(*) FILTER (WHERE ((e.value ->> 'result'::text) = 'PASS'::text)) AS pass_count
+                   FROM jsonb_array_elements(COALESCE(a.evidence, '[]'::jsonb)) e(value)) pa ON (true))
+          WHERE ((c.recorded_until_dt = 'infinity'::timestamp with time zone) AND (c.valid_until = 'infinity'::timestamp with time zone))
+          GROUP BY c.id, c.name, c.description, c.concept_id) agg;
+
+
+--
+-- Name: VIEW v_capability_satisfaction; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON VIEW nebula.v_capability_satisfaction IS 'Capability satisfaction lattice (V172 + V173 + V174): adapter counts by status, the satisfied verdict, satisfying_providers (never NULL), evidence_age, and the six-valued satisfaction_state — satisfied / satisfied-stale / unsatisfied (V173) extended with unreachable (measurement failure: the claim survives UNVERIFIED, not refuted), refused (provider reachable, capability declined), and unknown (never observed or check path absent — the V173 cell read unsatisfied here, a false comfort). Derivation: freshest observation across all live adapters; diagnostics (unreachable/refused) are fresh-only and decay to unsatisfied; SKIP is unknown at any age. Freshness window = 7-day constant in the view definition (ADAPTER_STALENESS_THRESHOLD on the probe side; roundtable-tunable). UNREACHABLE DATA MUST NOT BE ATTESTED AS ABSENT.';
+
+
+--
+-- Name: v_coordination_blackboard; Type: VIEW; Schema: nebula; Owner: -
+--
+
+CREATE VIEW nebula.v_coordination_blackboard AS
+ WITH todo_base AS (
+         SELECT p.id AS thread_id,
+            p.title,
+            p.created,
+            p.rating,
+            (regexp_match((p.title)::text, '^\[([a-z0-9-]+)'::text))[1] AS raw_token,
+            (EXISTS ( SELECT 1
+                   FROM assembly.comments c
+                  WHERE ((c.post_id = p.id) AND (c.role = ( SELECT r.name
+                           FROM nebula.roles r
+                          WHERE (r.name = (regexp_match((p.title)::text, '^\[([a-z0-9-]+)'::text))[1])))))) AS addressee_commented
+           FROM (assembly.posts p
+             JOIN assembly.forums f ON ((f.id = p.forum_uuid)))
+          WHERE ((f.slug)::text = 'to-do'::text)
+        ), todo_routed AS (
+         SELECT t.thread_id,
+            t.title,
+            t.created,
+            t.rating,
+            t.raw_token,
+            t.addressee_commented,
+            r.name AS routed_role,
+            (t.rating = ANY (ARRAY[(2)::bigint, (3)::bigint, (8)::bigint])) AS in_flight,
+            (t.rating = ANY (ARRAY[(4)::bigint, (5)::bigint, (7)::bigint])) AS done
+           FROM (todo_base t
+             LEFT JOIN nebula.roles r ON ((r.name = t.raw_token)))
+        )
+ SELECT 'todo'::text AS item_kind,
+    tr.thread_id AS item_id,
+    tr.title,
+    tr.routed_role,
+        CASE
+            WHEN (tr.routed_role IS NULL) THEN 'unrouted'::text
+            WHEN tr.done THEN 'done'::text
+            WHEN tr.in_flight THEN 'in-flight'::text
+            WHEN (tr.rating = 6) THEN 'action-needed'::text
+            WHEN tr.addressee_commented THEN 'in-flight'::text
+            WHEN ((((now() AT TIME ZONE 'UTC'::text))::timestamp with time zone - (tr.created AT TIME ZONE 'UTC'::text)) > '14 days'::interval) THEN 'stale'::text
+            WHEN ((((now() AT TIME ZONE 'UTC'::text))::timestamp with time zone - (tr.created AT TIME ZONE 'UTC'::text)) > '72:00:00'::interval) THEN 'awaiting-pickup'::text
+            ELSE 'action-needed'::text
+        END AS bucket,
+    tr.rating AS status_rating,
+    tr.created,
+        CASE
+            WHEN (tr.routed_role IS NULL) THEN 'no leading role token or token not in nebula.roles'::text
+            WHEN tr.done THEN 'terminal state (accepted/rejected/closed)'::text
+            WHEN tr.in_flight THEN 'picked up / in progress / operator-approved'::text
+            WHEN (tr.rating = 6) THEN 'reopened — needs another pass'::text
+            WHEN tr.addressee_commented THEN 'acknowledged by addressee but status never advanced — policy §6 violation'::text
+            WHEN ((((now() AT TIME ZONE 'UTC'::text))::timestamp with time zone - (tr.created AT TIME ZONE 'UTC'::text)) > '14 days'::interval) THEN 'STALE-UNACKED: >14d, no addressee-role comment'::text
+            WHEN ((((now() AT TIME ZONE 'UTC'::text))::timestamp with time zone - (tr.created AT TIME ZONE 'UTC'::text)) > '72:00:00'::interval) THEN 'past 72h ack SLA — awaiting visible pickup'::text
+            ELSE 'inside 72h ack SLA'::text
+        END AS reason,
+    ( SELECT max(c.created) AS max
+           FROM assembly.comments c
+          WHERE (c.post_id = tr.thread_id)) AS last_activity_at
+   FROM todo_routed tr
+UNION ALL
+ SELECT 'inbox'::text AS item_kind,
+    ar.id AS item_id,
+    "left"(ar.title, 200) AS title,
+    SUBSTRING(t.role FROM 4) AS routed_role,
+        CASE
+            WHEN (ar.created_at >= COALESCE(cp.last_reviewed_at, to_timestamp((0)::double precision))) THEN 'action-needed'::text
+            ELSE 'seen'::text
+        END AS bucket,
+    NULL::bigint AS status_rating,
+    ar.created_at AS created,
+        CASE
+            WHEN (ar.created_at >= COALESCE(cp.last_reviewed_at, to_timestamp((0)::double precision))) THEN (('tagged '::text || t.role) || ' — newer than inbox checkpoint'::text)
+            ELSE 'predates inbox checkpoint'::text
+        END AS reason,
+    ar.created_at AS last_activity_at
+   FROM ((nebula.agent_records_history ar
+     CROSS JOIN LATERAL unnest(ar.tags) t(role))
+     LEFT JOIN nebula.coordination_checkpoints cp ON (((cp.role = SUBSTRING(t.role FROM 4)) AND (cp.item_kind = 'inbox'::text))))
+  WHERE ((t.role ~~ 'to:%'::text) AND (length(t.role) > 3) AND (EXISTS ( SELECT 1
+           FROM nebula.roles r
+          WHERE (r.name = SUBSTRING(t.role FROM 4)))))
+UNION ALL
+ SELECT cp.item_kind,
+    NULL::uuid AS item_id,
+    (((cp.role || ' / '::text) || cp.item_kind) || ' checkpoint'::text) AS title,
+    cp.role AS routed_role,
+    'checkpoint'::text AS bucket,
+    NULL::bigint AS status_rating,
+    cp.last_reviewed_at AS created,
+        CASE
+            WHEN (cp.last_reviewed_at = to_timestamp((0)::double precision)) THEN 'never reviewed'::text
+            ELSE (('reviewed '::text || to_char(cp.last_reviewed_at, 'YYYY-MM-DD HH24:MI'::text)) || 'Z'::text)
+        END AS reason,
+    cp.updated_at AS last_activity_at
+   FROM nebula.coordination_checkpoints cp;
+
+
+--
+-- Name: VIEW v_coordination_blackboard; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON VIEW nebula.v_coordination_blackboard IS 'The coordination blackboard (V192, blackboard V1): derived per-role attention fold over to-do threads + tagged agent records + checkpoint freshness. Buckets: action-needed / awaiting-pickup / stale / in-flight / done / unrouted / seen / checkpoint. Read-only by construction — the only write surface is nebula.coordination_checkpoints. Doctrine: discussions 88385a46, ac2d1382.';
+
+
+--
 -- Name: v_latest_question_answer; Type: VIEW; Schema: nebula; Owner: -
 --
 
@@ -11297,6 +18541,35 @@ CREATE VIEW nebula.v_role_capabilities AS
 
 
 --
+-- Name: v_session_context_restore; Type: VIEW; Schema: nebula; Owner: -
+--
+
+CREATE VIEW nebula.v_session_context_restore AS
+ SELECT s.snapshot_id,
+    s.role,
+    s.model,
+    s.lease_ref,
+    l.status AS lease_status,
+    s.read_set_manifest,
+    s.source_records,
+    s.digest_payload,
+    s.level_filter_primary,
+    s.level_filter_allowed,
+    s.as_of,
+    (s.lease_ref IS NOT NULL) AS is_leased
+   FROM (nebula.session_context_snapshots s
+     LEFT JOIN tackle.role_leases l ON ((l.id = s.lease_ref)))
+  WHERE ((current_setting('vision.session_role'::text, true) = s.role) AND (s.valid_until > now()) AND (s.recorded_until_dt = 'infinity'::timestamp with time zone) AND ((s.lease_ref IS NULL) OR true));
+
+
+--
+-- Name: VIEW v_session_context_restore; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON VIEW nebula.v_session_context_restore IS 'Restore scope for digest assembly: session role bound via GUC vision.session_role (Q3 enforced), bitemporal-current rows only. lease_status is informational (Q1 deferrable); is_leased distinguishes attestable artifacts from marked content blobs.';
+
+
+--
 -- Name: services; Type: TABLE; Schema: registry; Owner: -
 --
 
@@ -11317,7 +18590,8 @@ CREATE TABLE registry.services (
     parent_service_id bigint,
     service_type_id bigint NOT NULL,
     asset_id uuid,
-    origin character varying(20)
+    origin character varying(20),
+    health_check_path character varying(255)
 );
 
 
@@ -11550,7 +18824,16 @@ CREATE TABLE vision.work_requests (
     title text DEFAULT ''::text NOT NULL,
     nexus_work_request_id uuid,
     asset_id uuid,
-    entity_key text
+    entity_key text,
+    business_key text,
+    relation_payload jsonb,
+    intent_payload jsonb,
+    lineage jsonb,
+    decomposition jsonb,
+    execution_linkage jsonb,
+    evidence_obligations jsonb,
+    inquiry jsonb,
+    shape_version text
 );
 
 ALTER TABLE ONLY vision.work_requests REPLICA IDENTITY FULL;
@@ -11561,6 +18844,69 @@ ALTER TABLE ONLY vision.work_requests REPLICA IDENTITY FULL;
 --
 
 COMMENT ON COLUMN vision.work_requests.nexus_work_request_id IS 'Links this LOSM work tracking record to the canonical nebula.work_requests business record.';
+
+
+--
+-- Name: COLUMN work_requests.business_key; Type: COMMENT; Schema: vision; Owner: -
+--
+
+COMMENT ON COLUMN vision.work_requests.business_key IS 'WP1 v0.1 identity: stable external key (execution domain keys on it in rover/execution-srv). Required for canonical landing (P1020). Uniqueness enforced by a partial UNIQUE index (C4) — NULL (legacy rows) exempt.';
+
+
+--
+-- Name: COLUMN work_requests.relation_payload; Type: COMMENT; Schema: vision; Owner: -
+--
+
+COMMENT ON COLUMN vision.work_requests.relation_payload IS 'Original-field preservation (relation_payload pattern): the unmodified source representation of the landed WR. Required for canonical landing (P1020); canonical columns are projections of this, never a destructive reshaping.';
+
+
+--
+-- Name: COLUMN work_requests.intent_payload; Type: COMMENT; Schema: vision; Owner: -
+--
+
+COMMENT ON COLUMN vision.work_requests.intent_payload IS 'WP1 v0.1 intent block: problem_statement (string, required) / desired_outcome (string, required) / priority (enum low|medium|high, optional). Keys outside the envelope are refused for canonical landing (P1020).';
+
+
+--
+-- Name: COLUMN work_requests.lineage; Type: COMMENT; Schema: vision; Owner: -
+--
+
+COMMENT ON COLUMN vision.work_requests.lineage IS 'WP1 v0.1 lineage block: derived_from (array, optional), plan (string, optional); ag:spawns_plan precedent.';
+
+
+--
+-- Name: COLUMN work_requests.decomposition; Type: COMMENT; Schema: vision; Owner: -
+--
+
+COMMENT ON COLUMN vision.work_requests.decomposition IS 'WP1 v0.1 decomposition: steps (array, optional).';
+
+
+--
+-- Name: COLUMN work_requests.execution_linkage; Type: COMMENT; Schema: vision; Owner: -
+--
+
+COMMENT ON COLUMN vision.work_requests.execution_linkage IS 'WP1 v0.1 execution linkage, REFS ONLY and key-aligned to the artifact (C1): lease_ref (string) / attempt_refs (array) / receipt_refs (array). Embedded execution state is refused (P1020) — no-megatable principle, thread 38b84810.';
+
+
+--
+-- Name: COLUMN work_requests.evidence_obligations; Type: COMMENT; Schema: vision; Owner: -
+--
+
+COMMENT ON COLUMN vision.work_requests.evidence_obligations IS 'WP1 v0.1 evidence_obligations: array (Decision B ev_requirements).';
+
+
+--
+-- Name: COLUMN work_requests.inquiry; Type: COMMENT; Schema: vision; Owner: -
+--
+
+COMMENT ON COLUMN vision.work_requests.inquiry IS 'WP1 v0.1 OPTIONAL inquiry block (read_set_scope object / evaluator_ref string / expected_outcome_type string / evidence_requirements array) — exactly these four fields when present, per-field types enforced (P1020); the 1,890 DCOs predate it.';
+
+
+--
+-- Name: COLUMN work_requests.shape_version; Type: COMMENT; Schema: vision; Owner: -
+--
+
+COMMENT ON COLUMN vision.work_requests.shape_version IS 'Landing-time stamp of the ratified shape version. Canonical landing must carry the ACTIVE ratified version explicitly (C3 — mismatch P1023); legacy (hatched) writes may leave it NULL.';
 
 
 --
@@ -12981,6 +20327,19 @@ CREATE TABLE resolution.canonical_asset (
 
 
 --
+-- Name: concept; Type: TABLE; Schema: resolution; Owner: -
+--
+
+CREATE TABLE resolution.concept (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name text NOT NULL,
+    description text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expired_at timestamp with time zone
+);
+
+
+--
 -- Name: concept_attribute; Type: TABLE; Schema: resolution; Owner: -
 --
 
@@ -13078,6 +20437,23 @@ CREATE TABLE resolution.consumer_operation (
     notes text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     expired_at timestamp with time zone
+);
+
+
+--
+-- Name: contract_version; Type: TABLE; Schema: resolution; Owner: -
+--
+
+CREATE TABLE resolution.contract_version (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    version integer NOT NULL,
+    schema_hash text NOT NULL,
+    event_vocabulary text[] NOT NULL,
+    key_scheme text NOT NULL,
+    outcome_classes text[] NOT NULL,
+    ratified_by text,
+    ratified_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -13270,6 +20646,30 @@ CREATE TABLE resolution.expression_operand (
     "position" integer NOT NULL,
     CONSTRAINT expression_operand_check CHECK ((parent_expression_id <> child_expression_id))
 );
+
+
+--
+-- Name: fanout_transition; Type: TABLE; Schema: resolution; Owner: -
+--
+
+CREATE TABLE resolution.fanout_transition (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    input_receipt_id uuid NOT NULL,
+    kind text NOT NULL,
+    fan_out_policy_version integer NOT NULL,
+    outcome text NOT NULL,
+    produced jsonb DEFAULT '[]'::jsonb NOT NULL,
+    conflict_fingerprints jsonb DEFAULT '[]'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT fanout_transition_outcome_check CHECK ((outcome = ANY (ARRAY['spawned'::text, 'completed'::text, 'no-op'::text, 'conflict'::text, 'refused'::text])))
+);
+
+
+--
+-- Name: TABLE fanout_transition; Type: COMMENT; Schema: resolution; Owner: -
+--
+
+COMMENT ON TABLE resolution.fanout_transition IS 'Position-aware fan-out ledger: THE single receipt-to-ticket fan-out (C3).';
 
 
 --
@@ -13521,6 +20921,31 @@ COMMENT ON COLUMN resolution.keychain_event_outbox.read_set IS 'Stable identitie
 
 
 --
+-- Name: CONSTRAINT keychain_event_outbox_outcome_ck ON keychain_event_outbox; Type: COMMENT; Schema: resolution; Owner: -
+--
+
+COMMENT ON CONSTRAINT keychain_event_outbox_outcome_ck ON resolution.keychain_event_outbox IS 'PEB deny_contract_promotion dispositions are all durable source events; only committed outcomes create state-vector checkpoints.';
+
+
+--
+-- Name: migration_disposition; Type: TABLE; Schema: resolution; Owner: -
+--
+
+CREATE TABLE resolution.migration_disposition (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    source_schema text NOT NULL,
+    source_table text NOT NULL,
+    source_pk text NOT NULL,
+    migration_version text NOT NULL,
+    disposition_class text NOT NULL,
+    target_refs jsonb DEFAULT '{}'::jsonb NOT NULL,
+    recorded_by text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT migration_disposition_disposition_class_check CHECK ((disposition_class = ANY (ARRAY['unlinked'::text, 'quarantined'::text, 'mapped'::text, 'discarded'::text, 'retired'::text])))
+);
+
+
+--
 -- Name: migration_ledger; Type: TABLE; Schema: resolution; Owner: -
 --
 
@@ -13649,6 +21074,107 @@ CREATE TABLE resolution.owning_subsystem (
     id smallint NOT NULL,
     name text NOT NULL,
     description text
+);
+
+
+--
+-- Name: producer_refusals; Type: TABLE; Schema: resolution; Owner: -
+--
+
+CREATE TABLE resolution.producer_refusals (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    producer_id text NOT NULL,
+    receipt_type text NOT NULL,
+    source_receipt_id text NOT NULL,
+    plan_id text,
+    sqlstate text,
+    error text NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE producer_refusals; Type: COMMENT; Schema: resolution; Owner: -
+--
+
+COMMENT ON TABLE resolution.producer_refusals IS 'Stage C C2 gate (Q-B alert class): redirect=enforce refusals of REAL writers. Canary writers (declared rec-zz-redirect- prefix) are excluded by construction — their refusals are legacy_shadow_failed evidence instead. Append-only.';
+
+
+--
+-- Name: producer_registry; Type: TABLE; Schema: resolution; Owner: -
+--
+
+CREATE TABLE resolution.producer_registry (
+    producer_id text NOT NULL,
+    name text NOT NULL,
+    allowed_kinds text[] NOT NULL,
+    contract_version_min integer NOT NULL,
+    contract_version_max integer NOT NULL,
+    state text DEFAULT 'active'::text NOT NULL,
+    registered_by text NOT NULL,
+    registered_at timestamp with time zone DEFAULT now() NOT NULL,
+    retired_at timestamp with time zone,
+    CONSTRAINT chk_producer_version_range CHECK ((contract_version_min <= contract_version_max)),
+    CONSTRAINT producer_registry_state_check CHECK ((state = ANY (ARRAY['active'::text, 'suspended'::text, 'retired'::text])))
+);
+
+
+--
+-- Name: TABLE producer_registry; Type: COMMENT; Schema: resolution; Owner: -
+--
+
+COMMENT ON TABLE resolution.producer_registry IS 'Named write authorities with kind-scoped grants (R2/Q3). Unknown/ambiguous writer → refused. Registered: conduit-mcp (TS), nexus-execution-worker (worker lane), nexus-conduit-python (python-direct channel, V142), peb-srv (admission-only), expression-pipeline (evaluation receipts, V194).';
+
+
+--
+-- Name: promotion_batch; Type: TABLE; Schema: resolution; Owner: -
+--
+
+CREATE TABLE resolution.promotion_batch (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    batch_key text NOT NULL,
+    envelope_version integer DEFAULT 1 NOT NULL,
+    status text DEFAULT 'open'::text NOT NULL,
+    eligibility_snapshot jsonb NOT NULL,
+    eligibility_canonical_text text NOT NULL,
+    eligibility_hash text NOT NULL,
+    created_by text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    valid_from timestamp with time zone DEFAULT now() NOT NULL,
+    valid_until timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL,
+    recorded_on_dt timestamp with time zone DEFAULT now() NOT NULL,
+    recorded_until_dt timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL,
+    CONSTRAINT promotion_batch_hash_check CHECK (((length(eligibility_hash) = 64) AND (eligibility_hash ~ '^[0-9a-f]{64}$'::text))),
+    CONSTRAINT promotion_batch_key_hash_check CHECK (((length(batch_key) = 64) AND (batch_key ~ '^[0-9a-f]{64}$'::text))),
+    CONSTRAINT promotion_batch_status_check CHECK ((status = ANY (ARRAY['open'::text, 'sealed'::text, 'superseded'::text])))
+);
+
+
+--
+-- Name: TABLE promotion_batch; Type: COMMENT; Schema: resolution; Owner: -
+--
+
+COMMENT ON TABLE resolution.promotion_batch IS 'ST.01 (V198): deterministic candidate-set batch. At most one OPEN batch per (candidate id-set, eligibility snapshot), enforced by uq_promotion_batch_active. Ratified by envelope ruling 4a0aeb66 (R1/R3).';
+
+
+--
+-- Name: COLUMN promotion_batch.envelope_version; Type: COMMENT; Schema: resolution; Owner: -
+--
+
+COMMENT ON COLUMN resolution.promotion_batch.envelope_version IS 'R1.4: authority-adjacent payloads carry an envelope version as a replay input. Shape/re-key changes increment this; nothing mutates in place.';
+
+
+--
+-- Name: promotion_batch_candidate; Type: TABLE; Schema: resolution; Owner: -
+--
+
+CREATE TABLE resolution.promotion_batch_candidate (
+    batch_id uuid NOT NULL,
+    candidate_id uuid NOT NULL,
+    "position" integer DEFAULT 0 NOT NULL,
+    recorded_on_dt timestamp with time zone DEFAULT now() NOT NULL,
+    recorded_until_dt timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL
 );
 
 
@@ -13822,6 +21348,20 @@ CREATE TABLE resolution.requirement_segment_set (
 
 
 --
+-- Name: retirement_signoff; Type: TABLE; Schema: resolution; Owner: -
+--
+
+CREATE TABLE resolution.retirement_signoff (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    role text NOT NULL,
+    signoff text NOT NULL,
+    signed_by text NOT NULL,
+    signed_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT retirement_signoff_role_check CHECK ((role = ANY (ARRAY['operator'::text, 'architect'::text, 'engineer'::text, 'dba'::text])))
+);
+
+
+--
 -- Name: rule; Type: TABLE; Schema: resolution; Owner: -
 --
 
@@ -13865,6 +21405,46 @@ CREATE TABLE resolution.semantic_type (
 CREATE TABLE resolution.semantic_type_required_dimension (
     semantic_type_id uuid NOT NULL,
     dimension_id uuid NOT NULL
+);
+
+
+--
+-- Name: shrapnel_field_sync_evidence; Type: TABLE; Schema: resolution; Owner: -
+--
+
+CREATE TABLE resolution.shrapnel_field_sync_evidence (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    field_id bigint NOT NULL,
+    property_name text NOT NULL,
+    field_type_code smallint NOT NULL,
+    value_type text NOT NULL,
+    concept_attribute_id uuid NOT NULL,
+    action text NOT NULL,
+    metadata_fingerprint text NOT NULL,
+    synchronized_at timestamp with time zone DEFAULT now() NOT NULL,
+    details jsonb DEFAULT '{}'::jsonb NOT NULL,
+    CONSTRAINT shrapnel_field_sync_evidence_action_check CHECK ((action = ANY (ARRAY['created'::text, 'already_present'::text])))
+);
+
+
+--
+-- Name: TABLE shrapnel_field_sync_evidence; Type: COMMENT; Schema: resolution; Owner: -
+--
+
+COMMENT ON TABLE resolution.shrapnel_field_sync_evidence IS 'Append-only evidence for additive Shrapnel field -> ShrapnelFact metadata synchronization; contains no instance values.';
+
+
+--
+-- Name: soak_evidence; Type: TABLE; Schema: resolution; Owner: -
+--
+
+CREATE TABLE resolution.soak_evidence (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    evidence_date date NOT NULL,
+    report jsonb NOT NULL,
+    green boolean NOT NULL,
+    recorded_by text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -13938,6 +21518,44 @@ CREATE TABLE resolution.t24_graph_edge_evidence (
 --
 
 COMMENT ON TABLE resolution.t24_graph_edge_evidence IS 'Lossless T24 graph-edge provenance attached to immutable SOL execution_evidence. Resolved endpoint identity is not semantic truth or execution acceptance.';
+
+
+--
+-- Name: ticket; Type: TABLE; Schema: resolution; Owner: -
+--
+
+CREATE TABLE resolution.ticket (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workflow_ref text NOT NULL,
+    role text NOT NULL,
+    "position" integer NOT NULL,
+    status text DEFAULT 'open'::text NOT NULL,
+    predecessor_receipt_id uuid,
+    generation integer DEFAULT 0 NOT NULL,
+    objective text DEFAULT ''::text NOT NULL,
+    contract_version integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT ticket_status_check CHECK ((status = ANY (ARRAY['open'::text, 'claimed'::text, 'stale'::text, 'closed'::text])))
+);
+
+
+--
+-- Name: ticket_transition; Type: TABLE; Schema: resolution; Owner: -
+--
+
+CREATE TABLE resolution.ticket_transition (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    ticket_id uuid NOT NULL,
+    input_receipt_id uuid,
+    from_status text NOT NULL,
+    to_status text NOT NULL,
+    fanout_policy_version integer DEFAULT 1 NOT NULL,
+    outcome_class text NOT NULL,
+    payload jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT ticket_transition_outcome_class_check CHECK ((outcome_class = ANY (ARRAY['accepted'::text, 'duplicate-equivalent'::text, 'conflict'::text, 'refused'::text, 'unlinked'::text, 'quarantined'::text])))
+);
 
 
 --
@@ -14056,6 +21674,20 @@ COMMENT ON TABLE resolution.work_request_edge IS 'Ported from vision.work_reques
 
 
 --
+-- Name: write_queue_applied; Type: TABLE; Schema: resolution; Owner: -
+--
+
+CREATE TABLE resolution.write_queue_applied (
+    write_id text NOT NULL,
+    target text,
+    verb text,
+    payload jsonb,
+    outcome text,
+    applied_at timestamp with time zone DEFAULT now()
+);
+
+
+--
 -- Name: evidence_item; Type: TABLE; Schema: semantics; Owner: -
 --
 
@@ -14113,6 +21745,650 @@ CREATE TABLE semantics.statement_evidence (
     CONSTRAINT statement_evidence_strength_check CHECK (((strength IS NULL) OR ((strength >= (0)::numeric) AND (strength <= (1)::numeric)))),
     CONSTRAINT statement_evidence_type_check CHECK (((statement_type = ANY (ARRAY['source_observation'::text, 'representation_relationship'::text, 'concept_relationship'::text, 'execution_claim'::text, 'resolution_proposition'::text])) OR (expired_at IS NOT NULL)))
 );
+
+
+--
+-- Name: _migration_ledger; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel._migration_ledger (
+    filename text NOT NULL,
+    applied_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: data_source; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.data_source (
+    id bigint NOT NULL,
+    name character varying(255) NOT NULL,
+    script_name character varying(255),
+    query_id bigint
+);
+
+ALTER TABLE ONLY shrapnel.data_source REPLICA IDENTITY FULL;
+
+
+--
+-- Name: data_source_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.data_source_seq
+    START WITH 1
+    INCREMENT BY 50
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: field_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.field_seq
+    START WITH 1
+    INCREMENT BY 50
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: field; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.field (
+    id bigint DEFAULT nextval('shrapnel.field_seq'::regclass) NOT NULL,
+    is_calculated boolean NOT NULL,
+    field_index integer NOT NULL,
+    label text,
+    name text,
+    property_name text NOT NULL,
+    field_type_code smallint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+ALTER TABLE ONLY shrapnel.field REPLICA IDENTITY FULL;
+
+
+--
+-- Name: TABLE field; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.field IS 'Attribute metadata: maps a logical attribute name to a field_type_code.';
+
+
+--
+-- Name: COLUMN field.property_name; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON COLUMN shrapnel.field.property_name IS 'Unique upsert key used by ON CONFLICT (property_name).';
+
+
+--
+-- Name: field_type; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.field_type (
+    code smallint NOT NULL,
+    name text NOT NULL,
+    description text,
+    pg_type text NOT NULL
+);
+
+ALTER TABLE ONLY shrapnel.field_type REPLICA IDENTITY FULL;
+
+
+--
+-- Name: TABLE field_type; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.field_type IS 'Type mapping registry for shrapnel EAV values.';
+
+
+--
+-- Name: COLUMN field_type.code; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON COLUMN shrapnel.field_type.code IS '1=Long, 2=String, 3=Double, 4=Boolean, 5=Timestamp, 6=JSONB, 7=UUID';
+
+
+--
+-- Name: object_attribute_value; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.object_attribute_value (
+    id bigint NOT NULL,
+    object_id bigint NOT NULL,
+    field_id bigint NOT NULL,
+    value_id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE object_attribute_value; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.object_attribute_value IS 'Junction: this objects has this value (id) for this field.';
+
+
+--
+-- Name: object_attribute_value_id_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.object_attribute_value_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: object_attribute_value_id_seq; Type: SEQUENCE OWNED BY; Schema: shrapnel; Owner: -
+--
+
+ALTER SEQUENCE shrapnel.object_attribute_value_id_seq OWNED BY shrapnel.object_attribute_value.id;
+
+
+--
+-- Name: object_instance; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.object_instance (
+    id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    stereotype_revision_id bigint,
+    stereotype_id bigint,
+    CONSTRAINT ck_objinst_membership_pair CHECK ((((stereotype_id IS NULL) AND (stereotype_revision_id IS NULL)) OR ((stereotype_id IS NOT NULL) AND (stereotype_revision_id IS NOT NULL))))
+);
+
+
+--
+-- Name: TABLE object_instance; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.object_instance IS 'Concrete object/entity instance. Holds no payload by design (EAV).';
+
+
+--
+-- Name: object_instance_id_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.object_instance_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: object_instance_id_seq; Type: SEQUENCE OWNED BY; Schema: shrapnel; Owner: -
+--
+
+ALTER SEQUENCE shrapnel.object_instance_id_seq OWNED BY shrapnel.object_instance.id;
+
+
+--
+-- Name: qbe_column; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.qbe_column (
+    id bigint NOT NULL,
+    field_index integer NOT NULL,
+    name character varying(255) NOT NULL,
+    field_type_id integer,
+    table_id bigint
+);
+
+ALTER TABLE ONLY shrapnel.qbe_column REPLICA IDENTITY FULL;
+
+
+--
+-- Name: qbe_column_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.qbe_column_seq
+    START WITH 1
+    INCREMENT BY 50
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: qbe_join; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.qbe_join (
+    id bigint NOT NULL,
+    join_column_a_id bigint,
+    join_column_b_id bigint,
+    join_type_code integer
+);
+
+ALTER TABLE ONLY shrapnel.qbe_join REPLICA IDENTITY FULL;
+
+
+--
+-- Name: qbe_join_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.qbe_join_seq
+    START WITH 1
+    INCREMENT BY 50
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: qbe_join_type; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.qbe_join_type (
+    code integer NOT NULL,
+    name character varying(255) NOT NULL
+);
+
+ALTER TABLE ONLY shrapnel.qbe_join_type REPLICA IDENTITY FULL;
+
+
+--
+-- Name: qbe_query; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.qbe_query (
+    id bigint NOT NULL,
+    name character varying(255) NOT NULL,
+    schema_name character varying(255) NOT NULL
+);
+
+ALTER TABLE ONLY shrapnel.qbe_query REPLICA IDENTITY FULL;
+
+
+--
+-- Name: qbe_query_column; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.qbe_query_column (
+    query_id bigint NOT NULL,
+    column_id bigint NOT NULL
+);
+
+ALTER TABLE ONLY shrapnel.qbe_query_column REPLICA IDENTITY FULL;
+
+
+--
+-- Name: qbe_query_join; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.qbe_query_join (
+    query_id bigint NOT NULL,
+    join_id bigint NOT NULL
+);
+
+ALTER TABLE ONLY shrapnel.qbe_query_join REPLICA IDENTITY FULL;
+
+
+--
+-- Name: qbe_query_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.qbe_query_seq
+    START WITH 1
+    INCREMENT BY 50
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: qbe_table; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.qbe_table (
+    id bigint NOT NULL,
+    name character varying(255) NOT NULL,
+    schema_name character varying(255) NOT NULL
+);
+
+ALTER TABLE ONLY shrapnel.qbe_table REPLICA IDENTITY FULL;
+
+
+--
+-- Name: qbe_table_column; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.qbe_table_column (
+    column_id bigint NOT NULL,
+    table_id bigint NOT NULL
+);
+
+ALTER TABLE ONLY shrapnel.qbe_table_column REPLICA IDENTITY FULL;
+
+
+--
+-- Name: qbe_table_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.qbe_table_seq
+    START WITH 1
+    INCREMENT BY 50
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: stereotype_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.stereotype_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: stereotype; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.stereotype (
+    id bigint DEFAULT nextval('shrapnel.stereotype_seq'::regclass) NOT NULL,
+    name text NOT NULL,
+    description text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: stereotype_field_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.stereotype_field_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: stereotype_field; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.stereotype_field (
+    id bigint DEFAULT nextval('shrapnel.stereotype_field_seq'::regclass) NOT NULL,
+    stereotype_revision_id bigint NOT NULL,
+    field_id bigint NOT NULL,
+    required boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: stereotype_revision_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.stereotype_revision_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: stereotype_revision; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.stereotype_revision (
+    id bigint DEFAULT nextval('shrapnel.stereotype_revision_seq'::regclass) NOT NULL,
+    stereotype_id bigint NOT NULL,
+    version integer NOT NULL,
+    parent_revision_id bigint,
+    parent_stereotype_id bigint,
+    extends_rationale text,
+    depth integer DEFAULT 0 NOT NULL,
+    contract_fingerprint text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT ck_sterev_depth_range CHECK (((depth >= 0) AND (depth <= 3))),
+    CONSTRAINT ck_sterev_fingerprint_format CHECK ((contract_fingerprint ~ '^sha256:[0-9a-f]{64}$'::text)),
+    CONSTRAINT ck_sterev_parent_rationale CHECK (((parent_revision_id IS NULL) OR ((extends_rationale IS NOT NULL) AND (btrim(extends_rationale) <> ''::text))))
+);
+
+
+--
+-- Name: v_object_stereotype; Type: VIEW; Schema: shrapnel; Owner: -
+--
+
+CREATE VIEW shrapnel.v_object_stereotype AS
+ SELECT o.id AS object_id,
+    o.created_at,
+    s.name AS stereotype_name,
+    r.id AS revision_id,
+    r.version,
+    r.depth
+   FROM ((shrapnel.object_instance o
+     JOIN shrapnel.stereotype_revision r ON ((r.id = o.stereotype_revision_id)))
+     JOIN shrapnel.stereotype s ON ((s.id = r.stereotype_id)));
+
+
+--
+-- Name: v_stereotype_contract; Type: VIEW; Schema: shrapnel; Owner: -
+--
+
+CREATE VIEW shrapnel.v_stereotype_contract AS
+ SELECT s.name AS stereotype_name,
+    r.id AS revision_id,
+    r.version,
+    r.depth,
+    r.contract_fingerprint,
+    f.property_name,
+    sf.required
+   FROM (((shrapnel.stereotype_revision r
+     JOIN shrapnel.stereotype s ON ((s.id = r.stereotype_id)))
+     JOIN shrapnel.stereotype_field sf ON ((sf.stereotype_revision_id = r.id)))
+     JOIN shrapnel.field f ON ((f.id = sf.field_id)));
+
+
+--
+-- Name: value_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.value_seq
+    START WITH 1
+    INCREMENT BY 50
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: value; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.value (
+    id bigint DEFAULT nextval('shrapnel.value_seq'::regclass) NOT NULL,
+    value_type_code smallint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+ALTER TABLE ONLY shrapnel.value REPLICA IDENTITY FULL;
+
+
+--
+-- Name: TABLE value; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.value IS 'Base entry for every concrete attribute value; joined 1:1 to one value_<type> extension.';
+
+
+--
+-- Name: value_boolean; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.value_boolean (
+    id bigint NOT NULL,
+    value boolean NOT NULL
+);
+
+
+--
+-- Name: TABLE value_boolean; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.value_boolean IS 'Boolean typed value extension (field_type_code = 4).';
+
+
+--
+-- Name: value_double; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.value_double (
+    id bigint NOT NULL,
+    value double precision NOT NULL
+);
+
+
+--
+-- Name: TABLE value_double; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.value_double IS 'Double typed value extension (field_type_code = 3).';
+
+
+--
+-- Name: value_jsonb; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.value_jsonb (
+    id bigint NOT NULL,
+    value jsonb NOT NULL
+);
+
+
+--
+-- Name: TABLE value_jsonb; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.value_jsonb IS 'JSONB typed value extension (field_type_code = 6).';
+
+
+--
+-- Name: value_long; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.value_long (
+    id bigint NOT NULL,
+    value bigint NOT NULL
+);
+
+ALTER TABLE ONLY shrapnel.value_long REPLICA IDENTITY FULL;
+
+
+--
+-- Name: TABLE value_long; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.value_long IS 'Long typed value extension (field_type_code = 1).';
+
+
+--
+-- Name: value_long_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.value_long_seq
+    START WITH 1
+    INCREMENT BY 50
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: value_string; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.value_string (
+    id bigint NOT NULL,
+    value text NOT NULL
+);
+
+ALTER TABLE ONLY shrapnel.value_string REPLICA IDENTITY FULL;
+
+
+--
+-- Name: TABLE value_string; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.value_string IS 'String typed value extension (field_type_code = 2).';
+
+
+--
+-- Name: value_string_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.value_string_seq
+    START WITH 1
+    INCREMENT BY 50
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: value_timestamp; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.value_timestamp (
+    id bigint NOT NULL,
+    value timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: TABLE value_timestamp; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.value_timestamp IS 'Timestamp typed value extension (field_type_code = 5).';
+
+
+--
+-- Name: value_type; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.value_type (
+    code integer NOT NULL,
+    table_name character varying(255) NOT NULL
+);
+
+ALTER TABLE ONLY shrapnel.value_type REPLICA IDENTITY FULL;
+
+
+--
+-- Name: value_uuid; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.value_uuid (
+    id bigint NOT NULL,
+    value uuid NOT NULL
+);
+
+
+--
+-- Name: TABLE value_uuid; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.value_uuid IS 'UUID typed value extension (field_type_code = 7).';
 
 
 --
@@ -14181,6 +22457,43 @@ CREATE TABLE tackle.agent_timeclock (
     valid_from timestamp with time zone DEFAULT now() NOT NULL,
     valid_until timestamp with time zone DEFAULT '9999-12-31 23:59:59+00'::timestamp with time zone NOT NULL
 );
+
+
+--
+-- Name: system_logs; Type: TABLE; Schema: tackle; Owner: -
+--
+
+CREATE TABLE tackle.system_logs (
+    id text DEFAULT (gen_random_uuid())::text NOT NULL,
+    "timestamp" timestamp with time zone DEFAULT now() NOT NULL,
+    level text NOT NULL,
+    category text NOT NULL,
+    message text NOT NULL,
+    source text,
+    details jsonb,
+    CONSTRAINT system_logs_level_check CHECK ((level = ANY (ARRAY['INFO'::text, 'WARN'::text, 'ERROR'::text, 'DEBUG'::text])))
+);
+
+
+--
+-- Name: audit_trail; Type: VIEW; Schema: tackle; Owner: -
+--
+
+CREATE VIEW tackle.audit_trail AS
+ SELECT id,
+    "timestamp",
+    category,
+    COALESCE((details ->> 'table'::text), "substring"(message, ' on ([a-z_]+) '::text)) AS audited_table,
+    COALESCE((details ->> 'op'::text), split_part(message, ' '::text, 1)) AS operation,
+    COALESCE(((details ->> 'row_count'::text))::bigint, (0)::bigint) AS row_count,
+    (details ->> 'keys'::text) AS keys,
+    (details ->> 'application_name'::text) AS application_name,
+    (details ->> 'client_addr'::text) AS client_addr,
+    ((details ->> 'txid'::text))::bigint AS txid,
+    message,
+    details
+   FROM tackle.system_logs
+  WHERE (category = ANY (ARRAY['REGISTRY_AUDIT'::text, 'NEBULA_AUDIT'::text, 'KG_AUDIT'::text]));
 
 
 --
@@ -14350,32 +22663,6 @@ ALTER TABLE ONLY tackle.providers REPLICA IDENTITY FULL;
 
 
 --
--- Name: role_leases; Type: TABLE; Schema: tackle; Owner: -
---
-
-CREATE TABLE tackle.role_leases (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    role text NOT NULL,
-    channel text DEFAULT 'interactive'::text NOT NULL,
-    model text,
-    window_start timestamp with time zone DEFAULT now() NOT NULL,
-    window_end timestamp with time zone NOT NULL,
-    budget_units integer,
-    consumed_units integer DEFAULT 0 NOT NULL,
-    status text DEFAULT 'ACTIVE'::text NOT NULL,
-    acquired_at timestamp with time zone DEFAULT now() NOT NULL,
-    expires_at timestamp with time zone NOT NULL,
-    released_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    release_reason text,
-    CONSTRAINT role_leases_channel_check CHECK ((channel = ANY (ARRAY['interactive'::text, 'opencode'::text, 'ollama'::text, 'unknown'::text]))),
-    CONSTRAINT role_leases_release_reason_check CHECK ((release_reason = ANY (ARRAY['revoked'::text, 'exhausted'::text, 'expired'::text]))),
-    CONSTRAINT role_leases_status_check CHECK ((status = ANY (ARRAY['ACTIVE'::text, 'EXPIRED'::text, 'RELEASED'::text])))
-);
-
-
---
 -- Name: role_memory; Type: TABLE; Schema: tackle; Owner: -
 --
 
@@ -14490,19 +22777,25 @@ ALTER TABLE ONLY tackle.sessions REPLICA IDENTITY FULL;
 
 
 --
--- Name: system_logs; Type: TABLE; Schema: tackle; Owner: -
+-- Name: system_logs_retention_policy; Type: TABLE; Schema: tackle; Owner: -
 --
 
-CREATE TABLE tackle.system_logs (
-    id text DEFAULT (gen_random_uuid())::text NOT NULL,
-    "timestamp" timestamp with time zone DEFAULT now() NOT NULL,
-    level text NOT NULL,
+CREATE TABLE tackle.system_logs_retention_policy (
     category text NOT NULL,
-    message text NOT NULL,
-    source text,
-    details jsonb,
-    CONSTRAINT system_logs_level_check CHECK ((level = ANY (ARRAY['INFO'::text, 'WARN'::text, 'ERROR'::text, 'DEBUG'::text])))
+    retain_days integer NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT system_logs_retention_policy_category_check CHECK ((NOT (category = ANY (tackle.audit_log_categories())))),
+    CONSTRAINT system_logs_retention_policy_retain_days_check CHECK (((retain_days >= 1) AND (retain_days <= 3650)))
 );
+
+
+--
+-- Name: TABLE system_logs_retention_policy; Type: COMMENT; Schema: tackle; Owner: -
+--
+
+COMMENT ON TABLE tackle.system_logs_retention_policy IS 'Retention policy for tackle.system_logs (V161). One row per pruneable category; audit categories (tackle.audit_log_categories()) are structurally excepted — the CHECK refuses policy rows for them, and the prune function hard-excludes them independent of this table.';
 
 
 --
@@ -14988,6 +23281,104 @@ CREATE SEQUENCE vision.branches_id_seq
 
 
 --
+-- Name: calendar_events; Type: TABLE; Schema: vision; Owner: -
+--
+
+CREATE TABLE vision.calendar_events (
+    event_id uuid NOT NULL,
+    calendar_id uuid NOT NULL,
+    kind text NOT NULL,
+    source_machine text NOT NULL,
+    source_emitter text NOT NULL,
+    title text NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    window_end timestamp with time zone,
+    participants jsonb DEFAULT '[]'::jsonb NOT NULL,
+    session_ref uuid,
+    payload jsonb,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    recorded_by text NOT NULL,
+    consolidated_from jsonb,
+    valid_until timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL,
+    recorded_on_dt timestamp with time zone DEFAULT now() NOT NULL,
+    recorded_until_dt timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT cks_calendar_events_consolidated CHECK (((consolidated_from IS NULL) OR (jsonb_typeof(consolidated_from) = 'array'::text))),
+    CONSTRAINT cks_calendar_events_kind CHECK ((kind = ANY (ARRAY['scheduled'::text, 'occurred'::text, 'observed'::text]))),
+    CONSTRAINT cks_calendar_events_kind_epistemics CHECK (((kind <> 'observed'::text) OR (consolidated_from IS NOT NULL))),
+    CONSTRAINT cks_calendar_events_participants CHECK ((jsonb_typeof(participants) = 'array'::text)),
+    CONSTRAINT cks_calendar_events_window CHECK (((window_end IS NULL) OR (window_end >= window_start)))
+);
+
+
+--
+-- Name: calendars; Type: TABLE; Schema: vision; Owner: -
+--
+
+CREATE TABLE vision.calendars (
+    calendar_id uuid NOT NULL,
+    title text NOT NULL,
+    scope text NOT NULL,
+    owner text,
+    valid_until timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL,
+    recorded_on_dt timestamp with time zone DEFAULT now() NOT NULL,
+    recorded_until_dt timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT cks_calendars_owner CHECK (((owner IS NOT NULL) OR (scope = 'shared'::text))),
+    CONSTRAINT cks_calendars_scope CHECK ((scope = ANY (ARRAY['local'::text, 'shared'::text])))
+);
+
+
+--
+-- Name: TABLE calendars; Type: COMMENT; Schema: vision; Owner: -
+--
+
+COMMENT ON TABLE vision.calendars IS 'Calendar primitive: accumulation surface (design a330914e, contract #331). local = one machine''s rhythm; shared = a gathering calendar multiple machines contribute to. STAGED INERT — apply waits on roundtable Q1/Q2.';
+
+
+--
+-- Name: canonical_wr_landing_refusals; Type: TABLE; Schema: vision; Owner: -
+--
+
+CREATE TABLE vision.canonical_wr_landing_refusals (
+    refusal_id bigint NOT NULL,
+    occurred_at timestamp with time zone DEFAULT now() NOT NULL,
+    table_name text NOT NULL,
+    operation text NOT NULL,
+    refusal_code text NOT NULL,
+    shape_version text,
+    business_key text,
+    detail text NOT NULL
+);
+
+
+--
+-- Name: TABLE canonical_wr_landing_refusals; Type: COMMENT; Schema: vision; Owner: -
+--
+
+COMMENT ON TABLE vision.canonical_wr_landing_refusals IS 'Writer-side refusal ledger (C6 refusal-ledger precedent): populated by the governed writer (the Option B projection service) AFTER a P1020/P1021/P1023 refusal, on its own connection. The in-database trigger deliberately does NOT insert here — a row written before the guard''s RAISE would roll back with the aborted transaction and never persist.';
+
+
+--
+-- Name: canonical_wr_landing_refusals_refusal_id_seq; Type: SEQUENCE; Schema: vision; Owner: -
+--
+
+CREATE SEQUENCE vision.canonical_wr_landing_refusals_refusal_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: canonical_wr_landing_refusals_refusal_id_seq; Type: SEQUENCE OWNED BY; Schema: vision; Owner: -
+--
+
+ALTER SEQUENCE vision.canonical_wr_landing_refusals_refusal_id_seq OWNED BY vision.canonical_wr_landing_refusals.refusal_id;
+
+
+--
 -- Name: governance_events_history; Type: TABLE; Schema: vision; Owner: -
 --
 
@@ -15140,6 +23531,40 @@ CREATE SEQUENCE vision.receipt_ingest_records_id_seq
     NO MINVALUE
     NO MAXVALUE
     CACHE 1;
+
+
+--
+-- Name: sessions; Type: TABLE; Schema: vision; Owner: -
+--
+
+CREATE TABLE vision.sessions (
+    session_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    title text NOT NULL,
+    address_host text NOT NULL,
+    address_port integer NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    window_end timestamp with time zone,
+    participants jsonb DEFAULT '[]'::jsonb NOT NULL,
+    context_bundle jsonb NOT NULL,
+    calendar_id uuid NOT NULL,
+    reconcile_state text DEFAULT 'open'::text NOT NULL,
+    valid_until timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL,
+    recorded_on_dt timestamp with time zone DEFAULT now() NOT NULL,
+    recorded_until_dt timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT cks_sessions_bundle CHECK ((jsonb_typeof(context_bundle) = 'object'::text)),
+    CONSTRAINT cks_sessions_participants CHECK ((jsonb_typeof(participants) = 'array'::text)),
+    CONSTRAINT cks_sessions_port CHECK (((address_port >= 1) AND (address_port <= 65535))),
+    CONSTRAINT cks_sessions_reconcile CHECK ((reconcile_state = ANY (ARRAY['open'::text, 'closed'::text, 'reconciled'::text]))),
+    CONSTRAINT cks_sessions_window CHECK (((window_end IS NULL) OR (window_end >= window_start)))
+);
+
+
+--
+-- Name: TABLE sessions; Type: COMMENT; Schema: vision; Owner: -
+--
+
+COMMENT ON TABLE vision.sessions IS 'Session object: a shared, co-incident context with temporal boundaries and its own address (a330914e). Joiners attach; starters spawn; both write connection records bound here. Close-out reconciliation produces minutes. STAGED INERT — apply waits on roundtable Q1/Q2 (Q5 addressing ownership open with Wind).';
 
 
 --
@@ -15317,6 +23742,33 @@ CREATE SEQUENCE vision.work_request_edges_id_seq
 
 
 --
+-- Name: work_request_shape_registry; Type: TABLE; Schema: vision; Owner: -
+--
+
+CREATE TABLE vision.work_request_shape_registry (
+    shape_version text NOT NULL,
+    artifact_path text NOT NULL,
+    artifact_sha256 text NOT NULL,
+    ratification_state text DEFAULT 'proposed'::text NOT NULL,
+    ratified_at timestamp with time zone,
+    ratified_by text,
+    notes jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    recorded_on_dt timestamp with time zone DEFAULT now() NOT NULL,
+    recorded_until_dt timestamp with time zone DEFAULT 'infinity'::timestamp with time zone NOT NULL,
+    CONSTRAINT work_request_shape_registry_artifact_sha256_check CHECK ((artifact_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT work_request_shape_registry_ratification_state_check CHECK ((ratification_state = ANY (ARRAY['proposed'::text, 'ratified'::text, 'superseded'::text])))
+);
+
+
+--
+-- Name: TABLE work_request_shape_registry; Type: COMMENT; Schema: vision; Owner: -
+--
+
+COMMENT ON TABLE vision.work_request_shape_registry IS 'WP1 canonical WorkRequest shape artifact registry. v0.1 row (schemas/work-request/canonical-shape.v0.1.json, sha256-pinned) is INSERTED by the shape author when the artifact lands; ratification_state flips to ''ratified'' only via WP2 zero-unmapped acceptance. Single-successor ratification enforced by trigger.';
+
+
+--
 -- Name: work_requests_id_seq; Type: SEQUENCE; Schema: vision; Owner: -
 --
 
@@ -15473,6 +23925,138 @@ COMMENT ON COLUMN wind.events.consumed_at IS 'NULL = unconsumed; set when Wind p
 
 
 --
+-- Name: execution_attempts; Type: TABLE; Schema: wind; Owner: -
+--
+
+CREATE TABLE wind.execution_attempts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    request_id uuid NOT NULL,
+    parent_attempt_id uuid,
+    attempt_number integer NOT NULL,
+    attempt_idempotency_key text NOT NULL,
+    executor_id text NOT NULL,
+    provider_invocation_ref text,
+    status text NOT NULL,
+    result jsonb DEFAULT '{}'::jsonb NOT NULL,
+    error text,
+    result_digest text NOT NULL,
+    started_at timestamp with time zone,
+    completed_at timestamp with time zone,
+    recorded_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    credential_env_ref text,
+    credential_fingerprint text,
+    CONSTRAINT execution_attempt_credential_fingerprint_check CHECK (((credential_fingerprint IS NULL) OR (credential_fingerprint ~ '^sha256:[0-9a-f]{64}$'::text))),
+    CONSTRAINT execution_attempt_status_check CHECK ((status = ANY (ARRAY['IN_FLIGHT'::text, 'ABORTED'::text, 'SUCCEEDED'::text, 'FAILED'::text, 'UNAVAILABLE'::text, 'STALE'::text, 'INVALID'::text]))),
+    CONSTRAINT execution_attempt_time_check CHECK (((completed_at IS NULL) OR (started_at IS NULL) OR (completed_at >= started_at))),
+    CONSTRAINT execution_attempts_attempt_number_check CHECK ((attempt_number > 0)),
+    CONSTRAINT execution_attempts_result_digest_check CHECK (((result_digest IS NULL) OR (result_digest ~ '^sha256:[0-9a-f]{64}$'::text)))
+);
+
+
+--
+-- Name: TABLE execution_attempts; Type: COMMENT; Schema: wind; Owner: -
+--
+
+COMMENT ON TABLE wind.execution_attempts IS 'Immutable truthful outcome of one provider attempt; retry/correction creates another attempt row';
+
+
+--
+-- Name: COLUMN execution_attempts.status; Type: COMMENT; Schema: wind; Owner: -
+--
+
+COMMENT ON COLUMN wind.execution_attempts.status IS 'IN_FLIGHT is a record-before-act reservation; terminal observed outcomes are append-only child attempts; ABORTED is truthful no-outcome termination';
+
+
+--
+-- Name: execution_receipts; Type: TABLE; Schema: wind; Owner: -
+--
+
+CREATE TABLE wind.execution_receipts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    request_id uuid NOT NULL,
+    attempt_id uuid NOT NULL,
+    outcome_status text NOT NULL,
+    result_digest text NOT NULL,
+    evidence_refs jsonb DEFAULT '[]'::jsonb NOT NULL,
+    lineage jsonb DEFAULT '{}'::jsonb NOT NULL,
+    authority_level text DEFAULT 'advisory'::text NOT NULL,
+    issued_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    credential_env_ref text,
+    credential_fingerprint text,
+    CONSTRAINT execution_receipt_authority_check CHECK ((authority_level = 'advisory'::text)),
+    CONSTRAINT execution_receipt_credential_fingerprint_check CHECK (((credential_fingerprint IS NULL) OR (credential_fingerprint ~ '^sha256:[0-9a-f]{64}$'::text))),
+    CONSTRAINT execution_receipt_status_check CHECK ((outcome_status = ANY (ARRAY['SUCCEEDED'::text, 'FAILED'::text, 'UNAVAILABLE'::text, 'STALE'::text, 'INVALID'::text]))),
+    CONSTRAINT execution_receipts_result_digest_check CHECK ((result_digest ~ '^sha256:[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: TABLE execution_receipts; Type: COMMENT; Schema: wind; Owner: -
+--
+
+COMMENT ON TABLE wind.execution_receipts IS 'Immutable advisory receipt joining one request and one attempt; it records evidence, never admission or lifecycle mutation';
+
+
+--
+-- Name: execution_requests; Type: TABLE; Schema: wind; Owner: -
+--
+
+CREATE TABLE wind.execution_requests (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workflow_version_id uuid,
+    node_id uuid,
+    artifact_type text NOT NULL,
+    artifact_ref text NOT NULL,
+    artifact_revision text NOT NULL,
+    artifact_fingerprint text NOT NULL,
+    read_set_digest text NOT NULL,
+    evaluator_contract_digest text NOT NULL,
+    causation_id uuid,
+    correlation_id uuid NOT NULL,
+    idempotency_key text NOT NULL,
+    provider_contract jsonb DEFAULT '{}'::jsonb NOT NULL,
+    invocation_contract jsonb DEFAULT '{}'::jsonb NOT NULL,
+    failure_policy jsonb DEFAULT '{}'::jsonb NOT NULL,
+    request_digest text NOT NULL,
+    authority_level text DEFAULT 'advisory'::text NOT NULL,
+    requested_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT execution_request_authority_check CHECK ((authority_level = 'advisory'::text)),
+    CONSTRAINT execution_request_node_pair_check CHECK (((node_id IS NULL) = (workflow_version_id IS NULL))),
+    CONSTRAINT execution_requests_artifact_fingerprint_check CHECK ((artifact_fingerprint ~ '^sha256:[0-9a-f]{64}$'::text)),
+    CONSTRAINT execution_requests_evaluator_contract_digest_check CHECK ((evaluator_contract_digest ~ '^sha256:[0-9a-f]{64}$'::text)),
+    CONSTRAINT execution_requests_read_set_digest_check CHECK ((read_set_digest ~ '^sha256:[0-9a-f]{64}$'::text)),
+    CONSTRAINT execution_requests_request_digest_check CHECK ((request_digest ~ '^sha256:[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: TABLE execution_requests; Type: COMMENT; Schema: wind; Owner: -
+--
+
+COMMENT ON TABLE wind.execution_requests IS 'Immutable advisory execution request projection; artifact and evaluator identities are revision-pinned and no admission authority is implied';
+
+
+--
+-- Name: node_requirements; Type: TABLE; Schema: wind; Owner: -
+--
+
+CREATE TABLE wind.node_requirements (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    node_id uuid NOT NULL,
+    capability_key text,
+    role_credential text,
+    last_verdict text,
+    valid_from timestamp with time zone DEFAULT now() NOT NULL,
+    valid_until timestamp with time zone DEFAULT '9999-12-31 00:00:00+00'::timestamp with time zone NOT NULL,
+    recorded_on_dt timestamp with time zone DEFAULT now() NOT NULL,
+    recorded_until_dt timestamp with time zone DEFAULT '9999-12-31 00:00:00+00'::timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT node_requirements_demand_required CHECK (((capability_key IS NOT NULL) OR (role_credential IS NOT NULL))),
+    CONSTRAINT node_requirements_last_verdict_check CHECK ((last_verdict = ANY (ARRAY['satisfied'::text, 'satisfied-stale'::text, 'unsatisfied'::text, 'unreachable'::text, 'refused'::text, 'unknown'::text])))
+);
+
+
+--
 -- Name: offices; Type: TABLE; Schema: wind; Owner: -
 --
 
@@ -15481,6 +24065,99 @@ CREATE TABLE wind.offices (
     name character varying(100) NOT NULL,
     description text,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: provider_contract_revisions; Type: TABLE; Schema: wind; Owner: -
+--
+
+CREATE TABLE wind.provider_contract_revisions (
+    revision_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    adapter_id text NOT NULL,
+    revision_number integer NOT NULL,
+    adapter_version text NOT NULL,
+    provider_id text NOT NULL,
+    provider_version text NOT NULL,
+    invocation_mode text NOT NULL,
+    input_schema_digest text NOT NULL,
+    output_schema_digest text NOT NULL,
+    credential_env_ref text,
+    endpoint_env_ref text,
+    schema_verification text DEFAULT 'verified'::text NOT NULL,
+    lifecycle_state text NOT NULL,
+    lifecycle_action text NOT NULL,
+    supersedes_revision_id uuid,
+    approval_record_ref text NOT NULL,
+    requested_by_role text DEFAULT 'engineer'::text NOT NULL,
+    acknowledged_by_role text,
+    approved_by_role text,
+    confirmed_by_role text,
+    lifecycle_reason text,
+    registered_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT provider_contract_revisions_input_schema_digest_check CHECK ((input_schema_digest ~ '^sha256:[0-9a-f]{64}$'::text)),
+    CONSTRAINT provider_contract_revisions_invocation_mode_check CHECK ((invocation_mode = ANY (ARRAY['CLI'::text, 'HTTP'::text, 'SDK'::text, 'MCP'::text]))),
+    CONSTRAINT provider_contract_revisions_lifecycle_action_check CHECK ((lifecycle_action = ANY (ARRAY['REGISTERED'::text, 'DEACTIVATED'::text, 'RETIRED'::text]))),
+    CONSTRAINT provider_contract_revisions_lifecycle_state_check CHECK ((lifecycle_state = ANY (ARRAY['ACTIVE'::text, 'DEACTIVATED'::text, 'RETIRED'::text]))),
+    CONSTRAINT provider_contract_revisions_output_schema_digest_check CHECK ((output_schema_digest ~ '^sha256:[0-9a-f]{64}$'::text)),
+    CONSTRAINT provider_contract_revisions_revision_number_check CHECK ((revision_number > 0)),
+    CONSTRAINT provider_contract_revisions_schema_verification_check CHECK ((schema_verification = 'verified'::text)),
+    CONSTRAINT provider_revision_action_state_check CHECK ((((lifecycle_action = 'REGISTERED'::text) AND (lifecycle_state = 'ACTIVE'::text)) OR ((lifecycle_action = 'DEACTIVATED'::text) AND (lifecycle_state = 'DEACTIVATED'::text)) OR ((lifecycle_action = 'RETIRED'::text) AND (lifecycle_state = 'RETIRED'::text)))),
+    CONSTRAINT provider_revision_credential_ref_check CHECK (((credential_env_ref IS NULL) OR (credential_env_ref ~ '^[A-Z][A-Z0-9_]{0,127}$'::text))),
+    CONSTRAINT provider_revision_endpoint_ref_check CHECK (((endpoint_env_ref IS NULL) OR (endpoint_env_ref ~ '^[A-Z][A-Z0-9_]{0,127}$'::text))),
+    CONSTRAINT provider_revision_http_endpoint_check CHECK (((invocation_mode <> 'HTTP'::text) OR (endpoint_env_ref IS NOT NULL))),
+    CONSTRAINT provider_revision_registration_control_check CHECK ((((lifecycle_action = 'REGISTERED'::text) AND (requested_by_role = 'engineer'::text) AND (acknowledged_by_role = ANY (ARRAY['architect'::text, 'operator'::text]))) OR ((lifecycle_action <> 'REGISTERED'::text) AND (approval_record_ref IS NOT NULL) AND (approved_by_role IS NOT NULL) AND (confirmed_by_role IS NOT NULL) AND (approved_by_role <> confirmed_by_role))))
+);
+
+
+--
+-- Name: provider_contracts; Type: TABLE; Schema: wind; Owner: -
+--
+
+CREATE TABLE wind.provider_contracts (
+    adapter_id text NOT NULL,
+    adapter_version text NOT NULL,
+    provider_id text NOT NULL,
+    provider_version text NOT NULL,
+    invocation_mode text NOT NULL,
+    input_schema_digest text NOT NULL,
+    output_schema_digest text NOT NULL,
+    credential_env_ref text,
+    endpoint_env_ref text,
+    schema_verification text DEFAULT 'verified'::text NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    registered_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT provider_contract_credential_ref_check CHECK (((credential_env_ref IS NULL) OR (credential_env_ref ~ '^[A-Z][A-Z0-9_]{0,127}$'::text))),
+    CONSTRAINT provider_contract_endpoint_ref_check CHECK (((endpoint_env_ref IS NULL) OR (endpoint_env_ref ~ '^[A-Z][A-Z0-9_]{0,127}$'::text))),
+    CONSTRAINT provider_contract_http_endpoint_check CHECK (((invocation_mode <> 'HTTP'::text) OR (endpoint_env_ref IS NOT NULL))),
+    CONSTRAINT provider_contracts_input_schema_digest_check CHECK ((input_schema_digest ~ '^sha256:[0-9a-f]{64}$'::text)),
+    CONSTRAINT provider_contracts_invocation_mode_check CHECK ((invocation_mode = ANY (ARRAY['CLI'::text, 'HTTP'::text, 'SDK'::text, 'MCP'::text]))),
+    CONSTRAINT provider_contracts_output_schema_digest_check CHECK ((output_schema_digest ~ '^sha256:[0-9a-f]{64}$'::text)),
+    CONSTRAINT provider_contracts_schema_verification_check CHECK ((schema_verification = 'verified'::text))
+);
+
+
+--
+-- Name: TABLE provider_contracts; Type: COMMENT; Schema: wind; Owner: -
+--
+
+COMMENT ON TABLE wind.provider_contracts IS 'Strict persisted allow-list of schema-verified advisory provider adapters; credential and endpoint columns contain environment variable names, never secret material';
+
+
+--
+-- Name: provider_credential_rotations; Type: TABLE; Schema: wind; Owner: -
+--
+
+CREATE TABLE wind.provider_credential_rotations (
+    rotation_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    adapter_id text NOT NULL,
+    revision_id uuid NOT NULL,
+    credential_env_ref text NOT NULL,
+    credential_fingerprint text NOT NULL,
+    rotation_record_ref text NOT NULL,
+    rotated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT provider_credential_rotations_credential_env_ref_check CHECK ((credential_env_ref ~ '^[A-Z][A-Z0-9_]{0,127}$'::text)),
+    CONSTRAINT provider_credential_rotations_credential_fingerprint_check CHECK ((credential_fingerprint ~ '^sha256:[0-9a-f]{64}$'::text))
 );
 
 
@@ -15569,6 +24246,37 @@ CREATE TABLE wind.titles (
     display_name character varying(100) NOT NULL,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
 );
+
+
+--
+-- Name: v_active_provider_contracts; Type: VIEW; Schema: wind; Owner: -
+--
+
+CREATE VIEW wind.v_active_provider_contracts AS
+ SELECT DISTINCT ON (adapter_id) revision_id,
+    adapter_id,
+    revision_number,
+    adapter_version,
+    provider_id,
+    provider_version,
+    invocation_mode,
+    input_schema_digest,
+    output_schema_digest,
+    credential_env_ref,
+    endpoint_env_ref,
+    schema_verification,
+    lifecycle_state,
+    lifecycle_action,
+    registered_at
+   FROM wind.provider_contract_revisions
+  ORDER BY adapter_id, revision_number DESC;
+
+
+--
+-- Name: VIEW v_active_provider_contracts; Type: COMMENT; Schema: wind; Owner: -
+--
+
+COMMENT ON VIEW wind.v_active_provider_contracts IS 'Latest immutable provider registry revision per adapter; dispatch is permitted only when lifecycle_state=ACTIVE';
 
 
 --
@@ -15770,10 +24478,31 @@ ALTER TABLE ONLY conduit.work_request_events ALTER COLUMN sequence_number SET DE
 
 
 --
+-- Name: session_events seq; Type: DEFAULT; Schema: duality; Owner: -
+--
+
+ALTER TABLE ONLY duality.session_events ALTER COLUMN seq SET DEFAULT nextval('duality.session_events_seq_seq'::regclass);
+
+
+--
 -- Name: governance_events id; Type: DEFAULT; Schema: peb; Owner: -
 --
 
 ALTER TABLE ONLY peb.governance_events ALTER COLUMN id SET DEFAULT nextval('peb.governance_events_id_seq'::regclass);
+
+
+--
+-- Name: object_attribute_value id; Type: DEFAULT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.object_attribute_value ALTER COLUMN id SET DEFAULT nextval('shrapnel.object_attribute_value_id_seq'::regclass);
+
+
+--
+-- Name: object_instance id; Type: DEFAULT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.object_instance ALTER COLUMN id SET DEFAULT nextval('shrapnel.object_instance_id_seq'::regclass);
 
 
 --
@@ -15833,10 +24562,529 @@ ALTER TABLE ONLY terrain.service_types ALTER COLUMN id SET DEFAULT nextval('terr
 
 
 --
+-- Name: canonical_wr_landing_refusals refusal_id; Type: DEFAULT; Schema: vision; Owner: -
+--
+
+ALTER TABLE ONLY vision.canonical_wr_landing_refusals ALTER COLUMN refusal_id SET DEFAULT nextval('vision.canonical_wr_landing_refusals_refusal_id_seq'::regclass);
+
+
+--
 -- Name: work_requests id; Type: DEFAULT; Schema: vision; Owner: -
 --
 
 ALTER TABLE ONLY vision.work_requests ALTER COLUMN id SET DEFAULT nextval('vision.work_requests_id_seq1'::regclass);
+
+
+--
+-- Name: attribute_mapping attribute_mapping_pkey; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.attribute_mapping
+    ADD CONSTRAINT attribute_mapping_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: attribute_mapping attribute_mapping_unique; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.attribute_mapping
+    ADD CONSTRAINT attribute_mapping_unique UNIQUE (registry_id, tla_variable);
+
+
+--
+-- Name: compiled_edge compiled_edge_pkey; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.compiled_edge
+    ADD CONSTRAINT compiled_edge_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: compiled_edge compiled_edge_unique; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.compiled_edge
+    ADD CONSTRAINT compiled_edge_unique UNIQUE (compilation_id, transition_id);
+
+
+--
+-- Name: compiled_edge compiled_edge_wind_unique; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.compiled_edge
+    ADD CONSTRAINT compiled_edge_wind_unique UNIQUE (compilation_id, wind_edge_id);
+
+
+--
+-- Name: compiled_node compiled_node_pkey; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.compiled_node
+    ADD CONSTRAINT compiled_node_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: compiled_node compiled_node_unique; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.compiled_node
+    ADD CONSTRAINT compiled_node_unique UNIQUE (compilation_id, state_id);
+
+
+--
+-- Name: compiled_node compiled_node_wind_unique; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.compiled_node
+    ADD CONSTRAINT compiled_node_wind_unique UNIQUE (compilation_id, wind_node_id);
+
+
+--
+-- Name: concept_mapping concept_mapping_pkey; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.concept_mapping
+    ADD CONSTRAINT concept_mapping_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: concept_mapping concept_mapping_unique; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.concept_mapping
+    ADD CONSTRAINT concept_mapping_unique UNIQUE (registry_id, tla_name);
+
+
+--
+-- Name: constant constant_pkey; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.constant
+    ADD CONSTRAINT constant_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: constant constant_registry_name_unique; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.constant
+    ADD CONSTRAINT constant_registry_name_unique UNIQUE (registry_id, name);
+
+
+--
+-- Name: execution_log execution_log_pkey; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.execution_log
+    ADD CONSTRAINT execution_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: invariant invariant_pkey; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.invariant
+    ADD CONSTRAINT invariant_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: invariant invariant_registry_name_unique; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.invariant
+    ADD CONSTRAINT invariant_registry_name_unique UNIQUE (registry_id, name);
+
+
+--
+-- Name: model_check_result model_check_result_pkey; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.model_check_result
+    ADD CONSTRAINT model_check_result_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: property property_pkey; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.property
+    ADD CONSTRAINT property_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: property property_registry_name_unique; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.property
+    ADD CONSTRAINT property_registry_name_unique UNIQUE (registry_id, name);
+
+
+--
+-- Name: registry registry_pkey; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.registry
+    ADD CONSTRAINT registry_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: registry_revision registry_revision_id_digest_unique; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.registry_revision
+    ADD CONSTRAINT registry_revision_id_digest_unique UNIQUE (registry_id, source_digest, model_digest);
+
+
+--
+-- Name: registry_revision registry_revision_number_unique; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.registry_revision
+    ADD CONSTRAINT registry_revision_number_unique UNIQUE (registry_id, revision_number);
+
+
+--
+-- Name: registry_revision registry_revision_pkey; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.registry_revision
+    ADD CONSTRAINT registry_revision_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: relationship_mapping relationship_mapping_pkey; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.relationship_mapping
+    ADD CONSTRAINT relationship_mapping_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: relationship_mapping relationship_mapping_unique; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.relationship_mapping
+    ADD CONSTRAINT relationship_mapping_unique UNIQUE (registry_id, tla_relationship);
+
+
+--
+-- Name: state state_pkey; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.state
+    ADD CONSTRAINT state_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: state state_registry_name_unique; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.state
+    ADD CONSTRAINT state_registry_name_unique UNIQUE (registry_id, name);
+
+
+--
+-- Name: temporal_property temporal_property_pkey; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.temporal_property
+    ADD CONSTRAINT temporal_property_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: temporal_property temporal_property_registry_name_unique; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.temporal_property
+    ADD CONSTRAINT temporal_property_registry_name_unique UNIQUE (registry_id, name);
+
+
+--
+-- Name: transition transition_pkey; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.transition
+    ADD CONSTRAINT transition_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: transition transition_registry_name_unique; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.transition
+    ADD CONSTRAINT transition_registry_name_unique UNIQUE (registry_id, name);
+
+
+--
+-- Name: validation_result validation_result_pkey; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.validation_result
+    ADD CONSTRAINT validation_result_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: variable variable_pkey; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.variable
+    ADD CONSTRAINT variable_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: variable variable_registry_name_unique; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.variable
+    ADD CONSTRAINT variable_registry_name_unique UNIQUE (registry_id, name);
+
+
+--
+-- Name: wind_compilation wind_compilation_id_scope_unique; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_compilation
+    ADD CONSTRAINT wind_compilation_id_scope_unique UNIQUE (id, registry_id, registry_revision_id);
+
+
+--
+-- Name: wind_compilation wind_compilation_id_version_unique; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_compilation
+    ADD CONSTRAINT wind_compilation_id_version_unique UNIQUE (id, wind_workflow_version_id);
+
+
+--
+-- Name: wind_compilation wind_compilation_pkey; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_compilation
+    ADD CONSTRAINT wind_compilation_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: wind_compilation wind_compilation_source_revision_unique; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_compilation
+    ADD CONSTRAINT wind_compilation_source_revision_unique UNIQUE (registry_revision_id, wind_workflow_version_id);
+
+
+--
+-- Name: wind_compilation wind_compilation_version_unique; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_compilation
+    ADD CONSTRAINT wind_compilation_version_unique UNIQUE (wind_workflow_version_id);
+
+
+--
+-- Name: wind_outcome_mapping wind_outcome_mapping_outcome_unique; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_outcome_mapping
+    ADD CONSTRAINT wind_outcome_mapping_outcome_unique UNIQUE (registry_revision_id, wind_outcome_id);
+
+
+--
+-- Name: wind_outcome_mapping wind_outcome_mapping_pkey; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_outcome_mapping
+    ADD CONSTRAINT wind_outcome_mapping_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: wind_outcome_mapping wind_outcome_mapping_transition_unique; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_outcome_mapping
+    ADD CONSTRAINT wind_outcome_mapping_transition_unique UNIQUE (registry_revision_id, transition_id);
+
+
+--
+-- Name: wind_task_mapping wind_task_mapping_pkey; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_task_mapping
+    ADD CONSTRAINT wind_task_mapping_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: wind_task_mapping wind_task_mapping_state_unique; Type: CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_task_mapping
+    ADD CONSTRAINT wind_task_mapping_state_unique UNIQUE (registry_revision_id, state_id);
+
+
+--
+-- Name: comments comments_pkey; Type: CONSTRAINT; Schema: assembly; Owner: -
+--
+
+ALTER TABLE ONLY assembly.comments
+    ADD CONSTRAINT comments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: edits edits_pkey; Type: CONSTRAINT; Schema: assembly; Owner: -
+--
+
+ALTER TABLE ONLY assembly.edits
+    ADD CONSTRAINT edits_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: forum_agendas forum_agendas_pkey; Type: CONSTRAINT; Schema: assembly; Owner: -
+--
+
+ALTER TABLE ONLY assembly.forum_agendas
+    ADD CONSTRAINT forum_agendas_pkey PRIMARY KEY (forum_id, agenda_id);
+
+
+--
+-- Name: forum_members forum_members_pkey; Type: CONSTRAINT; Schema: assembly; Owner: -
+--
+
+ALTER TABLE ONLY assembly.forum_members
+    ADD CONSTRAINT forum_members_pkey PRIMARY KEY (forum_id, user_id);
+
+
+--
+-- Name: forums forums_name_key; Type: CONSTRAINT; Schema: assembly; Owner: -
+--
+
+ALTER TABLE ONLY assembly.forums
+    ADD CONSTRAINT forums_name_key UNIQUE (name);
+
+
+--
+-- Name: forums forums_pkey; Type: CONSTRAINT; Schema: assembly; Owner: -
+--
+
+ALTER TABLE ONLY assembly.forums
+    ADD CONSTRAINT forums_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: forums forums_slug_key; Type: CONSTRAINT; Schema: assembly; Owner: -
+--
+
+ALTER TABLE ONLY assembly.forums
+    ADD CONSTRAINT forums_slug_key UNIQUE (slug);
+
+
+--
+-- Name: interests interests_name_key; Type: CONSTRAINT; Schema: assembly; Owner: -
+--
+
+ALTER TABLE ONLY assembly.interests
+    ADD CONSTRAINT interests_name_key UNIQUE (name);
+
+
+--
+-- Name: interests interests_pkey; Type: CONSTRAINT; Schema: assembly; Owner: -
+--
+
+ALTER TABLE ONLY assembly.interests
+    ADD CONSTRAINT interests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: post_artifact_refs post_artifact_refs_pkey; Type: CONSTRAINT; Schema: assembly; Owner: -
+--
+
+ALTER TABLE ONLY assembly.post_artifact_refs
+    ADD CONSTRAINT post_artifact_refs_pkey PRIMARY KEY (post_id, artifact_type, artifact_id);
+
+
+--
+-- Name: posts posts_pkey; Type: CONSTRAINT; Schema: assembly; Owner: -
+--
+
+ALTER TABLE ONLY assembly.posts
+    ADD CONSTRAINT posts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: profile_interests profile_interests_pkey; Type: CONSTRAINT; Schema: assembly; Owner: -
+--
+
+ALTER TABLE ONLY assembly.profile_interests
+    ADD CONSTRAINT profile_interests_pkey PRIMARY KEY (profile_id, interest_id);
+
+
+--
+-- Name: profiles profiles_pkey; Type: CONSTRAINT; Schema: assembly; Owner: -
+--
+
+ALTER TABLE ONLY assembly.profiles
+    ADD CONSTRAINT profiles_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: profiles profiles_user_id_key; Type: CONSTRAINT; Schema: assembly; Owner: -
+--
+
+ALTER TABLE ONLY assembly.profiles
+    ADD CONSTRAINT profiles_user_id_key UNIQUE (user_id);
+
+
+--
+-- Name: reactions reactions_pkey; Type: CONSTRAINT; Schema: assembly; Owner: -
+--
+
+ALTER TABLE ONLY assembly.reactions
+    ADD CONSTRAINT reactions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: user_followers user_followers_pkey; Type: CONSTRAINT; Schema: assembly; Owner: -
+--
+
+ALTER TABLE ONLY assembly.user_followers
+    ADD CONSTRAINT user_followers_pkey PRIMARY KEY (user_id, follower_id);
+
+
+--
+-- Name: user_following user_following_pkey; Type: CONSTRAINT; Schema: assembly; Owner: -
+--
+
+ALTER TABLE ONLY assembly.user_following
+    ADD CONSTRAINT user_following_pkey PRIMARY KEY (user_id, following_id);
+
+
+--
+-- Name: user_friends user_friends_pkey; Type: CONSTRAINT; Schema: assembly; Owner: -
+--
+
+ALTER TABLE ONLY assembly.user_friends
+    ADD CONSTRAINT user_friends_pkey PRIMARY KEY (user_id, friend_id);
+
+
+--
+-- Name: users users_alias_key; Type: CONSTRAINT; Schema: assembly; Owner: -
+--
+
+ALTER TABLE ONLY assembly.users
+    ADD CONSTRAINT users_alias_key UNIQUE (alias);
+
+
+--
+-- Name: users users_email_key; Type: CONSTRAINT; Schema: assembly; Owner: -
+--
+
+ALTER TABLE ONLY assembly.users
+    ADD CONSTRAINT users_email_key UNIQUE (email);
+
+
+--
+-- Name: users users_pkey; Type: CONSTRAINT; Schema: assembly; Owner: -
+--
+
+ALTER TABLE ONLY assembly.users
+    ADD CONSTRAINT users_pkey PRIMARY KEY (id);
 
 
 --
@@ -15992,6 +25240,46 @@ ALTER TABLE ONLY conduit.work_requests
 
 
 --
+-- Name: session_events session_events_event_key_key; Type: CONSTRAINT; Schema: duality; Owner: -
+--
+
+ALTER TABLE ONLY duality.session_events
+    ADD CONSTRAINT session_events_event_key_key UNIQUE (event_key);
+
+
+--
+-- Name: session_events session_events_pkey; Type: CONSTRAINT; Schema: duality; Owner: -
+--
+
+ALTER TABLE ONLY duality.session_events
+    ADD CONSTRAINT session_events_pkey PRIMARY KEY (seq);
+
+
+--
+-- Name: session_turns session_turns_pkey; Type: CONSTRAINT; Schema: duality; Owner: -
+--
+
+ALTER TABLE ONLY duality.session_turns
+    ADD CONSTRAINT session_turns_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: session_watches session_watches_pkey; Type: CONSTRAINT; Schema: duality; Owner: -
+--
+
+ALTER TABLE ONLY duality.session_watches
+    ADD CONSTRAINT session_watches_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: session_watches uq_session_watch_thread_role; Type: CONSTRAINT; Schema: duality; Owner: -
+--
+
+ALTER TABLE ONLY duality.session_watches
+    ADD CONSTRAINT uq_session_watch_thread_role UNIQUE (thread_id, role);
+
+
+--
 -- Name: attempts attempts_pkey; Type: CONSTRAINT; Schema: execution; Owner: -
 --
 
@@ -16032,6 +25320,86 @@ ALTER TABLE ONLY execution.requests
 
 
 --
+-- Name: event_log event_log_pkey; Type: CONSTRAINT; Schema: kernel; Owner: -
+--
+
+ALTER TABLE ONLY kernel.event_log
+    ADD CONSTRAINT event_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: intent intent_pkey; Type: CONSTRAINT; Schema: kernel; Owner: -
+--
+
+ALTER TABLE ONLY kernel.intent
+    ADD CONSTRAINT intent_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: policy_rule policy_rule_pkey; Type: CONSTRAINT; Schema: kernel; Owner: -
+--
+
+ALTER TABLE ONLY kernel.policy_rule
+    ADD CONSTRAINT policy_rule_pkey PRIMARY KEY (rule_id);
+
+
+--
+-- Name: policy_rule policy_rule_rule_name_key; Type: CONSTRAINT; Schema: kernel; Owner: -
+--
+
+ALTER TABLE ONLY kernel.policy_rule
+    ADD CONSTRAINT policy_rule_rule_name_key UNIQUE (rule_name);
+
+
+--
+-- Name: receipt receipt_pkey; Type: CONSTRAINT; Schema: kernel; Owner: -
+--
+
+ALTER TABLE ONLY kernel.receipt
+    ADD CONSTRAINT receipt_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: transition_event transition_event_pkey; Type: CONSTRAINT; Schema: kernel; Owner: -
+--
+
+ALTER TABLE ONLY kernel.transition_event
+    ADD CONSTRAINT transition_event_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: event_log uq_event_log_event_id; Type: CONSTRAINT; Schema: kernel; Owner: -
+--
+
+ALTER TABLE ONLY kernel.event_log
+    ADD CONSTRAINT uq_event_log_event_id UNIQUE (event_id);
+
+
+--
+-- Name: receipt uq_receipt_hash; Type: CONSTRAINT; Schema: kernel; Owner: -
+--
+
+ALTER TABLE ONLY kernel.receipt
+    ADD CONSTRAINT uq_receipt_hash UNIQUE (receipt_hash);
+
+
+--
+-- Name: transition_event uq_transition_event_event_id; Type: CONSTRAINT; Schema: kernel; Owner: -
+--
+
+ALTER TABLE ONLY kernel.transition_event
+    ADD CONSTRAINT uq_transition_event_event_id UNIQUE (event_id);
+
+
+--
+-- Name: adapters adapters_pkey; Type: CONSTRAINT; Schema: nebula; Owner: -
+--
+
+ALTER TABLE ONLY nebula.adapters
+    ADD CONSTRAINT adapters_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: agenda_item_questions agenda_item_questions_pkey; Type: CONSTRAINT; Schema: nebula; Owner: -
 --
 
@@ -16053,6 +25421,14 @@ ALTER TABLE ONLY nebula.agenda_items_history
 
 ALTER TABLE ONLY nebula.agendas_history
     ADD CONSTRAINT agendas_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: agent_connections agent_connections_pkey; Type: CONSTRAINT; Schema: nebula; Owner: -
+--
+
+ALTER TABLE ONLY nebula.agent_connections
+    ADD CONSTRAINT agent_connections_pkey PRIMARY KEY (conn_id);
 
 
 --
@@ -16096,11 +25472,35 @@ ALTER TABLE ONLY nebula.assessments_history
 
 
 --
+-- Name: attestations attestations_pkey; Type: CONSTRAINT; Schema: nebula; Owner: -
+--
+
+ALTER TABLE ONLY nebula.attestations
+    ADD CONSTRAINT attestations_pkey PRIMARY KEY (attestation_id);
+
+
+--
 -- Name: audit_files_history audit_files_history_pkey; Type: CONSTRAINT; Schema: nebula; Owner: -
 --
 
 ALTER TABLE ONLY nebula.audit_files_history
     ADD CONSTRAINT audit_files_history_pkey PRIMARY KEY (id, recorded_on_dt);
+
+
+--
+-- Name: blueprints_history blueprints_history_pkey; Type: CONSTRAINT; Schema: nebula; Owner: -
+--
+
+ALTER TABLE ONLY nebula.blueprints_history
+    ADD CONSTRAINT blueprints_history_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: blueprints_history blueprints_history_plan_number_key; Type: CONSTRAINT; Schema: nebula; Owner: -
+--
+
+ALTER TABLE ONLY nebula.blueprints_history
+    ADD CONSTRAINT blueprints_history_plan_number_key UNIQUE (plan_number);
 
 
 --
@@ -16120,6 +25520,22 @@ ALTER TABLE ONLY nebula.candidate_segment_sets
 
 
 --
+-- Name: capabilities capabilities_name_key; Type: CONSTRAINT; Schema: nebula; Owner: -
+--
+
+ALTER TABLE ONLY nebula.capabilities
+    ADD CONSTRAINT capabilities_name_key UNIQUE (name);
+
+
+--
+-- Name: capabilities capabilities_pkey; Type: CONSTRAINT; Schema: nebula; Owner: -
+--
+
+ALTER TABLE ONLY nebula.capabilities
+    ADD CONSTRAINT capabilities_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: conversation_blocks_history conversation_blocks_history_pkey; Type: CONSTRAINT; Schema: nebula; Owner: -
 --
 
@@ -16133,6 +25549,14 @@ ALTER TABLE ONLY nebula.conversation_blocks_history
 
 ALTER TABLE ONLY nebula.conversation_snapshots_history
     ADD CONSTRAINT conversation_snapshots_history_pkey PRIMARY KEY (id, as_of_dt);
+
+
+--
+-- Name: coordination_checkpoints coordination_checkpoints_pk; Type: CONSTRAINT; Schema: nebula; Owner: -
+--
+
+ALTER TABLE ONLY nebula.coordination_checkpoints
+    ADD CONSTRAINT coordination_checkpoints_pk PRIMARY KEY (role, item_kind);
 
 
 --
@@ -16256,19 +25680,6 @@ ALTER TABLE ONLY nebula.requirements_history
 
 
 --
--- Name: roles_history roles_name_open_key; Type: INDEX; Schema: nebula; Owner: -
---
--- V175: partial open-snapshot unique replaces the V081-era full UNIQUE(name)
--- (roles_name_key), which permitted only one snapshot per role EVER and made
--- the architect-ruled close-then-insert grant convention structurally
--- impossible. Fresh bootstraps carry the repaired shape from birth.
-
-CREATE UNIQUE INDEX roles_name_open_key
-    ON nebula.roles_history USING btree (name)
-    WHERE valid_until = '9999-12-31 00:00:00+00'::timestamp with time zone;
-
-
---
 -- Name: roles_history roles_pkey; Type: CONSTRAINT; Schema: nebula; Owner: -
 --
 
@@ -16306,6 +25717,14 @@ ALTER TABLE ONLY nebula.segment_set_members
 
 ALTER TABLE ONLY nebula.segment_sets
     ADD CONSTRAINT segment_sets_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: session_context_snapshots session_context_snapshots_pkey; Type: CONSTRAINT; Schema: nebula; Owner: -
+--
+
+ALTER TABLE ONLY nebula.session_context_snapshots
+    ADD CONSTRAINT session_context_snapshots_pkey PRIMARY KEY (snapshot_id);
 
 
 --
@@ -16989,6 +26408,22 @@ ALTER TABLE ONLY resolution.consumer_operation
 
 
 --
+-- Name: contract_version contract_version_pkey; Type: CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.contract_version
+    ADD CONSTRAINT contract_version_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: contract_version contract_version_version_key; Type: CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.contract_version
+    ADD CONSTRAINT contract_version_version_key UNIQUE (version);
+
+
+--
 -- Name: enforcement_posture enforcement_posture_pkey; Type: CONSTRAINT; Schema: resolution; Owner: -
 --
 
@@ -17042,6 +26477,14 @@ ALTER TABLE ONLY resolution.expression_operand
 
 ALTER TABLE ONLY resolution.expression
     ADD CONSTRAINT expression_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fanout_transition fanout_transition_pkey; Type: CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.fanout_transition
+    ADD CONSTRAINT fanout_transition_pkey PRIMARY KEY (id);
 
 
 --
@@ -17181,6 +26624,14 @@ ALTER TABLE ONLY resolution.keychain_event_outbox
 
 
 --
+-- Name: migration_disposition migration_disposition_pkey; Type: CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.migration_disposition
+    ADD CONSTRAINT migration_disposition_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: migration_ledger migration_ledger_pkey; Type: CONSTRAINT; Schema: resolution; Owner: -
 --
 
@@ -17253,6 +26704,38 @@ ALTER TABLE ONLY resolution.owning_subsystem
 
 
 --
+-- Name: producer_refusals producer_refusals_pkey; Type: CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.producer_refusals
+    ADD CONSTRAINT producer_refusals_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: producer_registry producer_registry_pkey; Type: CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.producer_registry
+    ADD CONSTRAINT producer_registry_pkey PRIMARY KEY (producer_id);
+
+
+--
+-- Name: promotion_batch_candidate promotion_batch_candidate_pk; Type: CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.promotion_batch_candidate
+    ADD CONSTRAINT promotion_batch_candidate_pk PRIMARY KEY (batch_id, candidate_id);
+
+
+--
+-- Name: promotion_batch promotion_batch_pkey; Type: CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.promotion_batch
+    ADD CONSTRAINT promotion_batch_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: proposition_assertion proposition_assertion_pkey; Type: CONSTRAINT; Schema: resolution; Owner: -
 --
 
@@ -17290,6 +26773,14 @@ ALTER TABLE ONLY resolution.proposition_frame_value
 
 ALTER TABLE ONLY resolution.proposition
     ADD CONSTRAINT proposition_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: receipt receipt_pkey; Type: CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.receipt
+    ADD CONSTRAINT receipt_pkey PRIMARY KEY (id);
 
 
 --
@@ -17349,6 +26840,22 @@ ALTER TABLE ONLY resolution.requirement_segment_set
 
 
 --
+-- Name: retirement_signoff retirement_signoff_pkey; Type: CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.retirement_signoff
+    ADD CONSTRAINT retirement_signoff_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: retirement_signoff retirement_signoff_role_key; Type: CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.retirement_signoff
+    ADD CONSTRAINT retirement_signoff_role_key UNIQUE (role);
+
+
+--
 -- Name: rule rule_pkey; Type: CONSTRAINT; Schema: resolution; Owner: -
 --
 
@@ -17378,6 +26885,38 @@ ALTER TABLE ONLY resolution.semantic_type
 
 ALTER TABLE ONLY resolution.semantic_type_required_dimension
     ADD CONSTRAINT semantic_type_required_dimension_pkey PRIMARY KEY (semantic_type_id, dimension_id);
+
+
+--
+-- Name: shrapnel_field_sync_evidence shrapnel_field_sync_evidence_field_id_metadata_fingerprint_key; Type: CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.shrapnel_field_sync_evidence
+    ADD CONSTRAINT shrapnel_field_sync_evidence_field_id_metadata_fingerprint_key UNIQUE (field_id, metadata_fingerprint);
+
+
+--
+-- Name: shrapnel_field_sync_evidence shrapnel_field_sync_evidence_pkey; Type: CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.shrapnel_field_sync_evidence
+    ADD CONSTRAINT shrapnel_field_sync_evidence_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: soak_evidence soak_evidence_evidence_date_key; Type: CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.soak_evidence
+    ADD CONSTRAINT soak_evidence_evidence_date_key UNIQUE (evidence_date);
+
+
+--
+-- Name: soak_evidence soak_evidence_pkey; Type: CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.soak_evidence
+    ADD CONSTRAINT soak_evidence_pkey PRIMARY KEY (id);
 
 
 --
@@ -17413,11 +26952,67 @@ ALTER TABLE ONLY resolution.t24_graph_edge_evidence
 
 
 --
+-- Name: ticket ticket_pkey; Type: CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.ticket
+    ADD CONSTRAINT ticket_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: ticket_transition ticket_transition_pkey; Type: CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.ticket_transition
+    ADD CONSTRAINT ticket_transition_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: enforcement_posture uq_enforcement_posture_family_effective; Type: CONSTRAINT; Schema: resolution; Owner: -
 --
 
 ALTER TABLE ONLY resolution.enforcement_posture
     ADD CONSTRAINT uq_enforcement_posture_family_effective UNIQUE (family, effective_from);
+
+
+--
+-- Name: migration_disposition uq_migration_disposition; Type: CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.migration_disposition
+    ADD CONSTRAINT uq_migration_disposition UNIQUE (source_schema, source_table, source_pk, migration_version);
+
+
+--
+-- Name: fanout_transition uq_resolution_fanout_idem; Type: CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.fanout_transition
+    ADD CONSTRAINT uq_resolution_fanout_idem UNIQUE (input_receipt_id, kind, fan_out_policy_version);
+
+
+--
+-- Name: receipt uq_resolution_receipt_idem; Type: CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.receipt
+    ADD CONSTRAINT uq_resolution_receipt_idem UNIQUE (source_system, source_receipt_id);
+
+
+--
+-- Name: ticket uq_resolution_ticket_idem; Type: CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.ticket
+    ADD CONSTRAINT uq_resolution_ticket_idem UNIQUE (workflow_ref, role, "position", generation);
+
+
+--
+-- Name: ticket_transition uq_resolution_ticket_transition_idem; Type: CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.ticket_transition
+    ADD CONSTRAINT uq_resolution_ticket_transition_idem UNIQUE (ticket_id, from_status, to_status, input_receipt_id, fanout_policy_version);
 
 
 --
@@ -17442,6 +27037,14 @@ ALTER TABLE ONLY resolution.work_request_edge
 
 ALTER TABLE ONLY resolution.work_request
     ADD CONSTRAINT work_request_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: write_queue_applied write_queue_applied_pkey; Type: CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.write_queue_applied
+    ADD CONSTRAINT write_queue_applied_pkey PRIMARY KEY (write_id);
 
 
 --
@@ -17546,6 +27149,197 @@ ALTER TABLE ONLY semantics.source_observation
 
 ALTER TABLE ONLY semantics.statement_evidence
     ADD CONSTRAINT statement_evidence_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: _migration_ledger _migration_ledger_pkey; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel._migration_ledger
+    ADD CONSTRAINT _migration_ledger_pkey PRIMARY KEY (filename);
+
+
+--
+-- Name: object_attribute_value object_attribute_value_pkey; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.object_attribute_value
+    ADD CONSTRAINT object_attribute_value_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_instance object_instance_pkey; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.object_instance
+    ADD CONSTRAINT object_instance_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: field_type pk_field_type_code; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.field_type
+    ADD CONSTRAINT pk_field_type_code PRIMARY KEY (code);
+
+
+--
+-- Name: field pk_shrapnel_field; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.field
+    ADD CONSTRAINT pk_shrapnel_field PRIMARY KEY (id);
+
+
+--
+-- Name: value pk_shrapnel_value; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value
+    ADD CONSTRAINT pk_shrapnel_value PRIMARY KEY (id);
+
+
+--
+-- Name: value_long pk_shrapnel_value_long; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_long
+    ADD CONSTRAINT pk_shrapnel_value_long PRIMARY KEY (id);
+
+
+--
+-- Name: value_string pk_shrapnel_value_string; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_string
+    ADD CONSTRAINT pk_shrapnel_value_string PRIMARY KEY (id);
+
+
+--
+-- Name: stereotype_field stereotype_field_pkey; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype_field
+    ADD CONSTRAINT stereotype_field_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: stereotype stereotype_pkey; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype
+    ADD CONSTRAINT stereotype_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: stereotype_revision stereotype_revision_pkey; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype_revision
+    ADD CONSTRAINT stereotype_revision_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: field uq_field_property_name; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.field
+    ADD CONSTRAINT uq_field_property_name UNIQUE (property_name);
+
+
+--
+-- Name: field_type uq_field_type_name; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.field_type
+    ADD CONSTRAINT uq_field_type_name UNIQUE (name);
+
+
+--
+-- Name: object_attribute_value uq_oav_object_field; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.object_attribute_value
+    ADD CONSTRAINT uq_oav_object_field UNIQUE (object_id, field_id);
+
+
+--
+-- Name: CONSTRAINT uq_oav_object_field ON object_attribute_value; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON CONSTRAINT uq_oav_object_field ON shrapnel.object_attribute_value IS 'An object can have at most one value per field.';
+
+
+--
+-- Name: stereotype uq_stereotype_name; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype
+    ADD CONSTRAINT uq_stereotype_name UNIQUE (name);
+
+
+--
+-- Name: stereotype_field uq_sterev_field; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype_field
+    ADD CONSTRAINT uq_sterev_field UNIQUE (stereotype_revision_id, field_id);
+
+
+--
+-- Name: stereotype_revision uq_sterev_identity_version; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype_revision
+    ADD CONSTRAINT uq_sterev_identity_version UNIQUE (stereotype_id, version);
+
+
+--
+-- Name: stereotype_revision uq_sterev_stereotype_id; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype_revision
+    ADD CONSTRAINT uq_sterev_stereotype_id UNIQUE (stereotype_id, id);
+
+
+--
+-- Name: value_boolean value_boolean_pkey; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_boolean
+    ADD CONSTRAINT value_boolean_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: value_double value_double_pkey; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_double
+    ADD CONSTRAINT value_double_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: value_jsonb value_jsonb_pkey; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_jsonb
+    ADD CONSTRAINT value_jsonb_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: value_timestamp value_timestamp_pkey; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_timestamp
+    ADD CONSTRAINT value_timestamp_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: value_uuid value_uuid_pkey; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_uuid
+    ADD CONSTRAINT value_uuid_pkey PRIMARY KEY (id);
 
 
 --
@@ -17667,22 +27461,6 @@ ALTER TABLE ONLY tackle.role_leases
 ALTER TABLE ONLY tackle.role_memory
     ADD CONSTRAINT role_memory_pkey PRIMARY KEY (id);
 
---
--- Name: role_memory uq_role_memory_validity; Type: CONSTRAINT; Schema: tackle; Owner: -
---
-
--- V178-born shape: no overlapping validity intervals per (memory_id, role).
--- Subsumes the former partial unique (uq_role_memory_active); permits
--- close-then-reassign history. (btree_gist is created at the top of this
--- bootstrap.)
-ALTER TABLE ONLY tackle.role_memory
-    ADD CONSTRAINT uq_role_memory_validity
-    EXCLUDE USING gist (
-        memory_id WITH =,
-        role      WITH =,
-        tstzrange(as_of_dt, COALESCE(expiration_dt, 'infinity'::timestamptz), '[)') WITH &&
-    );
-
 
 --
 -- Name: role_tool_access role_tool_access_pkey; Type: CONSTRAINT; Schema: tackle; Owner: -
@@ -17730,6 +27508,14 @@ ALTER TABLE ONLY tackle.sessions
 
 ALTER TABLE ONLY tackle.system_logs
     ADD CONSTRAINT system_logs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: system_logs_retention_policy system_logs_retention_policy_pkey; Type: CONSTRAINT; Schema: tackle; Owner: -
+--
+
+ALTER TABLE ONLY tackle.system_logs_retention_policy
+    ADD CONSTRAINT system_logs_retention_policy_pkey PRIMARY KEY (category);
 
 
 --
@@ -17789,6 +27575,14 @@ ALTER TABLE ONLY terrain.service_endpoints
 
 
 --
+-- Name: service_types service_types_pkey; Type: CONSTRAINT; Schema: terrain; Owner: -
+--
+
+ALTER TABLE ONLY terrain.service_types
+    ADD CONSTRAINT service_types_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: service_endpoints uq_service_endpoints_unit_instance; Type: CONSTRAINT; Schema: terrain; Owner: -
 --
 
@@ -17797,11 +27591,43 @@ ALTER TABLE ONLY terrain.service_endpoints
 
 
 --
+-- Name: calendar_events calendar_events_pkey; Type: CONSTRAINT; Schema: vision; Owner: -
+--
+
+ALTER TABLE ONLY vision.calendar_events
+    ADD CONSTRAINT calendar_events_pkey PRIMARY KEY (event_id);
+
+
+--
+-- Name: calendars calendars_pkey; Type: CONSTRAINT; Schema: vision; Owner: -
+--
+
+ALTER TABLE ONLY vision.calendars
+    ADD CONSTRAINT calendars_pkey PRIMARY KEY (calendar_id);
+
+
+--
+-- Name: canonical_wr_landing_refusals canonical_wr_landing_refusals_pkey; Type: CONSTRAINT; Schema: vision; Owner: -
+--
+
+ALTER TABLE ONLY vision.canonical_wr_landing_refusals
+    ADD CONSTRAINT canonical_wr_landing_refusals_pkey PRIMARY KEY (refusal_id);
+
+
+--
 -- Name: receipts receipts_pkey; Type: CONSTRAINT; Schema: vision; Owner: -
 --
 
 ALTER TABLE ONLY vision.receipts
     ADD CONSTRAINT receipts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sessions sessions_pkey; Type: CONSTRAINT; Schema: vision; Owner: -
+--
+
+ALTER TABLE ONLY vision.sessions
+    ADD CONSTRAINT sessions_pkey PRIMARY KEY (session_id);
 
 
 --
@@ -17829,6 +27655,14 @@ ALTER TABLE ONLY vision.work_request_edges_history
 
 
 --
+-- Name: work_request_shape_registry work_request_shape_registry_pkey; Type: CONSTRAINT; Schema: vision; Owner: -
+--
+
+ALTER TABLE ONLY vision.work_request_shape_registry
+    ADD CONSTRAINT work_request_shape_registry_pkey PRIMARY KEY (shape_version);
+
+
+--
 -- Name: wr_compile_verdicts wr_compile_verdicts_pkey; Type: CONSTRAINT; Schema: vision; Owner: -
 --
 
@@ -17853,6 +27687,78 @@ ALTER TABLE ONLY wind.events
 
 
 --
+-- Name: execution_attempts execution_attempt_id_request_unique; Type: CONSTRAINT; Schema: wind; Owner: -
+--
+
+ALTER TABLE ONLY wind.execution_attempts
+    ADD CONSTRAINT execution_attempt_id_request_unique UNIQUE (id, request_id);
+
+
+--
+-- Name: execution_attempts execution_attempt_request_key_unique; Type: CONSTRAINT; Schema: wind; Owner: -
+--
+
+ALTER TABLE ONLY wind.execution_attempts
+    ADD CONSTRAINT execution_attempt_request_key_unique UNIQUE (request_id, attempt_idempotency_key);
+
+
+--
+-- Name: execution_attempts execution_attempt_request_number_unique; Type: CONSTRAINT; Schema: wind; Owner: -
+--
+
+ALTER TABLE ONLY wind.execution_attempts
+    ADD CONSTRAINT execution_attempt_request_number_unique UNIQUE (request_id, attempt_number);
+
+
+--
+-- Name: execution_attempts execution_attempts_pkey; Type: CONSTRAINT; Schema: wind; Owner: -
+--
+
+ALTER TABLE ONLY wind.execution_attempts
+    ADD CONSTRAINT execution_attempts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: execution_receipts execution_receipt_attempt_unique; Type: CONSTRAINT; Schema: wind; Owner: -
+--
+
+ALTER TABLE ONLY wind.execution_receipts
+    ADD CONSTRAINT execution_receipt_attempt_unique UNIQUE (attempt_id);
+
+
+--
+-- Name: execution_receipts execution_receipts_pkey; Type: CONSTRAINT; Schema: wind; Owner: -
+--
+
+ALTER TABLE ONLY wind.execution_receipts
+    ADD CONSTRAINT execution_receipts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: execution_requests execution_requests_idempotency_key_key; Type: CONSTRAINT; Schema: wind; Owner: -
+--
+
+ALTER TABLE ONLY wind.execution_requests
+    ADD CONSTRAINT execution_requests_idempotency_key_key UNIQUE (idempotency_key);
+
+
+--
+-- Name: execution_requests execution_requests_pkey; Type: CONSTRAINT; Schema: wind; Owner: -
+--
+
+ALTER TABLE ONLY wind.execution_requests
+    ADD CONSTRAINT execution_requests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: node_requirements node_requirements_pkey; Type: CONSTRAINT; Schema: wind; Owner: -
+--
+
+ALTER TABLE ONLY wind.node_requirements
+    ADD CONSTRAINT node_requirements_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: offices offices_name_key; Type: CONSTRAINT; Schema: wind; Owner: -
 --
 
@@ -17866,6 +27772,38 @@ ALTER TABLE ONLY wind.offices
 
 ALTER TABLE ONLY wind.offices
     ADD CONSTRAINT offices_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: provider_contract_revisions provider_contract_revisions_pkey; Type: CONSTRAINT; Schema: wind; Owner: -
+--
+
+ALTER TABLE ONLY wind.provider_contract_revisions
+    ADD CONSTRAINT provider_contract_revisions_pkey PRIMARY KEY (revision_id);
+
+
+--
+-- Name: provider_contracts provider_contracts_pkey; Type: CONSTRAINT; Schema: wind; Owner: -
+--
+
+ALTER TABLE ONLY wind.provider_contracts
+    ADD CONSTRAINT provider_contracts_pkey PRIMARY KEY (adapter_id);
+
+
+--
+-- Name: provider_credential_rotations provider_credential_rotations_pkey; Type: CONSTRAINT; Schema: wind; Owner: -
+--
+
+ALTER TABLE ONLY wind.provider_credential_rotations
+    ADD CONSTRAINT provider_credential_rotations_pkey PRIMARY KEY (rotation_id);
+
+
+--
+-- Name: provider_contract_revisions provider_revision_number_unique; Type: CONSTRAINT; Schema: wind; Owner: -
+--
+
+ALTER TABLE ONLY wind.provider_contract_revisions
+    ADD CONSTRAINT provider_revision_number_unique UNIQUE (adapter_id, revision_number);
 
 
 --
@@ -18061,6 +27999,405 @@ ALTER TABLE ONLY wind.workflows
 
 
 --
+-- Name: idx_attribute_mapping_attribute; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_attribute_mapping_attribute ON aegis.attribute_mapping USING btree (attribute_id);
+
+
+--
+-- Name: idx_attribute_mapping_registry; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_attribute_mapping_registry ON aegis.attribute_mapping USING btree (registry_id);
+
+
+--
+-- Name: idx_compiled_edge_revision; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_compiled_edge_revision ON aegis.compiled_edge USING btree (registry_id, registry_revision_id);
+
+
+--
+-- Name: idx_compiled_edge_wind_edge; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_compiled_edge_wind_edge ON aegis.compiled_edge USING btree (wind_edge_id);
+
+
+--
+-- Name: idx_compiled_node_revision; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_compiled_node_revision ON aegis.compiled_node USING btree (registry_id, registry_revision_id);
+
+
+--
+-- Name: idx_compiled_node_wind_node; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_compiled_node_wind_node ON aegis.compiled_node USING btree (wind_node_id);
+
+
+--
+-- Name: idx_concept_mapping_concept; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_concept_mapping_concept ON aegis.concept_mapping USING btree (concept_id);
+
+
+--
+-- Name: idx_concept_mapping_registry; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_concept_mapping_registry ON aegis.concept_mapping USING btree (registry_id);
+
+
+--
+-- Name: idx_execution_log_created; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_execution_log_created ON aegis.execution_log USING btree (created_at DESC);
+
+
+--
+-- Name: idx_execution_log_entity; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_execution_log_entity ON aegis.execution_log USING btree (entity_id);
+
+
+--
+-- Name: idx_execution_log_registry; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_execution_log_registry ON aegis.execution_log USING btree (registry_id);
+
+
+--
+-- Name: idx_invariant_registry; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_invariant_registry ON aegis.invariant USING btree (registry_id);
+
+
+--
+-- Name: idx_model_check_registry; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_model_check_registry ON aegis.model_check_result USING btree (registry_id);
+
+
+--
+-- Name: idx_model_check_result_digest; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_model_check_result_digest ON aegis.model_check_result USING btree (result_digest);
+
+
+--
+-- Name: idx_model_check_revision; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_model_check_revision ON aegis.model_check_result USING btree (registry_revision_id, checked_at DESC);
+
+
+--
+-- Name: idx_model_check_status; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_model_check_status ON aegis.model_check_result USING btree (status);
+
+
+--
+-- Name: idx_model_check_time; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_model_check_time ON aegis.model_check_result USING btree (checked_at DESC);
+
+
+--
+-- Name: idx_property_registry; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_property_registry ON aegis.property USING btree (registry_id);
+
+
+--
+-- Name: idx_property_verified; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_property_verified ON aegis.property USING btree (is_verified);
+
+
+--
+-- Name: idx_registry_active; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_registry_active ON aegis.registry USING btree (is_active) WHERE (is_active = true);
+
+
+--
+-- Name: idx_registry_name; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_registry_name ON aegis.registry USING btree (name);
+
+
+--
+-- Name: idx_registry_revision_model_digest; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_registry_revision_model_digest ON aegis.registry_revision USING btree (model_digest);
+
+
+--
+-- Name: idx_registry_revision_registry; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_registry_revision_registry ON aegis.registry_revision USING btree (registry_id, revision_number DESC);
+
+
+--
+-- Name: idx_registry_revision_source_digest; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_registry_revision_source_digest ON aegis.registry_revision USING btree (source_digest);
+
+
+--
+-- Name: idx_registry_updated; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_registry_updated ON aegis.registry USING btree (updated_at DESC);
+
+
+--
+-- Name: idx_relationship_mapping_registry; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_relationship_mapping_registry ON aegis.relationship_mapping USING btree (registry_id);
+
+
+--
+-- Name: idx_relationship_mapping_relationship; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_relationship_mapping_relationship ON aegis.relationship_mapping USING btree (relationship_id);
+
+
+--
+-- Name: idx_state_initial; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_state_initial ON aegis.state USING btree (is_initial) WHERE (is_initial = true);
+
+
+--
+-- Name: idx_state_registry; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_state_registry ON aegis.state USING btree (registry_id);
+
+
+--
+-- Name: idx_temporal_property_registry; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_temporal_property_registry ON aegis.temporal_property USING btree (registry_id);
+
+
+--
+-- Name: idx_transition_from_state; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_transition_from_state ON aegis.transition USING btree (from_state_id);
+
+
+--
+-- Name: idx_transition_priority; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_transition_priority ON aegis.transition USING btree (priority DESC);
+
+
+--
+-- Name: idx_transition_registry; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_transition_registry ON aegis.transition USING btree (registry_id);
+
+
+--
+-- Name: idx_transition_to_state; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_transition_to_state ON aegis.transition USING btree (to_state_id);
+
+
+--
+-- Name: idx_validation_result_registry; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_validation_result_registry ON aegis.validation_result USING btree (registry_id);
+
+
+--
+-- Name: idx_validation_result_valid; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_validation_result_valid ON aegis.validation_result USING btree (is_valid);
+
+
+--
+-- Name: idx_variable_registry; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_variable_registry ON aegis.variable USING btree (registry_id);
+
+
+--
+-- Name: idx_wind_compilation_registry_revision; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_wind_compilation_registry_revision ON aegis.wind_compilation USING btree (registry_id, registry_revision_id, compiled_at DESC);
+
+
+--
+-- Name: idx_wind_compilation_wind_workflow; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_wind_compilation_wind_workflow ON aegis.wind_compilation USING btree (wind_workflow_id, wind_workflow_version_id);
+
+
+--
+-- Name: idx_wind_outcome_mapping_revision; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_wind_outcome_mapping_revision ON aegis.wind_outcome_mapping USING btree (registry_revision_id);
+
+
+--
+-- Name: idx_wind_outcome_mapping_wind_outcome; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_wind_outcome_mapping_wind_outcome ON aegis.wind_outcome_mapping USING btree (wind_outcome_id);
+
+
+--
+-- Name: idx_wind_task_mapping_revision; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_wind_task_mapping_revision ON aegis.wind_task_mapping USING btree (registry_revision_id);
+
+
+--
+-- Name: idx_wind_task_mapping_wind_task; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE INDEX idx_wind_task_mapping_wind_task ON aegis.wind_task_mapping USING btree (wind_task_id);
+
+
+--
+-- Name: property_registry_id_unique; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE UNIQUE INDEX property_registry_id_unique ON aegis.property USING btree (registry_id, id);
+
+
+--
+-- Name: registry_active_name_unique; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE UNIQUE INDEX registry_active_name_unique ON aegis.registry USING btree (name) WHERE (is_active = true);
+
+
+--
+-- Name: registry_revision_registry_id_unique; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE UNIQUE INDEX registry_revision_registry_id_unique ON aegis.registry_revision USING btree (registry_id, id);
+
+
+--
+-- Name: state_registry_id_unique; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE UNIQUE INDEX state_registry_id_unique ON aegis.state USING btree (registry_id, id);
+
+
+--
+-- Name: transition_registry_id_unique; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE UNIQUE INDEX transition_registry_id_unique ON aegis.transition USING btree (registry_id, id);
+
+
+--
+-- Name: validation_result_registry_id_unique; Type: INDEX; Schema: aegis; Owner: -
+--
+
+CREATE UNIQUE INDEX validation_result_registry_id_unique ON aegis.validation_result USING btree (registry_id, id);
+
+
+--
+-- Name: idx_comments_post_id; Type: INDEX; Schema: assembly; Owner: -
+--
+
+CREATE INDEX idx_comments_post_id ON assembly.comments USING btree (post_id);
+
+
+--
+-- Name: idx_forum_agendas_agenda; Type: INDEX; Schema: assembly; Owner: -
+--
+
+CREATE INDEX idx_forum_agendas_agenda ON assembly.forum_agendas USING btree (agenda_id);
+
+
+--
+-- Name: idx_forums_live_unbounded; Type: INDEX; Schema: assembly; Owner: -
+--
+
+CREATE INDEX idx_forums_live_unbounded ON assembly.forums USING btree (expiration_dt) WHERE (expiration_dt = 'infinity'::timestamp with time zone);
+
+
+--
+-- Name: idx_post_artifact_refs_art; Type: INDEX; Schema: assembly; Owner: -
+--
+
+CREATE INDEX idx_post_artifact_refs_art ON assembly.post_artifact_refs USING btree (artifact_type, artifact_id);
+
+
+--
+-- Name: idx_post_artifact_refs_post; Type: INDEX; Schema: assembly; Owner: -
+--
+
+CREATE INDEX idx_post_artifact_refs_post ON assembly.post_artifact_refs USING btree (post_id);
+
+
+--
+-- Name: idx_post_supporting_comment; Type: INDEX; Schema: assembly; Owner: -
+--
+
+CREATE INDEX idx_post_supporting_comment ON assembly.post_supporting_refs USING btree (comment_id);
+
+
+--
+-- Name: idx_post_supporting_post; Type: INDEX; Schema: assembly; Owner: -
+--
+
+CREATE INDEX idx_post_supporting_post ON assembly.post_supporting_refs USING btree (post_id);
+
+
+--
+-- Name: idx_posts_forum_uuid_current; Type: INDEX; Schema: assembly; Owner: -
+--
+
+CREATE INDEX idx_posts_forum_uuid_current ON assembly.posts USING btree (forum_uuid, rating) WHERE (expiration_dt = 'infinity'::timestamp with time zone);
+
+
+--
 -- Name: idx_events_aggregate; Type: INDEX; Schema: cascade; Owner: -
 --
 
@@ -18128,6 +28465,55 @@ CREATE INDEX idx_cost_logs_session ON conduit.cost_logs USING btree (session_id)
 --
 
 CREATE INDEX idx_cost_logs_ticket ON conduit.cost_logs USING btree (ticket_id);
+
+
+--
+-- Name: idx_session_events_thread_seq; Type: INDEX; Schema: duality; Owner: -
+--
+
+CREATE INDEX idx_session_events_thread_seq ON duality.session_events USING btree (thread_id, seq);
+
+
+--
+-- Name: idx_session_turns_lease; Type: INDEX; Schema: duality; Owner: -
+--
+
+CREATE INDEX idx_session_turns_lease ON duality.session_turns USING btree (lease_id);
+
+
+--
+-- Name: idx_session_turns_state; Type: INDEX; Schema: duality; Owner: -
+--
+
+CREATE INDEX idx_session_turns_state ON duality.session_turns USING btree (state);
+
+
+--
+-- Name: idx_session_turns_thread; Type: INDEX; Schema: duality; Owner: -
+--
+
+CREATE INDEX idx_session_turns_thread ON duality.session_turns USING btree (thread_id, created_at DESC);
+
+
+--
+-- Name: idx_session_turns_watch; Type: INDEX; Schema: duality; Owner: -
+--
+
+CREATE INDEX idx_session_turns_watch ON duality.session_turns USING btree (watch_id);
+
+
+--
+-- Name: idx_session_watches_status; Type: INDEX; Schema: duality; Owner: -
+--
+
+CREATE INDEX idx_session_watches_status ON duality.session_watches USING btree (status);
+
+
+--
+-- Name: idx_session_watches_thread; Type: INDEX; Schema: duality; Owner: -
+--
+
+CREATE INDEX idx_session_watches_thread ON duality.session_watches USING btree (thread_id);
 
 
 --
@@ -18229,6 +28615,41 @@ CREATE INDEX idx_execution_requests_status ON execution.requests USING btree (st
 
 
 --
+-- Name: idx_adapters_capability; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE INDEX idx_adapters_capability ON nebula.adapters USING btree (capability_id) WHERE (recorded_until_dt = 'infinity'::timestamp with time zone);
+
+
+--
+-- Name: idx_adapters_status; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE INDEX idx_adapters_status ON nebula.adapters USING btree (adapter_status) WHERE (recorded_until_dt = 'infinity'::timestamp with time zone);
+
+
+--
+-- Name: idx_agent_connections_lease; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE INDEX idx_agent_connections_lease ON nebula.agent_connections USING btree (lease_ref) WHERE (lease_ref IS NOT NULL);
+
+
+--
+-- Name: idx_agent_connections_role_asof; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE INDEX idx_agent_connections_role_asof ON nebula.agent_connections USING btree (role, as_of DESC);
+
+
+--
+-- Name: idx_agent_connections_session; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE INDEX idx_agent_connections_session ON nebula.agent_connections USING btree (session_id) WHERE (session_id IS NOT NULL);
+
+
+--
 -- Name: idx_agent_records_history_candidate_id; Type: INDEX; Schema: nebula; Owner: -
 --
 
@@ -18278,6 +28699,41 @@ CREATE INDEX idx_artifact_provenance_subject ON nebula.artifact_provenance_histo
 
 
 --
+-- Name: idx_attestations_cites; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE INDEX idx_attestations_cites ON nebula.attestations USING btree (cites_id) WHERE (cites_id IS NOT NULL);
+
+
+--
+-- Name: idx_attestations_kind; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE INDEX idx_attestations_kind ON nebula.attestations USING btree (kind);
+
+
+--
+-- Name: idx_attestations_work_ref; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE INDEX idx_attestations_work_ref ON nebula.attestations USING btree (work_ref);
+
+
+--
+-- Name: idx_blueprints_history_status; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE INDEX idx_blueprints_history_status ON nebula.blueprints_history USING btree (blueprint_status) WHERE (recorded_until_dt = 'infinity'::timestamp with time zone);
+
+
+--
+-- Name: idx_blueprints_history_updated_at_id; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE INDEX idx_blueprints_history_updated_at_id ON nebula.blueprints_history USING btree (updated_at DESC, id DESC);
+
+
+--
 -- Name: idx_harvests_history_created_at_id; Type: INDEX; Schema: nebula; Owner: -
 --
 
@@ -18303,6 +28759,34 @@ CREATE INDEX idx_hc_needs_new_node ON nebula.harvest_candidates_history USING bt
 --
 
 CREATE INDEX idx_hc_type ON nebula.harvest_candidates_history USING btree (type);
+
+
+--
+-- Name: idx_hh_stats_block_density; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE INDEX idx_hh_stats_block_density ON nebula.harvests_history USING btree (stats_block_density DESC NULLS LAST, id DESC);
+
+
+--
+-- Name: idx_hh_stats_code_blocks; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE INDEX idx_hh_stats_code_blocks ON nebula.harvests_history USING btree (stats_code_blocks DESC NULLS LAST, id DESC);
+
+
+--
+-- Name: idx_hh_stats_turns; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE INDEX idx_hh_stats_turns ON nebula.harvests_history USING btree (stats_turns DESC NULLS LAST, id DESC);
+
+
+--
+-- Name: idx_hh_stats_user_turns; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE INDEX idx_hh_stats_user_turns ON nebula.harvests_history USING btree (stats_user_turns DESC NULLS LAST, id DESC);
 
 
 --
@@ -18453,6 +28937,20 @@ CREATE INDEX idx_segment_set_members_set ON nebula.segment_set_members USING btr
 
 
 --
+-- Name: idx_session_context_snapshots_lease; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE INDEX idx_session_context_snapshots_lease ON nebula.session_context_snapshots USING btree (lease_ref) WHERE (lease_ref IS NOT NULL);
+
+
+--
+-- Name: idx_session_context_snapshots_role_asof; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE INDEX idx_session_context_snapshots_role_asof ON nebula.session_context_snapshots USING btree (role, as_of DESC);
+
+
+--
 -- Name: idx_spec_docs_candidate; Type: INDEX; Schema: nebula; Owner: -
 --
 
@@ -18558,6 +29056,13 @@ CREATE INDEX nebula_idx_assessment_outcome ON nebula.assessment_resolutions_hist
 
 
 --
+-- Name: roles_name_open_key; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE UNIQUE INDEX roles_name_open_key ON nebula.roles_history USING btree (name) WHERE (valid_until = '9999-12-31 00:00:00+00'::timestamp with time zone);
+
+
+--
 -- Name: uq_agenda_item_questions_current; Type: INDEX; Schema: nebula; Owner: -
 --
 
@@ -18590,6 +29095,13 @@ CREATE UNIQUE INDEX uq_cross_ref_current ON nebula.cross_references_history USIN
 --
 
 CREATE UNIQUE INDEX uq_deliberation_participants_current ON nebula.deliberation_participants USING btree (open_question_id, role) WHERE (valid_until = '9999-12-31 00:00:00+00'::timestamp with time zone);
+
+
+--
+-- Name: uq_hc_dedupe_live; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_hc_dedupe_live ON nebula.harvest_candidates_history USING btree (dedupe_key) WHERE ((dedupe_key IS NOT NULL) AND (valid_until = '9999-12-31 23:59:59+00'::timestamp with time zone) AND (recorded_until_dt = '9999-12-31 23:59:59+00'::timestamp with time zone));
 
 
 --
@@ -18817,6 +29329,13 @@ CREATE INDEX idx_keychain_event_outbox_pending ON resolution.keychain_event_outb
 
 
 --
+-- Name: idx_migration_disposition_src; Type: INDEX; Schema: resolution; Owner: -
+--
+
+CREATE INDEX idx_migration_disposition_src ON resolution.migration_disposition USING btree (source_schema, source_table);
+
+
+--
 -- Name: idx_oq_entity_concept_id; Type: INDEX; Schema: resolution; Owner: -
 --
 
@@ -18835,6 +29354,20 @@ CREATE INDEX idx_oqa_question ON resolution.open_question_answer USING btree (qu
 --
 
 CREATE INDEX idx_oqa_question_role ON resolution.open_question_answer USING btree (question_id, role);
+
+
+--
+-- Name: idx_producer_refusals_producer_time; Type: INDEX; Schema: resolution; Owner: -
+--
+
+CREATE INDEX idx_producer_refusals_producer_time ON resolution.producer_refusals USING btree (producer_id, recorded_at);
+
+
+--
+-- Name: idx_resolution_receipt_refs; Type: INDEX; Schema: resolution; Owner: -
+--
+
+CREATE INDEX idx_resolution_receipt_refs ON resolution.receipt USING gin (refs);
 
 
 --
@@ -18905,6 +29438,41 @@ CREATE INDEX idx_t24_graph_edge_evidence_migration ON resolution.t24_graph_edge_
 --
 
 CREATE UNIQUE INDEX idx_work_request_edge_active_pair ON resolution.work_request_edge USING btree (parent_work_request_id, child_work_request_id, edge_type) WHERE (valid_until = 'infinity'::timestamp with time zone);
+
+
+--
+-- Name: promotion_batch_candidate_candidate_idx; Type: INDEX; Schema: resolution; Owner: -
+--
+
+CREATE INDEX promotion_batch_candidate_candidate_idx ON resolution.promotion_batch_candidate USING btree (candidate_id);
+
+
+--
+-- Name: promotion_batch_status_idx; Type: INDEX; Schema: resolution; Owner: -
+--
+
+CREATE INDEX promotion_batch_status_idx ON resolution.promotion_batch USING btree (status, created_at DESC);
+
+
+--
+-- Name: uq_promotion_batch_active; Type: INDEX; Schema: resolution; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_promotion_batch_active ON resolution.promotion_batch USING btree (batch_key) WHERE (status = 'open'::text);
+
+
+--
+-- Name: uq_resolution_receipt_admission_peb_txn; Type: INDEX; Schema: resolution; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_resolution_receipt_admission_peb_txn ON resolution.receipt USING btree (((payload ->> 'peb_transaction_id'::text))) WHERE ((kind = 'admission'::text) AND ((payload ->> 'peb_transaction_id'::text) IS NOT NULL) AND ((payload ->> 'peb_transaction_id'::text) <> ''::text));
+
+
+--
+-- Name: INDEX uq_resolution_receipt_admission_peb_txn; Type: COMMENT; Schema: resolution; Owner: -
+--
+
+COMMENT ON INDEX resolution.uq_resolution_receipt_admission_peb_txn IS 'Stage B (Q-C, daae50b0): PEB admission replay-proofing — one canonical receipt per peb_transaction_id; mirrors idx_execution_admission_receipt_peb_tx of V132. Authority stays PEB-only (C2 Q3).';
 
 
 --
@@ -18989,6 +29557,83 @@ CREATE INDEX idx_statement_evidence_by_statement ON semantics.statement_evidence
 --
 
 CREATE UNIQUE INDEX idx_statement_evidence_proposition_unique ON semantics.statement_evidence USING btree (evidence_item_id, statement_id) WHERE ((statement_type = 'resolution_proposition'::text) AND (expired_at IS NULL));
+
+
+--
+-- Name: idx_field_label; Type: INDEX; Schema: shrapnel; Owner: -
+--
+
+CREATE INDEX idx_field_label ON shrapnel.field USING btree (label);
+
+
+--
+-- Name: idx_field_name; Type: INDEX; Schema: shrapnel; Owner: -
+--
+
+CREATE INDEX idx_field_name ON shrapnel.field USING btree (name);
+
+
+--
+-- Name: idx_field_type_code; Type: INDEX; Schema: shrapnel; Owner: -
+--
+
+CREATE INDEX idx_field_type_code ON shrapnel.field USING btree (field_type_code);
+
+
+--
+-- Name: idx_oav_field_id; Type: INDEX; Schema: shrapnel; Owner: -
+--
+
+CREATE INDEX idx_oav_field_id ON shrapnel.object_attribute_value USING btree (field_id);
+
+
+--
+-- Name: idx_oav_object_id; Type: INDEX; Schema: shrapnel; Owner: -
+--
+
+CREATE INDEX idx_oav_object_id ON shrapnel.object_attribute_value USING btree (object_id);
+
+
+--
+-- Name: idx_oav_value_id; Type: INDEX; Schema: shrapnel; Owner: -
+--
+
+CREATE INDEX idx_oav_value_id ON shrapnel.object_attribute_value USING btree (value_id);
+
+
+--
+-- Name: idx_object_instance_created_at; Type: INDEX; Schema: shrapnel; Owner: -
+--
+
+CREATE INDEX idx_object_instance_created_at ON shrapnel.object_instance USING btree (created_at);
+
+
+--
+-- Name: idx_objinst_stereotype_revision; Type: INDEX; Schema: shrapnel; Owner: -
+--
+
+CREATE INDEX idx_objinst_stereotype_revision ON shrapnel.object_instance USING btree (stereotype_revision_id);
+
+
+--
+-- Name: idx_stereofield_field; Type: INDEX; Schema: shrapnel; Owner: -
+--
+
+CREATE INDEX idx_stereofield_field ON shrapnel.stereotype_field USING btree (field_id);
+
+
+--
+-- Name: idx_sterev_parent; Type: INDEX; Schema: shrapnel; Owner: -
+--
+
+CREATE INDEX idx_sterev_parent ON shrapnel.stereotype_revision USING btree (parent_revision_id);
+
+
+--
+-- Name: idx_value_type_code; Type: INDEX; Schema: shrapnel; Owner: -
+--
+
+CREATE INDEX idx_value_type_code ON shrapnel.value USING btree (value_type_code);
 
 
 --
@@ -19118,6 +29763,13 @@ CREATE INDEX idx_sessions_created_at ON tackle.sessions USING btree (created_at 
 
 
 --
+-- Name: idx_system_logs_audit_recent; Type: INDEX; Schema: tackle; Owner: -
+--
+
+CREATE INDEX idx_system_logs_audit_recent ON tackle.system_logs USING btree ("timestamp" DESC) WHERE (category = ANY (ARRAY['REGISTRY_AUDIT'::text, 'NEBULA_AUDIT'::text, 'KG_AUDIT'::text]));
+
+
+--
 -- Name: idx_system_logs_category; Type: INDEX; Schema: tackle; Owner: -
 --
 
@@ -19167,6 +29819,34 @@ CREATE INDEX idx_tasks_role_active ON tackle.tasks USING btree (role, active);
 
 
 --
+-- Name: uq_role_memory_active; Type: INDEX; Schema: tackle; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_role_memory_active ON tackle.role_memory USING btree (memory_id, role) WHERE (expiration_dt IS NULL);
+
+
+--
+-- Name: idx_calendar_events_calendar_start; Type: INDEX; Schema: vision; Owner: -
+--
+
+CREATE INDEX idx_calendar_events_calendar_start ON vision.calendar_events USING btree (calendar_id, window_start DESC);
+
+
+--
+-- Name: idx_calendar_events_emitter; Type: INDEX; Schema: vision; Owner: -
+--
+
+CREATE INDEX idx_calendar_events_emitter ON vision.calendar_events USING btree (source_machine, source_emitter, window_start DESC);
+
+
+--
+-- Name: idx_calendar_events_session; Type: INDEX; Schema: vision; Owner: -
+--
+
+CREATE INDEX idx_calendar_events_session ON vision.calendar_events USING btree (session_ref) WHERE (session_ref IS NOT NULL);
+
+
+--
 -- Name: idx_edges_active_pair; Type: INDEX; Schema: vision; Owner: -
 --
 
@@ -19199,6 +29879,20 @@ CREATE INDEX idx_edges_history_type ON vision.work_request_edges_history USING b
 --
 
 CREATE UNIQUE INDEX idx_receipts_plan_sequence ON vision.receipts USING btree (plan_id, sequence);
+
+
+--
+-- Name: idx_sessions_calendar; Type: INDEX; Schema: vision; Owner: -
+--
+
+CREATE INDEX idx_sessions_calendar ON vision.sessions USING btree (calendar_id);
+
+
+--
+-- Name: idx_sessions_state; Type: INDEX; Schema: vision; Owner: -
+--
+
+CREATE INDEX idx_sessions_state ON vision.sessions USING btree (reconcile_state) WHERE (reconcile_state <> 'reconciled'::text);
 
 
 --
@@ -19265,10 +29959,24 @@ CREATE INDEX idx_wr_compile_verdicts_wr_id ON vision.wr_compile_verdicts USING b
 
 
 --
+-- Name: uq_vision_work_requests_business_key; Type: INDEX; Schema: vision; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_vision_work_requests_business_key ON vision.work_requests USING btree (business_key) WHERE (business_key IS NOT NULL);
+
+
+--
 -- Name: uq_work_requests_wr_id; Type: INDEX; Schema: vision; Owner: -
 --
 
 CREATE UNIQUE INDEX uq_work_requests_wr_id ON vision.work_requests USING btree (wr_id);
+
+
+--
+-- Name: idx_wind_credential_rotations_adapter; Type: INDEX; Schema: wind; Owner: -
+--
+
+CREATE INDEX idx_wind_credential_rotations_adapter ON wind.provider_credential_rotations USING btree (adapter_id, rotated_at DESC);
 
 
 --
@@ -19300,6 +30008,76 @@ CREATE INDEX idx_wind_events_unconsumed ON wind.events USING btree (created_at) 
 
 
 --
+-- Name: idx_wind_execution_attempts_request; Type: INDEX; Schema: wind; Owner: -
+--
+
+CREATE INDEX idx_wind_execution_attempts_request ON wind.execution_attempts USING btree (request_id, attempt_number DESC);
+
+
+--
+-- Name: idx_wind_execution_attempts_status; Type: INDEX; Schema: wind; Owner: -
+--
+
+CREATE INDEX idx_wind_execution_attempts_status ON wind.execution_attempts USING btree (status, recorded_at DESC);
+
+
+--
+-- Name: idx_wind_execution_receipts_request; Type: INDEX; Schema: wind; Owner: -
+--
+
+CREATE INDEX idx_wind_execution_receipts_request ON wind.execution_receipts USING btree (request_id, issued_at DESC);
+
+
+--
+-- Name: idx_wind_execution_receipts_status; Type: INDEX; Schema: wind; Owner: -
+--
+
+CREATE INDEX idx_wind_execution_receipts_status ON wind.execution_receipts USING btree (outcome_status, issued_at DESC);
+
+
+--
+-- Name: idx_wind_execution_requests_artifact; Type: INDEX; Schema: wind; Owner: -
+--
+
+CREATE INDEX idx_wind_execution_requests_artifact ON wind.execution_requests USING btree (artifact_type, artifact_ref, artifact_revision);
+
+
+--
+-- Name: idx_wind_execution_requests_correlation; Type: INDEX; Schema: wind; Owner: -
+--
+
+CREATE INDEX idx_wind_execution_requests_correlation ON wind.execution_requests USING btree (correlation_id, requested_at DESC);
+
+
+--
+-- Name: idx_wind_provider_contracts_active; Type: INDEX; Schema: wind; Owner: -
+--
+
+CREATE INDEX idx_wind_provider_contracts_active ON wind.provider_contracts USING btree (is_active, adapter_id);
+
+
+--
+-- Name: idx_wind_provider_contracts_provider; Type: INDEX; Schema: wind; Owner: -
+--
+
+CREATE INDEX idx_wind_provider_contracts_provider ON wind.provider_contracts USING btree (provider_id, provider_version);
+
+
+--
+-- Name: idx_wind_provider_revisions_adapter; Type: INDEX; Schema: wind; Owner: -
+--
+
+CREATE INDEX idx_wind_provider_revisions_adapter ON wind.provider_contract_revisions USING btree (adapter_id, revision_number DESC);
+
+
+--
+-- Name: idx_wind_provider_revisions_state; Type: INDEX; Schema: wind; Owner: -
+--
+
+CREATE INDEX idx_wind_provider_revisions_state ON wind.provider_contract_revisions USING btree (lifecycle_state, adapter_id, revision_number DESC);
+
+
+--
 -- Name: idx_wind_tasks_tackle_task; Type: INDEX; Schema: wind; Owner: -
 --
 
@@ -19311,6 +30089,195 @@ CREATE INDEX idx_wind_tasks_tackle_task ON wind.tasks USING btree (tackle_task_i
 --
 
 CREATE UNIQUE INDEX idx_wind_workflow_instances_dedup ON wind.workflow_instances USING btree (workflow_version_id, dedup_key) WHERE (dedup_key IS NOT NULL);
+
+
+--
+-- Name: node_requirements_node_idx; Type: INDEX; Schema: wind; Owner: -
+--
+
+CREATE INDEX node_requirements_node_idx ON wind.node_requirements USING btree (node_id);
+
+
+--
+-- Name: node_requirements_open_node_capability_uq; Type: INDEX; Schema: wind; Owner: -
+--
+
+CREATE UNIQUE INDEX node_requirements_open_node_capability_uq ON wind.node_requirements USING btree (node_id, capability_key) WHERE ((capability_key IS NOT NULL) AND (valid_until = '9999-12-31 00:00:00+00'::timestamp with time zone));
+
+
+--
+-- Name: node_requirements_open_node_role_uq; Type: INDEX; Schema: wind; Owner: -
+--
+
+CREATE UNIQUE INDEX node_requirements_open_node_role_uq ON wind.node_requirements USING btree (node_id, role_credential) WHERE ((role_credential IS NOT NULL) AND (valid_until = '9999-12-31 00:00:00+00'::timestamp with time zone));
+
+
+--
+-- Name: wind_edge_version_composite; Type: INDEX; Schema: wind; Owner: -
+--
+
+CREATE UNIQUE INDEX wind_edge_version_composite ON wind.workflow_edges USING btree (id, workflow_version_id);
+
+
+--
+-- Name: vw_registry_details _RETURN; Type: RULE; Schema: aegis; Owner: -
+--
+
+CREATE OR REPLACE VIEW aegis.vw_registry_details AS
+ SELECT r.id AS registry_id,
+    r.name AS registry_name,
+    r.description,
+    r.version,
+    r.tla_plus_module,
+    r.created_at,
+    r.updated_at,
+    r.is_active,
+    r.main_concept_id,
+    c.name AS main_concept_name,
+    count(DISTINCT s.id) AS state_count,
+    count(DISTINCT t.id) AS transition_count,
+    count(DISTINCT i.id) AS invariant_count,
+    count(DISTINCT p.id) AS property_count
+   FROM (((((aegis.registry r
+     LEFT JOIN resolution.concept c ON ((c.id = r.main_concept_id)))
+     LEFT JOIN aegis.state s ON ((s.registry_id = r.id)))
+     LEFT JOIN aegis.transition t ON ((t.registry_id = r.id)))
+     LEFT JOIN aegis.invariant i ON ((i.registry_id = r.id)))
+     LEFT JOIN aegis.property p ON ((p.registry_id = r.id)))
+  GROUP BY r.id, c.name;
+
+
+--
+-- Name: compiled_edge trg_compiled_edge_no_delete; Type: TRIGGER; Schema: aegis; Owner: -
+--
+
+CREATE TRIGGER trg_compiled_edge_no_delete BEFORE DELETE ON aegis.compiled_edge FOR EACH ROW EXECUTE FUNCTION aegis.forbid_wind_compilation_mutation();
+
+
+--
+-- Name: compiled_edge trg_compiled_edge_no_update; Type: TRIGGER; Schema: aegis; Owner: -
+--
+
+CREATE TRIGGER trg_compiled_edge_no_update BEFORE UPDATE ON aegis.compiled_edge FOR EACH ROW EXECUTE FUNCTION aegis.forbid_wind_compilation_mutation();
+
+
+--
+-- Name: compiled_node trg_compiled_node_no_delete; Type: TRIGGER; Schema: aegis; Owner: -
+--
+
+CREATE TRIGGER trg_compiled_node_no_delete BEFORE DELETE ON aegis.compiled_node FOR EACH ROW EXECUTE FUNCTION aegis.forbid_wind_compilation_mutation();
+
+
+--
+-- Name: compiled_node trg_compiled_node_no_update; Type: TRIGGER; Schema: aegis; Owner: -
+--
+
+CREATE TRIGGER trg_compiled_node_no_update BEFORE UPDATE ON aegis.compiled_node FOR EACH ROW EXECUTE FUNCTION aegis.forbid_wind_compilation_mutation();
+
+
+--
+-- Name: model_check_result trg_model_check_result_no_delete; Type: TRIGGER; Schema: aegis; Owner: -
+--
+
+CREATE TRIGGER trg_model_check_result_no_delete BEFORE DELETE ON aegis.model_check_result FOR EACH ROW EXECUTE FUNCTION aegis.forbid_model_check_result_mutation();
+
+
+--
+-- Name: model_check_result trg_model_check_result_no_update; Type: TRIGGER; Schema: aegis; Owner: -
+--
+
+CREATE TRIGGER trg_model_check_result_no_update BEFORE UPDATE ON aegis.model_check_result FOR EACH ROW EXECUTE FUNCTION aegis.forbid_model_check_result_mutation();
+
+
+--
+-- Name: registry_revision trg_registry_revision_no_delete; Type: TRIGGER; Schema: aegis; Owner: -
+--
+
+CREATE TRIGGER trg_registry_revision_no_delete BEFORE DELETE ON aegis.registry_revision FOR EACH ROW EXECUTE FUNCTION aegis.forbid_registry_revision_mutation();
+
+
+--
+-- Name: registry_revision trg_registry_revision_no_update; Type: TRIGGER; Schema: aegis; Owner: -
+--
+
+CREATE TRIGGER trg_registry_revision_no_update BEFORE UPDATE ON aegis.registry_revision FOR EACH ROW EXECUTE FUNCTION aegis.forbid_registry_revision_mutation();
+
+
+--
+-- Name: registry trg_registry_update_timestamp; Type: TRIGGER; Schema: aegis; Owner: -
+--
+
+CREATE TRIGGER trg_registry_update_timestamp BEFORE UPDATE ON aegis.registry FOR EACH ROW EXECUTE FUNCTION aegis.update_timestamp();
+
+
+--
+-- Name: wind_compilation trg_wind_compilation_no_delete; Type: TRIGGER; Schema: aegis; Owner: -
+--
+
+CREATE TRIGGER trg_wind_compilation_no_delete BEFORE DELETE ON aegis.wind_compilation FOR EACH ROW EXECUTE FUNCTION aegis.forbid_wind_compilation_mutation();
+
+
+--
+-- Name: wind_compilation trg_wind_compilation_no_update; Type: TRIGGER; Schema: aegis; Owner: -
+--
+
+CREATE TRIGGER trg_wind_compilation_no_update BEFORE UPDATE ON aegis.wind_compilation FOR EACH ROW EXECUTE FUNCTION aegis.forbid_wind_compilation_mutation();
+
+
+--
+-- Name: wind_compilation trg_wind_compilation_validate; Type: TRIGGER; Schema: aegis; Owner: -
+--
+
+CREATE TRIGGER trg_wind_compilation_validate BEFORE INSERT ON aegis.wind_compilation FOR EACH ROW EXECUTE FUNCTION aegis.validate_wind_compilation();
+
+
+--
+-- Name: wind_outcome_mapping trg_wind_outcome_mapping_no_delete; Type: TRIGGER; Schema: aegis; Owner: -
+--
+
+CREATE TRIGGER trg_wind_outcome_mapping_no_delete BEFORE DELETE ON aegis.wind_outcome_mapping FOR EACH ROW EXECUTE FUNCTION aegis.forbid_wind_bridge_mapping_mutation();
+
+
+--
+-- Name: wind_outcome_mapping trg_wind_outcome_mapping_no_update; Type: TRIGGER; Schema: aegis; Owner: -
+--
+
+CREATE TRIGGER trg_wind_outcome_mapping_no_update BEFORE UPDATE ON aegis.wind_outcome_mapping FOR EACH ROW EXECUTE FUNCTION aegis.forbid_wind_bridge_mapping_mutation();
+
+
+--
+-- Name: wind_outcome_mapping trg_wind_outcome_mapping_validate; Type: TRIGGER; Schema: aegis; Owner: -
+--
+
+CREATE TRIGGER trg_wind_outcome_mapping_validate BEFORE INSERT OR UPDATE ON aegis.wind_outcome_mapping FOR EACH ROW EXECUTE FUNCTION aegis.validate_wind_bridge_mapping();
+
+
+--
+-- Name: wind_task_mapping trg_wind_task_mapping_no_delete; Type: TRIGGER; Schema: aegis; Owner: -
+--
+
+CREATE TRIGGER trg_wind_task_mapping_no_delete BEFORE DELETE ON aegis.wind_task_mapping FOR EACH ROW EXECUTE FUNCTION aegis.forbid_wind_bridge_mapping_mutation();
+
+
+--
+-- Name: wind_task_mapping trg_wind_task_mapping_no_update; Type: TRIGGER; Schema: aegis; Owner: -
+--
+
+CREATE TRIGGER trg_wind_task_mapping_no_update BEFORE UPDATE ON aegis.wind_task_mapping FOR EACH ROW EXECUTE FUNCTION aegis.forbid_wind_bridge_mapping_mutation();
+
+
+--
+-- Name: wind_task_mapping trg_wind_task_mapping_validate; Type: TRIGGER; Schema: aegis; Owner: -
+--
+
+CREATE TRIGGER trg_wind_task_mapping_validate BEFORE INSERT OR UPDATE ON aegis.wind_task_mapping FOR EACH ROW EXECUTE FUNCTION aegis.validate_wind_bridge_mapping();
+
+
+--
+-- Name: comments trg_comment_created; Type: TRIGGER; Schema: assembly; Owner: -
+--
+
+CREATE TRIGGER trg_comment_created AFTER INSERT ON assembly.comments FOR EACH ROW EXECUTE FUNCTION duality.notify_comment_created();
 
 
 --
@@ -19332,6 +30299,13 @@ CREATE TRIGGER trg_enforce_state_transition BEFORE INSERT ON conduit.work_reques
 --
 
 CREATE TRIGGER trg_update_wr_state AFTER INSERT ON conduit.work_request_events FOR EACH ROW EXECUTE FUNCTION conduit.update_work_request_state();
+
+
+--
+-- Name: session_events trg_session_events_notify; Type: TRIGGER; Schema: duality; Owner: -
+--
+
+CREATE TRIGGER trg_session_events_notify AFTER INSERT ON duality.session_events FOR EACH ROW EXECUTE FUNCTION duality.session_events_notify();
 
 
 --
@@ -19363,6 +30337,146 @@ CREATE TRIGGER trg_receipts_immutable BEFORE DELETE OR UPDATE ON execution.recei
 
 
 --
+-- Name: receipt trg_authorize_receipt; Type: TRIGGER; Schema: kernel; Owner: -
+--
+
+CREATE TRIGGER trg_authorize_receipt BEFORE INSERT ON kernel.receipt FOR EACH ROW EXECUTE FUNCTION kernel.trg_authorize_receipt();
+
+
+--
+-- Name: transition_event trg_authorize_transition; Type: TRIGGER; Schema: kernel; Owner: -
+--
+
+CREATE TRIGGER trg_authorize_transition BEFORE INSERT ON kernel.transition_event FOR EACH ROW EXECUTE FUNCTION kernel.trg_authorize_transition();
+
+
+--
+-- Name: transition_event trg_notify_transition; Type: TRIGGER; Schema: kernel; Owner: -
+--
+
+CREATE TRIGGER trg_notify_transition AFTER INSERT ON kernel.transition_event FOR EACH ROW EXECUTE FUNCTION kernel.trg_notify_transition();
+
+
+--
+-- Name: policy_rule trg_policy_rule_updated_at; Type: TRIGGER; Schema: kernel; Owner: -
+--
+
+CREATE TRIGGER trg_policy_rule_updated_at BEFORE UPDATE ON kernel.policy_rule FOR EACH ROW EXECUTE FUNCTION kernel.trg_policy_rule_updated_at();
+
+
+--
+-- Name: coordination_checkpoints coordination_checkpoints_role_fk; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER coordination_checkpoints_role_fk BEFORE INSERT OR UPDATE OF role ON nebula.coordination_checkpoints FOR EACH ROW EXECUTE FUNCTION nebula.tg_coordination_checkpoints_role_fk();
+
+
+--
+-- Name: TRIGGER coordination_checkpoints_role_fk ON coordination_checkpoints; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON TRIGGER coordination_checkpoints_role_fk ON nebula.coordination_checkpoints IS 'Procedural FK to nebula.roles (a VIEW live, post-V175): unknown role -> SQLSTATE 23503, identical client behavior to a declarative FK.';
+
+
+--
+-- Name: adapters trg_adapters_audit; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_adapters_audit AFTER INSERT OR DELETE OR UPDATE ON nebula.adapters FOR EACH ROW EXECUTE FUNCTION nebula.trg_adapters_audit();
+
+
+--
+-- Name: adapters trg_adapters_provenance; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_adapters_provenance BEFORE INSERT OR UPDATE ON nebula.adapters FOR EACH ROW EXECUTE FUNCTION nebula.trg_capability_provenance();
+
+
+--
+-- Name: agent_connections trg_agent_connections_audit_del; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_agent_connections_audit_del AFTER DELETE ON nebula.agent_connections REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION nebula.trg_agent_connections_audit_del();
+
+
+--
+-- Name: agent_connections trg_agent_connections_audit_ins; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_agent_connections_audit_ins AFTER INSERT ON nebula.agent_connections REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION nebula.trg_agent_connections_audit_ins();
+
+
+--
+-- Name: agent_connections trg_agent_connections_immutability; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_agent_connections_immutability BEFORE DELETE OR UPDATE ON nebula.agent_connections FOR EACH ROW EXECUTE FUNCTION nebula.trg_agent_connections_immutability();
+
+
+--
+-- Name: agent_connections trg_agent_connections_provenance; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_agent_connections_provenance BEFORE INSERT OR UPDATE ON nebula.agent_connections FOR EACH ROW EXECUTE FUNCTION nebula.trg_agent_connections_provenance();
+
+
+--
+-- Name: agent_records_history trg_arh_audit_del; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_arh_audit_del AFTER DELETE ON nebula.agent_records_history REFERENCING OLD TABLE AS deleted_rows FOR EACH STATEMENT EXECUTE FUNCTION tackle.fn_audit_arh_del();
+
+
+--
+-- Name: agent_records_history trg_arh_audit_ins; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_arh_audit_ins AFTER INSERT ON nebula.agent_records_history REFERENCING NEW TABLE AS inserted_rows FOR EACH STATEMENT EXECUTE FUNCTION tackle.fn_audit_arh_ins();
+
+
+--
+-- Name: agent_records_history trg_arh_audit_upd; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_arh_audit_upd AFTER UPDATE ON nebula.agent_records_history REFERENCING NEW TABLE AS updated_rows FOR EACH STATEMENT EXECUTE FUNCTION tackle.fn_audit_arh_upd();
+
+
+--
+-- Name: attestations trg_attestations_chain_guards; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_attestations_chain_guards BEFORE INSERT ON nebula.attestations FOR EACH ROW EXECUTE FUNCTION nebula.trg_attestations_chain_guards();
+
+
+--
+-- Name: attestations trg_attestations_immutability; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_attestations_immutability BEFORE DELETE OR UPDATE ON nebula.attestations FOR EACH ROW EXECUTE FUNCTION nebula.trg_attestations_immutability();
+
+
+--
+-- Name: blueprints_history trg_blueprints_audit; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_blueprints_audit AFTER INSERT OR DELETE OR UPDATE ON nebula.blueprints_history FOR EACH ROW EXECUTE FUNCTION nebula.trg_blueprints_audit();
+
+
+--
+-- Name: capabilities trg_capabilities_audit; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_capabilities_audit AFTER INSERT OR DELETE OR UPDATE ON nebula.capabilities FOR EACH ROW EXECUTE FUNCTION nebula.trg_caps_audit();
+
+
+--
+-- Name: capabilities trg_capabilities_provenance; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_capabilities_provenance BEFORE INSERT OR UPDATE ON nebula.capabilities FOR EACH ROW EXECUTE FUNCTION nebula.trg_capability_provenance();
+
+
+--
 -- Name: conversation_blocks trg_conversation_blocks_insert; Type: TRIGGER; Schema: nebula; Owner: -
 --
 
@@ -19377,10 +30491,38 @@ CREATE TRIGGER trg_conversation_snapshots_insert INSTEAD OF INSERT ON nebula.con
 
 
 --
+-- Name: coordination_checkpoints trg_coordination_checkpoints_touch; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_coordination_checkpoints_touch BEFORE UPDATE ON nebula.coordination_checkpoints FOR EACH ROW EXECUTE FUNCTION nebula.tg_coordination_checkpoints_touch();
+
+
+--
 -- Name: harvests_history trg_harvests_history_auto_segment; Type: TRIGGER; Schema: nebula; Owner: -
 --
 
 CREATE TRIGGER trg_harvests_history_auto_segment AFTER INSERT ON nebula.harvests_history FOR EACH ROW WHEN (((new.docklang IS NOT NULL) AND (new.docklang <> '{}'::jsonb) AND (new.docklang ? 'discourse_units'::text))) EXECUTE FUNCTION nebula.harvests_auto_segment_trigger();
+
+
+--
+-- Name: harvests_history trg_hh_audit_del; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_hh_audit_del AFTER DELETE ON nebula.harvests_history REFERENCING OLD TABLE AS deleted_rows FOR EACH STATEMENT EXECUTE FUNCTION tackle.fn_audit_hh_del();
+
+
+--
+-- Name: harvests_history trg_hh_audit_ins; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_hh_audit_ins AFTER INSERT ON nebula.harvests_history REFERENCING NEW TABLE AS inserted_rows FOR EACH STATEMENT EXECUTE FUNCTION tackle.fn_audit_hh_ins();
+
+
+--
+-- Name: harvests_history trg_hh_audit_upd; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_hh_audit_upd AFTER UPDATE ON nebula.harvests_history REFERENCING NEW TABLE AS updated_rows FOR EACH STATEMENT EXECUTE FUNCTION tackle.fn_audit_hh_upd();
 
 
 --
@@ -19395,6 +30537,27 @@ CREATE TRIGGER trg_member_expired AFTER UPDATE ON nebula.segment_set_members FOR
 --
 
 CREATE TRIGGER trg_notify_open_question_event AFTER UPDATE ON nebula.open_questions_history FOR EACH ROW EXECUTE FUNCTION nebula.notify_open_question_event();
+
+
+--
+-- Name: roles_history trg_rh_audit_del; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_rh_audit_del AFTER DELETE ON nebula.roles_history REFERENCING OLD TABLE AS deleted_rows FOR EACH STATEMENT EXECUTE FUNCTION tackle.fn_audit_rh_del();
+
+
+--
+-- Name: roles_history trg_rh_audit_ins; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_rh_audit_ins AFTER INSERT ON nebula.roles_history REFERENCING NEW TABLE AS inserted_rows FOR EACH STATEMENT EXECUTE FUNCTION tackle.fn_audit_rh_ins();
+
+
+--
+-- Name: roles_history trg_rh_audit_upd; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_rh_audit_upd AFTER UPDATE ON nebula.roles_history REFERENCING NEW TABLE AS updated_rows FOR EACH STATEMENT EXECUTE FUNCTION tackle.fn_audit_rh_upd();
 
 
 --
@@ -19416,6 +30579,48 @@ CREATE TRIGGER trg_segment_expired AFTER UPDATE ON nebula.segments_history FOR E
 --
 
 COMMENT ON TRIGGER trg_segment_expired ON nebula.segments_history IS 'Emits pg_notify(''segment_expired'', json) when a segment is superseded so substance can invalidate cached segment sets.';
+
+
+--
+-- Name: session_context_snapshots trg_session_context_snapshot_immutability; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_session_context_snapshot_immutability BEFORE DELETE OR UPDATE ON nebula.session_context_snapshots FOR EACH ROW EXECUTE FUNCTION nebula.trg_session_context_snapshot_immutability();
+
+
+--
+-- Name: session_context_snapshots trg_session_context_snapshot_provenance; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_session_context_snapshot_provenance BEFORE INSERT OR UPDATE ON nebula.session_context_snapshots FOR EACH ROW EXECUTE FUNCTION nebula.trg_session_context_snapshot_provenance();
+
+
+--
+-- Name: session_context_snapshots trg_session_context_snapshots_audit_del; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_session_context_snapshots_audit_del AFTER DELETE ON nebula.session_context_snapshots REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION nebula.trg_session_context_snapshot_audit_del();
+
+
+--
+-- Name: session_context_snapshots trg_session_context_snapshots_audit_ins; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_session_context_snapshots_audit_ins AFTER INSERT ON nebula.session_context_snapshots REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION nebula.trg_session_context_snapshot_audit_ins();
+
+
+--
+-- Name: session_context_snapshots trg_session_context_snapshots_audit_upd; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_session_context_snapshots_audit_upd AFTER UPDATE ON nebula.session_context_snapshots REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION nebula.trg_session_context_snapshot_audit_upd();
+
+
+--
+-- Name: session_context_snapshots trg_session_context_snapshots_no_truncate; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_session_context_snapshots_no_truncate BEFORE TRUNCATE ON nebula.session_context_snapshots FOR EACH STATEMENT EXECUTE FUNCTION nebula.trg_session_context_snapshot_no_truncate();
 
 
 --
@@ -19447,6 +30652,13 @@ CREATE TRIGGER trg_registry_service_asset_link BEFORE INSERT ON registry.service
 
 
 --
+-- Name: receipt trg_canonical_admission_append_only; Type: TRIGGER; Schema: resolution; Owner: -
+--
+
+CREATE TRIGGER trg_canonical_admission_append_only BEFORE DELETE OR UPDATE ON resolution.receipt FOR EACH ROW WHEN ((old.kind = 'admission'::text)) EXECUTE FUNCTION resolution.forbid_canonical_admission_mutation();
+
+
+--
 -- Name: execution_evidence trg_execution_evidence_immutable; Type: TRIGGER; Schema: resolution; Owner: -
 --
 
@@ -19458,6 +30670,27 @@ CREATE TRIGGER trg_execution_evidence_immutable BEFORE DELETE OR UPDATE ON resol
 --
 
 CREATE TRIGGER trg_expression_operand_acyclic BEFORE INSERT OR UPDATE ON resolution.expression_operand FOR EACH ROW EXECUTE FUNCTION resolution.check_expression_acyclic();
+
+
+--
+-- Name: receipt trg_resolution_receipt_grant; Type: TRIGGER; Schema: resolution; Owner: -
+--
+
+CREATE TRIGGER trg_resolution_receipt_grant BEFORE INSERT ON resolution.receipt FOR EACH ROW EXECUTE FUNCTION resolution.enforce_producer_grant();
+
+
+--
+-- Name: shrapnel_field_sync_evidence trg_shrapnel_field_sync_evidence_no_delete; Type: TRIGGER; Schema: resolution; Owner: -
+--
+
+CREATE TRIGGER trg_shrapnel_field_sync_evidence_no_delete BEFORE DELETE ON resolution.shrapnel_field_sync_evidence FOR EACH ROW EXECUTE FUNCTION resolution.prevent_shrapnel_field_sync_evidence_mutation();
+
+
+--
+-- Name: shrapnel_field_sync_evidence trg_shrapnel_field_sync_evidence_no_update; Type: TRIGGER; Schema: resolution; Owner: -
+--
+
+CREATE TRIGGER trg_shrapnel_field_sync_evidence_no_update BEFORE UPDATE ON resolution.shrapnel_field_sync_evidence FOR EACH ROW EXECUTE FUNCTION resolution.prevent_shrapnel_field_sync_evidence_mutation();
 
 
 --
@@ -19482,6 +30715,167 @@ CREATE TRIGGER trg_statement_evidence_check_statement BEFORE INSERT OR UPDATE ON
 
 
 --
+-- Name: field trg_field_set_updated_at; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_field_set_updated_at BEFORE UPDATE ON shrapnel.field FOR EACH ROW EXECUTE FUNCTION shrapnel.set_updated_at();
+
+
+--
+-- Name: object_instance trg_objinst_membership_evidence; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_objinst_membership_evidence BEFORE INSERT OR UPDATE OF stereotype_id, stereotype_revision_id ON shrapnel.object_instance FOR EACH ROW EXECUTE FUNCTION shrapnel.check_membership_evidence_present();
+
+
+--
+-- Name: stereotype_field trg_stereotype_field_freeze; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_stereotype_field_freeze BEFORE INSERT OR DELETE OR UPDATE ON shrapnel.stereotype_field FOR EACH ROW EXECUTE FUNCTION shrapnel.forbid_stereotype_field_mutation();
+
+
+--
+-- Name: stereotype_revision trg_stereotype_revision_acyclic; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_stereotype_revision_acyclic BEFORE INSERT ON shrapnel.stereotype_revision FOR EACH ROW EXECUTE FUNCTION shrapnel.check_stereotype_acyclic();
+
+
+--
+-- Name: stereotype_revision trg_stereotype_revision_fingerprint; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trg_stereotype_revision_fingerprint AFTER INSERT ON shrapnel.stereotype_revision DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION shrapnel.verify_stereotype_fingerprint();
+
+
+--
+-- Name: stereotype_revision trg_stereotype_revision_no_delete; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_stereotype_revision_no_delete BEFORE DELETE ON shrapnel.stereotype_revision FOR EACH ROW EXECUTE FUNCTION shrapnel.forbid_stereotype_revision_mutation();
+
+
+--
+-- Name: stereotype_revision trg_stereotype_revision_no_update; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_stereotype_revision_no_update BEFORE UPDATE ON shrapnel.stereotype_revision FOR EACH ROW EXECUTE FUNCTION shrapnel.forbid_stereotype_revision_mutation();
+
+
+--
+-- Name: stereotype_revision trg_stereotype_revision_superset; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trg_stereotype_revision_superset AFTER INSERT ON shrapnel.stereotype_revision DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION shrapnel.check_stereotype_field_superset_v2();
+
+
+--
+-- Name: field trg_sync_field_metadata_to_resolution; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_sync_field_metadata_to_resolution AFTER INSERT OR UPDATE OF property_name, field_type_code ON shrapnel.field FOR EACH ROW EXECUTE FUNCTION shrapnel.sync_field_metadata_to_resolution();
+
+
+--
+-- Name: value_boolean trg_value_boolean_type_guard; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_value_boolean_type_guard BEFORE INSERT OR UPDATE ON shrapnel.value_boolean FOR EACH ROW EXECUTE FUNCTION shrapnel.assert_extension_type_matches('4');
+
+
+--
+-- Name: TRIGGER trg_value_boolean_type_guard ON value_boolean; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TRIGGER trg_value_boolean_type_guard ON shrapnel.value_boolean IS 'Reject extension rows whose parent value.value_type_code is not 4.';
+
+
+--
+-- Name: value_double trg_value_double_type_guard; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_value_double_type_guard BEFORE INSERT OR UPDATE ON shrapnel.value_double FOR EACH ROW EXECUTE FUNCTION shrapnel.assert_extension_type_matches('3');
+
+
+--
+-- Name: TRIGGER trg_value_double_type_guard ON value_double; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TRIGGER trg_value_double_type_guard ON shrapnel.value_double IS 'Reject extension rows whose parent value.value_type_code is not 3.';
+
+
+--
+-- Name: value_jsonb trg_value_jsonb_type_guard; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_value_jsonb_type_guard BEFORE INSERT OR UPDATE ON shrapnel.value_jsonb FOR EACH ROW EXECUTE FUNCTION shrapnel.assert_extension_type_matches('6');
+
+
+--
+-- Name: TRIGGER trg_value_jsonb_type_guard ON value_jsonb; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TRIGGER trg_value_jsonb_type_guard ON shrapnel.value_jsonb IS 'Reject extension rows whose parent value.value_type_code is not 6.';
+
+
+--
+-- Name: value_long trg_value_long_type_guard; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_value_long_type_guard BEFORE INSERT OR UPDATE ON shrapnel.value_long FOR EACH ROW EXECUTE FUNCTION shrapnel.assert_extension_type_matches('1');
+
+
+--
+-- Name: TRIGGER trg_value_long_type_guard ON value_long; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TRIGGER trg_value_long_type_guard ON shrapnel.value_long IS 'Reject extension rows whose parent value.value_type_code is not 1.';
+
+
+--
+-- Name: value_string trg_value_string_type_guard; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_value_string_type_guard BEFORE INSERT OR UPDATE ON shrapnel.value_string FOR EACH ROW EXECUTE FUNCTION shrapnel.assert_extension_type_matches('2');
+
+
+--
+-- Name: TRIGGER trg_value_string_type_guard ON value_string; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TRIGGER trg_value_string_type_guard ON shrapnel.value_string IS 'Reject extension rows whose parent value.value_type_code is not 2.';
+
+
+--
+-- Name: value_timestamp trg_value_timestamp_type_guard; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_value_timestamp_type_guard BEFORE INSERT OR UPDATE ON shrapnel.value_timestamp FOR EACH ROW EXECUTE FUNCTION shrapnel.assert_extension_type_matches('5');
+
+
+--
+-- Name: TRIGGER trg_value_timestamp_type_guard ON value_timestamp; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TRIGGER trg_value_timestamp_type_guard ON shrapnel.value_timestamp IS 'Reject extension rows whose parent value.value_type_code is not 5.';
+
+
+--
+-- Name: value_uuid trg_value_uuid_type_guard; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_value_uuid_type_guard BEFORE INSERT OR UPDATE ON shrapnel.value_uuid FOR EACH ROW EXECUTE FUNCTION shrapnel.assert_extension_type_matches('7');
+
+
+--
+-- Name: TRIGGER trg_value_uuid_type_guard ON value_uuid; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TRIGGER trg_value_uuid_type_guard ON shrapnel.value_uuid IS 'Reject extension rows whose parent value.value_type_code is not 7.';
+
+
+--
 -- Name: config_bundle trg_config_bundle_interactive_priority_pin; Type: TRIGGER; Schema: tackle; Owner: -
 --
 
@@ -19493,6 +30887,55 @@ CREATE TRIGGER trg_config_bundle_interactive_priority_pin BEFORE INSERT OR UPDAT
 --
 
 CREATE TRIGGER trg_config_bundle_verified_gate BEFORE INSERT OR UPDATE ON tackle.config_bundle FOR EACH ROW EXECUTE FUNCTION tackle.config_bundle_verified_gate();
+
+
+--
+-- Name: system_logs trg_guard_audit_erase; Type: TRIGGER; Schema: tackle; Owner: -
+--
+
+CREATE TRIGGER trg_guard_audit_erase AFTER DELETE ON tackle.system_logs REFERENCING OLD TABLE AS deleted_rows FOR EACH STATEMENT EXECUTE FUNCTION tackle.fn_guard_audit_erase();
+
+
+--
+-- Name: memory trg_memory_audit_del; Type: TRIGGER; Schema: tackle; Owner: -
+--
+
+CREATE TRIGGER trg_memory_audit_del AFTER DELETE ON tackle.memory REFERENCING OLD TABLE AS deleted_rows FOR EACH STATEMENT EXECUTE FUNCTION tackle.fn_audit_memory_del();
+
+
+--
+-- Name: memory trg_memory_audit_ins; Type: TRIGGER; Schema: tackle; Owner: -
+--
+
+CREATE TRIGGER trg_memory_audit_ins AFTER INSERT ON tackle.memory REFERENCING NEW TABLE AS inserted_rows FOR EACH STATEMENT EXECUTE FUNCTION tackle.fn_audit_memory_ins();
+
+
+--
+-- Name: memory trg_memory_audit_upd; Type: TRIGGER; Schema: tackle; Owner: -
+--
+
+CREATE TRIGGER trg_memory_audit_upd AFTER UPDATE ON tackle.memory REFERENCING NEW TABLE AS updated_rows FOR EACH STATEMENT EXECUTE FUNCTION tackle.fn_audit_memory_upd();
+
+
+--
+-- Name: role_memory trg_rm_audit_del; Type: TRIGGER; Schema: tackle; Owner: -
+--
+
+CREATE TRIGGER trg_rm_audit_del AFTER DELETE ON tackle.role_memory REFERENCING OLD TABLE AS deleted_rows FOR EACH STATEMENT EXECUTE FUNCTION tackle.fn_audit_rm_del();
+
+
+--
+-- Name: role_memory trg_rm_audit_ins; Type: TRIGGER; Schema: tackle; Owner: -
+--
+
+CREATE TRIGGER trg_rm_audit_ins AFTER INSERT ON tackle.role_memory REFERENCING NEW TABLE AS inserted_rows FOR EACH STATEMENT EXECUTE FUNCTION tackle.fn_audit_rm_ins();
+
+
+--
+-- Name: role_memory trg_rm_audit_upd; Type: TRIGGER; Schema: tackle; Owner: -
+--
+
+CREATE TRIGGER trg_rm_audit_upd AFTER UPDATE ON tackle.role_memory REFERENCING NEW TABLE AS updated_rows FOR EACH STATEMENT EXECUTE FUNCTION tackle.fn_audit_rm_upd();
 
 
 --
@@ -19573,6 +31016,55 @@ CREATE TRIGGER trg_branches_view_update INSTEAD OF UPDATE ON vision.branches FOR
 
 
 --
+-- Name: calendar_events trg_calendar_events_audit_ins; Type: TRIGGER; Schema: vision; Owner: -
+--
+
+CREATE TRIGGER trg_calendar_events_audit_ins AFTER INSERT ON vision.calendar_events REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION vision.trg_calendar_events_audit_ins();
+
+
+--
+-- Name: calendar_events trg_calendar_events_audit_upd; Type: TRIGGER; Schema: vision; Owner: -
+--
+
+CREATE TRIGGER trg_calendar_events_audit_upd AFTER UPDATE ON vision.calendar_events REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION vision.trg_calendar_events_audit_upd();
+
+
+--
+-- Name: calendar_events trg_calendar_events_no_delete; Type: TRIGGER; Schema: vision; Owner: -
+--
+
+CREATE TRIGGER trg_calendar_events_no_delete BEFORE DELETE ON vision.calendar_events FOR EACH ROW EXECUTE FUNCTION vision.trg_calendar_no_delete();
+
+
+--
+-- Name: calendar_events trg_calendar_events_no_truncate; Type: TRIGGER; Schema: vision; Owner: -
+--
+
+CREATE TRIGGER trg_calendar_events_no_truncate BEFORE TRUNCATE ON vision.calendar_events FOR EACH STATEMENT EXECUTE FUNCTION vision.trg_calendar_no_truncate();
+
+
+--
+-- Name: calendars trg_calendars_no_delete; Type: TRIGGER; Schema: vision; Owner: -
+--
+
+CREATE TRIGGER trg_calendars_no_delete BEFORE DELETE ON vision.calendars FOR EACH ROW EXECUTE FUNCTION vision.trg_calendar_no_delete();
+
+
+--
+-- Name: calendars trg_calendars_no_truncate; Type: TRIGGER; Schema: vision; Owner: -
+--
+
+CREATE TRIGGER trg_calendars_no_truncate BEFORE TRUNCATE ON vision.calendars FOR EACH STATEMENT EXECUTE FUNCTION vision.trg_calendar_no_truncate();
+
+
+--
+-- Name: work_requests trg_canonical_wr_landing_guard; Type: TRIGGER; Schema: vision; Owner: -
+--
+
+CREATE TRIGGER trg_canonical_wr_landing_guard BEFORE INSERT OR UPDATE ON vision.work_requests FOR EACH ROW EXECUTE FUNCTION vision.trg_canonical_wr_landing_guard();
+
+
+--
 -- Name: governance_events trg_governance_events_view_delete; Type: TRIGGER; Schema: vision; Owner: -
 --
 
@@ -19643,6 +31135,34 @@ CREATE TRIGGER trg_receipts_assign_sequence BEFORE INSERT ON vision.receipts FOR
 
 
 --
+-- Name: sessions trg_sessions_audit_ins; Type: TRIGGER; Schema: vision; Owner: -
+--
+
+CREATE TRIGGER trg_sessions_audit_ins AFTER INSERT ON vision.sessions REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION vision.trg_sessions_audit_ins();
+
+
+--
+-- Name: sessions trg_sessions_audit_upd; Type: TRIGGER; Schema: vision; Owner: -
+--
+
+CREATE TRIGGER trg_sessions_audit_upd AFTER UPDATE ON vision.sessions REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION vision.trg_sessions_audit_upd();
+
+
+--
+-- Name: sessions trg_sessions_no_delete; Type: TRIGGER; Schema: vision; Owner: -
+--
+
+CREATE TRIGGER trg_sessions_no_delete BEFORE DELETE ON vision.sessions FOR EACH ROW EXECUTE FUNCTION vision.trg_calendar_no_delete();
+
+
+--
+-- Name: sessions trg_sessions_no_truncate; Type: TRIGGER; Schema: vision; Owner: -
+--
+
+CREATE TRIGGER trg_sessions_no_truncate BEFORE TRUNCATE ON vision.sessions FOR EACH STATEMENT EXECUTE FUNCTION vision.trg_calendar_no_truncate();
+
+
+--
 -- Name: work_requests trg_vision_work_requests_asset; Type: TRIGGER; Schema: vision; Owner: -
 --
 
@@ -19678,6 +31198,13 @@ CREATE TRIGGER trg_wr_compile_verdicts_immutable BEFORE DELETE OR UPDATE ON visi
 
 
 --
+-- Name: work_request_shape_registry trg_wr_shape_registry_single_ratified; Type: TRIGGER; Schema: vision; Owner: -
+--
+
+CREATE TRIGGER trg_wr_shape_registry_single_ratified BEFORE INSERT OR UPDATE ON vision.work_request_shape_registry FOR EACH ROW EXECUTE FUNCTION vision.trg_work_request_shape_registry_single_ratified();
+
+
+--
 -- Name: workflow_instances trg_bridge_instance_to_cascade; Type: TRIGGER; Schema: wind; Owner: -
 --
 
@@ -19689,6 +31216,563 @@ CREATE TRIGGER trg_bridge_instance_to_cascade AFTER UPDATE OF status ON wind.wor
 --
 
 CREATE TRIGGER trg_bridge_ticket_to_cascade AFTER UPDATE OF status ON wind.tickets FOR EACH ROW WHEN ((((old.status)::text IS DISTINCT FROM (new.status)::text) AND ((new.status)::text = ANY ((ARRAY['COMPLETED'::character varying, 'CANCELLED'::character varying])::text[])))) EXECUTE FUNCTION wind.bridge_ticket_to_cascade();
+
+
+--
+-- Name: node_requirements trg_node_req_audit_del; Type: TRIGGER; Schema: wind; Owner: -
+--
+
+CREATE TRIGGER trg_node_req_audit_del AFTER DELETE ON wind.node_requirements REFERENCING OLD TABLE AS deleted_rows FOR EACH STATEMENT EXECUTE FUNCTION wind.fn_node_requirements_audit();
+
+
+--
+-- Name: node_requirements trg_node_req_audit_ins; Type: TRIGGER; Schema: wind; Owner: -
+--
+
+CREATE TRIGGER trg_node_req_audit_ins AFTER INSERT ON wind.node_requirements REFERENCING NEW TABLE AS inserted_rows FOR EACH STATEMENT EXECUTE FUNCTION wind.fn_node_requirements_audit();
+
+
+--
+-- Name: node_requirements trg_node_req_audit_upd; Type: TRIGGER; Schema: wind; Owner: -
+--
+
+CREATE TRIGGER trg_node_req_audit_upd AFTER UPDATE ON wind.node_requirements REFERENCING OLD TABLE AS updated_rows FOR EACH STATEMENT EXECUTE FUNCTION wind.fn_node_requirements_audit();
+
+
+--
+-- Name: execution_attempts trg_wind_execution_attempts_immutable; Type: TRIGGER; Schema: wind; Owner: -
+--
+
+CREATE TRIGGER trg_wind_execution_attempts_immutable BEFORE DELETE OR UPDATE ON wind.execution_attempts FOR EACH ROW EXECUTE FUNCTION wind.forbid_execution_evidence_mutation();
+
+
+--
+-- Name: execution_receipts trg_wind_execution_receipts_immutable; Type: TRIGGER; Schema: wind; Owner: -
+--
+
+CREATE TRIGGER trg_wind_execution_receipts_immutable BEFORE DELETE OR UPDATE ON wind.execution_receipts FOR EACH ROW EXECUTE FUNCTION wind.forbid_execution_evidence_mutation();
+
+
+--
+-- Name: execution_requests trg_wind_execution_requests_immutable; Type: TRIGGER; Schema: wind; Owner: -
+--
+
+CREATE TRIGGER trg_wind_execution_requests_immutable BEFORE DELETE OR UPDATE ON wind.execution_requests FOR EACH ROW EXECUTE FUNCTION wind.forbid_execution_evidence_mutation();
+
+
+--
+-- Name: provider_contract_revisions trg_wind_provider_contract_revisions_immutable; Type: TRIGGER; Schema: wind; Owner: -
+--
+
+CREATE TRIGGER trg_wind_provider_contract_revisions_immutable BEFORE DELETE OR UPDATE ON wind.provider_contract_revisions FOR EACH ROW EXECUTE FUNCTION wind.forbid_provider_registry_mutation();
+
+
+--
+-- Name: provider_credential_rotations trg_wind_provider_credential_rotations_immutable; Type: TRIGGER; Schema: wind; Owner: -
+--
+
+CREATE TRIGGER trg_wind_provider_credential_rotations_immutable BEFORE DELETE OR UPDATE ON wind.provider_credential_rotations FOR EACH ROW EXECUTE FUNCTION wind.forbid_provider_rotation_mutation();
+
+
+--
+-- Name: workflow_edges trg_workflow_edges_compiled_immutable; Type: TRIGGER; Schema: wind; Owner: -
+--
+
+CREATE TRIGGER trg_workflow_edges_compiled_immutable BEFORE DELETE OR UPDATE ON wind.workflow_edges FOR EACH ROW EXECUTE FUNCTION wind.forbid_compiled_artifact_mutation();
+
+
+--
+-- Name: workflow_nodes trg_workflow_nodes_compiled_immutable; Type: TRIGGER; Schema: wind; Owner: -
+--
+
+CREATE TRIGGER trg_workflow_nodes_compiled_immutable BEFORE DELETE OR UPDATE ON wind.workflow_nodes FOR EACH ROW EXECUTE FUNCTION wind.forbid_compiled_artifact_mutation();
+
+
+--
+-- Name: workflow_versions trg_workflow_versions_compiled_immutable; Type: TRIGGER; Schema: wind; Owner: -
+--
+
+CREATE TRIGGER trg_workflow_versions_compiled_immutable BEFORE DELETE OR UPDATE ON wind.workflow_versions FOR EACH ROW EXECUTE FUNCTION wind.forbid_compiled_artifact_mutation();
+
+
+--
+-- Name: attribute_mapping attribute_mapping_attribute_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.attribute_mapping
+    ADD CONSTRAINT attribute_mapping_attribute_fkey FOREIGN KEY (attribute_id) REFERENCES resolution.concept_attribute(id) ON DELETE CASCADE;
+
+
+--
+-- Name: attribute_mapping attribute_mapping_registry_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.attribute_mapping
+    ADD CONSTRAINT attribute_mapping_registry_fkey FOREIGN KEY (registry_id) REFERENCES aegis.registry(id) ON DELETE CASCADE;
+
+
+--
+-- Name: compiled_edge compiled_edge_compilation_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.compiled_edge
+    ADD CONSTRAINT compiled_edge_compilation_fkey FOREIGN KEY (compilation_id, registry_id, registry_revision_id) REFERENCES aegis.wind_compilation(id, registry_id, registry_revision_id) ON DELETE RESTRICT;
+
+
+--
+-- Name: compiled_edge compiled_edge_compilation_version_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.compiled_edge
+    ADD CONSTRAINT compiled_edge_compilation_version_fkey FOREIGN KEY (compilation_id, wind_workflow_version_id) REFERENCES aegis.wind_compilation(id, wind_workflow_version_id) ON DELETE RESTRICT;
+
+
+--
+-- Name: compiled_edge compiled_edge_revision_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.compiled_edge
+    ADD CONSTRAINT compiled_edge_revision_fkey FOREIGN KEY (registry_id, registry_revision_id) REFERENCES aegis.registry_revision(registry_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: compiled_edge compiled_edge_transition_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.compiled_edge
+    ADD CONSTRAINT compiled_edge_transition_fkey FOREIGN KEY (registry_id, transition_id) REFERENCES aegis.transition(registry_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: compiled_edge compiled_edge_wind_edge_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.compiled_edge
+    ADD CONSTRAINT compiled_edge_wind_edge_fkey FOREIGN KEY (wind_edge_id, wind_workflow_version_id) REFERENCES wind.workflow_edges(id, workflow_version_id) ON DELETE RESTRICT;
+
+
+--
+-- Name: compiled_node compiled_node_compilation_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.compiled_node
+    ADD CONSTRAINT compiled_node_compilation_fkey FOREIGN KEY (compilation_id, registry_id, registry_revision_id) REFERENCES aegis.wind_compilation(id, registry_id, registry_revision_id) ON DELETE RESTRICT;
+
+
+--
+-- Name: compiled_node compiled_node_compilation_version_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.compiled_node
+    ADD CONSTRAINT compiled_node_compilation_version_fkey FOREIGN KEY (compilation_id, wind_workflow_version_id) REFERENCES aegis.wind_compilation(id, wind_workflow_version_id) ON DELETE RESTRICT;
+
+
+--
+-- Name: compiled_node compiled_node_revision_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.compiled_node
+    ADD CONSTRAINT compiled_node_revision_fkey FOREIGN KEY (registry_id, registry_revision_id) REFERENCES aegis.registry_revision(registry_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: compiled_node compiled_node_state_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.compiled_node
+    ADD CONSTRAINT compiled_node_state_fkey FOREIGN KEY (registry_id, state_id) REFERENCES aegis.state(registry_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: compiled_node compiled_node_wind_node_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.compiled_node
+    ADD CONSTRAINT compiled_node_wind_node_fkey FOREIGN KEY (wind_node_id, wind_workflow_version_id) REFERENCES wind.workflow_nodes(id, workflow_version_id) ON DELETE RESTRICT;
+
+
+--
+-- Name: concept_mapping concept_mapping_concept_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.concept_mapping
+    ADD CONSTRAINT concept_mapping_concept_fkey FOREIGN KEY (concept_id) REFERENCES resolution.concept(id) ON DELETE CASCADE;
+
+
+--
+-- Name: concept_mapping concept_mapping_registry_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.concept_mapping
+    ADD CONSTRAINT concept_mapping_registry_fkey FOREIGN KEY (registry_id) REFERENCES aegis.registry(id) ON DELETE CASCADE;
+
+
+--
+-- Name: constant constant_registry_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.constant
+    ADD CONSTRAINT constant_registry_fkey FOREIGN KEY (registry_id) REFERENCES aegis.registry(id) ON DELETE CASCADE;
+
+
+--
+-- Name: execution_log execution_log_from_state_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.execution_log
+    ADD CONSTRAINT execution_log_from_state_fkey FOREIGN KEY (from_state_id) REFERENCES aegis.state(id) ON DELETE SET NULL;
+
+
+--
+-- Name: execution_log execution_log_registry_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.execution_log
+    ADD CONSTRAINT execution_log_registry_fkey FOREIGN KEY (registry_id) REFERENCES aegis.registry(id) ON DELETE CASCADE;
+
+
+--
+-- Name: execution_log execution_log_to_state_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.execution_log
+    ADD CONSTRAINT execution_log_to_state_fkey FOREIGN KEY (to_state_id) REFERENCES aegis.state(id) ON DELETE SET NULL;
+
+
+--
+-- Name: execution_log execution_log_transition_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.execution_log
+    ADD CONSTRAINT execution_log_transition_fkey FOREIGN KEY (transition_id) REFERENCES aegis.transition(id) ON DELETE SET NULL;
+
+
+--
+-- Name: invariant invariant_expression_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.invariant
+    ADD CONSTRAINT invariant_expression_fkey FOREIGN KEY (expression_id) REFERENCES resolution.expression(id) ON DELETE SET NULL;
+
+
+--
+-- Name: invariant invariant_registry_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.invariant
+    ADD CONSTRAINT invariant_registry_fkey FOREIGN KEY (registry_id) REFERENCES aegis.registry(id) ON DELETE CASCADE;
+
+
+--
+-- Name: invariant invariant_rule_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.invariant
+    ADD CONSTRAINT invariant_rule_fkey FOREIGN KEY (rule_id) REFERENCES resolution.rule(id) ON DELETE SET NULL;
+
+
+--
+-- Name: model_check_result model_check_result_registry_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.model_check_result
+    ADD CONSTRAINT model_check_result_registry_fkey FOREIGN KEY (registry_id) REFERENCES aegis.registry(id) ON DELETE CASCADE;
+
+
+--
+-- Name: model_check_result model_check_result_registry_property_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.model_check_result
+    ADD CONSTRAINT model_check_result_registry_property_fkey FOREIGN KEY (registry_id, property_id) REFERENCES aegis.property(registry_id, id);
+
+
+--
+-- Name: model_check_result model_check_result_registry_revision_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.model_check_result
+    ADD CONSTRAINT model_check_result_registry_revision_fkey FOREIGN KEY (registry_revision_id) REFERENCES aegis.registry_revision(id);
+
+
+--
+-- Name: property property_registry_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.property
+    ADD CONSTRAINT property_registry_fkey FOREIGN KEY (registry_id) REFERENCES aegis.registry(id) ON DELETE CASCADE;
+
+
+--
+-- Name: registry registry_main_concept_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.registry
+    ADD CONSTRAINT registry_main_concept_fkey FOREIGN KEY (main_concept_id) REFERENCES resolution.concept(id) ON DELETE SET NULL;
+
+
+--
+-- Name: registry_revision registry_revision_registry_id_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.registry_revision
+    ADD CONSTRAINT registry_revision_registry_id_fkey FOREIGN KEY (registry_id) REFERENCES aegis.registry(id);
+
+
+--
+-- Name: registry_revision registry_revision_supersedes_revision_id_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.registry_revision
+    ADD CONSTRAINT registry_revision_supersedes_revision_id_fkey FOREIGN KEY (supersedes_revision_id) REFERENCES aegis.registry_revision(id);
+
+
+--
+-- Name: relationship_mapping relationship_mapping_registry_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.relationship_mapping
+    ADD CONSTRAINT relationship_mapping_registry_fkey FOREIGN KEY (registry_id) REFERENCES aegis.registry(id) ON DELETE CASCADE;
+
+
+--
+-- Name: relationship_mapping relationship_mapping_relationship_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.relationship_mapping
+    ADD CONSTRAINT relationship_mapping_relationship_fkey FOREIGN KEY (relationship_id) REFERENCES resolution.concept_relationship(id) ON DELETE CASCADE;
+
+
+--
+-- Name: state state_attr_value_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.state
+    ADD CONSTRAINT state_attr_value_fkey FOREIGN KEY (attribute_value_id) REFERENCES resolution.concept_attribute_value(id) ON DELETE SET NULL;
+
+
+--
+-- Name: state state_concept_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.state
+    ADD CONSTRAINT state_concept_fkey FOREIGN KEY (concept_id) REFERENCES resolution.concept(id) ON DELETE SET NULL;
+
+
+--
+-- Name: state state_registry_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.state
+    ADD CONSTRAINT state_registry_fkey FOREIGN KEY (registry_id) REFERENCES aegis.registry(id) ON DELETE CASCADE;
+
+
+--
+-- Name: temporal_property temporal_property_registry_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.temporal_property
+    ADD CONSTRAINT temporal_property_registry_fkey FOREIGN KEY (registry_id) REFERENCES aegis.registry(id) ON DELETE CASCADE;
+
+
+--
+-- Name: transition transition_from_state_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.transition
+    ADD CONSTRAINT transition_from_state_fkey FOREIGN KEY (from_state_id) REFERENCES aegis.state(id) ON DELETE SET NULL;
+
+
+--
+-- Name: transition transition_guard_rule_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.transition
+    ADD CONSTRAINT transition_guard_rule_fkey FOREIGN KEY (guard_rule_id) REFERENCES resolution.rule(id) ON DELETE SET NULL;
+
+
+--
+-- Name: transition transition_registry_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.transition
+    ADD CONSTRAINT transition_registry_fkey FOREIGN KEY (registry_id) REFERENCES aegis.registry(id) ON DELETE CASCADE;
+
+
+--
+-- Name: transition transition_state_transition_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.transition
+    ADD CONSTRAINT transition_state_transition_fkey FOREIGN KEY (state_transition_id) REFERENCES resolution.concept_state_transition(id) ON DELETE SET NULL;
+
+
+--
+-- Name: transition transition_to_state_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.transition
+    ADD CONSTRAINT transition_to_state_fkey FOREIGN KEY (to_state_id) REFERENCES aegis.state(id) ON DELETE SET NULL;
+
+
+--
+-- Name: transition transition_transition_rule_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.transition
+    ADD CONSTRAINT transition_transition_rule_fkey FOREIGN KEY (transition_rule_id) REFERENCES resolution.rule(id) ON DELETE SET NULL;
+
+
+--
+-- Name: validation_result validation_result_registry_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.validation_result
+    ADD CONSTRAINT validation_result_registry_fkey FOREIGN KEY (registry_id) REFERENCES aegis.registry(id) ON DELETE CASCADE;
+
+
+--
+-- Name: variable variable_attribute_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.variable
+    ADD CONSTRAINT variable_attribute_fkey FOREIGN KEY (attribute_id) REFERENCES resolution.concept_attribute(id) ON DELETE SET NULL;
+
+
+--
+-- Name: variable variable_registry_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.variable
+    ADD CONSTRAINT variable_registry_fkey FOREIGN KEY (registry_id) REFERENCES aegis.registry(id) ON DELETE CASCADE;
+
+
+--
+-- Name: wind_compilation wind_compilation_registry_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_compilation
+    ADD CONSTRAINT wind_compilation_registry_fkey FOREIGN KEY (registry_id) REFERENCES aegis.registry(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: wind_compilation wind_compilation_revision_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_compilation
+    ADD CONSTRAINT wind_compilation_revision_fkey FOREIGN KEY (registry_revision_id) REFERENCES aegis.registry_revision(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: wind_compilation wind_compilation_revision_registry_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_compilation
+    ADD CONSTRAINT wind_compilation_revision_registry_fkey FOREIGN KEY (registry_id, registry_revision_id) REFERENCES aegis.registry_revision(registry_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: wind_compilation wind_compilation_validation_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_compilation
+    ADD CONSTRAINT wind_compilation_validation_fkey FOREIGN KEY (registry_id, validation_result_id) REFERENCES aegis.validation_result(registry_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: wind_compilation wind_compilation_wind_version_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_compilation
+    ADD CONSTRAINT wind_compilation_wind_version_fkey FOREIGN KEY (wind_workflow_version_id, wind_workflow_id) REFERENCES wind.workflow_versions(id, workflow_id) ON DELETE RESTRICT;
+
+
+--
+-- Name: wind_outcome_mapping wind_outcome_mapping_registry_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_outcome_mapping
+    ADD CONSTRAINT wind_outcome_mapping_registry_fkey FOREIGN KEY (registry_id) REFERENCES aegis.registry(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: wind_outcome_mapping wind_outcome_mapping_revision_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_outcome_mapping
+    ADD CONSTRAINT wind_outcome_mapping_revision_fkey FOREIGN KEY (registry_revision_id) REFERENCES aegis.registry_revision(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: wind_outcome_mapping wind_outcome_mapping_revision_registry_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_outcome_mapping
+    ADD CONSTRAINT wind_outcome_mapping_revision_registry_fkey FOREIGN KEY (registry_id, registry_revision_id) REFERENCES aegis.registry_revision(registry_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: wind_outcome_mapping wind_outcome_mapping_transition_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_outcome_mapping
+    ADD CONSTRAINT wind_outcome_mapping_transition_fkey FOREIGN KEY (registry_id, transition_id) REFERENCES aegis.transition(registry_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: wind_outcome_mapping wind_outcome_mapping_wind_outcome_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_outcome_mapping
+    ADD CONSTRAINT wind_outcome_mapping_wind_outcome_fkey FOREIGN KEY (wind_outcome_id, wind_task_id) REFERENCES wind.task_outcomes(id, task_id) ON DELETE RESTRICT;
+
+
+--
+-- Name: wind_outcome_mapping wind_outcome_mapping_wind_task_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_outcome_mapping
+    ADD CONSTRAINT wind_outcome_mapping_wind_task_fkey FOREIGN KEY (wind_task_id) REFERENCES wind.tasks(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: wind_task_mapping wind_task_mapping_registry_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_task_mapping
+    ADD CONSTRAINT wind_task_mapping_registry_fkey FOREIGN KEY (registry_id) REFERENCES aegis.registry(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: wind_task_mapping wind_task_mapping_revision_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_task_mapping
+    ADD CONSTRAINT wind_task_mapping_revision_fkey FOREIGN KEY (registry_revision_id) REFERENCES aegis.registry_revision(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: wind_task_mapping wind_task_mapping_revision_registry_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_task_mapping
+    ADD CONSTRAINT wind_task_mapping_revision_registry_fkey FOREIGN KEY (registry_id, registry_revision_id) REFERENCES aegis.registry_revision(registry_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: wind_task_mapping wind_task_mapping_state_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_task_mapping
+    ADD CONSTRAINT wind_task_mapping_state_fkey FOREIGN KEY (registry_id, state_id) REFERENCES aegis.state(registry_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: wind_task_mapping wind_task_mapping_wind_task_fkey; Type: FK CONSTRAINT; Schema: aegis; Owner: -
+--
+
+ALTER TABLE ONLY aegis.wind_task_mapping
+    ADD CONSTRAINT wind_task_mapping_wind_task_fkey FOREIGN KEY (wind_task_id) REFERENCES wind.tasks(id) ON DELETE RESTRICT;
 
 
 --
@@ -19748,6 +31832,14 @@ ALTER TABLE ONLY execution.requests
 
 
 --
+-- Name: adapters adapters_capability_id_fkey; Type: FK CONSTRAINT; Schema: nebula; Owner: -
+--
+
+ALTER TABLE ONLY nebula.adapters
+    ADD CONSTRAINT adapters_capability_id_fkey FOREIGN KEY (capability_id) REFERENCES nebula.capabilities(id);
+
+
+--
 -- Name: agenda_item_questions agenda_item_questions_agenda_item_id_fkey; Type: FK CONSTRAINT; Schema: nebula; Owner: -
 --
 
@@ -19769,6 +31861,22 @@ ALTER TABLE ONLY nebula.agenda_item_questions
 
 ALTER TABLE ONLY nebula.agenda_items_history
     ADD CONSTRAINT agenda_items_agenda_id_fkey FOREIGN KEY (agenda_id) REFERENCES nebula.agendas_history(id) ON DELETE CASCADE;
+
+
+--
+-- Name: attestations attestations_cites_id_fkey; Type: FK CONSTRAINT; Schema: nebula; Owner: -
+--
+
+ALTER TABLE ONLY nebula.attestations
+    ADD CONSTRAINT attestations_cites_id_fkey FOREIGN KEY (cites_id) REFERENCES nebula.attestations(attestation_id) ON DELETE RESTRICT;
+
+
+--
+-- Name: blueprints_history blueprints_history_asset_id_fkey; Type: FK CONSTRAINT; Schema: nebula; Owner: -
+--
+
+ALTER TABLE ONLY nebula.blueprints_history
+    ADD CONSTRAINT blueprints_history_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES semantics.canonical_asset(id);
 
 
 --
@@ -20332,6 +32440,14 @@ ALTER TABLE ONLY resolution.expression
 
 
 --
+-- Name: fanout_transition fanout_transition_input_receipt_id_fkey; Type: FK CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.fanout_transition
+    ADD CONSTRAINT fanout_transition_input_receipt_id_fkey FOREIGN KEY (input_receipt_id) REFERENCES resolution.receipt(id);
+
+
+--
 -- Name: frame_dimension_meaning frame_dimension_meaning_dimension_id_fkey; Type: FK CONSTRAINT; Schema: resolution; Owner: -
 --
 
@@ -20468,6 +32584,22 @@ ALTER TABLE ONLY resolution.open_question
 
 
 --
+-- Name: promotion_batch_candidate promotion_batch_candidate_batch_id_fkey; Type: FK CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.promotion_batch_candidate
+    ADD CONSTRAINT promotion_batch_candidate_batch_id_fkey FOREIGN KEY (batch_id) REFERENCES resolution.promotion_batch(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: promotion_batch_candidate promotion_batch_candidate_candidate_id_fkey; Type: FK CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.promotion_batch_candidate
+    ADD CONSTRAINT promotion_batch_candidate_candidate_id_fkey FOREIGN KEY (candidate_id) REFERENCES resolution.candidate(id) ON DELETE RESTRICT;
+
+
+--
 -- Name: proposition_assertion proposition_assertion_proposition_id_fkey; Type: FK CONSTRAINT; Schema: resolution; Owner: -
 --
 
@@ -20553,6 +32685,14 @@ ALTER TABLE ONLY resolution.proposition
 
 ALTER TABLE ONLY resolution.proposition
     ADD CONSTRAINT proposition_semantic_type_id_fkey FOREIGN KEY (semantic_type_id) REFERENCES resolution.semantic_type(id);
+
+
+--
+-- Name: receipt receipt_producer_id_fkey; Type: FK CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.receipt
+    ADD CONSTRAINT receipt_producer_id_fkey FOREIGN KEY (producer_id) REFERENCES resolution.producer_registry(producer_id);
 
 
 --
@@ -20708,6 +32848,14 @@ ALTER TABLE ONLY resolution.semantic_type_required_dimension
 
 
 --
+-- Name: shrapnel_field_sync_evidence shrapnel_field_sync_evidence_concept_attribute_id_fkey; Type: FK CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.shrapnel_field_sync_evidence
+    ADD CONSTRAINT shrapnel_field_sync_evidence_concept_attribute_id_fkey FOREIGN KEY (concept_attribute_id) REFERENCES resolution.concept_attribute(id);
+
+
+--
 -- Name: specification specification_asset_id_fkey; Type: FK CONSTRAINT; Schema: resolution; Owner: -
 --
 
@@ -20753,6 +32901,30 @@ ALTER TABLE ONLY resolution.specification
 
 ALTER TABLE ONLY resolution.t24_graph_edge_evidence
     ADD CONSTRAINT t24_graph_edge_evidence_evidence_id_fkey FOREIGN KEY (evidence_id) REFERENCES resolution.execution_evidence(id);
+
+
+--
+-- Name: ticket ticket_predecessor_receipt_id_fkey; Type: FK CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.ticket
+    ADD CONSTRAINT ticket_predecessor_receipt_id_fkey FOREIGN KEY (predecessor_receipt_id) REFERENCES resolution.receipt(id);
+
+
+--
+-- Name: ticket_transition ticket_transition_input_receipt_id_fkey; Type: FK CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.ticket_transition
+    ADD CONSTRAINT ticket_transition_input_receipt_id_fkey FOREIGN KEY (input_receipt_id) REFERENCES resolution.receipt(id);
+
+
+--
+-- Name: ticket_transition ticket_transition_ticket_id_fkey; Type: FK CONSTRAINT; Schema: resolution; Owner: -
+--
+
+ALTER TABLE ONLY resolution.ticket_transition
+    ADD CONSTRAINT ticket_transition_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES resolution.ticket(id);
 
 
 --
@@ -20932,6 +33104,142 @@ ALTER TABLE ONLY semantics.statement_evidence
 
 
 --
+-- Name: field fk_field_field_type; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.field
+    ADD CONSTRAINT fk_field_field_type FOREIGN KEY (field_type_code) REFERENCES shrapnel.field_type(code) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
+-- Name: object_instance fk_objinst_stereotype_identity; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.object_instance
+    ADD CONSTRAINT fk_objinst_stereotype_identity FOREIGN KEY (stereotype_id, stereotype_revision_id) REFERENCES shrapnel.stereotype_revision(stereotype_id, id);
+
+
+--
+-- Name: stereotype_revision fk_sterev_parent_identity; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype_revision
+    ADD CONSTRAINT fk_sterev_parent_identity FOREIGN KEY (parent_stereotype_id, parent_revision_id) REFERENCES shrapnel.stereotype_revision(stereotype_id, id);
+
+
+--
+-- Name: value fk_value_field_type; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value
+    ADD CONSTRAINT fk_value_field_type FOREIGN KEY (value_type_code) REFERENCES shrapnel.field_type(code) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
+-- Name: value_long fk_value_long_value; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_long
+    ADD CONSTRAINT fk_value_long_value FOREIGN KEY (id) REFERENCES shrapnel.value(id) ON DELETE CASCADE;
+
+
+--
+-- Name: value_string fk_value_string_value; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_string
+    ADD CONSTRAINT fk_value_string_value FOREIGN KEY (id) REFERENCES shrapnel.value(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_attribute_value object_attribute_value_field_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.object_attribute_value
+    ADD CONSTRAINT object_attribute_value_field_id_fkey FOREIGN KEY (field_id) REFERENCES shrapnel.field(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_attribute_value object_attribute_value_object_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.object_attribute_value
+    ADD CONSTRAINT object_attribute_value_object_id_fkey FOREIGN KEY (object_id) REFERENCES shrapnel.object_instance(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_attribute_value object_attribute_value_value_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.object_attribute_value
+    ADD CONSTRAINT object_attribute_value_value_id_fkey FOREIGN KEY (value_id) REFERENCES shrapnel.value(id) ON DELETE CASCADE;
+
+
+--
+-- Name: stereotype_field stereotype_field_field_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype_field
+    ADD CONSTRAINT stereotype_field_field_id_fkey FOREIGN KEY (field_id) REFERENCES shrapnel.field(id);
+
+
+--
+-- Name: stereotype_field stereotype_field_stereotype_revision_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype_field
+    ADD CONSTRAINT stereotype_field_stereotype_revision_id_fkey FOREIGN KEY (stereotype_revision_id) REFERENCES shrapnel.stereotype_revision(id);
+
+
+--
+-- Name: stereotype_revision stereotype_revision_stereotype_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype_revision
+    ADD CONSTRAINT stereotype_revision_stereotype_id_fkey FOREIGN KEY (stereotype_id) REFERENCES shrapnel.stereotype(id);
+
+
+--
+-- Name: value_boolean value_boolean_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_boolean
+    ADD CONSTRAINT value_boolean_id_fkey FOREIGN KEY (id) REFERENCES shrapnel.value(id) ON DELETE CASCADE;
+
+
+--
+-- Name: value_double value_double_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_double
+    ADD CONSTRAINT value_double_id_fkey FOREIGN KEY (id) REFERENCES shrapnel.value(id) ON DELETE CASCADE;
+
+
+--
+-- Name: value_jsonb value_jsonb_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_jsonb
+    ADD CONSTRAINT value_jsonb_id_fkey FOREIGN KEY (id) REFERENCES shrapnel.value(id) ON DELETE CASCADE;
+
+
+--
+-- Name: value_timestamp value_timestamp_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_timestamp
+    ADD CONSTRAINT value_timestamp_id_fkey FOREIGN KEY (id) REFERENCES shrapnel.value(id) ON DELETE CASCADE;
+
+
+--
+-- Name: value_uuid value_uuid_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_uuid
+    ADD CONSTRAINT value_uuid_id_fkey FOREIGN KEY (id) REFERENCES shrapnel.value(id) ON DELETE CASCADE;
+
+
+--
 -- Name: agent_scheduler fk_agent_scheduler_role; Type: FK CONSTRAINT; Schema: tackle; Owner: -
 --
 
@@ -20953,6 +33261,14 @@ ALTER TABLE ONLY tackle.config_bundle
 
 ALTER TABLE ONLY tackle.prompts
     ADD CONSTRAINT fk_prompts_role FOREIGN KEY (role) REFERENCES tackle.roles(name);
+
+
+--
+-- Name: role_memory fk_role_memory_memory; Type: FK CONSTRAINT; Schema: tackle; Owner: -
+--
+
+ALTER TABLE ONLY tackle.role_memory
+    ADD CONSTRAINT fk_role_memory_memory FOREIGN KEY (memory_id) REFERENCES tackle.memory(id) ON DELETE CASCADE;
 
 
 --
@@ -21004,6 +33320,22 @@ ALTER TABLE ONLY terrain.cli_tools
 
 
 --
+-- Name: runnable_services fkl3ogxiv9w28jw8qv6h3ujt84r; Type: FK CONSTRAINT; Schema: terrain; Owner: -
+--
+
+ALTER TABLE ONLY terrain.runnable_services
+    ADD CONSTRAINT fkl3ogxiv9w28jw8qv6h3ujt84r FOREIGN KEY (service_type_id) REFERENCES terrain.service_types(id);
+
+
+--
+-- Name: mcp_servers fkmqk3n2k41p67djqlyt9uwogm6; Type: FK CONSTRAINT; Schema: terrain; Owner: -
+--
+
+ALTER TABLE ONLY terrain.mcp_servers
+    ADD CONSTRAINT fkmqk3n2k41p67djqlyt9uwogm6 FOREIGN KEY (service_type_id) REFERENCES terrain.service_types(id);
+
+
+--
 -- Name: mcp_servers mcp_servers_asset_id_fkey; Type: FK CONSTRAINT; Schema: terrain; Owner: -
 --
 
@@ -21017,6 +33349,30 @@ ALTER TABLE ONLY terrain.mcp_servers
 
 ALTER TABLE ONLY terrain.runnable_services
     ADD CONSTRAINT runnable_services_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES semantics.canonical_asset(id);
+
+
+--
+-- Name: calendar_events calendar_events_calendar_id_fkey; Type: FK CONSTRAINT; Schema: vision; Owner: -
+--
+
+ALTER TABLE ONLY vision.calendar_events
+    ADD CONSTRAINT calendar_events_calendar_id_fkey FOREIGN KEY (calendar_id) REFERENCES vision.calendars(calendar_id);
+
+
+--
+-- Name: calendar_events fk_calendar_events_session; Type: FK CONSTRAINT; Schema: vision; Owner: -
+--
+
+ALTER TABLE ONLY vision.calendar_events
+    ADD CONSTRAINT fk_calendar_events_session FOREIGN KEY (session_ref) REFERENCES vision.sessions(session_id);
+
+
+--
+-- Name: sessions sessions_calendar_id_fkey; Type: FK CONSTRAINT; Schema: vision; Owner: -
+--
+
+ALTER TABLE ONLY vision.sessions
+    ADD CONSTRAINT sessions_calendar_id_fkey FOREIGN KEY (calendar_id) REFERENCES vision.calendars(calendar_id);
 
 
 --
@@ -21041,6 +33397,62 @@ ALTER TABLE ONLY wind.event_types
 
 ALTER TABLE ONLY wind.events
     ADD CONSTRAINT events_event_type_fkey FOREIGN KEY (event_type) REFERENCES wind.event_types(event_type);
+
+
+--
+-- Name: execution_attempts execution_attempt_parent_fkey; Type: FK CONSTRAINT; Schema: wind; Owner: -
+--
+
+ALTER TABLE ONLY wind.execution_attempts
+    ADD CONSTRAINT execution_attempt_parent_fkey FOREIGN KEY (parent_attempt_id, request_id) REFERENCES wind.execution_attempts(id, request_id) ON DELETE RESTRICT;
+
+
+--
+-- Name: execution_attempts execution_attempt_request_fkey; Type: FK CONSTRAINT; Schema: wind; Owner: -
+--
+
+ALTER TABLE ONLY wind.execution_attempts
+    ADD CONSTRAINT execution_attempt_request_fkey FOREIGN KEY (request_id) REFERENCES wind.execution_requests(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: execution_receipts execution_receipt_attempt_request_fkey; Type: FK CONSTRAINT; Schema: wind; Owner: -
+--
+
+ALTER TABLE ONLY wind.execution_receipts
+    ADD CONSTRAINT execution_receipt_attempt_request_fkey FOREIGN KEY (attempt_id, request_id) REFERENCES wind.execution_attempts(id, request_id) ON DELETE RESTRICT;
+
+
+--
+-- Name: execution_receipts execution_receipt_request_fkey; Type: FK CONSTRAINT; Schema: wind; Owner: -
+--
+
+ALTER TABLE ONLY wind.execution_receipts
+    ADD CONSTRAINT execution_receipt_request_fkey FOREIGN KEY (request_id) REFERENCES wind.execution_requests(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: execution_requests execution_request_node_fkey; Type: FK CONSTRAINT; Schema: wind; Owner: -
+--
+
+ALTER TABLE ONLY wind.execution_requests
+    ADD CONSTRAINT execution_request_node_fkey FOREIGN KEY (node_id) REFERENCES wind.workflow_nodes(id);
+
+
+--
+-- Name: execution_requests execution_request_node_version_fkey; Type: FK CONSTRAINT; Schema: wind; Owner: -
+--
+
+ALTER TABLE ONLY wind.execution_requests
+    ADD CONSTRAINT execution_request_node_version_fkey FOREIGN KEY (node_id, workflow_version_id) REFERENCES wind.workflow_nodes(id, workflow_version_id);
+
+
+--
+-- Name: execution_requests execution_request_version_fkey; Type: FK CONSTRAINT; Schema: wind; Owner: -
+--
+
+ALTER TABLE ONLY wind.execution_requests
+    ADD CONSTRAINT execution_request_version_fkey FOREIGN KEY (workflow_version_id) REFERENCES wind.workflow_versions(id);
 
 
 --
@@ -21121,6 +33533,38 @@ ALTER TABLE ONLY wind.tickets
 
 ALTER TABLE ONLY wind.tickets
     ADD CONSTRAINT fk_ticket_node_version FOREIGN KEY (node_id, workflow_version_id) REFERENCES wind.workflow_nodes(id, workflow_version_id);
+
+
+--
+-- Name: node_requirements node_requirements_capability_fk; Type: FK CONSTRAINT; Schema: wind; Owner: -
+--
+
+ALTER TABLE ONLY wind.node_requirements
+    ADD CONSTRAINT node_requirements_capability_fk FOREIGN KEY (capability_key) REFERENCES nebula.capabilities(name) ON UPDATE CASCADE;
+
+
+--
+-- Name: node_requirements node_requirements_node_id_fkey; Type: FK CONSTRAINT; Schema: wind; Owner: -
+--
+
+ALTER TABLE ONLY wind.node_requirements
+    ADD CONSTRAINT node_requirements_node_id_fkey FOREIGN KEY (node_id) REFERENCES wind.workflow_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: provider_credential_rotations provider_credential_rotations_revision_id_fkey; Type: FK CONSTRAINT; Schema: wind; Owner: -
+--
+
+ALTER TABLE ONLY wind.provider_credential_rotations
+    ADD CONSTRAINT provider_credential_rotations_revision_id_fkey FOREIGN KEY (revision_id) REFERENCES wind.provider_contract_revisions(revision_id);
+
+
+--
+-- Name: provider_contract_revisions provider_revision_supersedes_fkey; Type: FK CONSTRAINT; Schema: wind; Owner: -
+--
+
+ALTER TABLE ONLY wind.provider_contract_revisions
+    ADD CONSTRAINT provider_revision_supersedes_fkey FOREIGN KEY (supersedes_revision_id) REFERENCES wind.provider_contract_revisions(revision_id);
 
 
 --
@@ -21215,5 +33659,4 @@ ALTER TABLE ONLY wind.workflow_versions
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 0HIwe3Psx6fkmkqebO0G4oYVXiGKxQEhA2OhXP87VwRTOuqjNi2y2OHHC03DcLk
 
