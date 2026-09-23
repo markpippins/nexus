@@ -10,6 +10,8 @@ lives beside its incumbent and is cut over only behind a contract gate.
 | `solscript/` | 4060 | — (facade over `@nexus/solscript`) | `typespec/v1/solscript/typescript/operations.tsp` | app built; no manifest row |
 | `nexus-broker/` | 4080 | worker tier (`worker.pty` retired pty-srv) | `typespec/v1/nexus-broker/typescript/` (known drift) | partial cutovers |
 | `voyager/` | 4114 | `typescript/voyager-srv` (:3114) | **`typescript/voyager-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed, not cut over |
+| `cascade/` | 4106 | `typescript/cascade-srv` (:3106) | **`typescript/cascade-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed 24/24, not cut over |
+| `kernel/` | 4100 | `typescript/kernel-srv` (:8100) | **`typescript/kernel-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed 25/25, not cut over |
 
 ## Contract coverage
 

@@ -11,6 +11,10 @@
 # What this does (per run):
 #   1. pg_dump -Fc (custom format, compressed) of the `nexus` database
 #      from the live pgvector_db (localhost:5432).
+#   0. Version guard (fleet PG audit ecb91216 / ask R4): host pg_dump major
+#      must be >= target server major — this is the ONE backup path using
+#      bare host clients, and an older client can silently produce an
+#      archive it cannot fully represent. Fail loudly, never dump skewed.
 #   2. Verification gate: `pg_restore --list` must parse the archive —
 #      a dump that cannot be read back is not a backup.
 #   3. sha256 manifest for the artifact.
@@ -85,6 +89,51 @@ if ! drive_guard_require_dir "$BACKUP_DIR" "backup directory"; then
   exit 1
 fi
 
+# ------------------------------------------------- client/server version ----
+# R4 (fleet PG audit, thread ecb91216): this is the ONE backup path that runs
+# BARE HOST clients (pg_dump/pg_restore) instead of server-side docker-exec
+# clients (the vanadium tier shells INTO the containers, client==server). A
+# pg_dump OLDER than the target server cannot represent newer catalog
+# features and may emit an archive the verification gate accepts but a
+# future restore mishandles. Same doctrine as the drive guard: honest
+# fail-fast beats a silent coverage gap.
+#
+# Policy: real path — hard fail on major(client) < major(server), or when
+# either version cannot be determined. Dry-run — warn only (no dump is
+# performed; the operator may be inspecting the plan on a host whose client
+# they cannot fix right now).
+export PGPASSWORD
+CLIENT_MAJOR="$(pg_dump --version 2>/dev/null | sed -n 's/^[^0-9]*\([0-9][0-9]*\).*/\1/p')"
+case "$CLIENT_MAJOR" in ''|*[!0-9]*) CLIENT_MAJOR="" ;; esac
+SERVER_NUM="$(psql -X -Atq -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
+  -c 'SHOW server_version_num' 2>>"$LOG_FILE" | tr -d '[:space:]')"
+case "$SERVER_NUM" in ''|*[!0-9]*) SERVER_NUM=0 ;; esac
+SERVER_MAJOR=$(( SERVER_NUM / 10000 ))
+
+if [ -z "$CLIENT_MAJOR" ] || [ "$SERVER_MAJOR" -eq 0 ]; then
+  REASON="cannot determine versions (client='${CLIENT_MAJOR:-?}', server_num='${SERVER_NUM}')"
+  if [ "$DRY_RUN" = 1 ]; then
+    log "[dry] WARNING: version guard $REASON — not enforced in dry-run"
+  else
+    log "FAIL: pg client/server version guard: $REASON"
+    incident "pg-escape-hatch: version guard cannot verify client" \
+      "pg_dump client/server versions could not be determined ($REASON). No dump attempted. Install/verify postgresql-client (>= server major) on this host. See $LOG_FILE."
+    exit 1
+  fi
+elif [ "$CLIENT_MAJOR" -lt "$SERVER_MAJOR" ]; then
+  if [ "$DRY_RUN" = 1 ]; then
+    log "[dry] WARNING: pg client/server major skew: host pg_dump ${CLIENT_MAJOR}.x < server ${SERVER_MAJOR}.x — real runs would fail (restore-incompatible dump risk)"
+  else
+    log "FAIL: pg client/server major skew: host pg_dump ${CLIENT_MAJOR}.x < server ${SERVER_MAJOR}.x ($PGDATABASE@$PGHOST:$PGPORT)"
+    log "      remediation: install postgresql-client-${SERVER_MAJOR} (or newer) on this host"
+    incident "pg-escape-hatch: pg client older than server" \
+      "host pg_dump ${CLIENT_MAJOR}.x < server ${SERVER_MAJOR}.x — backup NOT attempted (restore-incompatible dump risk). Remediation: install postgresql-client-${SERVER_MAJOR}. See $LOG_FILE."
+    exit 1
+  fi
+else
+  log "pg client ${CLIENT_MAJOR}.x >= server ${SERVER_MAJOR}.x — version guard ok"
+fi
+
 # ---------------------------------------------------------------- dump -----
 OUT="$BACKUP_DIR/nexus__${TS}.dump"
 if [ "$DRY_RUN" = 1 ]; then
@@ -95,7 +144,6 @@ if [ "$DRY_RUN" = 1 ]; then
 fi
 
 START=$(date +%s)
-export PGPASSWORD
 if ! pg_dump -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
       --format=custom --file "$OUT" 2>>"$LOG_FILE"; then
   log "FAIL: pg_dump pipeline failed"

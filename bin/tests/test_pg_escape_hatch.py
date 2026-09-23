@@ -3,13 +3,17 @@ backup (audit f74eb976 zero-coverage finding).
 
 Two execution strategies keep this suite hermetic AND honest:
 
-1. MechanicsMockTest (deterministic, no server): pg_dump and pg_restore are
-   mocked on PATH. A marker file records whether the mock dump actually
-   ran, so "nothing was attempted" is pinned behaviorally, not just
-   textually. Covers: happy path (manifest + stamp + retention + ok log),
+1. MechanicsMockTest (deterministic, no server): pg_dump, pg_restore and
+   psql are mocked on PATH. A marker file records whether the mock dump
+   actually ran (real-dump invocations only — the --version probe the
+   R4 client/server guard performs must NOT count as "attempted"), so
+   "nothing was attempted" is pinned behaviorally, not just textually.
+   Covers: happy path (manifest + stamp + retention + ok log),
    verify-gate rejection (artifact removed, no manifest/stamp, honest
    FAIL), pg_dump failure, dangling-destination fail-fast (guard fires
-   BEFORE the dump), dry-run.
+   BEFORE the dump), dry-run, and the R4 version guard (client<server
+   hard fail before any dump, dry-run warns only, undeterminable
+   versions fail, client>=server passes).
 
 2. DockerE2ETest (real binaries end-to-end): a throwaway postgres:17-class
    container on a random loopback port receives the dump; pg_restore
@@ -58,14 +62,34 @@ class MechanicsMockTest(unittest.TestCase):
             "PATH": self.bindir + os.pathsep + os.environ["PATH"],
             "PG_DUMP_MARKER": self.marker,
         }
+        # R4 version-guard defaults: mock psql answers SHOW server_version_num
+        # with 170010 (v17) and pg_dump --version reports 17 — guard passes,
+        # existing tests exercise the post-guard behavior unchanged.
+        self._mock_psql("170010")
+        self.env["PG_DUMP_VERSION"] = "17"
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     # -- mock helpers -----------------------------------------------------
+    def _mock_psql(self, server_num: str = "170010"):
+        """Fake psql for the R4 version guard: answers any invocation with
+        the value of PG_SERVER_NUM (server_version_num shape)."""
+        self.env["PG_SERVER_NUM"] = server_num
+        mock = os.path.join(self.bindir, "psql")
+        with open(mock, "w") as fh:
+            fh.write(
+                "#!/bin/bash\n"
+                'echo "${PG_SERVER_NUM:-170010}"\n'
+                "exit 0\n"
+            )
+        os.chmod(mock, 0o755)
+
     def _mock_pg_dump(self, payload: bytes, exit_code: int = 0):
         """Fake pg_dump: honors --file <path> (real pg_dump creates the
-        artifact itself), touches the marker, exits with the given code.
+        artifact itself) and --version (the R4 guard probe — reports
+        $PG_DUMP_VERSION and does NOT touch the marker); real dump
+        invocations touch the marker and exit with the given code.
         Payload delivered via a file + cp — no shell quoting games."""
         payload_path = os.path.join(self.tmp, "pg_dump-payload.bin")
         with open(payload_path, "wb") as pf:
@@ -75,6 +99,12 @@ class MechanicsMockTest(unittest.TestCase):
         with open(mock, "w") as fh:
             fh.write(
                 "#!/bin/bash\n"
+                'for a in "$@"; do\n'
+                '  if [ "$a" = "--version" ]; then\n'
+                '    echo "pg_dump (PostgreSQL) ${PG_DUMP_VERSION:-17}"\n'
+                "    exit 0\n"
+                "  fi\n"
+                "done\n"
                 "out=\"\"\n"
                 "prev=\"\"\n"
                 'for a in "$@"; do\n'
@@ -170,6 +200,63 @@ class MechanicsMockTest(unittest.TestCase):
         bk_files = os.listdir(self.bk) if os.path.isdir(self.bk) else []
         self.assertEqual(["pg-escape-hatch.log"], bk_files)
         self.assertIn("[dry] complete", self._log())
+
+    # -- R4 client/server version guard ------------------------------------
+    def test_version_skew_hard_fails_before_dump(self):
+        # host pg_dump 15.x vs server 17.x: honest fail-fast, nothing attempted
+        self.env["PG_DUMP_VERSION"] = "15.4"
+        self._mock_pg_dump(b"SHOULD-NEVER-BE-WRITTEN")
+        self._mock_pg_restore(0)
+        proc = self._run()
+        self.assertEqual(1, proc.returncode)
+        self.assertFalse(
+            os.path.exists(self.marker),
+            "skew guard must fire BEFORE any dump attempt",
+        )
+        self.assertIn("FAIL: pg client/server major skew", self._log())
+        self.assertIn("host pg_dump 15.x < server 17.x", self._log())
+        self.assertIn("postgresql-client-17", self._log())
+        self.assertFalse(os.path.exists(os.path.join(self.bk, "last-backup.json")))
+        self.assertNotIn("complete (ok)", self._log())
+
+    def test_version_skew_dry_run_warns_only(self):
+        self.env["PG_DUMP_VERSION"] = "15.4"
+        self._mock_pg_dump(b"SHOULD-NEVER-BE-WRITTEN")
+        proc = self._run("--dry-run")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertFalse(os.path.exists(self.marker), "dry-run must not dump")
+        self.assertIn("[dry] WARNING", self._log())
+        self.assertIn("major skew", self._log())
+
+    def test_client_version_undetermined_hard_fails(self):
+        # --version garbage -> cannot determine -> honest fail (never dump blind)
+        self.env["PG_DUMP_VERSION"] = "garbage-no-digits"
+        self._mock_pg_dump(b"SHOULD-NEVER-BE-WRITTEN")
+        self._mock_pg_restore(0)
+        proc = self._run()
+        self.assertEqual(1, proc.returncode)
+        self.assertFalse(os.path.exists(self.marker))
+        self.assertIn("cannot determine versions", self._log())
+
+    def test_server_version_undetermined_hard_fails(self):
+        # psql unreachable / unparseable -> server major 0 -> honest fail
+        self._mock_psql("not-a-number")
+        self._mock_pg_dump(b"SHOULD-NEVER-BE-WRITTEN")
+        proc = self._run()
+        self.assertEqual(1, proc.returncode)
+        self.assertFalse(os.path.exists(self.marker))
+        self.assertIn("cannot determine versions", self._log())
+
+    def test_client_newer_than_server_passes_guard(self):
+        # >= semantics: newer client against older server is fine
+        self.env["PG_DUMP_VERSION"] = "18.0"
+        self._mock_psql("170010")
+        self._mock_pg_dump(b"FAKE-ARCHIVE-BYTES")
+        self._mock_pg_restore(0)
+        proc = self._run()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("version guard ok", self._log())
+        self.assertIn("complete (ok)", self._log())
 
     def test_retention_prunes_old_keeps_recent(self):
         os.makedirs(self.bk, exist_ok=True)
@@ -272,6 +359,9 @@ class DockerE2ETest(unittest.TestCase):
         proc = subprocess.run(["bash", SCRIPT], capture_output=True,
                               text=True, env=env)
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        # R4 guard ran against REAL client/server versions (host psql+pg_dump
+        # vs the throwaway container) and passed
+        self.assertIn("version guard ok", proc.stdout)
         bk = os.path.join(tmp, "bk")
         dumps = [f for f in os.listdir(bk) if f.startswith("nexus__") and f.endswith(".dump")]
         self.assertEqual(1, len(dumps))

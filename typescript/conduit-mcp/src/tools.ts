@@ -852,8 +852,13 @@ export function registerToolHandlers(
         });
         return { claimed: true, plan_id: args.plan_id, role: args.role, ...result };
       } catch (e: any) {
+        // Thrown AppError objects lose .message in the dispatcher
+        // (respondError(-32603, err.message || "Internal error")); a plain
+        // Error carries the code + full conflict details through.
         if (e?.code === "TICKET_CLAIM_CONFLICT" || e?.code === "NO_CLAIMABLE_TICKET") {
-          throw createError(e.code, e.message, e.details);
+          const err = new Error(`${e.code}: ${e.message}`) as Error & { code?: string };
+          err.code = e.code;
+          throw err;
         }
         throw e;
       }
@@ -875,7 +880,9 @@ export function registerToolHandlers(
         return { released: result.released, plan_id: args.plan_id, role: args.role, ticketId: result.ticketId };
       } catch (e: any) {
         if (e?.code === "TICKET_CLAIM_CONFLICT") {
-          throw createError(e.code, e.message, e.details);
+          const err = new Error(`${e.code}: ${e.message}`) as Error & { code?: string };
+          err.code = e.code;
+          throw err;
         }
         throw e;
       }
