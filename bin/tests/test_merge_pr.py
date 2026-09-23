@@ -25,14 +25,18 @@ NOW_MS = int(time.time() * 1000)
 
 
 def rec(rec_id="aaaa1111", role="tester", created_ms=None, tags=None,
-        title="Tester attestation: PR #487 (30 passed)", content=""):
+        title="Tester attestation: PR #487 (30 passed)", content="",
+        recordType="assessment"):
+    """Default shape = the tester's canonical attestation row (assessment +
+    type:approval + status:done), matching real records like b47510d6."""
     return {
         "id": rec_id,
         "role": role,
         "createdAt": NOW_MS - 3600_000 if created_ms is None else created_ms,
-        "tags": tags or [],
+        "tags": tags if tags is not None else ["type:approval", "status:done", "pr:487"],
         "title": title,
         "content": content,
+        "recordType": recordType,
     }
 
 
@@ -87,7 +91,7 @@ def test_match_by_content_number():
 
 def test_no_word_boundary_false_positive():
     # "#48" must not match PR 487
-    assert not merge_pr.attestation_mentions_pr(rec(title="attest #48 things"), 487)
+    assert not merge_pr.attestation_mentions_pr(rec(title="attest #48 things", tags=[]), 487)
 
 
 def test_unrelated_pr_not_matched():
@@ -107,6 +111,76 @@ def test_non_tester_role_does_not_count():
     records = [rec(role="engineer", title="attest PR #487")]
     ok, _ = merge_pr.evaluate_attestation(records, 487, NOW_MS)
     assert not ok
+
+
+# ── gate 3a: attestation-shape rule (tester finding 84ca2388) ────────────
+
+def test_intent_record_does_not_satisfy_gate3():
+    """Regression for the exact #492 reproduction: a tester INTENT row
+    (engineering_log, type:status-update) must not count as an attestation."""
+    intent = rec(
+        rec_id="b8acd611",
+        recordType="engineering_log",
+        tags=["to:engineer", "type:status-update", "attestations", "pr:492"],
+        title="Tester intent: attest PR #491 seed file and PR #492 merge wrapper",
+    )
+    ok, detail = merge_pr.evaluate_attestation([intent], 492, NOW_MS)
+    assert not ok
+    assert "attestation marker" in detail
+    assert "b8acd611" in detail
+
+
+def test_rejection_finding_does_not_count():
+    finding = rec(
+        rec_id="84ca2388",
+        recordType="inspection",
+        tags=["to:engineer", "type:rejection", "status:open", "pr:492"],
+        title="Tester finding: PR #492 attestation gate accepts non-attestation records",
+    )
+    ok, detail = merge_pr.evaluate_attestation([finding], 492, NOW_MS)
+    assert not ok
+    assert "attestation marker" in detail
+
+
+def test_canonical_attestation_shape_passes():
+    head_ms = NOW_MS - 7200_000
+    att = rec(
+        rec_id="b47510d6",
+        recordType="assessment",
+        tags=["to:engineer", "type:approval", "status:done", "attestations", "pr:491"],
+    )
+    ok, detail = merge_pr.evaluate_attestation([att], 491, head_ms)
+    assert ok
+    assert "postdates" in detail
+
+
+def test_legacy_type_attestation_tag_passes():
+    """Historical tester rows (75d069f8, bf9776e6, c4be406f) attest via an
+    explicit type:attestation tag with varying recordTypes."""
+    legacy = rec(
+        rec_id="75d069f8",
+        recordType="report",
+        tags=["to:dba", "type:attestation", "attestations", "pr:487"],
+    )
+    ok, detail = merge_pr.evaluate_attestation([legacy], 487, NOW_MS - 7200_000)
+    assert ok
+    assert "postdates" in detail
+
+
+def test_assessment_without_approval_tag_fails():
+    almost = rec(tags=["status:done", "pr:487"])
+    ok, detail = merge_pr.evaluate_attestation([almost], 487, NOW_MS)
+    assert not ok
+    assert "attestation marker" in detail
+
+
+def test_is_attestation_record_rejects_missing_recordtype():
+    assert not merge_pr.is_attestation_record(
+        {"tags": ["type:approval", "status:done"]}
+    )
+    assert merge_pr.is_attestation_record(
+        {"tags": ["type:attestation"], "recordType": "response"}
+    )
 
 
 def test_fresh_attestation_passes():

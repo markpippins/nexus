@@ -158,25 +158,59 @@ def attestation_mentions_pr(record: Dict[str, Any], pr_number: int) -> bool:
     )
 
 
+def is_attestation_record(record: Dict[str, Any]) -> bool:
+    """Fail-closed attestation-shape test (per tester finding 84ca2388).
+
+    A record counts as a tester attestation only if it is an *explicit*
+    attestation — not merely a tester record that mentions the PR:
+
+    canonical: ``recordType=assessment`` AND tags include ``type:approval``
+               AND ``status:done`` (the tester's current row shape)
+    legacy:    tags include ``type:attestation`` (any recordType; the
+               tester's historical rows before the current shape)
+
+    Intent rows (``type:status-update``, ``engineering_log``), reports and
+    findings never qualify — “I intend to attest” is not “attested”.
+    """
+    tags = {str(t or "").lower() for t in (record.get("tags") or [])}
+    if "type:attestation" in tags:
+        return True
+    return (
+        str(record.get("recordType") or "").lower() == "assessment"
+        and "type:approval" in tags
+        and "status:done" in tags
+    )
+
+
 def evaluate_attestation(
     records: List[Dict[str, Any]],
     pr_number: int,
     head_date_ms: Optional[int],
 ) -> Tuple[bool, str]:
-    """Gate 3: newest tester attestation for this PR must postdate the head
-    commit (a push after attestation means the attested code is gone)."""
-    matches = [
+    """Gate 3: an explicit tester attestation for this PR must postdate the
+    head commit (a push after attestation means the attested code is gone).
+    Records must satisfy :func:`is_attestation_record` — a tester record that
+    merely mentions the PR (e.g. an intent row) does not count."""
+    mentions = [
         r
         for r in records
         if str(r.get("role") or "").lower() == "tester"
         and attestation_mentions_pr(r, pr_number)
     ]
+    matches = [r for r in mentions if is_attestation_record(r)]
     if not matches:
-        return (
-            False,
+        detail = (
             f"no tester attestation record for PR #{pr_number} found in the "
-            f"{len(records)} most recent agent records",
+            f"{len(records)} most recent agent records"
         )
+        if mentions:
+            ids = ", ".join(str(r.get("id"))[:8] for r in mentions[:3])
+            detail += (
+                f" ({len(mentions)} tester record(s) mention the PR — {ids} — "
+                "but none carries an attestation marker: type:attestation tag, "
+                "or recordType=assessment with type:approval+status:done)"
+            )
+        return (False, detail)
     newest = max(matches, key=lambda r: r.get("createdAt") or 0)
     created_ms = newest.get("createdAt") or 0
     created_iso = datetime.fromtimestamp(
