@@ -15,10 +15,10 @@ bundles on the existing Expression IR/compiler with:
 """
 
 from __future__ import annotations
+from contextvars import ContextVar
 from copy import deepcopy
 
 import hashlib
-# Use MD5 for deterministic fingerprint (SHA256 is non-deterministic on this system)
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -67,18 +67,45 @@ class ConceptPackage:
 
 
 def _digest(value: str) -> str:
-    return hashlib.md5(value.encode("utf-8")).hexdigest()
+    """Deterministic SHA-256 digest (hex); callers truncate to 32 chars.
+
+    G4: replaces the previous MD5 digest, whose comment claimed SHA-256 was
+    non-deterministic on this system — hashlib is deterministic everywhere.
+    """
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _normalized(value: Any) -> Any:
+    """Recursively order-normalize lists/dicts for fingerprinting."""
+    if isinstance(value, list):
+        return sorted(
+            (_normalized(item) for item in value),
+            key=lambda item: json.dumps(item, sort_keys=True),
+        )
+    if isinstance(value, dict):
+        return {key: _normalized(item) for key, item in sorted(value.items())}
+    return value
 
 
 def _package_fingerprint(pkg: "ConceptPackage") -> str:
-    """Compute deterministic fingerprint of package content."""
+    """Canonical package fingerprint over package content.
+
+    G4: this is the ONLY fingerprint computation. create_concept_package
+    assigns via this same function, so a created package validates by
+    construction, and any change to the filter spec, expression bundle, or
+    metadata stream binding breaks the fingerprint (tamper-evident).
+
+    Excludes identity and timestamps (package_id, package_revision,
+    created_at, provenance); order-normalizes filter values so list
+    ordering cannot change the fingerprint.
+    """
     content = json.dumps({
         "filter_spec": {
-            "concept_scope": pkg.filter_spec.concept_scope,
-            "member_kinds": pkg.filter_spec.member_kinds,
-            "tag_filters": pkg.filter_spec.tag_filters,
-            "metadata_filters": pkg.filter_spec.metadata_filters,
-            "inclusion_ledger": pkg.filter_spec.inclusion_ledger,
+            "concept_scope": _normalized(pkg.filter_spec.concept_scope),
+            "member_kinds": _normalized(pkg.filter_spec.member_kinds),
+            "tag_filters": _normalized(pkg.filter_spec.tag_filters),
+            "metadata_filters": _normalized(pkg.filter_spec.metadata_filters),
+            "inclusion_ledger": _normalized(pkg.filter_spec.inclusion_ledger),
             "vocabulary_snapshot": pkg.filter_spec.vocabulary_snapshot,
             "projection_snapshot": pkg.filter_spec.projection_snapshot,
             "relationship_limitations": pkg.filter_spec.relationship_limitations,
@@ -143,13 +170,10 @@ def create_concept_package(
     
     package_revision = datetime.utcnow().isoformat() + "Z"
     
-    # Compute fingerprint
-    fingerprint = _digest(json.dumps({
-        "package_id": package_id,
-        "expression_bundle": _digest(json.dumps(expression_bundle, sort_keys=True)),
-    }, sort_keys=True))[:32]
-    
-    return ConceptPackage(
+    # G4: assign the canonical content fingerprint via the same
+    # _package_fingerprint used by validate_concept_package, so a created
+    # package validates by construction.
+    pkg = ConceptPackage(
         package_id=package_id,
         package_name=package_name,
         package_version=package_version,
@@ -163,16 +187,28 @@ def create_concept_package(
             "created_by": "create_concept_package",
             "created_at": datetime.utcnow().isoformat() + "Z",
         },
-        fingerprint=fingerprint,
+        fingerprint="",
     )
+    pkg.fingerprint = _package_fingerprint(pkg)
+    return pkg
 
 
 def filter_expression_bundle(
     bundle: dict[str, Any],
     filter_spec: ConceptPackageFilter,
 ) -> dict[str, Any]:
-    """Apply package filters to an expression bundle."""
+    """Apply package filters to an expression bundle.
+
+    G4: link/proposition filters consult the set of surviving observations
+    so members referencing dropped observations are dropped too.
+    """
     filtered = deepcopy(bundle)
+    kept_ids = {
+        obs.get("observation_id")
+        for obs in filtered.get("observations", [])
+        if _matches_filters(obs, filter_spec)
+    }
+    _kept_observation_ids.set(kept_ids)
     
     # Filter observations
     if bundle.get("observations"):
@@ -198,23 +234,98 @@ def filter_expression_bundle(
                 filtered_props.append(prop)
         filtered["proposition_candidates"] = filtered_props
     
+    _kept_observation_ids.set(None)
     return filtered
 
 
+_kept_observation_ids: ContextVar = ContextVar("kept_observation_ids", default=None)
+
+
 def _matches_filters(observation: dict[str, Any], filter_spec: ConceptPackageFilter) -> bool:
-    """Check if observation matches package filters."""
-    if filter_spec.member_kinds and observation.get("kind") not in filter_spec.member_kinds:
-        return False
-    # Add more filter checks as needed
+    """Check if an observation matches the package filters (G4 semantics).
+
+    Every specified filter must match (conjunction). Missing data fails
+    closed: a scope-tagged package drops observations without a concept
+    scope; metadata filters drop observations without the metadata key.
+    """
+    if filter_spec.member_kinds:
+        if observation.get("kind") not in filter_spec.member_kinds:
+            return False
+
+    if filter_spec.concept_scope:
+        scope_values = observation.get("concept_scope") or []
+        if not set(filter_spec.concept_scope) & set(scope_values):
+            return False
+
+    if filter_spec.tag_filters:
+        tags = observation.get("tags") or {}
+        if isinstance(tags, list):
+            mapped: dict[str, list[str]] = {}
+            for tag in tags:
+                key, sep, val = str(tag).partition(":")
+                if sep:
+                    mapped.setdefault(key, []).append(val)
+                else:
+                    mapped.setdefault(str(tag), []).append(str(tag))
+            tags = mapped
+        elif isinstance(tags, dict):
+            tags = {k: v if isinstance(v, list) else [v] for k, v in tags.items()}
+        for key, allowed in filter_spec.tag_filters.items():
+            values = tags.get(key, [])
+            if not set(allowed) & set(str(v) for v in values):
+                return False
+
+    if filter_spec.metadata_filters:
+        metadata = observation.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            return False
+        for key, allowed in filter_spec.metadata_filters.items():
+            if key not in metadata:
+                return False
+            value = metadata[key]
+            value_list = value if isinstance(value, list) else [value]
+            if not set(str(v) for v in value_list) & set(str(v) for v in allowed):
+                return False
+
+    if filter_spec.inclusion_ledger:
+        if observation.get("observation_id") not in filter_spec.inclusion_ledger:
+            return False
+
     return True
 
 
+def _item_matches_tag_or_metadata_filters(
+    item: dict[str, Any], filter_spec: ConceptPackageFilter
+) -> bool:
+    """Apply tag/metadata filters to links and propositions directly.
+
+    Derived members are constrained by their own tag/metadata fields only
+    when they actually carry them; otherwise membership is governed by the
+    referential integrity of their source observations.
+    """
+    tag_spec = ConceptPackageFilter(
+        tag_filters=filter_spec.tag_filters if item.get("tags") else None,
+        metadata_filters=filter_spec.metadata_filters if item.get("metadata") else None,
+    )
+    return _matches_filters(item, tag_spec)
+
+
 def _link_matches_filters(link: dict[str, Any], filter_spec: ConceptPackageFilter) -> bool:
-    return True  # Implement as needed
+    """Links survive only if their source observations all survive
+    (referential integrity) and they match any tag/metadata filters."""
+    kept = _kept_observation_ids.get()
+    if kept is not None and set(link.get("source_observation_ids", [])) - kept:
+        return False
+    return _item_matches_tag_or_metadata_filters(link, filter_spec)
 
 
 def _proposition_matches_filters(prop: dict[str, Any], filter_spec: ConceptPackageFilter) -> bool:
-    return True  # Implement as needed
+    """Propositions survive only if their source observations all survive
+    (referential integrity) and they match any tag/metadata filters."""
+    kept = _kept_observation_ids.get()
+    if kept is not None and set(prop.get("source_observation_ids", [])) - kept:
+        return False
+    return _item_matches_tag_or_metadata_filters(prop, filter_spec)
 
 
 def export_concept_package(pkg: "ConceptPackage") -> dict[str, Any]:
