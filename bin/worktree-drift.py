@@ -279,7 +279,12 @@ def print_cleanup(candidates, results_all):
           f"are provably safe to remove (clean + every branch tree already in "
           f"origin/main history). This tool never deletes — humans decide.\n")
     for r in candidates:
-        note = "tip tree in main (squash)" if r["landed_exact"] else "all trees in main"
+        if r["commits_merged"] and not r["landed_exact"]:
+            note = "every tree in main"
+        elif r["landed_exact"] and not r["commits_merged"]:
+            note = "tip tree in main (squash ghost)"
+        else:
+            note = "at a historical main commit"
         print(f"  {r['worktree']:40s} {r['branch'] or '(detached)':40s} {note}")
     unsafe = [r for r in results_all if r not in candidates and r["state"] != "current"]
     if unsafe:
