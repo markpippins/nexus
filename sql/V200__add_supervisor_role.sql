@@ -70,21 +70,23 @@ BEGIN
             left(live_def, 300);
     END IF;
 
-    IF live_vocab = (SELECT array_agg(x ORDER BY x) FROM unnest(target_vocab) AS x) THEN
-        RAISE NOTICE 'V200: Supervisor vocabulary already present — idempotent no-op.';
-        RETURN;
-    END IF;
-
+    -- Always compute the target literal list. Even when nebula already carries
+    -- the target vocabulary, the scratch mirror may still be stale; returning
+    -- early here would leave that drift permanently unrepaired.
     SELECT string_agg(quote_literal(r) || '::text', ', ' ORDER BY ord)
       INTO literal_list
       FROM unnest(target_vocab) WITH ORDINALITY AS t(r, ord)
      WHERE r <> '';
 
-    ALTER TABLE nebula.agent_records_history
-        DROP CONSTRAINT agent_records_role_check;
-    EXECUTE 'ALTER TABLE nebula.agent_records_history '
-         || 'ADD CONSTRAINT agent_records_role_check '
-         || 'CHECK (((role = ''''::text) OR (role = ANY (ARRAY[' || literal_list || ']))))';
+    IF live_vocab = (SELECT array_agg(x ORDER BY x) FROM unnest(target_vocab) AS x) THEN
+        RAISE NOTICE 'V200: nebula already carries Supervisor — skipping nebula swap and checking scratch mirror.';
+    ELSE
+        ALTER TABLE nebula.agent_records_history
+            DROP CONSTRAINT agent_records_role_check;
+        EXECUTE 'ALTER TABLE nebula.agent_records_history '
+             || 'ADD CONSTRAINT agent_records_role_check '
+             || 'CHECK (((role = ''''::text) OR (role = ANY (ARRAY[' || literal_list || ']))))';
+    END IF;
 
     IF to_regclass('scratch.agent_records_history') IS NOT NULL THEN
         SELECT pg_get_constraintdef(con.oid)
