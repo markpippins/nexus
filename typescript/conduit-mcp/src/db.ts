@@ -4399,25 +4399,32 @@ export async function claimTicket(
     await tRun(
       client,
       `UPDATE ${VISION_SCHEMA}.tickets
-       SET status = 'claimed', session_id = @sessionId, claimed_at = @now, last_activity = @now
+       SET status = 'claimed', session_id = @sessionId,
+         claimed_at = @now::timestamptz, last_activity = @now
        WHERE id = @ticketId`,
       { sessionId, now, ticketId: ticket.id },
     );
-    await recordTransition({
-      client,
-      aggregateType: "ticket",
-      aggregateId: ticket.id,
-      eventType: "transition.committed",
-      actor: "conduit-mcp",
-      authority: "system",
-      payload: {
-        from_status: ticket.status,
-        to_status: "claimed",
-        reason: decision.action === "takeover" ? "claim_takeover" : decision.action === "refresh" ? "claim_refresh" : "manual_claim",
-        session_id: sessionId,
-        ...(decision.action === "takeover" ? { took_over_from: decision.holder } : {}),
-      },
-    });
+    // Kernel policy: transition.committed forbids no-op transitions
+    // (from_status must differ from to_status) — a same-session refresh is
+    // claimed→claimed, so it gets a timestamp bump only; the claim/takeover
+    // paths transition recorded statuses.
+    if (decision.action !== "refresh") {
+      await recordTransition({
+        client,
+        aggregateType: "ticket",
+        aggregateId: ticket.id,
+        eventType: "transition.committed",
+        actor: "conduit-mcp",
+        authority: "system",
+        payload: {
+          from_status: ticket.status,
+          to_status: "claimed",
+          reason: decision.action === "takeover" ? "claim_takeover" : "manual_claim",
+          session_id: sessionId,
+          ...(decision.action === "takeover" ? { took_over_from: decision.holder } : {}),
+        },
+      });
+    }
     return {
       ticketId: ticket.id,
       action: decision.action,
