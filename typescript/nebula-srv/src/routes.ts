@@ -5007,6 +5007,53 @@ export function createRoutes(pool: Pool): Router {
     }
   });
 
+  // GET /api/attestations?pr=<N> — indexed, exact attestation lookup.
+  //
+  // Purpose-built for merge-gate gate 3 (bin/merge_pr.py): returns only
+  // attestation-shaped tester rows carrying the exact pr:<N> tag, newest
+  // first. The server-side shape constraint encodes tester finding
+  // 84ca2388 — canonical rows are record_type=assessment with
+  // type:approval + status:done; legacy rows carry type:attestation.
+  // Intent/status-update/finding records never qualify, so the gate's
+  // match is exact and index-backed (GIN on tags, migration 055) instead
+  // of a bounded newest-N scan. Tester role is hardcoded: attestation is
+  // the tester's binding output (roundtable invariant I2).
+  router.get('/attestations', async (req: Request, res: Response) => {
+    try {
+      const prRaw = req.query.pr;
+      if (prRaw === undefined || Array.isArray(prRaw)) {
+        return res.status(400).json({ error: 'pr query parameter is required (single positive integer)' });
+      }
+      const pr = parseInt(String(prRaw), 10);
+      if (!Number.isFinite(pr) || pr <= 0) {
+        return res.status(400).json({ error: 'pr query parameter must be a positive integer' });
+      }
+      const limit = Math.min(
+        100,
+        Math.max(1, parseInt(String(req.query.limit ?? '50'), 10) || 50)
+      );
+      const { rows } = await pool.query(
+        `SELECT id, record_type, role, model, title, source_path, tags, created_at,
+                recorded_on_dt, level, visibility_scope
+         FROM nebula.agent_records
+         WHERE role = 'tester'
+           AND tags @> ARRAY[$1::text]
+           AND (
+                 (record_type = 'assessment'
+                  AND 'type:approval' = ANY(tags)
+                  AND 'status:done'   = ANY(tags))
+              OR ('type:attestation'  = ANY(tags))
+               )
+         ORDER BY created_at DESC, id DESC
+         LIMIT $2`,
+        [`pr:${pr}`, limit]
+      );
+      res.json({ items: rows.map(camelCaseRow), total: rows.length, pr });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // POST /api/agent-records/search — multi-tag AND/OR agent record search
   router.post('/agent-records/search', async (req: Request, res: Response) => {
     try {
