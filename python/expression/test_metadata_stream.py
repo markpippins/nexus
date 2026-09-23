@@ -124,7 +124,8 @@ def test_metadata_stream_validation():
                 "extractor_revision": "v0.1",
                 "projection_timestamp": datetime.utcnow().isoformat() + "Z",
                 "provenance": {},
-                "traceability": {"observation_id": "obs-1", "authority_status": "non_authoritative"},
+                "authority_status": "non_authoritative",
+                "traceability": {"observation_id": "obs-1"},
             }
         ],
         created_at=datetime.utcnow(),
@@ -202,3 +203,105 @@ def test_metadata_stream_export_import():
     assert imported.extractor_revision == stream.extractor_revision
     assert len(imported.records) == len(stream.records)
     assert len(imported.traceability_chain) == len(stream.traceability_chain)
+
+
+def _assert_validates_clean(stream: MetadataStream) -> None:
+    errors = validate_metadata_stream(stream)
+    assert errors == [], f"expected clean validation, got: {errors}"
+
+
+def _g3_transcript(transcript_id: str) -> dict:
+    return {
+        "transcript_id": transcript_id,
+        "turns": [
+            {"role": "user", "content": "Deploy PR #123 to production"},
+            {"role": "assistant", "content": "PR #123 deployed successfully at v2.3.4"},
+        ],
+    }
+
+
+def test_generated_stream_passes_own_validator():
+    """Review finding 5 reproduction: a projected stream validates clean.
+
+    The projector emits authority_status at the record top level; the
+    validator must accept the generated shape, not a shape the generator
+    never produces.
+    """
+    stream = project_metadata_stream(
+        _g3_transcript("g3-repro-001"),
+        extractor_revision="g3-test-v0.1",
+        stream_id="g3-stream-001",
+    )
+    assert len(stream.records) > 0
+    _assert_validates_clean(stream)
+
+
+def test_generated_stream_from_records_passes_validator():
+    records = [
+        {
+            "observation_id": "obs-g3-001",
+            "kind": "reference",
+            "value": "PR #123",
+            "source": {"source_identity": "test:transcript", "segment_id": "seg-001"},
+            "extractor_revision": "g3-test-v0.1",
+            "input_fingerprint": "abc123",
+            "disposition": "unreviewed",
+            "authority_status": "non_authoritative",
+        },
+    ]
+
+    stream = project_metadata_stream_from_records(
+        records,
+        extractor_revision="g3-test-v0.1",
+        stream_id="g3-stream-002",
+    )
+    assert len(stream.records) == 1
+    _assert_validates_clean(stream)
+
+
+def test_export_import_round_trip_validates_clean():
+    stream = project_metadata_stream(
+        _g3_transcript("g3-roundtrip-001"),
+        extractor_revision="g3-test-v0.1",
+        stream_id="g3-stream-003",
+    )
+
+    exported = export_metadata_stream(stream)
+    imported = import_metadata_stream(exported)
+    _assert_validates_clean(imported)
+
+
+def test_governed_record_fails_validation():
+    stream = project_metadata_stream(
+        _g3_transcript("g3-governed-001"),
+        extractor_revision="g3-test-v0.1",
+        stream_id="g3-stream-004",
+    )
+
+    stream.records[0]["authority_status"] = "governed"
+    errors = validate_metadata_stream(stream)
+    assert any("must be non_authoritative" in e for e in errors)
+
+
+def test_missing_authority_status_fails_closed():
+    stream = project_metadata_stream(
+        _g3_transcript("g3-missing-001"),
+        extractor_revision="g3-test-v0.1",
+        stream_id="g3-stream-005",
+    )
+
+    del stream.records[0]["authority_status"]
+    errors = validate_metadata_stream(stream)
+    assert any("must be non_authoritative" in e for e in errors)
+
+
+def test_traceability_chain_governed_entry_fails():
+    stream = project_metadata_stream(
+        _g3_transcript("g3-chain-001"),
+        extractor_revision="g3-test-v0.1",
+        stream_id="g3-stream-006",
+    )
+
+    stream.traceability_chain[0]["authority_status"] = "governed"
+    errors = validate_metadata_stream(stream)
+    assert any("must be non_authoritative" in e for e in errors)

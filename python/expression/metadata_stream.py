@@ -272,15 +272,6 @@ def project_metadata_stream_from_records(
     )
 
 
-def _normalize_tag(value: Any) -> str:
-    """Normalize tag value to lowercase with hyphens."""
-    return str(value).strip().lower().replace(" ", "-").replace("_", "-")
-
-
-def _digest(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-
 def validate_metadata_stream(stream: MetadataStream) -> list[str]:
     """Validate a metadata stream against the expression boundary."""
     errors = []
@@ -296,11 +287,19 @@ def validate_metadata_stream(stream: MetadataStream) -> list[str]:
         errors.append("Metadata stream must have at least one record")
     
     for record in stream.records:
-        if record.get("traceability", {}).get("authority_status") != "non_authoritative":
-            errors.append(f"Record {record.get('stream_record_id')} must be non_authoritative")
-        
+        record_id = record.get("stream_record_id", "?")
+        # Contract (G3): the projector emits authority_status at the record
+        # top level; traceability carries the observation linkage. Fail closed
+        # when the top-level status is missing or not non_authoritative.
+        if record.get("authority_status") != "non_authoritative":
+            errors.append(f"Record {record_id} must be non_authoritative")
         if not record.get("traceability"):
-            errors.append(f"Record {record.get('stream_record_id')} missing traceability")
+            errors.append(f"Record {record_id} missing traceability")
+    for trace in stream.traceability_chain:
+        if trace.get("authority_status") != "non_authoritative":
+            errors.append(
+                f"Traceability entry {trace.get('observation_id', '?')} must be non_authoritative"
+            )
     
     return errors
 
