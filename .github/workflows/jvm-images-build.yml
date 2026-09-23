@@ -1,0 +1,109 @@
+# JVM images build gate (fleet-wide drift audit)
+#
+# Companion to nexus-core-image.yml (which covers the nexus-core image and its
+# specific reactors). This gate builds EVERY other hand-built JVM image with
+# the exact command each Dockerfile expects, so Dockerfile-vs-code drift is
+# caught at merge time anywhere in the jvm/ tree — the same drift class that
+# hid the nexus-core peb-api gap until a host rebuild (PR #454).
+#
+# Build contexts differ by family (each Dockerfile documents its own):
+#   - jvm/-root context: service-registry, broker-gateway (they install the
+#     spring parent POM and shared/ modules themselves)
+#   - standalone contexts: the service-broker services carry their own
+#     Maven wrapper and build self-contained
+#   - helidon: Oracle JDK base, two variants (classic + jlink)
+#
+# nexus-core is NOT duplicated here — it has its own workflow with narrower
+# path filters and a documented build-only rationale (see nexus-core-image.yml).
+#
+# The matrix runs with fail-fast: false deliberately: one red cell must not
+# hide the state of the other images — this workflow doubles as the standing
+# fleet build audit.
+#
+# Known pre-existing smells this gate will expose empirically (NOT fixed here):
+#   - social-media builds on openjdk:21-jdk-slim (official openjdk images are
+#     discontinued; base-image migration is its own PR)
+#   - Dockerfile.jlink runs on debian:stretch-slim (EOL Debian runtime base)
+#   - helidon builds depend on container-registry.oracle.com availability
+
+name: JVM Images Build
+
+on:
+  push:
+    branches: [ main, master, dev, feature/* ]
+    paths:
+      - 'jvm/**'
+      - '.github/workflows/jvm-images-build.yml'
+  pull_request:
+    branches: [ main, master, dev, feature/* ]
+    paths:
+      - 'jvm/**'
+      - '.github/workflows/jvm-images-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: "docker build: ${{ matrix.name }}"
+    runs-on: ubuntu-latest
+    # TEMPORARY (2026-09-22 fleet audit): 8/9 images fail to build from main
+    # — 5x base-image tags that no longer exist on Docker Hub (eclipse-temurin
+    # 21-jdk-slim x4, openjdk 21 x1), 1x broker-gateway -exec.jar churn
+    # (in-flight fat-jar pilot), 2x helidon missing shared/ reactor
+    # provisioning (same class as the nexus-core peb-api gap, PR #454).
+    # Updated 2026-09-23: the 4x eclipse-temurin 21-jdk-slim pins are fixed
+    # (retagged to 21-jdk). Remaining: social-media openjdk:21-jdk-slim
+    # (base-image migration, its own PR), broker-gateway -exec.jar churn
+    # (in-flight fat-jar pilot), helidon shared/ provisioning (PR #454 class).
+    # continue-on-error keeps this audit visible WITHOUT blocking merges
+    # until the punch list lands; FLIP TO FALSE once the matrix is green.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: service-registry
+            context: jvm
+            dockerfile: jvm/spring/service-registry/Dockerfile
+          - name: broker-gateway
+            context: jvm
+            dockerfile: jvm/spring/service-broker/broker-gateway/Dockerfile
+          - name: broker-discovery-service
+            context: jvm/spring/service-broker/broker-discovery-service
+            dockerfile: jvm/spring/service-broker/broker-discovery-service/Dockerfile
+          - name: user-service
+            context: jvm/spring/service-broker/user-service
+            dockerfile: jvm/spring/service-broker/user-service/Dockerfile
+          - name: login-service
+            context: jvm/spring/service-broker/login-service
+            dockerfile: jvm/spring/service-broker/login-service/Dockerfile
+          - name: user-access-service
+            context: jvm/spring/service-broker/user-access-service
+            dockerfile: jvm/spring/service-broker/user-access-service/Dockerfile
+          - name: social-media
+            context: jvm/spring/service-broker/social-media
+            dockerfile: jvm/spring/service-broker/social-media/Dockerfile
+          - name: helidon-user-access-service
+            context: jvm/helidon/user-access-service
+            dockerfile: jvm/helidon/user-access-service/Dockerfile
+          - name: helidon-user-access-service-jlink
+            context: jvm/helidon/user-access-service
+            dockerfile: jvm/helidon/user-access-service/Dockerfile.jlink
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build-only, no registry: the gate proves the images build.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: false
+          tags: jvm-drift/${{ matrix.name }}:ci
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,scope=${{ matrix.name }},mode=max
