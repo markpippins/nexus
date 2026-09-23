@@ -63,6 +63,7 @@ MOLECULER_SERVICES = {
     "moleculer/draft": "moleculer/draft",
     "moleculer/knowledge": "moleculer/knowledge",
     "moleculer/role-memory": "moleculer/role-memory",
+    "moleculer/semantics": "moleculer/semantics",
 }
 
 # moleculer-web alias entries: "GET /path": "svc.action" (single-quoted forms

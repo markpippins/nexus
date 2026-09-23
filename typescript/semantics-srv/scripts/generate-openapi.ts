@@ -259,7 +259,12 @@ for (const t of TABLES) {
         "500": { description: "get_failed", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
       },
     },
-    patch: {
+    // evidence_item is immutable (no update_ proc, no PATCH route — see
+    // routes/semantics.ts: "evidence_item is immutable — no PATCH route").
+    ...(t.table === "evidence_item"
+      ? {}
+      : {
+          patch: {
       summary: `Append-only replace on semantics.${t.table} — expires the row with the given id and inserts a NEW version with a NEW id; response includes superseded_id`,
       operationId: `update${capitalize(t.table)}`,
       tags: [t.table],
@@ -287,7 +292,8 @@ for (const t of TABLES) {
         "400": { description: "duplicate_active_key / update_failed", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
         "404": { description: "not_found — no active row", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
       },
-    },
+          },
+        }),
     delete: {
       summary: `Soft-delete (expire) a row in semantics.${t.table} — expire-not-delete, idempotent`,
       operationId: `softDelete${capitalize(t.table)}`,
@@ -317,6 +323,304 @@ for (const t of TABLES) {
     },
   };
 }
+
+// ── T02: Asset identity spine + evidence filters (live routes) ──────
+// These are the hand-written envelope/filter/sub-resource routes in
+// routes/semantics.ts that the TABLES loop above cannot express. Without
+// them the committed spec understates the live surface (the V072/V076/T02
+// additions never regenerated this file).
+const t02Err = (desc: string) => ({
+  description: desc,
+  content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+});
+const t02AssetRef = {
+  description: "The scoped canonical asset (id, canonicalAssetId, assetKind)",
+  content: {
+    "application/json": {
+      schema: {
+        type: "object",
+        properties: {
+          id: { type: "string", format: "uuid" },
+          canonicalAssetId: { type: "string" },
+          assetKind: { type: "string" },
+        },
+      },
+    },
+  },
+};
+const t02IdParam = (what: string) => [
+  { name: "id", in: "path", required: true, description: what, schema: { type: "string" } },
+];
+
+// GET /api/canonical_asset/{id} — expanded envelope. NOTE: this MERGES into
+// the loop-generated {id} path object (which carries patch/delete) — the
+// live envelope GET overrides the flat GET by registration order; the write
+// routes are unaffected. Do NOT assign a fresh object (that would clobber
+// the loop's patch/delete).
+Object.assign(paths["/api/canonical_asset/{id}"], {
+  get: {
+    summary: "Expanded canonical-asset envelope: asset + revisions + identity claims + relations + cross-schema external IDs (overrides the flat row GET)",
+    operationId: "getCanonicalAssetEnvelope",
+    tags: ["canonical_asset"],
+    parameters: t02IdParam("canonical asset uuid or canonical_asset_id"),
+    responses: {
+      "200": { description: "OK — envelope with revisions, identityClaims, relations, externalIds" },
+      "404": t02Err("not_found"),
+      "500": t02Err("envelope_failed"),
+    },
+  },
+});
+
+// GET /api/asset_revision/{id} — expanded revision envelope (same merge rule)
+Object.assign(paths["/api/asset_revision/{id}"], {
+  get: {
+    summary: "Expanded asset-revision envelope: revision + asset + source observations + parent + children (overrides the flat row GET)",
+    operationId: "getAssetRevisionEnvelope",
+    tags: ["asset_revision"],
+    parameters: t02IdParam("asset_revision uuid or revision_id"),
+    responses: {
+      "200": { description: "OK — envelope with asset, sourceObservations, parentRevision, childRevisions" },
+      "404": t02Err("not_found"),
+      "500": t02Err("envelope_failed"),
+    },
+  },
+});
+
+// GET /api/evidence_item and GET /api/statement_evidence — the loop already
+// emits these list paths (GET + POST); the live filter handlers override the
+// flat list GET by registration order. Method+path set is identical, so no
+// spec delta is needed here — the richer filter parameters are documented in
+// the hand-authored API.md section.
+
+// GET /api/canonical_asset/{id}/revisions
+paths["/api/canonical_asset/{id}/revisions"] = {
+  get: {
+    summary: "Paginated revisions for a canonical asset, with source observations",
+    operationId: "listCanonicalAssetRevisions",
+    tags: ["canonical_asset"],
+    parameters: [
+      ...t02IdParam("canonical asset uuid or canonical_asset_id"),
+      { name: "limit", in: "query", schema: { type: "integer", default: 50, maximum: 200 } },
+      { name: "offset", in: "query", schema: { type: "integer", default: 0 } },
+    ],
+    responses: {
+      "200": { description: "OK — { asset, revisions, count }" },
+      "404": t02Err("not_found"),
+      "500": t02Err("revisions_failed"),
+    },
+  },
+  post: {
+    summary: "Create an asset revision scoped to the asset (semantics.add_asset_revision)",
+    operationId: "addCanonicalAssetRevision",
+    tags: ["canonical_asset"],
+    parameters: t02IdParam("canonical asset uuid or canonical_asset_id"),
+    requestBody: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: {
+            type: "object",
+            properties: {
+              revisionId: { type: "string" },
+              contentHash: { type: "string" },
+              sourceHash: { type: "string" },
+              parentRevisionId: { type: "string", format: "uuid", nullable: true },
+              recordingStart: { type: "string", format: "date-time", nullable: true },
+              recordingEnd: { type: "string", format: "date-time", nullable: true },
+              createdBy: { type: "string" },
+            },
+          },
+        },
+      },
+    },
+    responses: {
+      "201": { description: "Created — the raw asset_revision row" },
+      "400": t02Err("duplicate_active_key"),
+      "404": t02Err("not_found"),
+      "500": t02Err("add_revision_failed"),
+    },
+  },
+};
+
+// GET+POST /api/canonical_asset/{id}/identity-claims
+paths["/api/canonical_asset/{id}/identity-claims"] = {
+  get: {
+    summary: "Identity claims for a canonical asset, with candidate-asset expansion",
+    operationId: "listCanonicalAssetIdentityClaims",
+    tags: ["canonical_asset"],
+    parameters: t02IdParam("canonical asset uuid or canonical_asset_id"),
+    responses: {
+      "200": { description: "OK — { asset, claims, count }" },
+      "404": t02Err("not_found"),
+      "500": t02Err("claims_failed"),
+    },
+  },
+  post: {
+    summary: "Create an identity claim scoped to the asset (semantics.add_asset_identity_claim)",
+    operationId: "addCanonicalAssetIdentityClaim",
+    tags: ["canonical_asset"],
+    parameters: t02IdParam("canonical asset uuid or canonical_asset_id"),
+    requestBody: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: {
+            type: "object",
+            properties: {
+              candidateAssetId: { type: "string", nullable: true },
+              claimType: { type: "string" },
+              confidence: { type: "number", nullable: true },
+              basis: { type: "string", nullable: true },
+              status: { type: "string" },
+              decidedBy: { type: "string", nullable: true },
+            },
+          },
+        },
+      },
+    },
+    responses: {
+      "201": { description: "Created — the raw asset_identity_claim row" },
+      "400": t02Err("duplicate_active_key"),
+      "404": t02Err("not_found"),
+      "500": t02Err("add_claim_failed"),
+    },
+  },
+};
+
+// GET+POST /api/canonical_asset/{id}/relations
+paths["/api/canonical_asset/{id}/relations"] = {
+  get: {
+    summary: "Relations for a canonical asset (both directions), with related-asset expansion",
+    operationId: "listCanonicalAssetRelations",
+    tags: ["canonical_asset"],
+    parameters: t02IdParam("canonical asset uuid or canonical_asset_id"),
+    responses: {
+      "200": { description: "OK — { asset, relations, count }" },
+      "404": t02Err("not_found"),
+      "500": t02Err("relations_failed"),
+    },
+  },
+  post: {
+    summary: "Create a relation with automatic direction resolution — :id is from, body.relatedAssetId is to",
+    operationId: "addCanonicalAssetRelation",
+    tags: ["canonical_asset"],
+    parameters: t02IdParam("canonical asset uuid or canonical_asset_id (becomes from_asset_id)"),
+    requestBody: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: {
+            type: "object",
+            required: ["relatedAssetId", "relationType"],
+            properties: {
+              relatedAssetId: { type: "string" },
+              relationType: { type: "string" },
+              decidedBy: { type: "string", nullable: true },
+              effectiveAt: { type: "string", format: "date-time", nullable: true },
+            },
+          },
+        },
+      },
+    },
+    responses: {
+      "201": { description: "Created — relation row + fromAsset/toAsset expansion" },
+      "400": t02Err("missing_field / self_relation / duplicate_active_key"),
+      "404": t02Err("not_found"),
+      "500": t02Err("add_relation_failed"),
+    },
+  },
+};
+
+// GET+POST+DELETE /api/canonical_asset/{id}/external-ids[/{eid}]
+paths["/api/canonical_asset/{id}/external-ids"] = {
+  get: {
+    summary: "Cross-schema external IDs for an asset — nebula systems owning it (V076: asset_relation)",
+    operationId: "listCanonicalAssetExternalIds",
+    tags: ["canonical_asset"],
+    parameters: t02IdParam("canonical asset uuid or canonical_asset_id"),
+    responses: {
+      "200": { description: "OK — { asset, externalIds, count }" },
+      "404": t02Err("not_found"),
+      "500": t02Err("external_ids_failed"),
+    },
+  },
+  post: {
+    summary: "Create a cross-schema link: nebula system owns this asset (idempotent guard, V076)",
+    operationId: "addCanonicalAssetExternalId",
+    tags: ["canonical_asset"],
+    parameters: t02IdParam("canonical asset uuid or canonical_asset_id"),
+    requestBody: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: {
+            type: "object",
+            required: ["nebulaSystemId"],
+            properties: {
+              nebulaSystemId: { type: "string", format: "uuid" },
+              relationType: { type: "string", default: "owns" },
+              decidedBy: { type: "string", nullable: true },
+            },
+          },
+        },
+      },
+    },
+    responses: {
+      "201": { description: "Created — relation row + nebulaSystem/canonicalAsset expansion" },
+      "400": t02Err("missing_field / no_asset"),
+      "404": t02Err("not_found"),
+      "409": t02Err("duplicate_active_key (active relation already exists)"),
+      "500": t02Err("link_failed"),
+    },
+  },
+};
+paths["/api/canonical_asset/{id}/external-ids/{eid}"] = {
+  delete: {
+    summary: "Soft-expire a cross-schema link (asset_relation) scoped to this asset",
+    operationId: "removeCanonicalAssetExternalId",
+    tags: ["canonical_asset"],
+    parameters: [
+      ...t02IdParam("canonical asset uuid or canonical_asset_id"),
+      { name: "eid", in: "path", required: true, description: "asset_relation id", schema: { type: "string", format: "uuid" } },
+    ],
+    responses: {
+      "200": { description: "OK — { id, deleted: true }" },
+      "404": t02Err("not_found"),
+      "500": t02Err("unlink_failed"),
+    },
+  },
+};
+
+// POST /api/asset_identity_claim/{id}/resolve — lifecycle transition
+paths["/api/asset_identity_claim/{id}/resolve"] = {
+  post: {
+    summary: "Resolve or reject an open identity claim (open → resolved | rejected; append-only via update_ proc)",
+    operationId: "resolveAssetIdentityClaim",
+    tags: ["asset_identity_claim"],
+    parameters: t02IdParam("asset_identity_claim uuid"),
+    requestBody: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: {
+            type: "object",
+            required: ["status"],
+            properties: {
+              status: { type: "string", enum: ["resolved", "rejected"] },
+              decidedBy: { type: "string", nullable: true },
+            },
+          },
+        },
+      },
+    },
+    responses: {
+      "200": { description: "OK — updated row + supersededId + previousStatus" },
+      "400": t02Err("invalid_status / invalid_transition"),
+      "404": t02Err("not_found"),
+      "500": t02Err("resolve_failed"),
+    },
+  },
+};
 
 // drift resolve
 paths["/api/drift_finding/{id}/resolve"] = {
