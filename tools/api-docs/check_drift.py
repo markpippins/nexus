@@ -50,6 +50,7 @@ EXCLUDED = {"semantics-srv", "pty-srv", "terrain-srv", "resolution-srv"}
 MOLLECULER_MIRRORS = {
     "moleculer/voyager": "typescript/voyager-srv",
     "moleculer/cascade": "typescript/cascade-srv",
+    "moleculer/kernel": "typescript/kernel-srv",
 }
 
 
