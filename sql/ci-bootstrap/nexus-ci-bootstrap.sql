@@ -105,7 +105,7 @@ $function$
 -- PostgreSQL database dump
 --
 
-\restrict 8qlJUzi8C7oHgKv8oZZjOer5Jg8h2xZNt8fCqRNBPc0dcga30xae9tcHbKuE0EU
+\restrict hCT5aqIGSRDRoJopWqogUjMlDtwQFobEDHQvuXrDVGL80gQfdChPrijBghBOBAv
 
 -- Dumped from database version 17.10 (Debian 17.10-1.pgdg12+1)
 -- Dumped by pg_dump version 17.11 (Debian 17.11-0+deb13u1)
@@ -24790,6 +24790,14 @@ ALTER TABLE ONLY tackle.prompts
 
 
 --
+-- Name: role_memory uq_role_memory_validity; Type: CONSTRAINT; Schema: tackle; Owner: -
+--
+
+ALTER TABLE ONLY tackle.role_memory
+    ADD CONSTRAINT uq_role_memory_validity EXCLUDE USING gist (memory_id WITH =, role WITH =, tstzrange(as_of_dt, COALESCE(expiration_dt, 'infinity'::timestamp with time zone), '[)'::text) WITH &&);
+
+
+--
 -- Name: role_tool_access uq_role_tool_access_role_mcp_tool; Type: CONSTRAINT; Schema: tackle; Owner: -
 --
 
@@ -27036,13 +27044,6 @@ CREATE INDEX idx_tasks_role ON tackle.tasks USING btree (role);
 --
 
 CREATE INDEX idx_tasks_role_active ON tackle.tasks USING btree (role, active);
-
-
---
--- Name: uq_role_memory_active; Type: INDEX; Schema: tackle; Owner: -
---
-
-CREATE UNIQUE INDEX uq_role_memory_active ON tackle.role_memory USING btree (memory_id, role) WHERE (expiration_dt IS NULL);
 
 
 --
@@ -30570,7 +30571,7 @@ ALTER TABLE ONLY wind.workflow_versions
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 8qlJUzi8C7oHgKv8oZZjOer5Jg8h2xZNt8fCqRNBPc0dcga30xae9tcHbKuE0EU
+\unrestrict hCT5aqIGSRDRoJopWqogUjMlDtwQFobEDHQvuXrDVGL80gQfdChPrijBghBOBAv
 
 
 -- ---------------------------------------------------------------------------
