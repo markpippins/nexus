@@ -279,9 +279,7 @@ def build_parser():
     p.add_argument("--containers", default=",".join(DEFAULT_CONTAINERS))
     p.add_argument("--state-file", type=Path, default=DEFAULT_STATE_FILE)
     p.add_argument("--no-actuator", action="store_true",
-                   help="skip the :8092 actuator check — use when the JVM tier on this "
-                        "host is retired/stopped (the probe outlived the tier it was "
-                        "written for; 2026-09-22 moleculer-on-helium prep)")
+                   help="skip the :8092 actuator check — use when the JVM tier on this host is retired/stopped (the probe outlived the tier it was written for; 2026-09-22 moleculer-on-helium prep)")
     p.add_argument("--dry-run", action="store_true",
                    help="print alerts instead of posting records")
     p.add_argument("--no-alert", action="store_true",
