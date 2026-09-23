@@ -50,6 +50,14 @@ Exit codes: 0 clean (warnings ok) | 1 violations | 2 usage error
 Usage:
   python3 bin/wf_lint.py [target] [--rule NAME ...] [--label LABEL]
                          [--list-rules]
+  python3 bin/wf_lint.py [target] [--rule NAME ...] --fix [--dry-run]
+
+--fix: rules that define a fix_file pass (structural rules — job-hardening
+today) auto-apply their remediations. A fix anchored to a line carrying an
+allow marker is suppressed exactly as the finding would be; non-fixable
+findings are reported untouched. The written diff IS the review surface.
+--dry-run previews without writing and exits 1 while fixes are pending.
+After a write, the tree is re-scanned: exit 0 only when nothing violates.
 """
 from __future__ import annotations
 
@@ -128,6 +136,35 @@ class Rule:
     def scan_file(self, rel: str, lines: list[str]) -> list[Finding]:
         """Optional structural pass — default: no findings."""
         return []
+
+    def fix_file(self, rel: str, lines: list[str]) -> list["Edit"]:
+        """Optional --fix pass — default: no fixes. Edits are computed against
+        the file as-read; the applier applies them in descending line order."""
+        return []
+
+
+class Edit:
+    """One auto-applied remediation from a rule's fix_file pass.
+
+    kind "insert": insert `text` immediately BEFORE 1-based line `lineno`
+    (len(lines)+1 appends). kind "replace": overwrite line `lineno`.
+    `anchor_lineno` is the line the parent finding anchored to — the applier
+    suppresses the fix when that line carries an allow marker for `rule`,
+    mirroring scan-time suppression. All edits are computed against the
+    original file, then applied in descending line order so earlier
+    positions never shift (the index-staleness failure mode of ad-hoc
+    fixers, designed out here).
+    """
+
+    __slots__ = ("kind", "lineno", "text", "reason", "rule", "anchor_lineno")
+
+    def __init__(self, kind: str, lineno: int, text: str, reason: str, rule: str, anchor_lineno: int):
+        self.kind = kind
+        self.lineno = lineno
+        self.text = text
+        self.reason = reason
+        self.rule = rule
+        self.anchor_lineno = anchor_lineno
 
 
 # --------------------------------------------------------------------------
@@ -436,6 +473,62 @@ class JobHardeningRule(Rule):
             ))
         return out
 
+    def fix_file(self, rel: str, lines: list[str]) -> list[Edit]:
+        """Auto-remediate the same violations scan_file finds.
+
+        timeout-minutes: inserted directly under each offending job header at
+        the job's own indent (10 minutes — house default; raise for heavy
+        jobs in review). permissions: a top-level contents: read block
+        directly above jobs: (house convention). The permissions fix
+        intentionally narrows the default token scope — review the diff to
+        confirm no job relied on write scopes (none do in this repo as of
+        #507). Anchors mirror scan_file so allow markers suppress fixes on
+        the same lines they suppress findings.
+        """
+        edits: list[Edit] = []
+        if not (
+            _has_top_level_key(lines, "on")
+            or _has_top_level_key(lines, "true")
+            or _has_top_level_key(lines, "true:")
+        ):
+            return []
+        jobs = _locate_jobs(lines)
+        for name, header_idx, job_indent, uses_key, block in jobs:
+            if uses_key:
+                continue  # GitHub rejects timeout-minutes on caller jobs
+            if not _has_job_key(block, job_indent, "timeout-minutes"):
+                edits.append(Edit(
+                    "insert", header_idx + 2,
+                    f"{' ' * (job_indent + 2)}timeout-minutes: 10\n",
+                    f"job `{name}` had no timeout-minutes",
+                    self.name, header_idx + 1,
+                ))
+        if not _has_top_level_key(lines, "permissions") and not (
+            jobs
+            and all(
+                _has_job_key(body, indent, "permissions")
+                for _n, _i, indent, _u, body in jobs
+            )
+        ):
+            ji = next(
+                (i for i, l in enumerate(lines)
+                 if (m := KEY_RE.match(l)) and m.group(1) == "" and m.group(2) == "jobs"),
+                None,
+            )
+            if ji is not None:
+                on_anchor = next(
+                    (i + 1 for i, l in enumerate(lines)
+                     if (m := VALKEY_RE.match(l)) and m.group(1) == "" and m.group(2) in ("on", "true")),
+                    1,
+                )
+                edits.append(Edit(
+                    "insert", ji + 1,
+                    "permissions:\n  contents: read\n\n",
+                    "workflow had no permissions block — added top-level contents: read",
+                    self.name, on_anchor,
+                ))
+        return edits
+
 
 def _locate_jobs(lines: list[str]) -> list[tuple[str, int, int, bool, list[str]]]:
     """Return (name, header_idx, job_indent, is_caller, body_lines) per job."""
@@ -568,9 +661,64 @@ def scan(target: str, rules: list[Rule]) -> tuple[list[Finding], int]:
     return findings, allowed
 
 
+def _apply_edits(path: str, lines: list[str], edits: list[Edit]) -> None:
+    """Apply one file's edits (computed against the as-read lines) in
+    descending line order so earlier positions never shift."""
+    for edit in sorted(edits, key=lambda e: e.lineno, reverse=True):
+        if edit.kind == "insert":
+            idx = min(max(edit.lineno - 1, 0), len(lines))
+            if idx == len(lines) and lines and not lines[-1].endswith("\n"):
+                lines[-1] += "\n"  # never glue a fix onto an unterminated line
+            lines.insert(idx, edit.text)
+        elif edit.kind == "replace":
+            if 1 <= edit.lineno <= len(lines):
+                lines[edit.lineno - 1] = edit.text
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.writelines(lines)
+
+
+def apply_fixes(target: str, rules: list[Rule], write: bool = True) -> tuple[int, int]:
+    """Run every rule's fix_file pass; write when `write` (dry-run previews).
+
+    Returns (applied, suppressed). Edits anchored to allow-marker lines are
+    suppressed exactly as their findings would be. Unreadable files are
+    skipped silently — scan() reports them.
+    """
+    applied = suppressed = 0
+    for dirpath, _dirnames, filenames in sorted(os.walk(target)):
+        for filename in sorted(filenames):
+            path = os.path.join(dirpath, filename)
+            rel = os.path.relpath(path, target).replace(os.sep, "/")
+            applicable = [r for r in rules if r.applies(rel, filename, target)]
+            if not applicable:
+                continue
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    lines = fh.readlines()
+            except OSError:
+                continue
+            edits: list[Edit] = []
+            for rule in applicable:
+                for edit in rule.fix_file(rel, lines):
+                    anchor = (
+                        lines[edit.anchor_lineno - 1]
+                        if 0 < edit.anchor_lineno <= len(lines) else ""
+                    )
+                    if _suppressed(anchor, edit.rule):
+                        suppressed += 1
+                        continue
+                    edits.append(edit)
+            if edits:
+                if write:
+                    _apply_edits(path, lines, edits)
+                applied += len(edits)
+    return applied, suppressed
+
+
 def main(argv: list[str]) -> int:
     target = DEFAULT_DIR
     label = "wf-lint"
+    fix = dry_run = False
     selected: list[str] = []
     i = 0
     args = argv[1:]
@@ -592,6 +740,10 @@ def main(argv: list[str]) -> int:
             for rule in RULES:
                 print(rule.name)
             return 0
+        elif arg == "--fix":
+            fix = True
+        elif arg == "--dry-run":
+            dry_run = True
         elif arg.startswith("-"):
             print(f"wf-lint: unknown option: {arg}", file=sys.stderr)
             return 2
@@ -615,6 +767,15 @@ def main(argv: list[str]) -> int:
         print(f"{label}: unknown rule(s): {', '.join(sorted(unknown))} — see --list-rules", file=sys.stderr)
         return 2
 
+    if dry_run and not fix:
+        print(f"{label}: --dry-run only makes sense with --fix", file=sys.stderr)
+        return 2
+
+    applied = 0
+    suppressed = 0
+    if fix:
+        applied, suppressed = apply_fixes(target, rules, write=not dry_run)
+
     findings, allowed = scan(target, rules)
     violations = [f for f in findings if f.severity == "violation"]
     warnings = [f for f in findings if f.severity == "warning"]
@@ -631,6 +792,14 @@ def main(argv: list[str]) -> int:
         f"{label}: {len(violations)} violation(s), {len(warnings)} warning(s), "
         f"{allowed} allow-marker line(s) — rules: {rule_names}{standard}"
     )
+    if fix:
+        verb = "would apply" if dry_run else "applied"
+        print(
+            f"{label}: {verb} {applied} fix(es), {suppressed} fix(es) suppressed "
+            f"by allow markers"
+        )
+        if dry_run and applied:
+            return 1  # signal: fixes are pending
     return 1 if violations else 0
 
 

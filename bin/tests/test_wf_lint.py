@@ -17,6 +17,11 @@ real-world findings that motivated the family:
     timeout-minutes fail (GitHub default 360 min), workflows without a
     permissions block fail; caller jobs exempt from timeout; nested
     timeout-minutes does not count; allow marker works on the anchor line.
+  - fix mode (--fix/--dry-run): rules with a fix_file pass auto-apply
+    remediations (job-hardening first). Edits apply descending by line so
+    positions never shift; allow markers suppress fixes exactly as they
+    suppress findings; post-fix re-scan proves the tree; a second run is a
+    no-op; dry-run touches nothing and exits 1 while fixes are pending.
 
 Run:
   python3 -m pytest bin/tests/test_wf_lint.py -v
@@ -397,6 +402,118 @@ class WfLintTest(unittest.TestCase):
         self._write(".github/workflows/empty.yml", "name: placeholder\n")
         proc = self._run(self.tree)
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+    def test_fix_dry_run_leaves_file_untouched_and_exits_pending(self):
+        body = (
+            "on: push\n"
+            "jobs:\n"
+            "  a:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps: []\n"
+        )
+        path = self._write(".github/workflows/dry.yml", body)
+        proc = self._run(self.tree, None, "--fix", "--dry-run")
+        self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)  # fixes pending
+        self.assertIn("would apply 2 fix(es), 0 fix(es) suppressed", proc.stdout)
+        with open(path) as fh:
+            self.assertEqual(body, fh.read())  # dry run wrote nothing
+
+    def test_fix_writes_missing_blocks_and_rescans_clean(self):
+        self._write(
+            ".github/workflows/fixme.yml",
+            "on: push\n"
+            "jobs:\n"
+            "  a:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps: []\n"
+            "  b:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps: []\n",
+        )
+        proc = self._run(self.tree, None, "--fix")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)  # re-scan proves the tree
+        self.assertIn("applied 3 fix(es), 0 fix(es) suppressed", proc.stdout)
+        with open(os.path.join(self.tree, ".github/workflows/fixme.yml")) as fh:
+            fixed = fh.read()
+        self.assertEqual(2, fixed.count("timeout-minutes: 10"))
+        self.assertIn("permissions:\n  contents: read\n\njobs:", fixed)
+        self.assertIn("  a:\n    timeout-minutes: 10\n    runs-on: ubuntu-latest", fixed)
+        self.assertIn("  b:\n    timeout-minutes: 10\n    runs-on: ubuntu-latest", fixed)
+
+    def test_fix_idempotent_second_run_is_noop(self):
+        self._write(
+            ".github/workflows/idem.yml",
+            "on: push\n"
+            "jobs:\n"
+            "  a:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps: []\n",
+        )
+        first = self._run(self.tree, None, "--fix")
+        self.assertEqual(0, first.returncode, first.stdout + first.stderr)
+        self.assertIn("applied 2 fix(es)", first.stdout)
+        second = self._run(self.tree, None, "--fix")
+        self.assertEqual(0, second.returncode, second.stdout + second.stderr)
+        self.assertIn("applied 0 fix(es)", second.stdout)
+
+    def test_fix_suppressed_by_allow_marker(self):
+        self._write(
+            ".github/workflows/allow.yml",
+            "on: push # wf-lint-allow: job-hardening — token restricted at repo level\n"
+            "jobs:\n"
+            "  a: # wf-lint-allow: job-hardening — upstream reusable gate owns the bound\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps: []\n",
+        )
+        proc = self._run(self.tree, None, "--fix")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("applied 0 fix(es), 2 fix(es) suppressed", proc.stdout)
+
+    def test_fix_leaves_caller_jobs_alone(self):
+        body = (
+            "on: push\n"
+            "permissions:\n"
+            "  contents: read\n"
+            "jobs:\n"
+            "  call:\n"
+            "    uses: ./.github/workflows/reusable.yml\n"
+            "    with:\n"
+            "      env: prod\n"
+        )
+        path = self._write(".github/workflows/caller.yml", body)
+        proc = self._run(self.tree, None, "--fix")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("applied 0 fix(es)", proc.stdout)  # caller exempt; no permission gap
+        with open(path) as fh:
+            self.assertEqual(body, fh.read())
+
+    def test_fix_count_matches_scan_findings(self):
+        # invariant: every fixable violation the scan reports gets exactly one fix
+        self._write(
+            ".github/workflows/multi.yml",
+            "on: push\n"
+            "jobs:\n"
+            "  a:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps: []\n"
+            "  b:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps: []\n"
+            "  c:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps: []\n",
+        )
+        scan = self._run(self.tree)
+        self.assertEqual(1, scan.returncode)
+        self.assertIn("4 violation(s)", scan.stdout)  # 3 timeouts + 1 permissions
+        proc = self._run(self.tree, None, "--fix")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("applied 4 fix(es)", proc.stdout)
+
+    def test_dry_run_without_fix_is_usage_error(self):
+        proc = self._run(self.tree, None, "--dry-run")
+        self.assertEqual(2, proc.returncode)
+        self.assertIn("--dry-run only makes sense with --fix", proc.stderr)
 
     # -- real repo -----------------------------------------------------------------
 
