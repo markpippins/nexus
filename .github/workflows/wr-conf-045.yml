@@ -1,0 +1,56 @@
+name: WR Conf 045 — ST.01 Promotion Batch + Candidate-Set Keys (V198 E2E)
+
+# Applies the REAL sql/V198__st01_promotion_batch_candidate_set_keys.sql to a
+# throwaway database carrying the minimal resolution skeleton (candidate at
+# the ratified 0-row pin window). Probes the ratified envelope-ruling
+# behavior end-to-end: preflight refusals (pgcrypto missing handled by the
+# skeleton, double-apply refused), both R2.4 negative-fixture CHECK pins,
+# the R3 partial-unique active-batch invariant, key semantics (order-free,
+# duplicate-collapsing — the disclosed fix vs pre-stage 1e942769 — canonical
+# jsonb eligibility hashing per R1.2), the atomic claim path (race
+# convergence, crash rollback, seal/supersede lineage per R1.4), and
+# normalized membership links (PC5 D3, FK RESTRICT).
+# No mocks on the DB path. Service pinned to postgres:17 (house
+# convention after the wr-conf-025 PG17 lesson, PR #300).
+
+on:
+  push:
+    branches: [main, master, feature/*, dev]
+  pull_request:
+    branches: [main, master, feature/*]
+  workflow_dispatch:
+
+jobs:
+  v198-st01-promotion-batch-e2e:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: pguser
+          POSTGRES_PASSWORD: pgpass
+          POSTGRES_DB: nexus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pguser"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies (declared, not mocked — pitfall #15)
+        run: python3 -m pip install pytest psycopg2-binary
+
+      - name: Run V198 ST.01 promotion-batch E2E
+        env:
+          CONDUIT_PG_DSN: postgresql://pguser:pgpass@localhost:5432/postgres
+        run: |
+          python3 -m pytest python/nexus_core/wrp/tests/test_v198_st01_promotion_batch_e2e.py -v
