@@ -53,6 +53,10 @@ jobs:
     # 21-jdk-slim x4, openjdk 21 x1), 1x broker-gateway -exec.jar churn
     # (in-flight fat-jar pilot), 2x helidon missing shared/ reactor
     # provisioning (same class as the nexus-core peb-api gap, PR #454).
+    # Updated 2026-09-23: the 4x eclipse-temurin 21-jdk-slim pins are fixed
+    # (retagged to 21-jdk). Remaining: social-media openjdk:21-jdk-slim
+    # (base-image migration, its own PR), broker-gateway -exec.jar churn
+    # (in-flight fat-jar pilot), helidon shared/ provisioning (PR #454 class).
     # continue-on-error keeps this audit visible WITHOUT blocking merges
     # until the punch list lands; FLIP TO FALSE once the matrix is green.
     continue-on-error: true
