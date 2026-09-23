@@ -1,0 +1,72 @@
+# Workflow lint family — one harness, four rules, one gate
+#
+# bin/wf_lint.py generalizes the PG pin lint (PR #474) into a small rule
+# family sharing one scanner. Rules:
+#
+#   postgres-pin   workflow postgres/pgvector pins >= fleet standard 17
+#                  (the drift class the fleet PG audit found: 9 workflows
+#                  silently on postgres:16; PR #300 failed the same way)
+#   dead-base      Dockerfile FROM images known dead — the #456 docker-gate
+#                  findings (4x eclipse-temurin:21-jdk-slim — tags Docker Hub
+#                  never published — plus openjdk:21-jdk-slim, repo
+#                  discontinued; fixed via #481, now un-reintroducible)
+#   eol-runtime    setup-* runtime versions past EOL fail; within 180 days
+#                  of EOL warn (node/python/go tables; java floor 17)
+#   action-ref     floating `uses:` refs (@main / bare) fail; @vN tag pins
+#                  are the house convention and pass
+#
+# This workflow SUPERSEDES pg-pin-lint.yml (same job naming role in branch
+# protection terms: nothing required references either). Its rules and the
+# legacy lint's tests are included in the run. Per-line escape:
+# '# wf-lint-allow: <reason>' (bare marker or a rule list also work); the
+# postgres rule additionally honors legacy '# pg-pin-allow'.
+#
+# Deliberately BLOCKING (no continue-on-error): a lint that cannot go red
+# cannot guard anything. Full-repo scan (bin/wf_lint.py .) so dead
+# Dockerfile bases are caught anywhere, not just under .github/workflows.
+
+name: Workflow Lint Family
+
+on:
+  push:
+    branches: [ main, master, dev, feature/* ]
+    paths:
+      - '.github/workflows/**'
+      - 'bin/wf_lint.py'
+      - 'bin/tests/test_wf_lint.py'
+      - 'bin/lint_postgres_pins.py'
+      - 'bin/tests/test_lint_postgres_pins.py'
+      - '**/Dockerfile*'
+  pull_request:
+    branches: [ main, master, dev, feature/* ]
+    paths:
+      - '.github/workflows/**'
+      - 'bin/wf_lint.py'
+      - 'bin/tests/test_wf_lint.py'
+      - 'bin/lint_postgres_pins.py'
+      - 'bin/tests/test_lint_postgres_pins.py'
+      - '**/Dockerfile*'
+  workflow_dispatch:
+  schedule:
+    # Weekly — catches EOL rollovers and standard drift without churn.
+    - cron: '23 4 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  wf-lint:
+    name: "workflow lint family (pg pins, dead bases, EOL runtimes, action refs)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test deps
+        run: python3 -m pip install --quiet pytest
+      - name: Lint unit tests (harness + rules)
+        run: python3 -m pytest bin/tests/test_wf_lint.py bin/tests/test_lint_postgres_pins.py -q
+      - name: Workflow lint (full family, full repo)
+        run: python3 bin/wf_lint.py .
