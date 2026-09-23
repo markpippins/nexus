@@ -182,6 +182,8 @@ def _package_fingerprint(pkg: "ConceptPackage") -> str:
             "inclusion_ledger": _normalized(pkg.filter_spec.inclusion_ledger),
             "vocabulary_snapshot": _normalized(pkg.filter_spec.vocabulary_snapshot),
             "projection_snapshot": _normalized(pkg.filter_spec.projection_snapshot),
+            "vocabulary_snapshot": pkg.filter_spec.vocabulary_snapshot,
+            "projection_snapshot": pkg.filter_spec.projection_snapshot,
             "relationship_limitations": pkg.filter_spec.relationship_limitations,
         },
         "snapshot_pin": {

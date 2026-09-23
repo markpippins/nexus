@@ -1,0 +1,56 @@
+# pg-escape-hatch backup suite
+#
+# Runs the hermetic test suite for bin/pg-escape-hatch.sh — the local
+# nightly nexus PG backup (travel tier). The suite's mechanics tests mock
+# pg_dump/pg_restore/psql and pin the R4 client/server version guard
+# behaviorally (skew fails BEFORE any dump attempt; dry-run warns only;
+# undeterminable versions fail; newer client passes). The Docker E2E test
+# skips cleanly on runners without the pgvector image — it is exercised
+# on hosts that have it (see the suite docstring).
+#
+# Coverage note (2026-09-22): this file had NO CI coverage before this
+# workflow — found while landing the R4 guard, when the PR body claimed
+# CI ran it and the check proved otherwise. Path-filtered to the script,
+# its lib, the tests, and this workflow itself.
+
+name: Escape Hatch Backup Suite
+
+on:
+  push:
+    branches: [ main, master, feature/*, dev ]
+    paths:
+      - 'bin/pg-escape-hatch.sh'
+      - 'bin/lib/drive-guard.sh'
+      - 'bin/tests/test_pg_escape_hatch.py'
+      - '.github/workflows/pg-escape-hatch.yml'
+  pull_request:
+    branches: [ main, master, feature/* ]
+    paths:
+      - 'bin/pg-escape-hatch.sh'
+      - 'bin/lib/drive-guard.sh'
+      - 'bin/tests/test_pg_escape_hatch.py'
+      - '.github/workflows/pg-escape-hatch.yml'
+  workflow_dispatch:
+  schedule:
+    # Daily — catches runner/toolchain drift in a script whose failure
+    # mode is a silently skipped nightly backup.
+    - cron: '30 5 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  escape-hatch-suite:
+    name: "pg-escape-hatch: mechanics + version guard (mock suite)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: 'pip'
+      - name: Install test deps
+        run: python3 -m pip install --quiet pytest
+      - name: Run suite (Docker E2E skips without the pgvector image)
+        run: python3 -m pytest bin/tests/test_pg_escape_hatch.py -v
