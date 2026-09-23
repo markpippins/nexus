@@ -80,6 +80,72 @@ def alert_recorder(posted):
 
 
 # --------------------------------------------------------------------------
+# ssh leg: IPv4 pinning + dedicated timeout (2026-09-21 flap fix, salvaged
+# from the helium-probe-ipv4 worktree triage — implementation was already on
+# main via #441's landing; these regression tests were not)
+# --------------------------------------------------------------------------
+
+def test_fetch_docker_states_forces_ipv4():
+    """ssh must pin -4: stale AAAA from helium's reimage made the v6-first
+    path flap the probe incident/recovery for a day (root-cause record
+    0d822504)."""
+    calls = []
+    real_run = mod.subprocess.run
+
+    def fake_run(cmd, capture_output, text, timeout):
+        calls.append((list(cmd), timeout))
+        return type("R", (), {"stdout": "nexus-core\trunning", "returncode": 0})()
+
+    mod.subprocess.run = fake_run
+    try:
+        mod.fetch_docker_states("helium", 9.0)
+    finally:
+        mod.subprocess.run = real_run
+    cmd, timeout = calls[0]
+    assert "-4" in cmd, f"ssh command must force IPv4, got: {cmd}"
+    assert "-o" in cmd and "BatchMode=yes" in cmd
+    assert timeout == 9.0
+
+
+def test_check_containers_uses_dedicated_ssh_timeout():
+    seen = {}
+
+    def states(host, timeout):
+        seen["args"] = (host, timeout)
+        return {n: "running" for n in mod.DEFAULT_CONTAINERS}
+
+    mod.check_containers(states, "helium", 1.0, list(mod.DEFAULT_CONTAINERS),
+                         ssh_timeout=7.5)
+    assert seen["args"] == ("helium", 7.5)
+
+
+def test_check_containers_default_ssh_timeout_is_ten_seconds():
+    seen = {}
+
+    def states(host, timeout):
+        seen["timeout"] = timeout
+        return {n: "running" for n in mod.DEFAULT_CONTAINERS}
+
+    mod.check_containers(states, "helium", 1.0, list(mod.DEFAULT_CONTAINERS))
+    assert seen["timeout"] == mod.DEFAULT_SSH_TIMEOUT
+    assert mod.DEFAULT_SSH_TIMEOUT == 10.0
+
+
+def test_run_probe_passes_ssh_timeout_to_container_check():
+    seen = {}
+
+    def states(host, timeout):
+        seen["timeout"] = timeout
+        return {n: "running" for n in mod.DEFAULT_CONTAINERS}
+
+    sf = Path("/tmp/probe-test-ssh-timeout-state.json")
+    mod.run_probe(make_args(state_file=sf, ssh_timeout=6.5),
+                  fetch=ok_fetcher(), fetch_states=states,
+                  poster=alert_recorder([]))
+    assert seen["timeout"] == 6.5
+
+
+# --------------------------------------------------------------------------
 # check_actuator
 # --------------------------------------------------------------------------
 
