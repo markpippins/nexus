@@ -412,5 +412,14 @@ class AspectsBindingPort:
 
 async def create_binding_port(dsn: str) -> AspectsBindingPort:
     """Create a binding port with a connection pool."""
+    if not _ASYNCPG_AVAILABLE:
+        # Fail fast with an actionable message. Without this guard a missing
+        # driver surfaces later as AttributeError: 'NoneType' object has no
+        # attribute 'create_pool' (asyncpg was soft-imported as None).
+        raise RuntimeError(
+            "asyncpg is not installed; it is the aspects binding port's "
+            "runtime driver. Install the declared requirements: "
+            "pip install -r python/aspects/requirements.txt"
+        )
     pool = await asyncpg.create_pool(dsn, min_size=1, max_size=5)
     return AspectsBindingPort(pool)
