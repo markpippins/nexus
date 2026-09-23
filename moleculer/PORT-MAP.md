@@ -23,6 +23,7 @@
 | 4100 | `kernel` (canary twin of `typescript/kernel-srv`) | `kernel` | `typescript/kernel-srv :8100` (resolution kernel: transitions, receipts, pg_notify SSE; contract pinned to incumbent `openapi.yaml`) | CANARY — merged (PR #463), canary-diffed byte-identical, **not cut over / not deployed** |
 | 4170 | `draft` (canary twin of `typescript/draft-srv`) | `draft` | `typescript/draft-srv :3140` (DB workbench API behind `data-explorer-ui`'s server-to-server proxy; fail-closed `X-Nexus-Internal` gate replicated; contract pinned to incumbent `openapi.yaml`) | CANARY — PR #479, canary-diffed byte-identical, **not cut over / not deployed** |
 | 4109 | `knowledge` (canary twin of `typescript/knowledge-srv`) | `knowledge` | `typescript/knowledge-srv :3109` (knowledge graph REST; sole caller knowledge-mcp REST proxy; no auth gate on incumbent — CORS only; contract pinned to incumbent `openapi.yaml`) | CANARY — PR #480, canary-diffed byte-identical, **not cut over / not deployed** |
+| 4150 | `role-memory` (canary twin of `typescript/role-memory-srv`) | `role-memory` | `typescript/role-memory-srv :3500` (Role Memory Procedure Registry: PG→Redis sync + cache reads; callers tackle-srv memory.ts, harness-srv, operator-svc, mesh-register; no auth gate on incumbent; contract pinned to incumbent `openapi.yaml`) | CANARY — submitted with this row (PR for the port), canary-diffed byte-identical, **not cut over / not deployed**; 4150 row submitted for Ruling 4 ratification |
 
 ## Shared infrastructure (NOT moleculer-owned — do not claim)
 
@@ -49,7 +50,7 @@
 - Any port change ratified in `jvm/ARCHITECTURE.md` must be mirrored here and
   in the owning service's config + launch units in the same change; the
   terrain registry entry follows at the next registration heartbeat.
-- Canary/deployment ports (4100/4106/4109/4114/4170) are the exception to
+- Canary/deployment ports (4100/4106/4109/4114/4150/4170) are the exception to
   one-live-authority: a canary twin may co-listen on its 41xx twin while its
   incumbent stays live, and must be removed from the map when cutover completes
   (dead routes die). Canary rows in this table require architect ratification
