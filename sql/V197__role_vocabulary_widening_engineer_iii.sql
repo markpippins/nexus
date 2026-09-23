@@ -30,31 +30,8 @@
 -- Apply:  psql -d nexus -f sql/V197__role_vocabulary_widening_engineer_iii.sql
 -- =============================================================================
 
--- =============================================================================
--- ROLE-VOCAB PIN — the marker-designated in-repo authority (2026-09-23).
---
--- The pinned role list below is THE authoritative role vocabulary in the
--- repository. Consumers:
---   * V197's own preflight (live nebula CHECK must equal either the prior
---     24-role set or this 25-role set at apply time — the drift gate below)
---   * wr-conf-042 CI: sql/ci-bootstrap's agent_records_role_check must carry
---     EXACTLY these literals (born-clean assertion, enforced on every PR)
---   * bin/role-vocab-drift.py (on-box): live nebula == pin == bootstrap
---
--- WIDENING THE VOCABULARY: copy this marker comment into the new migration
--- with the new pin, update the bootstrap to the same list, and REMOVE the
--- marker from this file — exactly ONE authoritative pin may exist at any
--- time (wr-conf-042 fails the build otherwise). Nebula's live constraint and
--- this pin must move together. (The marker was moved here from V190 by this
--- migration per that recipe.)
---
--- NOTE on shape: the ONLY role ARRAY in this file is the DECLARE block
--- below. The prior set is derived at runtime via array_remove(target, the
--- new role), and the swap DDL is built with dynamic SQL — so test
--- extractors (first ARRAY after this marker = the pin; last ARRAY = the
--- swap) both resolve to the same 25-role list. Do not add ARRAY literals
--- to comments here.
--- =============================================================================
+-- Historical role-vocabulary pin for the engineer-iii widening. The unique
+-- in-repo authority marker moved to V200 when Supervisor was added.
 
 BEGIN;
 

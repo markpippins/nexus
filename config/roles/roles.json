@@ -25,6 +25,7 @@
     "ontologist": { "harnessFile": false, "governance": false, "_note": "doctrine roundtable role (AGENTS.md R12): owns the resolution ontology (Concept/Representation freezes, e.g. V172 record 90bd3080); runs in interactive lease sessions; harness agent file deliberately absent" },
     "planner": {},
     "reviewer": {},
+    "supervisor": { "governance": false, "_note": "initial scope: role registration/configuration and doctrine + OpenCode projection regeneration; WorkRequest execution and receipt authority remain inactive until Conduit resumes" },
     "sysadmin": { "governance": false },
     "topologist": {},
     "DBA": { "nebulaCheck": true, "governance": false, "_note": "case variant: CHECK + harness file use lowercase 'dba'" },

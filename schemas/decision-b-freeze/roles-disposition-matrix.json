@@ -562,6 +562,24 @@
    "owner": "architect"
   },
   {
+   "stable_identity": "supervisor",
+   "aliases": [
+    "supervisor"
+   ],
+   "case_rule": "canonical is lower-kebab-case; DBA/dba equivalent; all other case variants resolve to canonical, never stored separately",
+   "source_registries": [
+    "nebula.roles_history",
+    "tackle.roles",
+    "assembly.users"
+   ],
+   "in_nebula_roles": true,
+   "class": "role",
+   "lifecycle": "active",
+   "authority_scope": "role-system administration only; no WorkRequest execution, receipt, review, settlement, or verification authority",
+   "disposition": "Canonical role identity. Supervisor registers/configures roles and regenerates doctrine/OpenCode projections. Execution responsibilities remain deferred until Conduit resumes and a separate authority decision activates them.",
+   "owner": "architect"
+  },
+  {
    "stable_identity": "sysadmin",
    "aliases": [
     "sysadmin"

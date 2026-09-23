@@ -13798,7 +13798,7 @@ CREATE TABLE nebula.agent_records_history (
     candidate_id uuid,
     requirement_id uuid,
     CONSTRAINT agent_records_record_type_check CHECK ((record_type = ANY (ARRAY['report'::text, 'analysis'::text, 'assessment'::text, 'inspection'::text, 'prompt'::text, 'response'::text, 'engineering_log'::text, 'architecture_note'::text, 'decision'::text]))),
-    CONSTRAINT agent_records_role_check CHECK (((role = ''::text) OR (role = ANY (ARRAY['architect'::text, 'planner'::text, 'builder'::text, 'reviewer'::text, 'critic'::text, 'analyst'::text, 'inspector'::text, 'engineer'::text, 'engineer-ii'::text, 'engineer-iii'::text, 'devops'::text, 'topologist'::text, 'auditor'::text, 'dba'::text, 'epistemologist'::text, 'operator'::text, 'sysadmin'::text, 'DBA'::text, 'tester'::text, 'analyst-ii'::text, 'design-synthesist'::text, 'layout-mechanic'::text, 'ontologist'::text, 'lead-engineer'::text, 'sound-technician'::text])))),
+    CONSTRAINT agent_records_role_check CHECK (((role = ''::text) OR (role = ANY (ARRAY['architect'::text, 'planner'::text, 'builder'::text, 'reviewer'::text, 'critic'::text, 'analyst'::text, 'inspector'::text, 'engineer'::text, 'engineer-ii'::text, 'engineer-iii'::text, 'devops'::text, 'topologist'::text, 'auditor'::text, 'dba'::text, 'epistemologist'::text, 'operator'::text, 'sysadmin'::text, 'DBA'::text, 'tester'::text, 'analyst-ii'::text, 'design-synthesist'::text, 'layout-mechanic'::text, 'ontologist'::text, 'lead-engineer'::text, 'sound-technician'::text, 'supervisor'::text])))),
     CONSTRAINT chk_agent_records_level CHECK (((level >= 1) AND (level <= 4)))
 );
 

@@ -101,7 +101,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'inspector', 'lead-engineer', 'planner', 'reviewer', 'sysadmin', 'tester', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'inspector', 'lead-engineer', 'planner', 'reviewer', 'supervisor', 'sysadmin', 'tester', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -152,7 +152,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'inspector', 'layout-mechanic', 'lead-engineer', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'inspector', 'layout-mechanic', 'lead-engineer', 'planner', 'reviewer', 'supervisor', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -192,7 +192,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'inspector', 'layout-mechanic', 'lead-engineer', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'inspector', 'layout-mechanic', 'lead-engineer', 'planner', 'reviewer', 'supervisor', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -372,7 +372,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'supervisor', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -413,7 +413,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'supervisor', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -465,7 +465,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'supervisor', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1007,7 +1007,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'supervisor', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1160,7 +1160,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'DBA', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'planner', 'reviewer', 'sound-technician', 'supervisor', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -1262,7 +1262,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'inspector', 'lead-engineer', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'inspector', 'lead-engineer', 'planner', 'reviewer', 'supervisor', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -2998,28 +2998,67 @@ BEGIN
     VALUES (
         'role-creation',
         'Role Creation (deterministic runbook)',
-        'One source-of-truth edit (config/roles/roles.json) plus generated artifacts registers a role across every surface; bin/verify-roles.py proves end-to-end coverage.',
+        'Deterministic role registration, canonical DB rollout, generated doctrine/OpenCode projections, and full-surface verification.',
+        '\n'
         '## Procedure\n'
-        'Adding a new role to the system is deterministic: edit the canonical expectations file, emit the artifacts, and verify with the end-to-end check. No undocumented parallel hand-edits.\n'
         '\n'
-        '### 1. Canonical edit\n'
-        'Add the role to \`nexus/config/roles/roles.json\` under \`roles\` — the key must match the name inserted into \`tackle.roles\`. Inherit \`roleDefaults\` unless the role is special (test/alias roles override surfaces to false).\n'
+        'Adding or changing a role is deterministic and database-first. Never hand-edit generated projections or silently widen execution authority.\n'
         '\n'
-        '### 2. Emit artifacts\n'
-        'For a full agent role, create/update:\n'
-        '- **tackle.roles row** — via the seed arrays (\`tackle-mcp/src/db.ts\` DEFAULT_ROLES, \`conduit-mcp/src/db.ts\` migration defaultRoles) or a migration; the live DB is canonical.\n'
-        '- **Persona prompt** — \`tackle.prompts\` row (role, slug \`opencode-persona\`, version 1) in \`schemas/migrations/tackle/\` (pattern: \`sysadmin_persona_v1.sql\`); apply to the live DB.\n'
-        '- **Harness agent file** — \`config/harnesses/opencode/agents/<role>.md\` (frontmatter: assumes_role, permissions; pattern: \`sysadmin.md\`).\n'
-        '- **Procedure cards** — add the role to the role lists of the relevant \`the canonical procedure-card table\` cards (the role assignment join table assignments); then regenerate the seed: \`python3 bin/regenerate_memory_seed.py --verify\`.\n'
-        '- **Assembly alias** — \`assembly.users\` row with alias = role name (pattern: builder seed in \`assembly-migration.sql\`).\n'
-        '- **nebula role CHECK** — new \`typescript/nebula-srv/migrations/0NN-allow-<role>.sql\` mirroring \`052-allow-sysadmin-dba-role.sql\`; apply + replicate to barium.\n'
-        '- **Governance** — add to \`harness-srv/src/governance.ts\` KNOWN_EXECUTORS only if the role issues receipts.\n'
+        '### 1. Confirm the decision and rollout gate\n'
         '\n'
-        '### 3. Verify\n'
-        'Run \`python3 bin/verify-roles.py\` — it checks every expected surface for every registered role (persona, procedure cards, assembly alias, harness file, nebula CHECK, governance). Exit 0 = all covered. Fix FAILs before closing.\n'
+        '1. Record the operator/architecture decision and the role''s initial authority boundary.\n'
+        '2. Check the live role vocabulary and any active migration/restore incident. Do not apply role DDL while role-memory validity or security constraints are in an unresolved incident state.\n'
+        '3. DDL/data application is DBA/operator authorized. Ask before replicating canonical changes to the off-machine target **vanadium** (R9).\n'
         '\n'
-        '### 4. Close\n'
-        'Post the walkthrough evidence on the role-creation thread and record an engineering log. Surface the new role to the architect for allowlist ratification if the case/naming deviates from convention.',
+        '### 2. Canonical repository edit\n'
+        '\n'
+        'Edit \`config/roles/roles.json\` under \`roles\`. The key must match \`tackle.roles.name\` exactly. Inherit \`roleDefaults\` unless a surface is deliberately absent.\n'
+        '\n'
+        '- \`governance\` is true only for a role that issues Conduit receipts.\n'
+        '- New roles default to **no WorkRequest execution, settlement, or verification authority** unless a separate binding decision grants it.\n'
+        '- Record the role in \`schemas/decision-b-freeze/roles-disposition-matrix.json\` with its source registries and authority scope.\n'
+        '\n'
+        '### 3. Emit every required surface\n'
+        '\n'
+        'For a full role, provide all of:\n'
+        '\n'
+        '1. \`tackle.roles\` identity in Tackle/Conduit seed inputs or a canonical migration.\n'
+        '2. \`tackle.prompts\` row for \`<role>/opencode-persona\`.\n'
+        '3. Active role-memory assignments for the minimum relevant procedure cards.\n'
+        '4. \`assembly.users\` alias for attributed posts.\n'
+        '5. Nebula record-author CHECK and \`nebula.roles_history\` capability metadata.\n'
+        '6. \`config/harnesses/opencode/agents/<role>.md\` source template when an OpenCode harness file is expected.\n'
+        '7. \`harness-srv\` \`KNOWN_EXECUTORS\` only if and only if the role issues receipts.\n'
+        '8. Role-vocabulary/bootstrap surfaces and the generated procedure seed/manifest.\n'
+        '\n'
+        '### 4. Regenerate projections\n'
+        '\n'
+        'After the canonical database migration is legitimately applied:\n'
+        '\n'
+        '\`\`\`bash\n'
+        'python3 bin/regenerate_memory_seed.py --verify\n'
+        '\`\`\`\n'
+        '\n'
+        'This regenerates \`typescript/tackle-seeds/index.ts\`, \`seed-manifest.json\`, and the built seed package from the live procedure-card and role-assignment tables. Never hand-edit those outputs.\n'
+        '\n'
+        'Render the OpenCode agent projection through the configured Tackle projection surface after the persona/role rows are live. Never directly edit runtime \`/home/codex/dev/.opencode/agents/*.md\` as a substitute for its source.\n'
+        '\n'
+        '### 5. Verify and test\n'
+        '\n'
+        '\`\`\`bash\n'
+        'python3 bin/verify-roles.py\n'
+        'python3 bin/role-vocab-drift.py --json\n'
+        '\`\`\`\n'
+        '\n'
+        'Add hermetic regression coverage for source-to-projection parity and new negative authority boundaries. Run the affected package tests/builds. Code plus passing tests is the merge gate; without tester attestation, keep the PR in draft.\n'
+        '\n'
+        '### 6. Close the loop\n'
+        '\n'
+        '1. Post the change summary to \`change-log\` with migration and regeneration evidence.\n'
+        '2. Write completion/status records to the new role and affected engineer/tester lanes.\n'
+        '3. Track the PR through the GitHub forum until merge or rejection.\n'
+        '4. If the role later expands into Conduit execution, make that a new authority decision and migration; do not silently reinterpret this runbook.\n'
+        '',
         ARRAY['role', 'runbook', 'bootstrap', 'onboarding', 'deterministic'],
         ARRAY['add a role', 'new role', 'create role', 'role creation', 'register role', 'onboard role'],
         '{}'
@@ -3027,7 +3066,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['architect', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'lead-engineer'];
+        v_roles := ARRAY['architect', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'lead-engineer', 'supervisor'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -3397,7 +3436,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'lead-engineer', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'architect', 'builder', 'critic', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'lead-engineer', 'planner', 'reviewer', 'supervisor', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
@@ -3517,7 +3556,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'architect', 'builder', 'critic', 'DBA', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'planner', 'reviewer', 'topologist'];
+        v_roles := ARRAY['analyst', 'architect', 'builder', 'critic', 'DBA', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'planner', 'reviewer', 'supervisor', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
