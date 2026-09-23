@@ -60,6 +60,12 @@ class TagBinding:
     bound_by: Optional[str]
     created_at: datetime
     expired_at: Optional[datetime]
+    # Decision attribution (V199). Defaults keep rows from pre-attribution
+    # fixtures/reads constructible; the decision-coherence CHECK guarantees
+    # live approved/rejected rows always carry decided_by + decided_at.
+    decided_by: Optional[str] = None
+    decided_at: Optional[datetime] = None
+    decision_note: Optional[str] = None
 
 
 # ── Binding lifecycle (Aspect G2) ────────────────────────────────────────
@@ -242,7 +248,10 @@ class AspectsBindingPort:
                 tb.status,
                 tb.bound_by,
                 tb.created_at,
-                tb.expired_at
+                tb.expired_at,
+                tb.decided_by,
+                tb.decided_at,
+                tb.decision_note
             FROM aspects.tag_binding tb
             JOIN aspects.governed_tag_vocabulary gtv ON gtv.id = tb.governed_tag_id
             {where_clause}
@@ -321,13 +330,21 @@ class AspectsBindingPort:
         self,
         binding_id: UUID,
         status: str,
-        bound_by: Optional[str] = None
+        decided_by: Optional[str] = None,
+        decision_note: Optional[str] = None,
     ) -> Optional[TagBinding]:
         """Update binding status through the explicit lifecycle machine.
 
         proposed -> approved | rejected | expired; approved/rejected -> expired.
         Expiring stamps expired_at so active_only queries stop returning the
         binding. Unknown statuses and illegal transitions fail closed.
+
+        Decision attribution: approve/reject REQUIRE decided_by (ValueError
+        otherwise) and stamp decided_at now() plus the optional note. Expiry
+        is lifecycle, not a decision — no actor needed, and any previously
+        recorded decision attribution is preserved. bound_by stays the
+        proposer's identity: it is never overwritten here (2026-09-23,
+        governance approval surface, intent 7923c595).
         """
         async with self.pool.acquire() as conn:
             current = await conn.fetchrow(
@@ -336,18 +353,25 @@ class AspectsBindingPort:
             )
             if not current:
                 return None
+            if status in ("approved", "rejected") and not decided_by:
+                raise ValueError(
+                    f"{status} requires decided_by attribution (who made the decision)"
+                )
             validate_binding_transition(current["status"], status)
             query = """
                 UPDATE aspects.tag_binding
                 SET status = $2,
-                    bound_by = COALESCE($3, bound_by),
+                    decided_by = CASE WHEN $2 IN ('approved','rejected') THEN $3 ELSE decided_by END,
+                    decided_at = CASE WHEN $2 IN ('approved','rejected') THEN now() ELSE decided_at END,
+                    decision_note = CASE WHEN $2 IN ('approved','rejected') THEN $4 ELSE decision_note END,
                     expired_at = CASE WHEN $2 = 'expired' THEN now() ELSE expired_at END
                 WHERE id = $1 AND expired_at IS NULL
                 RETURNING id, governed_tag_id, source_identity, source_revision,
                           namespace, tag_key, normalized_value, expression_observation_id,
-                          status, bound_by, created_at, expired_at
+                          status, bound_by, created_at, expired_at,
+                          decided_by, decided_at, decision_note
             """
-            row = await conn.fetchrow(query, binding_id, status, bound_by)
+            row = await conn.fetchrow(query, binding_id, status, decided_by, decision_note)
             if not row:
                 return None
             tag_row = await conn.fetchrow(
@@ -370,7 +394,10 @@ class AspectsBindingPort:
                 status=row["status"],
                 bound_by=row["bound_by"],
                 created_at=row["created_at"],
-                expired_at=row["expired_at"]
+                expired_at=row["expired_at"],
+                decided_by=row["decided_by"],
+                decided_at=row["decided_at"],
+                decision_note=row["decision_note"],
             )
     
     # ── SolStoragePort compatibility (read-only subset) ──────────────────
