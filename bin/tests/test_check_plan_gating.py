@@ -109,6 +109,47 @@ class TestEvaluate:
         assert verdicts[0]["met"] is None and err is True
 
 
+class TestCanonicalLoader:
+    def test_last_row_wins_keeps_live_gen2_visible(self, monkeypatch):
+        """The CD-1 regression pin: a completed gen-1 builder row followed
+        by an open gen-2 builder row must classify as OPEN (the live
+        work), not collapse to the closed row like /state does."""
+        rows = ("8261654-aa|builder|completed\n"
+                "8261654-aa|reviewer|failed\n"
+                "8261654-bb|builder|open")
+        calls = iter([rows, "review_reject"])
+        monkeypatch.setattr(G, "_psql_scalar", lambda sql: next(calls))
+        state = G.load_canonical_state(["8261654"])
+        assert state["8261654"]["tickets"]["builder"]["status"] == "open"
+        assert state["8261654"]["tickets"]["reviewer"]["status"] == "failed"
+        assert state["8261654"]["derived"] == "REVIEW_REJECT"
+
+    def test_receipt_kind_uppercased_for_derived(self, monkeypatch):
+        monkeypatch.setattr(G, "_psql_scalar",
+                            lambda sql: ("" if "vision.tickets" in sql
+                                         else "plan_create"))
+        state = G.load_canonical_state(["8261653"])
+        assert state["8261653"]["derived"] == "PLAN_CREATE"
+
+    def test_load_state_prefers_canonical(self, monkeypatch):
+        monkeypatch.setattr(G, "load_canonical_state",
+                            lambda ids: {i: {"derived": None, "tickets": {}}
+                                         for i in ids})
+        state, source = G.load_state(["8261652"])
+        assert source == "canonical"
+
+    def test_load_state_falls_back_to_conduit_state(self, monkeypatch):
+        def boom(ids):
+            raise RuntimeError("psql down")
+        monkeypatch.setattr(G, "load_canonical_state", boom)
+        monkeypatch.setattr(G, "load_conduit_state",
+                            lambda: {"8261652": {"derived": "PLAN_CREATE",
+                                                 "tickets": {}}})
+        state, source = G.load_state(["8261652"])
+        assert source == "conduit_state_fallback"
+        assert state["8261652"]["derived"] == "PLAN_CREATE"
+
+
 def test_live_spec_structural_consistency():
     """The shipped prototype spec must parse and use only known
     evaluators + family roles."""
