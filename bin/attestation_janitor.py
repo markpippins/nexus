@@ -26,6 +26,17 @@ Safety rails (all non-negotiable):
   - The janitor never edits branches, never forces anything, never bypasses
     a gate: a BYPASS line in the gate report is treated as failure.
 
+Change-log audit trail — every ACTION is logged to the Assembly change-log
+forum via bin/post-change-log.sh, individually:
+  - merged    : gated squash-merge issued (with head + gate evidence)
+  - promoted  : attested draft raised to ready (substantive gates already passed)
+  - refused   : an ATTESTED PR the gate refused (anomaly — surfaced loudly)
+  - bypass    : gate report contained BYPASS; merge refused
+  - cap-hold  : attested+gated PR deferred by the per-cycle cap
+Routine "not attested yet" skips are NOT change-logged (a 15-minute timer
+over N open PRs would flood the forum); they are recorded in the state
+file's per-run summary instead.
+
 Deployment: systemd user units bin/attestation-janitor.{service,timer}
 (in-repo source-of-truth doctrine, same as nexus-todo-lifecycle / sdk-drift-stamp).
 
@@ -185,6 +196,15 @@ def run_cycle(
                     tool_error = True
                     held.append(num)
                     continue
+                if not post_change_log(
+                    f"attestation-janitor: promoted draft PR #{num} to ready",
+                    f"Auto-promotion by bin/attestation_janitor.py at {_now_iso()}. PR #{num} "
+                    f"(head {head}) is attested with CI green; the only failing gate was "
+                    "draft state. Raised via `gh pr ready` and immediately re-gated before "
+                    "any merge decision.",
+                ):
+                    print(f"  #{num}: WARNING — change-log post failed (promotion itself succeeded)", file=out)
+                    tool_error = True
             else:
                 print(f"  #{num}: substantive gates pass; draft would be promoted under --apply (no action taken)", file=out)
             proc = run_gate(num, runner)
@@ -192,10 +212,27 @@ def run_cycle(
         if proc.returncode != 0:
             fails = "; ".join(ln.strip() for ln in proc.stdout.splitlines() if "[FAIL]" in ln) or f"exit={proc.returncode}"
             print(f"  #{num}: gate refuses — {fails[:220]}", file=out)
+            if pre is True:
+                # Attested yet refused: anomaly worth a forum-visible alert.
+                if not post_change_log(
+                    f"attestation-janitor: ANOMALY — attested PR #{num} refused by gate",
+                    f"bin/attestation_janitor.py at {_now_iso()}: PR #{num} (head {head}) has "
+                    "an attestation row but the merge gate refused: "
+                    f"{fails[:400]}. Human attention requested — possible head drift "
+                    "(attestation predates current head), CI regression, or stale row.",
+                ):
+                    tool_error = True
             held.append(num)
             continue
         if "BYPASS" in proc.stdout:
             print(f"  #{num}: gate report contains BYPASS — refusing to merge (bypasses are human decisions)", file=out)
+            if not post_change_log(
+                f"attestation-janitor: BYPASS in gate report for PR #{num} — merge refused",
+                f"bin/attestation_janitor.py at {_now_iso()}: PR #{num} (head {head}) passed "
+                "the gates only via a BYPASS marker; the janitor never merges bypassed "
+                "gates. Human decision required.",
+            ):
+                tool_error = True
             held.append(num)
             continue
 
@@ -204,6 +241,13 @@ def run_cycle(
             continue
         if merged_count >= cap:
             print(f"  #{num}: attested+gated, but per-cycle cap {cap} reached — held for next cycle", file=out)
+            if not post_change_log(
+                f"attestation-janitor: PR #{num} held by per-cycle cap ({cap})",
+                f"bin/attestation_janitor.py at {_now_iso()}: PR #{num} (head {head}) is "
+                "attested and passes every gate but the per-cycle merge cap was already "
+                "reached this cycle; it merges on the next tick.",
+            ):
+                tool_error = True
             held.append(num)
             continue
 
@@ -225,7 +269,7 @@ def run_cycle(
             f"Auto-merge by bin/attestation_janitor.py at {_now_iso()}. "
             f"PR #{num} at head {head} passed all three gates of bin/merge_pr.py "
             "(open+ready, CI green, tester attestation postdating head) and was "
-            "squash-merged via the gate itself.",
+            "squash-merged via the gate itself. Action: merged.",
         )
         if not ok:
             print(f"  #{num}: WARNING — change-log post failed (merge itself succeeded)", file=out)

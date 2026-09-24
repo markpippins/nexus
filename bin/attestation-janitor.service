@@ -25,6 +25,11 @@ After=network-online.target
 
 [Service]
 Type=oneshot
+# ExecCondition: skip cleanly (result=skipped, unit NOT failed) until the
+# script exists on the primary checkout — i.e. until the PR carrying it
+# merges. Prevents up to 96 failed ticks/day between timer enablement and
+# merge. Once bin/attestation_janitor.py lands on main, every tick is live.
+ExecCondition=/usr/bin/test -f /home/codex/dev/nexus/bin/attestation_janitor.py
 ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/attestation_janitor.py --apply --cap 3
 TimeoutStartSec=600
 SyslogIdentifier=attestation-janitor

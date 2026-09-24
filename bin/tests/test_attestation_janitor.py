@@ -180,7 +180,7 @@ def test_check_only_default_never_merges_or_promotes():
     assert not any("--merge" in c for c in calls), "check-only must not merge"
     assert not any("pr ready" in c for c in calls), "check-only must not promote"
     assert out.count("check-only, no action") == 2
-    assert logs == [] and state["merged"] == {}
+    assert logs == [] and state["merged"] == {}, "passing check-only posts nothing"
 
 
 def test_apply_merges_and_posts_change_log():
@@ -212,6 +212,8 @@ def test_draft_promoted_only_when_sole_failure_is_draft_gate():
     assert any("pr ready" in c for c in calls), "draft promoted exactly once"
     assert out.count("pr ready") >= 1 and "squash-merge issued" in out
     assert "600" in state["merged"]
+    assert any("promoted draft PR #600" in t for t in logs), "promotion is change-logged"
+    assert any("merged PR #600" in t for t in logs), "merge is change-logged"
 
 
 def test_draft_not_promoted_when_substantive_gate_fails():
@@ -232,7 +234,34 @@ def test_non_draft_gate_failure_reports_and_holds():
     rc, out, state, calls, pre, logs = _cycle_with_runner(plan, apply=True)
     assert rc == 0, "gate refusals are expected outcomes, not tool errors"
     assert out.count("gate refuses") == 2
-    assert state["runs"][-1]["held"] == [600, 601] and logs == []
+    assert state["runs"][-1]["held"] == [600, 601]
+    # both PRs look attested (harness default prefilter=True) -> anomaly logged
+    assert len(logs) == 2 and all("ANOMALY" in t for t in logs)
+
+
+def test_anomaly_logged_when_attested_pr_refused():
+    plan = [("pr list", DISCOVERY),
+            ("merge_pr.py 600", {"returncode": 1, "stdout": ATTEST_FAIL, "stderr": ""})]
+    rc, out, state, calls, pre, logs = _cycle_with_runner(plan, apply=True, _prefilter=True, only_pr=600)
+    assert any("ANOMALY" in t and "#600" in t for t in logs)
+
+
+def test_no_anomaly_log_when_unattested_pr_refused():
+    # prefilter unknown (endpoint down) -> gate evaluates; refusal of an
+    # unattested PR is routine, stays off the forum (anomaly fires only
+    # when the prefilter PROVED attestation, pre is True).
+    plan = [("pr list", DISCOVERY),
+            ("merge_pr.py 600", {"returncode": 1, "stdout": ATTEST_FAIL, "stderr": ""})]
+    rc, out, state, calls, pre, logs = _cycle_with_runner(plan, apply=True, _prefilter=None, only_pr=600)
+    assert "gate refuses" in out and logs == [], "routine unattested refusals stay off the forum"
+
+
+def test_check_only_refusal_of_attested_pr_still_surfaces_anomaly():
+    plan = [("pr list", DISCOVERY),
+            ("merge_pr.py 600", {"returncode": 1, "stdout": ATTEST_FAIL, "stderr": ""})]
+    rc, out, state, calls, pre, logs = _cycle_with_runner(plan, apply=False, _prefilter=True, only_pr=600)
+    assert not any("--merge" in c for c in calls), "check-only never merges"
+    assert any("ANOMALY" in t for t in logs), "anomalies surface even in check-only"
 
 
 # ── bypass guard ────────────────────────────────────────────────────────────
@@ -246,6 +275,7 @@ def test_bypass_report_refuses_merge():
     assert not any("merge_pr.py 600 --merge" in c for c in calls)
     assert "BYPASS" in out and "refusing" in out
     assert "601" in state["merged"], "clean PR unaffected"
+    assert any("BYPASS in gate report" in t and "#600" in t for t in logs), "bypass refusal is change-logged"
 
 
 # ── cap ──────────────────────────────────────────────────────────────────────
@@ -258,6 +288,7 @@ def test_cap_bounds_merges_per_cycle():
     rc, out, state, calls, pre, logs = _cycle_with_runner(plan, apply=True, cap=1)
     assert out.count("squash-merge issued") == 1
     assert "cap 1 reached" in out and state["runs"][-1]["held"] == [601]
+    assert any("held by per-cycle cap" in t and "#601" in t for t in logs), "cap-hold is change-logged"
 
 
 # ── state / idempotence ─────────────────────────────────────────────────────
