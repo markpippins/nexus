@@ -17,16 +17,25 @@ RUN --mount=type=cache,target=/root/.m2 mvn -B -q -f spring-parent.pom.xml -N in
 # Full shared/ reactor: gateway's dependency chain reaches several of its
 # modules transitively (core, apis, adapters) via the service-broker siblings.
 COPY shared/ shared/
-RUN --mount=type=cache,target=/root/.m2 mvn -B -q -f shared/pom.xml install -DskipTests
+COPY spring/atlas/ spring/atlas/
+COPY spring/service-broker/ spring/service-broker/
 # Broker reactor: build gateway plus its internal dependencies (-am), exactly
 # like the documented host build. The pom repackages WITHOUT the exec
 # classifier ("the main artifact IS the boot jar", atlas-consistent), so the
 # bootable jar is the unclassified one — exclude the original-*.jar thin copy.
 # The service-broker aggregator also declares module ../atlas (i.e. spring/atlas).
-COPY spring/atlas/ spring/atlas/
-COPY spring/service-broker/ spring/service-broker/
-WORKDIR /build/spring/service-broker
-RUN --mount=type=cache,target=/root/.m2 mvn -B clean package -DskipTests -pl broker-gateway -am \
+#
+# The shared/ seed install and the package live in ONE RUN layer: cache mounts
+# (--mount=type=cache) are not captured by the build layer cache, so a
+# cache-hit seed layer leaves /root/.m2 EMPTY on a fresh CI runner and the
+# -am build cannot resolve com.aibizarchitect.nexus:broker-service-api
+# (jvm/shared — not a service-broker module). That cold-build failure is
+# what PR #513 exposed 2026-09-24 (#454 drift class); same-RUN install
+# guarantees sibling resolution on every cold build.
+WORKDIR /build
+RUN --mount=type=cache,target=/root/.m2 mvn -B -q -f shared/pom.xml install -DskipTests \
+ && cd spring/service-broker \
+ && mvn -B clean package -DskipTests -pl broker-gateway -am \
  && JAR=$(ls broker-gateway/target/*.jar | grep -v original | head -1) \
  && ln -s "$(basename "$JAR")" broker-gateway/target/app.jar
 
