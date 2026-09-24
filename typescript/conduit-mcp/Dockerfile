@@ -6,7 +6,9 @@
 FROM node:20-bookworm AS build
 WORKDIR /app/conduit-mcp
 COPY conduit-mcp/package.json ./
-RUN npm install --no-package-lock
+COPY conduit-mcp/package-lock.json ./
+# npm ci: installs exactly the committed lock (lockfile batch 2).
+RUN npm ci --no-audit --no-fund
 COPY conduit-mcp/tsconfig.json ./
 COPY conduit-mcp/src ./src
 RUN npm run build && npm prune --omit=dev

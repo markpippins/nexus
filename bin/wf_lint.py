@@ -847,7 +847,14 @@ RULES: list[Rule] = [
 def scan(target: str, rules: list[Rule]) -> tuple[list[Finding], int]:
     findings: list[Finding] = []
     allowed = 0
-    for dirpath, _dirnames, filenames in sorted(os.walk(target)):
+    for dirpath, dirnames, filenames in os.walk(target):
+        # node_modules is guaranteed third-party: vendored packages ship their
+        # own Dockerfiles/workflows that would flood every rule with findings
+        # after any local npm ci. Never scanned (CI checkouts don't have it).
+        # NB: iterate os.walk DIRECTLY — the old sorted(os.walk(...)) wrapper
+        # consumed the whole generator before the loop body ran, so in-place
+        # dirnames mutation pruned nothing. Findings are re-sorted below.
+        dirnames[:] = [d for d in dirnames if d != "node_modules"]
         for filename in sorted(filenames):
             path = os.path.join(dirpath, filename)
             rel = os.path.relpath(path, target).replace(os.sep, "/")
@@ -907,7 +914,8 @@ def apply_fixes(target: str, rules: list[Rule], write: bool = True) -> tuple[int
     skipped silently — scan() reports them.
     """
     applied = suppressed = 0
-    for dirpath, _dirnames, filenames in sorted(os.walk(target)):
+    for dirpath, dirnames, filenames in os.walk(target):
+        dirnames[:] = [d for d in dirnames if d != "node_modules"]  # see scan()
         for filename in sorted(filenames):
             path = os.path.join(dirpath, filename)
             rel = os.path.relpath(path, target).replace(os.sep, "/")

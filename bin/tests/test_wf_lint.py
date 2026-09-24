@@ -679,6 +679,21 @@ class WfLintTest(unittest.TestCase):
         self.assertIn("rules: npm-ci", proc.stdout)
         self.assertNotIn("[dead-base]", proc.stderr)  # other rules not selected
 
+    def test_node_modules_never_scanned(self):
+        # vendored packages ship their own workflows/Dockerfiles; after any
+        # local npm ci they would flood every rule. The harness prunes them.
+        self._write(
+            "node_modules/pkg/.github/workflows/vendored.yml",
+            "on: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps: []\n",
+        )
+        self._write(
+            ".github/workflows/real.yml",
+            "on: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps: []\n",
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)  # real.yml's missing blocks fire
+        self.assertNotIn("node_modules", proc.stdout + proc.stderr)
+
     # -- real repo -----------------------------------------------------------------
 
     def test_real_repo_scan_does_not_crash(self):
