@@ -10,8 +10,12 @@ ENV NODE_ENV=production
 WORKDIR /app/assembly-srv
 
 COPY assembly-srv/package.json ./
+COPY assembly-srv/package-lock.json ./
 COPY heartbeat-client ../heartbeat-client
-RUN npm install --omit=dev --no-package-lock \
+# npm ci for assembly-srv itself (installs exactly the committed lock, #518);
+# heartbeat-client stays on npm install until it earns its own lock (opt-in
+# per #518's adoption pattern — its dir holds no package-lock.json).
+RUN npm ci --omit=dev --no-audit --no-fund \
  && cd ../heartbeat-client && npm install --no-package-lock --include=dev && npm run build
 
 COPY assembly-srv/src ./src
