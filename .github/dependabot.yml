@@ -2,7 +2,9 @@
 # dependabot remediation plan (record efb0fb8c).
 #
 # One entry per distinct manifest directory, discovered from the tree on
-# 2026-09-24 (pip 23, npm 80, maven 59). Semantics:
+# 2026-09-24 (pip 23, npm 80, maven 59; cargo 1 added 2026-09-24 —
+# rust/wrp/ccnf-verifier, the repo's single Cargo.toml, audited clean:
+# 0 open RustSec advisories on its locked deps). Semantics:
 #   schedule weekly .................. all ecosystems checked every Monday
 #   open-pull-requests-limit: 0 ...... SECURITY-ONLY mode: zero version-update
 #                                      PRs opened; security updates still fire
@@ -10,6 +12,8 @@
 #                                      as ONE grouped PR per directory
 # Manifests are additive by design; if Dependabot ever reports an unknown
 # directory, re-run the tree sweep and add the entry.
+# Cargo note: unlike npm, Cargo.lock IS committed — dependabot PRs here
+# will carry reproducible lockfile bumps.
 version: 2
 updates:
 - package-ecosystem: pip
@@ -1302,6 +1306,14 @@ updates:
       applies-to: security-updates
 - package-ecosystem: maven
   directory: jvm/spring/terrain
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: cargo
+  directory: /rust/wrp/ccnf-verifier
   schedule:
     interval: weekly
   open-pull-requests-limit: 0
