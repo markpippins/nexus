@@ -1,0 +1,20 @@
+{
+  // Typecheck-only program for wind-srv (pattern from PR #522).
+  //
+  // wind-srv has no build step (tsconfig.json exists for editor tooling over
+  // its .js sources, checkJs=false). This overlay adds the first real
+  // typecheck gate: no emit, and heartbeat-client resolved to the sibling's
+  // real source (index.ts) instead of its built dist/index.d.ts — which does
+  // not exist in fresh checkouts (build residue only).
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // noEmit makes rootDir's emit-layout role inert; widen it so the
+    // paths-mapped sibling source (outside src/) does not trip TS6059.
+    "rootDir": "..",
+    "baseUrl": ".",
+    "paths": {
+      "heartbeat-client": ["../heartbeat-client/index.ts"]
+    }
+  }
+}
