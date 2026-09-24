@@ -20,6 +20,40 @@ CREATE SCHEMA IF NOT EXISTS aegis;
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS citext;
+CREATE SCHEMA IF NOT EXISTS kernel;
+CREATE SCHEMA IF NOT EXISTS shrapnel;
+CREATE OR REPLACE FUNCTION public.bcrypt_write_guard()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+BEGIN
+    IF NEW.password IS NOT NULL
+       AND NEW.password <> ''
+       AND NEW.password NOT LIKE '$2%' THEN
+        NEW.password := crypt(NEW.password, gen_salt('bf', 10));
+    END IF;
+    RETURN NEW;
+END;
+$function$
+;
+CREATE OR REPLACE FUNCTION public.crypt(text, text)
+ RETURNS text
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '$libdir/pgcrypto', $function$pg_crypt$function$
+;
+CREATE OR REPLACE FUNCTION public.gen_salt(text, integer)
+ RETURNS text
+ LANGUAGE c
+ PARALLEL SAFE STRICT
+AS '$libdir/pgcrypto', $function$pg_gen_salt_rounds$function$
+;
+CREATE OR REPLACE FUNCTION public.gen_salt(text)
+ RETURNS text
+ LANGUAGE c
+ PARALLEL SAFE STRICT
+AS '$libdir/pgcrypto', $function$pg_gen_salt$function$
+;
 CREATE OR REPLACE FUNCTION public.notify_member_expired()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -105,7 +139,6 @@ $function$
 -- PostgreSQL database dump
 --
 
-\restrict hCT5aqIGSRDRoJopWqogUjMlDtwQFobEDHQvuXrDVGL80gQfdChPrijBghBOBAv
 
 -- Dumped from database version 17.10 (Debian 17.10-1.pgdg12+1)
 -- Dumped by pg_dump version 17.11 (Debian 17.11-0+deb13u1)
@@ -172,6 +205,19 @@ COMMENT ON SCHEMA aegis IS 'State Machine Registry for TLA+ formal methods bridg
 
 
 --
+-- Name: kernel; Type: SCHEMA; Schema: -; Owner: -
+--
+
+
+
+--
+-- Name: SCHEMA kernel; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON SCHEMA kernel IS 'Semantic Kernel — authoritative state machine. Owns the immutable event log.';
+
+
+--
 -- Name: nebula; Type: SCHEMA; Schema: -; Owner: -
 --
 
@@ -209,6 +255,12 @@ COMMENT ON SCHEMA resolution IS 'SOL sandbox: greenfield redevelopment of semant
 
 
 --
+-- Name: shrapnel; Type: SCHEMA; Schema: -; Owner: -
+--
+
+
+
+--
 -- Name: tackle; Type: SCHEMA; Schema: -; Owner: -
 --
 
@@ -230,6 +282,51 @@ COMMENT ON SCHEMA resolution IS 'SOL sandbox: greenfield redevelopment of semant
 -- Name: wind; Type: SCHEMA; Schema: -; Owner: -
 --
 
+
+
+--
+-- Name: event_type; Type: TYPE; Schema: kernel; Owner: -
+--
+
+CREATE TYPE kernel.event_type AS ENUM (
+    'intent.created',
+    'intent.updated',
+    'intent.archived',
+    'transition.requested',
+    'transition.committed',
+    'transition.rejected',
+    'artifact.created',
+    'artifact.updated',
+    'receipt.issued',
+    'policy.violated',
+    'observation.captured',
+    'notification.emitted',
+    'assessment.started',
+    'assessment.completed',
+    'assessment.accepted',
+    'assessment.rejected',
+    'agenda.created',
+    'agenda.activated',
+    'agenda.decision_recorded',
+    'agenda.closed',
+    'specification.created',
+    'specification.revised',
+    'specification.superseded',
+    'work_request.created',
+    'work_request.dispatched',
+    'work_request.completed',
+    'work_request.failed',
+    'deliberation.required',
+    'recommendation',
+    'receipt.failed'
+);
+
+
+--
+-- Name: TYPE event_type; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON TYPE kernel.event_type IS 'Canonical event types. Extensible — additive only, never removed.';
 
 
 --
@@ -1777,6 +1874,606 @@ BEGIN
     WHERE l.status = 'ACTIVE'
       AND l.expires_at < NOW()
     RETURNING l.id, l.request_id, l.executor_id, l.expires_at;
+END;
+$$;
+
+
+--
+-- Name: project_assessment_completed(); Type: FUNCTION; Schema: kernel; Owner: -
+--
+
+CREATE FUNCTION kernel.project_assessment_completed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.event_type = 'assessment.completed' THEN
+        INSERT INTO nebula.assessments (
+            id, observation_id, outcome, confidence,
+            impact_scope, open_questions, analysis_detail, created_at
+        ) VALUES (
+            NEW.aggregate_id::uuid,
+            (NEW.payload->>'observation_id')::uuid,
+            NEW.payload->>'outcome',
+            (NEW.payload->>'confidence')::numeric,
+            COALESCE(NEW.payload->'impact_scope', '{}'::jsonb),
+            COALESCE(NEW.payload->'open_questions', '[]'::jsonb),
+            NEW.payload->>'analysis_detail',
+            NEW.timestamp
+        )
+        ON CONFLICT (id) DO NOTHING;
+
+        UPDATE nebula.observations
+        SET assessed = true
+        WHERE id = (NEW.payload->>'observation_id')::uuid;
+    END IF;
+    RETURN NEW;
+END; $$;
+
+
+--
+-- Name: project_observation_captured(); Type: FUNCTION; Schema: kernel; Owner: -
+--
+
+CREATE FUNCTION kernel.project_observation_captured() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.event_type = 'observation.captured' THEN
+        INSERT INTO nebula.observations (
+            id, trigger_type, source_artifact_type, source_artifact_id,
+            payload, assessed, created_at
+        ) VALUES (
+            NEW.aggregate_id::uuid,
+            NEW.payload->>'trigger_type',
+            NEW.payload->>'source_artifact_type',
+            (NEW.payload->>'source_artifact_id')::uuid,
+            COALESCE(NEW.payload->'details', '{}'::jsonb),
+            false,
+            NEW.timestamp
+        )
+        ON CONFLICT (id) DO NOTHING;
+    END IF;
+    RETURN NEW;
+END; $$;
+
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: receipt; Type: TABLE; Schema: kernel; Owner: -
+--
+
+CREATE TABLE kernel.receipt (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    receipt_type text NOT NULL,
+    receipt_hash text NOT NULL,
+    event_id uuid NOT NULL,
+    issued_by text NOT NULL,
+    plan_number text,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT receipt_receipt_type_check CHECK ((receipt_type = ANY (ARRAY['proposed'::text, 'plan_create'::text, 'planning'::text, 'implementation'::text, 'review_pass'::text, 'review_reject'::text, 'transition_committed'::text, 'transition_rejected'::text, 'intent_registered'::text, 'artifact_registered'::text, 'policy_violated'::text, 'notification_sent'::text])))
+);
+
+
+--
+-- Name: TABLE receipt; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON TABLE kernel.receipt IS 'First-class receipt records. Every receipt is a verifiable, content-addressed
+     record that a specific event was committed. Receipts have independent identity
+     and lifecycle — they can be queried, linked to plans, and used as proof of
+     commitment outside the kernel.';
+
+
+--
+-- Name: COLUMN receipt.id; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.receipt.id IS 'Unique receipt identifier (UUID v4).';
+
+
+--
+-- Name: COLUMN receipt.receipt_type; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.receipt.receipt_type IS 'Type of receipt — identifies the lifecycle event being certified
+     (proposed, plan_create, transition_committed, etc.).';
+
+
+--
+-- Name: COLUMN receipt.receipt_hash; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.receipt.receipt_hash IS 'SHA-256 content hash of the receipt payload for integrity verification.';
+
+
+--
+-- Name: COLUMN receipt.event_id; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.receipt.event_id IS 'The transition event this receipt certifies. FK to kernel.transition_event.';
+
+
+--
+-- Name: COLUMN receipt.issued_by; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.receipt.issued_by IS 'Who issued this receipt — agent role (architect, planner, builder)
+     or system (kernel, conduit).';
+
+
+--
+-- Name: COLUMN receipt.plan_number; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.receipt.plan_number IS 'Optional reference to a conduit implementation plan number (e.g., 0053).';
+
+
+--
+-- Name: COLUMN receipt.metadata; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.receipt.metadata IS 'Receipt-type-specific metadata — shape varies by receipt_type.';
+
+
+--
+-- Name: COLUMN receipt.created_at; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.receipt.created_at IS 'When the receipt was issued (not when the event was committed).';
+
+
+--
+-- Name: sys_issue_receipt(text, text, uuid, text, text, jsonb); Type: FUNCTION; Schema: kernel; Owner: -
+--
+
+CREATE FUNCTION kernel.sys_issue_receipt(p_receipt_type text, p_receipt_hash text, p_event_id uuid, p_issued_by text, p_plan_number text DEFAULT NULL::text, p_metadata jsonb DEFAULT '{}'::jsonb) RETURNS kernel.receipt
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_receipt kernel.receipt;
+BEGIN
+    -- ── Admission Phase ──
+    -- Structural checks (policy-based checks can be added later)
+
+    IF length(trim(p_receipt_hash)) = 0 THEN
+        RAISE EXCEPTION 'RECEIPT_DENIED: receipt_hash is required'
+            USING HINT = 'Every receipt must have a content hash';
+    END IF;
+
+    IF length(trim(p_issued_by)) = 0 THEN
+        RAISE EXCEPTION 'RECEIPT_DENIED: issued_by is required'
+            USING HINT = 'Every receipt must specify an issuer';
+    END IF;
+
+    -- Verify the referenced event exists
+    IF NOT EXISTS (SELECT 1 FROM kernel.transition_event
+                   WHERE event_id = p_event_id) THEN
+        RAISE EXCEPTION 'RECEIPT_DENIED: event % does not exist', p_event_id
+            USING HINT = 'Cannot issue a receipt for a non-existent event';
+    END IF;
+
+    -- ── Commit Phase ──
+    INSERT INTO kernel.receipt (
+        receipt_type,
+        receipt_hash,
+        event_id,
+        issued_by,
+        plan_number,
+        metadata
+    ) VALUES (
+        p_receipt_type,
+        p_receipt_hash,
+        p_event_id,
+        p_issued_by,
+        p_plan_number,
+        p_metadata
+    )
+    RETURNING * INTO v_receipt;
+
+    -- ── Link back to the transition_event ──
+    UPDATE kernel.transition_event
+    SET receipt_id = v_receipt.id
+    WHERE event_id = p_event_id;
+
+    RETURN v_receipt;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION sys_issue_receipt(p_receipt_type text, p_receipt_hash text, p_event_id uuid, p_issued_by text, p_plan_number text, p_metadata jsonb); Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON FUNCTION kernel.sys_issue_receipt(p_receipt_type text, p_receipt_hash text, p_event_id uuid, p_issued_by text, p_plan_number text, p_metadata jsonb) IS 'Sole write surface for the receipt table. Issues a receipt linked to
+     an existing transition event and back-links the event to the receipt.
+
+     Args:
+       p_receipt_type: Type of receipt (proposed, plan_create, etc.)
+       p_receipt_hash: SHA-256 content hash for integrity verification
+       p_event_id:     The transition event this receipt certifies
+       p_issued_by:    Who issued this receipt (role or system)
+       p_plan_number:  Optional conduit plan reference
+       p_metadata:     Receipt-type-specific metadata (JSONB)
+
+     Returns: the committed receipt row.
+     Raises:  exception if validation fails.';
+
+
+--
+-- Name: transition_event; Type: TABLE; Schema: kernel; Owner: -
+--
+
+CREATE TABLE kernel.transition_event (
+    id bigint NOT NULL,
+    event_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    event_type kernel.event_type NOT NULL,
+    aggregate_type text NOT NULL,
+    aggregate_id text NOT NULL,
+    actor text NOT NULL,
+    authority text,
+    payload jsonb DEFAULT '{}'::jsonb NOT NULL,
+    receipt text,
+    causation_id uuid,
+    correlation_id uuid,
+    "timestamp" timestamp with time zone DEFAULT now() NOT NULL,
+    schema_version integer DEFAULT 1 NOT NULL,
+    receipt_id uuid,
+    CONSTRAINT ck_transition_event_receipt CHECK (((receipt IS NULL) OR (length(receipt) > 0)))
+);
+
+
+--
+-- Name: TABLE transition_event; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON TABLE kernel.transition_event IS 'Canonical append-only event log. Every state change is one row.
+     The runtime proposes; the kernel disposes.';
+
+
+--
+-- Name: COLUMN transition_event.event_id; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event.event_id IS 'Unique event identifier (UUID v4).';
+
+
+--
+-- Name: COLUMN transition_event.event_type; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event.event_type IS 'Type of event — identifies the lifecycle transition.';
+
+
+--
+-- Name: COLUMN transition_event.aggregate_type; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event.aggregate_type IS 'Domain entity type (e.g., intent, artifact, receipt, policy).';
+
+
+--
+-- Name: COLUMN transition_event.aggregate_id; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event.aggregate_id IS 'Identifier of the aggregate instance this event targets.';
+
+
+--
+-- Name: COLUMN transition_event.actor; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event.actor IS 'Entity that triggered this transition (agent, user, system).';
+
+
+--
+-- Name: COLUMN transition_event.authority; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event.authority IS 'Role or credential under which the actor operated (e.g., architect, planner).';
+
+
+--
+-- Name: COLUMN transition_event.payload; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event.payload IS 'Event-type-specific payload — shape varies by event_type.';
+
+
+--
+-- Name: COLUMN transition_event.receipt; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event.receipt IS 'Content-addressed hash of the event for integrity verification.';
+
+
+--
+-- Name: COLUMN transition_event.causation_id; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event.causation_id IS 'ID of the event that caused this event (causality chain).';
+
+
+--
+-- Name: COLUMN transition_event.correlation_id; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event.correlation_id IS 'Correlation ID grouping related events across aggregates.';
+
+
+--
+-- Name: COLUMN transition_event."timestamp"; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event."timestamp" IS 'When the event was committed (not when it was proposed).';
+
+
+--
+-- Name: COLUMN transition_event.schema_version; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event.schema_version IS 'Event schema version (additive only — never breaking).';
+
+
+--
+-- Name: COLUMN transition_event.receipt_id; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.transition_event.receipt_id IS 'Optional FK to kernel.receipt for full receipt lifecycle tracking.
+     The inline receipt TEXT hash remains for quick verification.';
+
+
+--
+-- Name: sys_transition(kernel.event_type, text, text, text, jsonb, text, text, uuid, uuid, timestamp with time zone); Type: FUNCTION; Schema: kernel; Owner: -
+--
+
+CREATE FUNCTION kernel.sys_transition(p_event_type kernel.event_type, p_aggregate_type text, p_aggregate_id text, p_actor text, p_payload jsonb DEFAULT '{}'::jsonb, p_authority text DEFAULT NULL::text, p_receipt text DEFAULT NULL::text, p_causation_id uuid DEFAULT NULL::uuid, p_correlation_id uuid DEFAULT NULL::uuid, p_timestamp timestamp with time zone DEFAULT now()) RETURNS kernel.transition_event
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_event kernel.transition_event;
+BEGIN
+    -- ── Admission Phase: authorization (extensible via trigger) ──
+    -- The BEFORE INSERT trigger on transition_event will perform
+    -- deeper authorization and validation checks.
+
+    -- ── Commit Phase: append the event ──
+    INSERT INTO kernel.transition_event (
+        event_id,
+        event_type,
+        aggregate_type,
+        aggregate_id,
+        actor,
+        authority,
+        payload,
+        receipt,
+        causation_id,
+        correlation_id,
+        timestamp,
+        schema_version
+    ) VALUES (
+        gen_random_uuid(),
+        p_event_type,
+        p_aggregate_type,
+        p_aggregate_id,
+        p_actor,
+        p_authority,
+        p_payload,
+        p_receipt,
+        p_causation_id,
+        p_correlation_id,
+        p_timestamp,
+        1
+    )
+    RETURNING * INTO v_event;
+
+    -- ── Reduction and Observation Phases are handled by triggers ──
+
+    RETURN v_event;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION sys_transition(p_event_type kernel.event_type, p_aggregate_type text, p_aggregate_id text, p_actor text, p_payload jsonb, p_authority text, p_receipt text, p_causation_id uuid, p_correlation_id uuid, p_timestamp timestamp with time zone); Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON FUNCTION kernel.sys_transition(p_event_type kernel.event_type, p_aggregate_type text, p_aggregate_id text, p_actor text, p_payload jsonb, p_authority text, p_receipt text, p_causation_id uuid, p_correlation_id uuid, p_timestamp timestamp with time zone) IS 'Sole write surface for the Semantic Kernel.
+     All state mutations — from any runtime, agent, or tool — must go through
+     this function. It enforces authorization (via BEFORE INSERT trigger),
+     appends to the immutable event log, and triggers NOTIFY so that Cascade
+     and projection workers can respond.
+
+     Args:
+       p_event_type:      Canonical event type
+       p_aggregate_type:  Domain entity type
+       p_aggregate_id:    Instance identifier
+       p_actor:           Who/what triggered this
+       p_payload:         Event-specific data (JSONB)
+       p_authority:       Role or credential (optional)
+       p_receipt:         Integrity hash (optional)
+       p_causation_id:    Parent event for causality chain (optional)
+       p_correlation_id:  Grouping ID for related events (optional)
+       p_timestamp:       Override timestamp (defaults to now())
+
+     Returns: the committed transition_event row.
+     Raises:  exception if authorization or validation fails (via trigger).';
+
+
+--
+-- Name: trg_authorize_receipt(); Type: FUNCTION; Schema: kernel; Owner: -
+--
+
+CREATE FUNCTION kernel.trg_authorize_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    -- Check 1: receipt_hash required
+    IF length(trim(NEW.receipt_hash)) = 0 THEN
+        RAISE EXCEPTION 'RECEIPT_DENIED: receipt_hash is required'
+            USING HINT = 'Every receipt must have a content hash';
+    END IF;
+
+    -- Check 2: issued_by required
+    IF length(trim(NEW.issued_by)) = 0 THEN
+        RAISE EXCEPTION 'RECEIPT_DENIED: issued_by is required'
+            USING HINT = 'Every receipt must specify an issuer';
+    END IF;
+
+    -- Check 3: referenced event must exist
+    IF NOT EXISTS (
+        SELECT 1 FROM kernel.transition_event
+        WHERE event_id = NEW.event_id
+    ) THEN
+        RAISE EXCEPTION 'RECEIPT_DENIED: event % does not exist', NEW.event_id
+            USING HINT = 'Cannot issue a receipt for a non-existent event';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trg_authorize_transition(); Type: FUNCTION; Schema: kernel; Owner: -
+--
+
+CREATE FUNCTION kernel.trg_authorize_transition() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE
+    v_rule  RECORD;
+    v_sql   TEXT;
+    v_pass  BOOLEAN;
+BEGIN
+    -- ──────────────────────────────────────────────────────────────────
+    --  Phase 1: Structural authorization (kernel invariants)
+    -- ──────────────────────────────────────────────────────────────────
+
+    -- Rule: Actor is required
+    IF NEW.actor IS NULL OR length(trim(NEW.actor)) = 0 THEN
+        RAISE EXCEPTION 'KERNEL_AUTH_DENIED: actor is required'
+            USING HINT = 'Every transition must specify an actor';
+    END IF;
+
+    -- Rule: Aggregate type and ID are required
+    IF NEW.aggregate_type IS NULL OR length(trim(NEW.aggregate_type)) = 0 THEN
+        RAISE EXCEPTION 'KERNEL_AUTH_DENIED: aggregate_type is required'
+            USING HINT = 'Every transition must specify an aggregate type';
+    END IF;
+
+    IF NEW.aggregate_id IS NULL OR length(trim(NEW.aggregate_id)) = 0 THEN
+        RAISE EXCEPTION 'KERNEL_AUTH_DENIED: aggregate_id is required'
+            USING HINT = 'Every transition must specify an aggregate instance';
+    END IF;
+
+    -- Rule: Past timestamps (5 sec clock skew tolerance)
+    IF NEW.timestamp > now() + INTERVAL '5 seconds' THEN
+        RAISE EXCEPTION 'KERNEL_AUTH_DENIED: future timestamp %', NEW.timestamp
+            USING HINT = 'Timestamps must not be in the future';
+    END IF;
+
+    -- ──────────────────────────────────────────────────────────────────
+    --  Phase 2: Policy rule evaluation (CUE-compiled)
+    -- ──────────────────────────────────────────────────────────────────
+    -- Evaluate all enabled rules matching this event type.
+    -- Rules with event_type = NULL apply to all transitions.
+
+    FOR v_rule IN
+        SELECT rule_name, compiled_sql, function_name, deny_reason
+        FROM kernel.policy_rule
+        WHERE enabled
+          AND (event_type IS NULL OR event_type = NEW.event_type)
+        ORDER BY priority ASC
+    LOOP
+        -- Dual eval path: function_name (compiled) or compiled_sql (dynamic)
+        IF v_rule.function_name IS NOT NULL THEN
+            -- Code-generated path: invoke the function with NEW as argument
+            v_sql := format('SELECT %s($1)', v_rule.function_name);
+            EXECUTE v_sql USING NEW INTO v_pass;
+        ELSE
+            -- Data-driven path: evaluate the compiled SQL predicate.
+            -- The predicate MUST reference the NEW record as $1.
+            -- Examples: "($1).authority IS NOT NULL"
+            --           "($1).receipt IS NOT NULL AND length(trim(($1).receipt)) > 0"
+            v_sql := format('SELECT %s', v_rule.compiled_sql);
+            EXECUTE v_sql USING NEW INTO v_pass;
+        END IF;
+
+        IF NOT v_pass OR v_pass IS NULL THEN
+            RAISE EXCEPTION 'KERNEL_POLICY_DENIED: %', v_rule.deny_reason
+                USING HINT = format('Policy rule "%s" rejected this transition',
+                           v_rule.rule_name);
+        END IF;
+    END LOOP;
+
+    RETURN NEW;
+END;
+$_$;
+
+
+--
+-- Name: FUNCTION trg_authorize_transition(); Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON FUNCTION kernel.trg_authorize_transition() IS 'BEFORE INSERT trigger: authorizes every transition before commit.
+     Phase 1 enforces structural invariants (actor, aggregate_type,
+     aggregate_id, timestamp sanity). Phase 2 evaluates all enabled
+     CUE-compiled policy rules from kernel.policy_rule. Rules matched
+     by event_type are evaluated in priority order. Dual eval path:
+     function_name (code-generated) or compiled_sql (data-driven).
+     The compiled_sql predicate MUST reference the NEW record as $1,
+     e.g.: "($1).authority IS NOT NULL".';
+
+
+--
+-- Name: trg_notify_transition(); Type: FUNCTION; Schema: kernel; Owner: -
+--
+
+CREATE FUNCTION kernel.trg_notify_transition() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_notify(
+        'kernel_transition_committed',
+        jsonb_build_object(
+            'event_id',         NEW.event_id::TEXT,
+            'event_type',       NEW.event_type::TEXT,
+            'aggregate_type',   NEW.aggregate_type,
+            'aggregate_id',     NEW.aggregate_id,
+            'actor',            NEW.actor,
+            'timestamp',        NEW.timestamp::TEXT,
+            'causation_id',     NEW.causation_id::TEXT,
+            'correlation_id',   NEW.correlation_id::TEXT
+        )::TEXT
+    );
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION trg_notify_transition(); Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON FUNCTION kernel.trg_notify_transition() IS 'AFTER INSERT trigger: notifies listeners that a transition was committed.
+     Cascade subscribes to kernel_transition_committed to orchestrate
+     downstream work. Projection workers subscribe to update derived views.';
+
+
+--
+-- Name: trg_policy_rule_updated_at(); Type: FUNCTION; Schema: kernel; Owner: -
+--
+
+CREATE FUNCTION kernel.trg_policy_rule_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
 END;
 $$;
 
@@ -8238,10 +8935,6 @@ END;
 $$;
 
 
-SET default_tablespace = '';
-
-SET default_table_access_method = heap;
-
 --
 -- Name: asset_identity_claim; Type: TABLE; Schema: semantics; Owner: -
 --
@@ -9137,6 +9830,775 @@ BEGIN
     END IF;
     RETURN NEW;
 END $$;
+
+
+--
+-- Name: assert_extension_type_matches(); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.assert_extension_type_matches() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    expected_code smallint := TG_ARGV[0]::smallint;
+    actual_code   smallint;
+BEGIN
+    IF TG_WHEN <> 'BEFORE' THEN
+        RAISE EXCEPTION 'shrapnel.assert_extension_type_matches must be a BEFORE trigger (got %)', TG_WHEN;
+    END IF;
+
+    SELECT value_type_code INTO actual_code
+    FROM shrapnel.value
+    WHERE id = NEW.id;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION
+            'shrapnel.%: insert into extension for value_id=% but no parent row exists in shrapnel.value',
+            TG_TABLE_NAME, NEW.id;
+    END IF;
+
+    IF actual_code <> expected_code THEN
+        RAISE EXCEPTION
+            'shrapnel.%: type-match violation for value_id=%: extension requires value_type_code=% but parent has %',
+            TG_TABLE_NAME, NEW.id, expected_code, actual_code;
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION assert_extension_type_matches(); Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON FUNCTION shrapnel.assert_extension_type_matches() IS 'BEFORE INSERT/UPDATE guard that rejects a value_<type> extension row when the parent shrapnel.value row''s value_type_code does not match the type the extension represents.';
+
+
+--
+-- Name: assert_value_extension_fk_parity(); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.assert_value_extension_fk_parity() RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    ext text;
+    cnt integer;
+    bad text[] := '{}';
+BEGIN
+    FOREACH ext IN ARRAY ARRAY[
+        'value_long', 'value_string', 'value_double', 'value_boolean',
+        'value_timestamp', 'value_jsonb', 'value_uuid'
+    ]
+    LOOP
+        SELECT count(*) INTO cnt
+        FROM pg_constraint
+        WHERE conrelid = format('shrapnel.%s', ext)::regclass
+          AND contype = 'f'
+          AND confrelid = 'shrapnel.value'::regclass;
+        IF cnt = 0 THEN
+            bad := bad || ext;
+        END IF;
+    END LOOP;
+    IF array_length(bad, 1) IS NOT NULL THEN
+        RAISE EXCEPTION
+            'shrapnel value-extension FK parity broken for: %', array_to_string(bad, ', ');
+    END IF;
+END;
+$$;
+
+
+--
+-- Name: check_membership_evidence_present(); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.check_membership_evidence_present() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_field_id bigint;
+BEGIN
+  IF NEW.stereotype_revision_id IS NULL THEN
+    RETURN NEW;  -- unclassified object; nothing to prove
+  END IF;
+
+  SELECT id INTO v_field_id
+    FROM shrapnel.field
+   WHERE property_name = 'stereotype_conformance';
+
+  IF v_field_id IS NULL OR NOT EXISTS (
+    SELECT 1
+    FROM shrapnel.object_attribute_value oav
+    JOIN shrapnel.value v         ON v.id = oav.value_id AND v.value_type_code = 2
+    JOIN shrapnel.value_string vs ON vs.id = v.id AND vs.value = 'conformant'
+    WHERE oav.object_id = NEW.id
+      AND oav.field_id  = v_field_id
+  ) THEN
+    RAISE EXCEPTION 'object %: stereotype membership requires conformance evidence (OAV field ''stereotype_conformance'' = ''conformant'') recorded for the object; conformance is evaluable data, not an implicit default',
+      NEW.id USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: check_stereotype_acyclic(); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.check_stereotype_acyclic() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_cur          bigint;
+  v_seen         bigint[] := ARRAY[]::bigint[];
+  v_hops         integer := 0;
+  v_max          integer := 3;
+  v_parent_depth integer;
+BEGIN
+  IF NEW.parent_revision_id IS NULL THEN
+    NEW.depth := 0;
+    RETURN NEW;
+  END IF;
+
+  v_cur := NEW.parent_revision_id;
+  LOOP
+    IF v_cur = ANY (v_seen) THEN
+      RAISE EXCEPTION 'stereotype_revision %: cycle detected in extends chain',
+        NEW.id USING ERRCODE = '23514';
+    END IF;
+    v_seen := v_seen || v_cur;
+
+    SELECT parent_revision_id, depth INTO v_cur, v_parent_depth
+      FROM shrapnel.stereotype_revision WHERE id = v_cur;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'stereotype_revision %: parent revision % not found',
+        NEW.id, v_cur USING ERRCODE = '23503';
+    END IF;
+    IF v_cur IS NULL THEN
+      -- Reached the root of the pinned chain; its depth is authoritative.
+      NEW.depth := v_parent_depth + v_hops + 1;
+      EXIT;
+    END IF;
+    v_hops := v_hops + 1;
+  END LOOP;
+
+  IF NEW.depth > v_max THEN
+    RAISE EXCEPTION 'stereotype_revision %: depth % exceeds maximum % (C1 shallow-hierarchy doctrine)',
+      NEW.id, NEW.depth, v_max USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: check_stereotype_field_superset(); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.check_stereotype_field_superset() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_missing bigint[];
+BEGIN
+  IF NEW.parent_revision_id IS NULL THEN
+    RETURN NULL;
+  END IF;
+
+  SELECT array_agg(pf.field_id ORDER BY pf.field_id)
+    INTO v_missing
+    FROM shrapnel.stereotype_field pf
+    WHERE pf.stereotype_revision_id = NEW.parent_revision_id
+      AND pf.required
+      AND NOT EXISTS (
+        SELECT 1 FROM shrapnel.stereotype_field cf
+        WHERE cf.stereotype_revision_id = NEW.id
+          AND cf.field_id = pf.field_id
+      );
+
+  IF v_missing IS NOT NULL THEN
+    RAISE EXCEPTION 'stereotype_revision %: required fields % missing relative to parent revision % (child contract must be a superset)',
+      NEW.id, v_missing, NEW.parent_revision_id USING ERRCODE = '23514';
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: check_stereotype_field_superset_v2(); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.check_stereotype_field_superset_v2() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_missing bigint[];
+  v_weakened bigint[];
+BEGIN
+  IF NEW.parent_revision_id IS NULL THEN
+    RETURN NULL;
+  END IF;
+
+  SELECT array_agg(pf.field_id ORDER BY pf.field_id)
+    INTO v_missing
+    FROM shrapnel.stereotype_field pf
+    WHERE pf.stereotype_revision_id = NEW.parent_revision_id
+      AND pf.required
+      AND NOT EXISTS (
+        SELECT 1 FROM shrapnel.stereotype_field cf
+        WHERE cf.stereotype_revision_id = NEW.id
+          AND cf.field_id = pf.field_id
+      );
+  IF v_missing IS NOT NULL THEN
+    RAISE EXCEPTION 'stereotype_revision %: required fields % missing relative to parent revision % (child contract must be a superset)',
+      NEW.id, v_missing, NEW.parent_revision_id USING ERRCODE = '23514';
+  END IF;
+
+  SELECT array_agg(pf.field_id ORDER BY pf.field_id)
+    INTO v_weakened
+    FROM shrapnel.stereotype_field pf
+    WHERE pf.stereotype_revision_id = NEW.parent_revision_id
+      AND pf.required
+      AND EXISTS (
+        SELECT 1 FROM shrapnel.stereotype_field cf
+        WHERE cf.stereotype_revision_id = NEW.id
+          AND cf.field_id = pf.field_id
+          AND cf.required = false
+      );
+  IF v_weakened IS NOT NULL THEN
+    RAISE EXCEPTION 'stereotype_revision %: fields % downgraded from required to optional relative to parent revision % (required-flags are monotonic down the chain)',
+      NEW.id, v_weakened, NEW.parent_revision_id USING ERRCODE = '23514';
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: forbid_stereotype_field_mutation(); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.forbid_stereotype_field_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_revision_id bigint;
+BEGIN
+  v_revision_id := COALESCE(OLD.stereotype_revision_id, NEW.stereotype_revision_id);
+  IF EXISTS (
+    SELECT 1 FROM shrapnel.stereotype_revision r
+    WHERE r.id = v_revision_id
+      AND r.xmin::text::bigint <> (txid_current() % 4294967296)::bigint
+  ) THEN
+    RAISE EXCEPTION 'stereotype_field rows for revision % are frozen (append-only contract); % rejected',
+      v_revision_id, TG_OP USING ERRCODE = '23514';
+  END IF;
+  -- BEFORE ROW triggers MUST return the row to keep the operation alive:
+  -- returning NULL would silently cancel the INSERT/UPDATE/DELETE.
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: forbid_stereotype_revision_mutation(); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.forbid_stereotype_revision_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  RAISE EXCEPTION 'stereotype_revision % is append-only; % rejected',
+    COALESCE(OLD.id, NEW.id), TG_OP USING ERRCODE = '23514';
+END;
+$$;
+
+
+--
+-- Name: object_classify(bigint, bigint, text); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.object_classify(p_object_id bigint, p_revision_id bigint, p_disposition text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_stereotype_id bigint;
+  v_stereotype    text;
+  v_field_conf    bigint;
+  v_field_disp    bigint;
+  v_value_id      bigint;
+  v_missing       text[];
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM shrapnel.object_instance WHERE id = p_object_id) THEN
+    RAISE EXCEPTION 'object_classify: object % not found', p_object_id;
+  END IF;
+
+  SELECT s.id, s.name INTO v_stereotype_id, v_stereotype
+  FROM shrapnel.stereotype_revision r
+  JOIN shrapnel.stereotype s ON s.id = r.stereotype_id
+  WHERE r.id = p_revision_id;
+  IF v_stereotype_id IS NULL THEN
+    RAISE EXCEPTION 'object_classify: revision % not found', p_revision_id;
+  END IF;
+
+  -- Pre-check the EFFECTIVE contract (inherited + own requirements).
+  -- Failure aborts the whole call: conformance is evaluable data and is
+  -- never repaired by materializing defaults.
+  SELECT coalesce(array_agg(e.property_name ORDER BY e.property_name), ARRAY[]::text[])
+    INTO v_missing
+  FROM shrapnel.stereotype_effective_contract(p_revision_id) e
+  WHERE e.required
+    AND NOT EXISTS (
+      SELECT 1
+      FROM shrapnel.object_attribute_value oav
+      JOIN shrapnel.field f ON f.id = oav.field_id
+      WHERE oav.object_id = p_object_id
+        AND f.property_name = e.property_name
+    );
+  IF v_missing IS NOT NULL AND array_length(v_missing, 1) > 0 THEN
+    RAISE EXCEPTION 'object_classify: object % missing required members %; conformance is evaluable data, not an implicit default',
+      p_object_id, v_missing USING ERRCODE = '23514';
+  END IF;
+
+  -- Conformance-evidence OAV row (get-or-create) — satisfies the 0004
+  -- membership evidence gate within this same transaction.
+  SELECT id INTO v_field_conf FROM shrapnel.field
+   WHERE property_name = 'stereotype_conformance';
+  IF v_field_conf IS NULL THEN
+    INSERT INTO shrapnel.field
+      (is_calculated, field_index, label, name, property_name, field_type_code)
+    VALUES
+      (false, 0, 'StereoType Conformance', 'StereoType Conformance',
+       'stereotype_conformance', 2)
+    RETURNING id INTO v_field_conf;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM shrapnel.object_attribute_value
+    WHERE object_id = p_object_id AND field_id = v_field_conf
+  ) THEN
+    INSERT INTO shrapnel.value (value_type_code) VALUES (2)
+      RETURNING id INTO v_value_id;
+    INSERT INTO shrapnel.value_string (id, value) VALUES (v_value_id, 'conformant');
+    INSERT INTO shrapnel.object_attribute_value (object_id, field_id, value_id)
+      VALUES (p_object_id, v_field_conf, v_value_id);
+  END IF;
+
+  -- Disposition record (auditability of the classification act itself).
+  IF p_disposition IS NOT NULL AND btrim(p_disposition) <> '' THEN
+    SELECT id INTO v_field_disp FROM shrapnel.field
+     WHERE property_name = 'stereotype_conformance_disposition';
+    IF v_field_disp IS NULL THEN
+      INSERT INTO shrapnel.field
+        (is_calculated, field_index, label, name, property_name, field_type_code)
+      VALUES
+        (false, 0, 'StereoType Conformance Disposition',
+         'StereoType Conformance Disposition',
+         'stereotype_conformance_disposition', 2)
+      RETURNING id INTO v_field_disp;
+    END IF;
+    IF NOT EXISTS (
+      SELECT 1 FROM shrapnel.object_attribute_value
+      WHERE object_id = p_object_id AND field_id = v_field_disp
+    ) THEN
+      INSERT INTO shrapnel.value (value_type_code) VALUES (2)
+        RETURNING id INTO v_value_id;
+      INSERT INTO shrapnel.value_string (id, value) VALUES (v_value_id, p_disposition);
+      INSERT INTO shrapnel.object_attribute_value (object_id, field_id, value_id)
+        VALUES (p_object_id, v_field_disp, v_value_id);
+    END IF;
+  END IF;
+
+  -- Membership (the evidence gate trigger sees the row inserted above).
+  UPDATE shrapnel.object_instance
+     SET stereotype_id          = v_stereotype_id,
+         stereotype_revision_id = p_revision_id
+   WHERE id = p_object_id;
+
+  RETURN jsonb_build_object(
+    'object_id',   p_object_id,
+    'stereotype',  v_stereotype,
+    'revision_id', p_revision_id,
+    'disposition', p_disposition,
+    'classified',  true
+  );
+END;
+$$;
+
+
+--
+-- Name: object_conformance(bigint); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.object_conformance(p_object_id bigint) RETURNS jsonb
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE
+  v_stereotype text;
+  v_revision   bigint;
+  v_missing    text[];
+BEGIN
+  SELECT s.name, o.stereotype_revision_id
+    INTO v_stereotype, v_revision
+  FROM shrapnel.object_instance o
+  LEFT JOIN shrapnel.stereotype_revision r ON r.id = o.stereotype_revision_id
+  LEFT JOIN shrapnel.stereotype s          ON s.id = r.stereotype_id
+  WHERE o.id = p_object_id;
+
+  IF v_revision IS NULL THEN
+    RETURN jsonb_build_object('object_id', p_object_id, 'classified', false);
+  END IF;
+
+  SELECT coalesce(array_agg(e.property_name ORDER BY e.property_name), ARRAY[]::text[])
+    INTO v_missing
+  FROM shrapnel.stereotype_effective_contract(v_revision) e
+  WHERE e.required
+    AND NOT EXISTS (
+      SELECT 1
+      FROM shrapnel.object_attribute_value oav
+      JOIN shrapnel.field f ON f.id = oav.field_id
+      WHERE oav.object_id = p_object_id
+        AND f.property_name = e.property_name
+    );
+
+  RETURN jsonb_build_object(
+    'object_id',    p_object_id,
+    'classified',   true,
+    'stereotype',   v_stereotype,
+    'revision_id',  v_revision,
+    'conformant',   (v_missing IS NULL OR array_length(v_missing, 1) IS NULL),
+    'missing',      to_jsonb(coalesce(v_missing, ARRAY[]::text[]))
+  );
+END;
+$$;
+
+
+--
+-- Name: set_updated_at(); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.updated_at := now();
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: stereotype_canonical_contract(bigint, bigint, text, jsonb); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_canonical_contract(p_stereotype_id bigint, p_parent_revision_id bigint, p_extends_rationale text, p_fields jsonb) RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT 'sha256:' || encode(
+    sha256(
+      convert_to(
+        jsonb_build_object(
+          'stereotype_id',      p_stereotype_id,
+          'parent_revision_id', p_parent_revision_id,
+          'extends_rationale',  p_extends_rationale,
+          'fields', (
+            SELECT coalesce(jsonb_agg(e ORDER BY (e->>'id')::bigint), '[]'::jsonb)
+            FROM jsonb_array_elements(
+                   CASE WHEN jsonb_typeof(p_fields) = 'array' THEN p_fields
+                        ELSE '[]'::jsonb END) e
+          )
+        )::text,
+        'UTF8'
+      )
+    ),
+    'hex'
+  )
+$$;
+
+
+--
+-- Name: stereotype_chain(bigint); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_chain(p_revision_id bigint) RETURNS TABLE(name text, version integer, hop integer)
+    LANGUAGE sql STABLE
+    AS $$
+  WITH RECURSIVE walk AS (
+    SELECT r.id, r.stereotype_id, r.version, r.parent_revision_id, 0 AS hop
+    FROM shrapnel.stereotype_revision r
+    WHERE r.id = p_revision_id
+    UNION ALL
+    SELECT p.id, p.stereotype_id, p.version, p.parent_revision_id, w.hop + 1
+    FROM shrapnel.stereotype_revision p
+    JOIN walk w ON p.id = w.parent_revision_id
+  )
+  SELECT s.name, w.version, w.hop
+  FROM walk w
+  JOIN shrapnel.stereotype s ON s.id = w.stereotype_id
+  ORDER BY w.hop
+$$;
+
+
+--
+-- Name: stereotype_create_revision(text, bigint, text, text[], text[]); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_create_revision(p_name text, p_extends_revision bigint, p_rationale text, p_required_fields text[], p_optional_fields text[] DEFAULT NULL::text[]) RETURNS bigint
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_stereotype_id        bigint;
+  v_parent_stereotype_id bigint;
+  v_parent_depth         integer;
+  v_version              integer;
+  v_revision             bigint;
+  v_fields               jsonb := '[]'::jsonb;
+  v_fid                  bigint;
+  v_seen                 text[] := ARRAY[]::text[];
+  t                      record;
+BEGIN
+  IF p_name IS NULL OR btrim(p_name) = '' THEN
+    RAISE EXCEPTION 'stereotype_create_revision: name is required';
+  END IF;
+
+  -- Identity get-or-create.
+  SELECT id INTO v_stereotype_id FROM shrapnel.stereotype WHERE name = p_name;
+  IF v_stereotype_id IS NULL THEN
+    INSERT INTO shrapnel.stereotype (name) VALUES (p_name)
+    RETURNING id INTO v_stereotype_id;
+  END IF;
+
+  -- Parent validation (C1: rationale required when extending).
+  IF p_extends_revision IS NOT NULL THEN
+    IF p_rationale IS NULL OR btrim(p_rationale) = '' THEN
+      RAISE EXCEPTION 'stereotype_create_revision: extends requires a rationale (C1 shallow-hierarchy doctrine)';
+    END IF;
+    SELECT stereotype_id, depth INTO v_parent_stereotype_id, v_parent_depth
+    FROM shrapnel.stereotype_revision
+    WHERE id = p_extends_revision;
+    IF v_parent_stereotype_id IS NULL THEN
+      RAISE EXCEPTION 'stereotype_create_revision: parent revision % not found', p_extends_revision;
+    END IF;
+  END IF;
+
+  -- Next version (uq_sterev_identity_version arbitrates concurrent races).
+  SELECT coalesce(max(version), 0) + 1 INTO v_version
+  FROM shrapnel.stereotype_revision
+  WHERE stereotype_id = v_stereotype_id;
+
+  -- Fields: get-or-create by property_name (default String, code 2), then
+  -- build the full fields document [{id, required}] for the v2 fingerprint.
+  -- A field may not be declared twice in one call (required and optional
+  -- are mutually exclusive per field).
+  -- On nexus the field INSERT fires trg_sync_field_metadata_to_resolution
+  -- (present live); on sol no such trigger exists — both paths are correct.
+  FOR t IN
+    SELECT pn, true AS req FROM unnest(coalesce(p_required_fields, ARRAY[]::text[])) pn
+    UNION ALL
+    SELECT pn, false FROM unnest(coalesce(p_optional_fields, ARRAY[]::text[])) pn
+  LOOP
+    IF t.pn = ANY (v_seen) THEN
+      RAISE EXCEPTION 'stereotype_create_revision: field % declared more than once', t.pn;
+    END IF;
+    v_seen := v_seen || t.pn;
+
+    SELECT id INTO v_fid FROM shrapnel.field WHERE property_name = t.pn;
+    IF v_fid IS NULL THEN
+      INSERT INTO shrapnel.field
+        (is_calculated, field_index, label, name, property_name, field_type_code)
+      VALUES
+        (false, 0, t.pn, t.pn, t.pn, 2)
+      RETURNING id INTO v_fid;
+    END IF;
+    v_fields := v_fields || jsonb_build_object('id', v_fid, 'required', t.req);
+  END LOOP;
+
+  -- Revision row with the server-computed v2 fingerprint over the FULL field
+  -- document. The immediate acyclicity trigger recomputes depth; the deferred
+  -- fingerprint/superset/field-integrity triggers verify at COMMIT.
+  INSERT INTO shrapnel.stereotype_revision
+    (stereotype_id, version, parent_revision_id, parent_stereotype_id,
+     extends_rationale, depth, contract_fingerprint)
+  VALUES
+    (v_stereotype_id, v_version, p_extends_revision, v_parent_stereotype_id,
+     p_rationale, coalesce(v_parent_depth + 1, 0),
+     shrapnel.stereotype_canonical_contract(
+       v_stereotype_id, p_extends_revision, p_rationale, v_fields))
+  RETURNING id INTO v_revision;
+
+  INSERT INTO shrapnel.stereotype_field (stereotype_revision_id, field_id, required)
+  SELECT v_revision, (e->>'id')::bigint, (e->>'required')::boolean
+  FROM jsonb_array_elements(v_fields) e;
+
+  RETURN v_revision;
+END;
+$$;
+
+
+--
+-- Name: stereotype_depth_of(bigint); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_depth_of(p_revision_id bigint) RETURNS integer
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE
+  v_cur   bigint := p_revision_id;
+  v_depth integer := 0;
+  v_next  bigint;
+BEGIN
+  IF p_revision_id IS NULL THEN
+    RETURN 0;
+  END IF;
+  LOOP
+    SELECT parent_revision_id INTO v_next
+      FROM shrapnel.stereotype_revision WHERE id = v_cur;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'stereotype_depth_of: revision % not found', v_cur;
+    END IF;
+    EXIT WHEN v_next IS NULL;
+    v_depth := v_depth + 1;
+    v_cur   := v_next;
+  END LOOP;
+  RETURN v_depth;
+END;
+$$;
+
+
+--
+-- Name: stereotype_effective_contract(bigint); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_effective_contract(p_revision_id bigint) RETURNS TABLE(property_name text, required boolean, origin_revision bigint, origin_stereotype text, origin_version integer)
+    LANGUAGE sql STABLE
+    AS $$
+  WITH RECURSIVE walk AS (
+    SELECT r.id, r.stereotype_id, r.version, r.parent_revision_id, 0 AS hop
+    FROM shrapnel.stereotype_revision r
+    WHERE r.id = p_revision_id
+    UNION ALL
+    SELECT p.id, p.stereotype_id, p.version, p.parent_revision_id, w.hop + 1
+    FROM shrapnel.stereotype_revision p
+    JOIN walk w ON p.id = w.parent_revision_id
+  )
+  SELECT DISTINCT ON (f.property_name)
+         f.property_name,
+         sf.required,
+         w.id,
+         s.name,
+         w.version
+  FROM walk w
+  JOIN shrapnel.stereotype_field sf ON sf.stereotype_revision_id = w.id
+  JOIN shrapnel.field f             ON f.id = sf.field_id
+  JOIN shrapnel.stereotype s        ON s.id = w.stereotype_id
+  ORDER BY f.property_name, w.hop
+$$;
+
+
+--
+-- Name: stereotype_extends(bigint, text); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_extends(p_child_revision bigint, p_ancestor_name text) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM shrapnel.stereotype_chain(p_child_revision) c
+    WHERE c.hop > 0
+      AND c.name = p_ancestor_name
+  )
+$$;
+
+
+--
+-- Name: stereotype_fields_document(bigint); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_fields_document(p_revision_id bigint) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT coalesce(jsonb_agg(jsonb_build_object('id', sf.field_id, 'required', sf.required)
+                            ORDER BY sf.field_id), '[]'::jsonb)
+  FROM shrapnel.stereotype_field sf
+  WHERE sf.stereotype_revision_id = p_revision_id
+$$;
+
+
+--
+-- Name: stereotype_resolve(text); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_resolve(p_name text) RETURNS TABLE(stereotype_id bigint, head_revision_id bigint, version integer)
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT s.id, r.id, r.version
+  FROM shrapnel.stereotype s
+  JOIN shrapnel.stereotype_revision r ON r.stereotype_id = s.id
+  WHERE s.name = p_name
+  ORDER BY r.version DESC
+  LIMIT 1
+$$;
+
+
+--
+-- Name: stereotype_sort_ids(bigint[]); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_sort_ids(p bigint[]) RETURNS bigint[]
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  SELECT coalesce((SELECT array_agg(x ORDER BY x) FROM unnest(p) AS x), ARRAY[]::bigint[])
+$$;
+
+
+--
+-- Name: sync_field_metadata_to_resolution(); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.sync_field_metadata_to_resolution() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM resolution.sync_shrapnel_field(NEW.id);
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: verify_stereotype_fingerprint(); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.verify_stereotype_fingerprint() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_expected text;
+  v_fields   jsonb;
+BEGIN
+  SELECT coalesce(jsonb_agg(jsonb_build_object('id', sf.field_id, 'required', sf.required)
+                            ORDER BY sf.field_id), '[]'::jsonb)
+    INTO v_fields
+    FROM shrapnel.stereotype_field sf
+   WHERE sf.stereotype_revision_id = NEW.id;
+
+  v_expected := shrapnel.stereotype_canonical_contract(
+    NEW.stereotype_id, NEW.parent_revision_id, NEW.extends_rationale, v_fields);
+
+  IF v_expected <> NEW.contract_fingerprint THEN
+    RAISE EXCEPTION 'stereotype_revision %: contract_fingerprint mismatch (expected %, got %)',
+      NEW.id, v_expected, NEW.contract_fingerprint USING ERRCODE = '23514';
+  END IF;
+  RETURN NULL;
+END;
+$$;
 
 
 --
@@ -12444,7 +13906,11 @@ CREATE TABLE aspects.tag_binding (
     bound_by text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     expired_at timestamp with time zone,
+    decided_by text,
+    decided_at timestamp with time zone,
+    decision_note text,
     CONSTRAINT tag_binding_check CHECK (((expired_at IS NULL) OR (status = 'expired'::text))),
+    CONSTRAINT tag_binding_decision_coherence CHECK ((((status = ANY (ARRAY['approved'::text, 'rejected'::text])) AND (decided_by IS NOT NULL) AND (decided_at IS NOT NULL)) OR ((status = 'proposed'::text) AND (decided_by IS NULL) AND (decided_at IS NULL)) OR (status = 'expired'::text))),
     CONSTRAINT tag_binding_status_check CHECK ((status = ANY (ARRAY['proposed'::text, 'approved'::text, 'rejected'::text, 'expired'::text])))
 );
 
@@ -12576,7 +14042,8 @@ CREATE TABLE assembly.users (
     password character varying(255) NOT NULL,
     avatar_url character varying(255),
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT users_password_bcrypt_check CHECK (((((password)::text ~~ '$2%'::text) AND (length((password)::text) = 60)) OR ((password)::text = ''::text)))
 );
 
 
@@ -13494,6 +14961,464 @@ CREATE TABLE execution.requests (
     source_wr_id uuid,
     CONSTRAINT requests_status_check CHECK ((status = ANY (ARRAY['DRAFT'::text, 'COMPILED'::text, 'VALIDATED'::text, 'ADMITTED'::text, 'READY'::text, 'COMPLETED'::text, 'FAILED'::text, 'CANCELLED'::text])))
 );
+
+
+--
+-- Name: event_log; Type: TABLE; Schema: kernel; Owner: -
+--
+
+CREATE TABLE kernel.event_log (
+    id bigint NOT NULL,
+    event_id uuid NOT NULL,
+    event_type text NOT NULL,
+    aggregate_type text NOT NULL,
+    aggregate_id text NOT NULL,
+    actor text NOT NULL,
+    authority text,
+    payload jsonb DEFAULT '{}'::jsonb NOT NULL,
+    receipt text,
+    causation_id uuid,
+    correlation_id uuid,
+    event_timestamp timestamp with time zone NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    reducer_version text DEFAULT 'kernel.event_log@0.1'::text NOT NULL
+);
+
+
+--
+-- Name: TABLE event_log; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON TABLE kernel.event_log IS 'Derived projection of kernel.transition_event. Maintained by the
+     Cascade projection_updater subscriber. Append-only, idempotent,
+     denormalized for fast querying.';
+
+
+--
+-- Name: COLUMN event_log.received_at; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.event_log.received_at IS 'When the projection subscriber received and wrote this event.
+     Distinct from event_timestamp (when the event was committed).';
+
+
+--
+-- Name: COLUMN event_log.reducer_version; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.event_log.reducer_version IS 'Version of the reducer logic that produced this row. Enables
+     schema migration of projections.';
+
+
+--
+-- Name: event_log_id_seq; Type: SEQUENCE; Schema: kernel; Owner: -
+--
+
+ALTER TABLE kernel.event_log ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME kernel.event_log_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: intent; Type: TABLE; Schema: kernel; Owner: -
+--
+
+CREATE TABLE kernel.intent (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    goal text NOT NULL,
+    owner text NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    parent_intent_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    superseded_at timestamp with time zone,
+    CONSTRAINT intent_status_check CHECK ((status = ANY (ARRAY['active'::text, 'completed'::text, 'abandoned'::text, 'superseded'::text])))
+);
+
+
+--
+-- Name: TABLE intent; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON TABLE kernel.intent IS 'Root aggregate. Everything — events, receipts, artifacts, provenance —
+     hangs off an intent. Enables replay by objective rather than chronology.';
+
+
+--
+-- Name: policy_rule; Type: TABLE; Schema: kernel; Owner: -
+--
+
+CREATE TABLE kernel.policy_rule (
+    rule_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    rule_name text NOT NULL,
+    priority integer DEFAULT 500 NOT NULL,
+    event_type kernel.event_type,
+    cue_source text NOT NULL,
+    compiled_sql text NOT NULL,
+    function_name text,
+    compiler_version text DEFAULT 'cue-to-sql@0.1'::text NOT NULL,
+    doctrine_version text,
+    deny_reason text NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    created_by text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT ck_policy_rule_has_target CHECK ((((compiled_sql IS NOT NULL) AND (length(TRIM(BOTH FROM compiled_sql)) > 0)) OR ((function_name IS NOT NULL) AND (length(TRIM(BOTH FROM function_name)) > 0)))),
+    CONSTRAINT policy_rule_priority_check CHECK (((priority >= 0) AND (priority <= 1000)))
+);
+
+
+--
+-- Name: TABLE policy_rule; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON TABLE kernel.policy_rule IS 'CUE-compiled policy rules enforced by trg_authorize_transition.
+     Every rule preserves provenance from source (cue_source) through
+     compilation (compiler_version, doctrine_version) to executable
+     form (compiled_sql or function_name).';
+
+
+--
+-- Name: COLUMN policy_rule.rule_name; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.policy_rule.rule_name IS 'Human-readable rule identifier, e.g. "capability.required" or
+     "receipt.must_be_signed".';
+
+
+--
+-- Name: COLUMN policy_rule.priority; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.policy_rule.priority IS 'Evaluation order (0 = first, 1000 = last). Default 500.';
+
+
+--
+-- Name: COLUMN policy_rule.event_type; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.policy_rule.event_type IS 'If set, this rule only applies to transitions of this event type.
+     If NULL, applies to all event types.';
+
+
+--
+-- Name: COLUMN policy_rule.cue_source; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.policy_rule.cue_source IS 'The original CUE source that produced this rule. This is the
+     authoritative policy expression — compiled_sql is derived.';
+
+
+--
+-- Name: COLUMN policy_rule.compiled_sql; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.policy_rule.compiled_sql IS 'The CUE-compiled SQL predicate. Evaluated dynamically by the
+     trigger against the NEW transition_event row. Example:
+     "NEW.actor IS NOT NULL AND NEW.authority IN (''architect'',''planner'')"';
+
+
+--
+-- Name: COLUMN policy_rule.function_name; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.policy_rule.function_name IS 'Optional: schema-qualified function name for code-generated
+     enforcement. When set, the trigger invokes this function instead
+     of evaluating compiled_sql dynamically. Enables a migration path
+     from data-driven to compiled enforcement as rules stabilize.';
+
+
+--
+-- Name: COLUMN policy_rule.compiler_version; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.policy_rule.compiler_version IS 'Version of the CUE→SQL compiler that produced this rule. Enables
+     invalidation and recompilation when the compiler changes.';
+
+
+--
+-- Name: COLUMN policy_rule.doctrine_version; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.policy_rule.doctrine_version IS 'Which revision of the policy doctrine this rule was generated from.
+     Links back to the source of authority.';
+
+
+--
+-- Name: COLUMN policy_rule.deny_reason; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.policy_rule.deny_reason IS 'Human-readable message returned to the caller when this rule rejects
+     a transition. Surfaced as KERNEL_POLICY_DENIED.';
+
+
+--
+-- Name: COLUMN policy_rule.enabled; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.policy_rule.enabled IS 'If false, the rule is skipped during evaluation. Enables gradual
+     rollout and emergency disable without dropping rules.';
+
+
+--
+-- Name: COLUMN policy_rule.created_by; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON COLUMN kernel.policy_rule.created_by IS 'Who authored this rule — agent role (architect, planner) or system
+     (peb, conduit).';
+
+
+--
+-- Name: transition_event_id_seq; Type: SEQUENCE; Schema: kernel; Owner: -
+--
+
+ALTER TABLE kernel.transition_event ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME kernel.transition_event_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: v_active_policy; Type: VIEW; Schema: kernel; Owner: -
+--
+
+CREATE VIEW kernel.v_active_policy AS
+ SELECT rule_id,
+    rule_name,
+    priority,
+    (event_type)::text AS event_type,
+    cue_source,
+    compiled_sql,
+    function_name,
+    compiler_version,
+    doctrine_version,
+    deny_reason,
+    enabled,
+    created_by,
+    created_at,
+    updated_at
+   FROM kernel.policy_rule
+  WHERE enabled
+  ORDER BY priority;
+
+
+--
+-- Name: v_aggregate_events; Type: VIEW; Schema: kernel; Owner: -
+--
+
+CREATE VIEW kernel.v_aggregate_events AS
+ SELECT aggregate_type,
+    aggregate_id,
+    count(*) AS event_count,
+    min("timestamp") AS first_seen,
+    max("timestamp") AS last_seen,
+    array_agg(DISTINCT (event_type)::text) AS event_types
+   FROM kernel.transition_event
+  GROUP BY aggregate_type, aggregate_id;
+
+
+--
+-- Name: VIEW v_aggregate_events; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON VIEW kernel.v_aggregate_events IS 'Summary of events per aggregate — useful for lifecycle inspection.';
+
+
+--
+-- Name: v_causality_chain; Type: VIEW; Schema: kernel; Owner: -
+--
+
+CREATE VIEW kernel.v_causality_chain AS
+ WITH RECURSIVE chain AS (
+         SELECT te.id,
+            te.event_id,
+            te.event_type,
+            te.aggregate_type,
+            te.aggregate_id,
+            te.actor,
+            te.causation_id,
+            te.correlation_id,
+            te."timestamp",
+            0 AS depth,
+            ARRAY[(te.event_id)::text] AS path
+           FROM kernel.transition_event te
+          WHERE (te.causation_id IS NULL)
+        UNION ALL
+         SELECT te.id,
+            te.event_id,
+            te.event_type,
+            te.aggregate_type,
+            te.aggregate_id,
+            te.actor,
+            te.causation_id,
+            te.correlation_id,
+            te."timestamp",
+            (c.depth + 1),
+            (c.path || (te.event_id)::text)
+           FROM (kernel.transition_event te
+             JOIN chain c ON ((c.event_id = te.causation_id)))
+          WHERE (NOT ((te.event_id)::text = ANY (c.path)))
+        )
+ SELECT id,
+    event_id,
+    event_type,
+    aggregate_type,
+    aggregate_id,
+    actor,
+    causation_id,
+    correlation_id,
+    "timestamp",
+    depth,
+    path
+   FROM chain;
+
+
+--
+-- Name: v_event_analytics; Type: VIEW; Schema: kernel; Owner: -
+--
+
+CREATE VIEW kernel.v_event_analytics AS
+ SELECT event_type,
+    aggregate_type,
+    count(*) AS event_count,
+    min(event_timestamp) AS first_seen,
+    max(event_timestamp) AS last_seen,
+    count(DISTINCT actor) AS unique_actors,
+    count(DISTINCT aggregate_id) AS unique_aggregates
+   FROM kernel.event_log
+  GROUP BY event_type, aggregate_type
+  ORDER BY event_type, aggregate_type;
+
+
+--
+-- Name: VIEW v_event_analytics; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON VIEW kernel.v_event_analytics IS 'Analytics summary: event counts grouped by type and aggregate.
+     Updated in real-time as the projection subscriber writes rows.';
+
+
+--
+-- Name: v_plan_receipts; Type: VIEW; Schema: kernel; Owner: -
+--
+
+CREATE VIEW kernel.v_plan_receipts AS
+ SELECT plan_number,
+    receipt_type,
+    count(*) AS receipt_count,
+    min(created_at) AS first_issued,
+    max(created_at) AS last_issued,
+    array_agg(DISTINCT issued_by) AS issuers,
+    array_agg(DISTINCT receipt_hash) AS hashes
+   FROM kernel.receipt r
+  WHERE (plan_number IS NOT NULL)
+  GROUP BY plan_number, receipt_type
+  ORDER BY plan_number;
+
+
+--
+-- Name: VIEW v_plan_receipts; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON VIEW kernel.v_plan_receipts IS 'Receipt summary grouped by plan number — useful for seeing
+     which receipts have been issued for each conduit plan.';
+
+
+--
+-- Name: v_policy_maturity; Type: VIEW; Schema: kernel; Owner: -
+--
+
+CREATE VIEW kernel.v_policy_maturity AS
+ SELECT count(*) AS total_rules,
+    count(*) FILTER (WHERE enabled) AS enabled_rules,
+    count(*) FILTER (WHERE (enabled AND (function_name IS NOT NULL))) AS compiled_enabled,
+    count(*) FILTER (WHERE (enabled AND (function_name IS NULL))) AS data_driven_enabled,
+    count(*) FILTER (WHERE (NOT enabled)) AS disabled_rules,
+        CASE
+            WHEN (count(*) FILTER (WHERE enabled) = 0) THEN NULL::numeric
+            ELSE round((((count(*) FILTER (WHERE (enabled AND (function_name IS NULL))))::numeric / (count(*) FILTER (WHERE enabled))::numeric) * (100)::numeric), 1)
+        END AS data_driven_pct,
+        CASE
+            WHEN (count(*) FILTER (WHERE enabled) = 0) THEN NULL::numeric
+            ELSE round((((count(*) FILTER (WHERE (enabled AND (function_name IS NOT NULL))))::numeric / (count(*) FILTER (WHERE enabled))::numeric) * (100)::numeric), 1)
+        END AS compiled_pct
+   FROM kernel.policy_rule;
+
+
+--
+-- Name: VIEW v_policy_maturity; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON VIEW kernel.v_policy_maturity IS 'Measures policy engine maturity: ratio of compiled-hardened rules to data-driven rules. Higher compiled_pct = narrower entrance. Track this over time.';
+
+
+--
+-- Name: v_receipt_chain; Type: VIEW; Schema: kernel; Owner: -
+--
+
+CREATE VIEW kernel.v_receipt_chain AS
+ SELECT r.id AS receipt_id,
+    r.receipt_type,
+    r.receipt_hash,
+    r.issued_by,
+    r.plan_number,
+    r.created_at AS receipt_created_at,
+    te.event_id,
+    (te.event_type)::text AS event_type,
+    te.aggregate_type,
+    te.aggregate_id,
+    te.actor,
+    te."timestamp" AS event_timestamp,
+    te.causation_id,
+    te.correlation_id
+   FROM (kernel.receipt r
+     JOIN kernel.transition_event te ON ((te.event_id = r.event_id)))
+  ORDER BY r.created_at DESC;
+
+
+--
+-- Name: VIEW v_receipt_chain; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON VIEW kernel.v_receipt_chain IS 'Joined view of receipts with their source transition events.
+     Useful for tracing which receipt certifies which event.';
+
+
+--
+-- Name: v_recent_events; Type: VIEW; Schema: kernel; Owner: -
+--
+
+CREATE VIEW kernel.v_recent_events AS
+ SELECT id,
+    event_id,
+    event_type,
+    aggregate_type,
+    aggregate_id,
+    actor,
+    authority,
+    event_timestamp,
+    received_at,
+    (received_at - event_timestamp) AS propagation_lag
+   FROM kernel.event_log
+  ORDER BY received_at DESC
+ LIMIT 100;
+
+
+--
+-- Name: VIEW v_recent_events; Type: COMMENT; Schema: kernel; Owner: -
+--
+
+COMMENT ON VIEW kernel.v_recent_events IS 'Last 100 projected events with propagation lag. Useful for
+     monitoring the kernel → NATS → subscriber pipeline latency.';
 
 
 --
@@ -19908,6 +21833,650 @@ CREATE TABLE semantics.statement_evidence (
 
 
 --
+-- Name: _migration_ledger; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel._migration_ledger (
+    filename text NOT NULL,
+    applied_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: data_source; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.data_source (
+    id bigint NOT NULL,
+    name character varying(255) NOT NULL,
+    script_name character varying(255),
+    query_id bigint
+);
+
+ALTER TABLE ONLY shrapnel.data_source REPLICA IDENTITY FULL;
+
+
+--
+-- Name: data_source_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.data_source_seq
+    START WITH 1
+    INCREMENT BY 50
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: field_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.field_seq
+    START WITH 1
+    INCREMENT BY 50
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: field; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.field (
+    id bigint DEFAULT nextval('shrapnel.field_seq'::regclass) NOT NULL,
+    is_calculated boolean NOT NULL,
+    field_index integer NOT NULL,
+    label text,
+    name text,
+    property_name text NOT NULL,
+    field_type_code smallint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+ALTER TABLE ONLY shrapnel.field REPLICA IDENTITY FULL;
+
+
+--
+-- Name: TABLE field; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.field IS 'Attribute metadata: maps a logical attribute name to a field_type_code.';
+
+
+--
+-- Name: COLUMN field.property_name; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON COLUMN shrapnel.field.property_name IS 'Unique upsert key used by ON CONFLICT (property_name).';
+
+
+--
+-- Name: field_type; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.field_type (
+    code smallint NOT NULL,
+    name text NOT NULL,
+    description text,
+    pg_type text NOT NULL
+);
+
+ALTER TABLE ONLY shrapnel.field_type REPLICA IDENTITY FULL;
+
+
+--
+-- Name: TABLE field_type; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.field_type IS 'Type mapping registry for shrapnel EAV values.';
+
+
+--
+-- Name: COLUMN field_type.code; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON COLUMN shrapnel.field_type.code IS '1=Long, 2=String, 3=Double, 4=Boolean, 5=Timestamp, 6=JSONB, 7=UUID';
+
+
+--
+-- Name: object_attribute_value; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.object_attribute_value (
+    id bigint NOT NULL,
+    object_id bigint NOT NULL,
+    field_id bigint NOT NULL,
+    value_id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE object_attribute_value; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.object_attribute_value IS 'Junction: this objects has this value (id) for this field.';
+
+
+--
+-- Name: object_attribute_value_id_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.object_attribute_value_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: object_attribute_value_id_seq; Type: SEQUENCE OWNED BY; Schema: shrapnel; Owner: -
+--
+
+ALTER SEQUENCE shrapnel.object_attribute_value_id_seq OWNED BY shrapnel.object_attribute_value.id;
+
+
+--
+-- Name: object_instance; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.object_instance (
+    id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    stereotype_revision_id bigint,
+    stereotype_id bigint,
+    CONSTRAINT ck_objinst_membership_pair CHECK ((((stereotype_id IS NULL) AND (stereotype_revision_id IS NULL)) OR ((stereotype_id IS NOT NULL) AND (stereotype_revision_id IS NOT NULL))))
+);
+
+
+--
+-- Name: TABLE object_instance; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.object_instance IS 'Concrete object/entity instance. Holds no payload by design (EAV).';
+
+
+--
+-- Name: object_instance_id_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.object_instance_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: object_instance_id_seq; Type: SEQUENCE OWNED BY; Schema: shrapnel; Owner: -
+--
+
+ALTER SEQUENCE shrapnel.object_instance_id_seq OWNED BY shrapnel.object_instance.id;
+
+
+--
+-- Name: qbe_column; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.qbe_column (
+    id bigint NOT NULL,
+    field_index integer NOT NULL,
+    name character varying(255) NOT NULL,
+    field_type_id integer,
+    table_id bigint
+);
+
+ALTER TABLE ONLY shrapnel.qbe_column REPLICA IDENTITY FULL;
+
+
+--
+-- Name: qbe_column_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.qbe_column_seq
+    START WITH 1
+    INCREMENT BY 50
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: qbe_join; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.qbe_join (
+    id bigint NOT NULL,
+    join_column_a_id bigint,
+    join_column_b_id bigint,
+    join_type_code integer
+);
+
+ALTER TABLE ONLY shrapnel.qbe_join REPLICA IDENTITY FULL;
+
+
+--
+-- Name: qbe_join_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.qbe_join_seq
+    START WITH 1
+    INCREMENT BY 50
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: qbe_join_type; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.qbe_join_type (
+    code integer NOT NULL,
+    name character varying(255) NOT NULL
+);
+
+ALTER TABLE ONLY shrapnel.qbe_join_type REPLICA IDENTITY FULL;
+
+
+--
+-- Name: qbe_query; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.qbe_query (
+    id bigint NOT NULL,
+    name character varying(255) NOT NULL,
+    schema_name character varying(255) NOT NULL
+);
+
+ALTER TABLE ONLY shrapnel.qbe_query REPLICA IDENTITY FULL;
+
+
+--
+-- Name: qbe_query_column; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.qbe_query_column (
+    query_id bigint NOT NULL,
+    column_id bigint NOT NULL
+);
+
+ALTER TABLE ONLY shrapnel.qbe_query_column REPLICA IDENTITY FULL;
+
+
+--
+-- Name: qbe_query_join; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.qbe_query_join (
+    query_id bigint NOT NULL,
+    join_id bigint NOT NULL
+);
+
+ALTER TABLE ONLY shrapnel.qbe_query_join REPLICA IDENTITY FULL;
+
+
+--
+-- Name: qbe_query_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.qbe_query_seq
+    START WITH 1
+    INCREMENT BY 50
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: qbe_table; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.qbe_table (
+    id bigint NOT NULL,
+    name character varying(255) NOT NULL,
+    schema_name character varying(255) NOT NULL
+);
+
+ALTER TABLE ONLY shrapnel.qbe_table REPLICA IDENTITY FULL;
+
+
+--
+-- Name: qbe_table_column; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.qbe_table_column (
+    column_id bigint NOT NULL,
+    table_id bigint NOT NULL
+);
+
+ALTER TABLE ONLY shrapnel.qbe_table_column REPLICA IDENTITY FULL;
+
+
+--
+-- Name: qbe_table_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.qbe_table_seq
+    START WITH 1
+    INCREMENT BY 50
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: stereotype_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.stereotype_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: stereotype; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.stereotype (
+    id bigint DEFAULT nextval('shrapnel.stereotype_seq'::regclass) NOT NULL,
+    name text NOT NULL,
+    description text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: stereotype_field_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.stereotype_field_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: stereotype_field; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.stereotype_field (
+    id bigint DEFAULT nextval('shrapnel.stereotype_field_seq'::regclass) NOT NULL,
+    stereotype_revision_id bigint NOT NULL,
+    field_id bigint NOT NULL,
+    required boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: stereotype_revision_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.stereotype_revision_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: stereotype_revision; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.stereotype_revision (
+    id bigint DEFAULT nextval('shrapnel.stereotype_revision_seq'::regclass) NOT NULL,
+    stereotype_id bigint NOT NULL,
+    version integer NOT NULL,
+    parent_revision_id bigint,
+    parent_stereotype_id bigint,
+    extends_rationale text,
+    depth integer DEFAULT 0 NOT NULL,
+    contract_fingerprint text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT ck_sterev_depth_range CHECK (((depth >= 0) AND (depth <= 3))),
+    CONSTRAINT ck_sterev_fingerprint_format CHECK ((contract_fingerprint ~ '^sha256:[0-9a-f]{64}$'::text)),
+    CONSTRAINT ck_sterev_parent_rationale CHECK (((parent_revision_id IS NULL) OR ((extends_rationale IS NOT NULL) AND (btrim(extends_rationale) <> ''::text))))
+);
+
+
+--
+-- Name: v_object_stereotype; Type: VIEW; Schema: shrapnel; Owner: -
+--
+
+CREATE VIEW shrapnel.v_object_stereotype AS
+ SELECT o.id AS object_id,
+    o.created_at,
+    s.name AS stereotype_name,
+    r.id AS revision_id,
+    r.version,
+    r.depth
+   FROM ((shrapnel.object_instance o
+     JOIN shrapnel.stereotype_revision r ON ((r.id = o.stereotype_revision_id)))
+     JOIN shrapnel.stereotype s ON ((s.id = r.stereotype_id)));
+
+
+--
+-- Name: v_stereotype_contract; Type: VIEW; Schema: shrapnel; Owner: -
+--
+
+CREATE VIEW shrapnel.v_stereotype_contract AS
+ SELECT s.name AS stereotype_name,
+    r.id AS revision_id,
+    r.version,
+    r.depth,
+    r.contract_fingerprint,
+    f.property_name,
+    sf.required
+   FROM (((shrapnel.stereotype_revision r
+     JOIN shrapnel.stereotype s ON ((s.id = r.stereotype_id)))
+     JOIN shrapnel.stereotype_field sf ON ((sf.stereotype_revision_id = r.id)))
+     JOIN shrapnel.field f ON ((f.id = sf.field_id)));
+
+
+--
+-- Name: value_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.value_seq
+    START WITH 1
+    INCREMENT BY 50
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: value; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.value (
+    id bigint DEFAULT nextval('shrapnel.value_seq'::regclass) NOT NULL,
+    value_type_code smallint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+ALTER TABLE ONLY shrapnel.value REPLICA IDENTITY FULL;
+
+
+--
+-- Name: TABLE value; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.value IS 'Base entry for every concrete attribute value; joined 1:1 to one value_<type> extension.';
+
+
+--
+-- Name: value_boolean; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.value_boolean (
+    id bigint NOT NULL,
+    value boolean NOT NULL
+);
+
+
+--
+-- Name: TABLE value_boolean; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.value_boolean IS 'Boolean typed value extension (field_type_code = 4).';
+
+
+--
+-- Name: value_double; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.value_double (
+    id bigint NOT NULL,
+    value double precision NOT NULL
+);
+
+
+--
+-- Name: TABLE value_double; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.value_double IS 'Double typed value extension (field_type_code = 3).';
+
+
+--
+-- Name: value_jsonb; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.value_jsonb (
+    id bigint NOT NULL,
+    value jsonb NOT NULL
+);
+
+
+--
+-- Name: TABLE value_jsonb; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.value_jsonb IS 'JSONB typed value extension (field_type_code = 6).';
+
+
+--
+-- Name: value_long; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.value_long (
+    id bigint NOT NULL,
+    value bigint NOT NULL
+);
+
+ALTER TABLE ONLY shrapnel.value_long REPLICA IDENTITY FULL;
+
+
+--
+-- Name: TABLE value_long; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.value_long IS 'Long typed value extension (field_type_code = 1).';
+
+
+--
+-- Name: value_long_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.value_long_seq
+    START WITH 1
+    INCREMENT BY 50
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: value_string; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.value_string (
+    id bigint NOT NULL,
+    value text NOT NULL
+);
+
+ALTER TABLE ONLY shrapnel.value_string REPLICA IDENTITY FULL;
+
+
+--
+-- Name: TABLE value_string; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.value_string IS 'String typed value extension (field_type_code = 2).';
+
+
+--
+-- Name: value_string_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.value_string_seq
+    START WITH 1
+    INCREMENT BY 50
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: value_timestamp; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.value_timestamp (
+    id bigint NOT NULL,
+    value timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: TABLE value_timestamp; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.value_timestamp IS 'Timestamp typed value extension (field_type_code = 5).';
+
+
+--
+-- Name: value_type; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.value_type (
+    code integer NOT NULL,
+    table_name character varying(255) NOT NULL
+);
+
+ALTER TABLE ONLY shrapnel.value_type REPLICA IDENTITY FULL;
+
+
+--
+-- Name: value_uuid; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.value_uuid (
+    id bigint NOT NULL,
+    value uuid NOT NULL
+);
+
+
+--
+-- Name: TABLE value_uuid; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.value_uuid IS 'UUID typed value extension (field_type_code = 7).';
+
+
+--
 -- Name: agent_scheduler; Type: TABLE; Schema: tackle; Owner: -
 --
 
@@ -22008,6 +24577,20 @@ ALTER TABLE ONLY peb.governance_events ALTER COLUMN id SET DEFAULT nextval('peb.
 
 
 --
+-- Name: object_attribute_value id; Type: DEFAULT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.object_attribute_value ALTER COLUMN id SET DEFAULT nextval('shrapnel.object_attribute_value_id_seq'::regclass);
+
+
+--
+-- Name: object_instance id; Type: DEFAULT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.object_instance ALTER COLUMN id SET DEFAULT nextval('shrapnel.object_instance_id_seq'::regclass);
+
+
+--
 -- Name: agent_scheduler id; Type: DEFAULT; Schema: tackle; Owner: -
 --
 
@@ -22835,6 +25418,78 @@ ALTER TABLE ONLY execution.requests
 
 ALTER TABLE ONLY execution.requests
     ADD CONSTRAINT requests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: event_log event_log_pkey; Type: CONSTRAINT; Schema: kernel; Owner: -
+--
+
+ALTER TABLE ONLY kernel.event_log
+    ADD CONSTRAINT event_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: intent intent_pkey; Type: CONSTRAINT; Schema: kernel; Owner: -
+--
+
+ALTER TABLE ONLY kernel.intent
+    ADD CONSTRAINT intent_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: policy_rule policy_rule_pkey; Type: CONSTRAINT; Schema: kernel; Owner: -
+--
+
+ALTER TABLE ONLY kernel.policy_rule
+    ADD CONSTRAINT policy_rule_pkey PRIMARY KEY (rule_id);
+
+
+--
+-- Name: policy_rule policy_rule_rule_name_key; Type: CONSTRAINT; Schema: kernel; Owner: -
+--
+
+ALTER TABLE ONLY kernel.policy_rule
+    ADD CONSTRAINT policy_rule_rule_name_key UNIQUE (rule_name);
+
+
+--
+-- Name: receipt receipt_pkey; Type: CONSTRAINT; Schema: kernel; Owner: -
+--
+
+ALTER TABLE ONLY kernel.receipt
+    ADD CONSTRAINT receipt_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: transition_event transition_event_pkey; Type: CONSTRAINT; Schema: kernel; Owner: -
+--
+
+ALTER TABLE ONLY kernel.transition_event
+    ADD CONSTRAINT transition_event_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: event_log uq_event_log_event_id; Type: CONSTRAINT; Schema: kernel; Owner: -
+--
+
+ALTER TABLE ONLY kernel.event_log
+    ADD CONSTRAINT uq_event_log_event_id UNIQUE (event_id);
+
+
+--
+-- Name: receipt uq_receipt_hash; Type: CONSTRAINT; Schema: kernel; Owner: -
+--
+
+ALTER TABLE ONLY kernel.receipt
+    ADD CONSTRAINT uq_receipt_hash UNIQUE (receipt_hash);
+
+
+--
+-- Name: transition_event uq_transition_event_event_id; Type: CONSTRAINT; Schema: kernel; Owner: -
+--
+
+ALTER TABLE ONLY kernel.transition_event
+    ADD CONSTRAINT uq_transition_event_event_id UNIQUE (event_id);
 
 
 --
@@ -24595,6 +27250,197 @@ ALTER TABLE ONLY semantics.source_observation
 
 ALTER TABLE ONLY semantics.statement_evidence
     ADD CONSTRAINT statement_evidence_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: _migration_ledger _migration_ledger_pkey; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel._migration_ledger
+    ADD CONSTRAINT _migration_ledger_pkey PRIMARY KEY (filename);
+
+
+--
+-- Name: object_attribute_value object_attribute_value_pkey; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.object_attribute_value
+    ADD CONSTRAINT object_attribute_value_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_instance object_instance_pkey; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.object_instance
+    ADD CONSTRAINT object_instance_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: field_type pk_field_type_code; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.field_type
+    ADD CONSTRAINT pk_field_type_code PRIMARY KEY (code);
+
+
+--
+-- Name: field pk_shrapnel_field; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.field
+    ADD CONSTRAINT pk_shrapnel_field PRIMARY KEY (id);
+
+
+--
+-- Name: value pk_shrapnel_value; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value
+    ADD CONSTRAINT pk_shrapnel_value PRIMARY KEY (id);
+
+
+--
+-- Name: value_long pk_shrapnel_value_long; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_long
+    ADD CONSTRAINT pk_shrapnel_value_long PRIMARY KEY (id);
+
+
+--
+-- Name: value_string pk_shrapnel_value_string; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_string
+    ADD CONSTRAINT pk_shrapnel_value_string PRIMARY KEY (id);
+
+
+--
+-- Name: stereotype_field stereotype_field_pkey; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype_field
+    ADD CONSTRAINT stereotype_field_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: stereotype stereotype_pkey; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype
+    ADD CONSTRAINT stereotype_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: stereotype_revision stereotype_revision_pkey; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype_revision
+    ADD CONSTRAINT stereotype_revision_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: field uq_field_property_name; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.field
+    ADD CONSTRAINT uq_field_property_name UNIQUE (property_name);
+
+
+--
+-- Name: field_type uq_field_type_name; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.field_type
+    ADD CONSTRAINT uq_field_type_name UNIQUE (name);
+
+
+--
+-- Name: object_attribute_value uq_oav_object_field; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.object_attribute_value
+    ADD CONSTRAINT uq_oav_object_field UNIQUE (object_id, field_id);
+
+
+--
+-- Name: CONSTRAINT uq_oav_object_field ON object_attribute_value; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON CONSTRAINT uq_oav_object_field ON shrapnel.object_attribute_value IS 'An object can have at most one value per field.';
+
+
+--
+-- Name: stereotype uq_stereotype_name; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype
+    ADD CONSTRAINT uq_stereotype_name UNIQUE (name);
+
+
+--
+-- Name: stereotype_field uq_sterev_field; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype_field
+    ADD CONSTRAINT uq_sterev_field UNIQUE (stereotype_revision_id, field_id);
+
+
+--
+-- Name: stereotype_revision uq_sterev_identity_version; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype_revision
+    ADD CONSTRAINT uq_sterev_identity_version UNIQUE (stereotype_id, version);
+
+
+--
+-- Name: stereotype_revision uq_sterev_stereotype_id; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype_revision
+    ADD CONSTRAINT uq_sterev_stereotype_id UNIQUE (stereotype_id, id);
+
+
+--
+-- Name: value_boolean value_boolean_pkey; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_boolean
+    ADD CONSTRAINT value_boolean_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: value_double value_double_pkey; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_double
+    ADD CONSTRAINT value_double_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: value_jsonb value_jsonb_pkey; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_jsonb
+    ADD CONSTRAINT value_jsonb_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: value_timestamp value_timestamp_pkey; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_timestamp
+    ADD CONSTRAINT value_timestamp_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: value_uuid value_uuid_pkey; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_uuid
+    ADD CONSTRAINT value_uuid_pkey PRIMARY KEY (id);
 
 
 --
@@ -26865,6 +29711,83 @@ CREATE UNIQUE INDEX idx_statement_evidence_proposition_unique ON semantics.state
 
 
 --
+-- Name: idx_field_label; Type: INDEX; Schema: shrapnel; Owner: -
+--
+
+CREATE INDEX idx_field_label ON shrapnel.field USING btree (label);
+
+
+--
+-- Name: idx_field_name; Type: INDEX; Schema: shrapnel; Owner: -
+--
+
+CREATE INDEX idx_field_name ON shrapnel.field USING btree (name);
+
+
+--
+-- Name: idx_field_type_code; Type: INDEX; Schema: shrapnel; Owner: -
+--
+
+CREATE INDEX idx_field_type_code ON shrapnel.field USING btree (field_type_code);
+
+
+--
+-- Name: idx_oav_field_id; Type: INDEX; Schema: shrapnel; Owner: -
+--
+
+CREATE INDEX idx_oav_field_id ON shrapnel.object_attribute_value USING btree (field_id);
+
+
+--
+-- Name: idx_oav_object_id; Type: INDEX; Schema: shrapnel; Owner: -
+--
+
+CREATE INDEX idx_oav_object_id ON shrapnel.object_attribute_value USING btree (object_id);
+
+
+--
+-- Name: idx_oav_value_id; Type: INDEX; Schema: shrapnel; Owner: -
+--
+
+CREATE INDEX idx_oav_value_id ON shrapnel.object_attribute_value USING btree (value_id);
+
+
+--
+-- Name: idx_object_instance_created_at; Type: INDEX; Schema: shrapnel; Owner: -
+--
+
+CREATE INDEX idx_object_instance_created_at ON shrapnel.object_instance USING btree (created_at);
+
+
+--
+-- Name: idx_objinst_stereotype_revision; Type: INDEX; Schema: shrapnel; Owner: -
+--
+
+CREATE INDEX idx_objinst_stereotype_revision ON shrapnel.object_instance USING btree (stereotype_revision_id);
+
+
+--
+-- Name: idx_stereofield_field; Type: INDEX; Schema: shrapnel; Owner: -
+--
+
+CREATE INDEX idx_stereofield_field ON shrapnel.stereotype_field USING btree (field_id);
+
+
+--
+-- Name: idx_sterev_parent; Type: INDEX; Schema: shrapnel; Owner: -
+--
+
+CREATE INDEX idx_sterev_parent ON shrapnel.stereotype_revision USING btree (parent_revision_id);
+
+
+--
+-- Name: idx_value_type_code; Type: INDEX; Schema: shrapnel; Owner: -
+--
+
+CREATE INDEX idx_value_type_code ON shrapnel.value USING btree (value_type_code);
+
+
+--
 -- Name: agent_timeclock_clock_in_idx; Type: INDEX; Schema: tackle; Owner: -
 --
 
@@ -26925,13 +29848,6 @@ CREATE INDEX idx_prompts_role ON tackle.prompts USING btree (role);
 --
 
 CREATE INDEX idx_prompts_slug ON tackle.prompts USING btree (slug);
-
-
---
--- Name: idx_role_leases_active_per_role; Type: INDEX; Schema: tackle; Owner: -
---
-
-CREATE UNIQUE INDEX idx_role_leases_active_per_role ON tackle.role_leases USING btree (role) WHERE (status = 'ACTIVE'::text);
 
 
 --
@@ -27495,6 +30411,13 @@ CREATE TRIGGER trg_wind_task_mapping_validate BEFORE INSERT OR UPDATE ON aegis.w
 
 
 --
+-- Name: users trg_bcrypt_write_guard; Type: TRIGGER; Schema: assembly; Owner: -
+--
+
+CREATE TRIGGER trg_bcrypt_write_guard BEFORE INSERT OR UPDATE OF password ON assembly.users FOR EACH ROW EXECUTE FUNCTION public.bcrypt_write_guard();
+
+
+--
 -- Name: comments trg_comment_created; Type: TRIGGER; Schema: assembly; Owner: -
 --
 
@@ -27555,6 +30478,34 @@ CREATE TRIGGER trg_receipt_governance AFTER INSERT ON execution.receipts FOR EAC
 --
 
 CREATE TRIGGER trg_receipts_immutable BEFORE DELETE OR UPDATE ON execution.receipts FOR EACH ROW EXECUTE FUNCTION execution.receipts_immutable_guard();
+
+
+--
+-- Name: receipt trg_authorize_receipt; Type: TRIGGER; Schema: kernel; Owner: -
+--
+
+CREATE TRIGGER trg_authorize_receipt BEFORE INSERT ON kernel.receipt FOR EACH ROW EXECUTE FUNCTION kernel.trg_authorize_receipt();
+
+
+--
+-- Name: transition_event trg_authorize_transition; Type: TRIGGER; Schema: kernel; Owner: -
+--
+
+CREATE TRIGGER trg_authorize_transition BEFORE INSERT ON kernel.transition_event FOR EACH ROW EXECUTE FUNCTION kernel.trg_authorize_transition();
+
+
+--
+-- Name: transition_event trg_notify_transition; Type: TRIGGER; Schema: kernel; Owner: -
+--
+
+CREATE TRIGGER trg_notify_transition AFTER INSERT ON kernel.transition_event FOR EACH ROW EXECUTE FUNCTION kernel.trg_notify_transition();
+
+
+--
+-- Name: policy_rule trg_policy_rule_updated_at; Type: TRIGGER; Schema: kernel; Owner: -
+--
+
+CREATE TRIGGER trg_policy_rule_updated_at BEFORE UPDATE ON kernel.policy_rule FOR EACH ROW EXECUTE FUNCTION kernel.trg_policy_rule_updated_at();
 
 
 --
@@ -27905,6 +30856,167 @@ CREATE TRIGGER trg_verified_statement_immutable BEFORE DELETE OR UPDATE ON resol
 --
 
 CREATE TRIGGER trg_statement_evidence_check_statement BEFORE INSERT OR UPDATE ON semantics.statement_evidence FOR EACH ROW EXECUTE FUNCTION semantics.check_statement_id();
+
+
+--
+-- Name: field trg_field_set_updated_at; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_field_set_updated_at BEFORE UPDATE ON shrapnel.field FOR EACH ROW EXECUTE FUNCTION shrapnel.set_updated_at();
+
+
+--
+-- Name: object_instance trg_objinst_membership_evidence; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_objinst_membership_evidence BEFORE INSERT OR UPDATE OF stereotype_id, stereotype_revision_id ON shrapnel.object_instance FOR EACH ROW EXECUTE FUNCTION shrapnel.check_membership_evidence_present();
+
+
+--
+-- Name: stereotype_field trg_stereotype_field_freeze; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_stereotype_field_freeze BEFORE INSERT OR DELETE OR UPDATE ON shrapnel.stereotype_field FOR EACH ROW EXECUTE FUNCTION shrapnel.forbid_stereotype_field_mutation();
+
+
+--
+-- Name: stereotype_revision trg_stereotype_revision_acyclic; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_stereotype_revision_acyclic BEFORE INSERT ON shrapnel.stereotype_revision FOR EACH ROW EXECUTE FUNCTION shrapnel.check_stereotype_acyclic();
+
+
+--
+-- Name: stereotype_revision trg_stereotype_revision_fingerprint; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trg_stereotype_revision_fingerprint AFTER INSERT ON shrapnel.stereotype_revision DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION shrapnel.verify_stereotype_fingerprint();
+
+
+--
+-- Name: stereotype_revision trg_stereotype_revision_no_delete; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_stereotype_revision_no_delete BEFORE DELETE ON shrapnel.stereotype_revision FOR EACH ROW EXECUTE FUNCTION shrapnel.forbid_stereotype_revision_mutation();
+
+
+--
+-- Name: stereotype_revision trg_stereotype_revision_no_update; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_stereotype_revision_no_update BEFORE UPDATE ON shrapnel.stereotype_revision FOR EACH ROW EXECUTE FUNCTION shrapnel.forbid_stereotype_revision_mutation();
+
+
+--
+-- Name: stereotype_revision trg_stereotype_revision_superset; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trg_stereotype_revision_superset AFTER INSERT ON shrapnel.stereotype_revision DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION shrapnel.check_stereotype_field_superset_v2();
+
+
+--
+-- Name: field trg_sync_field_metadata_to_resolution; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_sync_field_metadata_to_resolution AFTER INSERT OR UPDATE OF property_name, field_type_code ON shrapnel.field FOR EACH ROW EXECUTE FUNCTION shrapnel.sync_field_metadata_to_resolution();
+
+
+--
+-- Name: value_boolean trg_value_boolean_type_guard; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_value_boolean_type_guard BEFORE INSERT OR UPDATE ON shrapnel.value_boolean FOR EACH ROW EXECUTE FUNCTION shrapnel.assert_extension_type_matches('4');
+
+
+--
+-- Name: TRIGGER trg_value_boolean_type_guard ON value_boolean; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TRIGGER trg_value_boolean_type_guard ON shrapnel.value_boolean IS 'Reject extension rows whose parent value.value_type_code is not 4.';
+
+
+--
+-- Name: value_double trg_value_double_type_guard; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_value_double_type_guard BEFORE INSERT OR UPDATE ON shrapnel.value_double FOR EACH ROW EXECUTE FUNCTION shrapnel.assert_extension_type_matches('3');
+
+
+--
+-- Name: TRIGGER trg_value_double_type_guard ON value_double; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TRIGGER trg_value_double_type_guard ON shrapnel.value_double IS 'Reject extension rows whose parent value.value_type_code is not 3.';
+
+
+--
+-- Name: value_jsonb trg_value_jsonb_type_guard; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_value_jsonb_type_guard BEFORE INSERT OR UPDATE ON shrapnel.value_jsonb FOR EACH ROW EXECUTE FUNCTION shrapnel.assert_extension_type_matches('6');
+
+
+--
+-- Name: TRIGGER trg_value_jsonb_type_guard ON value_jsonb; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TRIGGER trg_value_jsonb_type_guard ON shrapnel.value_jsonb IS 'Reject extension rows whose parent value.value_type_code is not 6.';
+
+
+--
+-- Name: value_long trg_value_long_type_guard; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_value_long_type_guard BEFORE INSERT OR UPDATE ON shrapnel.value_long FOR EACH ROW EXECUTE FUNCTION shrapnel.assert_extension_type_matches('1');
+
+
+--
+-- Name: TRIGGER trg_value_long_type_guard ON value_long; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TRIGGER trg_value_long_type_guard ON shrapnel.value_long IS 'Reject extension rows whose parent value.value_type_code is not 1.';
+
+
+--
+-- Name: value_string trg_value_string_type_guard; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_value_string_type_guard BEFORE INSERT OR UPDATE ON shrapnel.value_string FOR EACH ROW EXECUTE FUNCTION shrapnel.assert_extension_type_matches('2');
+
+
+--
+-- Name: TRIGGER trg_value_string_type_guard ON value_string; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TRIGGER trg_value_string_type_guard ON shrapnel.value_string IS 'Reject extension rows whose parent value.value_type_code is not 2.';
+
+
+--
+-- Name: value_timestamp trg_value_timestamp_type_guard; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_value_timestamp_type_guard BEFORE INSERT OR UPDATE ON shrapnel.value_timestamp FOR EACH ROW EXECUTE FUNCTION shrapnel.assert_extension_type_matches('5');
+
+
+--
+-- Name: TRIGGER trg_value_timestamp_type_guard ON value_timestamp; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TRIGGER trg_value_timestamp_type_guard ON shrapnel.value_timestamp IS 'Reject extension rows whose parent value.value_type_code is not 5.';
+
+
+--
+-- Name: value_uuid trg_value_uuid_type_guard; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_value_uuid_type_guard BEFORE INSERT OR UPDATE ON shrapnel.value_uuid FOR EACH ROW EXECUTE FUNCTION shrapnel.assert_extension_type_matches('7');
+
+
+--
+-- Name: TRIGGER trg_value_uuid_type_guard ON value_uuid; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TRIGGER trg_value_uuid_type_guard ON shrapnel.value_uuid IS 'Reject extension rows whose parent value.value_type_code is not 7.';
 
 
 --
@@ -30152,6 +33264,142 @@ ALTER TABLE ONLY semantics.statement_evidence
 
 
 --
+-- Name: field fk_field_field_type; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.field
+    ADD CONSTRAINT fk_field_field_type FOREIGN KEY (field_type_code) REFERENCES shrapnel.field_type(code) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
+-- Name: object_instance fk_objinst_stereotype_identity; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.object_instance
+    ADD CONSTRAINT fk_objinst_stereotype_identity FOREIGN KEY (stereotype_id, stereotype_revision_id) REFERENCES shrapnel.stereotype_revision(stereotype_id, id);
+
+
+--
+-- Name: stereotype_revision fk_sterev_parent_identity; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype_revision
+    ADD CONSTRAINT fk_sterev_parent_identity FOREIGN KEY (parent_stereotype_id, parent_revision_id) REFERENCES shrapnel.stereotype_revision(stereotype_id, id);
+
+
+--
+-- Name: value fk_value_field_type; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value
+    ADD CONSTRAINT fk_value_field_type FOREIGN KEY (value_type_code) REFERENCES shrapnel.field_type(code) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
+-- Name: value_long fk_value_long_value; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_long
+    ADD CONSTRAINT fk_value_long_value FOREIGN KEY (id) REFERENCES shrapnel.value(id) ON DELETE CASCADE;
+
+
+--
+-- Name: value_string fk_value_string_value; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_string
+    ADD CONSTRAINT fk_value_string_value FOREIGN KEY (id) REFERENCES shrapnel.value(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_attribute_value object_attribute_value_field_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.object_attribute_value
+    ADD CONSTRAINT object_attribute_value_field_id_fkey FOREIGN KEY (field_id) REFERENCES shrapnel.field(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_attribute_value object_attribute_value_object_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.object_attribute_value
+    ADD CONSTRAINT object_attribute_value_object_id_fkey FOREIGN KEY (object_id) REFERENCES shrapnel.object_instance(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_attribute_value object_attribute_value_value_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.object_attribute_value
+    ADD CONSTRAINT object_attribute_value_value_id_fkey FOREIGN KEY (value_id) REFERENCES shrapnel.value(id) ON DELETE CASCADE;
+
+
+--
+-- Name: stereotype_field stereotype_field_field_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype_field
+    ADD CONSTRAINT stereotype_field_field_id_fkey FOREIGN KEY (field_id) REFERENCES shrapnel.field(id);
+
+
+--
+-- Name: stereotype_field stereotype_field_stereotype_revision_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype_field
+    ADD CONSTRAINT stereotype_field_stereotype_revision_id_fkey FOREIGN KEY (stereotype_revision_id) REFERENCES shrapnel.stereotype_revision(id);
+
+
+--
+-- Name: stereotype_revision stereotype_revision_stereotype_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype_revision
+    ADD CONSTRAINT stereotype_revision_stereotype_id_fkey FOREIGN KEY (stereotype_id) REFERENCES shrapnel.stereotype(id);
+
+
+--
+-- Name: value_boolean value_boolean_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_boolean
+    ADD CONSTRAINT value_boolean_id_fkey FOREIGN KEY (id) REFERENCES shrapnel.value(id) ON DELETE CASCADE;
+
+
+--
+-- Name: value_double value_double_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_double
+    ADD CONSTRAINT value_double_id_fkey FOREIGN KEY (id) REFERENCES shrapnel.value(id) ON DELETE CASCADE;
+
+
+--
+-- Name: value_jsonb value_jsonb_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_jsonb
+    ADD CONSTRAINT value_jsonb_id_fkey FOREIGN KEY (id) REFERENCES shrapnel.value(id) ON DELETE CASCADE;
+
+
+--
+-- Name: value_timestamp value_timestamp_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_timestamp
+    ADD CONSTRAINT value_timestamp_id_fkey FOREIGN KEY (id) REFERENCES shrapnel.value(id) ON DELETE CASCADE;
+
+
+--
+-- Name: value_uuid value_uuid_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.value_uuid
+    ADD CONSTRAINT value_uuid_id_fkey FOREIGN KEY (id) REFERENCES shrapnel.value(id) ON DELETE CASCADE;
+
+
+--
 -- Name: agent_scheduler fk_agent_scheduler_role; Type: FK CONSTRAINT; Schema: tackle; Owner: -
 --
 
@@ -30571,7 +33819,6 @@ ALTER TABLE ONLY wind.workflow_versions
 -- PostgreSQL database dump complete
 --
 
-\unrestrict hCT5aqIGSRDRoJopWqogUjMlDtwQFobEDHQvuXrDVGL80gQfdChPrijBghBOBAv
 
 
 -- ---------------------------------------------------------------------------
