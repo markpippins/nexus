@@ -2077,6 +2077,7 @@ const migrations: Migration[] = [
         { name: "epistemologist", desc: "Epistemic governance — tracks knowledge stratification, role boundaries, and cross-role divergence" },
         { name: "operator", desc: "Pipeline and platform operator — monitors pipeline state, investigates stuck plans and drift, keeps operational surfaces healthy" },
         { name: "sysadmin", desc: "Infrastructure health governance — systemd-timer cycles, service health, incident reporting; runs standalone" },
+        { name: "supervisor", desc: "Role-system administrator — registers and configures roles, regenerates doctrine and OpenCode projections, and verifies role-surface coverage; no WorkRequest execution authority" },
         { name: "test", desc: "Internal test harness role — used for test invoke sessions and ad-hoc agent runs" },
         { name: "tester", desc: "Walkthrough role (b80f0fdb) — full-surface demonstration of the role-creation runbook" },
       ];
