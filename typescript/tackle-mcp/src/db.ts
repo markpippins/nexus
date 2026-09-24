@@ -1,5 +1,5 @@
 import { Pool, PoolClient, types } from "pg";
-import { seedMemoryProcedures } from "tackle-seeds";
+import { seedMemoryProcedures, loadCanonicalRoleMemoryShape } from "tackle-seeds";
 
 // ── Keep timestamps as ISO strings ─────────────────────────────────
 // pg parses TIMESTAMPTZ into Date objects by default. Override to keep
@@ -255,48 +255,9 @@ async function createSchema(
   `);
 
   // ── Memory procedure registry ─────────────────────────────────────
-  await exec(`CREATE EXTENSION IF NOT EXISTS btree_gist`);
-
-  await exec(`
-    CREATE TABLE IF NOT EXISTS ${TACKLE_SCHEMA}.memory (
-      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      slug        TEXT NOT NULL UNIQUE,
-      title       TEXT NOT NULL,
-      summary     TEXT NOT NULL DEFAULT '',
-      body_md     TEXT NOT NULL DEFAULT '',
-      tags        TEXT[] NOT NULL DEFAULT '{}',
-      triggers    TEXT[] NOT NULL DEFAULT '{}',
-      mcp_tools   TEXT[] NOT NULL DEFAULT '{}',
-      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-  `);
-
-  await exec(`
-    CREATE TABLE IF NOT EXISTS ${TACKLE_SCHEMA}.role_memory (
-      id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      memory_id     UUID NOT NULL REFERENCES ${TACKLE_SCHEMA}.memory(id) ON DELETE CASCADE,
-      role          TEXT NOT NULL,
-      as_of_dt      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      expiration_dt TIMESTAMPTZ,
-      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      CONSTRAINT uq_role_memory_active
-        EXCLUDE USING gist (
-          memory_id WITH =,
-          role WITH =,
-          tstzrange(as_of_dt, expiration_dt) WITH &&
-        )
-    );
-  `);
-
-  await exec(`
-    CREATE INDEX IF NOT EXISTS idx_role_memory_as_of
-      ON ${TACKLE_SCHEMA}.role_memory (role, as_of_dt DESC)
-  `);
-  await exec(`
-    CREATE INDEX IF NOT EXISTS idx_role_memory_expiration
-      ON ${TACKLE_SCHEMA}.role_memory (role, expiration_dt DESC NULLS FIRST)
-  `);
+  // Shape consumed from the canonical fragment (sql/canonical/) via
+  // tackle-seeds — DO NOT restate the DDL inline (parity test enforces).
+  await exec(loadCanonicalRoleMemoryShape(TACKLE_SCHEMA));
 
   // role_leases — session-level role leases (RoleLeases / plan 1286):
   // a bounded window + budget under which a role on a given channel may

@@ -13,51 +13,55 @@
 --   mem:meta:last_updated → ISO timestamp
 -- ─────────────────────────────────────────────────────────────────────
 
--- btree_gist is needed for the temporal exclusion constraint
-CREATE EXTENSION IF NOT EXISTS btree_gist;
+-- ════════════════════════════════════════════════════════════════════
+-- BEGIN GENERATED CANONICAL SHAPE (sql/canonical/tackle_role_memory_shape.sql)
+-- Regenerate: python3 bin/regenerate_canonical_shape.py
+-- DO NOT hand-edit the block between the markers.
+-- ════════════════════════════════════════════════════════════════════
 
--- ── tackle.memory: procedure definitions ──────────────────────────
+CREATE EXTENSION IF NOT EXISTS btree_gist;
 
 CREATE TABLE IF NOT EXISTS tackle.memory (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     slug        TEXT NOT NULL UNIQUE,
     title       TEXT NOT NULL,
     summary     TEXT NOT NULL DEFAULT '',
-    body_md     TEXT NOT NULL DEFAULT '',        -- full procedure markdown
-    tags        TEXT[] NOT NULL DEFAULT '{}',     -- categorization tags
-    triggers    TEXT[] NOT NULL DEFAULT '{}',     -- keywords that match user requests
-    mcp_tools   TEXT[] NOT NULL DEFAULT '{}',     -- tools needed to execute
+    body_md     TEXT NOT NULL DEFAULT '',
+    tags        TEXT[] NOT NULL DEFAULT '{}',
+    triggers    TEXT[] NOT NULL DEFAULT '{}',
+    mcp_tools   TEXT[] NOT NULL DEFAULT '{}',
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
--- ── tackle.role_memory: role→procedure assignment (bitemporal) ─────
 
 CREATE TABLE IF NOT EXISTS tackle.role_memory (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     memory_id     UUID NOT NULL REFERENCES tackle.memory(id) ON DELETE CASCADE,
     role          TEXT NOT NULL,
     as_of_dt      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    expiration_dt TIMESTAMPTZ,         -- NULL = currently active
+    expiration_dt TIMESTAMPTZ,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    -- No overlapping active assignments for the same (memory, role) pair
-    CONSTRAINT uq_role_memory_active
+    -- V178: no overlapping validity intervals per (memory, role); open-open
+    -- range with infinity coalescing subsumes and replaces V155's partial
+    -- unique (uq_role_memory_active) — that name must NOT reappear.
+    CONSTRAINT uq_role_memory_validity
         EXCLUDE USING gist (
             memory_id WITH =,
             role WITH =,
-            tstzrange(as_of_dt, expiration_dt) WITH &&
+            tstzrange(as_of_dt, COALESCE(expiration_dt, 'infinity'), '[)') WITH &&
         )
 );
 
--- Index for change-detection queries (used by memory_check_since)
 CREATE INDEX IF NOT EXISTS idx_role_memory_as_of
     ON tackle.role_memory (role, as_of_dt DESC);
 
 CREATE INDEX IF NOT EXISTS idx_role_memory_expiration
     ON tackle.role_memory (role, expiration_dt DESC NULLS FIRST);
 
--- ── Seed: initial procedures from AGENTS.md ──────────────────────
+-- ════════════════════════════════════════════════════════════════════
+-- END GENERATED CANONICAL SHAPE
+-- ════════════════════════════════════════════════════════════════════
 
 -- Helper: upsert a procedure and assign it to one or more roles
 -- Uses a DO block so it's idempotent (re-runnable).

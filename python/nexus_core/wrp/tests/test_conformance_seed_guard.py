@@ -82,6 +82,11 @@ from nexus_core.wrp.seed_manifest import (  # noqa: E402
 )
 
 DSN = os.environ.get("CONDUIT_PG_DSN", "postgresql://pguser:pgpass@localhost:5432/nexus")
+# Canonical shape fragment (single source of truth, V178-ratified).
+from pathlib import Path as _Path
+_CANONICAL_SHAPE_PATH = (_Path(__file__).resolve().parents[4]
+                        / 'sql' / 'canonical'
+                        / 'tackle_role_memory_shape.sql')
 
 # Repo root = nexus/ (parent of nexus/python).
 _REPO_ROOT = os.path.abspath(os.path.join(_NEXUS_PYTHON, ".."))
@@ -300,30 +305,14 @@ def _scratch_seed(rendered_sql: str) -> dict:
         # memory + role_memory with the FK, PK, UNIQUE and the btree_gist
         # EXCLUDE constraint so role-assignment semantics match live.
         cur.execute("CREATE EXTENSION IF NOT EXISTS btree_gist")
+        # Shape consumed from the canonical fragment (single source of truth,
+        # V178-ratified) — rendered for pg_temp so the shadow-seed world uses
+        # temp tables. DO NOT restate the DDL inline (parity test enforces).
+        frag = _CANONICAL_SHAPE_PATH.read_text()
         cur.execute(
-            "CREATE TEMP TABLE memory ("
-            "  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),"
-            "  slug TEXT NOT NULL UNIQUE,"
-            "  title TEXT NOT NULL,"
-            "  summary TEXT NOT NULL DEFAULT '',"
-            "  body_md TEXT NOT NULL DEFAULT '',"
-            "  tags TEXT[] NOT NULL DEFAULT '{}',"
-            "  triggers TEXT[] NOT NULL DEFAULT '{}',"
-            "  mcp_tools TEXT[] NOT NULL DEFAULT '{}'"
-            ")"
-        )
-        cur.execute(
-            "CREATE TEMP TABLE role_memory ("
-            "  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),"
-            "  memory_id UUID NOT NULL REFERENCES pg_temp.memory(id) ON DELETE CASCADE,"
-            "  role TEXT NOT NULL,"
-            "  as_of_dt TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
-            "  expiration_dt TIMESTAMPTZ,"
-            "  CONSTRAINT uq_role_memory_active EXCLUDE USING gist ("
-            "    memory_id WITH =, role WITH =,"
-            "    tstzrange(as_of_dt, expiration_dt) WITH &&"
-            "  )"
-            ")"
+            frag.replace("__SCHEMA__", "pg_temp")
+                .replace("__REFTABLE__", "pg_temp.memory")
+                .replace("__TABLE_SUFFIX__", "")
         )
         cur.execute(shadow_sql)  # DO block — no params → simple query protocol
         conn.commit()
