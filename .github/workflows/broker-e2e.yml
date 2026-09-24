@@ -88,6 +88,23 @@ jobs:
       - name: Install + build (dist/ is untracked)
         working-directory: moleculer/nexus-broker
         run: npm ci && npm run build
+      # pg_isready health checks pass during the initdb temp-server phase
+      # (trust auth, no password validation) — the runner can declare the
+      # service healthy while initdb is still running and pguser does not
+      # exist yet. The #456 boot-smoke job documented this exact race; the
+      # only honest readiness signal is an authenticated query as the real
+      # user against the real database.
+      - name: Wait for real postgres readiness (authenticated probe)
+        run: |
+          for i in $(seq 1 60); do
+            if PGPASSWORD=pgpass psql -h localhost -U pguser -d nexus -tAc 'SELECT 1' >/dev/null 2>&1; then
+              echo "postgres accepting authenticated connections (attempt $i)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "postgres never accepted an authenticated connection"
+          exit 1
       - name: Apply keychain-delta PG shim
         run: |
           psql -v ON_ERROR_STOP=1 -h localhost -U pguser -d nexus \
