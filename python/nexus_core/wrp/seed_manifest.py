@@ -107,35 +107,25 @@ def build_manifest(conn, schema: str = "tackle") -> dict:
     }
 
 
-# DDL used to reconstruct the tackle schema from the manifest (mirrors
-# tackle-srv/src/db.ts memory + role_memory, including the btree_gist EXCLUDE
-# constraint so role-assignment semantics match live).
-_MEMORY_DDL = (
-    "CREATE TABLE IF NOT EXISTS {schema}.memory ("
-    "  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),"
-    "  slug TEXT NOT NULL UNIQUE,"
-    "  title TEXT NOT NULL,"
-    "  summary TEXT NOT NULL DEFAULT '',"
-    "  body_md TEXT NOT NULL DEFAULT '',"
-    "  tags TEXT[] NOT NULL DEFAULT '{}',"
-    "  triggers TEXT[] NOT NULL DEFAULT '{}',"
-    "  mcp_tools TEXT[] NOT NULL DEFAULT '{}'"
-    ")"
+# DDL consumed from the canonical fragment (sql/canonical/
+# tackle_role_memory_shape.sql) — the single source of truth for the
+# memory/role_memory reconstruction shape (V178-ratified). Do NOT restate
+# the shape inline; bin/tests/test_canonical_shape_parity.py enforces
+# fragment-consumption and shape parity across all surfaces.
+from pathlib import Path as _Path
+
+_CANONICAL_FRAGMENT = (
+    _Path(__file__).resolve().parents[3]
+    / "sql" / "canonical" / "tackle_role_memory_shape.sql"
 )
 
-_ROLE_MEMORY_DDL = (
-    "CREATE TABLE IF NOT EXISTS {schema}.role_memory ("
-    "  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),"
-    "  memory_id UUID NOT NULL REFERENCES {schema}.memory(id) ON DELETE CASCADE,"
-    "  role TEXT NOT NULL,"
-    "  as_of_dt TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
-    "  expiration_dt TIMESTAMPTZ,"
-    "  CONSTRAINT uq_role_memory_active EXCLUDE USING gist ("
-    "    memory_id WITH =, role WITH =,"
-    "    tstzrange(as_of_dt, expiration_dt) WITH &&"
-    "  )"
-    ")"
-)
+
+def _load_shape_sql(schema: str) -> str:
+    """Render the canonical shape fragment for the target schema."""
+    sql = _CANONICAL_FRAGMENT.read_text()
+    return (sql.replace("__SCHEMA__", schema)
+               .replace("__REFTABLE__", f"{schema}.memory")
+               .replace("__TABLE_SUFFIX__", ""))
 
 
 def apply_manifest(conn, manifest: dict, schema: str = "tackle", reset: bool = True):
@@ -156,8 +146,7 @@ def apply_manifest(conn, manifest: dict, schema: str = "tackle", reset: bool = T
         cur.execute(f"DROP TABLE IF EXISTS {schema}.memory CASCADE")
     # Use replace() not .format(): the DDL contains literal '{}' array
     # defaults which .format() would try to interpolate.
-    cur.execute(_MEMORY_DDL.replace("{schema}", schema))
-    cur.execute(_ROLE_MEMORY_DDL.replace("{schema}", schema))
+    cur.execute(_load_shape_sql(schema))
     role_rows = 0
     for card in manifest["cards"]:
         cur.execute(
