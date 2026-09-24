@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch src/index.js",
-    "start": "node src/index.js",
-    "test": "vitest run"
+  "start": "node src/index.js",
+  "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
+  "test": "vitest run"
   },
   "dependencies": {
     "heartbeat-client": "file:../heartbeat-client",
