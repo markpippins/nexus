@@ -62,11 +62,11 @@ def main() -> int:
          "--tags", '["type:inspection","bcrypt-enforcement","users-drift","db-a"]',
          "-c",
          "The daily users-plaintext check (users-bcrypt-drift.timer) found "
-         "drift in the V191/V201 bcrypt enforcement path: plaintext rows on an "
+         "drift in the V191/V202 bcrypt enforcement path: plaintext rows on an "
          "enforced surface, a missing users_password_bcrypt_check CHECK, or a "
          "missing trg_bcrypt_write_guard trigger. Checker output:\n\n"
          + (out or "(no output)")
-         + "\n\nRemediation: re-apply sql/V201__bcrypt_write_guard.sql "
+         + "\n\nRemediation: re-apply sql/V202__bcrypt_write_guard.sql "
          "(idempotent — backfill no-op unless plaintext exists, CHECKs and "
          "triggers re-created), then disposition why the guard vanished "
          "(out-of-band restore / manual drop are the known classes). This "

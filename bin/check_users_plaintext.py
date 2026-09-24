@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Census users-table password hygiene on a live nexus database.
 
-Enforced scope (V191/V201): assembly.users + gateway.users. For each surface
+Enforced scope (V191/V202): assembly.users + gateway.users. For each surface
 this check verifies the full enforcement path, not just the data:
 
   1. zero plaintext rows (password NOT LIKE '$2%' AND password <> '' — ''
@@ -42,6 +42,19 @@ PLAINTEXT_WHERE = "password NOT LIKE '$2%' AND password <> ''"
 
 def census(cur, surface: str) -> dict:
     schema, table = surface.split(".")
+    cur.execute(
+        "SELECT count(*) FROM information_schema.columns "
+        "WHERE table_schema=%s AND table_name=%s AND column_name='password'",
+        (schema, table))
+    if cur.fetchone()[0] == 0:
+        # Notice surface without a password column (reshaped out-of-band, as
+        # public.users was on 2026-09-24): nothing to enforce here. Record
+        # shape stays stable so callers never special-case; the note surfaces
+        # the anomaly instead of dying on it.
+        return {"surface": surface, "rows": None, "plaintext": 0,
+                "check_present": False, "trigger_present": False,
+                "ok": True, "skipped": True,
+                "note": "no password column (surface reshaped out-of-band?)"}
     cur.execute(
         f"SELECT count(*) FILTER (WHERE {PLAINTEXT_WHERE}), count(*) "
         f"FROM {schema}.{table}")
@@ -95,6 +108,9 @@ def main() -> int:
     else:
         for r in results + notices:
             tag = "ENFORCED" if r in results else "notice  "
+            if r.get("skipped"):
+                print(f"[{tag}] {r['surface']}: SKIPPED — {r['note']}")
+                continue
             state = "OK" if r["ok"] else "DRIFT"
             print(f"[{tag}] {r['surface']}: {state} — "
                   f"plaintext {r['plaintext']}/{r['rows']}, "

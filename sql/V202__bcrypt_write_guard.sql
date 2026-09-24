@@ -1,5 +1,5 @@
 -- =============================================================================
--- V201 (DBA): bcrypt write-guard — the enforcement path that keeps V191 landed.
+-- V202 (DBA): bcrypt write-guard — the enforcement path that keeps V191 landed.
 -- =============================================================================
 -- History: V191 (2026-09-20, issue 59bcd3da) staged the bcrypt backfill +
 -- born-clean CHECKs as "applies on explicit operator go" — and the go never
@@ -45,10 +45,10 @@ BEGIN;
 DO $$
 BEGIN
     IF to_regclass('assembly.users') IS NULL THEN
-        RAISE EXCEPTION 'V201 PREFLIGHT FAIL: assembly.users does not exist';
+        RAISE EXCEPTION 'V202 PREFLIGHT FAIL: assembly.users does not exist';
     END IF;
     IF to_regclass('gateway.users') IS NULL THEN
-        RAISE EXCEPTION 'V201 PREFLIGHT FAIL: gateway.users does not exist';
+        RAISE EXCEPTION 'V202 PREFLIGHT FAIL: gateway.users does not exist';
     END IF;
 END $$;
 

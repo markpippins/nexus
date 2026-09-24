@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""E2E: V201 — bcrypt write-guard (V191 re-apply + self-hashing triggers) on
+"""E2E: V202 — bcrypt write-guard (V191 re-apply + self-hashing triggers) on
 a throwaway DB, wr-conf house pattern (V191/V190 companions).
 
 The skeleton recreates the PRE-V191 live shape (census 2026-09-20, titanium:
 assembly.users 8 plaintext rows, gateway.users 2). Then the REAL
-sql/V201__bcrypt_write_guard.sql applies and the contract is exercised
+sql/V202__bcrypt_write_guard.sql applies and the contract is exercised
 against live constraint + trigger behavior — no mocks on the DB path:
 
-  - V191 backfill rides inside V201: every plaintext password becomes bcrypt
+  - V191 backfill rides inside V202: every plaintext password becomes bcrypt
     ($2…, 60 chars) and the ORIGINAL credentials still round-trip through
     pgcrypto crypt() (what BCryptPasswordEncoder.matches() implements)
-  - the V191 born-clean CHECKs are present after V201
+  - the V191 born-clean CHECKs are present after V202
   - trigger self-hash: a plaintext INSERT is normalized to a valid bcrypt
     hash (the known writers — assembly-srv createUser, adonis changeme
     default — keep functioning); a plaintext UPDATE re-hash likewise
@@ -19,7 +19,7 @@ against live constraint + trigger behavior — no mocks on the DB path:
   - no laundering: a '$2'-prefixed non-hash passes the trigger untouched and
     is still rejected by the CHECK (length = 60) — garbage stays loud
   - empty string escape still allowed; pre-existing hashes never re-hashed
-  - idempotent re-apply: second V201 run is a no-op (hashes unchanged)
+  - idempotent re-apply: second V202 run is a no-op (hashes unchanged)
 """
 import os
 import unittest
@@ -29,7 +29,7 @@ import psycopg2
 
 _REPO_ROOT = os.path.abspath(os.path.join(
     os.path.dirname(__file__), "..", "..", "..", ".."))
-V201_PATH = os.path.join(_REPO_ROOT, "sql", "V201__bcrypt_write_guard.sql")
+V202_PATH = os.path.join(_REPO_ROOT, "sql", "V202__bcrypt_write_guard.sql")
 
 DSN = os.environ.get("CONDUIT_PG_DSN",
                      "postgresql://pguser:pgpass@localhost:5432/postgres")
@@ -129,11 +129,11 @@ class ThrowawayDB:
         raise AssertionError("expected the statement to fail")
 
     def apply_v201(self):
-        with open(V201_PATH) as fh:
+        with open(V202_PATH) as fh:
             self.sql(fh.read())
 
 
-class BackfillViaV201(unittest.TestCase):
+class BackfillViaV202(unittest.TestCase):
     def test_01_v191_rides_inside_v201(self):
         db = ThrowawayDB("backfill")
         with db as d:
@@ -228,7 +228,7 @@ class TriggerGuard(unittest.TestCase):
             d.apply_v201()
             post = d.sql("SELECT password FROM assembly.users WHERE alias='already'")
             self.assertEqual(pre, post, "existing hash was re-hashed")
-            # Second V201 apply: zero-row no-op, hashes byte-identical.
+            # Second V202 apply: zero-row no-op, hashes byte-identical.
             h1 = d.sql(
                 "SELECT md5(string_agg(password, '' ORDER BY alias)) FROM assembly.users")
             d.apply_v201()
