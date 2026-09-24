@@ -420,7 +420,17 @@ def main(argv=None):
         with open(api_path, "w") as f:
             f.write(generated)
             if hand:
-                f.write(hand)
+                # Idempotent junction: `generated` ends with the marker plus
+                # one newline, and `hand` (sliced from the previous file)
+                # begins with the newline(s) the previous write left after
+                # the marker. Appending hand verbatim therefore added one
+                # blank line PER REGENERATION — an unconvergable ratchet that
+                # made the CI byte-identical check fail on every run once it
+                # actually executed (it was a silent no-op before the
+                # extract_routes ROOT fix). Canonical form: marker, one blank
+                # line, hand-authored section — stable under re-runs.
+                f.write("\n")
+                f.write(hand.lstrip("\n"))
                 if not hand.endswith("\n"):
                     f.write("\n")
         summary[key] = f"{len(endpoints)} endpoints ({kind})"
