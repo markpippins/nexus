@@ -62,7 +62,10 @@ def ev_record_exists(params: dict) -> bool:
 
 def load_conduit_state() -> dict:
     """plan_number -> derivedStatus, from conduit /state (via urllib to
-    stay dependency-free)."""
+    stay dependency-free). FALLBACK ONLY: /state's ticket projection
+    hides open higher-generation rows behind closed same-role rows (the
+    CD-1 defect escalated in record 5b64b3b3) — prefer
+    load_canonical_state()."""
     import urllib.request
     with urllib.request.urlopen(STATE_URL, timeout=15) as resp:
         state = json.load(resp)
@@ -74,6 +77,44 @@ def load_conduit_state() -> dict:
                 "tickets": p.get("ticketStatuses") or {},
             }
     return out
+
+
+def load_canonical_state(plan_ids: list[str]) -> dict:
+    """plan -> {derived, tickets{role: {status}}} from the canonical
+    stores: vision.tickets for the ticket surface (where the flow
+    actually writes; resolution.ticket is empty for these plans — the
+    W-B6 split) and the latest resolution.receipt kind for derived
+    status. Rows are read in created_at order and last-row-wins per
+    role, so a live (open) higher-generation ticket is never hidden
+    behind a closed earlier-generation one — the exact CD-1 blindness.
+    """
+    state = {p: {"derived": None, "tickets": {}} for p in plan_ids}
+    patterns = ", ".join("'" + p.replace("'", "") + "%'" for p in plan_ids)
+    rows = _psql_scalar(
+        "select plan_id||'|'||role||'|'||status from vision.tickets "
+        f"where plan_id like any(array[{patterns}]) order by created_at;")
+    for line in (rows or "").splitlines():
+        if not line or line.count("|") < 2:
+            continue
+        plan, role, status = line.split("|", 2)
+        key = next((p for p in plan_ids if plan.startswith(p)), None)
+        if key:
+            state[key]["tickets"][role] = {"status": status}
+    for p in plan_ids:
+        kind = _psql_scalar(
+            "select kind from resolution.receipt where payload->>'plan_id' "
+            f"like '{p.replace(chr(39), "")}%' order by created_at desc limit 1;")
+        state[p]["derived"] = (kind or "").upper() or None
+    return state
+
+
+def load_state(plan_ids: list[str]) -> tuple[dict, str]:
+    """Canonical first; /state as documented fallback. Returns
+    (state, source)."""
+    try:
+        return load_canonical_state(plan_ids), "canonical"
+    except Exception:
+        return load_conduit_state(), "conduit_state_fallback"
 
 
 EVALUATORS = {
@@ -155,12 +196,13 @@ def main() -> int:
     try:
         path = Path(spec_path) if spec_path else sorted(base.glob("*.json"))[0]
         spec = json.loads(path.read_text())
-        conduit_state = load_conduit_state()
+        plan_ids = list(spec["plans"].keys())
+        conduit_state, source = load_state(plan_ids)
     except Exception as exc:  # noqa: BLE001
         print(f"tool error: {exc}", file=sys.stderr)
         return 2
 
-    report = {"spec": str(path), "plans": {}}
+    report = {"spec": str(path), "state_source": source, "plans": {}}
     mismatches = 0
     for plan_id, plan_spec in spec["plans"].items():
         verdicts, tool_error = evaluate_conditions(
