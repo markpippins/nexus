@@ -1,0 +1,143 @@
+{
+  "$comment": [
+    "Fleet-wide gating census (DBA, 2026-09-24): the canonical gating checker run",
+    "across ALL live non-terminal plans, not just the W family.",
+    "",
+    "Coverage: the 12 nebula-pending plans (8261638, 8261639, 8261645-8261651,",
+    "8261653-8261655) plus the 2 active plans (0002, 0005). 8261652 is excluded:",
+    "it was ARCHIVED by the planner executing D-2 (duplicate-parent supersession)",
+    "after the architect's 21:42 snapshot - the architect's earlier '22 pending'",
+    "figure counted a broader historical set; their 21:42 review (f4973207) pins",
+    "the live pending set at the original 12.",
+    "",
+    "Per-plan fields beyond the W-B4 prototype:",
+    "  correlation       - the architect's read-only correlation class",
+    "                      (record 3ebbe0a5), echoed verbatim for the",
+    "                      cross-reference matrix.",
+    "  declared_blockers - blockers the plan's own dependencies field declares",
+    "                      in free text (unstructured gating - the W-B4 gap",
+    "                      itself); echoed, not evaluated.",
+    "  plan_has_record   - evaluator: nebula.agent_records rows with",
+    "                      plan_ref = <plan> (evidence mass on the plan)."
+  ],
+  "version": "fleet-census-1",
+  "plans": {
+    "8261638": {
+      "title": "probe (orphan smoke/probe per architect correlation)",
+      "correlation": "orphan smoke/probe; disposition = supersede/abandon, not re-emit",
+      "start_conditions": [],
+      "expected_gating": "BLOCKED-BUT-OPEN — builder completed and reviewer ticket expired 09-23; a probe needs no gates, only a disposition"
+    },
+    "8261639": {
+      "title": "Consolidation Wave 1 — Lilac ticket, receipt, and execution-claim unification",
+      "correlation": "explicit Wave 1 C7 closeout evidence on record (30 plan_ref records)",
+      "start_conditions": [
+        {"id": "evidence_mass", "evaluator": "plan_has_record",
+         "params": {"plan": "8261639", "min_count": 5},
+         "evidence_ref": "nebula.agent_records plan_ref=8261639",
+         "note": "closeout evidence exists; completion was never receipted"}
+      ],
+      "expected_gating": "BLOCKED-BUT-OPEN — work evidenced complete but no IMPLEMENTATION/REVIEW receipt ever issued; needs retroactive disposition, not a fresh builder"
+    },
+    "8261645": {
+      "title": "Parallel convergence tracks: Moleculer, Night Shift, ontology, and Resolution",
+      "correlation": "umbrella docket; parent of the W family via To Do docket c7c26160",
+      "family": {
+        "role": "duplicate-parent",
+        "children": ["8261653", "8261654", "8261655"],
+        "note": "children declare dependency {8261645} (lineage); planner's D-1..D-3 ruling treats ST.01 as the operative W-A gate, so the dep is recorded as lineage, not gating"
+      },
+      "start_conditions": [],
+      "expected_gating": "BLOCKED-BUT-OPEN — umbrella whose decomposition scope is carried by children 8261653-55; expired builder ticket with no respawn; supersede candidate"
+    },
+    "8261646": {
+      "title": "Collapse vision-srv into losm-host (absorb CRUD/DAG surface, retire vision-srv-py)",
+      "correlation": "no direct To Do match; unverified",
+      "declared_blockers": [],
+      "start_conditions": [],
+      "expected_gating": "BLOCKED-BUT-OPEN — expired builder ticket, no start conditions declared, no evidence of activity"
+    },
+    "8261647": {
+      "title": "Fix Assembly comment attribution: postedById must follow acting role (inspector C1)",
+      "correlation": "no direct To Do match; unverified",
+      "start_conditions": [],
+      "expected_gating": "BLOCKED-BUT-OPEN — inspector-finding plan, expired builder ticket, never started"
+    },
+    "8261648": {
+      "title": "Eliminate singleton frame_values mutation in SOL gates (inspector C2)",
+      "correlation": "no direct To Do match; unverified",
+      "start_conditions": [],
+      "expected_gating": "BLOCKED-BUT-OPEN — inspector-finding plan, expired builder ticket, never started"
+    },
+    "8261649": {
+      "title": "Close WRP event-vocabulary drift + deterministic fold (inspector D2/G2)",
+      "correlation": "no direct To Do match; unverified",
+      "start_conditions": [],
+      "expected_gating": "BLOCKED-BUT-OPEN — inspector-finding plan, expired builder ticket, never started"
+    },
+    "8261650": {
+      "title": "WR canonicalization landing (Option B): legacy_id backfill, writer repoints, view demotion, PR #366 cutover",
+      "correlation": "genuine active multi-stage plan; Stage 2/W2a evidence but not wholly complete",
+      "declared_blockers": [
+        "BLOCKED-ON architect type:decision ruling on thread 402d8a0d (combined e772b969 disposition + WR canonicalization) must land Option B — declared in plan dependencies as free text",
+        "DBA V-series apply on explicit operator go BEFORE stages 1-6"
+      ],
+      "start_conditions": [],
+      "expected_gating": "BLOCKED-BUT-OPEN — the fleet's one genuinely active multi-stage plan; its real gate (the 402d8a0d ruling) lives in unstructured dependency text"
+    },
+    "8261651": {
+      "title": "Repoint conduit-mcp caller to consolidated kernel routes (TypeSpec survey follow-up)",
+      "correlation": "no direct To Do match; unverified",
+      "start_conditions": [],
+      "expected_gating": "BLOCKED-BUT-OPEN — expired builder ticket; partial overlap with merged route/SDK consolidation work (#458/#464/#468) needs disposition"
+    },
+    "8261653": {
+      "title": "W-A decomposition: duplicate-history reconciliation into M-sized packages",
+      "correlation": "W family child; planner re-emit pending (D-3)",
+      "family": {"role": "child", "parent": "8261652"},
+      "start_conditions": [
+        {"id": "st01", "evaluator": "db_table_exists",
+         "params": {"table": "resolution.promotion_batch"},
+         "evidence_ref": "PR #493 merged 09-23",
+         "note": "met 2026-09-23"}
+      ],
+      "expected_gating": "BLOCKED-BUT-OPEN — ST.01 met but builder ticket expired untouched; planner D-3 re-emit is the fix"
+    },
+    "8261654": {
+      "title": "W-B decomposition: Conduit/Nebula visibility unification into M-sized packages",
+      "correlation": "W family child; AC4/AC5 re-scoped by planner 09-24",
+      "family": {"role": "child", "parent": "8261652"},
+      "start_conditions": [],
+      "artifact_state": "review_reject: re-scoped by planner D-1..D-3 09-24; awaiting re-emit",
+      "expected_gating": "IN-REWORK — REVIEW_REJECT with re-scope landed; re-emit pending"
+    },
+    "8261655": {
+      "title": "W-C decomposition: consumer migration (writer fencing + Stage D gates) into M-sized packages",
+      "correlation": "W family child; the W-B4 exhibit",
+      "family": {"role": "child", "parent": "8261652"},
+      "start_conditions": [
+        {"id": "wa_done", "evaluator": "plan_status_in",
+         "params": {"plan": "8261653", "accept": ["completed"]},
+         "evidence_ref": "canonical latest receipt kind",
+         "note": "W-A must terminal-pass first"},
+        {"id": "wb_done", "evaluator": "plan_status_in",
+         "params": {"plan": "8261654", "accept": ["completed"]},
+         "evidence_ref": "canonical latest receipt kind",
+         "note": "W-B must terminal-pass first"}
+      ],
+      "expected_gating": "BLOCKED-AND-OPEN — expired builder ticket presents work its own conditions (W-A and W-B done) forbid; the W-B4 exhibit"
+    },
+    "0002": {
+      "title": "PEB dual-authority parity: reconcile Python contract with shared TypeSpec",
+      "correlation": "active legacy-numbered plan; builder completed 08-22",
+      "start_conditions": [],
+      "expected_gating": "BLOCKED-BUT-OPEN — builder completed and reviewer ticket expired 08-22; review never picked up for 33 days"
+    },
+    "0005": {
+      "title": "Implement D-2026-08-23-D push-based promotion flow (stages 0-5)",
+      "correlation": "active legacy-numbered plan",
+      "start_conditions": [],
+      "expected_gating": "BLOCKED-BUT-OPEN — builder ticket expired 08-24, implementation stalled; promotion-adjacent so W-B6-adjacent too"
+    }
+  }
+}
