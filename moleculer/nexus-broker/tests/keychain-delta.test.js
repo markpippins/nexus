@@ -41,18 +41,26 @@ const { spawn } = require('node:child_process')
 const path = require('node:path')
 const dotenv = require('dotenv')
 const { MongoClient } = require('mongodb')
+const { getEphemeralPort } = require('./helpers/ephemeral-ports')
 
 dotenv.config({ path: path.join(__dirname, '..', '.env') })
 
 const BROKER_DIR = path.resolve(__dirname, '..')
-const TEST_PORT = process.env.DELTA_TEST_PORT || '4100' // 4100: broker-smoke's WS default is TEST_PORT+1=4099 — avoid colliding when node --test runs files concurrently
-const TEST_PTY_WS_PORT = process.env.DELTA_TEST_PTY_WS_PORT || String(Number(TEST_PORT) + 2)
-const BASE = `http://localhost:${TEST_PORT}/api`
+// OS-assigned ports by default (see tests/helpers/ephemeral-ports.js);
+// HARNESS_FIXED_PORTS=1 restores the historical DELTA_TEST_* values.
+const FIXED_SERVICE_PORT = process.env.DELTA_TEST_PORT || '4100'
+const FIXED_PTY_WS_PORT = process.env.DELTA_TEST_PTY_WS_PORT || String(Number(FIXED_SERVICE_PORT) + 2)
 const MONGO_URL = process.env.MONGO_URL || 'mongodb://localhost:27017'
+let TEST_PORT = null
+let TEST_PTY_WS_PORT = null
+let BASE = null
 
 let child = null
 
 async function startBroker() {
+  TEST_PORT = await getEphemeralPort(FIXED_SERVICE_PORT)
+  TEST_PTY_WS_PORT = await getEphemeralPort(FIXED_PTY_WS_PORT)
+  BASE = `http://localhost:${TEST_PORT}/api`
   child = spawn(
     process.execPath,
     ['node_modules/.bin/moleculer-runner', '--mask', '**/*.js', 'dist/services'],

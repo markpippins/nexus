@@ -47,9 +47,13 @@ import java.util.List;
 public class AdmissionControllerFacade {
 
     private final PebGovernanceEngine governanceEngine;
+    private final org.nexus.peb.store.repository.PebTransactionRepository transactionRepository;
 
-    public AdmissionControllerFacade(PebGovernanceEngine governanceEngine) {
+    public AdmissionControllerFacade(
+            PebGovernanceEngine governanceEngine,
+            org.nexus.peb.store.repository.PebTransactionRepository transactionRepository) {
         this.governanceEngine = governanceEngine;
+        this.transactionRepository = transactionRepository;
     }
 
     @PostMapping("/transaction")
@@ -60,12 +64,61 @@ public class AdmissionControllerFacade {
                 .body("Malformed admission request: missing required field(s): " + missing);
         }
         AdmissionPath path = AdmissionPath.fromToolName(transaction.getToolName());
-        AdmissionResponse response = governanceEngine.processForPath(transaction, path);
-        if (response.admitted()) {
-            return ResponseEntity.ok(response.message());
+
+        // Idempotent replay parity with the Python kernel's api.py: same
+        // idempotencyKey + byte-identical payload replays the RECORDED
+        // outcome (HTTP 200/422 with the original transaction id); the same
+        // key with a different payload is a conflicting replay (409). The
+        // peb.transactions unique index alone would turn a replay into a
+        // 500, breaking producers that retry on transport failure.
+        java.util.Optional<PebTransaction> existing =
+            transactionRepository.findByIdempotencyKey(transaction.getIdempotencyKey());
+        if (existing.isPresent()) {
+            PebTransaction prior = existing.get();
+            boolean samePayload = java.util.Objects.equals(
+                prior.getInput() == null ? null : prior.getInput().toString(),
+                transaction.getInput() == null ? null : transaction.getInput().toString());
+            if (samePayload) {
+                boolean replayAdmitted =
+                    "peb_report_violation".equals(prior.getToolName())
+                        || (prior.getAdmissionResult() != null
+                            && "ALLOWED".equals(prior.getAdmissionResult().name()));
+                String replayBody = "{\"transaction_id\":\"" + prior.getId()
+                    + "\",\"admission_result\":\""
+                    + (prior.getAdmissionResult() == null ? "ROUTED" : prior.getAdmissionResult().name())
+                    + "\",\"message\":\"" + jsonEscape("Idempotent replay: recorded admission result "
+                        + (prior.getAdmissionResult() == null ? "UNKNOWN" : prior.getAdmissionResult().name()))
+                    + "\",\"admitted\":" + replayAdmitted + "}";
+                return ResponseEntity.status(replayAdmitted
+                        ? org.springframework.http.HttpStatus.OK
+                        : HttpStatus.UNPROCESSABLE_ENTITY)
+                    .body(replayBody);
+            }
+            String conflictBody = "{\"transaction_id\":\"" + prior.getId()
+                + "\",\"admission_result\":null,\"message\":\"Conflicting replay: idempotency key already used with a different payload\",\"admitted\":false}";
+            return ResponseEntity.status(org.springframework.http.HttpStatus.CONFLICT).body(conflictBody);
         }
-        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
-                             .body(response.message());
+
+        AdmissionResponse response = governanceEngine.processForPath(transaction, path);
+        // JSON body matching the Python kernel's PebAdmissionResult.to_dict()
+        // contract ({transaction_id, admission_result, message, admitted}). The
+        // historical plain-string body made programmatic consumers (wrp
+        // git_claim_producer) crash parsing "Mutation processed" as JSON.
+        String body = "{\"transaction_id\":\"" + transaction.ensureId()
+            + "\",\"admission_result\":\"" + transaction.getAdmissionResult()
+            + "\",\"message\":\"" + jsonEscape(response.message())
+            + "\",\"admitted\":" + response.admitted() + "}";
+        if (response.admitted()) {
+            return ResponseEntity.ok(body);
+        }
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(body);
+    }
+
+    private static String jsonEscape(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replace("\\", "\\\\").replace("\"", "\\\\\"");
     }
 
     /**

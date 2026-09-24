@@ -15,10 +15,22 @@ const { spawn } = require('node:child_process')
 const path = require('node:path')
 
 const BROKER_DIR = path.resolve(__dirname, '..')
-const TEST_SERVICE_PORT = process.env.TEST_SERVICE_PORT_PTY || '4199'
-const TEST_PTY_WS_PORT = process.env.TEST_PTY_WS_PORT || '3199'
-const BASE = `http://localhost:${TEST_SERVICE_PORT}/api`
-const WS_URL = `ws://localhost:${TEST_PTY_WS_PORT}`
+// OS-assigned ports by default (see tests/helpers/ephemeral-ports.js);
+// HARNESS_FIXED_PORTS=1 restores the historical 4199/3199.
+const FIXED_SERVICE_PORT = process.env.TEST_SERVICE_PORT_PTY || '4199'
+const FIXED_PTY_WS_PORT = process.env.TEST_PTY_WS_PORT || '3199'
+let TEST_SERVICE_PORT = null
+let TEST_PTY_WS_PORT = null
+let BASE = null
+let WS_URL = null
+
+async function resolvePorts() {
+  const { getEphemeralPort } = require('./helpers/ephemeral-ports')
+  TEST_SERVICE_PORT = await getEphemeralPort(FIXED_SERVICE_PORT)
+  TEST_PTY_WS_PORT = await getEphemeralPort(FIXED_PTY_WS_PORT)
+  BASE = `http://localhost:${TEST_SERVICE_PORT}/api`
+  WS_URL = `ws://localhost:${TEST_PTY_WS_PORT}`
+}
 
 let child = null
 
@@ -91,6 +103,7 @@ function waitFor(ws, predicate, description, timeoutMs = 15_000) {
 let ptyWorkerHealth
 
 before(async () => {
+  await resolvePorts()
   await startBroker()
   // Confirm the gateway now advertises the transport worker and the HTTP
   // proxy route for its health resolves.
