@@ -1,0 +1,1310 @@
+# Dependabot configuration (PR #514) — systemic recommendation of the
+# dependabot remediation plan (record efb0fb8c).
+#
+# One entry per distinct manifest directory, discovered from the tree on
+# 2026-09-24 (pip 23, npm 80, maven 59). Semantics:
+#   schedule weekly .................. all ecosystems checked every Monday
+#   open-pull-requests-limit: 0 ...... SECURITY-ONLY mode: zero version-update
+#                                      PRs opened; security updates still fire
+#   groups.security-updates .......... all security alerts in one manifest land
+#                                      as ONE grouped PR per directory
+# Manifests are additive by design; if Dependabot ever reports an unknown
+# directory, re-run the tree sweep and add the entry.
+version: 2
+updates:
+- package-ecosystem: pip
+  directory: python/substance
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: pip
+  directory: python/cascade
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: pip
+  directory: python/meep
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: pip
+  directory: python/address/tts
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: pip
+  directory: python/vision/losm-shell
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: pip
+  directory: python/voyager
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: pip
+  directory: python/conduit
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: pip
+  directory: python/vision/losm-store
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: pip
+  directory: python/peb-kernel
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: pip
+  directory: python/governance-envelope
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: pip
+  directory: python/SOLScript
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: pip
+  directory: /
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: pip
+  directory: python/vision/losm-ir
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: pip
+  directory: python/aspects
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: pip
+  directory: legacy/python/vision-srv
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: pip
+  directory: python/fs/fs-crawler
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: pip
+  directory: python/ir
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: pip
+  directory: python/peb-kernel/generated
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: pip
+  directory: python/nats_envelope
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: pip
+  directory: python/timeclock
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: pip
+  directory: python/conduit/generated
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: pip
+  directory: python/fs/fs-crawler-adapter
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: pip
+  directory: python/vision/losm-host
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: adonisjs/broker-gateway-proxy
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: adonisjs/nexus-control-edge
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: angular/barbie
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: angular/cascade-ui
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: angular/conduit-ui
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: angular/conduit-ui-legacy
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: angular/execution-ui
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: angular/nexus-console
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: angular/shared-react
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: angular/shrapnel-ui
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: angular/surface-ui
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: angular/tackle-ui
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: moleculer/cascade
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: moleculer/draft
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: moleculer/kernel
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: moleculer/knowledge
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: moleculer/nexus-broker
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: moleculer/role-memory
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: moleculer/search
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: moleculer/solscript
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: moleculer/voyager
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: python/fs/fs-crawler/ui
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/address-tts-mcp
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/aegis-srv
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/assembly-mcp
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/assembly-srv
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/cascade-srv
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/conduit-mcp
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/conduit-srv
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/draft-srv
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/execution-srv
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/file-system-server
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/google
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/harness-srv
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/heartbeat-client
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/image-server
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/kernel-srv
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/knowledge-mcp
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/knowledge-srv
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/mcp-bridge
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/mcp-registry-seeder
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/mcp-types
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/nebula-mcp
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/nebula-srv
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/peb-mcp
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/peb-srv
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/projection-core
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/pty-srv
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/resolution-srv
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/role-memory-srv
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/secure-file-system-server
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/semantics-mcp
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/semantics-srv
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/service-broker-mcp
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/shrapnel
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/slash-command-mcp
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/solscript
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/sonar-mcp
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/tackle-cli
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/tackle-mcp
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/tackle-prompt-bridge
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/tackle-prompt-sync-srv
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/tackle-seeds
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/tackle-srv
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/terrain-mcp
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/tools-aggregator
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/ui-event-bus
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/ui-tools
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/ui-tools-mcp
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/utils
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/vision-mcp
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/voyager-srv
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typescript/wind-srv
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typespec/v1
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typespec/v1/core
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typespec/v1/service-broker/helidon
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typespec/v1/service-broker/quarkus
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typespec/v1/service-broker/spring
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typespec/v1/service-broker/spring/file-service
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: npm
+  directory: typespec/v1/service-registry/spring
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/helidon
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/helidon/user-access-service
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/quarkus
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/quarkus/broker-gateway
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/shared
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/shared/adapters.helidon
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/shared/adapters.quarkus
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/shared/adapters.spring
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/shared/broker-service-api
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/shared/core
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/shared/service-registry-api
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/shared/user-api
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/atlas
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/conformance-verifier
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/nexus-core
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/nexus-core/nexus-core-aegis
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/nexus-core/nexus-core-app
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/nexus-core/nexus-core-broker
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/nexus-core/nexus-core-meep
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/nexus-core/nexus-core-search
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/nexus-core/nexus-core-shrapnel
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/nexus-core/nexus-core-solscript
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/nexus-core/nexus-core-writequeue
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/nexus-core/nexus-core-wrp
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/peb-kernel
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/peb-kernel/peb-adapters
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/peb-kernel/peb-api
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/peb-kernel/peb-bootstrap
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/peb-kernel/peb-core
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/peb-kernel/peb-domain
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/peb-kernel/peb-hash
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/peb-kernel/peb-observability
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/peb-kernel/peb-store
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/peb-kernel/peb-test
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/service-broker
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/service-broker/admin-logging
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/service-broker/broker-discovery-service
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/service-broker/broker-gateway
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/service-broker/broker-gateway-sec-bot
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/service-broker/broker-service
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/service-broker/broker-service-spi
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/service-broker/export-service
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/service-broker/file-service
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/service-broker/file-service-api
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/service-broker/login-service
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/service-broker/note-service
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/service-broker/search-service
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/service-broker/shrapnel-data
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/service-broker/social-media
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/service-broker/social-media-api
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/service-broker/tackle-registry-service
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/service-broker/upload-service
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/service-broker/user-access-service
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/service-broker/user-creation-service
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/service-broker/user-service
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/service-registry
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: maven
+  directory: jvm/spring/terrain
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
