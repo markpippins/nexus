@@ -183,3 +183,14 @@ Data-safety note: because PGDATA is shared and never migrated, rollback cannot l
 | Guard skew fail | **real `pg_dump 16.x`** (postgres:16 image, `--network host`) vs 17.11 server | `FAIL: pg client/server major skew: host pg_dump 16.x < server 17.x` + remediation hint, **exit 1**, **no dump written**, `last-backup.json` untouched |
 
 Scratch containers and network removed after rehearsal; `/tmp/r5-pgdata` (root-owned container files) could not be removed by the user account and is left to be reclaimed at reboot. Nothing touched the live `pgvector_db` at any point.
+
+---
+
+## Addendum (DBA, 2026-09-24): window executed early via compose adoption + durable log volume
+
+The 17.10→17.11 bump is **live as of 2026-09-24 ~19:59 UTC** (recreate under the floating `:pg17` tag pulled 17.11; data bind untouched; rollback image `pgvector-local:pg17.10-rollback-20260923` still intact). During the same maintenance action, per the oob-restore hunt (thread 900e7144):
+
+- `compose.yml` service `db` gained the durable log bind: `./pglogs:/var/lib/postgresql/data/pglogs` (host-readable DDL/audit log).
+- `ALTER SYSTEM` (auto.conf, pre-change backup retained at `postgresql.auto.conf.pre-logging.bak-20260924T1945Z`, 353B): `logging_collector=on`, `log_directory=pglogs`, daily filename, `log_truncate_on_rotation=on`, attribution prefix `%m [%p] db=%d user=%u app=%a client=%h`, `log_statement=ddl` (re-anchored), `log_file_mode=0644`.
+- Attribution proven live: three tagged probes (`ddl-attribution-probe`, `-v2`, `-v3`) logged CREATE/COMMENT/DROP with db/user/app/client — grep-able from the host at `/home/codex/dev/pgsql/pglogs/`.
+- Container is compose-managed again (labels restored after the intermediate manual recreate); rollback: `docker rm -f pgvector_db && docker tag pgvector-local:pg17.10-rollback-20260923 pgvector/pgvector:pg17` (or run the pinned ID) + `ALTER SYSTEM RESET` per setting + restart.
