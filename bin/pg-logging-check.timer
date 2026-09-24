@@ -1,0 +1,17 @@
+# Source of truth for ~/.config/systemd/user/pg-logging-check.timer
+#
+# Nightly 06:40 UTC — fourth slot in the drift/heartbeat cluster (SDK
+# stamp 06:10, users bcrypt 06:20, record durability 06:30). Runs after
+# the UTC midnight rotation so "yesterday's file" is complete.
+# Persistent=true catches up if the machine was off at the scheduled time.
+
+[Unit]
+Description=Run pg-logging integrity check nightly at 06:40 UTC
+
+[Timer]
+OnCalendar=*-*-* 06:40:00 UTC
+Persistent=true
+Unit=pg-logging-check.service
+
+[Install]
+WantedBy=timers.target
