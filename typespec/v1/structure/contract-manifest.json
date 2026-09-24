@@ -1,0 +1,89 @@
+{
+  "contract_revision": "structure-v0.1",
+  "fingerprint_version": 1,
+  "owner": "structure",
+  "authority_status": "non_authoritative",
+  "source_kinds": [
+    "jvm_source",
+    "python_source",
+    "seed_sql",
+    "solscript",
+    "sql_ddl",
+    "sql_migration",
+    "typespec",
+    "unknown"
+  ],
+  "fact_kinds": [
+    "column",
+    "enum_type",
+    "foreign_key",
+    "index",
+    "named_constraint",
+    "operation",
+    "seed_value",
+    "table",
+    "unsupported_syntax"
+  ],
+  "parse_statuses": [
+    "complete",
+    "failed",
+    "partial",
+    "unsupported"
+  ],
+  "relation_mapping_statuses": [
+    "mapped",
+    "unmapped"
+  ],
+  "candidate_statuses": [
+    "ambiguous",
+    "resolved",
+    "unmapped",
+    "unsupported"
+  ],
+  "finding_codes": [
+    "authority_escalation_denied",
+    "grammar_drift",
+    "identity_collision",
+    "missing_anchor",
+    "parser_drift",
+    "stale_source_revision",
+    "unsupported_syntax"
+  ],
+  "source_fact_id_version": 1,
+  "observation_id_version": 1,
+  "read_set_fingerprint_algorithm": "sha256-canonical-json-v1",
+  "expression_envelope": {
+    "shared_fields": [
+      "revision",
+      "content_hash",
+      "source_uri"
+    ],
+    "field_semantics": {
+      "content_hash": "sha256 hex digest of the exact bytes parsed",
+      "revision": "source revision identifier (git rev, migration stamp)",
+      "source_uri": "canonical URI of the parsed artifact"
+    },
+    "implicit_taxonomy_growth": false,
+    "bridging_fields": []
+  },
+  "authority_boundary": {
+    "structure_is": "reader",
+    "grants_governed_identity": false,
+    "self_authorizes_relations": false,
+    "governed_identity_owner": "aspects",
+    "relation_authority_owner": "resolution-aspects",
+    "authority_status": "non_authoritative",
+    "escalation_finding_code": "authority_escalation_denied",
+    "invents_predicates": false,
+    "invented_predicates": [],
+    "unresolved_shapes_become": "explicit_unresolved_candidate",
+    "absence_never_asserts_nonexistence": true,
+    "state_boundary": [
+      "structural_fact",
+      "relation_candidate",
+      "evaluated_relation",
+      "admitted_relation"
+    ]
+  },
+  "contract_fingerprint": "6ea822280a8f650f7662fbf70b8da4b6d155614f4fbd971986ec4d1d61b7cb6e"
+}
