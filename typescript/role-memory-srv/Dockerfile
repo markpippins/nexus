@@ -6,7 +6,9 @@
 FROM node:20-bookworm AS build
 WORKDIR /app/role-memory-srv
 COPY role-memory-srv/package.json ./
-RUN npm install --no-package-lock
+COPY role-memory-srv/package-lock.json ./
+# npm ci: installs exactly the committed lock (lockfile batch 2).
+RUN npm ci --no-audit --no-fund
 COPY role-memory-srv/tsconfig.json ./
 COPY role-memory-srv/src ./src
 # __tests__ is excluded by the root .dockerignore; guard in case the

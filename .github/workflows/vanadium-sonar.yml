@@ -79,8 +79,8 @@ jobs:
         run: |
           mkdir -p coverage
           cd typescript/conduit-mcp
-          if [ ! -d node_modules ]; then npm ci --no-audit --no-fund || npm install --no-audit --no-fund || true; fi
-          npm install --no-save --no-audit --no-fund @vitest/coverage-v8 || true
+          if [ ! -d node_modules ]; then npm ci --no-audit --no-fund || true; fi
+          npm install --no-save --no-audit --no-fund @vitest/coverage-v8 || true # wf-lint-allow: npm-ci — CI-only coverage provider; must not touch package.json or the lock
           npx vitest run src/compile-verdict.test.ts src/compile-identity.test.ts \
             src/runtime-kernel-fold.test.ts \
             --coverage.enabled --coverage.provider=v8 \

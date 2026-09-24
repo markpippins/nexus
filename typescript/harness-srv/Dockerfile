@@ -8,7 +8,9 @@
 FROM node:20-bookworm AS build
 WORKDIR /app/harness-srv
 COPY harness-srv/package.json ./
-RUN npm install --no-package-lock
+COPY harness-srv/package-lock.json ./
+# npm ci: installs exactly the committed lock (lockfile batch 2).
+RUN npm ci --no-audit --no-fund
 COPY harness-srv/tsconfig.json ./
 COPY harness-srv/src ./src
 RUN npm run build

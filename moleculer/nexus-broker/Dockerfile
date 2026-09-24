@@ -12,13 +12,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 make g+
 # fails the build outright. Discovered 2026-09-20 on the first non-titanium
 # (helium) deploy: local builds only ever worked because the dev checkout
 # happened to hold an untracked lockfile.
-# A glob keeps the COPY valid when the lock is absent, and `npm ci` still runs
-# wherever a lockfile exists (so existing local builds are unchanged); the
-# fallback resolves from package.json when there is none.
-# (The durable fix — tracking lock files — changes repo-wide policy and needs
-# an owner's ruling, not a unilateral edit here.)
+# The lockfile is now tracked (opt-in pattern, #518 / lockfile batch 2), so
+# `npm ci` is authoritative: installs exactly the committed lock and fails
+# loudly on drift. The old `|| npm install` fallback is gone — it silently
+# masked lock drift (the wf-lint npm-ci rule now enforces this).
 COPY package*.json ./
-RUN npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+RUN npm ci --no-audit --no-fund
 
 COPY tsconfig.json moleculer.config.ts ./
 COPY services ./services

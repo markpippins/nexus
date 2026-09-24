@@ -6,7 +6,8 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies
-RUN npm install
+# npm ci: installs exactly the committed lock (lockfile batch 2).
+RUN npm ci --no-audit --no-fund
 
 # Copy source code
 COPY . .
