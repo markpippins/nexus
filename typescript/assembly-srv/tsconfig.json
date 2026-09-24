@@ -9,11 +9,13 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "outDir": "./dist",
-    "rootDir": "./src",
     "resolveJsonModule": true,
     "allowJs": true,
     "checkJs": true,
-    "noEmit": true
+    "noEmit": true,
+    "paths": {
+      "heartbeat-client": ["../heartbeat-client/index.ts"]
+    }
   },
   "include": ["src/**/*"]
 }
