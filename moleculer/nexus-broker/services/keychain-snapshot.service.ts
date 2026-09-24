@@ -1942,7 +1942,11 @@ export default class KeychainService extends Service {
     } else if (prev) {
       prevIndex = this.indexFromLegacyArrays((prev as any).instance_ids, (prev as any).current_record_ids);
     } else {
-      prevIndex = {};
+      // No prior state at all (fresh store): unknown prior state must yield
+      // a BASE (D6: "a delta is never computed against unknown prior state").
+      // An empty prevIndex here would instead produce a delta whose diff
+      // against nothing is a full-rewrite "added" set with base_version null.
+      prevIndex = null;
     }
     let prevStateKnown = prevIndex !== null;
     const prevInstanceIds = new Set<string>(Object.keys(prevIndex || {}));

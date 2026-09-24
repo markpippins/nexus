@@ -20,14 +20,21 @@
 #
 # Included: tests/pty-transport.e2e.test.js — proven exit 0 hermetically
 # (fresh Mongo on :28017, free ports, no NATS, no PG).
+#   tests/keychain-delta.test.js — self-seeds its full-manifest anchor via
+#   the API on a fresh Mongo (worktree fix, same PR), with PG shimmed to the
+#   real agent_records schema + grouping-rule seed rows
+#   (tests/fixtures/keychain-delta-ci-pg.sql). Proven on all three branches:
+#   fresh store (seeds + cleans up), re-run (re-seeds), pre-seeded store
+#   (adopts existing anchor, restores around it). The one-line service fix
+#   in keychain-snapshot.service.ts makes a fresh store take the D6 base
+#   branch instead of producing a baseless delta against prevIndex = {}.
 #
 # Excluded (documented, follow-up work):
-#   - keychain-delta: requires a pre-existing full-manifest ar_snapshot as
-#     the delta chain anchor (production-seeded on titanium); fails at that
-#     precondition on a fresh Mongo.
 #   - broker-smoke: 20/23 pass fresh, but rewind + SOL-outbox tests need
 #     seeded checkpoint/outbox state, and witnessed-runs parity needs a
-#     seeded PostgreSQL (PG integration class).
+#     seeded PostgreSQL (PG integration class). Regression-controlled in
+#     the same PR: identical failure set with and without the
+#     keychain-snapshot service fix (13 pass / 9 fail both ways).
 #   - attempt-lifecycle / harness-bridge: seeded-PostgreSQL integration
 #     class, not Mongo.
 name: broker-e2e
@@ -51,6 +58,19 @@ jobs:
     permissions:
       contents: read
     services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: nexus
+          POSTGRES_USER: pguser
+          POSTGRES_PASSWORD: pgpass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pguser -d nexus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
       mongo:
         image: mongo:7
         ports:
@@ -68,8 +88,29 @@ jobs:
       - name: Install + build (dist/ is untracked)
         working-directory: moleculer/nexus-broker
         run: npm ci && npm run build
+      - name: Apply keychain-delta PG shim
+        run: |
+          psql -v ON_ERROR_STOP=1 -h localhost -U pguser -d nexus \
+            < moleculer/nexus-broker/tests/fixtures/keychain-delta-ci-pg.sql
+          # Postcondition: the anchor state vector must resolve to exactly
+          # 4 logical instances (2 chains collapse + 1 standalone).
+          N=$(psql -h localhost -U pguser -d nexus -tAc \
+            "SELECT count(*) FROM nebula.agent_records")
+          echo "agent_records rows: $N"
+          [ "$N" -eq 5 ] || { echo "shim seed rows missing"; exit 1; }
       - name: PTY transport E2E (hermetic booting suite)
         working-directory: moleculer/nexus-broker
         env:
           MONGO_URL: mongodb://localhost:28017
         run: node --test tests/pty-transport.e2e.test.js
+      - name: Keychain delta E2E (self-seeding anchor)
+        working-directory: moleculer/nexus-broker
+        env:
+          MONGO_URL: mongodb://localhost:28017/nexus
+          PG_HOST: localhost
+          PG_PORT: '5432'
+          PG_USER: pguser
+          PG_PASSWORD: pgpass
+          PG_DATABASE: nexus
+        run: node --test tests/keychain-delta.test.js
+

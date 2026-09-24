@@ -145,6 +145,7 @@ test('checkpoints persist deltas, not full copies, and rewind reconstructs them'
   let previousRecordTypeState = null
   let db = null
   let restored = false
+  let seededAnchorVersion = null
 
   // Shared-store restore. Registered against process signals as well as the
   // normal exit path: the broker test harness has been interrupted mid-run
@@ -157,6 +158,12 @@ test('checkpoints persist deltas, not full copies, and rewind reconstructs them'
       await db.collection('ar_drift_findings').deleteMany({ checkpoint_id: { $in: checkpointIds } })
       await db.collection('ar_snapshots').deleteMany({ checkpoint_id: { $in: checkpointIds } })
       await db.collection('checkpoint_entries').deleteMany({ checkpoint_id: { $in: checkpointIds } })
+    }
+    if (seededAnchorVersion != null) {
+      // Remove the anchor we seeded ourselves (fresh store only). Restore
+      // never touches a pre-existing anchor on a seeded store.
+      await db.collection('transitions').deleteOne({ snapshot_version: seededAnchorVersion })
+      await db.collection('ar_snapshots').deleteMany({ version: seededAnchorVersion })
     }
     if (previousActive) {
       await db.collection('active_checkpoints').replaceOne({ _id: 'agent-records' }, previousActive, { upsert: true })
@@ -178,9 +185,9 @@ test('checkpoints persist deltas, not full copies, and rewind reconstructs them'
       await db.collection('checkpoint_sequences').deleteOne({ _id: 'agent-records' })
     }
     await db.collection('entries').deleteMany({})
-    if (previousEntries.length) await db.collection('entries').insertMany(previousEntries)
+    if (previousEntries?.length) await db.collection('entries').insertMany(previousEntries)
     await db.collection('record_type_state').deleteMany({})
-    if (previousRecordTypeState.length) {
+    if (previousRecordTypeState?.length) {
       await db.collection('record_type_state').insertMany(previousRecordTypeState)
     }
   }
@@ -193,25 +200,63 @@ test('checkpoints persist deltas, not full copies, and rewind reconstructs them'
   try {
     await mongo.connect()
     db = mongo.db('keychains')
-    previousActive = await db.collection('active_checkpoints').findOne({ _id: 'agent-records' })
-    previousHead = await db.collection('checkpoint_heads').findOne({ _id: 'agent-records' })
-    previousSequence = await db.collection('checkpoint_sequences').findOne({ _id: 'agent-records' })
-    previousEntries = await db.collection('entries').find({}).toArray()
-    previousRecordTypeState = await db.collection('record_type_state').find({}).toArray()
+    // Fresh-store guard: a dedicated CI/scratch Mongo has no prior collections,
+    // so these pre-state reads return empty and restore() would wrongly wipe
+    // the store after the run. On an empty store, skip pre-state capture and
+    // restore only our own seeded/test documents.
+    const freshStore =
+      (await db.collection('entries').estimatedDocumentCount()) === 0 &&
+      (await db.collection('record_type_state').estimatedDocumentCount()) === 0
+    if (!freshStore) {
+      previousActive = await db.collection('active_checkpoints').findOne({ _id: 'agent-records' })
+      previousHead = await db.collection('checkpoint_heads').findOne({ _id: 'agent-records' })
+      previousSequence = await db.collection('checkpoint_sequences').findOne({ _id: 'agent-records' })
+      previousEntries = await db.collection('entries').find({}).toArray()
+      previousRecordTypeState = await db.collection('record_type_state').find({}).toArray()
+    }
 
     // The baseline must be the newest checkpoint that still carries a full
     // manifest — NOT simply the newest checkpoint, because a prior run of this
     // very test (or any future delta) can be the newest. Asserting against
     // `latestSnapshot` here would make the legacy-read check fail the moment a
     // delta became the tip.
-    const baseline = await db.collection('ar_snapshots').findOne(
+    // Self-seeding: the delta chain needs a pre-existing full-manifest
+    // committed anchor. On titanium that state is production-seeded; on a
+    // fresh CI Mongo it is not. Seed it THROUGH THE SERVICE'S OWN WRITE
+    // PATH: a snapshot POST against unknown prior state is a base (full
+    // manifest) by D6 construction, so the fixture follows the real code
+    // path and survives schema evolution (no hand-crafted documents).
+    let baseline = await db.collection('ar_snapshots').findOne(
       {
         state_vector: { $exists: true },
         $or: [{ checkpoint_status: 'committed' }, { checkpoint_status: { $exists: false } }],
       },
       { sort: { version: -1 } }
     )
-    assert.ok(baseline, 'a full-manifest checkpoint exists to anchor the chain')
+    if (!baseline) {
+      const seedRes = await postSnapshot({
+        source_namespace: `keychains-anchor-${process.pid}-${Date.now()}`,
+        source_event_id: randomUUID(),
+        kind: 'sol.transition.committed',
+        outcome: 'committed',
+        actor: 'keychain-delta-test-anchor-seed',
+        recorded_at: new Date().toISOString(),
+      })
+      assert.equal(seedRes.status, 200, 'anchor seed POST should be accepted')
+      const seedBody = await seedRes.json()
+      assert.equal(seedBody.ok, true)
+      assert.equal(
+        seedBody.storage,
+        'base',
+        'first write on unknown prior state must be a full-manifest base (D6)'
+      )
+      seededAnchorVersion = seedBody.version
+      console.log(`[delta-test] seeded full-manifest anchor at v${seededAnchorVersion}`)
+      baseline = await db.collection('ar_snapshots').findOne({ version: seededAnchorVersion })
+      assert.ok(baseline, 'seeded anchor is queryable')
+    } else {
+      console.log(`[delta-test] using pre-existing full-manifest anchor at v${baseline.version}`)
+    }
 
     const legacyRewind = await (
       await fetch(`${BASE}/keychain-snapshot/agent-records/rewind?at=${baseline.version}`)
