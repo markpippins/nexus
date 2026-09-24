@@ -1,0 +1,29 @@
+{
+  "name": "moleculer-semantics",
+  "version": "1.0.0",
+  "description": "Moleculer port of typescript/semantics-srv (Semantics Topology Legend: REST over the semantics.* PG schema — table-driven CRUD via stored procs + asset identity spine)",
+  "main": "dist/services/semantics.service.js",
+  "scripts": {
+    "dev": "moleculer-runner --hot --repl services/**/*.service.ts",
+    "start": "moleculer-runner services/**/*.service.ts",
+    "build": "tsc",
+    "cli": "moleculer connect NATS",
+    "test": "jest --forceExit --detectOpenHandles",
+    "test:watch": "jest --watch"
+  },
+  "dependencies": {
+    "moleculer": "^0.14.34",
+    "moleculer-web": "^0.10.7",
+    "nats": "^2.29.3",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/node": "^20.0.0",
+    "@types/pg": "^8.11.10",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}

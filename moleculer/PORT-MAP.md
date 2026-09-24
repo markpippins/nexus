@@ -24,6 +24,7 @@
 | 4170 | `draft` (canary twin of `typescript/draft-srv`) | `draft` | `typescript/draft-srv :3140` (DB workbench API behind `data-explorer-ui`'s server-to-server proxy; fail-closed `X-Nexus-Internal` gate replicated; contract pinned to incumbent `openapi.yaml`) | CANARY — PR #479, canary-diffed byte-identical, **not cut over / not deployed** |
 | 4109 | `knowledge` (canary twin of `typescript/knowledge-srv`) | `knowledge` | `typescript/knowledge-srv :3109` (knowledge graph REST; sole caller knowledge-mcp REST proxy; no auth gate on incumbent — CORS only; contract pinned to incumbent `openapi.yaml`) | CANARY — PR #480, canary-diffed byte-identical, **not cut over / not deployed** |
 | 4150 | `role-memory` (canary twin of `typescript/role-memory-srv`) | `role-memory` | `typescript/role-memory-srv :3500` (Role Memory Procedure Registry: PG→Redis sync + cache reads; callers tackle-srv memory.ts, harness-srv, operator-svc, mesh-register; no auth gate on incumbent; contract pinned to incumbent `openapi.yaml`) | CANARY — submitted with this row (PR for the port), canary-diffed byte-identical, **not cut over / not deployed**; 4150 row submitted for Ruling 4 ratification |
+| 4160 | `semantics` (canary twin of `typescript/semantics-srv`) | `semantics` | `typescript/semantics-srv :3160` (Semantics Topology Legend: REST over `semantics.*` — table-driven CRUD via stored procs, T02 asset identity spine, evidence filters, drift lifecycle; caller `semantics-ui`; no auth gate on incumbent — CORS only; contract pinned to incumbent `openapi.yaml`) | CANARY — submitted with this row (PR for the port), canary-diffed byte-identical (12/12 read/negative + 6/6 live-data envelope routes), **not cut over / not deployed**; 4160 row submitted for Ruling 4 ratification |
 
 ## Shared infrastructure (NOT moleculer-owned — do not claim)
 
@@ -40,7 +41,7 @@
 | Component | Address |
 |-----------|---------|
 | NATS broker | `nats://localhost:4222` (services default via `NATS_URL` env, `nats://localhost:4222`) |
-| Namespaces | one per service family: `search`, `solscript`, `broker`, `voyager`, `cascade`, `kernel`, `draft`, `knowledge` |
+| Namespaces | one per service family: `search`, `solscript`, `broker`, `voyager`, `cascade`, `kernel`, `draft`, `knowledge`, `role-memory`, `semantics` |
 
 ## Host posture on titanium (DBA gate, 2026-09-23)
 
