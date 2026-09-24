@@ -111,9 +111,19 @@ def main():
     m = re.search(r"KNOWN_EXECUTORS\s*=\s*new Set\(\[(.*?)\]\)", gov_text, re.S)
     gov_roles = set(re.findall(r'"([^"]+)"', m.group(1))) if m else set()
 
+    # CI-ephemeral roles are minted by wr-conf E2E grant suites on throwaway
+    # databases and dropped with them; they must never enter the expectations
+    # file, and their presence in a long-lived DB is reportable but not a
+    # coverage failure.
+    CI_EPHEMERAL_PREFIXES = ("wr-conf-",)
+
     # ── Verify ───────────────────────────────────────────────────────
     results = []
-    unknown = sorted(db_roles - set(expectations))
+    unknown = sorted(
+        r
+        for r in db_roles - set(expectations)
+        if not r.startswith(CI_EPHEMERAL_PREFIXES)
+    )
     unseeded = sorted(set(expectations) - db_roles)
 
     for role, exp in sorted(expectations.items()):

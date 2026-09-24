@@ -115,8 +115,10 @@ function opencodeModelId(providerId: string, modelIdentifier: string, override?:
 }
 
 const KNOWN_EXECUTORS = new Set([
-  "planner", "builder", "reviewer", "analyst",
-  "critic", "inspector", "architect", "engineer", "engineer-ii", "engineer-iii", "leased-builder",
+  // keep in lockstep with typescript/harness-srv/src/governance.ts (port-canary
+  // doctrine: the twins must agree or the canary diff is lying)
+  "planner", "builder", "reviewer", "analyst", "analyst-ii",
+  "critic", "inspector", "architect", "engineer", "engineer-ii", "engineer-iii", "lead-engineer", "leased-builder",
   "watchdog",
 ]);
 
