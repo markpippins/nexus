@@ -55,4 +55,4 @@ jobs:
         env:
           CONDUIT_PG_DSN: postgresql://pguser:pgpass@localhost:5432/postgres
         run: |
-          python3 -m pytest python/nexus_core/wrp/tests/test_v201_bcrypt_write_guard_e2e.py -v
+          python3 -m pytest python/nexus_core/wrp/tests/test_v202_bcrypt_write_guard_e2e.py -v
