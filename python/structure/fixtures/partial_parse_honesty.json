@@ -1,0 +1,46 @@
+{
+  "fixture": "partial-parse-honesty",
+  "description": "The ruling's parse-honesty property as data: a partial parse MUST carry diagnostics naming what was not parsed. Comments, dynamic SQL, procedural bodies and extension syntax must never silently become false facts \u2014 and absence of a fact must never assert the construct does not exist.",
+  "observation": {
+    "observation_id": "783dc947c71d2194bed028b1640e874d7445907cf45f1b792bcb9b8bdfae818c",
+    "source_fact_id": "435158616e0637f2c8e34b492364bd965238383109d28477da8d77dd4c1467ca",
+    "source": {
+      "source_uri": "db/migrations/V179__procedural_backfill.sql",
+      "revision": "5b06e287",
+      "content_hash": "a57926a5d0cc1f238b189786c06804c277887a5725a6d5f0b5a6b02c42c00104",
+      "language": "sql",
+      "source_kind": "sql_migration"
+    },
+    "parser": {
+      "parser_identity": "structure-sql-parser",
+      "parser_revision": "v0.1.0",
+      "grammar_revision": "v0.1.0"
+    },
+    "anchor": {
+      "node_path": "ddl[1].do_block.anonymous",
+      "span": {
+        "start_line": 40,
+        "start_column": 1,
+        "end_line": 55,
+        "end_column": 11
+      }
+    },
+    "fact_kind": "operation",
+    "payload": {
+      "construct": "DO anonymous code block",
+      "statements_parsed": 0
+    },
+    "parse_status": "partial",
+    "diagnostics": [
+      {
+        "code": "unsupported_syntax",
+        "message": "PL/pgSQL procedural body is not covered by grammar v0.1.0; statements inside the block are not represented in this run's facts. Their absence is not evidence of the constructs' non-existence.",
+        "anchor": {
+          "node_path": "ddl[1].do_block.anonymous"
+        }
+      }
+    ],
+    "read_set_fingerprint": "43b33645afcae7ca34c9d1278daef864d5ee9e903a9cb3114572799d1e881662",
+    "authority_status": "non_authoritative"
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "fixture": "wellformed-table-observation",
+  "description": "One fully-provenanced, non-authoritative table observation pinned for S1 conformance. Both identities are real digests: source_fact_id pins the inspected location (parser-independent); observation_id pins what parser v0.1.0 under grammar v0.1.0 claimed over this read set.",
+  "observation": {
+    "observation_id": "50409d2ef184d5cfdee60722262e44baf41b07005a3cda225f865ec88979c9ee",
+    "source_fact_id": "37c2c36275b94680140682bb96a43d34754ed35a493b8f2cb5b97bbb81f92368",
+    "source": {
+      "source_uri": "db/migrations/V178__role_memory.sql",
+      "revision": "5b06e287",
+      "content_hash": "3f7a1c2e9b4d5f6a8c0b1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a",
+      "language": "sql",
+      "source_kind": "sql_migration"
+    },
+    "parser": {
+      "parser_identity": "structure-sql-parser",
+      "parser_revision": "v0.1.0",
+      "grammar_revision": "v0.1.0"
+    },
+    "anchor": {
+      "node_path": "ddl[0].create_table.role_memory",
+      "span": {
+        "start_line": 12,
+        "start_column": 1,
+        "end_line": 31,
+        "end_column": 2
+      }
+    },
+    "fact_kind": "table",
+    "payload": {
+      "name": "role_memory",
+      "columns": [
+        "id",
+        "key",
+        "value",
+        "recorded_at"
+      ]
+    },
+    "parse_status": "complete",
+    "read_set_fingerprint": "6d47f4bf61f73dcf86f27c07214281c23c91e5c60674da2cf80316d2b710bb97",
+    "authority_status": "non_authoritative"
+  }
+}
