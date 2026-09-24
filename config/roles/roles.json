@@ -8,24 +8,38 @@
     "nebulaCheck": true,
     "governance": true
   },
-  "roles": {
-    "analyst": {},
-    "architect": {},
+  "roles": {        "analyst": {},
+        "analyst-ii": {
+            "governance": true,
+            "_note": "Wave-1 clone of analyst (V175 lineage, 8df132d0): can_verify_work_requests=false, analyst-domain clone; registered live 2026-09-23"
+        },
+        "architect": {},
     "auditor": { "governance": false },
     "builder": {},
     "critic": {},
     "design-synthesist": { "harnessFile": false, "governance": false, "_note": "doctrine roundtable role (AGENTS.md R12): runs in interactive lease sessions; harness agent file deliberately absent" },
-    "devops": {},
-    "engineer": {},
-    "lead-engineer": {},
+    "devops": {},        "engineer": {},
+        "engineer-ii": {
+            "governance": true,
+            "_note": "Wave-1 clone of engineer (V175 lineage, 8df132d0): can_verify_work_requests=true, engineer-domain clone; registered live 2026-09-23"
+        },
+        "engineer-iii": {
+            "governance": true,
+            "_note": "fresh-role grant (engineer baseline clone, 8df132d0 lineage via PR #525): can_verify_work_requests=true; persona bridge separate open defect (957ead77)"
+        },
+        "lead-engineer": {},
     "layout-mechanic": { "harnessFile": false, "governance": false, "_note": "doctrine roundtable role (AGENTS.md R12): runs in interactive lease sessions; harness agent file deliberately absent" },
     "epistemologist": { "governance": false },
     "inspector": {},
     "operator": { "governance": false },
     "ontologist": { "harnessFile": false, "governance": false, "_note": "doctrine roundtable role (AGENTS.md R12): owns the resolution ontology (Concept/Representation freezes, e.g. V172 record 90bd3080); runs in interactive lease sessions; harness agent file deliberately absent" },
-    "planner": {},
-    "reviewer": {},
-    "supervisor": { "governance": false, "_note": "initial scope: role registration/configuration and doctrine + OpenCode projection regeneration; WorkRequest execution and receipt authority remain inactive until Conduit resumes" },
+    "planner": {},        "reviewer": {},
+        "sound-technician": {
+            "harnessFile": false,
+            "governance": false,
+            "_note": "doctrine roundtable role (AGENTS.md R12): runs in interactive lease sessions; harness agent file deliberately absent"
+        },
+        "supervisor": { "governance": false, "_note": "initial scope: role registration/configuration and doctrine + OpenCode projection regeneration; WorkRequest execution and receipt authority remain inactive until Conduit resumes" },
     "sysadmin": { "governance": false },
     "topologist": {},
     "DBA": { "nebulaCheck": true, "governance": false, "_note": "case variant: CHECK + harness file use lowercase 'dba'" },

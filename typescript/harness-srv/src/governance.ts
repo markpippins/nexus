@@ -40,8 +40,10 @@ const CONDUIT_MCP_URL = (process.env.CONDUIT_MCP_URL || "http://localhost:3100")
 // (T16) that does not own DAG nodes but does issue receipts. Roles
 // outside this set fall back to "builder" for the agent_role field.
 const KNOWN_EXECUTORS = new Set([
-  "planner", "builder", "reviewer", "analyst",
-  "critic", "inspector", "architect", "engineer", "engineer-ii", "devops", "topologist", "leased-builder",
+  // keep in lockstep with moleculer/nexus-broker harness.worker.ts (port-canary
+  // doctrine: the twins must agree or the canary diff is lying)
+  "planner", "builder", "reviewer", "analyst", "analyst-ii",
+  "critic", "inspector", "architect", "engineer", "engineer-ii", "engineer-iii", "lead-engineer", "devops", "topologist", "leased-builder",
   "tester",
   "watchdog",
 ]);
