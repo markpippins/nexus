@@ -1,0 +1,26 @@
+# Source of truth for ~/.config/systemd/user/users-bcrypt-drift.service
+#
+# Deploy:
+#   cp bin/users-bcrypt-drift.service ~/.config/systemd/user/
+#   cp bin/users-bcrypt-drift.timer   ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now users-bcrypt-drift.timer
+#
+# Why this file is in the repo: same doctrine as sdk-drift-stamp.service —
+# host-only units drift from the corpus (the 2026-09-21 helium probe incident,
+# where the deployed ExecStart was invisible to the repo for three days).
+#
+# The wrapper resolves the repo root from its own location, so any checkout
+# clone works. Exit 0 = clean or drift-found-and-recorded (the check did its
+# job); 2 = tool error (unreachable DB), visible in the journal.
+
+[Unit]
+Description=Users bcrypt enforcement drift check (V191/V201: plaintext census + CHECK/trigger presence)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/users_bcrypt_drift_wrap.py
+
+[Install]
+WantedBy=default.target
