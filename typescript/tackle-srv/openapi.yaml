@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: tackle-srv — Tackle Role Memory + Agent Orchestration
-  version: 1.0.b03fdca4
+  version: 1.0.2ef171a0
   description: 'Tackle role memory and orchestration: AI config, sessions, roles, scheduler, memory, prompts, tool access,
     failure recovery, tasks, and logs.
 
@@ -54,8 +54,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-      summary: Browsable surface over the V155/V156 statement-level audit categories (REGISTRY_AUDIT, NEBULA_AUDIT) stored
-        in tackle.system_logs. Every rou
+      summary: GET /audit-trail — filtered listing with bounded default page
   /audit-trail/recent:
     get:
       tags:

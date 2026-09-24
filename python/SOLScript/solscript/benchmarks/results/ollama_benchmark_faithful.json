@@ -1,0 +1,135 @@
+[
+  {
+    "id": "noul_001",
+    "type": "noul",
+    "kind": "NoulResult",
+    "detail": "P=1.0",
+    "status": "ok"
+  },
+  {
+    "id": "noul_002",
+    "type": "noul",
+    "kind": "NoulResult",
+    "detail": "P=0.0",
+    "status": "ok"
+  },
+  {
+    "id": "noul_003",
+    "type": "noul",
+    "kind": "NoulResult",
+    "detail": "P=1.0",
+    "status": "ok"
+  },
+  {
+    "id": "noul_004",
+    "type": "noul",
+    "kind": "NoulResult",
+    "detail": "P=1.0",
+    "status": "ok"
+  },
+  {
+    "id": "noul_005",
+    "type": "noul",
+    "kind": "NoulResult",
+    "detail": "P=0.9",
+    "status": "ok"
+  },
+  {
+    "id": "noul_006",
+    "type": "noul",
+    "kind": "NoulResult",
+    "detail": "P=0.0",
+    "status": "ok"
+  },
+  {
+    "id": "noul_007",
+    "type": "noul",
+    "kind": "NoulResult",
+    "detail": "P=0.9",
+    "status": "ok"
+  },
+  {
+    "id": "noul_008",
+    "type": "noul",
+    "kind": "NoulResult",
+    "detail": "P=0.9",
+    "status": "ok"
+  },
+  {
+    "id": "choice_001",
+    "type": "choice",
+    "kind": "ChoiceResult",
+    "detail": "top=drift_type1 probs={'drift_type1': 0.8, 'drift_type2': 0.2}",
+    "status": "ok"
+  },
+  {
+    "id": "choice_002",
+    "type": "choice",
+    "kind": "ChoiceResult",
+    "detail": "top=low probs={'low': 0.98, 'medium': 0.01, 'high': 0.01}",
+    "status": "ok"
+  },
+  {
+    "id": "choice_003",
+    "type": "choice",
+    "kind": "ChoiceResult",
+    "detail": "top=label1 probs={'label1': 0.6, 'label2': 0.4}",
+    "status": "ok"
+  },
+  {
+    "id": "choice_004",
+    "type": "choice",
+    "kind": "ChoiceResult",
+    "detail": "top=label1 probs={'label1': 0.9, 'label2': 0.1}",
+    "status": "ok"
+  },
+  {
+    "id": "choice_005",
+    "type": "choice",
+    "kind": "ChoiceResult",
+    "detail": "top=medium probs={'low': 0.1, 'medium': 0.6, 'high': 0.3}",
+    "status": "ok"
+  },
+  {
+    "id": "choice_006",
+    "type": "choice",
+    "kind": "ChoiceResult",
+    "detail": "top=success probs={'success': 0.75, 'failure': 0.25}",
+    "status": "ok"
+  },
+  {
+    "id": "score_001",
+    "type": "score",
+    "kind": "JevNonOutcomeResult",
+    "detail": "JevNonOutcomeResult(kind='unevaluable', reason='Failed to parse response as JSON: Expecting property name enclosed in do",
+    "status": "ok"
+  },
+  {
+    "id": "score_002",
+    "type": "score",
+    "kind": "ScoreResult",
+    "detail": "EV=0.8",
+    "status": "ok"
+  },
+  {
+    "id": "score_003",
+    "type": "score",
+    "kind": "ScoreResult",
+    "detail": "EV=0.9",
+    "status": "ok"
+  },
+  {
+    "id": "score_004",
+    "type": "score",
+    "kind": "ScoreResult",
+    "detail": "EV=0.7",
+    "status": "ok"
+  },
+  {
+    "id": "score_005",
+    "type": "score",
+    "kind": "ScoreResult",
+    "detail": "EV=0.95",
+    "status": "ok"
+  }
+]

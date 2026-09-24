@@ -24,6 +24,14 @@ Rules
                  HEAD) and bare uses: without @ fail. Major-tag pins
                  (@v4) are the house convention and pass; set
                  WF_LINT_REQUIRE_SHA=1 to require full 40-hex SHAs.
+  job-hardening  structural: every job carries timeout-minutes (GitHub's
+                 default 360 min means a wedged job holds a runner for
+                 hours) and every workflow declares a permissions block
+                 (least-privilege; house default is a top-level
+                 `contents: read` above jobs:). Findings anchor to the
+                 job header / on: line so the allow marker works there.
+                 Reusable-workflow caller jobs (job-level uses:) are
+                 exempt — GitHub rejects timeout-minutes on them.
 
 Escape hatch: '# wf-lint-allow' (bare) suppresses every rule for that
 line; '# wf-lint-allow: rule1,rule2' suppresses only the named rules;
@@ -31,8 +39,9 @@ line; '# wf-lint-allow: rule1,rule2' suppresses only the named rules;
 on the line. The postgres rule also honors its legacy '# pg-pin-allow'
 marker.
 
-Scope: postgres-pin / eol-runtime / action-ref scan .github/workflows
-YAML only; dead-base scans Dockerfiles anywhere under the target.
+Scope: postgres-pin / eol-runtime / action-ref / job-hardening scan
+.github/workflows YAML only; dead-base scans Dockerfiles anywhere under
+the target.
 Compose-file PG pins are host-stack concerns (fleet rulings R1/R3) and
 deliberately out of scope here.
 
@@ -41,6 +50,14 @@ Exit codes: 0 clean (warnings ok) | 1 violations | 2 usage error
 Usage:
   python3 bin/wf_lint.py [target] [--rule NAME ...] [--label LABEL]
                          [--list-rules]
+  python3 bin/wf_lint.py [target] [--rule NAME ...] --fix [--dry-run]
+
+--fix: rules that define a fix_file pass (structural rules — job-hardening
+today) auto-apply their remediations. A fix anchored to a line carrying an
+allow marker is suppressed exactly as the finding would be; non-fixable
+findings are reported untouched. The written diff IS the review surface.
+--dry-run previews without writing and exits 1 while fixes are pending.
+After a write, the tree is re-scanned: exit 0 only when nothing violates.
 """
 from __future__ import annotations
 
@@ -99,7 +116,14 @@ class Finding:
 
 
 class Rule:
-    """Base: a named line-scanner over a filtered file set."""
+    """Base: a named line-scanner over a filtered file set.
+
+    Most rules judge what is WRONG with individual lines (scan_line).
+    Rules that judge what a file is MISSING (missing blocks, missing
+    declarations) implement the optional scan_file hook instead — it
+    receives the whole file once, after the line pass, and anchors its
+    findings wherever is most useful (typically a block header).
+    """
 
     name = "rule"
 
@@ -108,6 +132,39 @@ class Rule:
 
     def scan_line(self, raw: str, rel: str, lineno: int) -> list[Finding]:
         raise NotImplementedError
+
+    def scan_file(self, rel: str, lines: list[str]) -> list[Finding]:
+        """Optional structural pass — default: no findings."""
+        return []
+
+    def fix_file(self, rel: str, lines: list[str]) -> list["Edit"]:
+        """Optional --fix pass — default: no fixes. Edits are computed against
+        the file as-read; the applier applies them in descending line order."""
+        return []
+
+
+class Edit:
+    """One auto-applied remediation from a rule's fix_file pass.
+
+    kind "insert": insert `text` immediately BEFORE 1-based line `lineno`
+    (len(lines)+1 appends). kind "replace": overwrite line `lineno`.
+    `anchor_lineno` is the line the parent finding anchored to — the applier
+    suppresses the fix when that line carries an allow marker for `rule`,
+    mirroring scan-time suppression. All edits are computed against the
+    original file, then applied in descending line order so earlier
+    positions never shift (the index-staleness failure mode of ad-hoc
+    fixers, designed out here).
+    """
+
+    __slots__ = ("kind", "lineno", "text", "reason", "rule", "anchor_lineno")
+
+    def __init__(self, kind: str, lineno: int, text: str, reason: str, rule: str, anchor_lineno: int):
+        self.kind = kind
+        self.lineno = lineno
+        self.text = text
+        self.reason = reason
+        self.rule = rule
+        self.anchor_lineno = anchor_lineno
 
 
 # --------------------------------------------------------------------------
@@ -316,6 +373,8 @@ class ActionRefRule(Rule):
         if not m:
             return []
         action, ref = m.group(1), m.group(2)
+        if action.startswith(("./", "../")):
+            return []  # local action / reusable-workflow ref: @ref not applicable by design
         if not ref:
             return [Finding(
                 "violation", rel, lineno, self.name,
@@ -332,6 +391,195 @@ class ActionRefRule(Rule):
                 f"`uses: {action}@{ref}` is not a full 40-hex SHA (WF_LINT_REQUIRE_SHA=1)",
             )]
         return []
+
+
+# --------------------------------------------------------------------------
+# rule: job-hardening (structural — the first scan_file rule)
+# --------------------------------------------------------------------------
+
+# Job headers are the second indent level under `jobs:`; every GitHub
+# workflow in the house style uses 2-space indents, so the first
+# non-comment entry under jobs: fixes the expected depth and any
+# shallower key (on:, name:, permissions:) ends the block.
+KEY_RE = re.compile(r"^(\s*)([A-Za-z0-9_-]+):\s*(?:#.*)?$")      # block keys (empty value)
+VALKEY_RE = re.compile(r"^(\s*)([A-Za-z0-9_-]+):(?:\s.*)?$")     # keys w/ scalar value
+
+
+class JobHardeningRule(Rule):
+    """Every job: timeout-minutes; every file: a permissions block.
+
+    Structural by nature (missing blocks), so it runs as one pass per
+    file via scan_file. Anchoring: timeout findings point at the job
+    header line, the missing-permissions finding at the `on:` line —
+    which keeps the per-line allow marker usable on the anchor line.
+    Caller jobs (job-level uses:) are exempt from the timeout check:
+    GitHub rejects timeout-minutes on reusable-workflow calls.
+    """
+
+    name = "job-hardening"
+
+    def applies(self, rel: str, filename: str, target: str) -> bool:
+        return _in_workflows(rel, target) and filename.endswith((".yml", ".yaml"))
+
+    def scan_line(self, raw: str, rel: str, lineno: int) -> list[Finding]:
+        return []  # structural rule: judges missing blocks via scan_file only
+
+    def scan_file(self, rel: str, lines: list[str]) -> list[Finding]:
+        out: list[Finding] = []
+        # Only judge what GitHub would actually run: a file with no trigger
+        # (on: / true:) is rejected by GitHub outright, so scratch fixtures
+        # and malformed files are out of scope for the whole rule.
+        # VALKEY_RE (not KEY_RE) — triggers usually carry a value: `on: push`.
+        if not (
+            _has_top_level_key(lines, "on")
+            or _has_top_level_key(lines, "true")
+            or _has_top_level_key(lines, "true:")
+        ):
+            return []
+        jobs = _locate_jobs(lines)
+        for name, header_idx, job_indent, uses_key, block in jobs:
+            if uses_key:
+                continue  # reusable-workflow caller: timeout-minutes forbidden
+            if not _has_job_key(block, job_indent, "timeout-minutes"):
+                out.append(Finding(
+                    "violation", rel, header_idx + 1, self.name,
+                    f"job `{name}` has no timeout-minutes (GitHub default is 360 — "
+                    f"a wedged job holds a runner for hours); add `timeout-minutes: 10` "
+                    f"under {name}:",
+                ))
+        # Least-privilege gate: a top-level permissions block is the house
+        # style, but per-job permissions on EVERY job pins the token just as
+        # fully — only a workflow with neither is violating.
+        if not _has_top_level_key(lines, "permissions") and not (
+            jobs
+            and all(
+                _has_job_key(body, indent, "permissions")
+                for _name, _idx, indent, _uses, body in jobs
+            )
+        ):
+            on_idx = next(
+                (
+                    i
+                    for i, l in enumerate(lines)
+                    if (m := VALKEY_RE.match(l)) and m.group(1) == "" and m.group(2) in ("on", "true")
+                ),
+                0,
+            )
+            out.append(Finding(
+                "violation", rel, on_idx + 1, self.name,
+                "workflow declares no permissions block — jobs inherit the token's "
+                "default scope; add a top-level `permissions: contents: read` "
+                "(house convention) above jobs:",
+            ))
+        return out
+
+    def fix_file(self, rel: str, lines: list[str]) -> list[Edit]:
+        """Auto-remediate the same violations scan_file finds.
+
+        timeout-minutes: inserted directly under each offending job header at
+        the job's own indent (10 minutes — house default; raise for heavy
+        jobs in review). permissions: a top-level contents: read block
+        directly above jobs: (house convention). The permissions fix
+        intentionally narrows the default token scope — review the diff to
+        confirm no job relied on write scopes (none do in this repo as of
+        #507). Anchors mirror scan_file so allow markers suppress fixes on
+        the same lines they suppress findings.
+        """
+        edits: list[Edit] = []
+        if not (
+            _has_top_level_key(lines, "on")
+            or _has_top_level_key(lines, "true")
+            or _has_top_level_key(lines, "true:")
+        ):
+            return []
+        jobs = _locate_jobs(lines)
+        for name, header_idx, job_indent, uses_key, block in jobs:
+            if uses_key:
+                continue  # GitHub rejects timeout-minutes on caller jobs
+            if not _has_job_key(block, job_indent, "timeout-minutes"):
+                edits.append(Edit(
+                    "insert", header_idx + 2,
+                    f"{' ' * (job_indent + 2)}timeout-minutes: 10\n",
+                    f"job `{name}` had no timeout-minutes",
+                    self.name, header_idx + 1,
+                ))
+        if not _has_top_level_key(lines, "permissions") and not (
+            jobs
+            and all(
+                _has_job_key(body, indent, "permissions")
+                for _n, _i, indent, _u, body in jobs
+            )
+        ):
+            ji = next(
+                (i for i, l in enumerate(lines)
+                 if (m := KEY_RE.match(l)) and m.group(1) == "" and m.group(2) == "jobs"),
+                None,
+            )
+            if ji is not None:
+                on_anchor = next(
+                    (i + 1 for i, l in enumerate(lines)
+                     if (m := VALKEY_RE.match(l)) and m.group(1) == "" and m.group(2) in ("on", "true")),
+                    1,
+                )
+                edits.append(Edit(
+                    "insert", ji + 1,
+                    "permissions:\n  contents: read\n\n",
+                    "workflow had no permissions block — added top-level contents: read",
+                    self.name, on_anchor,
+                ))
+        return edits
+
+
+def _locate_jobs(lines: list[str]) -> list[tuple[str, int, int, bool, list[str]]]:
+    """Return (name, header_idx, job_indent, is_caller, body_lines) per job."""
+    ji = next((i for i, l in enumerate(lines) if KEY_RE.match(l) and l.split(":")[0].strip() == "jobs"), None)
+    if ji is None:
+        return []
+    job_indent = None
+    jobs: list[tuple[str, int, int, bool, list[str]]] = []
+    for i in range(ji + 1, len(lines)):
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        ind = len(lines[i]) - len(lines[i].lstrip())
+        if job_indent is None:
+            job_indent = ind
+        if ind == job_indent:
+            m = KEY_RE.match(lines[i])
+            if not m:
+                break
+            jobs.append((m.group(2), i, job_indent, False, []))
+        elif ind < job_indent:
+            break
+    # second pass: fill bodies + detect job-level uses: (reusable-workflow call)
+    for k, (name, idx, indent, _uses, _body) in enumerate(jobs):
+        end = jobs[k + 1][1] if k + 1 < len(jobs) else len(lines)
+        body = lines[idx + 1:end]
+        uses = any(
+            (m := VALKEY_RE.match(l)) and len(m.group(1)) == indent + 2
+            and m.group(2) == "uses"
+            for l in body
+        )
+        jobs[k] = (name, idx, indent, uses, body)
+    return jobs
+
+
+def _has_job_key(body: list[str], job_indent: int, key: str) -> bool:
+    """True when a direct child of the job sets `key` (job-level, not nested)."""
+    want = " " * (job_indent + 2)
+    return any(
+        (m := VALKEY_RE.match(l)) and m.group(1) == want and m.group(2) == key
+        for l in body
+    )
+
+
+def _has_top_level_key(lines: list[str], key: str) -> bool:
+    """True when `key` appears as a zero-indent top-level key (value optional:
+    VALKEY_RE, so both `on:` and `on: push` count)."""
+    return any(
+        (m := VALKEY_RE.match(l)) and m.group(1) == "" and m.group(2) == key
+        for l in lines
+    )
 
 
 # --------------------------------------------------------------------------
@@ -370,6 +618,7 @@ RULES: list[Rule] = [
     DeadBaseRule(),
     EolRuntimeRule(),
     ActionRefRule(),
+    JobHardeningRule(),
 ]
 
 
@@ -389,6 +638,15 @@ def scan(target: str, rules: list[Rule]) -> tuple[list[Finding], int]:
             except OSError as exc:
                 findings.append(Finding("warning", rel, 0, "harness", f"unreadable ({exc})"))
                 continue
+            # structural pass: rules that judge missing blocks, not bad lines
+            # (base Rule.scan_file is a no-op default — harmless to call)
+            for rule in applicable:
+                for finding in rule.scan_file(rel, lines):
+                    anchor = lines[finding.lineno - 1] if 0 < finding.lineno <= len(lines) else ""
+                    if _suppressed(anchor, rule.name):
+                        allowed += 1
+                        continue
+                    findings.append(finding)
             for lineno, raw in enumerate(lines, start=1):
                 if raw.strip().startswith("#"):
                     continue  # whole-line comment
@@ -403,9 +661,64 @@ def scan(target: str, rules: list[Rule]) -> tuple[list[Finding], int]:
     return findings, allowed
 
 
+def _apply_edits(path: str, lines: list[str], edits: list[Edit]) -> None:
+    """Apply one file's edits (computed against the as-read lines) in
+    descending line order so earlier positions never shift."""
+    for edit in sorted(edits, key=lambda e: e.lineno, reverse=True):
+        if edit.kind == "insert":
+            idx = min(max(edit.lineno - 1, 0), len(lines))
+            if idx == len(lines) and lines and not lines[-1].endswith("\n"):
+                lines[-1] += "\n"  # never glue a fix onto an unterminated line
+            lines.insert(idx, edit.text)
+        elif edit.kind == "replace":
+            if 1 <= edit.lineno <= len(lines):
+                lines[edit.lineno - 1] = edit.text
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.writelines(lines)
+
+
+def apply_fixes(target: str, rules: list[Rule], write: bool = True) -> tuple[int, int]:
+    """Run every rule's fix_file pass; write when `write` (dry-run previews).
+
+    Returns (applied, suppressed). Edits anchored to allow-marker lines are
+    suppressed exactly as their findings would be. Unreadable files are
+    skipped silently — scan() reports them.
+    """
+    applied = suppressed = 0
+    for dirpath, _dirnames, filenames in sorted(os.walk(target)):
+        for filename in sorted(filenames):
+            path = os.path.join(dirpath, filename)
+            rel = os.path.relpath(path, target).replace(os.sep, "/")
+            applicable = [r for r in rules if r.applies(rel, filename, target)]
+            if not applicable:
+                continue
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    lines = fh.readlines()
+            except OSError:
+                continue
+            edits: list[Edit] = []
+            for rule in applicable:
+                for edit in rule.fix_file(rel, lines):
+                    anchor = (
+                        lines[edit.anchor_lineno - 1]
+                        if 0 < edit.anchor_lineno <= len(lines) else ""
+                    )
+                    if _suppressed(anchor, edit.rule):
+                        suppressed += 1
+                        continue
+                    edits.append(edit)
+            if edits:
+                if write:
+                    _apply_edits(path, lines, edits)
+                applied += len(edits)
+    return applied, suppressed
+
+
 def main(argv: list[str]) -> int:
     target = DEFAULT_DIR
     label = "wf-lint"
+    fix = dry_run = False
     selected: list[str] = []
     i = 0
     args = argv[1:]
@@ -427,6 +740,10 @@ def main(argv: list[str]) -> int:
             for rule in RULES:
                 print(rule.name)
             return 0
+        elif arg == "--fix":
+            fix = True
+        elif arg == "--dry-run":
+            dry_run = True
         elif arg.startswith("-"):
             print(f"wf-lint: unknown option: {arg}", file=sys.stderr)
             return 2
@@ -450,6 +767,15 @@ def main(argv: list[str]) -> int:
         print(f"{label}: unknown rule(s): {', '.join(sorted(unknown))} — see --list-rules", file=sys.stderr)
         return 2
 
+    if dry_run and not fix:
+        print(f"{label}: --dry-run only makes sense with --fix", file=sys.stderr)
+        return 2
+
+    applied = 0
+    suppressed = 0
+    if fix:
+        applied, suppressed = apply_fixes(target, rules, write=not dry_run)
+
     findings, allowed = scan(target, rules)
     violations = [f for f in findings if f.severity == "violation"]
     warnings = [f for f in findings if f.severity == "warning"]
@@ -466,6 +792,14 @@ def main(argv: list[str]) -> int:
         f"{label}: {len(violations)} violation(s), {len(warnings)} warning(s), "
         f"{allowed} allow-marker line(s) — rules: {rule_names}{standard}"
     )
+    if fix:
+        verb = "would apply" if dry_run else "applied"
+        print(
+            f"{label}: {verb} {applied} fix(es), {suppressed} fix(es) suppressed "
+            f"by allow markers"
+        )
+        if dry_run and applied:
+            return 1  # signal: fixes are pending
     return 1 if violations else 0
 
 

@@ -25,6 +25,7 @@ jobs:
   close-code-v185:
     name: "wr-conf-038: V185 close-code vocabulary E2E"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     services:
       postgres:
         image: postgres:17

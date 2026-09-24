@@ -38,7 +38,20 @@ RUN --mount=type=cache,target=/root/.m2 mvn -B -q -f spring/peb-kernel/pom.xml i
 # Standalone nexus-core reactor — parent POM resolves from Central.
 COPY spring/nexus-core/ spring/nexus-core/
 WORKDIR /build/spring/nexus-core
-RUN --mount=type=cache,target=/root/.m2 mvn -B clean package -DskipTests -q \
+# Re-install shared + peb-kernel INSIDE this step before packaging.
+#
+# Why: the earlier install RUNs above can be CACHED-skipped by BuildKit,
+# and a skipped RUN performs NO cache-mount writes. GitHub runners are
+# ephemeral, so the /root/.m2 cache mount is cold on every run — a PR that
+# invalidates the COPY layers (any file under spring/nexus-core/**, e.g.
+# regenerated API.md) then re-executes ONLY this step and dies with
+# "Could not find artifact com.aibizarchitect.nexus:core:jar:0.1.0-SNAPSHOT"
+# (exposed by PR #500; main's green runs were full cache hits and never
+# exercised the path). These installs are idempotent — they succeed and
+# install the artifacts whether the mount is cold or already warm.
+RUN --mount=type=cache,target=/root/.m2 mvn -B -q -f /build/shared/pom.xml install -DskipTests \
+ && mvn -B -q -f /build/spring/peb-kernel/pom.xml install -DskipTests \
+ && mvn -B clean package -DskipTests -q \
  && JAR=$(ls nexus-core-app/target/*.jar | grep -v original | head -1) \
  && ln -s "$(basename "$JAR")" nexus-core-app/target/app.jar
 

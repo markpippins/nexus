@@ -21,7 +21,12 @@ import json
 import os
 import re
 
-ROOT = "/home/codex/dev/nexus"
+HERE = os.path.dirname(os.path.abspath(__file__))
+# Derived from __file__ (same convention as check_drift.py): a hardcoded path
+# to the primary checkout silently extracted the WRONG TREE when the tool ran
+# from a worktree — every work exists in nexus-worktrees/, so apidocs regen
+# validated main's routes, not the branch's (found remediating PR #500 CI).
+ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 
 VERB_RE = re.compile(r"\.(get|post|put|patch|delete)\s*\(\s*['\"`]")
 USE_RE = re.compile(r"\.use\s*\(\s*['\"`]([^'\"`]+)['\"`]\s*,\s*([A-Za-z_$][\w$]*(?:\s*\([^)]*\))?)")

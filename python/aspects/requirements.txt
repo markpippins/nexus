@@ -1,0 +1,7 @@
+# Runtime requirements for the aspects governed layer.
+#
+# asyncpg is the binding port's driver (binding_port.py): required to
+# create connection pools against the nexus database. Proven minimum
+# 0.29 (matches python/substance/requirements.txt); 0.31.0 verified
+# end-to-end against the live DB (engineer record 457a2eea).
+asyncpg>=0.29

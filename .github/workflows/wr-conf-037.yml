@@ -24,6 +24,7 @@ jobs:
   calendar-consolidate:
     name: "wr-conf-037: calendar consolidation intake E2E"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     services:
       postgres:
         image: postgres:17

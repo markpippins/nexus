@@ -48,6 +48,13 @@ model TagBinding {
   expression_observation_id?: string;
   status: BindingStatus;
   bound_by?: string;
+  /** Who made the approve/reject decision; present exactly when status is
+   * approved or rejected (decision-coherence CHECK in V199). Expiry is
+   * lifecycle, not a decision, so expired rows carry none. */
+  decided_by?: string;
+  decided_at?: utcDateTime;
+  /** Free-text rationale recorded with the decision (governance surface). */
+  decision_note?: string;
   created_at: utcDateTime;
   expired_at?: utcDateTime;
 }

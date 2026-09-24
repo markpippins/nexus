@@ -22,9 +22,13 @@ on:
     branches: [main, master, feature/*]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   v192-blackboard-e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     services:
       postgres:

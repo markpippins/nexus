@@ -31,6 +31,7 @@ jobs:
   v187-view-demotion:
     name: "wr-conf-040: V187 view demotion E2E"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     services:
       postgres:
         image: postgres:17

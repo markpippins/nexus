@@ -5,12 +5,12 @@ No database, no network — three in-repo files are compared:
 
   PIN   the sql/*.sql migration carrying the ROLE-VOCAB PIN marker
         (the marker-designated in-repo authority; currently
-        V197__role_vocabulary_widening_engineer_iii.sql — the marker
-        MOVED there from V190 per the widening recipe)
+        V200__add_supervisor_role.sql — the marker moved there from
+        V197 per the widening recipe)
   BOOT  sql/ci-bootstrap/nexus-ci-bootstrap.sql's agent_records_role_check
   SWAP  the pin migration's own swap DDL (pin == swap-target consistency)
 
-Pins the contract from R1 e9711b15 (amended 2026-09-23, V197):
+Pins the contract from R1 e9711b15 (amended 2026-09-23, V200):
 
   P1  bootstrap CHECK literals == pin literals  (born-clean: every fresh
       deploy carries the authoritative vocabulary at birth)
@@ -20,8 +20,8 @@ Pins the contract from R1 e9711b15 (amended 2026-09-23, V197):
       unique; a future widening migration must move the marker, not add
       a second one)
   P4  the pin carries the ratified-12 trio (ontologist / lead-engineer /
-      sound-technician) and engineer-iii (the V197 widening) — catches
-      an accidental pin regression to a stale list
+      sound-technician), engineer-iii, and supervisor — catches an
+      accidental pin regression to a stale list
   P5  the bootstrap CHECK literally names agent_records_role_check on
       nebula.agent_records_history (guards against renames silently
       orphaning this suite)
@@ -120,9 +120,9 @@ class Parity(unittest.TestCase):
         for role in ("ontologist", "lead-engineer", "sound-technician"):
             self.assertIn(role, pin,
                           "pin lost a ratified-12 role — G1 regression")
-        # V197 widening (2026-09-23): engineer-iii must be present.
-        self.assertIn("engineer-iii", pin,
-                      "pin lost engineer-iii — V197 widening regression")
+        # V197/V200 widenings (2026-09-23): these roles must be present.
+        for role in ("engineer-iii", "supervisor"):
+            self.assertIn(role, pin, f"pin lost {role} — role-vocabulary regression")
 
     # ── P2 detail: the swap DDL must include the newest widening ──
     def test_swap_ddl_matches_pin(self):
@@ -148,7 +148,7 @@ class Parity(unittest.TestCase):
     def test_exactly_one_pin_marker_repo_wide(self):
         self.assertEqual(
             [os.path.relpath(self.pin_path, _REPO_ROOT)],
-            ["sql/V197__role_vocabulary_widening_engineer_iii.sql"],
+            ["sql/V200__add_supervisor_role.sql"],
             "ROLE-VOCAB PIN marker home changed — update this assertion when "
             "the marker moves again",
         )

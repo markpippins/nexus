@@ -5,7 +5,7 @@
 
 Canonical asset graph: systems, subsystems, features, documents, harvests, agent records, projections, knowledge graph, and cross-references.
 
-**226 endpoints** — inventory generated from source route registrations (`nexus/tools/api-docs/`).
+**227 endpoints** — inventory generated from source route registrations (`nexus/tools/api-docs/`).
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -31,6 +31,7 @@ Canonical asset graph: systems, subsystems, features, documents, harvests, agent
 | GET | `/api/artifact-provenance/:id` | GET /api/artifact-provenance/:id — detail |
 | GET | `/api/assessments` | ASSESSMENTS GET /api/assessments — list with pagination |
 | GET | `/api/assessments/:id` | GET /api/assessments/:id — single assessment |
+| GET | `/api/attestations` | 84ca2388 — canonical rows are record_type=assessment with type:approval + status:done; legacy rows carry type:attestation. Intent/status-update/finding records never qualify, so the gate's match is exact and index-backed (GIN on tags, migration 055) instead of a bounded newest-N scan. Tester role is |
 | GET | `/api/audit` | GET /api/audit — list all audit files with pagination |
 | GET | `/api/audit/:id` | GET /api/audit/:id — get single audit file with content |
 | POST | `/api/audit/:id/regenerate` | POST /api/audit/:id/regenerate — re-read this specific file from disk into DB |
@@ -244,19 +245,6 @@ python3 tools/api-docs/gen_openapi.py --inventory /tmp/api_inventory.json   # (v
 ```
 
 <!-- API-SPEC-BEGIN -->
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 ---
 

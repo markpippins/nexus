@@ -185,6 +185,9 @@ class PortLifecycleTests(IsolatedAsyncioTestCase):
                 "bound_by": "engineer",
                 "created_at": datetime(2026, 9, 21, tzinfo=timezone.utc),
                 "expired_at": datetime(2026, 9, 22, tzinfo=timezone.utc),
+                "decided_by": None,
+                "decided_at": None,
+                "decision_note": None,
             },
             {                                            # governed tag detail read
                 "name": "To Architect",

@@ -145,6 +145,78 @@ def fetch_agent_records(
     return data if isinstance(data, list) else []
 
 
+def fetch_attestations(
+    http_get: Callable[[str], Any],
+    pr_number: int,
+    base_url: str = NEBULA_BASE,
+) -> Optional[List[Dict[str, Any]]]:
+    """Exact, indexed attestation lookup (nebula GET /api/attestations?pr=N).
+
+    Returns the attestation-shaped tester rows for this PR, newest first, or
+    None when the endpoint is unavailable (old server, error, unexpected
+    shape) so the caller can fall back to the bounded scan. Never raises.
+    """
+    url = f"{base_url}/api/attestations?pr={pr_number}"
+    try:
+        data = http_get(url)
+    except Exception:
+        return None
+    if isinstance(data, dict) and isinstance(data.get("items"), list):
+        return data["items"]
+    return None
+
+
+def fetch_tester_pr_mentions(
+    http_get: Callable[[str], Any],
+    pr_number: int,
+    base_url: str = NEBULA_BASE,
+) -> List[Dict[str, Any]]:
+    """Newest few tester records carrying the pr:<N> tag (any shape) — used
+    only to make 'no attestation' refusals self-explaining. Indexed via the
+    same GIN tags index; never raises."""
+    url = f"{base_url}/api/agent-records?role=tester&tag=pr:{pr_number}&limit=3"
+    try:
+        data = http_get(url)
+    except Exception:
+        return []
+    if isinstance(data, dict) and isinstance(data.get("items"), list):
+        return data["items"]
+    return []
+
+
+def attestation_check(
+    http_get: Callable[[str], Any],
+    pr_number: int,
+    head_date_ms: Optional[int],
+) -> Tuple[bool, str]:
+    """Gate 3 lookup, exact by preference: the indexed /api/attestations
+    endpoint when available (server-side shape filter + GIN tags index),
+    bounded-scan fallback otherwise. Both paths share the client-side
+    shape + freshness rules in evaluate_attestation()."""
+    rows = fetch_attestations(http_get, pr_number)
+    if rows is not None:
+        ok, detail = evaluate_attestation(rows, pr_number, head_date_ms)
+        if not rows:
+            detail = (
+                f"no attestation-shaped tester record for PR #{pr_number} "
+                "(indexed lookup)"
+            )
+            mentions = fetch_tester_pr_mentions(http_get, pr_number)
+            if mentions:
+                ids = ", ".join(str(r.get("id"))[:8] for r in mentions[:3])
+                detail += (
+                    f" — tester records mentioning the PR: {ids} — none "
+                    "carries an attestation marker (type:attestation tag, "
+                    "or recordType=assessment with type:approval+status:done)"
+                )
+        else:
+            detail += " (indexed lookup)"
+        return ok, detail
+    records = fetch_agent_records(http_get)
+    ok, detail = evaluate_attestation(records, pr_number, head_date_ms)
+    return ok, detail + " (scan fallback: /api/attestations unavailable)"
+
+
 def attestation_mentions_pr(record: Dict[str, Any], pr_number: int) -> bool:
     """Match convention: pr:<N> tag, or '#<N>' with a word boundary in
     title/content (so #48 does not match PR #487)."""
@@ -292,8 +364,7 @@ def evaluate(
     att_ok, att_detail = False, ""
     try:
         head_ms = fetch_head_commit_date_ms(pr_number, run_json)
-        records = fetch_agent_records(http_get)
-        att_ok, att_detail = evaluate_attestation(records, pr_number, head_ms)
+        att_ok, att_detail = attestation_check(http_get, pr_number, head_ms)
     except Exception as exc:  # fail closed on any lookup failure
         att_detail = f"attestation lookup failed: {exc!r} (fail closed)"
     if bypassed and not att_ok:
