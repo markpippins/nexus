@@ -1,0 +1,25 @@
+# Source of truth for ~/.config/systemd/user/pg-logging-check.service
+#
+# Deploy:
+#   cp bin/pg-logging-check.service ~/.config/systemd/user/
+#   cp bin/pg-logging-check.timer   ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now pg-logging-check.timer
+#
+# Why this file is in the repo: host-only units drift from the corpus
+# (the 2026-09-21 helium probe incident). ExecStart resolves the wrapper
+# through the repo working tree so merges deploy themselves.
+#
+# Environment overrides (all optional): PGLOGGING_VD_SSH (ssh host alias
+# for vanadium, default "vanadium"), PGLOGGING_TI_LOGDIR.
+
+[Unit]
+Description=Nightly pg-logging integrity check: yesterday's pglogs file present with attributed DDL on both R9 legs (titanium local, vanadium ssh)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/dev/nexus/bin/pg_logging_check_wrap.py
+TimeoutStartSec=420
+
+[Install]
+WantedBy=default.target

@@ -48,3 +48,18 @@ at `/home/codex/pg-backups/titanium/`, outside the container).
   separate compose project (`/home/codex/nexus/docker/vanadium-ci`).
 - One-shot procedure: titanium's in-data detour (data dir is 0700) was skipped —
   this host went straight to the dedicated-volume topology.
+
+## Amendment 2026-09-24 — rotation-size pin + nightly integrity check
+`log_rotation_size=0` pinned via ALTER SYSTEM (was the 10MB default): with
+`log_filename=postgresql-%Y-%m-%d.log`, size-based rotation would otherwise
+split a day across `postgresql-<date>.log` and `postgresql-<date>.log.1`
+(and <date>.log could hold a previous day's tail), breaking the
+one-file-per-day rule the nightly checker relies on. Reloaded live with
+`pg_reload_conf()` (no restart needed — reloadable GUC).
+
+Enforcement: `bin/pg-logging-check.timer` (nightly 06:40 UTC) runs
+`bin/check_pg_logging.py` — verifies yesterday's file exists with DDL lines
+carrying the attribution prefix on BOTH R9 legs (titanium local, vanadium
+ssh) plus a live attribution probe, filing green-heartbeat records on the
+`series:pg-logging` tag (wrapper `bin/pg_logging_check_wrap.py`, same
+contract as the other drift timers).

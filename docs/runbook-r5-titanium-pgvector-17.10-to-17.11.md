@@ -194,3 +194,12 @@ The 17.10→17.11 bump is **live as of 2026-09-24 ~19:59 UTC** (recreate under t
 - `ALTER SYSTEM` (auto.conf, pre-change backup retained at `postgresql.auto.conf.pre-logging.bak-20260924T1945Z`, 353B): `logging_collector=on`, `log_directory=pglogs`, daily filename, `log_truncate_on_rotation=on`, attribution prefix `%m [%p] db=%d user=%u app=%a client=%h`, `log_statement=ddl` (re-anchored), `log_file_mode=0644`.
 - Attribution proven live: three tagged probes (`ddl-attribution-probe`, `-v2`, `-v3`) logged CREATE/COMMENT/DROP with db/user/app/client — grep-able from the host at `/home/codex/dev/pgsql/pglogs/`.
 - Container is compose-managed again (labels restored after the intermediate manual recreate); rollback: `docker rm -f pgvector_db && docker tag pgvector-local:pg17.10-rollback-20260923 pgvector/pgvector:pg17` (or run the pinned ID) + `ALTER SYSTEM RESET` per setting + restart.
+
+## Amendment 2026-09-24 — rotation-size pin + nightly integrity check
+`log_rotation_size=0` pinned via ALTER SYSTEM (was the 10MB default), so
+`log_filename=postgresql-%Y-%m-%d.log` yields exactly one file per UTC day —
+the precondition for `bin/check_pg_logging.py` (pg-logging-check.timer,
+06:40 UTC nightly), which verifies yesterday's pglogs file and its
+DDL-attribution lines on both R9 legs (titanium local + vanadium ssh) and
+files `series:pg-logging` heartbeat records. Reloaded live; see the
+vanadium runbook amendment for the two-host detail.
