@@ -5,7 +5,10 @@
 FROM node:20-bookworm AS build
 WORKDIR /app/nebula-srv
 COPY nebula-srv/package.json ./
-RUN npm install --no-package-lock
+COPY nebula-srv/package-lock.json ./
+# npm ci: installs exactly the committed lock (#518) — reproducible, and it
+# fails loudly if the lock ever drifts from package.json.
+RUN npm ci --no-audit --no-fund
 COPY nebula-srv/tsconfig.json ./
 COPY nebula-srv/src ./src
 COPY nebula-srv/migrations ./migrations

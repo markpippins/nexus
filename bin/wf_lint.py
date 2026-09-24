@@ -32,6 +32,21 @@ Rules
                  job header / on: line so the allow marker works there.
                  Reusable-workflow caller jobs (job-level uses:) are
                  exempt — GitHub rejects timeout-minutes on them.
+  npm-ci         `npm install` is non-reproducible wherever a committed
+                 package-lock.json applies, and lockfile adoption (#518)
+                 is opt-in per service — so enforcement is exactly as
+                 opt-in: the rule only fires where a lock exists. There:
+                 workflows fail when a run block executes `npm install`
+                 with an effective working-directory (step-level
+                 working-directory:, the job's defaults.run one, or an
+                 in-block `cd`) holding a lock; Dockerfiles fail when an
+                 `npm install` RUN's effective dir (last `cd` on the
+                 chain, else the Dockerfile's own dir) is lock-bearing —
+                 remediation is `COPY package-lock.json` + `npm ci`.
+                 Exempt: `-g/--global` (no project manifest) and
+                 `--package-lock-only` (deliberate lock regeneration).
+                 `npm i` shorthand is not recognized (house code writes
+                 the long form).
 
 Escape hatch: '# wf-lint-allow' (bare) suppresses every rule for that
 line; '# wf-lint-allow: rule1,rule2' suppresses only the named rules;
@@ -41,7 +56,10 @@ marker.
 
 Scope: postgres-pin / eol-runtime / action-ref / job-hardening scan
 .github/workflows YAML only; dead-base scans Dockerfiles anywhere under
-the target.
+the target; npm-ci judges both surfaces (workflow run blocks with
+working-directory/cd resolution, and Dockerfile RUNs with build-context
+lock resolution — repo-side approximation of the build context, since
+the actual -f/--context flags are unknowable from the files alone).
 Compose-file PG pins are host-stack concerns (fleet rulings R1/R3) and
 deliberately out of scope here.
 
@@ -583,6 +601,209 @@ def _has_top_level_key(lines: list[str], key: str) -> bool:
 
 
 # --------------------------------------------------------------------------
+# rule: npm-ci (lockfile-aware install policy)
+# --------------------------------------------------------------------------
+
+NPM_INSTALL_RE = re.compile(r"\bnpm\s+install\b")
+# Real global flags anywhere in the command (-g / --global as standalone
+# tokens). Must NOT match arbitrary dashed tokens that merely contain a 'g'
+# (the first draft `-\S*g\S*` exempted `--no-package-lock` — caught by the
+# nebula-srv fixture before it shipped).
+NPM_INSTALL_GLOBAL_RE = re.compile(r"(?:^|\s)(?:-g|--global)(?:\s|$)")
+# `cd` after line start, a shell chain operator, an inline `run:`/`RUN` prefix
+# (case-insensitive covers both YAML and Dockerfile spellings). NOT after
+# `npm run <script>` — the \b and required cd make that a non-match.
+CD_RE = re.compile(r"(?:^|[;&|]|\brun\s*:?\s)\s*cd\s+(\S+)", re.I)
+RUN_BLOCK_RE = re.compile(r"^(\s*)(?:-\s+)?run:\s*(\|)?")
+WD_RE = re.compile(r"^\s*(?:-\s+)?working-directory:\s*['\"]?([^'\"\s#]+)")
+STEPS_KEY_RE = re.compile(r"^\s*steps:\s*$")
+STEP_ITEM_RE = re.compile(r"^\s*-\s+([A-Za-z_-]+)\s*:")
+LOCKFILE = "package-lock.json"
+
+
+def _npm_install_exempt(raw: str) -> bool:
+    """Global installs touch no project manifest; --package-lock-only IS the
+    lock-regeneration flow. Both are legitimate `npm install` uses."""
+    return bool(NPM_INSTALL_GLOBAL_RE.search(raw)) or "--package-lock-only" in raw
+
+
+def _nearest_lock(start_dir: str, root: str) -> str | None:
+    """Nearest package-lock.json at or above start_dir, stopping at the scan
+    root — the repo-side approximation of the build context (the real
+    docker -f/--context flags are unknowable from the files alone; every
+    house Dockerfile builds from the service's own tree or its parent)."""
+    cur = os.path.normpath(os.path.abspath(start_dir))
+    stop = os.path.normpath(os.path.abspath(root))
+    while cur == stop or cur.startswith(stop + os.sep):
+        if os.path.isfile(os.path.join(cur, LOCKFILE)):
+            return os.path.relpath(os.path.join(cur, LOCKFILE), stop)
+        if cur == stop:
+            return None
+        cur = os.path.dirname(cur)
+    return None
+
+
+class NpmCiRule(Rule):
+    """With a committed package-lock.json, `npm ci` is the only reproducible
+    install. Opt-in enforcement mirrors #518's opt-in adoption: silent where
+    no lock applies, loud where one does. Workflows are judged per run block
+    (step working-directory: / defaults.run / in-block cd resolve the effective
+    dir); Dockerfiles per RUN line (last `cd` on the chain, else the
+    Dockerfile's dir). Both walk the repo-side ancestor chain for the nearest
+    lock, mirroring the two real build-context shapes in this repo.
+    """
+
+    name = "npm-ci"
+
+    def __init__(self) -> None:
+        self._target = "."
+
+    def applies(self, rel: str, filename: str, target: str) -> bool:
+        self._target = target
+        if (
+            filename == "Dockerfile"
+            or filename.startswith("Dockerfile.")
+            or filename.endswith(".dockerfile")
+        ):
+            return True
+        return _in_workflows(rel, target) and filename.endswith((".yml", ".yaml"))
+
+    def scan_line(self, raw: str, rel: str, lineno: int) -> list[Finding]:
+        return []  # structural: run blocks and build contexts are per-file facts
+
+    def scan_file(self, rel: str, lines: list[str]) -> list[Finding]:
+        filename = os.path.basename(rel)
+        if (
+            filename == "Dockerfile"
+            or filename.startswith("Dockerfile.")
+            or filename.endswith(".dockerfile")
+        ):
+            return self._scan_dockerfile(rel, lines)
+        return self._scan_workflow(rel, lines)
+
+    # -- workflows -------------------------------------------------------------
+
+    def _scan_workflow(self, rel: str, lines: list[str]) -> list[Finding]:
+        out: list[Finding] = []
+        default_wd: str | None = None  # defaults.run.working-directory (pre-steps)
+        step_wd: str | None = None     # step-level; resets at each new step item
+        in_steps = False
+        run_indent: int | None = None
+        cd_stack: list[str] = []       # `cd`-affected dirs inside the open block
+
+        def effective_dir(wd: str | None) -> str | None:
+            if not wd:
+                return None
+            return os.path.join(self._target, wd)
+
+        def lock_for(wd: str | None) -> str | None:
+            d = effective_dir(wd)
+            return _nearest_lock(d, self._target) if d else None
+
+        for i, raw in enumerate(lines):
+            stripped = raw.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if run_indent is not None:
+                ind = len(raw) - len(raw.lstrip())
+                if ind <= run_indent:
+                    run_indent = None  # dedent closes the block scalar
+                    cd_stack = []
+                else:
+                    m = CD_RE.search(raw)
+                    if m:
+                        base = cd_stack[-1] if cd_stack else (step_wd or default_wd or ".")
+                        cd_stack.append(os.path.normpath(os.path.join(base, m.group(1).strip("'\""))))
+                    if NPM_INSTALL_RE.search(raw) and not _npm_install_exempt(raw):
+                        wd = cd_stack[-1] if cd_stack else (step_wd or default_wd)
+                        lock = lock_for(wd)
+                        if lock:
+                            out.append(Finding(
+                                "violation", rel, i + 1, self.name,
+                                f"`npm install` while `{lock}` applies here — use `npm ci` "
+                                f"for reproducible installs: {stripped[:90]}",
+                            ))
+                continue
+            if STEPS_KEY_RE.match(raw):
+                in_steps = True
+                continue
+            wm = WD_RE.match(raw)
+            if wm:
+                wd = wm.group(1).strip("'\"")
+                if in_steps:
+                    step_wd = wd
+                else:
+                    default_wd = wd
+                continue
+            sm = STEP_ITEM_RE.match(raw)
+            if sm and in_steps and sm.group(1) != "working-directory":
+                step_wd = None  # new step: step-level working-directory resets
+            m = RUN_BLOCK_RE.match(raw)
+            if m and m.group(2):
+                # block scalar opens; key indent = leading spaces + the "- "
+                # prefix when the run key hangs off a step item
+                run_indent = len(m.group(1)) + (
+                    2 if raw[len(m.group(1)):len(m.group(1)) + 2] == "- " else 0
+                )
+                cd_stack = []
+                continue
+            # inline `run: cmd` (and any stray top-level line): judge directly,
+            # honoring an in-line `cd` relative to the step/defaults wd
+            if NPM_INSTALL_RE.search(raw) and not _npm_install_exempt(raw):
+                wd = step_wd or default_wd
+                m_cd = CD_RE.search(raw)
+                if m_cd:
+                    wd = os.path.normpath(os.path.join(wd or ".", m_cd.group(1).strip("'\"")))
+                lock = lock_for(wd)
+                if lock:
+                    out.append(Finding(
+                        "violation", rel, i + 1, self.name,
+                        f"`npm install` while `{lock}` applies here — use `npm ci` "
+                        f"for reproducible installs: {stripped[:90]}",
+                    ))
+        return out
+
+    # -- Dockerfiles -----------------------------------------------------------
+
+    def _scan_dockerfile(self, rel: str, lines: list[str]) -> list[Finding]:
+        out: list[Finding] = []
+        df_dir = os.path.dirname(os.path.join(self._target, rel)) or self._target
+        copies_lock = any(
+            l.strip().upper().startswith("COPY")
+            and "--from=" not in l
+            and LOCKFILE in l
+            for l in lines
+        )
+        for i, raw in enumerate(lines):
+            stripped = raw.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if not stripped.upper().startswith("RUN"):
+                continue
+            if not (NPM_INSTALL_RE.search(stripped) and not _npm_install_exempt(stripped)):
+                continue
+            eff_dir = df_dir
+            last_cd = None
+            for m in CD_RE.finditer(stripped):  # shell chains left-to-right: last wins
+                last_cd = m
+            if last_cd:
+                eff_dir = os.path.normpath(os.path.join(df_dir, last_cd.group(1).strip("'\"")))
+            lock = _nearest_lock(eff_dir, self._target)
+            if lock:
+                hint = (
+                    "lock already COPYed — switch to `npm ci`"
+                    if copies_lock
+                    else f"COPY {LOCKFILE} and switch to `npm ci`"
+                )
+                out.append(Finding(
+                    "violation", rel, i + 1, self.name,
+                    f"`npm install` under a build context holding `{lock}` ({hint}) — "
+                    f"reproducible installs: {stripped[:90]}",
+                ))
+        return out
+
+
+# --------------------------------------------------------------------------
 # allow markers
 # --------------------------------------------------------------------------
 
@@ -619,6 +840,7 @@ RULES: list[Rule] = [
     EolRuntimeRule(),
     ActionRefRule(),
     JobHardeningRule(),
+    NpmCiRule(),
 ]
 
 

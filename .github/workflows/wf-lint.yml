@@ -1,4 +1,4 @@
-# Workflow lint family — one harness, five rules, one gate
+# Workflow lint family — one harness, six rules, one gate
 #
 # bin/wf_lint.py generalizes the PG pin lint (PR #474) into a small rule
 # family sharing one scanner. Rules:
@@ -19,6 +19,12 @@
 #                  declares a permissions block (house: contents: read
 #                  above jobs:). Structural rule; caller jobs (uses:)
 #                  exempt from the timeout half.
+#   npm-ci         `npm install` fails wherever a committed
+#                  package-lock.json applies (lockfile adoption is opt-in
+#                  per service since #518 — enforcement is exactly as
+#                  opt-in). Workflows: step/defaults/cd-resolved effective
+#                  dir; Dockerfiles: COPY-context lock resolution.
+#                  Remediation: COPY the lock + `npm ci`.
 #
 # This workflow SUPERSEDES pg-pin-lint.yml (same job naming role in branch
 # protection terms: nothing required references either). Its rules and the
@@ -61,7 +67,7 @@ permissions:
 
 jobs:
   wf-lint:
-    name: "workflow lint family (pg pins, dead bases, EOL runtimes, action refs, job hardening)"
+    name: "workflow lint family (pg pins, dead bases, EOL runtimes, action refs, job hardening, npm ci)"
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
