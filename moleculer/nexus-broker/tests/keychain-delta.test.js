@@ -45,7 +45,7 @@ const { MongoClient } = require('mongodb')
 dotenv.config({ path: path.join(__dirname, '..', '.env') })
 
 const BROKER_DIR = path.resolve(__dirname, '..')
-const TEST_PORT = process.env.DELTA_TEST_PORT || '4099'
+const TEST_PORT = process.env.DELTA_TEST_PORT || '4100' // 4100: broker-smoke's WS default is TEST_PORT+1=4099 — avoid colliding when node --test runs files concurrently
 const TEST_PTY_WS_PORT = process.env.DELTA_TEST_PTY_WS_PORT || String(Number(TEST_PORT) + 2)
 const BASE = `http://localhost:${TEST_PORT}/api`
 const MONGO_URL = process.env.MONGO_URL || 'mongodb://localhost:27017'
