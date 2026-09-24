@@ -1,0 +1,19 @@
+# Source of truth for ~/.config/systemd/user/attestation-janitor.timer
+#
+# Every 15 minutes — the tester batches verification runs (~25 min turnaround
+# observed), so a quarter-hour cadence lands attested work within one batch
+# cycle of its attestation. Persistent=true catches up if the machine was
+# off at a scheduled tick. Check-only runs (no --apply) can be triggered
+# ad hoc: systemctl --user start attestation-janitor.service after editing
+# ExecStart, or run bin/attestation_janitor.py directly.
+
+[Unit]
+Description=Run the attestation auto-merge janitor every 15 minutes
+
+[Timer]
+OnCalendar=*-*-* *:00/15:00 UTC
+Persistent=true
+Unit=attestation-janitor.service
+
+[Install]
+WantedBy=timers.target
