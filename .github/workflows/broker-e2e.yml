@@ -1,0 +1,75 @@
+# Nexus-broker (Moleculer worker tier) E2E gate
+#
+# Boots the real compiled broker (moleculer-runner on dist/services, same
+# path as `npm start`) and runs the hermetic booting E2E: the PTY transport
+# terminal cycle (spawn -> ack -> output -> input -> resize -> kill -> exit
+# -> cleanup). dist/ is untracked, so the build step is required.
+#
+# Empirics (2026-09-24 local hermetic proof, worktree of main f44589ac):
+#   - The boot blocker for this suite was never NATS. The broker runs
+#     transporter: null (in-process tier, D-2026-08-14-002) and no service
+#     imports nats. The real dependency is MongoDB: keychain-snapshot
+#     creates indexes in started(), so boot dies without a reachable Mongo
+#     (Unauthorized / ECONNREFUSED -> "Unable to start all services" ->
+#     health never up -> test's 30s timeout). The suite silently depended
+#     on titanium's local mongo — that is the "environmental" failure.
+#   - Second latent breaker: broker-smoke's WS default port
+#     (TEST_SERVICE_PORT+1 = 4099) collided with keychain-delta's service
+#     default (4099) when node --test runs files concurrently. keychain-delta
+#     now defaults to 4100 (same PR as this workflow).
+#
+# Included: tests/pty-transport.e2e.test.js — proven exit 0 hermetically
+# (fresh Mongo on :28017, free ports, no NATS, no PG).
+#
+# Excluded (documented, follow-up work):
+#   - keychain-delta: requires a pre-existing full-manifest ar_snapshot as
+#     the delta chain anchor (production-seeded on titanium); fails at that
+#     precondition on a fresh Mongo.
+#   - broker-smoke: 20/23 pass fresh, but rewind + SOL-outbox tests need
+#     seeded checkpoint/outbox state, and witnessed-runs parity needs a
+#     seeded PostgreSQL (PG integration class).
+#   - attempt-lifecycle / harness-bridge: seeded-PostgreSQL integration
+#     class, not Mongo.
+name: broker-e2e
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'moleculer/nexus-broker/**'
+      - '.github/workflows/broker-e2e.yml'
+  pull_request:
+    paths:
+      - 'moleculer/nexus-broker/**'
+      - '.github/workflows/broker-e2e.yml'
+  workflow_dispatch:
+
+jobs:
+  broker-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 28017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping: 1}).ok'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install + build (dist/ is untracked)
+        working-directory: moleculer/nexus-broker
+        run: npm ci && npm run build
+      - name: PTY transport E2E (hermetic booting suite)
+        working-directory: moleculer/nexus-broker
+        env:
+          MONGO_URL: mongodb://localhost:28017
+        run: node --test tests/pty-transport.e2e.test.js
