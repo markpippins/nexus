@@ -63,6 +63,10 @@ def parse_args():
     p.add_argument("--role", "-r", required=True)
     p.add_argument("--title", "-t", required=True)
     p.add_argument("--content", "-c", default=None)
+    p.add_argument("--file", "-F", default=None,
+                   help="Read record body from FILE (robust against shell quoting; preferred for long bodies)")
+    p.add_argument("--force-content", action="store_true",
+                   help="Allow --content that names an existing file path (deliberate path-as-body)")
     p.add_argument("--tags", default="")
     p.add_argument("--record-type", default="engineering_log")
     p.add_argument("--level", type=int, default=3)
@@ -88,13 +92,38 @@ def main():
         print(f"ERROR: role must be one of: {', '.join(sorted(valid_roles))}", file=sys.stderr)
         sys.exit(2)
 
-    # Resolve content from arg or stdin
-    content = args.content
-    if content is None:
-        if not sys.stdin.isatty():
-            content = sys.stdin.read()
-        if not content:
-            print("ERROR: --content is required (or pipe via stdin)", file=sys.stderr)
+    # Resolve content from --file, arg, or stdin (precedence: -F > -c > stdin).
+    # Path-content guard (incident 2026-09-24): --content was handed a file
+    # PATH (e.g. `-c /tmp/wp3_close.md`) and stored the path string as the
+    # record body — 49 hollow records across the fleet, 5 unrecoverable. A
+    # bare path is never a valid body: refuse when the string IS an existing
+    # file, unless the caller passes --force-content (the explicit escape
+    # hatch for legitimately posting a path-looking string).
+    if args.file:
+        if args.content:
+            print("ERROR: --file and --content are mutually exclusive", file=sys.stderr)
+            sys.exit(2)
+        try:
+            with open(args.file, encoding="utf-8", errors="replace") as fh:
+                content = fh.read()
+        except OSError as exc:
+            print(f"ERROR: cannot read --file {args.file}: {exc}", file=sys.stderr)
+            sys.exit(2)
+    else:
+        content = args.content
+        if content is None:
+            if not sys.stdin.isatty():
+                content = sys.stdin.read()
+            if not content:
+                print("ERROR: --content is required (or pipe via stdin)", file=sys.stderr)
+                sys.exit(2)
+        elif not args.force_content and "\n" not in content and len(content) < 512 \
+                and os.path.isfile(content):
+            print(
+                f"ERROR: --content looks like a path to an existing file ({content}). "
+                f"Use --file {content} to post its body, or --force-content to store this string deliberately.",
+                file=sys.stderr,
+            )
             sys.exit(2)
 
     # Parse tags. Accepts BOTH house forms: comma-separated
