@@ -24,7 +24,8 @@
 | 4170 | `draft` (canary twin of `typescript/draft-srv`) | `draft` | `typescript/draft-srv :3140` (DB workbench API behind `data-explorer-ui`'s server-to-server proxy; fail-closed `X-Nexus-Internal` gate replicated; contract pinned to incumbent `openapi.yaml`) | CANARY — PR #479, canary-diffed byte-identical, **not cut over / not deployed** |
 | 4109 | `knowledge` (canary twin of `typescript/knowledge-srv`) | `knowledge` | `typescript/knowledge-srv :3109` (knowledge graph REST; sole caller knowledge-mcp REST proxy; no auth gate on incumbent — CORS only; contract pinned to incumbent `openapi.yaml`) | CANARY — PR #480, canary-diffed byte-identical, **not cut over / not deployed** |
 | 4150 | `role-memory` (canary twin of `typescript/role-memory-srv`) | `role-memory` | `typescript/role-memory-srv :3500` (Role Memory Procedure Registry: PG→Redis sync + cache reads; callers tackle-srv memory.ts, harness-srv, operator-svc, mesh-register; no auth gate on incumbent; contract pinned to incumbent `openapi.yaml`) | CANARY — submitted with this row (PR for the port), canary-diffed byte-identical, **not cut over / not deployed**; 4150 row submitted for Ruling 4 ratification |
-| 4160 | `semantics` (canary twin of `typescript/semantics-srv`) | `semantics` | `typescript/semantics-srv :3160` (Semantics Topology Legend: REST over `semantics.*` — table-driven CRUD via stored procs, T02 asset identity spine, evidence filters, drift lifecycle; caller `semantics-ui`; no auth gate on incumbent — CORS only; contract pinned to incumbent `openapi.yaml`) | CANARY — submitted with this row (PR for the port), canary-diffed byte-identical (12/12 read/negative + 6/6 live-data envelope routes), **not cut over / not deployed**; 4160 row submitted for Ruling 4 ratification |
+| 4160 | `semantics` (canary twin of `typescript/semantics-srv`) | `semantics` | `typescript/semantics-srv :3160` (Semantics Topology Legend: REST over `semantics.*` — table-driven CRUD via stored procs, T02 asset identity spine, evidence filters, drift lifecycle; caller `semantics-ui`; no auth gate on incumbent — CORS only; contract pinned to incumbent `openapi.yaml`) | CANARY — merged (PR #509), canary-diffed byte-identical (12/12 read/negative + 6/6 live-data envelope routes), **not cut over / not deployed** |
+| 4501 | `prompt-sync` (canary twin of `typescript/tackle-prompt-sync-srv`) | `prompt-sync` | `typescript/tackle-prompt-sync-srv :3501` (Prompt Registry: PG→Redis sync — tackle.prompts/tackle.tasks → prompt:proc/idx, task:idx, prompt:meta; callers tackle-prompt-bridge, tackle-cli; no auth gate on incumbent; contract pinned to incumbent `openapi.yaml`) | CANARY — submitted with this row (PR for the port), canary-diffed byte-identical (44/44 incl. POST /refresh convergence), **not cut over / not deployed** |
 
 ## Shared infrastructure (NOT moleculer-owned — do not claim)
 
@@ -41,7 +42,7 @@
 | Component | Address |
 |-----------|---------|
 | NATS broker | `nats://localhost:4222` (services default via `NATS_URL` env, `nats://localhost:4222`) |
-| Namespaces | one per service family: `search`, `solscript`, `broker`, `voyager`, `cascade`, `kernel`, `draft`, `knowledge`, `role-memory`, `semantics` |
+| Namespaces | one per service family: `search`, `solscript`, `broker`, `voyager`, `cascade`, `kernel`, `draft`, `knowledge`, `role-memory`, `semantics`, `prompt-sync` |
 
 ## Host posture on titanium (DBA gate, 2026-09-23)
 
@@ -71,12 +72,14 @@ Moleculer does **not run locally** on titanium — enforced, not assumed:
 - Any port change ratified in `jvm/ARCHITECTURE.md` must be mirrored here and
   in the owning service's config + launch units in the same change; the
   terrain registry entry follows at the next registration heartbeat.
-- Canary/deployment ports (4100/4106/4109/4114/4150/4170) are the exception to
+- Canary/deployment ports (4100/4106/4109/4114/4150/4170/4501) are the exception to
   one-live-authority: a canary twin may co-listen on its 41xx twin while its
   incumbent stays live, and must be removed from the map when cutover completes
   (dead routes die). Canary rows in this table require architect ratification
   under Ruling 4 (port map is architect-owned). The 4114 voyager row was the
   originally ratified exception (decision 8ae4761b / port-map ping 422bc879);
   rows 4100/4106/4114/4170 were RATIFIED 2026-09-23 (architect decision on
+  the port-band), 4150/4160 ratified with their merges, and 4501 (+1000
+  band, submitted with the prompt-sync PR) extends the same scheme;
   record); row 4109 (PR #480) follows the same pattern and is submitted for
   ratification in the same pass.
