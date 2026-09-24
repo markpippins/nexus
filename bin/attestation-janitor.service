@@ -1,0 +1,38 @@
+# Source of truth for ~/.config/systemd/user/attestation-janitor.service
+#
+# Deploy:
+#   cp bin/attestation-janitor.service ~/.config/systemd/user/
+#   cp bin/attestation-janitor.timer   ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now attestation-janitor.timer
+#
+# Why this file is in the repo: same doctrine as nexus-todo-lifecycle.service
+# and sdk-drift-stamp.service — host-only units drift from the corpus
+# (2026-09-21 helium probe incident). The unit's ExecStart targets the primary
+# checkout's absolute path (same as todo-lifecycle), so it runs the gate from
+# main; the janitor itself takes no actions unless every gate of
+# bin/merge_pr.py passes for a PR's current head.
+#
+# Failure model: exit 0 = cycle ran (merges are gated + capped); nonzero =
+# tool error (discovery failure, gh failure — unit shows failed). A PR failing
+# gates is an expected outcome, not an error; the per-run summary goes to the
+# state file (~/.cache/attestation-janitor.json) and every merge to the
+# Assembly change-log forum via bin/post-change-log.sh.
+
+[Unit]
+Description=Attestation auto-merge janitor (gated by bin/merge_pr.py, capped)
+After=network-online.target
+
+[Service]
+Type=oneshot
+# ExecCondition: skip cleanly (result=skipped, unit NOT failed) until the
+# script exists on the primary checkout — i.e. until the PR carrying it
+# merges. Prevents up to 96 failed ticks/day between timer enablement and
+# merge. Once bin/attestation_janitor.py lands on main, every tick is live.
+ExecCondition=/usr/bin/test -f /home/codex/dev/nexus/bin/attestation_janitor.py
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/attestation_janitor.py --apply --cap 3
+TimeoutStartSec=600
+SyslogIdentifier=attestation-janitor
+
+[Install]
+WantedBy=default.target

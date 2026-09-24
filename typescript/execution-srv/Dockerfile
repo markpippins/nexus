@@ -6,9 +6,13 @@
 FROM node:20-bookworm AS build
 WORKDIR /app/execution-srv
 COPY execution-srv/package.json ./
+COPY execution-srv/package-lock.json ./
 COPY heartbeat-client ../heartbeat-client
-RUN npm install --no-package-lock
-# Build file: sibling so its dist/ exists at runtime (main -> ./dist/index.js)
+# npm ci: installs exactly the committed lock (lockfile batch 2); the file:
+# sibling is COPYed above so the lock's file: entry resolves.
+RUN npm ci --no-audit --no-fund
+# Build file: sibling so its dist/ exists at runtime (main -> ./dist/index.js).
+# heartbeat-client has no committed lock of its own (opt-in per #518).
 RUN cd ../heartbeat-client && npm install --no-package-lock && npm run build
 COPY execution-srv/tsconfig.json ./
 COPY execution-srv/src ./src

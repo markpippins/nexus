@@ -4,8 +4,12 @@
 FROM node:20-bookworm AS build
 WORKDIR /app/knowledge-srv
 COPY knowledge-srv/package.json ./
+COPY knowledge-srv/package-lock.json ./
 COPY heartbeat-client ../heartbeat-client
-RUN npm install --no-package-lock
+# npm ci: installs exactly the committed lock (lockfile batch 2); the file:
+# sibling is COPYed above so the lock's file: entry resolves.
+RUN npm ci --no-audit --no-fund
+# heartbeat-client has no committed lock of its own (opt-in per #518).
 RUN cd ../heartbeat-client && npm install --no-package-lock --include=dev && npm run build
 COPY knowledge-srv/tsconfig.json ./
 COPY knowledge-srv/src ./src

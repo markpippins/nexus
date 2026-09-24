@@ -515,6 +515,185 @@ class WfLintTest(unittest.TestCase):
         self.assertEqual(2, proc.returncode)
         self.assertIn("--dry-run only makes sense with --fix", proc.stderr)
 
+    # -- npm-ci (lockfile-aware install policy) -----------------------------------
+
+    # The rule is opt-in like #518's adoption: silent wherever no committed
+    # package-lock.json applies, loud where one does. Fixtures mirror the two
+    # real shapes on main: typescript/<svc>/Dockerfile (service-dir context,
+    # lock in the same dir) and the typescript/-root context (lock one level
+    # up the ancestor chain).
+
+    def test_workflow_cd_into_lockdir_fails_and_other_dir_passes(self):
+        self._write("typescript/nebula-srv/package-lock.json", "{}\n")
+        self._write("typescript/other-svc/package.json", '{}\n')
+        self._write(
+            ".github/workflows/w.yml",
+            "jobs:\n"
+            "  a:\n"
+            "    steps:\n"
+            "      - run: |\n"
+            "          cd typescript/nebula-srv\n"
+            "          npm install --no-audit\n"
+            "      - run: |\n"
+            "          cd typescript/other-svc\n"
+            "          npm install --no-audit\n",
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("typescript/nebula-srv/package-lock.json", proc.stderr)
+        self.assertIn("use `npm ci`", proc.stderr)
+        self.assertNotIn("other-svc", proc.stdout + proc.stderr)  # no lock: silent
+
+    def test_workflow_step_working_directory_resolved(self):
+        self._write("typescript/assembly-srv/package-lock.json", "{}\n")
+        self._write(
+            ".github/workflows/w.yml",
+            "jobs:\n"
+            "  a:\n"
+            "    steps:\n"
+            "      - name: x\n"
+            "        working-directory: typescript/assembly-srv\n"
+            "        run: npm install --no-audit --no-fund\n",
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("typescript/assembly-srv/package-lock.json", proc.stderr)
+
+    def test_workflow_defaults_run_wd_resolved_and_step_resets(self):
+        self._write("svc/package-lock.json", "{}\n")
+        self._write(
+            ".github/workflows/w.yml",
+            "jobs:\n"
+            "  a:\n"
+            "    defaults:\n"
+            "      run:\n"
+            "        working-directory: svc\n"
+            "    steps:\n"
+            "      - run: npm install\n"
+            "      - working-directory: other\n"
+            "        run: npm install\n",
+        )
+        self._write("other/package.json", "{}\n")
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("svc/package-lock.json", proc.stderr)
+        self.assertNotIn("other/package-lock.json", proc.stderr)  # reset works
+
+    def test_workflow_inline_run_cd_prefixed_resolved(self):
+        self._write("svc/package-lock.json", "{}\n")
+        self._write(
+            ".github/workflows/w.yml",
+            "jobs:\n"
+            "  a:\n"
+            "    steps:\n"
+            "      - run: cd svc && npm install\n",
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("svc/package-lock.json", proc.stderr)
+
+    def test_workflow_npm_ci_and_exemptions_pass(self):
+        self._write("svc/package-lock.json", "{}\n")
+        self._write(
+            ".github/workflows/w.yml",
+            "jobs:\n"
+            "  a:\n"
+            "    steps:\n"
+            "      - run: cd svc && npm ci --no-audit\n"
+            "      # npm install --global typescript   <- comment line, ignored\n"
+            "      - run: npm install --global typescript\n"
+            "      - run: npm install --package-lock-only --dry-run\n"
+            "      - run: cd svc && npm install # wf-lint-allow: npm-ci — vendored dir, reviewed\n",
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("1 allow-marker line(s)", proc.stdout)
+
+    def test_dockerfile_service_dir_lock_copied_hint(self):
+        self._write("typescript/nebula-srv/package-lock.json", "{}\n")
+        self._write(
+            "typescript/nebula-srv/Dockerfile",
+            "FROM node:20-bookworm\n"
+            "COPY package.json ./\n"
+            "COPY package-lock.json ./\n"
+            "RUN npm install --omit=dev\n",
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("typescript/nebula-srv/Dockerfile:4", proc.stderr)
+        self.assertIn("lock already COPYed", proc.stderr)
+
+    def test_dockerfile_ancestor_context_lock_hint(self):
+        # typescript/-root build context: the lock lives one level up from
+        # the Dockerfile's own dir — the ancestor walk must find it
+        self._write("typescript/assembly-srv/package-lock.json", "{}\n")
+        self._write(
+            "typescript/assembly-srv/Dockerfile",
+            "FROM node:20-bookworm-slim\n"
+            "COPY assembly-srv/package.json ./\n"
+            "RUN npm install --omit=dev --no-package-lock\n",
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("COPY package-lock.json", proc.stderr)  # not-yet-copied hint
+
+    def test_dockerfile_cd_chain_and_no_lock_pass(self):
+        self._write("typescript/nebula-srv/package-lock.json", "{}\n")
+        self._write("typescript/plain/Dockerfile", "FROM node:20\nRUN npm install\n")
+        proc = self._run(self.tree)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)  # opt-in: no lock → silent
+        # ...and nebula-srv's lock (with no Dockerfile there) fires nothing either
+        # cd chain: last cd wins — the lock the chain resolves to must exist;
+        # realistic shape (assembly-srv's actual heartbeat-client dance)
+        self._write("typescript/assembly-srv/package-lock.json", "{}\n")
+        self._write(
+            "typescript/assembly-srv/Dockerfile",
+            "FROM node:20-bookworm-slim\n"
+            "RUN cd ../heartbeat-client && cd ../assembly-srv && npm install\n",
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("typescript/assembly-srv/Dockerfile:2", proc.stderr)
+
+    def test_dockerfile_multiline_run_and_copy_from_exempt(self):
+        self._write("svc/package-lock.json", "{}\n")
+        self._write(
+            "svc/Dockerfile",
+            "FROM node:20 AS build\n"
+            "COPY package.json ./\n"
+            "COPY package-lock.json ./\n"
+            "RUN npm install \\\n"
+            "  --omit=dev\n"
+            "FROM node:20-slim\n"
+            "COPY --from=build /app/node_modules ./node_modules\n",
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("svc/Dockerfile:4", proc.stderr)  # RUN header anchors
+
+    def test_npm_ci_rule_alone_selectable(self):
+        self._write("svc/package-lock.json", "{}\n")
+        self._write("svc/Dockerfile", "FROM openjdk:17\nRUN npm install\n")
+        proc = self._run(self.tree, None, "--rule", "npm-ci")
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("rules: npm-ci", proc.stdout)
+        self.assertNotIn("[dead-base]", proc.stderr)  # other rules not selected
+
+    def test_node_modules_never_scanned(self):
+        # vendored packages ship their own workflows/Dockerfiles; after any
+        # local npm ci they would flood every rule. The harness prunes them.
+        self._write(
+            "node_modules/pkg/.github/workflows/vendored.yml",
+            "on: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps: []\n",
+        )
+        self._write(
+            ".github/workflows/real.yml",
+            "on: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps: []\n",
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)  # real.yml's missing blocks fire
+        self.assertNotIn("node_modules", proc.stdout + proc.stderr)
+
     # -- real repo -----------------------------------------------------------------
 
     def test_real_repo_scan_does_not_crash(self):

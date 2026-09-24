@@ -11,7 +11,10 @@ harvestsRouter.get('/', async (req, res, next) => {
     // version, sourceHash, level, visibilityScope, systemId, subsystemId,
     // featureId. Map limit/offset (legacy UI shape) onto page/pageSize.
     const pageSize = req.query.pageSize ?? req.query.limit ?? '100';
-    const page = req.query.page ?? (req.query.offset ? String(Math.max(1, Math.floor(parseInt(req.query.offset, 10) / parseInt(pageSize, 10)) + 1)) : '1');
+    // String() wrap is runtime-identical (parseInt ToString-coerces its
+    // argument per spec); it satisfies the checker, since express types
+    // query values as string | ParsedQs | (string | ParsedQs)[].
+    const page = req.query.page ?? (req.query.offset ? String(Math.max(1, Math.floor(parseInt(String(req.query.offset), 10) / parseInt(String(pageSize), 10)) + 1)) : '1');
     const query = {
       page,
       pageSize,

@@ -7,23 +7,26 @@
 FROM node:20-bookworm AS build
 WORKDIR /app/tackle-srv
 COPY tackle-srv/package.json ./
+COPY tackle-srv/package-lock.json ./
 COPY heartbeat-client ../heartbeat-client
 COPY tackle-seeds ../tackle-seeds
-# --no-package-lock: the repo lockfiles are out of sync with the file: deps
-# (npm bug 'Cannot read properties of undefined (reading extraneous)');
-# resolve fresh for the image instead of fighting the stale lock.
-RUN npm install --no-package-lock
+# npm ci: installs exactly the committed lock (lockfile batch 2). The old
+# '--no-package-lock to dodge stale locks' rationale is gone — the committed
+# lock is generated from this package.json (file: deps included) and npm ci
+# fails loudly on drift. Both file: siblings are COPYed above so the lock's
+# file: entries resolve.
+RUN npm ci --no-audit --no-fund
 # Build tackle-seeds file: dep so its dist/ exists at runtime (main -> ./dist/index.js).
 # heartbeat-client dist is built further below alongside the tsc workaround.
+# (tackle-seeds has no committed lock of its own — opt-in per #518.)
 RUN cd ../tackle-seeds && npm install --no-package-lock && npm run build
 COPY tackle-srv/tsconfig.json ./
 COPY tackle-srv/src ./src
 # Build the file deps' dist first: the root .dockerignore excludes **/dist,
 # so without this tsc may type-check heartbeat-client's TS source (ESM
 # import.meta under CommonJS -> TS1343).
-WORKDIR /app/heartbeat-client
-RUN npm install --no-package-lock && npm run build
 WORKDIR /app/tackle-srv
+RUN cd ../heartbeat-client && npm install --no-package-lock && npm run build
 RUN npm run build
 RUN npm prune --omit=dev
 

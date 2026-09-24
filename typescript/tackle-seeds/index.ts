@@ -4051,3 +4051,6 @@ BEGIN
     RAISE NOTICE 'Memory procedures seeded.';
 END $mem$;`;
 }
+
+export * from "./canonical-shape";
+
