@@ -1,0 +1,58 @@
+name: WR Conf 046 — Bcrypt Write-Guard (V202 E2E: V191 re-apply + self-hashing triggers)
+
+# Applies the REAL sql/V202__bcrypt_write_guard.sql to a throwaway database
+# carrying the pre-V191 live shape (census 2026-09-20, titanium). V202 is the
+# operator go for the never-landed V191 backfill, shipped inside the migration
+# chain: backfill to bcrypt (bf,10), V191 born-clean CHECKs re-asserted, and
+# BEFORE-write triggers that bcrypt-hash any plaintext on the way in — so the
+# known plaintext writers (assembly-srv createUser, adonis changeme default)
+# keep functioning while raw plaintext writes remain impossible (trigger
+# normalizes, CHECK backstops even if the trigger is dropped, garbage is not
+# laundered). No mocks on the DB path. Service pinned to postgres:17 (house
+# convention after the wr-conf-025 PG17 lesson, PR #300).
+
+on:
+  push:
+    branches: [main, master, feature/*, dev]
+  pull_request:
+    branches: [main, master, feature/*]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  v201-bcrypt-write-guard-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: pguser
+          POSTGRES_PASSWORD: pgpass
+          POSTGRES_DB: nexus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pguser"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies (declared, not mocked — pitfall #15)
+        run: python3 -m pip install pytest psycopg2-binary
+
+      - name: Run V202 bcrypt write-guard E2E
+        env:
+          CONDUIT_PG_DSN: postgresql://pguser:pgpass@localhost:5432/postgres
+        run: |
+          python3 -m pytest python/nexus_core/wrp/tests/test_v201_bcrypt_write_guard_e2e.py -v

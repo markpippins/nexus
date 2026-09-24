@@ -25,6 +25,7 @@ jobs:
   v184-calendar-e2e:
     name: "wr-conf-036: V184 calendar primitive E2E"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     services:
       postgres:
         image: postgres:17

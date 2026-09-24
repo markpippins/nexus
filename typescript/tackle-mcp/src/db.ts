@@ -633,6 +633,7 @@ const DEFAULT_ROLES: { name: string; description: string }[] = [
   { name: "epistemologist", description: "Epistemic governance — tracks knowledge stratification, role boundaries, and cross-role divergence" },
   { name: "operator", description: "Pipeline and platform operator — monitors pipeline state, investigates stuck plans and drift, keeps operational surfaces healthy" },
   { name: "sysadmin", description: "Infrastructure health governance — systemd-timer cycles, service health, incident reporting; runs standalone" },
+  { name: "supervisor", description: "Role-system administrator — registers and configures roles, regenerates doctrine and OpenCode projections, and verifies role-surface coverage; no WorkRequest execution authority" },
   { name: "test", description: "Internal test harness role — used for test invoke sessions and ad-hoc agent runs" },
   { name: "tester", description: "Walkthrough role (b80f0fdb) — full-surface demonstration of the role-creation runbook" },
   { name: "leased-builder", description: "Interactive-channel implementation executor — bounded role lease (RoleLeases, plan 1286): consumes from the READY pool under a window+budget lease, mirroring builder with a mandatory time limit" },

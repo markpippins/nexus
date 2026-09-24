@@ -16,8 +16,9 @@
  *     - service principals (admin, jenkins-sync, sonar-sync, rover, ...)
  *     - config residue (builder-fallback, leased-builder, test, wr-conf-016-*)
  *
- * The matrix lists 23 role-class identities. The 6 legacy allowlist entries
- * (planner, builder, reviewer, critic, analyst, architect) are a strict subset
+ * The matrix lists 24 role-class identities after the Supervisor addition. The
+ * 6 legacy allowlist entries (planner, builder, reviewer, critic, analyst,
+ * architect) are a strict subset
  * — widening is backward compatible.
  */
 export const KILLABLE_ROLES: readonly string[] = [
@@ -41,6 +42,7 @@ export const KILLABLE_ROLES: readonly string[] = [
   "planner",
   "reviewer",
   "sound-technician",
+  "supervisor",
   "sysadmin",
   "tester",
   "topologist",

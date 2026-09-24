@@ -3,7 +3,7 @@
  *
  * Guards the KILLABLE_ROLES vocabulary consumed by POST /agents/:role/kill:
  *   1. Vocabulary conformance (drift guard) — the allowlist must contain all
- *      12 ratified roles; anyone shrinking it below the ratified vocabulary
+ *      13 ratified roles; anyone shrinking it below the ratified vocabulary
  *      fails CI. Same fixture-guard convention as ruled for D1 (1c23a764).
  *   2. No model identities — model bindings must never be killable agent roles.
  *   3. Behavioral — the route accepts a ratified role and rejects model/garbage.
@@ -19,7 +19,7 @@ import { describe, test, expect } from "vitest";
 
 import { KILLABLE_ROLES } from "./role-vocabulary";
 
-// The 12 ratified roles (decision-b-freeze roles matrix / wave-1+2 grants).
+// The 13 ratified roles (decision-b-freeze matrix, including Supervisor).
 const RATIFIED_ROLES = [
   "analyst-ii",
   "auditor",
@@ -31,12 +31,13 @@ const RATIFIED_ROLES = [
   "lead-engineer",
   "operator",
   "sound-technician",
+  "supervisor",
   "sysadmin",
   "tester",
 ];
 
 describe("G3 kill-endpoint role allowlist", () => {
-  test("AC1 — vocabulary conformance: contains all 12 ratified roles", () => {
+  test("AC1 — vocabulary conformance: contains all 13 ratified roles", () => {
     for (const r of RATIFIED_ROLES) {
       expect(KILLABLE_ROLES, `missing ratified role ${r}`).toContain(r);
     }

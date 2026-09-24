@@ -311,18 +311,29 @@ class OllamaTypeSafeAdapter(TypeSafeAdapter):
         state: Dict[str, Any],
         questions: List[str],
         expected_types: Optional[List[JevPrimitiveType]] = None,
+        label_sets: Optional[List[Optional[List[str]]]] = None,
     ) -> List[Union[JevJudgmentResult, JevNonOutcomeResult]]:
-        """Execute judgment queries against ollama."""
+        """Execute judgment queries against ollama.
+
+        ``label_sets`` is an optional parallel list to ``questions``: for
+        CHOICE questions, the entry is the corpus label vocabulary the model
+        must classify into (Jev 6 item 2 — without it small models invent
+        their own labels, e.g. ``drift_type1``). ``None`` entries mean
+        "no constraint" and preserve the legacy behavior.
+        """
         if not self.client:
             raise RuntimeError("Adapter not initialized — use async context manager")
-        
+
         if expected_types is None:
             expected_types = [JevPrimitiveType.NOUL] * len(questions)
-        
+
+        if label_sets is None:
+            label_sets = [None] * len(questions)
+
         results = []
-        for question, expected_type in zip(questions, expected_types):
+        for question, expected_type, labels in zip(questions, expected_types, label_sets):
             try:
-                result = await self._execute_judgment(state, question, expected_type)
+                result = await self._execute_judgment(state, question, expected_type, labels)
                 results.append(result)
             except Exception as e:
                 logger.error(f"Judgment failed for question '{question}': {e}")
@@ -340,19 +351,25 @@ class OllamaTypeSafeAdapter(TypeSafeAdapter):
         state: Dict[str, Any],
         question: str,
         expected_type: JevPrimitiveType,
+        labels: Optional[List[str]] = None,
     ) -> Union[JevJudgmentResult, JevNonOutcomeResult]:
         """Execute a single judgment against ollama."""
-        prompt = self._build_prompt(state, question, expected_type)
+        prompt = self._build_prompt(state, question, expected_type, labels)
         response = await self._call_ollama(prompt)
-        return self._parse_response(response, expected_type)
+        return self._parse_response(response, expected_type, labels)
     
     def _build_prompt(
         self,
         state: Dict[str, Any],
         question: str,
         expected_type: JevPrimitiveType,
+        labels: Optional[List[str]] = None,
     ) -> str:
-        """Build a structured prompt for the given primitive type."""
+        """Build a structured prompt for the given primitive type.
+
+        For CHOICE with ``labels``, the allowed vocabulary is injected and the
+        model is instructed to use exactly those labels (Jev 6 item 2).
+        """
         state_summary = self._summarize_state(state)
         
         if expected_type == JevPrimitiveType.NOUL:
@@ -371,6 +388,25 @@ Return ONLY a JSON object:
 }}"""
         
         elif expected_type == JevPrimitiveType.CHOICE:
+            if labels:
+                label_list = ", ".join(f'"{lb}"' for lb in labels)
+                return f"""You are a calibrated judgment engine. Classify the input into exactly one of the allowed labels below.
+
+STATE CONTEXT:
+{state_summary}
+
+QUESTION: {question}
+
+ALLOWED LABELS (use exactly these strings, no others): [{label_list}]
+
+Return ONLY a JSON object with a probability for EVERY allowed label (probabilities must sum to 1.0):
+{{
+  "label_probabilities": {{<label>: <float>, ...}},
+  "top_label": "<one of the allowed labels>",
+  "confidence_concentration": <float>,
+  "confidence_decision_mass": <float>,
+  "flag_for_review": <bool>
+}}"""
             return f"""You are a calibrated judgment engine. Classify the input into one of the predefined labels with probabilities.
 
 STATE CONTEXT:
@@ -459,6 +495,7 @@ Return ONLY a JSON object:
         self,
         response: str,
         expected_type: JevPrimitiveType,
+        labels: Optional[List[str]] = None,
     ) -> Union[JevJudgmentResult, JevNonOutcomeResult]:
         """Parse ollama response into structured judgment."""
         try:
@@ -494,6 +531,22 @@ Return ONLY a JSON object:
         elif expected_type == JevPrimitiveType.CHOICE:
             label_probs = data.get("label_probabilities", {})
             top_label = data.get("top_label", max(label_probs, key=label_probs.get) if label_probs else "")
+            if labels:
+                # Constrain to the corpus vocabulary (Jev 6 item 2): map model
+                # output onto canonical labels case-insensitively, drop invented
+                # labels, and flag for review when the top pick is unmappable.
+                # Fail-visible: never fabricate a label the model did not pick.
+                canonical = {lb.casefold(): lb for lb in labels}
+                mapped_probs = {}
+                for k, v in label_probs.items():
+                    if k.casefold() in canonical:
+                        mapped_probs[canonical[k.casefold()]] = v
+                label_probs = mapped_probs
+                if top_label.casefold() in canonical:
+                    top_label = canonical[top_label.casefold()]
+                else:
+                    flag_for_review = True
+                    top_label = max(label_probs, key=label_probs.get) if label_probs else top_label
             return ChoiceResult(
                 label_probabilities=label_probs,
                 top_label=top_label,

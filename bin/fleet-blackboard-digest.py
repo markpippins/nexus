@@ -60,7 +60,7 @@ NEBULA = os.environ.get("NEBULA_URL", "http://localhost:3101")
 FALLBACK_ROLES = [
     "architect", "engineer", "planner", "reviewer", "analyst", "inspector",
     "critic", "sound-technician", "layout-mechanic", "design-synthesist",
-    "operator", "DBA",
+    "operator", "supervisor", "DBA",
 ]
 
 

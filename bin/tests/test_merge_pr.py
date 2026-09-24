@@ -330,6 +330,100 @@ def test_evaluate_attestation_lookup_failure_fails_closed():
     assert "fail closed" in gate3.detail
 
 
+# ── gate 3c: indexed /api/attestations lookup + scan fallback ────────────
+
+def _dispatching_http(attestations, mentions, scan):
+    """Fake nebula: dispatch by URL path so the indexed endpoint, the
+    pr-tag mention lookup, and the legacy scan serve different data."""
+    def http_get(url):
+        if "/api/attestations?" in url:
+            return {"items": attestations, "total": len(attestations)}
+        if "role=tester" in url and "tag=pr:" in url:
+            return {"items": mentions}
+        if "/api/agent-records" in url:
+            return {"items": scan}
+        raise RuntimeError(f"unexpected url {url}")
+    return http_get
+
+
+def test_indexed_lookup_is_exact_and_preferred_over_scan():
+    """The scan path contains only a poison intent row; the indexed endpoint
+    returns the canonical attestation. Gate must pass via the indexed row —
+    proving exact lookup, not a newest-N scan over mixed data."""
+    poison = rec(
+        rec_id="b8acd611", recordType="engineering_log",
+        tags=["to:engineer", "type:status-update", "pr:487"],
+        title="Tester intent: attest PR #487",
+    )
+    canonical = rec(created_ms=NOW_MS - 3600_000)
+    run_json, _ = make_fakes()
+    gates, _ = merge_pr.evaluate(
+        487, run_json=run_json,
+        http_get=_dispatching_http([canonical], [poison], [poison]), env={})
+    gate3 = gates[2]
+    assert gate3.passed
+    assert "indexed lookup" in gate3.detail
+
+
+def test_fallback_to_scan_when_attestations_endpoint_unavailable():
+    """Old server (endpoint raises): fall back to the bounded scan —
+    fail-safe, never fail-open."""
+    def http_get(url):
+        if "/api/attestations?" in url:
+            raise RuntimeError("404: unknown route")
+        return {"items": [rec(created_ms=NOW_MS - 3600_000)]}
+
+    run_json, _ = make_fakes()
+    gates, _ = merge_pr.evaluate(487, run_json=run_json, http_get=http_get, env={})
+    gate3 = gates[2]
+    assert gate3.passed
+    assert "scan fallback" in gate3.detail
+
+
+def test_fallback_scan_still_fails_closed_on_empty():
+    def http_get(url):
+        if "/api/attestations?" in url:
+            raise RuntimeError("404: unknown route")
+        return {"items": []}
+
+    run_json, _ = make_fakes()
+    gates, _ = merge_pr.evaluate(487, run_json=run_json, http_get=http_get, env={})
+    assert not gates[2].passed
+
+
+def test_indexed_empty_refusal_names_markerless_mentions():
+    """Indexed empty result + marker-less tester mentions: refusal explains
+    the gap by name (the 84ca2388 remediation UX, now server-assisted)."""
+    poison = rec(
+        rec_id="b8acd611", recordType="engineering_log",
+        tags=["to:engineer", "type:status-update", "pr:492"],
+        title="Tester intent: attest PR #492",
+    )
+    finding = rec(
+        rec_id="84ca2388", recordType="inspection",
+        tags=["to:engineer", "type:rejection", "pr:492"],
+        title="Tester finding: gate accepts non-attestation records",
+    )
+    run_json, _ = make_fakes()
+    gates, _ = merge_pr.evaluate(
+        492, run_json=run_json,
+        http_get=_dispatching_http([], [poison, finding], [poison, finding]), env={})
+    gate3 = gates[2]
+    assert not gate3.passed
+    assert "indexed lookup" in gate3.detail
+    assert "b8acd611" in gate3.detail and "84ca2388" in gate3.detail
+    assert "attestation marker" in gate3.detail
+
+
+def test_fetch_attestations_never_raises_and_shape_checks():
+    assert merge_pr.fetch_attestations(lambda url: (_ for _ in ()).throw(RuntimeError("x")), 492) is None
+    assert merge_pr.fetch_attestations(lambda url: {"items": "not-a-list"}, 492) is None
+    assert merge_pr.fetch_attestations(lambda url: ["legacy-list-shape"], 492) is None
+    assert merge_pr.fetch_attestations(lambda url: {"items": [{"id": "x"}]}, 492) == [{"id": "x"}]
+    assert merge_pr.fetch_tester_pr_mentions(lambda url: (_ for _ in ()).throw(RuntimeError("x")), 492) == []
+    assert merge_pr.fetch_tester_pr_mentions(lambda url: {"items": [{"id": "y"}]}, 492) == [{"id": "y"}]
+
+
 def test_evaluate_gh_failure_yields_single_fail_closed_gate():
     """gh unavailable (e.g. outside a repo): clean refusal, no traceback."""
     def boom(*args):

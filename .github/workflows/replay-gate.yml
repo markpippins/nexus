@@ -25,6 +25,7 @@ jobs:
   python-replay:
     name: Python replay conformance + AC4 digest emission
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -55,6 +56,7 @@ jobs:
   typescript-conformance:
     name: TypeScript projection-core conformance
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -73,6 +75,7 @@ jobs:
   jvm-verifier:
     name: JVM replay verifier (release gate re-run)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -96,6 +99,7 @@ jobs:
   gate:
     name: Release gate (all runtimes must pass)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: [python-replay, typescript-conformance, jvm-verifier]
     steps:
       - name: All runtimes passed

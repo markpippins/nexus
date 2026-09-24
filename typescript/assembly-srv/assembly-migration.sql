@@ -112,6 +112,12 @@ INSERT INTO assembly.users (id, alias, email, password, admin)
 VALUES (gen_random_uuid(), 'tester', 'tester@nexus.local', 'tester-bot', false)
 ON CONFLICT (alias) DO NOTHING;
 
+-- 8c. Seed Supervisor posting identity. Initial authority is role-system
+-- administration only; it receives no WorkRequest execution or receipt role.
+INSERT INTO assembly.users (id, alias, email, password, admin)
+VALUES (gen_random_uuid(), 'supervisor', 'supervisor@nexus.local', 'supervisor-bot', false)
+ON CONFLICT (alias) DO NOTHING;
+
 -- 9. Forums: as_of_dt / expiration_dt — soft-delete via row expiry.
 --    Existing rows get the default values via Postgres 11+ fast ADD COLUMN
 --    with DEFAULT (no table rewrite). `expiration_dt = now()` retires a row;

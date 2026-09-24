@@ -1,0 +1,16 @@
+# Source of truth for ~/.config/systemd/user/users-bcrypt-drift.timer
+#
+# Daily 06:20 UTC — after the SDK stamp check's 06:10 slot, before business
+# hours. Persistent=true catches up if the machine was off at the scheduled
+# time.
+
+[Unit]
+Description=Run users bcrypt enforcement drift check daily at 06:20 UTC
+
+[Timer]
+OnCalendar=*-*-* 06:20:00 UTC
+Persistent=true
+Unit=users-bcrypt-drift.service
+
+[Install]
+WantedBy=timers.target

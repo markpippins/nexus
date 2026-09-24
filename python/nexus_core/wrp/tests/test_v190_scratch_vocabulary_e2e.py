@@ -1,25 +1,22 @@
 #!/usr/bin/env python3
-"""E2E: V190 — scratch role-vocabulary widening (real migration, throwaway DB).
+"""E2E: current role-vocabulary PIN — scratch widening (real migration, throwaway DB).
 
-wr-conf house pattern (V175/V178/V179/V187 companions). Three paths, one
-suite:
+This historical V190 workflow tracks the current single ROLE-VOCAB PIN rather
+than freezing V190's old 24/25-role target. Three paths, one suite:
 
-- RepairPath: a skeleton carrying the PRE-V190 live shape —
-  scratch.agent_records_history with the STALE 21-role CHECK, plus a nebula
-  twin with the live 24-role CHECK (the preflight's comparison target) —
-  then the REAL sql/V190__scratch_role_vocabulary_widening.sql applies and
-  the contract is exercised against live constraint behavior, no mocks on
-  the DB path:
+- RepairPath: a skeleton carrying the current PIN on nebula and a stale scratch
+  mirror, then the REAL pin-owning migration applies and the contract is
+  exercised against live constraint behavior, no mocks on the DB path:
     * pre-state defect: lead-engineer write through the scratch path rejected
-    * repair: the three previously-rejected roles now accepted
+    * repair: every currently widened role is accepted
     * bogus role still rejected; empty-string role still allowed
     * constraint parity: scratch def == nebula def (normalized literals)
     * existing rows survive the swap
 - DriftGate: nebula's CHECK grown beyond the pin (simulated future
-  vocabulary growth) -> V190 refuses loudly, nothing changes.
+  vocabulary growth) -> the current pin migration refuses, nothing changes.
 - BootstrapPath: the REAL patched ci-bootstrap deploys born-clean — the
-  24-role CHECK present at birth, every pinned role (plus '') insertable,
-  a bogus role rejected. No repair needed, none applied.
+  current pinned CHECK is present at birth, every pinned role (plus '') is
+  insertable, and a bogus role is rejected. No repair is needed.
 
 Each class creates and drops its own throwaway database; no production
 database is touched.
@@ -34,7 +31,6 @@ import psycopg2
 
 _REPO_ROOT = os.path.abspath(os.path.join(
     os.path.dirname(__file__), "..", "..", "..", ".."))
-V190_PATH = os.path.join(_REPO_ROOT, "sql", "V190__scratch_role_vocabulary_widening.sql")
 BOOTSTRAP_PATH = os.path.join(_REPO_ROOT, "sql", "ci-bootstrap", "nexus-ci-bootstrap.sql")
 
 DSN = os.environ.get("CONDUIT_PG_DSN",
@@ -61,12 +57,15 @@ def _find_pin_migration():
     return hits[0]
 
 
+PIN_PATH = _find_pin_migration()
+
+
 def _load_pin_roles():
     """Derive the vocabulary from the ROLE-VOCAB PIN in its owning migration
     (single in-repo copy — wr-conf-042's parity suite enforces bootstrap
     parity; deriving here keeps the E2E from carrying a second list that
     could silently drift)."""
-    with open(_find_pin_migration(), encoding="utf-8") as fh:
+    with open(PIN_PATH, encoding="utf-8") as fh:
         text = fh.read()
     mk = text.find("ROLE-VOCAB PIN")
     if mk < 0:
@@ -83,8 +82,10 @@ def _load_pin_roles():
 
 
 PINNED_ROLES = _load_pin_roles()
-STALE_ROLES = [r for r in PINNED_ROLES
-               if r not in ("ontologist", "lead-engineer", "sound-technician")]
+WIDENING_ROLES = (
+    "ontologist", "lead-engineer", "sound-technician", "supervisor",
+)
+STALE_ROLES = [r for r in PINNED_ROLES if r not in WIDENING_ROLES]
 
 RECORD_TYPE_CHECK = (
     "CHECK ((record_type = ANY (ARRAY['report'::text, 'analysis'::text, "
@@ -241,21 +242,20 @@ class RepairPath(_Base):
     def test_01_prestate_defect_and_repair(self):
         db = self._make()
         with db as d:
-            # nebula = LIVE 24-role shape (the preflight's comparison
-            # target); scratch = the stale 21-role copy being repaired.
+            # nebula already carries the current PIN; scratch is the stale
+            # mirror being repaired. This is the reapply/convergence path.
             d.sql(_skeleton(PINNED_ROLES, STALE_ROLES))
-            # Pre-state: the live defect reproduces — scratch rejects
-            # lead-engineer (the operator's write failure).
-            err = d.expect_error(_probe("lead-engineer"),
-                                 ("lead-engineer",))
-            self.assertIn("agent_records_role_check", err)
+            # Pre-state: every newly widened role is rejected by scratch.
+            for role in WIDENING_ROLES:
+                err = d.expect_error(_probe(role), (role,))
+                self.assertIn("agent_records_role_check", err)
             # A stale-era role works fine pre-repair.
             d.in_tx(lambda cur: cur.execute(_probe("engineer"), ("engineer",)))
             # Apply the REAL migration.
-            with open(V190_PATH) as fh:
+            with open(PIN_PATH) as fh:
                 d.sql(fh.read())
-            # The three previously-rejected roles now pass.
-            for role in ("lead-engineer", "sound-technician", "ontologist"):
+            # The newly widened roles now pass through scratch.
+            for role in WIDENING_ROLES:
                 d.in_tx(lambda cur, r=role: cur.execute(_probe(r), (r,)))
             # Empty-string role still allowed (the '' escape hatch).
             d.in_tx(lambda cur: cur.execute(_probe(""), ("",)))
@@ -278,7 +278,7 @@ class RepairPath(_Base):
             # autocommit INSERTs so they PERSIST (the point of the test).
             for r in ("architect", "engineer", "dba", "DBA", ""):
                 d.sql(_probe(r), (r,))
-            with open(V190_PATH) as fh:
+            with open(PIN_PATH) as fh:
                 d.sql(fh.read())
             # The pre-existing row set is intact and its roles unchanged.
             rows = d.sql("SELECT role, count(*) FROM "
@@ -295,9 +295,9 @@ class RepairPath(_Base):
         db = self._make()
         with db as d:
             d.sql(_skeleton(PINNED_ROLES, STALE_ROLES))
-            with open(V190_PATH) as fh:
+            with open(PIN_PATH) as fh:
                 d.sql(fh.read())
-            with open(V190_PATH) as fh:
+            with open(PIN_PATH) as fh:
                 d.sql(fh.read())  # must succeed, not error
             scratch_def = self.role_check_def(d, "scratch.agent_records_history")
             self.assertEqual(_extract_literals(scratch_def),
@@ -306,16 +306,16 @@ class RepairPath(_Base):
 
 class DriftGate(_Base):
     def test_nebula_grown_beyond_pin_refuses(self):
-        """Future vocabulary growth on nebula without updating V190's pin:
-        the preflight must refuse the migration and change nothing."""
+        """Future vocabulary growth on nebula without updating the current pin:
+        the pin migration must refuse and change nothing."""
         db = self._make_db("drift")
         with db as d:
             grown = STALE_ROLES + ["future-role"]
             d.sql(_skeleton(grown, STALE_ROLES))
-            with open(V190_PATH) as fh:
+            with open(PIN_PATH) as fh:
                 err = d.expect_error(fh.read())
-            self.assertIn("V190 PREFLIGHT FAIL", err)
-            self.assertIn("drifted", err)
+            self.assertIn("PREFLIGHT FAIL", err)
+            self.assertIn("matches neither", err)
             # Nothing changed: scratch still carries the stale constraint.
             scratch_def = self.role_check_def(d, "scratch.agent_records_history")
             self.assertEqual(_extract_literals(scratch_def),
@@ -329,16 +329,16 @@ class DriftGate(_Base):
                   + TABLE_SQL.format(qual="scratch.agent_records_history",
                                      rt_check=RECORD_TYPE_CHECK,
                                      role_check=_role_check_sql(STALE_ROLES)))
-            with open(V190_PATH) as fh:
+            with open(PIN_PATH) as fh:
                 err = d.expect_error(fh.read())
-            self.assertIn("V190 PREFLIGHT FAIL", err)
-            self.assertIn("source of truth missing", err)
+            self.assertIn("PREFLIGHT FAIL", err)
+            self.assertIn("not found", err)
 
 
 class BootstrapPath(_Base):
     """The REAL patched bootstrap deploys born-clean (no repair needed)."""
 
-    def test_born_clean_24_roles(self):
+    def test_born_clean_current_pin(self):
         db = self._make_db("boot")
         with db as d:
             d.conn.autocommit = False

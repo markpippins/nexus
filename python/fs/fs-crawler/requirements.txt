@@ -16,7 +16,7 @@ pydantic-settings==2.4.0
 
 # Media Processing Libraries
 mutagen==1.47.0  # Audio metadata
-Pillow==10.4.0   # Image processing
+Pillow==12.3.0   # Image processing
 ExifRead==3.0.0  # EXIF data
 python-magic==0.4.27  # File type detection
 
@@ -25,7 +25,7 @@ python-magic==0.4.27  # File type detection
 
 # Utilities
 aiofiles==23.2.1  # Async file operations
-python-multipart==0.0.6  # File uploads
+python-multipart==0.0.31  # File uploads
 httpx==0.25.2  # HTTP client for testing
 
 # Development & Monitoring

@@ -18,6 +18,7 @@
         "lead-engineer",
         "planner",
         "reviewer",
+        "supervisor",
         "topologist"
       ],
       "sha256": "c8ee53af63a26ab4b810700caa8f8cb323062c0c9f70d92cd48ef11c47a5dc6d",
@@ -60,6 +61,7 @@
         "lead-engineer",
         "planner",
         "reviewer",
+        "supervisor",
         "topologist"
       ],
       "sha256": "64a890ab65da7107c39472a158441bfa473e2dbcc465d8c9152a0ac10071b1ac",
@@ -518,6 +520,7 @@
         "planner",
         "reviewer",
         "sound-technician",
+        "supervisor",
         "topologist"
       ],
       "sha256": "aaf19bac0def929f44ac6b3f94813eafeba8e4131e9feaea1e9e6ec6e42a6c85",
@@ -688,6 +691,7 @@
         "planner",
         "reviewer",
         "sound-technician",
+        "supervisor",
         "topologist"
       ],
       "sha256": "c1d83419bbc08b6cd8441edb7054e88ad290412b90e8d830a5b272c87ed529f0",
@@ -1134,6 +1138,7 @@
         "lead-engineer",
         "planner",
         "reviewer",
+        "supervisor",
         "sysadmin",
         "tester",
         "topologist"
@@ -1313,6 +1318,7 @@
         "lead-engineer",
         "planner",
         "reviewer",
+        "supervisor",
         "topologist"
       ],
       "sha256": "0d2e7b80c3cadec9495f390942aca333ef32b5d39e6369eb2e72429c5b0cfe69",
@@ -1418,6 +1424,7 @@
         "engineer-iii",
         "planner",
         "reviewer",
+        "supervisor",
         "topologist"
       ],
       "sha256": "2525da58d8253a7d263fd73eee114bd49b6e969f096b4242e5b6d168f67b8392",
@@ -1474,7 +1481,7 @@
       ]
     },
     {
-      "body_md": "## Procedure\nAdding a new role to the system is deterministic: edit the canonical expectations file, emit the artifacts, and verify with the end-to-end check. No undocumented parallel hand-edits.\n\n### 1. Canonical edit\nAdd the role to `nexus/config/roles/roles.json` under `roles` \u2014 the key must match the name inserted into `tackle.roles`. Inherit `roleDefaults` unless the role is special (test/alias roles override surfaces to false).\n\n### 2. Emit artifacts\nFor a full agent role, create/update:\n- **tackle.roles row** \u2014 via the seed arrays (`tackle-mcp/src/db.ts` DEFAULT_ROLES, `conduit-mcp/src/db.ts` migration defaultRoles) or a migration; the live DB is canonical.\n- **Persona prompt** \u2014 `tackle.prompts` row (role, slug `opencode-persona`, version 1) in `schemas/migrations/tackle/` (pattern: `sysadmin_persona_v1.sql`); apply to the live DB.\n- **Harness agent file** \u2014 `config/harnesses/opencode/agents/<role>.md` (frontmatter: assumes_role, permissions; pattern: `sysadmin.md`).\n- **Procedure cards** \u2014 add the role to the role lists of the relevant `the canonical procedure-card table` cards (the role assignment join table assignments); then regenerate the seed: `python3 bin/regenerate_memory_seed.py --verify`.\n- **Assembly alias** \u2014 `assembly.users` row with alias = role name (pattern: builder seed in `assembly-migration.sql`).\n- **nebula role CHECK** \u2014 new `typescript/nebula-srv/migrations/0NN-allow-<role>.sql` mirroring `052-allow-sysadmin-dba-role.sql`; apply + replicate to barium.\n- **Governance** \u2014 add to `harness-srv/src/governance.ts` KNOWN_EXECUTORS only if the role issues receipts.\n\n### 3. Verify\nRun `python3 bin/verify-roles.py` \u2014 it checks every expected surface for every registered role (persona, procedure cards, assembly alias, harness file, nebula CHECK, governance). Exit 0 = all covered. Fix FAILs before closing.\n\n### 4. Close\nPost the walkthrough evidence on the role-creation thread and record an engineering log. Surface the new role to the architect for allowlist ratification if the case/naming deviates from convention.",
+      "body_md": "\n## Procedure\n\nAdding or changing a role is deterministic and database-first. Never hand-edit generated projections or silently widen execution authority.\n\n### 1. Confirm the decision and rollout gate\n\n1. Record the operator/architecture decision and the role's initial authority boundary.\n2. Check the live role vocabulary and any active migration/restore incident. Do not apply role DDL while role-memory validity or security constraints are in an unresolved incident state.\n3. DDL/data application is DBA/operator authorized. Ask before replicating canonical changes to the off-machine target **vanadium** (R9).\n\n### 2. Canonical repository edit\n\nEdit `config/roles/roles.json` under `roles`. The key must match `tackle.roles.name` exactly. Inherit `roleDefaults` unless a surface is deliberately absent.\n\n- `governance` is true only for a role that issues Conduit receipts.\n- New roles default to **no WorkRequest execution, settlement, or verification authority** unless a separate binding decision grants it.\n- Record the role in `schemas/decision-b-freeze/roles-disposition-matrix.json` with its source registries and authority scope.\n\n### 3. Emit every required surface\n\nFor a full role, provide all of:\n\n1. `tackle.roles` identity in Tackle/Conduit seed inputs or a canonical migration.\n2. `tackle.prompts` row for `<role>/opencode-persona`.\n3. Active role-memory assignments for the minimum relevant procedure cards.\n4. `assembly.users` alias for attributed posts.\n5. Nebula record-author CHECK and `nebula.roles_history` capability metadata.\n6. `config/harnesses/opencode/agents/<role>.md` source template when an OpenCode harness file is expected.\n7. `harness-srv` `KNOWN_EXECUTORS` only if and only if the role issues receipts.\n8. Role-vocabulary/bootstrap surfaces and the generated procedure seed/manifest.\n\n### 4. Regenerate projections\n\nAfter the canonical database migration is legitimately applied:\n\n```bash\npython3 bin/regenerate_memory_seed.py --verify\n```\n\nThis regenerates `typescript/tackle-seeds/index.ts`, `seed-manifest.json`, and the built seed package from the live procedure-card and role-assignment tables. Never hand-edit those outputs.\n\nRender the OpenCode agent projection through the configured Tackle projection surface after the persona/role rows are live. Never directly edit runtime `/home/codex/dev/.opencode/agents/*.md` as a substitute for its source.\n\n### 5. Verify and test\n\n```bash\npython3 bin/verify-roles.py\npython3 bin/role-vocab-drift.py --json\n```\n\nAdd hermetic regression coverage for source-to-projection parity and new negative authority boundaries. Run the affected package tests/builds. Code plus passing tests is the merge gate; without tester attestation, keep the PR in draft.\n\n### 6. Close the loop\n\n1. Post the change summary to `change-log` with migration and regeneration evidence.\n2. Write completion/status records to the new role and affected engineer/tester lanes.\n3. Track the PR through the GitHub forum until merge or rejection.\n4. If the role later expands into Conduit execution, make that a new authority decision and migration; do not silently reinterpret this runbook.\n",
       "mcp_tools": [],
       "roles": [
         "architect",
@@ -1482,11 +1489,12 @@
         "engineer",
         "engineer-ii",
         "engineer-iii",
-        "lead-engineer"
+        "lead-engineer",
+        "supervisor"
       ],
-      "sha256": "d5583b3bd764f513cb3597d4ffd2c5e01e0c9536790eb6f2f477c13517834b91",
+      "sha256": "d58eaa0b09d98e72ae4fdd2c392e00e70d24745446f63227ab786a32f5a3c050",
       "slug": "role-creation",
-      "summary": "One source-of-truth edit (config/roles/roles.json) plus generated artifacts registers a role across every surface; bin/verify-roles.py proves end-to-end coverage.",
+      "summary": "Deterministic role registration, canonical DB rollout, generated doctrine/OpenCode projections, and full-surface verification.",
       "tags": [
         "role",
         "runbook",
@@ -1528,6 +1536,7 @@
         "planner",
         "reviewer",
         "sound-technician",
+        "supervisor",
         "topologist"
       ],
       "sha256": "f0b1af8f27a778561df95a74b8c9cd4b49bbb725f271242553c82a6cd57d6389",
@@ -1758,6 +1767,7 @@
         "planner",
         "reviewer",
         "sound-technician",
+        "supervisor",
         "topologist"
       ],
       "sha256": "83d7ac6d0b3d5c444447fdd755b5b936dd91a3ef7a6aeaa2717fa229d54d5302",
@@ -1864,6 +1874,7 @@
         "planner",
         "reviewer",
         "sound-technician",
+        "supervisor",
         "topologist"
       ],
       "sha256": "20a67b199b3fd6cc919dbe6faf011055362f05be880dc79575b6eb45c2775b56",
@@ -2035,6 +2046,7 @@
         "lead-engineer",
         "planner",
         "reviewer",
+        "supervisor",
         "topologist"
       ],
       "sha256": "743864a567164ddaf93a0a35e158c9864c390fd35a02f87d833b09fb6ba7ad69",
@@ -2061,6 +2073,6 @@
       ]
     }
   ],
-  "role_count": 568,
+  "role_count": 580,
   "schema": "tackle"
 }
