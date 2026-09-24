@@ -78,8 +78,16 @@ const REPO = path.resolve(__dirname, "..", "..", "..", "..", "..", "nexus");
 const WORKTREE_ROOT = path.resolve(__dirname, "../../..");
 const TWIN_API = path.resolve(__dirname, "../services/api.service.ts");
 const INCUMBENT_SRC = path.join(REPO, "typescript/tackle-srv/src");
-const SEEDS_CHECKOUT = path.join(WORKTREE_ROOT, "typescript/tackle-seeds/index.ts");
-const SEEDS_VENDORED = path.resolve(__dirname, "../vendor/tackle-seeds/index.ts");
+// Every file the vendored seeds module needs at runtime (canonical-shape.ts
+// reads sql/canonical/tackle_role_memory_shape.sql relative to its compiled
+// location — walked up to the worktree root copy if the vendored one is
+// absent, so both files must track the checkout).
+const SEEDS_FILES: Array<[string, string]> = [
+  ["typescript/tackle-seeds/index.ts", "vendor/tackle-seeds/index.ts"],
+  ["typescript/tackle-seeds/canonical-shape.ts", "vendor/tackle-seeds/canonical-shape.ts"],
+  ["typescript/tackle-seeds/seed-manifest.json", "vendor/tackle-seeds/seed-manifest.json"],
+  ["sql/canonical/tackle_role_memory_shape.sql", "vendor/tackle-seeds/sql/canonical/tackle_role_memory_shape.sql"],
+];
 
 function extractAliasPairs(): Set<string> {
   const src = fs.readFileSync(TWIN_API, "utf8");
@@ -150,10 +158,12 @@ describe("alias map parity (static)", () => {
 });
 
 describe("vendored tackle-seeds drift guard (static)", () => {
-  test("vendored copy is byte-identical to typescript/tackle-seeds/index.ts", () => {
-    const a = fs.readFileSync(SEEDS_CHECKOUT);
-    const b = fs.readFileSync(SEEDS_VENDORED);
-    expect(a.equals(b)).toBe(true);
+  test("every vendored seeds file is byte-identical to the checkout", () => {
+    for (const [checkoutRel, vendoredRel] of SEEDS_FILES) {
+      const a = fs.readFileSync(path.join(WORKTREE_ROOT, checkoutRel));
+      const b = fs.readFileSync(path.resolve(__dirname, "..", vendoredRel));
+      expect(a.equals(b)).toBe(true);
+    }
   });
 });
 

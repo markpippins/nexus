@@ -1,11 +1,7 @@
 import { Pool, PoolClient, types } from "pg";
 import { readFileSync } from "fs";
 import path from "path";
-// TWIN DEVIATION (the only one in this file): the incumbent imports the
-// workspace `file:` dep `tackle-seeds`; the twin imports the vendored copy
-// (../vendor/tackle-seeds/index.ts, byte-identical — enforced by a drift
-// test). Everything below is verbatim.
-import { seedMemoryProcedures } from "../vendor/tackle-seeds/index.js";
+import { seedMemoryProcedures, loadCanonicalRoleMemoryShape } from "../vendor/tackle-seeds/index.js";
 
 // ── Keep timestamps as ISO strings ─────────────────────────────────
 // pg parses TIMESTAMPTZ into Date objects by default. Override to keep
@@ -261,48 +257,9 @@ async function createSchema(
   `);
 
   // ── Memory procedure registry ─────────────────────────────────────
-  await exec(`CREATE EXTENSION IF NOT EXISTS btree_gist`);
-
-  await exec(`
-    CREATE TABLE IF NOT EXISTS ${TACKLE_SCHEMA}.memory (
-      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      slug        TEXT NOT NULL UNIQUE,
-      title       TEXT NOT NULL,
-      summary     TEXT NOT NULL DEFAULT '',
-      body_md     TEXT NOT NULL DEFAULT '',
-      tags        TEXT[] NOT NULL DEFAULT '{}',
-      triggers    TEXT[] NOT NULL DEFAULT '{}',
-      mcp_tools   TEXT[] NOT NULL DEFAULT '{}',
-      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-  `);
-
-  await exec(`
-    CREATE TABLE IF NOT EXISTS ${TACKLE_SCHEMA}.role_memory (
-      id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      memory_id     UUID NOT NULL REFERENCES ${TACKLE_SCHEMA}.memory(id) ON DELETE CASCADE,
-      role          TEXT NOT NULL,
-      as_of_dt      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      expiration_dt TIMESTAMPTZ,
-      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      CONSTRAINT uq_role_memory_active
-        EXCLUDE USING gist (
-          memory_id WITH =,
-          role WITH =,
-          tstzrange(as_of_dt, expiration_dt) WITH &&
-        )
-    );
-  `);
-
-  await exec(`
-    CREATE INDEX IF NOT EXISTS idx_role_memory_as_of
-      ON ${TACKLE_SCHEMA}.role_memory (role, as_of_dt DESC)
-  `);
-  await exec(`
-    CREATE INDEX IF NOT EXISTS idx_role_memory_expiration
-      ON ${TACKLE_SCHEMA}.role_memory (role, expiration_dt DESC NULLS FIRST)
-  `);
+  // Shape consumed from the canonical fragment (sql/canonical/) via
+  // tackle-seeds — DO NOT restate the DDL inline (parity test enforces).
+  await exec(loadCanonicalRoleMemoryShape(TACKLE_SCHEMA));
 
   // role_leases — session-level role leases (RoleLeases / plan 1286):
   // a bounded window + budget under which a role on a given channel may
@@ -1102,6 +1059,7 @@ const DEFAULT_ROLES: { name: string; description: string }[] = [
   { name: "critic", description: "Adversarial evaluator — surfaces risks, contradictions, and blind spots" },
   { name: "analyst", description: "Gap and triage analyst — identifies missing coverage, classifies incidents" },
   { name: "inspector", description: "Compliance auditor — verifies invariants, issues violation reports" },
+  { name: "supervisor", description: "Role-system administrator — registers and configures roles, regenerates doctrine and OpenCode projections, and verifies role-surface coverage; no WorkRequest execution authority" },
   { name: "test", description: "Internal test harness role — used for test invoke sessions and ad-hoc agent runs" },
   { name: "leased-builder", description: "Interactive-channel implementation executor — bounded role lease (RoleLeases, plan 1286): consumes from the READY pool under a window+budget lease, mirroring builder with a mandatory time limit" },
 ];

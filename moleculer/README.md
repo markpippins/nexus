@@ -16,6 +16,7 @@ lives beside its incumbent and is cut over only behind a contract gate.
 | `knowledge/` | 4109 | `typescript/knowledge-srv` (:3109) | **`typescript/knowledge-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed 28/28, not cut over (no auth gate on incumbent — CORS only; registry heartbeat deliberately not ported) |
 | `role-memory/` | 4150 | `typescript/role-memory-srv` (:3500) | **`typescript/role-memory-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed 30/30, not cut over (shared Redis/PG parity — refresh converges the same cache; no auth gate on incumbent) |
 | `semantics/` | 4160 | `typescript/semantics-srv` (:3160) | **`typescript/semantics-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed 12/12 + live-data envelopes, not cut over (table-driven CRUD via stored procs + T02 asset spine; no auth gate on incumbent — CORS only) |
+| `tackle/` | 4410 | `typescript/tackle-srv` (:3410) | **`typescript/tackle-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed 54/54, not cut over (dispatch-through-Express: verbatim incumbent app behind one `tackle.dispatch` action, 86 aliases; real writes stay incumbent-owned) |
 
 ## Contract coverage
 
@@ -37,6 +38,13 @@ to repeat:
    parses that variable itself and passes the literal string `"null"`
    (`Invalid transporter type 'null'`). Use a config file: see
    `voyager/moleculer.config.standalone.js`.
+3. **Dispatch-through-Express for wide Express incumbents.** When the
+   incumbent is many Express routers with verbatim middleware semantics
+   (query parsing, SSE, finalhandler HTML 404s), do not hand-shim handlers:
+   host the incumbent's real `app` behind one action (`tackle.dispatch`)
+   and point every alias at it — `ctx.meta.$req/$res` stashed in
+   `onBeforeCall` gives the gateway the real req/res; local callers pass
+   meta by reference. See `tackle/services/express-app.ts`.
 
 ## Commands
 
