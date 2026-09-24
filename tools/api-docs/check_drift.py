@@ -54,6 +54,8 @@ MOLECULER_MIRRORS = {
     "moleculer/draft": "typescript/draft-srv",
     "moleculer/knowledge": "typescript/knowledge-srv",
     "moleculer/role-memory": "typescript/role-memory-srv",
+    "moleculer/semantics": "typescript/semantics-srv",
+    "moleculer/tackle": "typescript/tackle-srv",
 }
 
 
