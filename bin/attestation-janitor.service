@@ -25,6 +25,9 @@ After=network-online.target
 
 [Service]
 Type=oneshot
+# gh needs repo context for `gh pr list` discovery; systemd starts in $HOME,
+# which broke every tick once the script went live on main (2026-09-24).
+WorkingDirectory=/home/codex/dev/nexus
 # ExecCondition: skip cleanly (result=skipped, unit NOT failed) until the
 # script exists on the primary checkout — i.e. until the PR carrying it
 # merges. Prevents up to 96 failed ticks/day between timer enablement and
