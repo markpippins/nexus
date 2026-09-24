@@ -1,0 +1,73 @@
+{
+  "$comment": [
+    "W-B4 evidence prototype (DBA, 2026-09-24): structured start-condition gating",
+    "spec for plans 8261652-8261655 — the candidate metadata shape for planner",
+    "ratification. NOT live plan metadata yet; the checker reads this file.",
+    "",
+    "start_conditions: each entry is one gate. evaluator = a small named",
+    "  predicate the checker knows how to compute from live evidence",
+    "  (bin/check_plan_gating.py). params carry the evidence references.",
+    "family: parent/child links. status = active|superseded|duplicate-parent.",
+    "  'duplicate-parent' marks a parent whose scope is fully carried by its",
+    "  children — the W-B4 duplication case this prototype demonstrates."
+  ],
+  "version": "wb4-prototype-1",
+  "plans": {
+    "8261652": {
+      "title": "Decompose promotion post-ST.01 waves (W-A/W-B/W-C) into M-sized packages",
+      "family": {
+        "role": "duplicate-parent",
+        "children": ["8261653", "8261654", "8261655"]
+      },
+      "start_conditions": [
+        {"id": "st01", "evaluator": "db_table_exists",
+         "params": {"table": "resolution.promotion_batch"},
+         "evidence_ref": "nebula.agent_records 09-23 16:25 WP#3 COMPLETE + PR #493",
+         "note": "met 2026-09-23 (V198 live)"},
+        {"id": "envelope_freeze", "evaluator": "record_exists",
+         "params": {"record_id8": "a2352584"},
+         "evidence_ref": "envelope v1 delivered 09-22 22:48",
+         "note": "met 2026-09-22"}
+      ],
+      "expected_gating": "BLOCKED-BUT-OPEN — conditions met, builder ticket expired with no respawn; parent is duplicate anyway, so the correct action is supersede, not start"
+    },
+    "8261653": {
+      "title": "W-A decomposition: duplicate-history reconciliation into M-sized packages",
+      "family": {
+        "role": "child",
+        "parent": "8261652"
+      },
+      "start_conditions": [
+        {"id": "st01", "evaluator": "db_table_exists",
+         "params": {"table": "resolution.promotion_batch"},
+         "evidence_ref": "PR #493 merged",
+         "note": "met 2026-09-23"}
+      ],
+      "expected_gating": "BLOCKED-BUT-OPEN — ST.01 was met after ticket expiry; startable content-wise but no live ticket; planner re-emit required"
+    },
+    "8261654": {
+      "title": "W-B decomposition: Conduit/Nebula visibility unification into M-sized packages",
+      "family": {
+        "role": "child",
+        "parent": "8261652"
+      },
+      "start_conditions": [],
+      "artifact_state": "review_reject: 5/7 ACs; AC4 evidence undefined; AC5 is wave end-state (blueprint conflation) — needs planner re-scope + re-emit",
+      "expected_gating": "IN-REWORK — not startable by any builder until planner re-scopes AC4/AC5 and re-emits"
+    },
+    "8261655": {
+      "title": "W-C decomposition: consumer migration (writer fencing + Stage D gates) into M-sized packages",
+      "family": {
+        "role": "child",
+        "parent": "8261652"
+      },
+      "start_conditions": [
+        {"id": "wa_wb_done", "evaluator": "plan_status_in",
+         "params": {"plan": "8261654", "accept": ["completed"]},
+         "evidence_ref": "conduit /state derivedStatus",
+         "note": "W-B terminal pass required first"}
+      ],
+      "expected_gating": "BLOCKED-AND-OPEN — expired builder ticket presents work its own condition (W-A/W-B done) forbids; the W-B4 exhibit"
+    }
+  }
+}
