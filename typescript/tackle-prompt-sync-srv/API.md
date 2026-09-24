@@ -24,14 +24,6 @@ python3 tools/api-docs/gen_openapi.py --inventory /tmp/api_inventory.json   # (v
 
 <!-- API-SPEC-BEGIN -->
 
-
-
-
-
-
-
-
-
 ---
 
 # tackle-prompt-sync-srv — REST & Envelope Spec

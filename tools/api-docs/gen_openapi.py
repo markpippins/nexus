@@ -366,7 +366,7 @@ def build_api_md(meta, endpoints, kind):
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Generate OpenAPI + API.md per *-srv from the endpoint inventory.")
     ap.add_argument("--inventory", default="/tmp/api_inventory.json")
-    ap.add_argument("--root", default="/home/codex/dev/nexus")
+    ap.add_argument("--root", default=os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")), help="repo root (defaults to the tree this script lives in, not a hardcoded checkout)")
     ap.add_argument("--skip-fastapi", action="store_true", help="do not fetch vision-srv's live FastAPI spec")
     ap.add_argument("--only", default="", help="comma-separated service names to regenerate (default: all)")
     args = ap.parse_args(argv)
@@ -420,7 +420,17 @@ def main(argv=None):
         with open(api_path, "w") as f:
             f.write(generated)
             if hand:
-                f.write(hand)
+                # Idempotent junction: `generated` ends with the marker plus
+                # one newline, and `hand` (sliced from the previous file)
+                # begins with the newline(s) the previous write left after
+                # the marker. Appending hand verbatim therefore added one
+                # blank line PER REGENERATION — an unconvergable ratchet that
+                # made the CI byte-identical check fail on every run once it
+                # actually executed (it was a silent no-op before the
+                # extract_routes ROOT fix). Canonical form: marker, one blank
+                # line, hand-authored section — stable under re-runs.
+                f.write("\n")
+                f.write(hand.lstrip("\n"))
                 if not hand.endswith("\n"):
                     f.write("\n")
         summary[key] = f"{len(endpoints)} endpoints ({kind})"
