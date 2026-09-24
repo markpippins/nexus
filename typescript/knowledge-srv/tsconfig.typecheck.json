@@ -1,0 +1,24 @@
+{
+  // Typecheck-only program for knowledge-srv (pattern from PR #522).
+  //
+  // The base tsconfig.json must keep emitting `dist/` with rootDir=src for
+  // `npm run build`, so it CANNOT map heartbeat-client to its sibling source
+  // (that would pull ../heartbeat-client/index.ts into the emit program and
+  // shift the dist layout). This overlay exists for `npm run typecheck`:
+  // no emit, and heartbeat-client resolved to the sibling's real source
+  // (index.ts) instead of its built dist/index.d.ts — which does not exist
+  // in fresh checkouts (build residue only; the image build compiles the
+  // sibling first via the Dockerfile step order, which stays authoritative
+  // for builds).
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // noEmit makes rootDir's emit-layout role inert; widen it so the
+    // paths-mapped sibling source (outside src/) does not trip TS6059.
+    "rootDir": "..",
+    "baseUrl": ".",
+    "paths": {
+      "heartbeat-client": ["../heartbeat-client/index.ts"]
+    }
+  }
+}
