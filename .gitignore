@@ -151,3 +151,10 @@ etc/
 
 # sonar scanner local artifacts
 .scannerwork/
+
+# Lockfile adoption — opt-in per service (2026-09-24).
+# Dependabot npm bumps become reproducible: dependabot PRs now update
+# package-lock.json, and consumers can npm ci. Extend this list service
+# by service; do not un-ignore repo-wide.
+!typescript/nebula-srv/package-lock.json
+!typescript/assembly-srv/package-lock.json
