@@ -14,12 +14,13 @@ lives beside its incumbent and is cut over only behind a contract gate.
 | `kernel/` | 4100 | `typescript/kernel-srv` (:8100) | **`typescript/kernel-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed 25/25, not cut over |
 | `draft/` | 4170 | `typescript/draft-srv` (:3170) | **`typescript/draft-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed 15/15, not cut over (drivers copied verbatim; X-Nexus-Internal gate replicated) |
 | `knowledge/` | 4109 | `typescript/knowledge-srv` (:3109) | **`typescript/knowledge-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed 28/28, not cut over (no auth gate on incumbent — CORS only; registry heartbeat deliberately not ported) |
+| `role-memory/` | 4150 | `typescript/role-memory-srv` (:3500) | **`typescript/role-memory-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed 30/30, not cut over (shared Redis/PG parity — refresh converges the same cache; no auth gate on incumbent) |
 
 ## Contract coverage
 
 `tools/api-docs/check_drift.py` treats a moleculer app as a second
 implementation of an existing contract when it appears in
-`MOLLECULER_MIRRORS` (key → incumbent service): the app carries no
+`MOLECULER_MIRRORS` (key → incumbent service): the app carries no
 `openapi.yaml` of its own, its gateway alias map is compared against the
 incumbent's committed spec, and `--update` refuses to "fix" the port by
 rewriting that spec. `voyager/` is the first app wired this way.

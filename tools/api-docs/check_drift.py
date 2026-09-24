@@ -47,12 +47,13 @@ EXCLUDED = {"semantics-srv", "pty-srv", "terrain-srv", "resolution-srv"}
 # The port carries NO spec of its own: one contract, two implementations, one
 # gate. Drift here means the alias map moved, not that a spec is stale — so
 # these keys are never regenerated (see --update below).
-MOLLECULER_MIRRORS = {
+MOLECULER_MIRRORS = {
     "moleculer/voyager": "typescript/voyager-srv",
     "moleculer/cascade": "typescript/cascade-srv",
     "moleculer/kernel": "typescript/kernel-srv",
     "moleculer/draft": "typescript/draft-srv",
     "moleculer/knowledge": "typescript/knowledge-srv",
+    "moleculer/role-memory": "typescript/role-memory-srv",
 }
 
 
@@ -100,7 +101,7 @@ def find_services():
         if os.path.isdir(full):
             services[key] = full
     # Moleculer apps (moleculer-web gateways).
-    for key, rel in er.MOLLECULER_SERVICES.items():
+    for key, rel in er.MOLECULER_SERVICES.items():
         full = os.path.join(ROOT, rel)
         if os.path.isdir(full):
             services[key] = full
@@ -109,7 +110,7 @@ def find_services():
 
 def extract_surface(key, svc_dir):
     """Route inventory for a service — Express/FastAPI, Moleculer, or Spring."""
-    if key in er.MOLLECULER_SERVICES:
+    if key in er.MOLECULER_SERVICES:
         return er.process_moleculer_service(svc_dir, key)
     if key.startswith("jvm/"):
         return er.process_spring_service(svc_dir, key)
@@ -123,7 +124,7 @@ def contract_dir(key, svc_dir):
     second implementation of an existing contract); for everything else it is
     the service's own dir.
     """
-    mirror = MOLLECULER_MIRRORS.get(key)
+    mirror = MOLECULER_MIRRORS.get(key)
     if mirror:
         return os.path.join(ROOT, mirror)
     return svc_dir
@@ -133,7 +134,7 @@ def verify_all(services):
     """Compute the per-service drift report: {key: {status, ...}}."""
     report = {}
     for key, svc_dir in sorted(services.items()):
-        contract = MOLLECULER_MIRRORS.get(key)
+        contract = MOLECULER_MIRRORS.get(key)
         spec_path = os.path.join(contract_dir(key, svc_dir), "openapi.yaml")
         if not os.path.exists(spec_path):
             report[key] = {
@@ -195,11 +196,11 @@ def main():
         # regenerating that spec from the incumbent's routes cannot fix an
         # alias-map drift, it would only rewrite an unchanged spec. Report and
         # skip instead, so --update never masks a port/contract divergence.
-        mirrored = {k: v for k, v in problems.items() if k in MOLLECULER_MIRRORS}
+        mirrored = {k: v for k, v in problems.items() if k in MOLECULER_MIRRORS}
         for k, v in sorted(mirrored.items()):
             print(f"  ! {k}: cannot regenerate — judged against {v.get('contract')} "
                   f"(fix the gateway alias map, not the spec)")
-        targets = [k.split("/")[-1] for k in problems if k not in MOLLECULER_MIRRORS]
+        targets = [k.split("/")[-1] for k in problems if k not in MOLECULER_MIRRORS]
         if targets:
             go.main(["--inventory", tmp, "--root", ROOT, "--only", ",".join(targets)])
         # re-verify to confirm the refresh landed

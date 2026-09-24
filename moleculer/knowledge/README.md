@@ -3,7 +3,7 @@
 Moleculer port of `typescript/knowledge-srv` (:3109), the knowledge-graph REST
 API (graph_entities, graph_edges, graph_cross_references, graph_migrations).
 Listens on **:4109**; contract pinned to the incumbent's committed
-`openapi.yaml` via `tools/api-docs/check_drift.py` (`MOLLECULER_MIRRORS`).
+`openapi.yaml` via `tools/api-docs/check_drift.py` (`MOLECULER_MIRRORS`).
 
 ## Callers (why this port matters)
 

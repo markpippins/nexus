@@ -55,13 +55,14 @@ JVM_SERVICES = {
 # Express `router.get(...)` calls but the gateway's `aliases:` map
 # (`"GET /path": "svc.action"`) relative to each route's `path:` prefix —
 # parsed by process_moleculer_service() below. Which incumbent contract each
-# app is pinned to lives in check_drift.MOLLECULER_MIRRORS.
-MOLLECULER_SERVICES = {
+# app is pinned to lives in check_drift.MOLECULER_MIRRORS.
+MOLECULER_SERVICES = {
     "moleculer/voyager": "moleculer/voyager",
     "moleculer/cascade": "moleculer/cascade",
     "moleculer/kernel": "moleculer/kernel",
     "moleculer/draft": "moleculer/draft",
     "moleculer/knowledge": "moleculer/knowledge",
+    "moleculer/role-memory": "moleculer/role-memory",
 }
 
 # moleculer-web alias entries: "GET /path": "svc.action" (single-quoted forms
@@ -475,7 +476,7 @@ def main():
         full = os.path.join(args.root, rel)
         if os.path.isdir(full):
             result[key] = process_spring_service(full, key)
-    for key, rel in sorted(MOLLECULER_SERVICES.items()):
+    for key, rel in sorted(MOLECULER_SERVICES.items()):
         full = os.path.join(args.root, rel)
         if os.path.isdir(full):
             result[key] = process_moleculer_service(full, key)
