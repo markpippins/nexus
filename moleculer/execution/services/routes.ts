@@ -33,6 +33,7 @@
 // All queries run as SELECTs only — there is no write path in this service.
 
 import { Request, Response, Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { Pool, QueryResult } from 'pg';
 import { governanceMetrics, METRIC_WITNESSED_RUN_STATUS, METRIC_RECEIPT_CORRELATION_INVALID, isUuidShape } from './metrics.js';
 
@@ -139,6 +140,20 @@ function paginatedListHandler(pool: Pool, cfg: PaginatedListConfig) {
 
 export function createRoutes(pool: Pool): Router {
   const router = Router();
+
+  // Route-level limiter — mirrored from the incumbent (CodeQL
+  // js/missing-rate-limiting remediation): belt-and-braces under the
+  // app-level limiter so the whole /api/execution surface is covered
+  // wherever the router is mounted.
+  router.use(
+    rateLimit({
+      windowMs: 60 * 1000,
+      max: 300,
+      standardHeaders: 'draft-7',
+      legacyHeaders: false,
+      message: { error: 'execution-srv rate limit exceeded' },
+    }),
+  );
 
   // ═══════════════════════════════════════════════════════════════════
   // 0. PAGINATED LIST ENDPOINTS

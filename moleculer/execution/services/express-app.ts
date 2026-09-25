@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import rateLimit from "express-rate-limit";
 import { pool } from "./db.js";
 import { createRoutes } from "./routes.js";
 
@@ -14,6 +15,18 @@ const app = express();
 
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
+
+// Global request limiter — mirrored from the incumbent (CodeQL
+// js/missing-rate-limiting remediation): 300 req/min/IP, nebula-srv posture.
+app.use(
+  rateLimit({
+    windowMs: 60 * 1000,
+    max: 300,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    message: { error: "execution-srv rate limit exceeded" },
+  }),
+);
 
 // ── API Routes ─────────────────────────────────────────────────────
 app.use("/api/execution", createRoutes(pool));
