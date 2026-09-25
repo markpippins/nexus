@@ -2,7 +2,7 @@
 # dependabot remediation plan (record efb0fb8c).
 #
 # One entry per distinct manifest directory, discovered from the tree on
-# 2026-09-24 (pip 23, npm 80, maven 59; cargo 1 added 2026-09-24 —
+# 2026-09-24 (pip 25, npm 80, maven 59; cargo 1 added 2026-09-24 —
 # rust/wrp/ccnf-verifier, the repo's single Cargo.toml, audited clean:
 # 0 open RustSec advisories on its locked deps). Semantics:
 #   schedule weekly .................. all ecosystems checked every Monday
@@ -1306,6 +1306,22 @@ updates:
       applies-to: security-updates
 - package-ecosystem: maven
   directory: jvm/spring/terrain
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: pip
+  directory: python/nexus_core
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 0
+  groups:
+    security-updates:
+      applies-to: security-updates
+- package-ecosystem: pip
+  directory: python/vision/losm-kernel
   schedule:
     interval: weekly
   open-pull-requests-limit: 0
