@@ -241,14 +241,19 @@ jobs:
           # NATS readiness gate (inspection cbe83e25): the reconciler's
           # provisioning retries are NOT a readiness signal — assert the
           # server is actually accepting requests before anything publishes.
+          # NOTE: connect()'s first positional parameter IS `servers` —
+          # passing the URL positionally AND servers= as a kwarg raises
+          # "got multiple values for argument 'servers'" (caught live by
+          # the first validation dispatch, run 36197088565).
+          NATS_READY='import nats; nats.connect("nats://localhost:4222", max_reconnect_attempts=1, connect_timeout=2).close()'
           for i in $(seq 1 30); do
-            if python3 -c "import nats; nats.connect('nats://localhost:4222', servers=['nats://localhost:4222'], max_reconnect_attempts=1, connect_timeout=2).close()" 2>/dev/null; then
+            if python3 -c "$NATS_READY" 2>/dev/null; then
               echo "NATS ready: accepting client connections"
               break
             fi
             sleep 2
           done
-          python3 -c "import nats; nats.connect('nats://localhost:4222', servers=['nats://localhost:4222'], max_reconnect_attempts=1, connect_timeout=2).close()" || {
+          python3 -c "$NATS_READY" || {
             echo "::error::NATS never became ready (no client connection within 60s)"
             docker logs ci-nats 2>&1 | tail -30
             exit 1
