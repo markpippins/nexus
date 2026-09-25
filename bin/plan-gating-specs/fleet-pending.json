@@ -125,7 +125,7 @@
          "evidence_ref": "canonical latest receipt kind",
          "note": "W-B must terminal-pass first"}
       ],
-      "expected_gating": "BLOCKED-AND-OPEN — expired builder ticket presents work its own conditions (W-A and W-B done) forbid; the W-B4 exhibit"
+      "expected_gating": "BLOCKED-WITH-EXPIRED — gen-1 builder ticket expired (sweeper-enforced post-CD-2), no open ticket; conditions (W-A/W-B done) remain unmet pending planner disposition; was the W-B4 exhibit"
     },
     "0002": {
       "title": "PEB dual-authority parity: reconcile Python contract with shared TypeSpec",

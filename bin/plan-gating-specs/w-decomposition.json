@@ -67,7 +67,7 @@
          "evidence_ref": "conduit /state derivedStatus",
          "note": "W-B terminal pass required first"}
       ],
-      "expected_gating": "BLOCKED-AND-OPEN — expired builder ticket presents work its own condition (W-A/W-B done) forbids; the W-B4 exhibit"
+      "expected_gating": "BLOCKED-WITH-EXPIRED — expired gen-1 ticket awaits disposition; conditions (W-A/W-B done) remain unmet; post-CD-2 the live-work exhibit class requires an open ticket"
     }
   }
 }

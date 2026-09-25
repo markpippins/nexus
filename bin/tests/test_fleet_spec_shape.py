@@ -19,7 +19,7 @@ CHECKER = REPO / "bin" / "check_plan_gating.py"
 
 KNOWN_GATING = {
     "STARTABLE", "BLOCKED-AND-OPEN", "BLOCKED-BUT-OPEN",
-    "BLOCKED-CLOSED", "IN-REWORK", "UNKNOWN",
+    "BLOCKED-WITH-EXPIRED", "BLOCKED-CLOSED", "IN-REWORK", "UNKNOWN",
 }
 KNOWN_EVALUATORS = {
     "db_table_exists", "record_exists", "plan_status_in", "plan_has_record",
@@ -68,12 +68,22 @@ def test_checker_imports_and_classifies() -> None:
     mod = importlib.util.module_from_spec(spec_)
     spec_.loader.exec_module(mod)
 
-    # The W-B4 exhibit: expired ticket + unmet condition -> BLOCKED-AND-OPEN
+    # The W-B4 exhibit class now requires a LIVE open ticket: open ticket
+    # + unmet condition -> BLOCKED-AND-OPEN
+    gating, findings = mod.classify(
+        {}, [{"id": "c1", "met": False}],
+        {"derived": None,
+         "tickets": {"builder": {"status": "open"}}})
+    assert gating == "BLOCKED-AND-OPEN"
+    assert findings
+
+    # Post-CD-2: expired-only ticket on a blocked plan is disposition
+    # hygiene (BLOCKED-WITH-EXPIRED), not live forbidden work
     gating, findings = mod.classify(
         {}, [{"id": "c1", "met": False}],
         {"derived": None,
          "tickets": {"builder": {"status": "expired"}}})
-    assert gating == "BLOCKED-AND-OPEN"
+    assert gating == "BLOCKED-WITH-EXPIRED"
     assert findings
 
     # Conditions met but only an expired ticket -> flow defect class
