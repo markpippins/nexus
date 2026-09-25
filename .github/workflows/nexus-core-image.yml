@@ -227,13 +227,32 @@ jobs:
 
       - name: "Write-queue arc probe (D5) — produce, stream, reconcile, verify"
         run: |
-          # Pinned probes (inspection cbe83e25: bare unpinned pip bootstrap
-          # on a moving ubuntu-latest interpreter is non-reproducible).
+          # Exact-pinned probes (inspection cbe83e25: range pins on a moving
+          # ubuntu-latest interpreter are still non-reproducible — pin exact,
+          # bump deliberately).
           python3 -m pip install --quiet \
-            "nats-py>=2.8,<3" "psycopg2-binary>=2.9,<3"
+            "nats-py==2.16.0" "psycopg2-binary==2.9.13" "asyncpg==0.31.0"
           # The stream must exist before any publish — JetStream drops
           # subjects no stream matches, and the whole point is a durable arc.
+          # (nats-py 2.x dropped the nats.js.api subset import surface; the
+          # provisioning helper is held at 2.10.0 to match the CLI pin.)
+          python3 -m pip install --quiet "nats-py==2.10.0"
           python3 bin/ensure-write-queue-stream.py --nats nats://localhost:4222
+          # NATS readiness gate (inspection cbe83e25): the reconciler's
+          # provisioning retries are NOT a readiness signal — assert the
+          # server is actually accepting requests before anything publishes.
+          for i in $(seq 1 30); do
+            if python3 -c "import nats; nats.connect('nats://localhost:4222', servers=['nats://localhost:4222'], max_reconnect_attempts=1, connect_timeout=2).close()" 2>/dev/null; then
+              echo "NATS ready: accepting client connections"
+              break
+            fi
+            sleep 2
+          done
+          python3 -c "import nats; nats.connect('nats://localhost:4222', servers=['nats://localhost:4222'], max_reconnect_attempts=1, connect_timeout=2).close()" || {
+            echo "::error::NATS never became ready (no client connection within 60s)"
+            docker logs ci-nats 2>&1 | tail -30
+            exit 1
+          }
           WRITE_ID="smoke-$(date -u +%Y%m%dT%H%M%SZ)"
           GOV_ID="smoke-gov-$(date -u +%Y%m%dT%H%M%SZ)"
           echo "staging writeId: $WRITE_ID"
@@ -256,6 +275,16 @@ jobs:
           grep -q "durable consumer .* attached" reconciler.log || {
             echo "::error::reconciler never attached its durable consumer"
             tail -40 reconciler.log
+            exit 1
+          }
+          # The staging surface is canonical DDL (bootstrap + prod migrations);
+          # the reconciler asserts pre-existence and fails loudly rather than
+          # self-provisioning (inspection cbe83e25). Assert it here too, before
+          # any intent flows, so a missing surface fails at the gate, not mid-arc.
+          docker exec ci-pg psql -U nexus -d nexus -tAc \
+            "SELECT to_regclass('resolution.write_queue_applied') IS NOT NULL" \
+            | grep -q t || {
+            echo "::error::resolution.write_queue_applied missing from the bootstrap snapshot — reconciler will (correctly) refuse to self-provision"
             exit 1
           }
           # ── Arc 1 (always): staging-only branch via an unmapped target.
@@ -313,6 +342,29 @@ jobs:
             reconciler.log
           retention-days: 7
 
+      - name: Stop reconciler and upload its log
+        if: always()
+        run: |
+          # Explicit kill + log upload under always() (inspection cbe83e25):
+          # reconciler.log is written on the RUNNER, so teardown must happen in
+          # a step that runs even when the arc step failed — nohup children
+          # would otherwise survive the step and log upload would be skipped.
+          if [ -n "$RECONCILER_PID" ]; then
+            kill $RECONCILER_PID 2>/dev/null || true
+            sleep 1
+          fi
+          pkill -f write_queue_reconciler.py 2>/dev/null || true
+          if [ -f reconciler.log ]; then
+            echo "=== reconciler.log (tail) ==="
+            tail -30 reconciler.log
+          else
+            echo "reconciler.log absent — reconciler never started"
+          fi
+
       - name: Tear down
         if: always()
-        run: docker rm -f ci-app ci-pg ci-nats || true
+        run: |
+          docker rm -f ci-app ci-pg ci-nats || true
+          # Network teardown also under always() — a leaked ci-boot-smoke
+          # network would collide with the next run's `docker network create`.
+          docker network rm ci-boot-smoke || true

@@ -274,13 +274,25 @@ def _apply(intent: dict[str, Any], db) -> tuple[bool, str]:
 
 
 def _stage_applied(intent: dict[str, Any], db) -> None:
-    """Record the write in the audit staging row (idempotent)."""
+    """Record the write in the audit staging row (idempotent).
+
+    The table is provisioned by the canonical DDL (nexus-ci-bootstrap.sql
+    snapshot and production migrations) — the reconciler asserts
+    pre-existence and fails loudly rather than silently re-creating a
+    divergent copy (tester inspection cbe83e25: self-provisioning masked
+    snapshot drift; a stale local shape would reconcile invisibly wrong).
+    """
     cur = db.cursor()
     cur.execute(
-        "CREATE TABLE IF NOT EXISTS resolution.write_queue_applied ("
-        " write_id TEXT PRIMARY KEY, target TEXT, verb TEXT, "
-        " payload JSONB, outcome TEXT, applied_at TIMESTAMPTZ DEFAULT now())"
+        "SELECT to_regclass('resolution.write_queue_applied') IS NOT NULL"
     )
+    exists = cur.fetchone()
+    if not exists or not str(exists[0]).lower().startswith("t"):
+        raise RuntimeError(
+            "resolution.write_queue_applied is missing — provision it via the "
+            "canonical DDL (nexus-ci-bootstrap.sql / V-migrations); the "
+            "reconciler no longer self-provisions"
+        )
     cur.execute(
         "INSERT INTO resolution.write_queue_applied (write_id, target, verb, payload, outcome) "
         "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (write_id) DO NOTHING",

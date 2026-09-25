@@ -26,6 +26,10 @@ class FakeDb:
         self.applied = []
         self.outbox = []
         self.updates = []
+        self.last_sql = ""
+        # Pre-existence verdict for the reconciler's to_regclass assert
+        # (True = canonical DDL provisioned the staging table).
+        self.applied_table_exists = True
 
     def cursor(self):
         return FakeCursor(self)
@@ -45,6 +49,7 @@ class FakeCursor:
         self.db = db
 
     def execute(self, sql, params=None):
+        self.db.last_sql = sql
         if "INSERT INTO" in sql and "write_queue_applied" in sql:
             self.db.applied.append(params)
         if "INSERT INTO" in sql and "keychain_event_outbox" in sql:
@@ -53,6 +58,10 @@ class FakeCursor:
             self.db.updates.append(params)
 
     def fetchone(self):
+        # The staging pre-existence assert (to_regclass) is the only SELECT
+        # the staging path issues; everything else gets the legacy ("0",).
+        if "to_regclass" in self.db.last_sql:
+            return ("t",) if self.db.applied_table_exists else (None,)
         return ("0",)
 
 
@@ -324,6 +333,47 @@ class TestHydration(unittest.TestCase):
         self.assertIn("refused", detail)
         self.assertEqual(len(db.outbox), 1, "refusal KeychainEvent durably recorded")
         self.assertEqual(db.outbox[0][3], "refused")
+
+
+class TestStagingTableAssert(unittest.TestCase):
+    """write_queue_applied pre-existence assert (tester inspection cbe83e25).
+
+    The staging table is canonical DDL (nexus-ci-bootstrap.sql snapshot +
+    production V-migrations). The reconciler used to self-provision with
+    CREATE TABLE IF NOT EXISTS — masking snapshot drift behind an inferred
+    local shape. It now asserts pre-existence and fails loudly.
+    """
+
+    def test_missing_table_fails_loudly(self):
+        with _Ctx():
+            db = FakeDb()
+            db.applied_table_exists = False
+            intent = dict(BASE_INTENT)
+            intent["writeId"] = "tr-missing"
+            ok, detail = wqr._apply(intent, db)
+        self.assertFalse(ok, "absent canonical surface must refuse to apply")
+        self.assertIn("write_queue_applied", detail)
+        self.assertIn("self-provision", detail)
+        self.assertEqual(db.applied, [], "no staging insert when the surface is absent")
+
+    def test_present_table_stages_normally(self):
+        with _Ctx():
+            db = FakeDb()
+            intent = dict(BASE_INTENT)
+            intent["writeId"] = "tr-present"
+            # Unmapped target: isolates the staging assert from the
+            # governed interpreter path (covered by its own tests).
+            intent["target"] = "ci.probe/touch"
+            intent["verb"] = "touch"
+            ok, detail = wqr._apply(intent, db)
+        self.assertTrue(ok)
+        self.assertEqual(len(db.applied), 1, "staging row recorded")
+
+    def test_staging_never_creates_tables(self):
+        """The CREATE TABLE IF NOT EXISTS drift-mask must stay gone."""
+        import inspect
+        src = inspect.getsource(wqr._stage_applied)
+        self.assertNotIn("CREATE TABLE", src)
 
 
 if __name__ == "__main__":
