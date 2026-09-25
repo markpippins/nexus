@@ -14,6 +14,9 @@ Pins the safety rails from the janitor docstring:
   - attestation prefilter: definitive-empty skips; unknown evaluates (fail-safe)
   - state file makes merges idempotent across cycles
   - change-log post fires on every merge
+  - empty-rollup repair: fires ONLY for attested PRs whose sole failing gate
+    is the empty-CI-rollup marker; head-unchanged verified first; cooldown +
+    lifetime attempt cap; --apply only; never merges through a repair
 """
 
 from __future__ import annotations
@@ -71,6 +74,32 @@ BYPASS_REPORT = PASSING.replace("ci green: all checks", "ci green: (BYPASS via e
 
 READY_OK = {"returncode": 0, "stdout": "✓ marked ready", "stderr": ""}
 MERGE_OK = {"returncode": 0, "stdout": "squash-merge of PR #X issued", "stderr": ""}
+CLOSE_OK = {"returncode": 0, "stdout": "", "stderr": ""}
+REOPEN_OK = {"returncode": 0, "stdout": "", "stderr": ""}
+
+# Empty-rollup CI failure: the fail-closed marker from merge_pr.py when the
+# PR's check-rollup is empty (no pull_request run fired against this base).
+EMPTY_CI = gate_report(
+    passes=[
+        "pr open & ready: state=OPEN draft=False mergeable=MERGEABLE head=abc",
+        "tester attestation: record postdates head",
+    ],
+    fails=["ci green: no CI checks reported (fail closed)"],
+)
+REAL_CI_FAIL = gate_report(
+    passes=[
+        "pr open & ready: state=OPEN draft=False mergeable=MERGEABLE head=abc",
+        "tester attestation: record postdates head",
+    ],
+    fails=["ci green: 2 of 49 checks failed: build, wr-conf"],
+)
+
+
+def _view(head: str):
+    return {"returncode": 0, "stdout": json.dumps({"headRefOid": head}), "stderr": ""}
+
+
+HEAD_600 = "b" * 40  # DISCOVERY's headRefOid for PR 600
 
 
 def make_runner(plan):
@@ -337,7 +366,107 @@ def test_corrupt_state_file_is_not_fatal():
     assert rc == 0 and "2 open PR(s)" in buf.getvalue()
 
 
-# ── dual-runnable runner ─────────────────────────────────────────────────────
+# ── empty-rollup repair (close/reopen) ───────────────────────────────────
+
+def test_repair_fires_for_empty_rollup_sole_ci_fail():
+    plan = [("pr list", DISCOVERY),
+            ("merge_pr.py 600", {"returncode": 1, "stdout": EMPTY_CI, "stderr": ""}),
+            ("pr view 600", _view(HEAD_600)),
+            ("pr close 600", CLOSE_OK),
+            ("pr reopen 600", REOPEN_OK)]
+    rc, out, state, calls, pre, logs = _cycle_with_runner(plan, apply=True, only_pr=600)
+    assert any("pr close 600" in c for c in calls) and any("pr reopen 600" in c for c in calls)
+    assert not any("--merge" in c for c in calls), "repair never merges"
+    assert "repair fired" in out and "attempt 1/3" in out
+    assert state["repairs"]["600"]["attempts"] == 1
+    assert state["runs"][-1]["held"] == [600]
+    assert any("empty-CI-rollup repair" in t and "#600" in t for t in logs)
+
+
+def test_repair_never_fires_for_real_ci_failure():
+    plan = [("pr list", DISCOVERY),
+            ("merge_pr.py 600", {"returncode": 1, "stdout": REAL_CI_FAIL, "stderr": ""})]
+    rc, out, state, calls, pre, logs = _cycle_with_runner(plan, apply=True, only_pr=600)
+    assert not any("pr close" in c or "pr reopen" in c for c in calls), "genuine CI failures are never repaired"
+    assert "gate refuses" in out
+    assert any("ANOMALY" in t for t in logs), "attested refusal still surfaces"
+
+
+def test_repair_check_only_prints_without_mutating():
+    plan = [("pr list", DISCOVERY),
+            ("merge_pr.py 600", {"returncode": 1, "stdout": EMPTY_CI, "stderr": ""}),
+            ("pr view 600", _view(HEAD_600))]
+    rc, out, state, calls, pre, logs = _cycle_with_runner(plan, apply=False, only_pr=600)
+    assert not any("pr close" in c for c in calls), "check-only must not close"
+    assert "would fire under --apply" in out
+    assert logs == [] and "repairs" not in state, "check-only records no repair attempts"
+
+
+def test_repair_aborts_when_head_moved():
+    moved = "d" * 40
+    plan = [("pr list", DISCOVERY),
+            ("merge_pr.py 600", {"returncode": 1, "stdout": EMPTY_CI, "stderr": ""}),
+            ("pr view 600", _view(moved))]
+    rc, out, state, calls, pre, logs = _cycle_with_runner(plan, apply=True, only_pr=600)
+    assert not any("pr close" in c for c in calls), "moved head aborts before mutation"
+    assert "head moved" in out
+    assert any("repair-blocked" in t and "head moved" in t for t in logs)
+    assert rc == 1, "head drift under an active attestation is a tool error"
+
+
+def test_repair_cooldown_waits_silently():
+    tmp = Path(tempfile.mkdtemp())
+    state_path = tmp / "state.json"
+    state_path.write_text(json.dumps({
+        "repairs": {"600": {"attempts": 1, "last_attempt": janitor.time.time() - 60}},
+    }))
+    plan = [("pr list", DISCOVERY),
+            ("merge_pr.py 600", {"returncode": 1, "stdout": EMPTY_CI, "stderr": ""}),
+            ("pr view 600", _view(HEAD_600))]
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        plan, apply=True, only_pr=600, state_path=state_path)
+    assert not any("pr close" in c for c in calls), "cooldown blocks mutation"
+    assert "cooldown" in out and logs == []
+    assert state["repairs"]["600"]["attempts"] == 1, "cooldown does not consume an attempt"
+
+
+def test_repair_attempt_cap_alerts_once():
+    tmp = Path(tempfile.mkdtemp())
+    state_path = tmp / "state.json"
+    state_path.write_text(json.dumps({"repairs": {"600": {"attempts": 3}}}))
+    plan = [("pr list", DISCOVERY),
+            ("merge_pr.py 600", {"returncode": 1, "stdout": EMPTY_CI, "stderr": ""}),
+            ("pr view 600", _view(HEAD_600))]
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        plan, apply=True, only_pr=600, state_path=state_path)
+    assert not any("pr close" in c for c in calls), "cap blocks mutation"
+    assert "exhausted" in out
+    assert any("repair-blocked" in t and "exhausted" in t for t in logs), "exhaustion surfaces once"
+    assert state["repairs"]["600"].get("exhausted_logged") is True
+    # second cycle: still held, but no duplicate forum alert
+    runner2 = make_runner([("pr list", DISCOVERY),
+                           ("merge_pr.py 600", {"returncode": 1, "stdout": EMPTY_CI, "stderr": ""}),
+                           ("pr view 600", _view(HEAD_600))])
+    rc2, out2, state2, pre2, logs2 = run_cycle(
+        runner=runner2, apply=True, only_pr=600, state_path=state_path)
+    assert logs2 == [], "exhaustion alert fires once, not every tick"
+    assert state2["runs"][-1]["held"] == [600]
+
+
+def test_repair_reopen_failure_leaves_loud_trail():
+    plan = [("pr list", DISCOVERY),
+            ("merge_pr.py 600", {"returncode": 1, "stdout": EMPTY_CI, "stderr": ""}),
+            ("pr view 600", _view(HEAD_600)),
+            ("pr close 600", CLOSE_OK),
+            ("pr reopen 600", {"returncode": 1, "stdout": "", "stderr": "GraphQL: error"})]
+    rc, out, state, calls, pre, logs = _cycle_with_runner(plan, apply=True, only_pr=600)
+    assert rc == 1, "a close-without-reopen is a tool error"
+    assert "PR IS CLOSED" in out
+    assert any("closed but not reopened" in t for t in logs)
+    assert "repairs" not in state, "a failed cycle records no attempt"
+
+
+# ── dual-runnable runner ─────────────────────────────────────────────────
 
 def _main() -> int:
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
