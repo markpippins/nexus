@@ -90,9 +90,9 @@
   },
   "contract_revision": "structure-v0.1",
   "expected_verdict_hash": "464424fe5a9aea89747c3302f2e651a3850ed7b35bbc95682595b9cf19af0824",
-  "grammar_revision": "sql-ddl-v0.2.0",
+  "grammar_revision": "sql-ddl-v0.3.0",
   "parser": {
-    "grammar_revision": "sql-ddl-v0.2.0",
+    "grammar_revision": "sql-ddl-v0.3.0",
     "parser_identity": "structure-sql-parser",
     "parser_revision": "v0.2.0"
   },
@@ -163,10 +163,10 @@
     },
     {
       "expectation": "observation_id is a function of source_fact_id, parser identity/revision, grammar revision, canonical payload, and the run's read-set fingerprint — two replays under the same pinned revisions agree; a grammar change does not",
-      "expected": "4ac2586d0a71b5223b6e97fe9c242e48067cf1e82e0c32e0b1a6e75dbf59f9e6",
+      "expected": "e3e9ffda686b8f660117c3ae41161e71986f468f391990e5196247e021efa8c4",
       "inputs": {
         "parser": {
-          "grammar_revision": "sql-ddl-v0.2.0",
+          "grammar_revision": "sql-ddl-v0.3.0",
           "parser_identity": "structure-sql-parser",
           "parser_revision": "v0.2.0"
         },
@@ -183,11 +183,11 @@
     },
     {
       "expectation": "unresolved candidates are first-class: the same ambiguous shape re-emits the same candidate_id on rerun (reason 'ambiguous', FK from role_memory_tag to governed_tag)",
-      "expected": "087c44bad5bce90f2a2ae3a627b3c69010fb03d5c368bc3782d33d67876bfec1",
+      "expected": "5e6720f9e507601be58816c666c5548063758244be1e145eb0628e281d0d40ee",
       "inputs": {
         "node_path": "statements[3].table.role_memory_tag.fks[1]",
         "parser": {
-          "grammar_revision": "sql-ddl-v0.2.0",
+          "grammar_revision": "sql-ddl-v0.3.0",
           "parser_identity": "structure-sql-parser",
           "parser_revision": "v0.2.0"
         },
@@ -246,7 +246,7 @@
       "expected": null,
       "inputs": {
         "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
-        "grammar_revision": "sql-ddl-v0.2.0",
+        "grammar_revision": "sql-ddl-v0.3.0",
         "language": "sql",
         "observations": [
           {
@@ -261,10 +261,10 @@
             },
             "authority_status": "non_authoritative",
             "fact_kind": "enum_type",
-            "observation_id": "6ad38fc9d52f54ab88a197a5d8d0cbaba4097c63bcc416bd94f19dd00d6dcf49",
+            "observation_id": "305b7caf6505e1aceb251098ac9762e7c934bdded6361df2f1c18a072c1fab4e",
             "parse_status": "complete",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -289,7 +289,7 @@
           },
           {
             "anchor": {
-              "node_path": "statements[1].create_table.role_memory",
+              "node_path": "statements[1].table.role_memory",
               "span": {
                 "end_col": 2,
                 "end_line": 13,
@@ -301,7 +301,7 @@
             "diagnostics": [
               {
                 "anchor": {
-                  "node_path": "statements[1].create_table.role_memory",
+                  "node_path": "statements[1].table.role_memory",
                   "span": {
                     "end_col": 2,
                     "end_line": 13,
@@ -314,10 +314,10 @@
               }
             ],
             "fact_kind": "table",
-            "observation_id": "33b0b002f1666b3551728cf72f32bba6dd2963cc9f76c49d214acb4486b285be",
+            "observation_id": "ca6d14e4b46fd78d79a7041b2ea0c2ad5583d1cbd1a31b45834165e12aeb4a73",
             "parse_status": "partial",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -334,7 +334,7 @@
               "source_kind": "sql_migration",
               "source_uri": "db/migrations/V178__role_memory.sql"
             },
-            "source_fact_id": "a2132fd2025dbfdf04b9b20b549e9430c1bab1ad7f04f80d6d417a720b7581fa"
+            "source_fact_id": "8a0c569c4ab951e6ee236ea5f7de6e7260fc7c18fac203806a48f4aa664678d8"
           },
           {
             "anchor": {
@@ -348,10 +348,10 @@
             },
             "authority_status": "non_authoritative",
             "fact_kind": "column",
-            "observation_id": "b7a74d62dc1c720f881d299b1e7a6b657e1316c8a4e787fa533aeabe050f3bdd",
+            "observation_id": "26f974ba065bc3e6665394c8be6b3f06021ab51c4ef8439dbe03265061697084",
             "parse_status": "complete",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -384,10 +384,10 @@
             },
             "authority_status": "non_authoritative",
             "fact_kind": "column",
-            "observation_id": "0fabdff5c9e239441f81ec7581fd1ad81e4c226f28d1b4f0d0e23b5a50d4c629",
+            "observation_id": "c47919dc026776dbeca72476a6d4c2bb7790260a426e06af4065315cf7cdc410",
             "parse_status": "complete",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -420,10 +420,10 @@
             },
             "authority_status": "non_authoritative",
             "fact_kind": "column",
-            "observation_id": "cb0d2e96f25d185e5051b1575aacda638399d3e1bf149d25f6f5114ab7ff8c14",
+            "observation_id": "5bb51eb64e0df9acc4f77451a54fc48bdcf4dc0f2bb9caa7dfe82cb613193577",
             "parse_status": "complete",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -456,10 +456,10 @@
             },
             "authority_status": "non_authoritative",
             "fact_kind": "column",
-            "observation_id": "4e6a4c74137b1d732bffa6b428c7c63422635c257178811abde7aa805e8ad4ec",
+            "observation_id": "fbe2cfbd8e1c5b5bf516a0fba5300cba9fb6d9bc12ad821dba902a819946e73b",
             "parse_status": "complete",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -494,10 +494,10 @@
             },
             "authority_status": "non_authoritative",
             "fact_kind": "named_constraint",
-            "observation_id": "1c253896241d802c0e8ee433f986aacbf36b6ec59d61a46fa8144c1e3f96eec9",
+            "observation_id": "14261c4a122a7a1a4a8ccd6118a3e582c0c85eabc0af28425885fe6ce3f6f2aa",
             "parse_status": "complete",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -522,7 +522,7 @@
           },
           {
             "anchor": {
-              "node_path": "statements[2].create_table.governed_tag",
+              "node_path": "statements[2].table.governed_tag",
               "span": {
                 "end_col": 2,
                 "end_line": 21,
@@ -534,7 +534,7 @@
             "diagnostics": [
               {
                 "anchor": {
-                  "node_path": "statements[2].create_table.governed_tag",
+                  "node_path": "statements[2].table.governed_tag",
                   "span": {
                     "end_col": 2,
                     "end_line": 21,
@@ -547,10 +547,10 @@
               }
             ],
             "fact_kind": "table",
-            "observation_id": "53ce1b058159f416cd07f15c9e60838bcf335d849a9c4f417d7111c3dd842598",
+            "observation_id": "e652487f7e88cdaf408cdf3a23ae1574f6dea46be6c741c2aacb631ee5f12deb",
             "parse_status": "partial",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -567,7 +567,7 @@
               "source_kind": "sql_migration",
               "source_uri": "db/migrations/V178__role_memory.sql"
             },
-            "source_fact_id": "9e68ea44978b06c7ee42b48e53370ace398749794c0c09e5058bb70a22442f48"
+            "source_fact_id": "2c0873008ad1f94d5cf2c90b71dd4eadad7b5e12460bc813a30149d968d4b93a"
           },
           {
             "anchor": {
@@ -581,10 +581,10 @@
             },
             "authority_status": "non_authoritative",
             "fact_kind": "column",
-            "observation_id": "2dbffe4ca3a8f0039bba64f7b7557cbf7ed8eecc303b32c3f9d3661c23c436b5",
+            "observation_id": "fe29d4008464d440fe1c4fc5dc9f89d96ee0384e167d190fd969c8fcfbeeae24",
             "parse_status": "complete",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -620,10 +620,10 @@
             },
             "authority_status": "non_authoritative",
             "fact_kind": "column",
-            "observation_id": "d002c9f68cbf9d2042c0f497c4b825f2854d64990d1961e1b895dede4ff66619",
+            "observation_id": "5f0e87d2bb9b91ad5b70c069d006156149775c60b5f6ac8b8016b0301bfb3900",
             "parse_status": "complete",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -656,10 +656,10 @@
             },
             "authority_status": "non_authoritative",
             "fact_kind": "column",
-            "observation_id": "ae1e8cbc34c43546bb668d9eca947777ba4dfe1701fd59c4f61cb523ec302626",
+            "observation_id": "e1b1ba66b278ddb8d746269d31e71c60d0863cec6d2a7dcc4d65e14ed2396b1c",
             "parse_status": "complete",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -692,10 +692,10 @@
             },
             "authority_status": "non_authoritative",
             "fact_kind": "column",
-            "observation_id": "c5a333ea56f4775d220e666acb0c7a6e1f99b203a6493d9049e4cfe23e83d384",
+            "observation_id": "19e70f06d2bba50a1b78f2614958e3994094c6eb3ae86faeb6f52c002ad33d9c",
             "parse_status": "complete",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -729,10 +729,10 @@
             },
             "authority_status": "non_authoritative",
             "fact_kind": "named_constraint",
-            "observation_id": "c588d2a4a296ea8e6d4f63fe4ad20197508dad41373b0ac9123b88495cf13431",
+            "observation_id": "eb7b362e7ba1955eb85f909b7e330e6cae96e28be83e9058f3b6eb4c5eb184d6",
             "parse_status": "complete",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -758,7 +758,7 @@
           },
           {
             "anchor": {
-              "node_path": "statements[3].create_table.role_memory_tag",
+              "node_path": "statements[3].table.role_memory_tag",
               "span": {
                 "end_col": 2,
                 "end_line": 27,
@@ -770,7 +770,7 @@
             "diagnostics": [
               {
                 "anchor": {
-                  "node_path": "statements[3].create_table.role_memory_tag",
+                  "node_path": "statements[3].table.role_memory_tag",
                   "span": {
                     "end_col": 2,
                     "end_line": 27,
@@ -783,10 +783,10 @@
               }
             ],
             "fact_kind": "table",
-            "observation_id": "a18293f10cb748f9f2c6c0f322584aa66a91a456cc9e3f8bc60747b09973c54e",
+            "observation_id": "92a77335ade19a2a3d75c9efe2c4ee033c5e39ec4a3bd36b05bb6e21af1d719c",
             "parse_status": "partial",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -803,7 +803,7 @@
               "source_kind": "sql_migration",
               "source_uri": "db/migrations/V178__role_memory.sql"
             },
-            "source_fact_id": "bc98e9badf6d92cc61838bba306b2091e8a1fb9063ae663295f92678b3b5a24b"
+            "source_fact_id": "5923f1ebcf9c0609c8452f83cfc6eaeee330d7efc7c920f664ff69afaf957649"
           },
           {
             "anchor": {
@@ -817,10 +817,10 @@
             },
             "authority_status": "non_authoritative",
             "fact_kind": "column",
-            "observation_id": "23abd197ff0f77292cf3d28b9241e722eff8b14ac295d9578c77c5a96ba5897c",
+            "observation_id": "7175aeb186211295f4322d6e955decdcabed2d35a7d25ed93fbc19b92870d985",
             "parse_status": "complete",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -853,10 +853,10 @@
             },
             "authority_status": "non_authoritative",
             "fact_kind": "column",
-            "observation_id": "f903d9557be1421c2320d4df3703d972ddd27eb20d0757184e05215ae7421cf6",
+            "observation_id": "db9120acf0d5a5e41eec5ead3bb242f1752d119d2a8a3656fd01602141b5a799",
             "parse_status": "complete",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -889,10 +889,10 @@
             },
             "authority_status": "non_authoritative",
             "fact_kind": "named_constraint",
-            "observation_id": "12ba2550b68320883e5c3582ae6f8112c0193b8f06469a1240cc6f147d16295a",
+            "observation_id": "a0227ce6b136ed1636d9eb38c7f455a45ad2e1fe8485a2c505892c63e44e102d",
             "parse_status": "complete",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -928,10 +928,10 @@
             },
             "authority_status": "non_authoritative",
             "fact_kind": "foreign_key",
-            "observation_id": "b3a1b33e71ac7553001d1df32494a88e4780e2ccf994df6c50d44a72eaa0f899",
+            "observation_id": "fe678f98cebebbc9dda5715ff88e1135a84dcdb6ea96cf055280ccf834123e27",
             "parse_status": "complete",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -974,10 +974,10 @@
             },
             "authority_status": "non_authoritative",
             "fact_kind": "foreign_key",
-            "observation_id": "d75426ebcc57755be2ada44c376044e27e169ae9f6e5d117803f6ee727139a48",
+            "observation_id": "d1796f03b0a22cab4629fc77e21e12715b8cb383f3b96c79a0dfa6018dd433e0",
             "parse_status": "complete",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -1035,10 +1035,10 @@
               }
             ],
             "fact_kind": "index",
-            "observation_id": "84ca1904b4c0fe75d24509f56756e99363edb726481c0ff1b6dff8dd8bec598f",
+            "observation_id": "2771315b19bf07c7194e3c0a8d192e11a8a0e89d2635058aa3eaf18e46ae7b0d",
             "parse_status": "partial",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -1091,10 +1091,10 @@
               }
             ],
             "fact_kind": "index",
-            "observation_id": "894988bea27d4703f9e2dd7b1c786397dfa0f93df5cf706daae547e49bcc151b",
+            "observation_id": "6bfb29a7da1fae2f01131acc189dfd263d44242179ad9e5bbce0cf5589a5887a",
             "parse_status": "partial",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -1131,10 +1131,10 @@
             },
             "authority_status": "non_authoritative",
             "fact_kind": "column",
-            "observation_id": "9cf00faace586b7e0abe4290dd5daf7744394c110df398c60d49159c10a43f4e",
+            "observation_id": "b9c09292925b927c8b642efe46cdf1b67ba1055c2c0ed8d7d7238b3f5f4690ae",
             "parse_status": "complete",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -1167,10 +1167,10 @@
             },
             "authority_status": "non_authoritative",
             "fact_kind": "named_constraint",
-            "observation_id": "d3c36648fcafc214526e4734b7a8a281c2853887b600d647a028950f398d6d07",
+            "observation_id": "5c2ed2faea55ac1a9c120d88402958d7daf996be7bf1bf554cd5936b2ac77b05",
             "parse_status": "complete",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -1203,10 +1203,10 @@
             },
             "authority_status": "non_authoritative",
             "fact_kind": "seed_value",
-            "observation_id": "e70485eef09ca1f60b9ab22604a56196399cc5c8709e512c5a6bfe8c0d5d8b99",
+            "observation_id": "49fae04667cd846aae490f4fd8b6a523c732aa24f1921282019a06a32a264b0a",
             "parse_status": "complete",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -1245,10 +1245,10 @@
             },
             "authority_status": "non_authoritative",
             "fact_kind": "seed_value",
-            "observation_id": "68e77234487f56193edad5028c892ce016c5edff607013ff9c7a05c94e4e5dcb",
+            "observation_id": "e49eed4e471023d4aa4751d608365eeb8e35e25f9269b7027721fc0183c8ac9e",
             "parse_status": "complete",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -1298,14 +1298,14 @@
                   }
                 },
                 "code": "unsupported_syntax",
-                "message": "create function is outside capability profile sql-ddl-v0.2.0 (procedural bodies, dynamic SQL and extension syntax are explicitly unsupported); no structural facts are claimed for its internals"
+                "message": "create function is outside capability profile sql-ddl-v0.3.0 (procedural bodies, dynamic SQL and extension syntax are explicitly unsupported); no structural facts are claimed for its internals"
               }
             ],
             "fact_kind": "operation",
-            "observation_id": "8f82310d8ca08f4de6a5aea5fd80caf5d0e0f146c62212ee2b28f450819915a3",
+            "observation_id": "108363236177d15e35b30836cbdcd497cb9bf895f1fa58a17c6cb292033bbc43",
             "parse_status": "unsupported",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -1347,14 +1347,14 @@
                   }
                 },
                 "code": "unsupported_syntax",
-                "message": "select is outside capability profile sql-ddl-v0.2.0 (procedural bodies, dynamic SQL and extension syntax are explicitly unsupported); no structural facts are claimed for its internals"
+                "message": "select is outside capability profile sql-ddl-v0.3.0 (procedural bodies, dynamic SQL and extension syntax are explicitly unsupported); no structural facts are claimed for its internals"
               }
             ],
             "fact_kind": "operation",
-            "observation_id": "f64d79b27aae6acec3388dfda3216517eebf939042fdeb776a268c28e9f79332",
+            "observation_id": "3654c8399516a422d7490e1e752fd1b6290e4953b9ca3602c591ff2d7c9d0f18",
             "parse_status": "unsupported",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -1375,7 +1375,7 @@
           }
         ],
         "parser": {
-          "grammar_revision": "sql-ddl-v0.2.0",
+          "grammar_revision": "sql-ddl-v0.3.0",
           "parser_identity": "structure-sql-parser",
           "parser_revision": "v0.2.0"
         },
@@ -1406,7 +1406,7 @@
       "expected": null,
       "inputs": {
         "content_hash": "841ab6c727c3f2426eec24c1c344b561825b0699aa15049ba2d1bde3edf42b73",
-        "grammar_revision": "sql-ddl-v0.2.0",
+        "grammar_revision": "sql-ddl-v0.3.0",
         "language": "sql",
         "observations": [
           {
@@ -1432,14 +1432,14 @@
                   }
                 },
                 "code": "unsupported_syntax",
-                "message": "create extension is outside capability profile sql-ddl-v0.2.0 (procedural bodies, dynamic SQL and extension syntax are explicitly unsupported); no structural facts are claimed for its internals"
+                "message": "create extension is outside capability profile sql-ddl-v0.3.0 (procedural bodies, dynamic SQL and extension syntax are explicitly unsupported); no structural facts are claimed for its internals"
               }
             ],
             "fact_kind": "operation",
-            "observation_id": "9c193fc0818ccd45575d2705907e11e188075e97968b865de8b7d31a502c810a",
+            "observation_id": "628ecd6c13af45134f1b9b0fc9f5d4107d438d1e43aa8895bb23deaf987f3648",
             "parse_status": "unsupported",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -1481,14 +1481,14 @@
                   }
                 },
                 "code": "unsupported_syntax",
-                "message": "create view is outside capability profile sql-ddl-v0.2.0 (procedural bodies, dynamic SQL and extension syntax are explicitly unsupported); no structural facts are claimed for its internals"
+                "message": "create view is outside capability profile sql-ddl-v0.3.0 (procedural bodies, dynamic SQL and extension syntax are explicitly unsupported); no structural facts are claimed for its internals"
               }
             ],
             "fact_kind": "operation",
-            "observation_id": "4c124b5da8c947a27a59e0ab810454a414a2169ccb4bb4ff108ec3e88eb11b17",
+            "observation_id": "e2223a8a8b16c371194a435b0c6613f55be62f7b17278fd5a338fa1149aac948",
             "parse_status": "unsupported",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -1530,14 +1530,14 @@
                   }
                 },
                 "code": "unsupported_syntax",
-                "message": "do is outside capability profile sql-ddl-v0.2.0 (procedural bodies, dynamic SQL and extension syntax are explicitly unsupported); no structural facts are claimed for its internals"
+                "message": "do is outside capability profile sql-ddl-v0.3.0 (procedural bodies, dynamic SQL and extension syntax are explicitly unsupported); no structural facts are claimed for its internals"
               }
             ],
             "fact_kind": "operation",
-            "observation_id": "4d7f7c0d8a58dffd5751bcb6438cc87cf346612bdb7dca360662fe1ac9449714",
+            "observation_id": "f6992f9c0f1ce3cee6ae9d53b53b43e7ae234acbac63eb9592201f8f86f7bcf9",
             "parse_status": "unsupported",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -1579,14 +1579,14 @@
                   }
                 },
                 "code": "unsupported_syntax",
-                "message": "execute is outside capability profile sql-ddl-v0.2.0 (procedural bodies, dynamic SQL and extension syntax are explicitly unsupported); no structural facts are claimed for its internals"
+                "message": "execute is outside capability profile sql-ddl-v0.3.0 (procedural bodies, dynamic SQL and extension syntax are explicitly unsupported); no structural facts are claimed for its internals"
               }
             ],
             "fact_kind": "operation",
-            "observation_id": "be3ca704630a31958911c1575f82bc4e247879ca6bcf930f1de4ac10c0831d95",
+            "observation_id": "b27c9ef225c3bb81edb220deef9189cedfd643312ca7cbc9bc4f239e10a72f80",
             "parse_status": "unsupported",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -1628,14 +1628,14 @@
                   }
                 },
                 "code": "unsupported_syntax",
-                "message": "create trigger is outside capability profile sql-ddl-v0.2.0 (procedural bodies, dynamic SQL and extension syntax are explicitly unsupported); no structural facts are claimed for its internals"
+                "message": "create trigger is outside capability profile sql-ddl-v0.3.0 (procedural bodies, dynamic SQL and extension syntax are explicitly unsupported); no structural facts are claimed for its internals"
               }
             ],
             "fact_kind": "operation",
-            "observation_id": "08d232d337a2111648ea2474f077f1ebff41d447469b369717005f0c1871c9f3",
+            "observation_id": "e4740a07d3cbb5d05bf2e13d4a2ad4709b9efdfb55f2e9336bb00f669cb68e4c",
             "parse_status": "unsupported",
             "parser": {
-              "grammar_revision": "sql-ddl-v0.2.0",
+              "grammar_revision": "sql-ddl-v0.3.0",
               "parser_identity": "structure-sql-parser",
               "parser_revision": "v0.2.0"
             },
@@ -1656,7 +1656,7 @@
           }
         ],
         "parser": {
-          "grammar_revision": "sql-ddl-v0.2.0",
+          "grammar_revision": "sql-ddl-v0.3.0",
           "parser_identity": "structure-sql-parser",
           "parser_revision": "v0.2.0"
         },
@@ -1684,7 +1684,7 @@
           "observation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "parse_status": "complete",
           "parser": {
-            "grammar_revision": "sql-ddl-v0.2.0",
+            "grammar_revision": "sql-ddl-v0.3.0",
             "parser_identity": "structure-sql-parser",
             "parser_revision": "v0.2.0"
           },
