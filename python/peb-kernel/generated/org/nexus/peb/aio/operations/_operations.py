@@ -19,7 +19,7 @@ from corehttp.runtime import AsyncPipelineClient
 from corehttp.runtime.pipeline import PipelineResponse
 from corehttp.utils import case_insensitive_dict
 
-from ... import models as _models
+from ... import models as _models, types as _types
 from ..._utils.model_base import SdkJSONEncoder, _deserialize
 from ..._utils.serialization import Deserializer, Serializer
 from ...operations._operations import (
@@ -28,12 +28,11 @@ from ...operations._operations import (
 )
 from .._configuration import pebClientConfiguration
 
-JSON = MutableMapping[str, Any]
 T = TypeVar("T")
 ClsType = Optional[Callable[[PipelineResponse[HttpRequest, AsyncHttpResponse], T, dict[str, Any]], Any]]
 
 
-class PebTransactionEndpointOperations:
+class PebTransactionEndpointOperations:  # pylint: disable=docstring-missing-param
     """
     .. warning::
         **DO NOT** instantiate this class directly.
@@ -76,7 +75,7 @@ class PebTransactionEndpointOperations:
 
     @overload
     async def submit(
-        self, request: JSON, *, content_type: str = "application/json", **kwargs: Any
+        self, request: _types.PebTransactionRequest, *, content_type: str = "application/json", **kwargs: Any
     ) -> _models.PebAdmissionResult:
         """Submit a transaction to the PEB governance engine.
           The toolName field determines which admission path and engine is invoked:
@@ -89,7 +88,7 @@ class PebTransactionEndpointOperations:
         422.
 
         :param request: Required.
-        :type request: JSON
+        :type request: ~org.nexus.peb.types.PebTransactionRequest
         :keyword content_type: Body Parameter content-type. Content type parameter for JSON body.
          Default value is "application/json".
         :paramtype content_type: str
@@ -123,7 +122,7 @@ class PebTransactionEndpointOperations:
         """
 
     async def submit(
-        self, request: Union[_models.PebTransactionRequest, JSON, IO[bytes]], **kwargs: Any
+        self, request: Union[_models.PebTransactionRequest, _types.PebTransactionRequest, IO[bytes]], **kwargs: Any
     ) -> _models.PebAdmissionResult:
         """Submit a transaction to the PEB governance engine.
           The toolName field determines which admission path and engine is invoked:
@@ -135,8 +134,9 @@ class PebTransactionEndpointOperations:
         * unknown toolName → the classifier reports UNKNOWN; structural validation rejects it with HTTP
         422.
 
-        :param request: Is one of the following types: PebTransactionRequest, JSON, IO[bytes] Required.
-        :type request: ~org.nexus.peb.models.PebTransactionRequest or JSON or IO[bytes]
+        :param request: Is either a PebTransactionRequest type or a IO[bytes] type. Required.
+        :type request: ~org.nexus.peb.models.PebTransactionRequest or
+         ~org.nexus.peb.types.PebTransactionRequest or IO[bytes]
         :return: PebAdmissionResult. The PebAdmissionResult is compatible with MutableMapping
         :rtype: ~org.nexus.peb.models.PebAdmissionResult
         :raises ~corehttp.exceptions.HttpResponseError:
@@ -199,7 +199,7 @@ class PebTransactionEndpointOperations:
         return deserialized  # type: ignore
 
 
-class PebHealthEndpointOperations:
+class PebHealthEndpointOperations:  # pylint: disable=docstring-missing-param
     """
     .. warning::
         **DO NOT** instantiate this class directly.
