@@ -6,6 +6,8 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Mapping, Protocol
 
+from .doctrine import DoctrineSnapshot, build_doctrine_snapshot
+
 
 class OutboxConnection(Protocol):
     def cursor(self) -> Any: ...
@@ -217,6 +219,54 @@ class PebKeychainsAdapter:
             )
         return outer.get("authorization_ref") or outer.get("authority_ref") or outer.get("grant_id")
 
+    @staticmethod
+    def _doctrine_snapshot(
+        transaction: Any,
+        binding: Mapping[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """Resolve an explicitly supplied doctrine snapshot without mutating it.
+
+        A binding may carry either the normalized snapshot object or only its
+        content address. Component inputs are also accepted so callers can use
+        the same builder as the PEB producer. The existing normative
+        ``doctrine_ids`` field is intentionally not overloaded.
+        """
+        input_payload = getattr(transaction, "input", None)
+        sources = [
+            source for source in (binding, input_payload)
+            if isinstance(source, Mapping)
+        ]
+        for source in sources:
+            candidate = source.get("doctrine_snapshot")
+            if candidate is not None:
+                if not isinstance(candidate, Mapping):
+                    raise ValueError("doctrine_snapshot must be an object")
+                if "snapshot_id" in candidate:
+                    return DoctrineSnapshot.from_dict(candidate).to_dict()
+                try:
+                    return build_doctrine_snapshot(
+                        system_prompt=candidate["system_prompt"],
+                        bootstrap=candidate["bootstrap"],
+                        active_procedure_cards=candidate["active_procedure_cards"],
+                    ).to_dict()
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise ValueError("doctrine_snapshot component inputs are invalid") from exc
+
+            snapshot_id = source.get("doctrine_snapshot_id")
+            if snapshot_id:
+                return {"doctrine_snapshot_id": str(snapshot_id)}
+        return None
+
+    @staticmethod
+    def _add_doctrine_provenance(target: dict[str, Any], snapshot: Mapping[str, Any] | None) -> None:
+        if not snapshot:
+            return
+        if "snapshot_id" in snapshot:
+            target["doctrine_snapshot"] = dict(snapshot)
+            target["doctrine_snapshot_id"] = snapshot["snapshot_id"]
+        elif snapshot.get("doctrine_snapshot_id"):
+            target["doctrine_snapshot_id"] = snapshot["doctrine_snapshot_id"]
+
     @classmethod
     def _read_set(cls, transaction: Any, binding: Mapping[str, Any] | None) -> dict[str, Any]:
         read_set: dict[str, Any] = {
@@ -229,7 +279,9 @@ class PebKeychainsAdapter:
             "before_hash": transaction.before_hash,
             "after_hash": transaction.after_hash,
         }
+        doctrine_snapshot = cls._doctrine_snapshot(transaction, binding)
         if binding is None:
+            cls._add_doctrine_provenance(read_set, doctrine_snapshot)
             return read_set
 
         contract = cls._nested(binding, "contract")
@@ -279,6 +331,7 @@ class PebKeychainsAdapter:
             "rollback_evidence_ids": observation.get("rollback_evidence_ids") or binding.get("rollback_evidence_ids") or outer.get("rollback_evidence_ids"),
             "read_set_manifest": binding.get("read_set_manifest") or outer.get("read_set_manifest"),
         })
+        cls._add_doctrine_provenance(read_set, doctrine_snapshot)
         return read_set
 
     @classmethod
@@ -291,6 +344,7 @@ class PebKeychainsAdapter:
             else None,
             "kernel_event_type": transaction.kernel_event_type,
         }
+        doctrine_snapshot = cls._doctrine_snapshot(transaction, binding)
         if binding is not None:
             observation = cls._observation(binding)
             payload.update({
@@ -319,6 +373,7 @@ class PebKeychainsAdapter:
                 "lineage_fingerprint": binding.get("lineage_fingerprint"),
                 "outcome": outcome,
             })
+        cls._add_doctrine_provenance(payload, doctrine_snapshot)
         return payload
 
 

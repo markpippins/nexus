@@ -1,0 +1,19 @@
+# Source of truth for ~/.config/systemd/user/transition-attestation.service
+#
+# Deploy:
+#   cp bin/transition-attestation.service ~/.config/systemd/user/
+#   cp bin/transition-attestation.timer   ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now transition-attestation.timer
+#
+# Why this file is in the repo: host-only units drift from the corpus
+# (the 2026-09-21 helium probe incident). ExecStart resolves the wrapper
+# through the repo working tree so the deployed unit tracks main.
+
+[Unit]
+Description=Transition-event attestation check (ADR-016, CD-2 design §4)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/dev/nexus/bin/transition_attestation_wrap.py
+# Environment=CONDUIT_PG_DSN=postgresql://...  # override if non-default

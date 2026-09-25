@@ -1006,6 +1006,15 @@ def _dispatch_one(
         db.close_session(session_id, last_exit_code)
 
 
+def _utc_now_rfc3339() -> str:
+    """Return the current UTC time as an RFC3339 timestamp.
+
+    ``datetime.isoformat()`` already includes ``+00:00`` for an aware UTC
+    value, so appending ``Z`` would produce the invalid ``+00:00Z`` form.
+    """
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def dispatch_single_plan(
     plan_id: str,
     db: DBAdapter,
@@ -1041,7 +1050,7 @@ def dispatch_single_plan(
     plan = dict(plan_row)
     print(f"Restarting builder for plan: {plan_id} - {plan.get('title', '')}")
 
-    now = datetime.now(timezone.utc).isoformat() + "Z"
+    now = _utc_now_rfc3339()
     db.create_ticket_if_missing(plan_id, "builder", "restart-v078", now)
 
     model_cfg = get_model(db, registry, "builder")
@@ -1289,7 +1298,7 @@ if __name__ == "__main__":
             if args.supersede_replace:
                 old = result.get("old_ticket", {})
                 if old:
-                    now = datetime.now(timezone.utc).isoformat() + "Z"
+                    now = _utc_now_rfc3339()
                     ts = int(datetime.now(timezone.utc).timestamp())
                     repl = db.create_ticket_if_missing(
                         old["plan_id"], old["role"],

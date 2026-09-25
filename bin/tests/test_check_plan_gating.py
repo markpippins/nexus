@@ -48,11 +48,19 @@ class TestClassify:
         assert gating == "BLOCKED-BUT-OPEN"
         assert "no respawn" in f[0]
 
-    def test_blocked_with_expired_ticket_is_exhibit(self):
+    def test_blocked_with_open_ticket_is_exhibit(self):
+        verdicts = [{"id": "c", "met": False}]
+        gating, f = G.classify({}, verdicts, entry(builder="open"))
+        assert gating == "BLOCKED-AND-OPEN"
+        assert "live" in f[0]
+
+    def test_blocked_with_expired_only_is_hygiene(self):
+        # Post-CD-2: expiry is sweeper-enforced, so an expired row on a
+        # blocked plan is disposition hygiene, not live forbidden work.
         verdicts = [{"id": "c", "met": False}]
         gating, f = G.classify({}, verdicts, entry(builder="expired"))
-        assert gating == "BLOCKED-AND-OPEN"
-        assert "W-B4 exhibit" in f[0]
+        assert gating == "BLOCKED-WITH-EXPIRED"
+        assert "hygiene" in f[0]
 
     def test_blocked_no_ticket_blocked_closed(self):
         verdicts = [{"id": "c", "met": False}]
