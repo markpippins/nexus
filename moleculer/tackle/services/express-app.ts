@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import rateLimit from "express-rate-limit";
 import fs from "fs";
 import path from "path";
 import { loadEnv } from "./env.js";
@@ -39,6 +40,18 @@ const PORT = parseInt(process.env.TACKLE_SRV_PORT || "3410", 10);
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Global request limiter — mirrored from the incumbent (CodeQL
+// js/missing-rate-limiting remediation): 300 req/min/IP, nebula-srv posture.
+app.use(
+  rateLimit({
+    windowMs: 60 * 1000,
+    max: 300,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    message: { error: "tackle-srv rate limit exceeded" },
+  }),
+);
 
 // Request logging middleware — fire-and-forget async DB writes (verbatim)
 app.use((req, res, next) => {
@@ -87,7 +100,14 @@ app.get("/log/:sessionId", (req, res) => {
   }
 
   const projectRoot = process.env.PIPELINE_ROOT || "/home/codex/dev";
-  const logPath = path.join(projectRoot, "nexus", "logs", `${sessionId}.log`);
+  // Containment guard — mirrored from the incumbent (CodeQL
+  // js/path-injection remediation).
+  const logsDir = path.resolve(projectRoot, "nexus", "logs");
+  const logPath = path.resolve(logsDir, `${sessionId}.log`);
+  if (!logPath.startsWith(logsDir + path.sep)) {
+    res.status(400).json({ error: "Invalid session ID" });
+    return;
+  }
 
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
