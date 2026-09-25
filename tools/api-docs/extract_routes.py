@@ -71,6 +71,8 @@ MOLECULER_SERVICES = {
     "moleculer/semantics": "moleculer/semantics",
     "moleculer/tackle": "moleculer/tackle",
     "moleculer/prompt-sync": "moleculer/prompt-sync",
+    "moleculer/peb": "moleculer/peb",
+    "moleculer/aegis": "moleculer/aegis",
 }
 
 # moleculer-web alias entries: "GET /path": "svc.action" (single-quoted forms

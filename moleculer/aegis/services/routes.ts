@@ -1,11 +1,12 @@
 import { Request, Response, Router } from 'express';
-import { query, withTransaction } from './db';
-import { checkModel, MCModel } from './model-checker';
-import { runTlc, stageSpec, TlcRunOpts, TlcResult } from './tlc-runner';
-import { digestJson, mapCheckerOutcome } from './phase-a';
-import { buildWindCompilationPlan } from './wind-compiler';
+import type { Router as RouterType } from 'express';
+import { query, withTransaction } from './db.js';
+import { checkModel, MCModel } from './model-checker.js';
+import { runTlc, stageSpec, TlcRunOpts, TlcResult } from './tlc-runner.js';
+import { digestJson, mapCheckerOutcome } from './phase-a.js';
+import { buildWindCompilationPlan } from './wind-compiler.js';
 
-const router = Router();
+const router: RouterType = Router();
 
 // ── Helpers ──────────────────────────────────────────────────────
 const isUuid = (v: string) =>
@@ -508,9 +509,7 @@ router.get('/registries/:id/validation-results', async (req, res) => {
     );
     res.json({ items: rows });
   } catch (e) { pgError(res, e); }
-}
-
-router.get('/registries/:id/model-check-results', async (req, res) => {
+});router.get('/registries/:id/model-check-results', async (req, res) => {
   try {
     const registryId = await requireRegistry(req.params.id, res);
     if (!registryId) return;

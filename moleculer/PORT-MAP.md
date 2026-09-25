@@ -26,6 +26,7 @@
 | 4150 | `role-memory` (canary twin of `typescript/role-memory-srv`) | `role-memory` | `typescript/role-memory-srv :3500` (Role Memory Procedure Registry: PG→Redis sync + cache reads; callers tackle-srv memory.ts, harness-srv, operator-svc, mesh-register; no auth gate on incumbent; contract pinned to incumbent `openapi.yaml`) | CANARY — submitted with this row (PR for the port), canary-diffed byte-identical, **not cut over / not deployed**; 4150 row submitted for Ruling 4 ratification |
 | 4160 | `semantics` (canary twin of `typescript/semantics-srv`) | `semantics` | `typescript/semantics-srv :3160` (Semantics Topology Legend: REST over `semantics.*` — table-driven CRUD via stored procs, T02 asset identity spine, evidence filters, drift lifecycle; caller `semantics-ui`; no auth gate on incumbent — CORS only; contract pinned to incumbent `openapi.yaml`) | CANARY — merged (PR #509), canary-diffed byte-identical (12/12 read/negative + 6/6 live-data envelope routes), **not cut over / not deployed** |
 | 4501 | `prompt-sync` (canary twin of `typescript/tackle-prompt-sync-srv`) | `prompt-sync` | `typescript/tackle-prompt-sync-srv :3501` (Prompt Registry: PG→Redis sync — tackle.prompts/tackle.tasks → prompt:proc/idx, task:idx, prompt:meta; callers tackle-prompt-bridge, tackle-cli; no auth gate on incumbent; contract pinned to incumbent `openapi.yaml`) | CANARY — submitted with this row (PR for the port), canary-diffed byte-identical (44/44 incl. POST /refresh convergence), **not cut over / not deployed** |
+| 4116 | `aegis` (canary twin of `typescript/aegis-srv`) | `aegis` | `typescript/aegis-srv :3116` (TLA+ state-machine registry over `aegis.*`: registry CRUD + revisions, Phase-A validate, TLC model-check via bundled tla2tools.jar, wind compilation plans, and CRUD families for constants/variables/states/transitions/invariants/properties/temporal-properties/mappings/execution-log; no auth gate on incumbent — CORS only; contract pinned to incumbent `openapi.yaml`; twin ships a day-one rate limiter + TLC timeout clamp — incumbent has 1 open resource-exhaustion alert, remediation tracked separately) | CANARY — submitted with this row (PR for the port), canary-diffed reads + validation negatives (write routes reject before DB/spawn work), **not cut over / not deployed**; also carries the incumbent spec-gap fix (`GET /model-check-results` was served but absent from the committed contract) |
 
 ## Shared infrastructure (NOT moleculer-owned — do not claim)
 
@@ -42,7 +43,7 @@
 | Component | Address |
 |-----------|---------|
 | NATS broker | `nats://localhost:4222` (services default via `NATS_URL` env, `nats://localhost:4222`) |
-| Namespaces | one per service family: `search`, `solscript`, `broker`, `voyager`, `cascade`, `kernel`, `draft`, `knowledge`, `role-memory`, `semantics`, `prompt-sync` |
+| Namespaces | one per service family: `search`, `solscript`, `broker`, `voyager`, `cascade`, `kernel`, `draft`, `knowledge`, `role-memory`, `semantics`, `prompt-sync`, `aegis` |
 
 ## Host posture on titanium (DBA gate, 2026-09-23)
 
@@ -72,7 +73,7 @@ Moleculer does **not run locally** on titanium — enforced, not assumed:
 - Any port change ratified in `jvm/ARCHITECTURE.md` must be mirrored here and
   in the owning service's config + launch units in the same change; the
   terrain registry entry follows at the next registration heartbeat.
-- Canary/deployment ports (4100/4106/4109/4114/4150/4170/4501) are the exception to
+- Canary/deployment ports (4100/4106/4109/4114/4116/4150/4170/4501) are the exception to
   one-live-authority: a canary twin may co-listen on its 41xx twin while its
   incumbent stays live, and must be removed from the map when cutover completes
   (dead routes die). Canary rows in this table require architect ratification
