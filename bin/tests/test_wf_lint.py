@@ -694,6 +694,108 @@ class WfLintTest(unittest.TestCase):
         self.assertEqual(1, proc.returncode)  # real.yml's missing blocks fire
         self.assertNotIn("node_modules", proc.stdout + proc.stderr)
 
+    # -- migration-dup-prefix -------------------------------------------------
+
+    def test_dup_prefix_fails_with_pointer_to_twin(self):
+        # the live drift class (thread 6bba5dd3): two files claiming one
+        # version in the same migration directory
+        self._write(
+            "typescript/svc/migrations/055-agent-records-tags-gin.sql",
+            "-- gin index\nCREATE INDEX IF NOT EXISTS i ON t USING gin (tags);\n",
+        )
+        self._write(
+            "typescript/svc/migrations/055-allow-supervisor-role.sql",
+            "-- supervisor widening (lex-second: the skipped twin)\nSELECT 1;\n",
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("[migration-dup-prefix]", proc.stderr)
+        # the violation anchors on the lex-SECOND file and names its twin
+        self.assertIn("055-allow-supervisor-role.sql:1", proc.stderr)
+        self.assertIn("also claimed by 055-agent-records-tags-gin.sql", proc.stderr)
+        self.assertIn("silently skips", proc.stderr)
+
+    def test_unique_prefixes_and_cross_dir_reuse_pass(self):
+        # three files, one dir: no dup; the same prefix in a DIFFERENT
+        # service's migrations dir is a separate namespace — never a finding
+        for name in ("001-a.sql", "002-b.sql", "003-c.sql"):
+            self._write(f"typescript/svc/migrations/{name}", "SELECT 1;\n")
+        self._write("typescript/other/migrations/001-x.sql", "SELECT 1;\n")
+        proc = self._run(self.tree)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+    def test_non_numeric_and_four_digit_files_ignored(self):
+        # scd-type4-*.sql / seed-*.sql / run-NNN.js are not version-prefixed
+        # files; a 4-digit prefix (V-migrations style) is not NNN- either
+        self._write("typescript/svc/migrations/scd-type4-temporal.sql", "SELECT 1;\n")
+        self._write("typescript/svc/migrations/seed-projections.sql", "SELECT 1;\n")
+        self._write("typescript/svc/migrations/0001-wide.sql", "SELECT 1;\n")
+        self._write("typescript/svc/migrations/README.md", "docs\n")
+        proc = self._run(self.tree)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+    def test_adonisjs_ordered_runner_dirs_exempt(self):
+        # adonisjs database/migrations is an ordered file-based runner — no
+        # version ledger, so a shared prefix is not a skip class there
+        self._write("adonisjs/app/database/migrations/1681000001_one.sql", "SELECT 1;\n")
+        self._write("adonisjs/app/database/migrations/1681000001_two.sql", "SELECT 1;\n")
+        proc = self._run(self.tree)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+    def test_allow_marker_on_header_suppresses_dup(self):
+        body_a = "-- a\nSELECT 1;\n"
+        body_b = "-- legacy duplicate kept for DR replay # wf-lint-allow: migration-dup-prefix\nSELECT 1;\n"
+        self._write("typescript/svc/migrations/010-a.sql", body_a)
+        self._write("typescript/svc/migrations/010-b.sql", body_b)
+        proc = self._run(self.tree)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("1 allow-marker line(s)", proc.stdout)
+
+    def test_triple_dup_reports_both_lex_seconds(self):
+        self._write("typescript/svc/migrations/020-a.sql", "SELECT 1;\n")
+        self._write("typescript/svc/migrations/020-b.sql", "SELECT 1;\n")
+        self._write("typescript/svc/migrations/020-c.sql", "SELECT 1;\n")
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        stderr = proc.stderr
+        self.assertIn("020-b.sql:1", stderr)
+        self.assertIn("020-c.sql:1", stderr)
+        self.assertEqual(2, stderr.count("[migration-dup-prefix]"))
+
+    def test_fix_rescan_keeps_dup_rule_state_clean(self):
+        # --fix re-scans the same rule instances after writing; cross-file
+        # state must reset per scan so a clean re-scan stays clean. Uses the
+        # job-hardening rule (the fixable one): missing permissions + timeout
+        # are auto-inserted, the post-fix re-scan must exit 0, and the tree's
+        # migration dirs (none here) must not re-fire stale dup findings.
+        self._write(
+            ".github/workflows/wf.yml",
+            "on: push\n"
+            "jobs:\n"
+            "  j:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - run: echo hi\n",
+        )
+        proc = self._run(self.tree, None, "--fix")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("applied 2 fix", proc.stdout)
+        fixed = open(os.path.join(self.tree, ".github", "workflows", "wf.yml")).read()
+        self.assertIn("permissions:", fixed)
+        self.assertIn("timeout-minutes:", fixed)
+
+    def test_sql_files_use_dash_marker_syntax(self):
+        # SQL comment syntax (`--`) carries the same escape hatch (`#` is not
+        # a comment in SQL); conduit's historical twins are the live case
+        self._write("svc/migrations/030-a.sql", "-- original\nSELECT 1;\n")
+        self._write(
+            "svc/migrations/030-b-v2.sql",
+            "-- wf-lint-allow: migration-dup-prefix — superseded rewrite kept as a historical record\nSELECT 1;\n",
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("1 allow-marker line(s)", proc.stdout)
+
     # -- real repo -----------------------------------------------------------------
 
     def test_real_repo_scan_does_not_crash(self):

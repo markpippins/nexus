@@ -1,6 +1,11 @@
--- Migration 003: Complete level + visibility_scope DDL on harvests_history and agent_records_history
+-- Migration 056: Complete level + visibility_scope DDL on harvests_history and agent_records_history
 -- Adds defaults, NOT NULL, CHECK constraints; backfills existing NULLs; updates INSTEAD OF trigger functions.
 -- Depends on: schema-v2.sql, migrations/scd-type4-bitemporal-upgrade.sql
+--
+-- Renumbered from 003-level-visibility-constraints.sql (thread 6bba5dd3):
+-- duplicate version prefixes make the startup runner (src/migrate.ts) skip
+-- the lex-second twin on a fresh database. Content unchanged and replay-safe
+-- (backfills + DO-block guards are idempotent).
 
 SET search_path TO nebula;
 

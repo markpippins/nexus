@@ -1,5 +1,10 @@
 -- ═══════════════════════════════════════════════════════════════════════
---  Migration 004 — Backfill Harvest References from Conversation Blocks
+--  Migration 057 — Backfill Harvest References from Conversation Blocks
+--
+--  RENUMBERED from 004-backfill-harvest-references.sql (thread 6bba5dd3):
+--  duplicate version prefixes make the startup runner (../src/migrate.ts)
+--  skip the lex-second twin on a fresh database. Content unchanged and
+--  replay-safe (INSERT ... WHERE NOT EXISTS idempotency).
 --
 --  Populates nebula.harvest_references_history with inferred references
 --  derived from existing conversation blocks. This creates the graph
