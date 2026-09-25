@@ -248,6 +248,7 @@ class AdmissionControllerFacadeTest {
             ReflectionTestUtils.setField(prior, "toolName", "peb_record_decision");
             ReflectionTestUtils.setField(prior, "input",
                     JsonNodeFactory.instance.objectNode().put("different", true));
+            prior.ensureId();
             replayTransaction = prior;
 
             ResponseEntity<String> result = controller.submitTransaction(

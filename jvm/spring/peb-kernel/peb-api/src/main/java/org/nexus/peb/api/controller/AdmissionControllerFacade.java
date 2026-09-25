@@ -5,6 +5,8 @@ import org.nexus.peb.domain.dto.AdmissionResponse;
 import org.nexus.peb.domain.entity.PebTransaction;
 import org.nexus.peb.domain.enums.AdmissionPath;
 import org.nexus.peb.domain.exception.MalformedAdmissionRequestException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -83,19 +85,21 @@ public class AdmissionControllerFacade {
                     "peb_report_violation".equals(prior.getToolName())
                         || (prior.getAdmissionResult() != null
                             && "ALLOWED".equals(prior.getAdmissionResult().name()));
-                String replayBody = "{\"transaction_id\":\"" + prior.getId()
-                    + "\",\"admission_result\":\""
-                    + (prior.getAdmissionResult() == null ? "ROUTED" : prior.getAdmissionResult().name())
-                    + "\",\"message\":\"" + jsonEscape("Idempotent replay: recorded admission result "
-                        + (prior.getAdmissionResult() == null ? "UNKNOWN" : prior.getAdmissionResult().name()))
-                    + "\",\"admitted\":" + replayAdmitted + "}";
+                String replayBody = admissionBody(
+                    prior.getId().toString(),
+                    prior.getAdmissionResult() == null ? "ROUTED" : prior.getAdmissionResult().name(),
+                    "Idempotent replay: recorded admission result "
+                        + (prior.getAdmissionResult() == null ? "UNKNOWN" : prior.getAdmissionResult().name()),
+                    replayAdmitted);
                 return ResponseEntity.status(replayAdmitted
                         ? org.springframework.http.HttpStatus.OK
                         : HttpStatus.UNPROCESSABLE_ENTITY)
                     .body(replayBody);
             }
-            String conflictBody = "{\"transaction_id\":\"" + prior.getId()
-                + "\",\"admission_result\":null,\"message\":\"Conflicting replay: idempotency key already used with a different payload\",\"admitted\":false}";
+            String conflictBody = admissionBody(
+                prior.getId().toString(), null,
+                "Conflicting replay: idempotency key already used with a different payload",
+                false);
             return ResponseEntity.status(org.springframework.http.HttpStatus.CONFLICT).body(conflictBody);
         }
 
@@ -104,21 +108,35 @@ public class AdmissionControllerFacade {
         // contract ({transaction_id, admission_result, message, admitted}). The
         // historical plain-string body made programmatic consumers (wrp
         // git_claim_producer) crash parsing "Mutation processed" as JSON.
-        String body = "{\"transaction_id\":\"" + transaction.ensureId()
-            + "\",\"admission_result\":\"" + transaction.getAdmissionResult()
-            + "\",\"message\":\"" + jsonEscape(response.message())
-            + "\",\"admitted\":" + response.admitted() + "}";
+        //
+        // Built via Jackson ObjectNode rather than string concatenation:
+        // message() can echo user-controlled input (e.g. toolName), and
+        // CodeQL java/xss correctly flagged the hand-escaped concatenation
+        // (incomplete escaping) as taint flowing into the response.
+        String body = admissionBody(
+            transaction.ensureId().toString(),
+            transaction.getAdmissionResult() == null ? null : transaction.getAdmissionResult().name(),
+            response.message(),
+            response.admitted());
         if (response.admitted()) {
             return ResponseEntity.ok(body);
         }
         return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(body);
     }
 
-    private static String jsonEscape(String value) {
-        if (value == null) {
-            return "";
-        }
-        return value.replace("\\", "\\\\").replace("\"", "\\\\\"");
+    private static final ObjectMapper BODY_MAPPER = new ObjectMapper();
+
+    /**
+     * Serializes the Python-kernel contract shape with a real JSON encoder —
+     * structurally immune to injection (no hand-built escaping to get wrong).
+     */
+    private static String admissionBody(String transactionId, String admissionResult, String message, boolean admitted) {
+        ObjectNode node = BODY_MAPPER.createObjectNode();
+        node.put("transaction_id", transactionId);
+        node.put("admission_result", admissionResult);
+        node.put("message", message == null ? "" : message);
+        node.put("admitted", admitted);
+        return node.toString();
     }
 
     /**
