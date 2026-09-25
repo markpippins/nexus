@@ -62,7 +62,16 @@ jobs:
         with:
           java-version: '21'
           distribution: 'temurin'
-          cache: maven
+      # Per-workflow key (NOT setup-java's shared repo-wide cache: maven key):
+      # this narrow -pl job must own its own entry, not race the full-reactor
+      # workflows for one shared key (observed 2026-09-25 — the wrp twin won
+      # that race and starved ci.yml's full reactor down to its own subtree).
+      - name: Cache Maven repository
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: maven-meep-parity-gate-${{ hashFiles('jvm/**/pom.xml') }}
+          restore-keys: maven-meep-parity-gate-
 
       - name: Run JVM kernel tests (incl. byte-exact golden parity)
         run: mvn -B -f jvm/spring/nexus-core/pom.xml -pl nexus-core-meep clean test

@@ -788,6 +788,92 @@ class WfLintTest(unittest.TestCase):
         self.assertEqual(1, proc.returncode)
         self.assertIn("[maven-cache]", proc.stderr)
 
+    # -- maven-cache: actions/cache idiom (per-workflow keys, 2026-09-25) -------
+    # setup-java's `cache: maven` hardcodes ONE repo-wide key; on the first
+    # post-merge run (36148478232) a narrow -pl parity job won the save race
+    # and starved the full reactor (~10 MB entry, 1546 re-downloads every
+    # run). The remediation is per-workflow actions/cache keys, so an
+    # actions/cache step covering ~/.m2 must satisfy this rule too.
+
+    def test_actions_cache_m2_idiom_passes(self):
+        # The converted fleet shape: uncached setup-java + explicit actions/cache
+        # restoring ~/.m2 under a per-workflow key.
+        body = (
+            "on: push\n"
+            "jobs:\n"
+            "  build:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - uses: actions/checkout@v4\n"
+            "      - uses: actions/cache@v4\n"
+            "        with:\n"
+            "          path: ~/.m2/repository\n"
+            "          key: maven-ci-${{ hashFiles('jvm/**/pom.xml') }}\n"
+            "          restore-keys: maven-ci-\n"
+            "      - name: Set up JDK\n"
+            "        uses: actions/setup-java@v3\n"
+            "        with:\n"
+            "          java-version: '21'\n"
+            "          distribution: temurin\n"
+            "      - run: mvn -B test\n"
+        )
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_actions_cache_wrong_path_still_fails(self):
+        # An actions/cache step that does NOT cover ~/.m2 cannot satisfy the
+        # rule — gradle-style path or a different dir is not a Maven repo.
+        for path in ("~/.gradle/caches", "~/.m2x/repository"):
+            body = self.MAVEN_OK.replace(
+                "          cache: maven\n", ""
+            ) + (
+                "      - uses: actions/cache@v4\n"
+                "        with:\n"
+                f"          path: {path}\n"
+                "          key: x-${{ hashFiles('**/pom.xml') }}\n"
+            )
+            self._write(".github/workflows/ci.yml", body)
+            proc = self._run(self.tree, None, "--rule", "maven-cache")
+            self.assertEqual(1, proc.returncode, path)
+
+    def test_uncached_message_names_both_remedies(self):
+        # The finding must present both valid remedies so the operator can
+        # pick either idiom.
+        body = self.MAVEN_OK.replace("          cache: maven\n", "")
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("cache: maven", proc.stderr)
+        self.assertIn("actions/cache", proc.stderr)
+
+    def test_actions_cache_other_job_does_not_leak(self):
+        # Same cross-window discipline as the cache: input — an actions/cache
+        # ~/.m2 step in job `ok` must not satisfy the uncached job `bad`.
+        ok = (
+            "  ok:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - uses: actions/cache@v4\n"
+            "        with:\n"
+            "          path: ~/.m2/repository\n"
+            "          key: maven-ok-\n"
+            "      - uses: actions/setup-java@v3\n"
+            "      - run: mvn -B test\n"
+        )
+        bad = (
+            "  bad:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - uses: actions/setup-java@v3\n"
+            "      - run: mvn -B test\n"
+        )
+        self._write(".github/workflows/ci.yml", "on: push\njobs:\n" + ok + bad)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("job `bad`", proc.stderr)
+        self.assertNotIn("job `ok`", proc.stderr)
+
     def test_other_steps_cache_does_not_leak(self):
         # A DIFFERENT setup-java-family step cached elsewhere must not satisfy
         # the uncached one; each step is judged within its own window.
