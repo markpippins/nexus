@@ -1,0 +1,33 @@
+{
+  "fixture": "governed-relation-vocabulary-v182",
+  "description": "Pinned projection of the governed relation vocabulary seeded by sql/V182__relation_vocabulary.sql (resolution.relation_vocabulary). Structure is read-only and performs no DB reads at runtime; this fixture is the provenance-carrying pin. Names only \u2014 no UUIDs (ids are generated per-environment and are Resolution-domain identity).",
+  "vocabulary_revision": "resolution.relation_vocabulary@V182",
+  "source_migration": "sql/V182__relation_vocabulary.sql",
+  "source_freeze_draft": "df6b70c4-ec1a-4d53-affe-79fcb33d48c9",
+  "names": [
+    "basis_of",
+    "calls",
+    "constrains",
+    "consumes",
+    "contradicts",
+    "defines",
+    "depends_on",
+    "derives_from",
+    "implements",
+    "member_of",
+    "mentions",
+    "produces",
+    "projects",
+    "provenance_of",
+    "reads",
+    "replies_to",
+    "spawns",
+    "supersedes",
+    "supports",
+    "transforms_into",
+    "uses",
+    "validates",
+    "writes"
+  ],
+  "names_fingerprint": "598caeeedf472492eb6b7252a1547435c31840434ea6f9e32453fdcb768d1d47"
+}

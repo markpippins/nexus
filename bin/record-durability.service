@@ -1,0 +1,26 @@
+# Source of truth for ~/.config/systemd/user/record-durability.service
+#
+# Deploy:
+#   cp bin/record-durability.service ~/.config/systemd/user/
+#   cp bin/record-durability.timer   ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now record-durability.timer
+#
+# Why this file is in the repo: same doctrine as sdk-drift-stamp.service —
+# host-only units drift from the corpus (the 2026-09-21 helium probe incident,
+# where the deployed unit outlived its in-repo definition). ExecStart resolves
+# the wrapper through the repo working tree so merges deploy themselves.
+#
+# SRCDSN override: the checker defaults to the same DSN as every other
+# corpus tool; set SRCDSN here only if the fleet DSN ever changes.
+
+[Unit]
+Description=Nightly record-durability sweep: surface hollow agent records (path-like or <50B content) the day they are created
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/dev/nexus/bin/record_durability_wrap.py
+TimeoutStartSec=420
+
+[Install]
+WantedBy=default.target
