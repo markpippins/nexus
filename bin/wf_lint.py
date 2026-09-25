@@ -47,6 +47,16 @@ Rules
                  `--package-lock-only` (deliberate lock regeneration).
                  `npm i` shorthand is not recognized (house code writes
                  the long form).
+  maven-cache    jobs that run mvn/mvnw on the runner must cache the Maven
+                 repository: an actions/setup-java step without `cache:
+                 maven` cold-pulls Central, and concurrent cold pulls trip
+                 its rate limiter (the 2026-09-25 main 429 incident, run
+                 36088456372; fixed in #569, guarded here). Fires once per
+                 job, anchored at the first uncached setup-java step.
+                 Docker-internal Maven builds (docker-gate shape) are out
+                 of scope — no runner-level mvn, and the host cache would
+                 not apply. mvnw counts (same cold-pull class); a wrong-
+                 ecosystem cache (gradle/sbt) does not satisfy it.
 
 Escape hatch: '# wf-lint-allow' (bare) suppresses every rule for that
 line; '# wf-lint-allow: rule1,rule2' suppresses only the named rules;
@@ -54,12 +64,13 @@ line; '# wf-lint-allow: rule1,rule2' suppresses only the named rules;
 on the line. The postgres rule also honors its legacy '# pg-pin-allow'
 marker.
 
-Scope: postgres-pin / eol-runtime / action-ref / job-hardening scan
-.github/workflows YAML only; dead-base scans Dockerfiles anywhere under
-the target; npm-ci judges both surfaces (workflow run blocks with
-working-directory/cd resolution, and Dockerfile RUNs with build-context
-lock resolution — repo-side approximation of the build context, since
-the actual -f/--context flags are unknowable from the files alone).
+Scope: postgres-pin / eol-runtime / action-ref / job-hardening /
+maven-cache scan .github/workflows YAML only; dead-base scans
+Dockerfiles anywhere under the target; npm-ci judges both surfaces
+(workflow run blocks with working-directory/cd resolution, and
+Dockerfile RUNs with build-context lock resolution — repo-side
+approximation of the build context, since the actual -f/--context
+flags are unknowable from the files alone).
 Compose-file PG pins are host-stack concerns (fleet rulings R1/R3) and
 deliberately out of scope here.
 
@@ -804,6 +815,157 @@ class NpmCiRule(Rule):
 
 
 # --------------------------------------------------------------------------
+# rule: maven-cache (Central rate-limit hygiene)
+# --------------------------------------------------------------------------
+
+# `mvn`/`mvnw` as a standalone token followed by whitespace + an argument.
+# Word-boundary form so ./mvnw, `run: mvn ...`, and `x && mvn ...` all match,
+# while maven-the-word, mvn-repo paths, and bare `mvn` (no args) do not.
+MVN_RUN_RE = re.compile(r"\b(?:mvn|mvnw)\s+\S")
+SETUP_JAVA_RE = re.compile(r"^\s*(?:-\s+)?uses:\s*actions/setup-java\b")
+CACHE_MAVEN_RE = re.compile(r"^\s*cache:\s*['\"]?maven['\"]?\s*(?:#.*)?$")
+
+
+def _job_runs_maven(body: list[str]) -> bool:
+    """True when any executable line of the job body invokes mvn/mvnw on the
+    runner. Comment lines (shell comments inside run blocks included) never
+    count. Docker-internal Maven (docker build / docker run ... mvn) is out
+    of scope for the same reason the docker-gate is exempt: a host-runner
+    cache does not reach inside the container."""
+    for raw in body:
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if "docker build" in stripped or "docker run" in stripped:
+            continue
+        if MVN_RUN_RE.search(stripped):
+            return True
+    return False
+
+
+def _uncached_setup_java_offsets(body: list[str]) -> list[int]:
+    """Body offsets of setup-java steps lacking a `cache: maven` input.
+
+    Step anatomy (house 2-space style): a list item's first property carries
+    the `- ` marker (e.g. `- name:`), so its key sits two columns LEFT of the
+    step's other properties (`uses:`, `with:`, `run:` all share one indent);
+    when `uses:` is itself the first property, it owns the dash. The step's
+    window therefore runs from its `- ` item line to the next dash item or
+    job-level key, and `with:` lives INSIDE that window at the property
+    indent — the naive "stop at the uses: line's own indent" read amputates
+    the with: block and false-positives every correctly cached step (caught
+    live against the #569-fixed workflows before this shipped).
+
+    `cache:` is judged only among the `with:` block's children, so another
+    step's cache, or text inside a run block, can never satisfy this step.
+    A step with no `with:` at all is uncached by definition. Quoted values
+    and trailing comments are accepted.
+    """
+    out: list[int] = []
+    for i, raw in enumerate(body):
+        if not SETUP_JAVA_RE.match(raw):
+            continue
+        u = len(raw) - len(raw.lstrip())
+        # Step start: walk back to the `- ` item line at the property indent's
+        # dash column — present unless uses: itself carries the dash.
+        start = i
+        if not raw.lstrip().startswith("- "):
+            k = i
+            while k > 0:
+                line = body[k]
+                s = line.strip()
+                if s:
+                    ind = len(line) - len(line.lstrip())
+                    if ind < u and s.startswith("- "):
+                        start = k
+                        break
+                    if ind < u:
+                        break  # job-level key: degenerate, stay at i
+                k -= 1
+        # Step end: next dash item at the step level, or any dedent below it.
+        end = len(body)
+        j = start + 1
+        while j < len(body):
+            line = body[j]
+            s = line.strip()
+            if s:
+                ind = len(line) - len(line.lstrip())
+                if ind < u or (ind == u and s.startswith("- ")):
+                    end = j
+                    break
+            j += 1
+        # The step's with: block: a `with:` key line inside the window.
+        with_idx = None
+        for j in range(start, end):
+            m = VALKEY_RE.match(body[j])
+            if m and m.group(2) == "with" and (m.group(1) == " " * u or m.group(1) == " " * (u + 2)):
+                with_idx = j
+                break
+        cached = False
+        if with_idx is not None:
+            w = len(body[with_idx]) - len(body[with_idx].lstrip())
+            for j in range(with_idx + 1, end):
+                line = body[j]
+                if line.strip():
+                    if len(line) - len(line.lstrip()) <= w:
+                        break  # dedent: with: block closed
+                    if CACHE_MAVEN_RE.match(line):
+                        cached = True
+                        break
+        if not cached:
+            out.append(i)
+    return out
+
+
+class MavenCacheRule(Rule):
+    """A job that runs mvn/mvnw with an uncached setup-java step cold-pulls
+    Maven Central; concurrent cold pulls trip its 429 rate limiter (2026-09-25
+    main incident, run 36088456372). One finding per offending job, anchored
+    at the first uncached setup-java step so the allow marker works there.
+    Structural (scan_file): needs the job body plus step windows, which no
+    single line can reveal. No --fix pass on purpose: the remediation depends
+    on whether the step already has a with: block, and the edit is one line —
+    review should see it in context.
+    """
+
+    name = "maven-cache"
+
+    def applies(self, rel: str, filename: str, target: str) -> bool:
+        return _in_workflows(rel, target) and filename.endswith((".yml", ".yaml"))
+
+    def scan_line(self, raw: str, rel: str, lineno: int) -> list[Finding]:
+        return []  # structural rule: judged via scan_file only
+
+    def scan_file(self, rel: str, lines: list[str]) -> list[Finding]:
+        out: list[Finding] = []
+        # Same GitHub-reality gate as job-hardening: no trigger, not a file
+        # GitHub would run — scratch fixtures and malformed files are out of
+        # scope for the whole rule.
+        if not (
+            _has_top_level_key(lines, "on")
+            or _has_top_level_key(lines, "true")
+            or _has_top_level_key(lines, "true:")
+        ):
+            return []
+        for name, header_idx, _job_indent, uses_key, body in _locate_jobs(lines):
+            if uses_key:
+                continue  # reusable-workflow caller: steps live elsewhere
+            if not _job_runs_maven(body):
+                continue
+            uncached = _uncached_setup_java_offsets(body)
+            if uncached:
+                anchor = header_idx + uncached[0] + 2  # 1-based lineno of body[uncached[0]]
+                out.append(Finding(
+                    "violation", rel, anchor, self.name,
+                    f"job `{name}` runs mvn/mvnw but its actions/setup-java step has "
+                    f"no `cache: maven` — concurrent cold pulls hit Maven Central's "
+                    f"429 rate limiter (2026-09-25 incident, #569); add `cache: maven` "
+                    f"to the step's with: block",
+                ))
+        return out
+
+
+# --------------------------------------------------------------------------
 # allow markers
 # --------------------------------------------------------------------------
 
@@ -841,6 +1003,7 @@ RULES: list[Rule] = [
     ActionRefRule(),
     JobHardeningRule(),
     NpmCiRule(),
+    MavenCacheRule(),
 ]
 
 

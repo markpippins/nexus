@@ -694,6 +694,184 @@ class WfLintTest(unittest.TestCase):
         self.assertEqual(1, proc.returncode)  # real.yml's missing blocks fire
         self.assertNotIn("node_modules", proc.stdout + proc.stderr)
 
+    # -- maven-cache ----------------------------------------------------------------
+
+    MAVEN_OK = (
+        "on: push\n"
+        "jobs:\n"
+        "  build:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@v4\n"
+        "      - name: Set up JDK\n"
+        "        uses: actions/setup-java@v3\n"
+        "        with:\n"
+        "          java-version: '21'\n"
+        "          distribution: temurin\n"
+        "          cache: maven\n"
+        "      - run: mvn -B test\n"
+    )
+
+    def test_uncached_setup_java_with_mvn_fails(self):
+        # The drift class: the 2026-09-25 main 429 (run 36088456372) — setup-java
+        # without cache: maven + a runner mvn invocation, concurrent jobs cold-pull.
+        body = self.MAVEN_OK.replace("          cache: maven\n", "")
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("[maven-cache]", proc.stderr)
+        self.assertIn("cache: maven", proc.stderr)
+
+    def test_cached_maven_passes(self):
+        self._write(".github/workflows/ci.yml", self.MAVEN_OK)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_quoted_and_commented_cache_values_pass(self):
+        for variant in ("          cache: 'maven'  # fleet standard\n",
+                        '          cache: "maven"\n'):
+            body = self.MAVEN_OK.replace("          cache: maven\n", variant)
+            self._write(".github/workflows/ci.yml", body)
+            proc = self._run(self.tree, None, "--rule", "maven-cache")
+            self.assertEqual(0, proc.returncode, variant)
+
+    def test_no_setup_java_no_finding(self):
+        # Maven via a preinstalled JDK (no setup-java step) is not the rule's
+        # subject — nothing to attach cache: maven to.
+        body = self.MAVEN_OK.replace(
+            "      - name: Set up JDK\n"
+            "        uses: actions/setup-java@v3\n"
+            "        with:\n"
+            "          java-version: '21'\n"
+            "          distribution: temurin\n"
+            "          cache: maven\n",
+            "",
+        )
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_no_mvn_no_finding(self):
+        # setup-java without any runner mvn (e.g. java-only tooling) is not a
+        # cold-pull risk — the rule requires both halves.
+        body = self.MAVEN_OK.replace("      - run: mvn -B test\n", "      - run: java -jar app.jar\n")
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_mvnw_counts(self):
+        # Same cold-pull class, different wrapper spelling.
+        body = self.MAVEN_OK.replace(
+            "      - run: mvn -B test\n",
+            "      - run: ./mvnw -B test\n",
+        )
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_docker_internal_maven_not_in_scope(self):
+        # docker-gate shape: mvn executes inside the container; a host cache
+        # would not reach it, and docker build/run lines are excluded.
+        body = self.MAVEN_OK.replace(
+            "      - run: mvn -B test\n",
+            "      - run: docker build -f jvm/Dockerfile .\n",
+        )
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_wrong_ecosystem_cache_still_fails(self):
+        # cache: gradle does not cover ~/.m2 — the rule demands maven.
+        body = self.MAVEN_OK.replace("          cache: maven\n", "          cache: gradle\n")
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("[maven-cache]", proc.stderr)
+
+    def test_other_steps_cache_does_not_leak(self):
+        # A DIFFERENT setup-java-family step cached elsewhere must not satisfy
+        # the uncached one; each step is judged within its own window.
+        body = (
+            "on: push\n"
+            "jobs:\n"
+            "  build:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - name: Cached gradle step\n"
+            "        uses: gradle/actions/setup-gradle@v3\n"
+            "        with:\n"
+            "          cache: maven\n"
+            "      - name: Uncached java step\n"
+            "        uses: actions/setup-java@v3\n"
+            "      - run: mvn -B test\n"
+        )
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(1, proc.returncode)
+
+    def test_multi_job_one_offender_fails_with_anchor(self):
+        # Two mvn jobs in ONE document; only `bad` is uncached. Finding
+        # anchors at that job's setup-java line so the allow marker works
+        # there. (Concatenating two YAML documents is invalid — the line-based
+        # job locator reads the first jobs: block only.)
+        body = self.MAVEN_OK.replace("  build:\n", "  ok:\n") + self.MAVEN_OK.replace(
+            "          cache: maven\n", ""
+        ).replace("  build:\n", "  bad:\n").replace("on: push\n", "").replace("jobs:\n", "", 1)
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("job `bad`", proc.stderr)
+        self.assertNotIn("job `ok`", proc.stderr)
+
+    def test_allow_marker_on_uses_line_suppresses(self):
+        body = self.MAVEN_OK.replace("          cache: maven\n", "").replace(
+            "        uses: actions/setup-java@v3\n",
+            "        uses: actions/setup-java@v3  # wf-lint-allow: deliberate cold-pull\n",
+        )
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(0, proc.returncode)
+        self.assertIn("allow-marker", proc.stdout)
+
+    def test_reusable_workflow_caller_job_exempt(self):
+        body = self.MAVEN_OK.replace(
+            "  build:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - uses: actions/checkout@v4\n"
+            "      - name: Set up JDK\n"
+            "        uses: actions/setup-java@v3\n"
+            "        with:\n"
+            "          java-version: '21'\n"
+            "          distribution: temurin\n"
+            "          cache: maven\n"
+            "      - run: mvn -B test\n",
+            "  build:\n"
+            "    uses: ./.github/workflows/reusable.yml\n",
+        )
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_no_trigger_scratch_file_ignored(self):
+        body = self.MAVEN_OK.replace("          cache: maven\n", "").replace("on: push\n", "")
+        self._write(".github/workflows/draft.yml", body)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_maven_cache_rule_alone_selectable(self):
+        body = self.MAVEN_OK.replace("          cache: maven\n", "")
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("rules: maven-cache", proc.stdout)
+
+    def test_real_repo_maven_workflows_green(self):
+        # Born-green invariant: the #569-fixed fleet must pass the new rule —
+        # this test rots the moment someone drops a cache: maven input again.
+        proc = self._run(os.path.join(REPO_ROOT, ".github", "workflows"), None, "--rule", "maven-cache")
+        self.assertEqual(0, proc.returncode)
+
     # -- real repo -----------------------------------------------------------------
 
     def test_real_repo_scan_does_not_crash(self):
