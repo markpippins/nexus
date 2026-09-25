@@ -481,6 +481,19 @@ class DBAdapter:
                 """,
                 (session_id, now, now, ticket_id),
             )
+            if cursor.rowcount > 0:
+                # ADR-016: record kernel transition within the same transaction
+                # (parity with the TS manual_claim path — transition.committed)
+                self._record_kernel_transition(
+                    conn,
+                    aggregate_type="ticket",
+                    aggregate_id=ticket_id,
+                    event_type="transition.committed",
+                    payload={
+                        "from_status": "open", "to_status": "claimed",
+                        "reason": "manual_claim", "session_id": session_id,
+                    },
+                )
             conn.commit()
             if cursor.rowcount > 0:
                 _log.info("claim_ticket: claimed %s session=%s", ticket_id, session_id)
@@ -491,10 +504,19 @@ class DBAdapter:
     def close_ticket(
         self, plan_id: str, role: str, session_id: str, terminal_status: str = "completed"
     ) -> bool:
-        """Close a claimed Ticket into a terminal state.  v079: sets last_activity."""
+        """Close a claimed Ticket into a terminal state.  v079: sets last_activity.
+        ADR-016: emits transition.committed (claimed→terminal) in the same
+        transaction — parity with the TS receipt-advance path."""
         _log.debug("close_ticket: plan=%s role=%s session=%s status=%s", plan_id, role, session_id, terminal_status)
         now = datetime.utcnow().isoformat() + "Z"
         with self._get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT id, status FROM tickets
+                WHERE plan_id = %s AND role = %s AND session_id = %s AND status = 'claimed'
+                """,
+                (plan_id, role, session_id),
+            ).fetchone()
             cursor = conn.execute(
                 """
                 UPDATE tickets SET
@@ -503,16 +525,37 @@ class DBAdapter:
                 """,
                 (terminal_status, now, now, plan_id, role, session_id),
             )
+            if cursor.rowcount > 0 and row:
+                # ADR-016: record kernel transition within the same transaction
+                self._record_kernel_transition(
+                    conn,
+                    aggregate_type="ticket",
+                    aggregate_id=row[0],
+                    event_type="transition.committed",
+                    payload={
+                        "from_status": row[1], "to_status": terminal_status,
+                        "reason": "session_close", "session_id": session_id,
+                    },
+                )
             conn.commit()
             if cursor.rowcount > 0:
                 _log.info("close_ticket: closed ticket plan=%s role=%s as %s", plan_id, role, terminal_status)
             return cursor.rowcount > 0
 
     def release_ticket(self, plan_id: str, role: str, session_id: str) -> bool:
-        """Release a claimed Ticket back to 'open'.  v079: sets last_activity."""
+        """Release a claimed Ticket back to 'open'.  v079: sets last_activity.
+        ADR-016: emits transition.committed (claimed→open) in the same
+        transaction — parity with the TS manual_release path."""
         _log.debug("release_ticket: plan=%s role=%s session=%s", plan_id, role, session_id)
         now = datetime.utcnow().isoformat() + "Z"
         with self._get_connection() as conn:
+            affected = conn.execute(
+                """
+                SELECT id FROM tickets
+                WHERE plan_id = %s AND role = %s AND session_id = %s AND status = 'claimed'
+                """,
+                (plan_id, role, session_id),
+            ).fetchall()
             cursor = conn.execute(
                 """
                 UPDATE tickets SET
@@ -522,14 +565,36 @@ class DBAdapter:
                 """,
                 (now, plan_id, role, session_id),
             )
+            # ADR-016: record kernel transitions within the same transaction
+            for r in (affected or []):
+                self._record_kernel_transition(
+                    conn,
+                    aggregate_type="ticket",
+                    aggregate_id=r[0],
+                    event_type="transition.committed",
+                    payload={
+                        "from_status": "claimed", "to_status": "open",
+                        "reason": "manual_release", "session_id": session_id,
+                    },
+                )
             conn.commit()
             return cursor.rowcount > 0
 
     def abandon_ticket(self, plan_id: str, role: str, session_id: str) -> bool:
-        """Mark a claimed Ticket as abandoned.  v079: sets last_activity."""
+        """Mark a claimed Ticket as abandoned.  v079: sets last_activity.
+        ADR-016: emits transition.rejected (claimed→abandoned) in the same
+        transaction — TS has no abandon path; event shape follows the
+        cancel/supersede family (rejected = non-success closure)."""
         _log.info("abandon_ticket: plan=%s role=%s session=%s", plan_id, role, session_id)
         now = datetime.utcnow().isoformat() + "Z"
         with self._get_connection() as conn:
+            affected = conn.execute(
+                """
+                SELECT id, status FROM tickets
+                WHERE plan_id = %s AND role = %s AND session_id = %s AND status = 'claimed'
+                """,
+                (plan_id, role, session_id),
+            ).fetchall()
             cursor = conn.execute(
                 """
                 UPDATE tickets SET
@@ -538,14 +603,32 @@ class DBAdapter:
                 """,
                 (now, now, plan_id, role, session_id),
             )
+            # ADR-016: record kernel transitions within the same transaction
+            for r in (affected or []):
+                self._record_kernel_transition(
+                    conn,
+                    aggregate_type="ticket",
+                    aggregate_id=r[0],
+                    event_type="transition.rejected",
+                    payload={
+                        "from_status": r[1], "to_status": "abandoned",
+                        "reason": "session_abandoned",
+                    },
+                )
             conn.commit()
             return cursor.rowcount > 0
 
     def release_session_tickets(self, session_id: str) -> int:
-        """Release all Tickets claimed by *session_id* back to 'open'.  v079: sets last_activity."""
+        """Release all Tickets claimed by *session_id* back to 'open'.  v079: sets last_activity.
+        ADR-016: emits transition.committed (claimed→open) per released ticket
+        in the same transaction — parity with the TS session_released path."""
         _log.debug("release_session_tickets: session=%s", session_id)
         now = datetime.utcnow().isoformat() + "Z"
         with self._get_connection() as conn:
+            affected = conn.execute(
+                "SELECT id FROM tickets WHERE session_id = %s AND status = 'claimed'",
+                (session_id,),
+            ).fetchall()
             cursor = conn.execute(
                 """
                 UPDATE tickets SET
@@ -555,6 +638,18 @@ class DBAdapter:
                 """,
                 (now, session_id),
             )
+            # ADR-016: record kernel transitions within the same transaction
+            for r in (affected or []):
+                self._record_kernel_transition(
+                    conn,
+                    aggregate_type="ticket",
+                    aggregate_id=r[0],
+                    event_type="transition.committed",
+                    payload={
+                        "from_status": "claimed", "to_status": "open",
+                        "reason": "session_released", "session_id": session_id,
+                    },
+                )
             conn.commit()
             n = cursor.rowcount
             if n:
@@ -1665,6 +1760,9 @@ class DBAdapter:
                 _log.debug("supersede_ticket: ticket %s not found or not in eligible status", ticket_id)
                 return {"superseded": False}
 
+            from_status = conn.execute(
+                "SELECT status FROM tickets WHERE id = %s", (ticket_id,)
+            ).fetchone()
             conn.execute(
                 """
                 UPDATE tickets SET
@@ -1674,6 +1772,19 @@ class DBAdapter:
                 AND status IN ('open', 'claimed', 'stale')
                 """,
                 (now, now, reason or "superseded", ticket_id),
+            )
+            # ADR-016: record kernel transition within the same transaction
+            # (parity with TS supersedeTicket — transition.rejected family)
+            self._record_kernel_transition(
+                conn,
+                aggregate_type="ticket",
+                aggregate_id=ticket_id,
+                event_type="transition.rejected",
+                payload={
+                    "from_status": from_status[0] if from_status else "unknown",
+                    "to_status": "superseded",
+                    "reason": reason or "superseded",
+                },
             )
             conn.commit()
             _log.info("supersede_ticket: superseded %s (plan=%s role=%s)", ticket_id, old[0], old[1])
@@ -1688,9 +1799,18 @@ class DBAdapter:
             }
 
     def cancel_ticket(self, ticket_id: str, reason: str = "") -> int:
+        """Cancel an eligible Ticket.  ADR-016: emits transition.rejected
+        (from→cancelled) in the same transaction — parity with the TS
+        cancelTicket path.  The gen-2 8261654 cancellation (2026-09-24) rode
+        this path and produced zero transition events; every future
+        cancellation must be visible to event-driven consumers (CD-2 design,
+        PR #549)."""
         _log.info("cancel_ticket: ticket=%s reason=%s", ticket_id, reason)
         now = datetime.utcnow().isoformat() + "Z"
         with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT status FROM tickets WHERE id = %s", (ticket_id,)
+            ).fetchone()
             cursor = conn.execute(
                 """
                 UPDATE tickets SET
@@ -1701,6 +1821,19 @@ class DBAdapter:
                 """,
                 (now, now, reason or "cancelled", ticket_id),
             )
+            if cursor.rowcount > 0:
+                # ADR-016: record kernel transition within the same transaction
+                self._record_kernel_transition(
+                    conn,
+                    aggregate_type="ticket",
+                    aggregate_id=ticket_id,
+                    event_type="transition.rejected",
+                    payload={
+                        "from_status": row[0] if row else "unknown",
+                        "to_status": "cancelled",
+                        "reason": reason or "cancelled",
+                    },
+                )
             conn.commit()
             n = cursor.rowcount
             if n:
@@ -1913,9 +2046,15 @@ class DBAdapter:
                     valid_roles.append(role)
 
             now = datetime.utcnow().isoformat() + "Z"
+            # ADR-016: SELECT affected tickets before UPDATE for kernel
+            # transition recording (house detect_* pattern)
             if not valid_roles:
                 # No role is eligible — close ALL open tickets
                 reason = f'orphaned: plan status {derived_status} has no eligible roles'
+                affected = conn.execute(
+                    "SELECT id, status FROM tickets WHERE plan_id = %s AND status = 'open'",
+                    (plan_id,),
+                ).fetchall()
                 cursor = conn.execute(
                     """
                     UPDATE tickets SET
@@ -1928,6 +2067,13 @@ class DBAdapter:
             else:
                 placeholders = ', '.join(['%s'] * len(valid_roles))
                 reason = f'orphaned: role no longer eligible for plan status {derived_status}'
+                affected = conn.execute(
+                    f"""
+                    SELECT id, status FROM tickets
+                    WHERE plan_id = %s AND role NOT IN ({placeholders}) AND status = 'open'
+                    """,
+                    (plan_id, *valid_roles),
+                ).fetchall()
                 cursor = conn.execute(
                     f"""
                     UPDATE tickets SET
@@ -1936,6 +2082,18 @@ class DBAdapter:
                     WHERE plan_id = %s AND role NOT IN ({placeholders}) AND status = 'open'
                     """,
                     (now, now, reason, plan_id, *valid_roles),
+                )
+            # ADR-016: record kernel transitions within the same transaction
+            for r in (affected or []):
+                self._record_kernel_transition(
+                    conn,
+                    aggregate_type="ticket",
+                    aggregate_id=r[0],
+                    event_type="transition.rejected",
+                    payload={
+                        "from_status": r[1], "to_status": "cancelled",
+                        "reason": reason, "plan_id": plan_id,
+                    },
                 )
             conn.commit()
             n = cursor.rowcount
