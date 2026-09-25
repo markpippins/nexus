@@ -1,0 +1,30 @@
+{
+  "fixture": "ambiguous-candidate",
+  "description": "An explicit unresolved candidate: the parser recognized a referential shape but the mapping is undecided. Ambiguity is first-class output \u2014 recorded with a stable identity, never silently resolved, never dropped, and never invented into a free-form predicate.",
+  "unresolved_candidate": {
+    "candidate_id": "91d2a7ffa1cf897416f4e6a06dfb087eb8d9b279799fc83d77c27d9c08888738",
+    "source": {
+      "source_uri": "db/seeds/legacy_tags.sql",
+      "revision": "5b06e287",
+      "content_hash": "7139f6961d12a234084e5fc663d003bd2ea5f5562c2e2560561b46ed05e357c4",
+      "language": "sql",
+      "source_kind": "seed_sql"
+    },
+    "parser": {
+      "parser_identity": "structure-sql-parser",
+      "parser_revision": "v0.1.0",
+      "grammar_revision": "v0.1.0"
+    },
+    "anchor": {
+      "node_path": "seed[2].insert.into.tag_binding.select_expression",
+      "span": {
+        "start_line": 88,
+        "start_column": 5,
+        "end_line": 96,
+        "end_column": 22
+      }
+    },
+    "reason": "ambiguous",
+    "note": "Referential shape resembles a tag binding, but the target column set matches two governed tables; mapping is Resolution/Aspects work at the S4 boundary."
+  }
+}

@@ -1,4 +1,4 @@
-name: WR Conf 046 — Bcrypt Write-Guard (V202 E2E: V191 re-apply + self-hashing triggers)
+name: "WR Conf 046 — Bcrypt Write-Guard (V202 E2E: V191 re-apply + self-hashing triggers)"
 
 # Applies the REAL sql/V202__bcrypt_write_guard.sql to a throwaway database
 # carrying the pre-V191 live shape (census 2026-09-20, titanium). V202 is the
@@ -55,4 +55,4 @@ jobs:
         env:
           CONDUIT_PG_DSN: postgresql://pguser:pgpass@localhost:5432/postgres
         run: |
-          python3 -m pytest python/nexus_core/wrp/tests/test_v201_bcrypt_write_guard_e2e.py -v
+          python3 -m pytest python/nexus_core/wrp/tests/test_v202_bcrypt_write_guard_e2e.py -v

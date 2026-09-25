@@ -1,0 +1,17 @@
+# Source of truth for ~/.config/systemd/user/record-durability.timer
+#
+# Nightly 06:30 UTC — third slot in the drift/heartbeat cluster, after the
+# SDK stamp check (06:10) and the users bcrypt check (06:20), before
+# business hours. Persistent=true catches up if the machine was off at
+# the scheduled time.
+
+[Unit]
+Description=Run record durability sweep nightly at 06:30 UTC
+
+[Timer]
+OnCalendar=*-*-* 06:30:00 UTC
+Persistent=true
+Unit=record-durability.service
+
+[Install]
+WantedBy=timers.target

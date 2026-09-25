@@ -112,6 +112,16 @@ interface OutboxRow {
  * `idempotency_key` = `${kind}:${id}` so the same logical decision point
  * can never create two indistinguishable snapshots.
  */
+const DOCTRINE_HASH_RE = /^sha256:[0-9a-f]{64}$/;
+
+interface DoctrineSnapshot {
+  schema_version: 1;
+  snapshot_id: string;
+  system_prompt_hash: string;
+  bootstrap_hash: string;
+  active_procedure_cards: string[];
+}
+
 interface TriggerEventContract {
   schema_version?: number;
   source_namespace?: string | null;
@@ -172,6 +182,8 @@ interface TriggerEventContract {
   meta?: any;
   read_set?: any;
   read_set_manifest?: any;
+  doctrine_snapshot?: DoctrineSnapshot;
+  doctrine_snapshot_id?: string;
   payload?: any;
   checkpoint_status?: string;
   /** Raw legacy trigger string (backward compat only). */
@@ -226,6 +238,7 @@ interface DecisionContextManifest {
   bridge: { id: string | null; version: string | number | null };
   source_read_set: any;
   read_set_manifest: any;
+  doctrine_snapshot_id?: string;
   observation_window?: {
     activation_ref: string | null;
     activated_at: string | null;
@@ -455,6 +468,7 @@ export default class KeychainService extends Service {
                 state_vector: stateVector,
                 storage: (snap as any).storage || "base",
                 decision_context: (snap as any).decision_context || null,
+                ...this.checkpointDoctrineReference(snap),
               };
             }
 
@@ -470,6 +484,7 @@ export default class KeychainService extends Service {
                 note: "state_vector not present on this snapshot (pre-D1 rework) — only counts available",
                 typeBreakdown: (snap as any).typeBreakdown || null,
                 state_vector: null,
+                ...this.checkpointDoctrineReference(snap),
               };
             }
             // Walk the prevVersion pointers back to the nearest checkpoint
@@ -542,6 +557,7 @@ export default class KeychainService extends Service {
               base_version: baseVersion,
               delta_steps: path.length,
               decision_context: (snap as any).decision_context || null,
+              ...this.checkpointDoctrineReference(snap),
             };
           },
         },
@@ -1596,10 +1612,87 @@ export default class KeychainService extends Service {
     };
   }
 
+  private doctrineSnapshot(triggerEvent: TriggerEventContract): {
+    snapshot: DoctrineSnapshot | null;
+    snapshotId: string | null;
+  } {
+    const readSet = triggerEvent.read_set && typeof triggerEvent.read_set === "object"
+      ? triggerEvent.read_set
+      : {};
+    const payload = triggerEvent.payload && typeof triggerEvent.payload === "object"
+      ? triggerEvent.payload
+      : {};
+    const meta = triggerEvent.meta && typeof triggerEvent.meta === "object"
+      ? triggerEvent.meta
+      : {};
+    const candidates = [
+      triggerEvent.doctrine_snapshot,
+      meta.doctrine_snapshot,
+      readSet.doctrine_snapshot,
+      payload.doctrine_snapshot,
+    ];
+    let snapshot: DoctrineSnapshot | null = null;
+    for (const candidate of candidates) {
+      if (candidate == null) continue;
+      if (
+        typeof candidate !== "object"
+        || candidate.schema_version !== 1
+        || typeof candidate.snapshot_id !== "string"
+        || !DOCTRINE_HASH_RE.test(candidate.snapshot_id)
+        || typeof candidate.system_prompt_hash !== "string"
+        || !DOCTRINE_HASH_RE.test(candidate.system_prompt_hash)
+        || typeof candidate.bootstrap_hash !== "string"
+        || !DOCTRINE_HASH_RE.test(candidate.bootstrap_hash)
+        || !Array.isArray(candidate.active_procedure_cards)
+        || !candidate.active_procedure_cards.every((card: any) => typeof card === "string" && DOCTRINE_HASH_RE.test(card))
+      ) {
+        throw new Error("doctrine_snapshot is malformed");
+      }
+      const cards = candidate.active_procedure_cards as string[];
+      const sortedCards = [...cards].sort();
+      if (new Set(cards).size !== cards.length || cards.some((card, index) => card !== sortedCards[index])) {
+        throw new Error("doctrine_snapshot card set must be sorted and unique");
+      }
+      snapshot = candidate as DoctrineSnapshot;
+      break;
+    }
+    const snapshotId = snapshot?.snapshot_id
+      || triggerEvent.doctrine_snapshot_id
+      || meta.doctrine_snapshot_id
+      || readSet.doctrine_snapshot_id
+      || payload.doctrine_snapshot_id
+      || null;
+    if (snapshot && snapshotId && snapshot.snapshot_id !== snapshotId) {
+      throw new Error("doctrine snapshot reference mismatch");
+    }
+    return { snapshot, snapshotId: snapshotId ? String(snapshotId) : null };
+  }
+
+  private async upsertDoctrineSnapshot(db: any, snapshot: DoctrineSnapshot | null): Promise<void> {
+    if (!snapshot) return;
+    await db.collection("doctrine_snapshots").updateOne(
+      { _id: snapshot.snapshot_id },
+      {
+        $setOnInsert: {
+          ...snapshot,
+          created_at: new Date().toISOString(),
+        },
+      },
+      { upsert: true },
+    );
+  }
+
+  private checkpointDoctrineReference(snapshot: any): { doctrine_snapshot_id?: string } {
+    return snapshot?.doctrine_snapshot_id
+      ? { doctrine_snapshot_id: String(snapshot.doctrine_snapshot_id) }
+      : {};
+  }
+
   private buildDecisionContextManifest(
     triggerEvent: TriggerEventContract,
     checkpointReference?: { checkpoint_id: string; version: number },
   ): DecisionContextManifest {
+    const doctrine = this.doctrineSnapshot(triggerEvent);
     const readSet = triggerEvent.read_set && typeof triggerEvent.read_set === "object"
       ? triggerEvent.read_set
       : {};
@@ -1717,6 +1810,7 @@ export default class KeychainService extends Service {
               ...(readSet.manifest_digest ? { manifest_digest: readSet.manifest_digest } : {}),
             }
           : null),
+      ...(doctrine.snapshotId ? { doctrine_snapshot_id: doctrine.snapshotId } : {}),
       ...(observationWindow ? { observation_window: observationWindow } : {}),
       ...(checkpointReference ? { checkpoint_reference: checkpointReference } : {}),
     };
@@ -1740,8 +1834,12 @@ export default class KeychainService extends Service {
         ? this.parseLegacyTrigger(params.trigger)
         : null;
 
+    const doctrine = triggerEvent
+      ? this.doctrineSnapshot(triggerEvent)
+      : { snapshot: null, snapshotId: null };
     if (triggerEvent) {
       triggerEvent.recorded_at = triggerEvent.recorded_at || new Date().toISOString();
+      await this.upsertDoctrineSnapshot(db, doctrine.snapshot);
       const readSet = triggerEvent.read_set && typeof triggerEvent.read_set === "object"
         ? triggerEvent.read_set
         : {};
@@ -1763,6 +1861,7 @@ export default class KeychainService extends Service {
           deduplicated: true,
           version: existing.snapshot_version,
           trigger: triggerEvent,
+          ...(doctrine.snapshotId ? { doctrine_snapshot_id: doctrine.snapshotId } : {}),
           note: "snapshot already exists for this trigger event",
         };
       }
@@ -1804,6 +1903,7 @@ export default class KeychainService extends Service {
             deduplicated: true,
             version: committed.version,
             trigger: triggerEvent,
+            ...(doctrine.snapshotId ? { doctrine_snapshot_id: doctrine.snapshotId } : {}),
             note: "recovered an already committed checkpoint for this source event",
           };
         }
@@ -1942,7 +2042,11 @@ export default class KeychainService extends Service {
     } else if (prev) {
       prevIndex = this.indexFromLegacyArrays((prev as any).instance_ids, (prev as any).current_record_ids);
     } else {
-      prevIndex = {};
+      // No prior state at all (fresh store): unknown prior state must yield
+      // a BASE (D6: "a delta is never computed against unknown prior state").
+      // An empty prevIndex here would instead produce a delta whose diff
+      // against nothing is a full-rewrite "added" set with base_version null.
+      prevIndex = null;
     }
     let prevStateKnown = prevIndex !== null;
     const prevInstanceIds = new Set<string>(Object.keys(prevIndex || {}));
@@ -2111,6 +2215,7 @@ export default class KeychainService extends Service {
             },
           }),
       decision_context: triggerEvent ? this.buildDecisionContextManifest(triggerEvent, { checkpoint_id: checkpointId, version }) : null,
+      ...(doctrine.snapshotId ? { doctrine_snapshot_id: doctrine.snapshotId } : {}),
       ...(triggerEvent?.source_namespace && triggerEvent?.source_event_id
         ? {
             source_namespace: triggerEvent.source_namespace,
@@ -2222,6 +2327,7 @@ export default class KeychainService extends Service {
       },
       trigger: triggerEvent || null,
       decision_context: triggerEvent ? this.buildDecisionContextManifest(triggerEvent, { checkpoint_id: checkpointId, version }) : null,
+      ...(doctrine.snapshotId ? { doctrine_snapshot_id: doctrine.snapshotId } : {}),
       deduplicated: false,
       prevVersion,
     };

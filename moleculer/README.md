@@ -17,6 +17,7 @@ lives beside its incumbent and is cut over only behind a contract gate.
 | `role-memory/` | 4150 | `typescript/role-memory-srv` (:3500) | **`typescript/role-memory-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed 30/30, not cut over (shared Redis/PG parity — refresh converges the same cache; no auth gate on incumbent) |
 | `semantics/` | 4160 | `typescript/semantics-srv` (:3160) | **`typescript/semantics-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed 12/12 + live-data envelopes, not cut over (table-driven CRUD via stored procs + T02 asset spine; no auth gate on incumbent — CORS only) |
 | `tackle/` | 4410 | `typescript/tackle-srv` (:3410) | **`typescript/tackle-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed 54/54, not cut over (dispatch-through-Express: verbatim incumbent app behind one `tackle.dispatch` action, 86 aliases; real writes stay incumbent-owned) |
+| `prompt-sync/` | 4501 | `typescript/tackle-prompt-sync-srv` (:3501) | **`typescript/tackle-prompt-sync-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed 44/44, not cut over (Prompt Registry PG→Redis sync — role-memory twin pattern, shared-cache convergence; no auth gate on incumbent) |
 
 ## Contract coverage
 

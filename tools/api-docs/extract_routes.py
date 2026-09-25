@@ -70,6 +70,7 @@ MOLECULER_SERVICES = {
     "moleculer/role-memory": "moleculer/role-memory",
     "moleculer/semantics": "moleculer/semantics",
     "moleculer/tackle": "moleculer/tackle",
+    "moleculer/prompt-sync": "moleculer/prompt-sync",
 }
 
 # moleculer-web alias entries: "GET /path": "svc.action" (single-quoted forms

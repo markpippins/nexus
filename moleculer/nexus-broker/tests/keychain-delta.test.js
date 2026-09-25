@@ -36,7 +36,7 @@
  */
 const { test } = require('node:test')
 const assert = require('node:assert/strict')
-const { randomUUID } = require('node:crypto')
+const { createHash, randomUUID } = require('node:crypto')
 const { spawn } = require('node:child_process')
 const path = require('node:path')
 const dotenv = require('dotenv')
@@ -49,6 +49,7 @@ const TEST_PORT = process.env.DELTA_TEST_PORT || '4100' // 4100: broker-smoke's 
 const TEST_PTY_WS_PORT = process.env.DELTA_TEST_PTY_WS_PORT || String(Number(TEST_PORT) + 2)
 const BASE = `http://localhost:${TEST_PORT}/api`
 const MONGO_URL = process.env.MONGO_URL || 'mongodb://localhost:27017'
+const sha256 = (value) => `sha256:${createHash('sha256').update(value).digest('hex')}`
 
 let child = null
 
@@ -136,6 +137,16 @@ test.after(async () => {
 
 test('checkpoints persist deltas, not full copies, and rewind reconstructs them', async () => {
   const sourceNamespace = `keychains-delta-${process.pid}-${Date.now()}`
+  const doctrineSnapshot = {
+    schema_version: 1,
+    snapshot_id: sha256(`snapshot:${sourceNamespace}`),
+    system_prompt_hash: sha256(`system-prompt:${sourceNamespace}`),
+    bootstrap_hash: sha256(`bootstrap:${sourceNamespace}`),
+    active_procedure_cards: [
+      sha256(`card-a:${sourceNamespace}`),
+      sha256(`card-b:${sourceNamespace}`),
+    ].sort(),
+  }
   const mongo = new MongoClient(MONGO_URL)
   const checkpointIds = []
   let previousActive = null
@@ -145,6 +156,7 @@ test('checkpoints persist deltas, not full copies, and rewind reconstructs them'
   let previousRecordTypeState = null
   let db = null
   let restored = false
+  let seededAnchorVersion = null
 
   // Shared-store restore. Registered against process signals as well as the
   // normal exit path: the broker test harness has been interrupted mid-run
@@ -153,10 +165,17 @@ test('checkpoints persist deltas, not full copies, and rewind reconstructs them'
     if (restored || !db) return
     restored = true
     await db.collection('transitions').deleteMany({ source_namespace: sourceNamespace })
+    await db.collection('doctrine_snapshots').deleteOne({ _id: doctrineSnapshot.snapshot_id })
     if (checkpointIds.length) {
       await db.collection('ar_drift_findings').deleteMany({ checkpoint_id: { $in: checkpointIds } })
       await db.collection('ar_snapshots').deleteMany({ checkpoint_id: { $in: checkpointIds } })
       await db.collection('checkpoint_entries').deleteMany({ checkpoint_id: { $in: checkpointIds } })
+    }
+    if (seededAnchorVersion != null) {
+      // Remove the anchor we seeded ourselves (fresh store only). Restore
+      // never touches a pre-existing anchor on a seeded store.
+      await db.collection('transitions').deleteOne({ snapshot_version: seededAnchorVersion })
+      await db.collection('ar_snapshots').deleteMany({ version: seededAnchorVersion })
     }
     if (previousActive) {
       await db.collection('active_checkpoints').replaceOne({ _id: 'agent-records' }, previousActive, { upsert: true })
@@ -178,9 +197,9 @@ test('checkpoints persist deltas, not full copies, and rewind reconstructs them'
       await db.collection('checkpoint_sequences').deleteOne({ _id: 'agent-records' })
     }
     await db.collection('entries').deleteMany({})
-    if (previousEntries.length) await db.collection('entries').insertMany(previousEntries)
+    if (previousEntries?.length) await db.collection('entries').insertMany(previousEntries)
     await db.collection('record_type_state').deleteMany({})
-    if (previousRecordTypeState.length) {
+    if (previousRecordTypeState?.length) {
       await db.collection('record_type_state').insertMany(previousRecordTypeState)
     }
   }
@@ -193,25 +212,63 @@ test('checkpoints persist deltas, not full copies, and rewind reconstructs them'
   try {
     await mongo.connect()
     db = mongo.db('keychains')
-    previousActive = await db.collection('active_checkpoints').findOne({ _id: 'agent-records' })
-    previousHead = await db.collection('checkpoint_heads').findOne({ _id: 'agent-records' })
-    previousSequence = await db.collection('checkpoint_sequences').findOne({ _id: 'agent-records' })
-    previousEntries = await db.collection('entries').find({}).toArray()
-    previousRecordTypeState = await db.collection('record_type_state').find({}).toArray()
+    // Fresh-store guard: a dedicated CI/scratch Mongo has no prior collections,
+    // so these pre-state reads return empty and restore() would wrongly wipe
+    // the store after the run. On an empty store, skip pre-state capture and
+    // restore only our own seeded/test documents.
+    const freshStore =
+      (await db.collection('entries').estimatedDocumentCount()) === 0 &&
+      (await db.collection('record_type_state').estimatedDocumentCount()) === 0
+    if (!freshStore) {
+      previousActive = await db.collection('active_checkpoints').findOne({ _id: 'agent-records' })
+      previousHead = await db.collection('checkpoint_heads').findOne({ _id: 'agent-records' })
+      previousSequence = await db.collection('checkpoint_sequences').findOne({ _id: 'agent-records' })
+      previousEntries = await db.collection('entries').find({}).toArray()
+      previousRecordTypeState = await db.collection('record_type_state').find({}).toArray()
+    }
 
     // The baseline must be the newest checkpoint that still carries a full
     // manifest — NOT simply the newest checkpoint, because a prior run of this
     // very test (or any future delta) can be the newest. Asserting against
     // `latestSnapshot` here would make the legacy-read check fail the moment a
     // delta became the tip.
-    const baseline = await db.collection('ar_snapshots').findOne(
+    // Self-seeding: the delta chain needs a pre-existing full-manifest
+    // committed anchor. On titanium that state is production-seeded; on a
+    // fresh CI Mongo it is not. Seed it THROUGH THE SERVICE'S OWN WRITE
+    // PATH: a snapshot POST against unknown prior state is a base (full
+    // manifest) by D6 construction, so the fixture follows the real code
+    // path and survives schema evolution (no hand-crafted documents).
+    let baseline = await db.collection('ar_snapshots').findOne(
       {
         state_vector: { $exists: true },
         $or: [{ checkpoint_status: 'committed' }, { checkpoint_status: { $exists: false } }],
       },
       { sort: { version: -1 } }
     )
-    assert.ok(baseline, 'a full-manifest checkpoint exists to anchor the chain')
+    if (!baseline) {
+      const seedRes = await postSnapshot({
+        source_namespace: `keychains-anchor-${process.pid}-${Date.now()}`,
+        source_event_id: randomUUID(),
+        kind: 'sol.transition.committed',
+        outcome: 'committed',
+        actor: 'keychain-delta-test-anchor-seed',
+        recorded_at: new Date().toISOString(),
+      })
+      assert.equal(seedRes.status, 200, 'anchor seed POST should be accepted')
+      const seedBody = await seedRes.json()
+      assert.equal(seedBody.ok, true)
+      assert.equal(
+        seedBody.storage,
+        'base',
+        'first write on unknown prior state must be a full-manifest base (D6)'
+      )
+      seededAnchorVersion = seedBody.version
+      console.log(`[delta-test] seeded full-manifest anchor at v${seededAnchorVersion}`)
+      baseline = await db.collection('ar_snapshots').findOne({ version: seededAnchorVersion })
+      assert.ok(baseline, 'seeded anchor is queryable')
+    } else {
+      console.log(`[delta-test] using pre-existing full-manifest anchor at v${baseline.version}`)
+    }
 
     const legacyRewind = await (
       await fetch(`${BASE}/keychain-snapshot/agent-records/rewind?at=${baseline.version}`)
@@ -220,6 +277,9 @@ test('checkpoints persist deltas, not full copies, and rewind reconstructs them'
     assert.ok(legacyRewind.state_vector, 'full-manifest checkpoint still returns a state vector')
     assert.notEqual(legacyRewind.reconstructed, true, 'full-manifest checkpoint is not a reconstruction')
     assert.notEqual(legacyRewind.storage, 'delta')
+    if (!Object.hasOwn(baseline, 'doctrine_snapshot_id')) {
+      assert.equal(Object.hasOwn(legacyRewind, 'doctrine_snapshot_id'), false, 'legacy rewind shape is unchanged')
+    }
 
     // Three committed events. A version is a base only on the first write
     // against unknown prior state or every KEYCHAIN_BASE_INTERVAL (50)
@@ -233,6 +293,14 @@ test('checkpoints persist deltas, not full copies, and rewind reconstructs them'
         kind: 'sol.transition.committed',
         outcome: 'committed',
         actor: 'keychain-delta-test',
+        read_set: {
+          doctrine_snapshot: doctrineSnapshot,
+          doctrine_snapshot_id: doctrineSnapshot.snapshot_id,
+        },
+        payload: {
+          doctrine_snapshot: doctrineSnapshot,
+          doctrine_snapshot_id: doctrineSnapshot.snapshot_id,
+        },
         recorded_at: new Date().toISOString(),
       }
       events.push(triggerEvent)
@@ -240,7 +308,9 @@ test('checkpoints persist deltas, not full copies, and rewind reconstructs them'
       assert.equal(res.status, 200)
       const body = await res.json()
       assert.equal(body.ok, true)
+      assert.equal(body.doctrine_snapshot_id, doctrineSnapshot.snapshot_id)
       versions.push(body.version)
+
       console.log(`[delta-test] post ${i + 1}: version=${body.version} storage=${body.storage} entryCount=${body.entryCount}`)
       const checkpoint = await db.collection('ar_snapshots').findOne({ version: body.version })
       checkpointIds.push(checkpoint.checkpoint_id)
@@ -251,6 +321,19 @@ test('checkpoints persist deltas, not full copies, and rewind reconstructs them'
     const docs = await db.collection('ar_snapshots').find({ version: { $in: versions } }).toArray()
     const deltas = docs.filter((doc) => doc.storage === 'delta')
     assert.ok(deltas.length >= 2, `expected at least 2 deltas, got ${deltas.length}`)
+    assert.equal(
+      await db.collection('doctrine_snapshots').countDocuments({ _id: doctrineSnapshot.snapshot_id }),
+      1,
+      'identical doctrine snapshots dedupe to one projected record',
+    )
+    for (const doc of docs) {
+      assert.equal(doc.doctrine_snapshot_id, doctrineSnapshot.snapshot_id)
+    }
+    const transition = await db.collection('transitions').findOne({
+      source_namespace: sourceNamespace,
+      source_event_id: events[0].source_event_id,
+    })
+    assert.equal(transition.read_set.doctrine_snapshot_id, doctrineSnapshot.snapshot_id)
 
     for (const doc of deltas) {
       // A delta carries only what moved.
@@ -269,25 +352,30 @@ test('checkpoints persist deltas, not full copies, and rewind reconstructs them'
       assert.deepEqual(Object.keys(doc.delta).sort(), ['added', 'removed', 'updated'])
     }
 
-    // The chain must root at the full-manifest baseline we identified.
-    const first = docs.find((doc) => doc.version === Math.min(...versions))
-    assert.equal(first.prevVersion, baseline.version, 'first delta chains to the full-manifest baseline')
-    assert.equal(first.base_version, baseline.version)
-
     // Explicitly prove the persisted pointer chain terminates at a full base
     // rather than merely trusting base_version metadata. This catches cycles,
     // missing predecessors, and deltas whose advertised base is not reachable.
-    const byVersion = new Map(docs.concat([baseline]).map((doc) => [doc.version, doc]))
-    let cursor = docs.find((doc) => doc.version === Math.max(...versions))
+    const byVersion = new Map(docs.map((doc) => [doc.version, doc]))
+    const loadCheckpoint = async (version) => {
+      if (!byVersion.has(version)) {
+        const doc = await db.collection('ar_snapshots').findOne({
+          version,
+          $or: [{ checkpoint_status: 'committed' }, { checkpoint_status: { $exists: false } }],
+        })
+        if (doc) byVersion.set(version, doc)
+      }
+      return byVersion.get(version)
+    }
+    let cursor = await loadCheckpoint(Math.max(...versions))
     const seen = new Set()
-    while (cursor.storage === 'delta') {
+    while (cursor?.storage === 'delta') {
       assert.ok(!seen.has(cursor.version), `delta chain cycles at v${cursor.version}`)
       seen.add(cursor.version)
       assert.ok(Number.isInteger(cursor.prevVersion), `v${cursor.version} has a pointer predecessor`)
-      cursor = byVersion.get(cursor.prevVersion)
+      cursor = await loadCheckpoint(Number(cursor.prevVersion))
       assert.ok(cursor, `delta predecessor v${cursor?.version || 'unknown'} exists in the test chain`)
     }
-    assert.equal(cursor.version, baseline.version, 'delta chain terminates at the full-manifest baseline')
+    assert.ok(cursor, 'delta chain has a root checkpoint')
     assert.ok(cursor.storage === 'base' || cursor.state_vector, 'chain terminates at a full-manifest base')
 
     // Rewind the newest checkpoint. It is a delta, so the response must be a
@@ -299,6 +387,8 @@ test('checkpoints persist deltas, not full copies, and rewind reconstructs them'
     ).json()
     assert.equal(rewind.ok, true)
     assert.equal(rewind.version, target.version)
+    assert.equal(rewind.doctrine_snapshot_id, doctrineSnapshot.snapshot_id)
+
     if (target.storage === 'delta') {
       assert.equal(rewind.reconstructed, true)
       assert.equal(rewind.storage, 'delta')

@@ -15,6 +15,7 @@ import { BuilderWatcher } from "./watchers/builder-watcher";
 import { CircuitBreakerWatcher } from "./watchers/cb-watcher";
 import { AgentWatcher } from "./watchers/agent-watcher";
 import { AnalyticsEngine } from "./watchers/analytics-engine";
+import { TicketExpirySweeper } from "./ticket-sweep";
 import {
   initDb,
   getDb,
@@ -33,6 +34,8 @@ import {
   endSession,
   releaseSessionTickets,
   createTicketIfMissing,
+  detectStaleTickets,
+  detectExpiredTickets,
   checkpointWal,
   getNewestCompileVerdictForPlan,
   verdictBlocksBootstrap,
@@ -48,6 +51,7 @@ export class PipelineWatcher {
   private cbWatcher: CircuitBreakerWatcher;
   private agentWatcher: AgentWatcher;
   private analytics: AnalyticsEngine;
+  private ticketSweeper: TicketExpirySweeper;
   baseDir: string;
   graphDir: string;
 
@@ -60,6 +64,17 @@ export class PipelineWatcher {
     this.cbWatcher = new CircuitBreakerWatcher(baseDir, emit);
     this.agentWatcher = new AgentWatcher(baseDir, emit);
     this.analytics = new AnalyticsEngine();
+    this.ticketSweeper = new TicketExpirySweeper(
+      { detectStaleTickets, detectExpiredTickets },
+      {
+        onResult: ({ stale, expired }) => {
+          console.log(`[ticket-sweep] stale=${stale} expired=${expired}`);
+        },
+        onError: (error) => {
+          console.error("[ticket-sweep] failed:", error);
+        },
+      },
+    );
   }
 
   onEvent(callback: (event: any) => void) {
@@ -666,9 +681,11 @@ export class PipelineWatcher {
     this.startStateHeartbeat();
     this.startStaleSessionSweep();
     this.startAutoBootstrap();
+    this.ticketSweeper.start();
   }
 
   destroy() {
+    this.ticketSweeper.stop();
     this.stopAutoBootstrap();
     this.planWatcher.destroy();
     this.builderWatcher.destroy();
