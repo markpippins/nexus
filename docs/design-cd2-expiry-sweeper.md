@@ -118,7 +118,82 @@ await reAlerter.processNewExpiryEvents();   // reads kernel.transition_event
   existing `onError` path; they must never fail the state transition
   (ruling: enforcement may not block semantics).
 
-### 4. What this design deliberately does NOT do
+### 4. Transition-event attestation pass (added 2026-09-25)
+
+The re-alert leg (§2) consumes events that are *emitted*. This pass closes
+the other half: it watches for state that was **mutated without an event
+at all** — terminal tickets carrying no `kernel.transition_event` row for
+their aggregate. That class is real and measured: at design time,
+363/371 cancelled, 139/142 completed, 86/86 failed tickets had zero
+transition events (the Python adapter's silent write paths, fixed in
+PR #556; the TS paths were already conformant).
+
+**Grounding correction (record ae18bba7):** the gen-2 8261654
+cancellation — originally cited as the motivating incident — actually
+DID emit (`transition.rejected`, actor `conduit-mcp`, 2026-09-24
+22:05:09.970). The earlier "zero events" finding was a failed query
+misread as an empty result. Two design rules follow directly:
+
+1. **Fail loud, never empty:** the checker treats any query error as
+   FATAL (exit 2) — absence of evidence must never be concluded from a
+   failing probe. Encoded as an exit contract in the checker's tests.
+2. **The join is the measurement:** no per-ticket existence probes that
+   can fail independently; one LEFT JOIN between `vision.tickets` and
+   `kernel.transition_event` is the single source of the verdict.
+3. **Waivers are ruled, enumerated, and contradiction-fatal
+   (ruling 6b42dd3f):** rows closed before the receipt-advance emission
+   fix (PR #560) may be attested by their closure evidence instead of an
+   event — but only the exact ids listed in
+   `bin/transition-attestation-waivers.json` (currently the two 8261654
+   gen-1 rows, with ticket/receipt provenance per the ruling). The list
+   grows only by an explicit architect ruling recorded in the file; a
+   malformed waiver file is FATAL (exit 2), and a waived id that has
+   grown an event is an audit contradiction (FATAL exit 2), never a
+   silent pass. No transition events are synthesized, ever; the list
+   never suppresses a row not named in it, so future terminal tickets
+   must emit.
+
+**Check definition (read-only, `bin/check_transition_attestation.py`):**
+
+- Population: `vision.tickets` rows with `status IN (cancelled,
+  superseded, abandoned, expired, failed, completed)` and
+  `closed_at IS NOT NULL`, LEFT JOIN-counted against
+  `kernel.transition_event (aggregate_type='ticket', aggregate_id=t.id)`.
+- **UNATTESTED** = event count 0. Any event at all (claim/release
+  cycles included) attests the aggregate reached the event stream; the
+  terminal-state-specific event is #556's coverage guarantee going
+  forward.
+- **Adoption cutoff 2026-09-22** (walk-through date, when the fleet
+  began enforcing durable transitions per generation): unattested
+  tickets closed AT/AFTER the cutoff → verdict DRIFT (exit 1).
+  Pre-cutoff silence is counted as HISTORICAL and never fails — a
+  backfill decision belongs to the architect, not to a checker exit
+  code. The cutoff is a flag (`--since`), not dogma.
+- **Wiring (same host, one more slot):** nightly user timer at 06:50
+  UTC — after pg-logging-check (06:40), completing the drift/heartbeat
+  cluster (SDK stamp 06:10, bcrypt 06:20, durability 06:30, pglog
+  06:40, attestation 06:50). Unit files in `bin/` per the corpus
+  doctrine (host-only units drift; the 2026-09-21 helium probe
+  incident). Wrapper files green-heartbeat records on
+  `series:conduit-attestation` (commissioning + weekly, daily
+  suppressed) and a drift record per non-clean run — the same contract
+  as PRs #527/#540 parity.
+- **Deliberately NOT done here:** no auto-backfill of events for
+  historical silence (fabricating audit rows is out-of-band mutation,
+  the exact class this fleet is hunting); no auto-close of unattested
+  tickets; no event regeneration — the checker surfaces, owners rule.
+- **First-run result (2026-09-25, the check working as designed):**
+  verdict DRIFT with two post-cutoff catches, both on 8261654's gen-1
+  pair — builder `completed` 09-22 19:30 (`receipt:IMPLEMENTATION`) and
+  reviewer `failed` 09-22 19:33 (`receipt:REVIEW_REJECT`), both with
+  zero events. Root cause: the TS **receipt-advance path**
+  (`advanceTicketsOnReceipt`, db.ts) closes tickets without emitting —
+  a remaining silent surface distinct from #556's Python scope (cancel/
+  claim/release in TS do emit). Fix ask routed to the engineer; the
+  checker holds the class visible daily until it lands, then the series
+  goes green and watches.
+
+### 5. What this design deliberately does NOT do
 
 - No auto-close, no respawn (respawn-on-expiry was rejected by the
   ruling's "expiry must not imply completion" + the 18:37 no-bulk-close
@@ -131,7 +206,7 @@ await reAlerter.processNewExpiryEvents();   // reads kernel.transition_event
 - No direct DB mutation path for 8261654 (already dispositioned by the
   planner at 22:04–22:11, correctly, with transition records).
 
-### 5. Tests (hermetic, mirroring ticket-sweep.test.ts)
+### 6. Tests (hermetic, mirroring ticket-sweep.test.ts)
 
 - fingerprint stability: same inputs → same fingerprint; any field
   change → different fingerprint
@@ -141,8 +216,11 @@ await reAlerter.processNewExpiryEvents();   // reads kernel.transition_event
 - failure isolation: re-alerter throw does not fail sweeper.runOnce()
 - W-B6 fixture (per ruling ¶1): two builder generations (closed gen-1 +
   open gen-2) → projection/alerting sees the open one
+- attestation checker (§4): zero/positive event classification, cutoff
+  semantics (historical mass never fails), fail-loud exit contract
+  (missing DSN or failed query → exit 2, never 0/1)
 
-### 6. Live context the design accounts for
+### 7. Live context the design accounts for
 
 - **8261654 gen-2:** already cancelled by the planner (22:05,
   `transition.rejected`, planner-return reason) — correctly NOT via

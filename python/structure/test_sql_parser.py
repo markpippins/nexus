@@ -330,7 +330,9 @@ def test_changed_grammar_creates_new_population_same_source_facts() -> None:
     snap_a = sp.snapshot_run(sp.build_run(srcs), srcs)
     original_revision = sp.GRAMMAR_REVISION
     try:
-        sp.GRAMMAR_REVISION = "sql-ddl-v0.3.0"
+        # always-suffixed sentinel: differs from the real revision whatever
+        # it is bumped to (a literal "v0.3.0" collided with the real bump)
+        sp.GRAMMAR_REVISION = original_revision + "-changed"
         snap_b = sp.snapshot_run(sp.build_run(srcs), srcs)
     finally:
         sp.GRAMMAR_REVISION = original_revision

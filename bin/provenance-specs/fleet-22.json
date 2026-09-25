@@ -1,0 +1,109 @@
+{
+  "$comment": [
+    "Declared provenance for the 22-plan population the architect's 18:37",
+    "analysis (f9390b52) refers to: the 13 plans pending at their snapshot",
+    "(the 12-list plus child 8261654) + the 9 rows bulk-stamped completed",
+    "at 09-22 18:20. Population membership is computed live by the tool;",
+    "this file supplies the DECLARED class + correlation evidence per plan",
+    "from the architect's records (433b06e5, 3ebbe0a5, f9390b52) and the",
+    "planner's D-1..D-3 dispositions.",
+    "",
+    "archived_disposition: required for plans the tool observes archived",
+    "live (the verify leg demands it)."
+  ],
+  "version": "fleet-22-1",
+  "plans": {
+    "8261638": {
+      "class": "orphan",
+      "note": "probe; builder completed + reviewer expired; no docket, no evidence mass"
+    },
+    "8261639": {
+      "class": "completed-wrapper",
+      "evidence": "Wave 1 C7 closeout published; 30 plan_ref records; row stayed PLAN_CREATE only for follow-on WR consolidation (f9390b52)",
+      "note": "still live-pending = the stale side the class names"
+    },
+    "8261640": {
+      "class": "completed-wrapper",
+      "evidence": "bulk nebula stamp 09-22 18:20; flow-terminal REVIEW_PASS beforehand"
+    },
+    "8261641": {
+      "class": "completed-wrapper",
+      "evidence": "bulk nebula stamp 09-22 18:20; flow-terminal REVIEW_PASS beforehand"
+    },
+    "8261642": {
+      "class": "completed-wrapper",
+      "evidence": "bulk nebula stamp 09-22 18:20; flow-terminal REVIEW_PASS beforehand"
+    },
+    "8261643": {
+      "class": "completed-wrapper",
+      "evidence": "bulk nebula stamp 09-22 18:20; flow-terminal REVIEW_PASS beforehand"
+    },
+    "8261644": {
+      "class": "completed-wrapper",
+      "evidence": "bulk nebula stamp 09-22 18:20; flow-terminal REVIEW_PASS beforehand"
+    },
+    "8261645": {
+      "class": "docketed",
+      "evidence": "grandparent convergence docket; children 8261652/53/54 declare it via dependencies; active PC1/PC2/PC6/PC7 + Moleculer/Resolution To Do tracks (f9390b52)",
+      "note": "not one Conduit ticket — lifecycle governed by the docket"
+    },
+    "8261646": {
+      "class": "unverified",
+      "note": "no direct To Do match in correlation pass; left unverified"
+    },
+    "8261647": {
+      "class": "unverified",
+      "note": "no direct To Do match in correlation pass; left unverified"
+    },
+    "8261648": {
+      "class": "unverified",
+      "note": "no direct To Do match in correlation pass; left unverified"
+    },
+    "8261649": {
+      "class": "unverified",
+      "note": "no direct To Do match in correlation pass; left unverified"
+    },
+    "8261650": {
+      "class": "active",
+      "evidence": "genuine active exception: W2a/Stage 2 complete but stage board never advanced; declared gate = 402d8a0d Option-B ruling (f9390b52)",
+      "note": "the only pending plan with real in-flight execution"
+    },
+    "8261651": {
+      "class": "unverified",
+      "note": "no direct To Do match in correlation pass; left unverified"
+    },
+    "8261652": {
+      "class": "completed-wrapper",
+      "evidence": "superseded by children 8261653/54/55; planner D-2 executed",
+      "archived_disposition": "archived 09-24 22:08 by planner D-2 (duplicate-parent supersession)"
+    },
+    "8261653": {
+      "class": "docketed",
+      "evidence": "W-A child of docket 8261652/c7c26160; ST.01 met 09-23; awaiting planner D-3 re-emit"
+    },
+    "8261654": {
+      "class": "docketed",
+      "evidence": "W-B child; artifact reported complete (f9390b52); REVIEW_REJECT re-scoped by planner D-1..D-3, re-emit pending"
+    },
+    "8261655": {
+      "class": "docketed",
+      "evidence": "W-C child; expired gen-1 builder ticket undisposed; own conditions (W-A/W-B done) forbid start"
+    },
+    "0007": {
+      "class": "completed-wrapper",
+      "evidence": "bulk nebula stamp 09-22 18:20; flow-terminal REVIEW_PASS beforehand"
+    },
+    "0013": {
+      "class": "completed-wrapper",
+      "evidence": "bulk nebula stamp 09-22 18:20; Accepted To Do + completion comment 1d937257, PR #65 (f4973207)"
+    },
+    "0014": {
+      "class": "completed-wrapper",
+      "evidence": "bulk nebula stamp 09-22 18:20"
+    },
+    "0016": {
+      "class": "completed-wrapper",
+      "evidence": "bulk nebula stamp 09-22 18:20"
+    }
+  }
+}

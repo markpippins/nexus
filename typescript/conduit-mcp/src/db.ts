@@ -4144,6 +4144,18 @@ export function receiptToCompletingRole(
 }
 
 /**
+ * Kernel event type for a receipt-driven ticket closure (ADR-016).
+ * Success closures (completed) commit; failure closures (failed —
+ * REVIEW_REJECT) reject, matching the cancel/supersede family convention.
+ * Pure: hermetically testable; the advance path uses it verbatim.
+ */
+export function receiptClosureEventType(
+  status: "completed" | "failed",
+): "transition.committed" | "transition.rejected" {
+  return status === "completed" ? "transition.committed" : "transition.rejected";
+}
+
+/**
  * WIRING FIX (plan 0016 follow-up; timers-readiness): advance the ticket
  * lifecycle when a receipt lands.
  *
@@ -4169,7 +4181,7 @@ export async function advanceTicketsOnReceipt(
 
   // Find the open/claimed/stale ticket for the completing role.
   const ticket = await qOne(
-    `SELECT id, objective, completion_criteria, owner
+    `SELECT id, status, objective, completion_criteria, owner
      FROM ${VISION_SCHEMA}.tickets
      WHERE plan_id = @planId AND role = @role AND status IN ('open','claimed','stale')
      ORDER BY created_at ASC LIMIT 1`,
@@ -4177,15 +4189,39 @@ export async function advanceTicketsOnReceipt(
   );
   if (!ticket) return { completed: 0, spawned: 0 };
 
-  // Mark it completed/failed.
+  // Mark it completed/failed. ADR-016: the closure emits a kernel
+  // transition in the same transaction as the UPDATE — receipt-driven
+  // closures were previously silent (two 8261654 gen-1 rows were the live
+  // evidence; series:conduit-attestation holds the class visible).
   const now = new Date().toISOString();
-  await qRun(
-    `UPDATE ${VISION_SCHEMA}.tickets
-     SET status = @status, closed_at = @now::timestamptz, last_activity = @now,
-         closure_reason = @reason
-     WHERE id = @ticketId AND status IN ('open','claimed','stale')`,
-    { ticketId: ticket.id, status: m.status, now, reason: `receipt:${receiptType}` },
-  );
+  const closureReason = `receipt:${receiptType}`;
+  await withTransaction(async (client) => {
+    const changes = await tRun(
+      client,
+      `UPDATE ${VISION_SCHEMA}.tickets
+       SET status = @status, closed_at = @now::timestamptz, last_activity = @now,
+           closure_reason = @reason
+       WHERE id = @ticketId AND status IN ('open','claimed','stale')`,
+      { ticketId: ticket.id, status: m.status, now, reason: closureReason },
+    );
+    if (changes > 0) {
+      await recordTransition({
+        client,
+        aggregateType: "ticket",
+        aggregateId: ticket.id,
+        eventType: receiptClosureEventType(m.status),
+        actor: "conduit-mcp",
+        authority: m.role,
+        payload: {
+          from_status: ticket.status || "unknown",
+          to_status: m.status,
+          reason: closureReason,
+          receipt_type: receiptType,
+          plan_id: planId,
+        },
+      });
+    }
+  });
 
   // Resolve critique position locally from the receipt chain (db.ts reads PG
   // directly — no HTTP, no import from receipts.ts to avoid a layering cycle).

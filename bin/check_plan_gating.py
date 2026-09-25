@@ -60,6 +60,19 @@ def ev_record_exists(params: dict) -> bool:
         f"where id::text like '{id8}%';") not in ("", "0")
 
 
+def ev_plan_has_record(params: dict) -> bool:
+    """Evidence mass: nebula.agent_records rows whose plan_ref points at
+    the plan (id8 prefix match), at least params['min_count'] of them.
+    Introduced with the fleet spec (#551) but not implemented until now —
+    the spec's reference silently forced exit 1 on every run."""
+    plan = params["plan"].replace("'", "")
+    min_count = int(params.get("min_count", 1))
+    count = _psql_scalar(
+        "select count(*) from nebula.agent_records "
+        f"where plan_ref like '{plan}%';")
+    return (int(count) if count else 0) >= min_count
+
+
 def load_conduit_state() -> dict:
     """plan_number -> derivedStatus, from conduit /state (via urllib to
     stay dependency-free). FALLBACK ONLY: /state's ticket projection
@@ -120,6 +133,7 @@ def load_state(plan_ids: list[str]) -> tuple[dict, str]:
 EVALUATORS = {
     "db_table_exists": ev_db_table_exists,
     "record_exists": ev_record_exists,
+    "plan_has_record": ev_plan_has_record,
 }
 
 
@@ -158,8 +172,12 @@ def classify(plan_spec: dict, verdicts: list[dict],
       READY + OPEN     -> STARTABLE
       READY + EXPIRED  -> BLOCKED-BUT-OPEN (flow defect: no respawn)
       READY + NONE     -> UNKNOWN (state quirk)
-      BLOCKED + ticket -> BLOCKED-AND-OPEN (the W-B4 exhibit: a plan
+      BLOCKED + OPEN   -> BLOCKED-AND-OPEN (live exhibit: a plan
                           presents builder-ready work its own ACs forbid)
+      BLOCKED + EXPIRED (no open) -> BLOCKED-WITH-EXPIRED (post-CD-2:
+                          expiry enforced, no live work presented; the
+                          stale expired row is planner-disposition
+                          hygiene, not a live gating defect)
       BLOCKED + NONE   -> BLOCKED-CLOSED (gating working as intended)
     """
     findings: list[str] = []
@@ -183,10 +201,15 @@ def classify(plan_spec: dict, verdicts: list[dict],
         findings.append("conditions met and no ticket row present (state quirk)")
         return "UNKNOWN", findings
 
-    if has_open or has_expired:
+    if has_open:
         findings.append("ticket presents builder-ready work whose own start "
-                        "conditions are unmet (the W-B4 exhibit)")
+                        "conditions are unmet (the W-B4 exhibit, live)")
         return "BLOCKED-AND-OPEN", findings
+    if has_expired:
+        findings.append("expired ticket row on a blocked plan with no open "
+                        "ticket (post-CD-2 hygiene: expiry enforced by the "
+                        "sweeper, row awaits planner disposition)")
+        return "BLOCKED-WITH-EXPIRED", findings
     return "BLOCKED-CLOSED", findings
 
 

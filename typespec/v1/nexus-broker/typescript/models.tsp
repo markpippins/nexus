@@ -101,6 +101,16 @@ namespace org.nexus.nexusbroker {
     asset_id: string | null;
   }
 
+  /** Content-addressed doctrine manifest projected into Keychains. */
+  model KeychainDoctrineSnapshot {
+    schema_version: int32;
+    snapshot_id: string;
+    system_prompt_hash: string;
+    bootstrap_hash: string;
+    /** Sorted full-content hashes of the active procedure cards. */
+    active_procedure_cards: string[];
+  }
+
   /** Stable evaluator context attached to a decision checkpoint. */
   model KeychainDecisionContext {
     schema_version: int32;
@@ -118,6 +128,7 @@ namespace org.nexus.nexusbroker {
     bridge: KeychainVersionedReference;
     source_read_set: Record<unknown>;
     read_set_manifest: Record<unknown> | null;
+    doctrine_snapshot_id?: string;
     observation_window?: KeychainObservationWindow;
     checkpoint_reference?: KeychainCheckpointReference;
   }
@@ -236,6 +247,8 @@ namespace org.nexus.nexusbroker {
     recorded_at?: string;
     read_set?: Record<unknown>;
     read_set_manifest?: Record<unknown>;
+    doctrine_snapshot?: KeychainDoctrineSnapshot;
+    doctrine_snapshot_id?: string;
     payload?: Record<unknown>;
     checkpoint_status?: string;
     idempotency_key?: string;
@@ -273,6 +286,7 @@ namespace org.nexus.nexusbroker {
     recordTypeCount: int32;
     trigger: KeychainTriggerEvent | null;
     decision_context: KeychainDecisionContext | null;
+    doctrine_snapshot_id?: string | null;
     deduplicated: boolean;
     prevVersion: int32;
   }
@@ -295,6 +309,7 @@ namespace org.nexus.nexusbroker {
     recordTypeCount: int32 | null;
     state_vector: Record<unknown> | null;
     decision_context?: KeychainDecisionContext | null;
+    doctrine_snapshot_id?: string | null;
     note?: string;
     error?: string;
   }
