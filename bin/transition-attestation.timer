@@ -1,0 +1,18 @@
+# Source of truth for ~/.config/systemd/user/transition-attestation.timer
+#
+# Nightly 06:50 UTC — fifth slot in the drift/heartbeat cluster (SDK
+# stamp 06:10, users bcrypt 06:20, record durability 06:30, pg-logging
+# 06:40). Runs after the UTC midnight rotation so closed_at timestamps
+# are settled. Persistent=true catches up if the machine was off at the
+# scheduled time.
+
+[Unit]
+Description=Run transition-event attestation check nightly at 06:50 UTC
+
+[Timer]
+OnCalendar=*-*-* 06:50:00 UTC
+Persistent=true
+Unit=transition-attestation.service
+
+[Install]
+WantedBy=timers.target
