@@ -872,6 +872,360 @@ class WfLintTest(unittest.TestCase):
         proc = self._run(os.path.join(REPO_ROOT, ".github", "workflows"), None, "--rule", "maven-cache")
         self.assertEqual(0, proc.returncode)
 
+    # -- node-cache / pip-cache ------------------------------------------------------
+
+    NODE_WF = (
+        "on: push\n"
+        "jobs:\n"
+        "  build:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@v4\n"
+        "      - uses: actions/setup-node@v4\n"
+        "        with:\n"
+        "          node-version: '22'\n"
+        "      - name: Install\n"
+        "        working-directory: svc\n"
+        "        run: npm ci\n"
+    )
+
+    PIP_WF = (
+        "on: push\n"
+        "jobs:\n"
+        "  test:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@v4\n"
+        "      - uses: actions/setup-python@v5\n"
+        "        with:\n"
+        "          python-version: '3.11'\n"
+        "      - name: Install\n"
+        "        run: python3 -m pip install -r requirements-dev.txt\n"
+    )
+
+    def test_node_uncached_lockbearing_fails_and_names_lock(self):
+        self._write("svc/package-lock.json", "{}\n")
+        self._write(".github/workflows/ci.yml", self.NODE_WF)
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("[node-cache]", proc.stderr)
+        self.assertIn("svc/package-lock.json", proc.stderr)
+
+    def test_node_root_lock_fails(self):
+        self._write("package-lock.json", "{}\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.NODE_WF.replace("        working-directory: svc\n", ""),
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("[node-cache]", proc.stderr)
+
+    def test_node_cached_passes(self):
+        self._write("svc/package-lock.json", "{}\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.NODE_WF.replace(
+                "          node-version: '22'\n",
+                "          node-version: '22'\n"
+                "          cache: npm\n"
+                "          cache-dependency-path: svc/package-lock.json\n",
+            ),
+        )
+        proc = self._run(self.tree, None, "--rule", "node-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_node_lockless_dir_silent(self):
+        # GitHub's cache: npm hard-fails without a lock — the rule must not
+        # demand an unremediable fix (npm-ci's opt-in philosophy).
+        self._write(".github/workflows/ci.yml", self.NODE_WF)
+        proc = self._run(self.tree, None, "--rule", "node-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_node_no_npm_silent(self):
+        self._write("svc/package-lock.json", "{}\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.NODE_WF.replace("        run: npm ci\n", "        run: node app.js\n"),
+        )
+        proc = self._run(self.tree, None, "--rule", "node-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_node_wrong_ecosystem_cache_fails(self):
+        self._write("svc/package-lock.json", "{}\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.NODE_WF.replace("          node-version: '22'\n", "          node-version: '22'\n          cache: pnpm\n"),
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+
+    def test_node_cd_into_lockdir_resolved(self):
+        self._write("svc/package-lock.json", "{}\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.NODE_WF.replace(
+                "      - name: Install\n        working-directory: svc\n        run: npm ci\n",
+                "      - name: Install\n        run: cd svc && npm ci\n",
+            ),
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("[node-cache]", proc.stderr)
+
+    def test_pip_uncached_requirements_install_fails(self):
+        self._write("requirements-dev.txt", "pytest\n")
+        self._write(".github/workflows/ci.yml", self.PIP_WF)
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("[pip-cache]", proc.stderr)
+        self.assertIn("requirements-dev.txt", proc.stderr)
+
+    def test_pip_cached_quoted_passes(self):
+        # mesh-pytest's live shape: cache: 'pip' with quotes.
+        self._write("requirements-dev.txt", "pytest\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.PIP_WF.replace(
+                "          python-version: '3.11'\n",
+                "          python-version: '3.11'\n          cache: 'pip'\n          cache-dependency-path: requirements-dev.txt\n",
+            ),
+        )
+        proc = self._run(self.tree, None, "--rule", "pip-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_pip_missing_requirements_file_silent(self):
+        # -r naming a file the repo doesn't ship: cache-dependency-path would
+        # be fiction — GitHub's cache: pip would also fail. Silent.
+        self._write(".github/workflows/ci.yml", self.PIP_WF)
+        proc = self._run(self.tree, None, "--rule", "pip-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_pip_adhoc_install_silent(self):
+        # The ~40 wr-conf jobs install pytest/psycopg2 ad hoc — marginal
+        # wheel-cache win, arbitrary key file. Deliberately out of scope.
+        self._write("requirements-dev.txt", "pytest\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.PIP_WF.replace(
+                "        run: python3 -m pip install -r requirements-dev.txt\n",
+                "        run: python3 -m pip install --quiet pytest psycopg2-binary\n",
+            ),
+        )
+        proc = self._run(self.tree, None, "--rule", "pip-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_pip_requirements_via_working_directory(self):
+        self._write("svc/requirements.txt", "pytest\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.PIP_WF.replace(
+                "requirements-dev.txt", "requirements.txt"
+            ).replace(
+                "      - name: Install\n",
+                "      - name: Install\n        working-directory: svc\n",
+            ),
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("[pip-cache]", proc.stderr)
+
+    def test_node_pip_allow_marker_on_uses_line(self):
+        self._write("svc/package-lock.json", "{}\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.NODE_WF.replace(
+                "      - uses: actions/setup-node@v4\n",
+                "      - uses: actions/setup-node@v4  # wf-lint-allow: node-cache — runner pre-warms the store\n",
+            ),
+        )
+        proc = self._run(self.tree, None, "--rule", "node-cache")
+        self.assertEqual(0, proc.returncode)
+        self.assertIn("allow-marker", proc.stdout)
+
+    def test_node_pip_rules_alone_selectable(self):
+        # --rule takes one name per flag (a comma blob reads as one unknown
+        # rule and exits 2).
+        self._write(".github/workflows/ci.yml", self.NODE_WF)
+        proc = self._run(self.tree, None, "--rule", "node-cache", "--rule", "pip-cache")
+        self.assertEqual(0, proc.returncode)
+        self.assertIn("rules: node-cache,pip-cache", proc.stdout)
+
+    def test_real_repo_node_pip_workflows_green(self):
+        # Born-green invariant on the remediated fleet (broker-e2e +
+        # vanadium-sonar carry cache: npm; mesh-pytest/vanadium-sonar pip
+        # already cached). Rots the moment a lock-bearing npm job or a -r
+        # pip job drops its cache input again.
+        proc = self._run(
+            os.path.join(REPO_ROOT, ".github", "workflows"),
+            None, "--rule", "node-cache", "--rule", "pip-cache",
+        )
+        self.assertEqual(0, proc.returncode)
+
+    # -- cache-dep-path --------------------------------------------------------------
+
+    NODE_CACHED_NONROOT = (
+        "on: push\n"
+        "jobs:\n"
+        "  build:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@v4\n"
+        "      - uses: actions/setup-node@v4\n"
+        "        with:\n"
+        "          node-version: '22'\n"
+        "          cache: npm\n"
+        "      - name: Install\n"
+        "        working-directory: svc\n"
+        "        run: npm ci\n"
+    )
+
+    PIP_CACHED_DEVREQS = (
+        "on: push\n"
+        "jobs:\n"
+        "  test:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@v4\n"
+        "      - uses: actions/setup-python@v5\n"
+        "        with:\n"
+        "          python-version: '3.11'\n"
+        "          cache: 'pip'\n"
+        "      - name: Install\n"
+        "        run: python3 -m pip install -r requirements-dev.txt\n"
+    )
+
+    def test_dep_path_node_nonroot_lock_fails_and_names_path(self):
+        # The #572 remediation shape WITHOUT the path declaration: cache: npm
+        # is set but the lock is in svc/ — the default hash target is wrong.
+        self._write("svc/package-lock.json", "{}\n")
+        self._write(".github/workflows/ci.yml", self.NODE_CACHED_NONROOT)
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("[cache-dep-path]", proc.stderr)
+        self.assertIn("cache-dependency-path: svc/package-lock.json", proc.stderr)
+
+    def test_dep_path_node_root_lock_exempt(self):
+        # Root lock = the action's default target; declaration unnecessary.
+        self._write("package-lock.json", "{}\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.NODE_CACHED_NONROOT.replace("        working-directory: svc\n", ""),
+        )
+        proc = self._run(self.tree, None, "--rule", "cache-dep-path")
+        self.assertEqual(0, proc.returncode)
+
+    def test_dep_path_node_declaration_present_passes(self):
+        self._write("svc/package-lock.json", "{}\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.NODE_CACHED_NONROOT.replace(
+                "          cache: npm\n",
+                "          cache: npm\n          cache-dependency-path: svc/package-lock.json\n",
+            ),
+        )
+        proc = self._run(self.tree, None, "--rule", "cache-dep-path")
+        self.assertEqual(0, proc.returncode)
+
+    def test_dep_path_node_no_lock_silent(self):
+        # cache: npm with no lock anywhere fails loudly at runtime — the
+        # node-cache/pip family's satisfiability gate, not this rule's subject.
+        self._write(".github/workflows/ci.yml", self.NODE_CACHED_NONROOT)
+        proc = self._run(self.tree, None, "--rule", "cache-dep-path")
+        self.assertEqual(0, proc.returncode)
+
+    def test_dep_path_pip_nondefault_reqs_fails(self):
+        # The live mesh-pytest defect: cached pip, installing from a file pip
+        # does NOT default-search — pin changes could never bust the cache.
+        self._write("requirements-dev.txt", "pytest\n")
+        self._write(".github/workflows/ci.yml", self.PIP_CACHED_DEVREQS)
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("[cache-dep-path]", proc.stderr)
+        self.assertIn("cache-dependency-path: requirements-dev.txt", proc.stderr)
+
+    def test_dep_path_pip_default_reqs_exempt(self):
+        # requirements.txt IS in pip's default repo-wide search — the default
+        # hash already includes it.
+        self._write("requirements.txt", "pytest\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.PIP_CACHED_DEVREQS.replace("requirements-dev.txt", "requirements.txt"),
+        )
+        proc = self._run(self.tree, None, "--rule", "cache-dep-path")
+        self.assertEqual(0, proc.returncode)
+
+    def test_dep_path_pip_nested_default_reqs_exempt(self):
+        # A deep requirements.txt is still default-covered (repo-wide search,
+        # runtime-verified: mesh-pytest's default-keyed cache ran green with
+        # files only at python/*/ depth).
+        self._write("svc/requirements.txt", "pytest\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.PIP_CACHED_DEVREQS.replace(
+                "        run: python3 -m pip install -r requirements-dev.txt\n",
+                "        run: cd svc && python3 -m pip install -r requirements.txt\n",
+            ),
+        )
+        proc = self._run(self.tree, None, "--rule", "cache-dep-path")
+        self.assertEqual(0, proc.returncode)
+
+    def test_dep_path_pip_declaration_present_passes(self):
+        self._write("requirements-dev.txt", "pytest\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.PIP_CACHED_DEVREQS.replace(
+                "          cache: 'pip'\n",
+                "          cache: 'pip'\n          cache-dependency-path: requirements-dev.txt\n",
+            ),
+        )
+        proc = self._run(self.tree, None, "--rule", "cache-dep-path")
+        self.assertEqual(0, proc.returncode)
+
+    def test_dep_path_pip_missing_reqs_file_silent(self):
+        # -r file not shipped: nothing real to key on — pip-cache's subject.
+        self._write(".github/workflows/ci.yml", self.PIP_CACHED_DEVREQS)
+        proc = self._run(self.tree, None, "--rule", "cache-dep-path")
+        self.assertEqual(0, proc.returncode)
+
+    def test_dep_path_uncached_step_silent(self):
+        # No cache input at all: the node/pip-cache rules own that finding;
+        # this rule judges only steps that DO cache.
+        self._write("requirements-dev.txt", "pytest\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.PIP_CACHED_DEVREQS.replace("          cache: 'pip'\n", ""),
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)  # pip-cache fires
+        self.assertNotIn("[cache-dep-path]", proc.stderr)
+
+    def test_dep_path_allow_marker_on_uses_line(self):
+        self._write("requirements-dev.txt", "pytest\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.PIP_CACHED_DEVREQS.replace(
+                "      - uses: actions/setup-python@v5\n",
+                "      - uses: actions/setup-python@v5  # wf-lint-allow: cache-dep-path — deliberate default hash\n",
+            ),
+        )
+        proc = self._run(self.tree, None, "--rule", "cache-dep-path")
+        self.assertEqual(0, proc.returncode)
+        self.assertIn("allow-marker", proc.stdout)
+
+    def test_dep_path_selectable_alone(self):
+        self._write(".github/workflows/ci.yml", self.NODE_CACHED_NONROOT)
+        proc = self._run(self.tree, None, "--rule", "cache-dep-path")
+        self.assertEqual(0, proc.returncode)  # no lock -> silent
+        self.assertIn("rules: cache-dep-path", proc.stdout)
+
+    def test_real_repo_cache_dep_path_green(self):
+        # Born-green invariant on the remediated fleet (mesh-pytest now
+        # declares cache-dependency-path). Rots if a cached setup-* step
+        # with a non-default key file drops its declaration again.
+        proc = self._run(os.path.join(REPO_ROOT, ".github", "workflows"), None, "--rule", "cache-dep-path")
+        self.assertEqual(0, proc.returncode)
+
     # -- real repo -----------------------------------------------------------------
 
     def test_real_repo_scan_does_not_crash(self):
