@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import rateLimit from "express-rate-limit";
 import { query } from "./db/client.js";
 import workflowsRouter from "./routes/workflows.js";
 import ticketsRouter from "./routes/tickets.js";
@@ -20,6 +21,18 @@ const app = express();
 
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
+
+// Global request limiter — mirrored from the incumbent (CodeQL
+// js/missing-rate-limiting remediation): 300 req/min/IP, nebula-srv posture.
+app.use(
+  rateLimit({
+    windowMs: 60 * 1000,
+    max: 300,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    message: { error: "conduit-srv rate limit exceeded" },
+  }),
+);
 
 app.use("/workflows", workflowsRouter);
 app.use("/tickets", ticketsRouter);
