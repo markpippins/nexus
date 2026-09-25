@@ -1387,6 +1387,149 @@ class CacheDepPathRule(_SetupCacheRuleBase):
 
 
 # --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# rule: nats-postcondition
+# --------------------------------------------------------------------------
+
+# A run block that PUBLISHES an intent/event into NATS. Matched as a closed
+# vocabulary of real publisher shapes (runner-side JetStream publishes, the
+# nats CLI, and invocations of the house producer route / probe). Stream
+# provisioning alone (ensure-write-queue-stream, nats stream info) is NOT
+# publishing, and neither is a plain subscriber.
+NATS_PUBLISH_RE = re.compile(
+    r"\b(?:js|nc|conn)\.publish\s*\("            # nats client publishes
+    r"|\bnats\s+pub\s"                           # nats CLI publish
+    r"|\bsolscript/transition-entity\b"          # house producer route (app -> JetStream)
+    r"|\bci_write_queue_probe\.py\b"             # house probe (publishes by design)
+)
+
+# A run block that VERIFIES the published intent actually landed: a committed
+# postcondition script, a poll/assert loop on the canonical outcome, a
+# JetStream state assertion, or a log assert for the applied/outcome marker.
+NATS_ASSERT_RE = re.compile(
+    r"postcondition"                              # committed postcondition script
+    r"|stream_info|consumer_info"                  # JetStream state assertion
+    r"|nats\s+(?:stream|consumer)\s+(?:info|view)" # nats CLI state read
+    r"|grep\s+-q"                                 # log/outcome-marker assert
+    r"|SELECT count\(\*\)"                         # house poll-assert on canonical rows
+)
+
+
+class NatsPostconditionRule(Rule):
+    """A workflow job that publishes to NATS must VERIFY the publish landed.
+
+    Born from the write-queue arc (2026-09-25): a JetStream publish to a
+    subject no stream matches returns success (the silent no-op class), and
+    a publish whose consumer is down still succeeds — the intent just sits
+    in the stream. A smoke test that publishes and then walks away proves
+    nothing: it stays green while the whole arc behind the publish is broken
+    (the failure mode the D5 arc was built to expose, and the same shape as
+    the old broker health-poll fooling). The postcondition must be IN the
+    workflow — visible to review and to this lint — not buried in a helper.
+
+    Satisfiers (any, anywhere in the same job, order-agnostic): a committed
+    postcondition script, a JetStream/consumer state assertion, a poll loop
+    on the canonical outcome, or a grep -q assert on a reconciler/service
+    log. Anchored at the first publish line so the allow marker works there.
+    One finding per offending job. Structural (scan_file); no --fix pass —
+    the honest remediation is choosing the right assertion for the arc,
+    which review should see in context.
+    """
+
+    name = "nats-postcondition"
+
+    def applies(self, rel: str, filename: str, target: str) -> bool:
+        return _in_workflows(rel, target) and filename.endswith((".yml", ".yaml"))
+
+    def scan_line(self, raw: str, rel: str, lineno: int) -> list[Finding]:
+        return []  # structural rule: judged via scan_file only
+
+    @staticmethod
+    def _run_blocks(body: list[str]) -> list[list[tuple[int, str]]]:
+        """(body_offset, code_line) per `run:` block, boundaries by indent.
+
+        A run block opens at a `run:` property — including the dash-carrying
+        first-property form (`- run: |`, where VALKEY_RE cannot match past
+        the `- ` marker — caught live against a fixture before shipping) —
+        and spans every following deeper-indented line. The boundary is the
+        run key's PROPERTY indent (dash column + 2), so sibling step
+        properties and the next dash item both close the block. Whole-line
+        comments are dropped so a commented-out assert can never satisfy the
+        rule — a silent assert is exactly the failure mode in scope. Offsets
+        are kept per code line so findings anchor at the REAL publish line
+        (the allow marker lives there; a block-index anchor points at the
+        wrong line and suppressions silently stop working)."""
+        run_re = re.compile(r"^(\s*)(?:-\s+)?([A-Za-z0-9_-]+):(?:\s.*)?$")
+        blocks: list[list[tuple[int, str]]] = []
+        i = 0
+        n = len(body)
+        while i < n:
+            m = run_re.match(body[i])
+            if not m or m.group(2) != "run":
+                i += 1
+                continue
+            key_indent = len(m.group(1))
+            if body[i].lstrip().startswith("- "):
+                key_indent += 2  # the dash item's property indent
+            code: list[tuple[int, str]] = []
+            j = i + 1
+            while j < n:
+                line = body[j]
+                if not line.strip():
+                    j += 1
+                    continue
+                ind = len(line) - len(line.lstrip())
+                if ind <= key_indent:
+                    break
+                s = line.strip()
+                if not s.startswith("#"):
+                    code.append((j, s))
+                j += 1
+            blocks.append(code)
+            i = j
+        return blocks
+
+    def scan_file(self, rel: str, lines: list[str]) -> list[Finding]:
+        if not any(STEPS_KEY_RE.match(l) for l in lines):
+            return []
+        findings: list[Finding] = []
+        for name, idx, _indent, _caller, body in _locate_jobs(lines):
+            if _has_top_level_key(body, "uses"):
+                continue  # reusable-workflow caller: nothing to lint here
+            blocks = self._run_blocks(body)
+            hit_offset = None
+            for code in blocks:
+                for j, s in code:
+                    if NATS_PUBLISH_RE.search(s):
+                        hit_offset = j
+                        break
+                if hit_offset is not None:
+                    break
+            if hit_offset is None:
+                continue
+            verified = False
+            for code2 in blocks:
+                if NATS_ASSERT_RE.search("\n".join(s for _j, s in code2)):
+                    verified = True
+                    break
+            if verified:
+                continue
+            findings.append(Finding(
+                "violation", rel, idx + 2 + hit_offset, self.name,
+                f"job `{name}` publishes to NATS but never verifies the "
+                "publish landed — a JetStream publish to a subject no "
+                "stream matches returns success, and a publish with the "
+                "consumer down also succeeds (the intent just sits in the "
+                "stream). Add a postcondition in this job: a postcondition "
+                "script, a JetStream/consumer state assert (stream_info/"
+                "consumer_info), a poll loop on the canonical outcome, or a "
+                "grep -q assert on the reconciler/service log — or mark the "
+                "publish line '# wf-lint-allow: <reason>' if this arc is "
+                "verified elsewhere."
+            ))
+        return findings
+
+
 # allow markers
 # --------------------------------------------------------------------------
 
@@ -1428,6 +1571,7 @@ RULES: list[Rule] = [
     NodeCacheRule(),
     PipCacheRule(),
     CacheDepPathRule(),
+    NatsPostconditionRule(),
 ]
 
 

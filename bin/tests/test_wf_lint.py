@@ -39,6 +39,19 @@ LINT = os.path.join(REPO_ROOT, "bin", "wf_lint.py")
 FROZEN = {"WF_LINT_AS_OF": "2026-09-01"}
 
 
+def _nats_wf(pub_step: str, verify_step: str = "") -> str:
+    """Minimal hardened workflow with one publishing job (+ optional verifier)."""
+    return (
+        "on: push\npermissions:\n  contents: read\n"
+        "jobs:\n"
+        "  smoke:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    timeout-minutes: 10\n"
+        "    steps:\n"
+        + pub_step + verify_step
+    )
+
+
 class WfLintTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="wflint-")
@@ -1318,6 +1331,138 @@ class WfLintTest(unittest.TestCase):
         proc = self._run(os.path.join(REPO_ROOT, ".github", "workflows"))
         self.assertIn(proc.returncode, (0, 1))
         self.assertIn("wf-lint:", proc.stdout)
+
+
+    # -- rule: nats-postcondition -------------------------------------------
+    # A job that publishes to NATS must verify the publish landed. Born from
+    # the write-queue arc: a JetStream publish to a subject no stream matches
+    # returns success, and a publish with the consumer down also succeeds — a
+    # publish-then-walk-away smoke stays green while the whole arc behind it
+    # is broken.
+
+    PUB_ONLY = _nats_wf(
+        "      - run: |\n"
+        "          python3 bin/ci_write_queue_probe.py --nats nats://localhost:4222 --write-id w1\n"
+        "          echo done\n"
+    )
+
+    PUB_WITH_POSTCONDITION = _nats_wf(
+        "      - run: |\n"
+        "          python3 bin/ci_write_queue_probe.py --nats nats://localhost:4222 --write-id w1\n"
+        "      - name: verify\n"
+        "        run: |\n"
+        "          python3 bin/ci_governed_postcondition.py --write-id w1\n"
+    )
+
+    def test_publish_without_assert_fails(self):
+        self._write(".github/workflows/pub.yml", self.PUB_ONLY)
+        proc = self._run(self.tree, None, "--rule", "nats-postcondition")
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("nats-postcondition", proc.stderr)
+        self.assertIn("publishes to NATS but never verifies", proc.stderr)
+
+    def test_committed_postcondition_script_satisfies(self):
+        self._write(".github/workflows/pub.yml", self.PUB_WITH_POSTCONDITION)
+        proc = self._run(self.tree, None, "--rule", "nats-postcondition")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+
+    def test_poll_assert_in_later_step_satisfies(self):
+        body = _nats_wf(
+            "      - run: |\n"
+            "          python3 bin/ci_write_queue_probe.py --nats nats://localhost:4222 --write-id w1\n",
+            "      - name: verify\n"
+            "        run: |\n"
+            "          for i in $(seq 1 30); do\n"
+            "            n=$(psql -tAc \"SELECT count(*) FROM resolution.write_queue_applied WHERE write_id='w1'\")\n"
+            "            [ \"$n\" -ge 1 ] && break\n"
+            "            sleep 2\n"
+            "          done\n",
+        )
+        self._write(".github/workflows/pub.yml", body)
+        proc = self._run(self.tree, None, "--rule", "nats-postcondition")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+
+    def test_grep_q_log_assert_satisfies(self):
+        body = _nats_wf(
+            "      - run: |\n"
+            "          nats pub nexus.write-queue.v1.t.u hello\n",
+            "      - name: verify\n"
+            "        run: |\n"
+            "          grep -q 'arc complete' reconciler.log\n",
+        )
+        self._write(".github/workflows/pub.yml", body)
+        proc = self._run(self.tree, None, "--rule", "nats-postcondition")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+
+    def test_js_publish_requires_verification_too(self):
+        body = _nats_wf(
+            "      - run: |\n"
+            "          python3 -c \"import asyncio,nats\"\n"
+            "          echo placeholder\n"
+            "      - name: verify\n"
+            "        run: |\n"
+            "          echo nothing verified\n",
+        )
+        # swap in a real js.publish line so the publish detector fires
+        body = body.replace("echo placeholder", 'python3 -c "await js.publish(sub, b)"')
+        self._write(".github/work/workflows/x.yml", body) if False else None
+        self._write(".github/workflows/pub.yml", body)
+        proc = self._run(self.tree, None, "--rule", "nats-postcondition")
+        self.assertEqual(1, proc.returncode, "js.publish without verification must fail")
+
+    def test_commented_out_assert_never_satisfies(self):
+        body = _nats_wf(
+            "      - run: |\n"
+            "          python3 bin/ci_write_queue_probe.py --nats nats://localhost:4222 --write-id w1\n"
+            "      - name: verify\n"
+            "        run: |\n"
+            "          # python3 bin/ci_governed_postcondition.py --write-id w1\n"
+            "          echo walked away\n",
+        )
+        self._write(".github/workflows/pub.yml", body)
+        proc = self._run(self.tree, None, "--rule", "nats-postcondition")
+        self.assertEqual(1, proc.returncode, "a commented-out postcondition is a silent assert")
+
+    def test_allow_marker_on_publish_line_suppresses(self):
+        body = _nats_wf(
+            "      - run: |\n"
+            "          python3 bin/ci_write_queue_probe.py --nats nats://localhost:4222 --write-id w1  # wf-lint-allow: verified in downstream arc job\n"
+            "          echo done\n"
+        )
+        self._write(".github/workflows/pub.yml", body)
+        proc = self._run(self.tree, None, "--rule", "nats-postcondition")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn("allow-marker", proc.stdout)
+
+    def test_provisioning_alone_is_not_publishing(self):
+        body = _nats_wf(
+            "      - run: |\n"
+            "          python3 bin/ensure-write-queue-stream.py --nats nats://localhost:4222\n"
+            "          echo provisioning only\n"
+        )
+        self._write(".github/workflows/pub.yml", body)
+        proc = self._run(self.tree, None, "--rule", "nats-postcondition")
+        self.assertEqual(0, proc.returncode, "stream provisioning is not a publish")
+
+    def test_reusable_workflow_caller_exempt(self):
+        body = (
+            "on: push\npermissions:\n  contents: read\n"
+            "jobs:\n"
+            "  smoke:\n"
+            "    uses: ./.github/workflows/reusable.yml\n"
+        )
+        self._write(".github/workflows/pub.yml", body)
+        publish_lines = [l for l in body.splitlines() if "publish" in l]
+        self.assertEqual([], publish_lines)
+        proc = self._run(self.tree, None, "--rule", "nats-postcondition")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+
+    def test_nats_rule_alone_selectable(self):
+        self._write(".github/workflows/pub.yml", self.PUB_ONLY)
+        proc = self._run(self.tree, None, "--rule", "nats-postcondition")
+        self.assertEqual(1, proc.returncode)
+        proc = self._run(self.tree, None, "--rule", "postgres-pin")
+        self.assertEqual(0, proc.returncode, proc.stderr)
 
 
 if __name__ == "__main__":
