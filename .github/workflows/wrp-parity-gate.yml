@@ -68,6 +68,7 @@ jobs:
         with:
           java-version: '21'
           distribution: 'temurin'
+          cache: maven
 
       - name: Run JVM kernel tests (incl. byte-exact golden parity)
         run: mvn -B -f jvm/spring/nexus-core/pom.xml -pl nexus-core-wrp clean test
