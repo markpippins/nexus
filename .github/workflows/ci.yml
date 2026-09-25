@@ -9,6 +9,9 @@ on:
     branches: [ main, master, dev, feature/* ]
   pull_request:
     branches: [ main, master, dev, feature/* ]
+  # On-demand runs: cache verification (per-workflow Maven keys from #573 —
+  # miss+save then hit can be proven without a throwaway push).
+  workflow_dispatch:
 
 permissions:
   contents: read

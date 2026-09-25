@@ -11,6 +11,10 @@ on:
     branches: [ main, master, feature/* ]
   pull_request:
     branches: [ main, master, feature/* ]
+  # On-demand runs: cache verification (the pip entry seeded under the
+  # corrected cache-dependency-path key needs one run to prove the exact
+  # hit — no natural push required, see change-log 6b447737).
+  workflow_dispatch:
 
 permissions:
   contents: read
