@@ -17,6 +17,7 @@ lives beside its incumbent and is cut over only behind a contract gate.
 | `role-memory/` | 4150 | `typescript/role-memory-srv` (:3500) | **`typescript/role-memory-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed 30/30, not cut over (shared Redis/PG parity — refresh converges the same cache; no auth gate on incumbent) |
 | `semantics/` | 4160 | `typescript/semantics-srv` (:3160) | **`typescript/semantics-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed 12/12 + live-data envelopes, not cut over (table-driven CRUD via stored procs + T02 asset spine; no auth gate on incumbent — CORS only) |
 | `prompt-sync/` | 4501 | `typescript/tackle-prompt-sync-srv` (:3501) | **`typescript/tackle-prompt-sync-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, canary-diffed 44/44, not cut over (Prompt Registry PG→Redis sync — role-memory twin pattern, shared-cache convergence; no auth gate on incumbent) |
+| `execution/` | 4110 | `typescript/execution-srv` (:3110) | **`typescript/execution-srv/openapi.yaml`** via `tools/api-docs/check_drift.py` | port complete, dispatch-through-Express; incumbent is read-only so the canary exercises every endpoint live; not cut over (moleculer broker tier already carries a partial `worker.execution` subset on :4080 — this twin mirrors the FULL legacy REST surface) |
 
 ## Contract coverage
 
