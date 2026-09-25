@@ -11,12 +11,13 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "heartbeat-client": "file:../heartbeat-client",
-    "tackle-seeds": "file:../tackle-seeds",
     "cors": "^2.8.5",
     "express": "^4.21.0",
+    "express-rate-limit": "^7.5.1",
+    "heartbeat-client": "file:../heartbeat-client",
     "ioredis": "^5.11.1",
-    "pg": "^8.21.0"
+    "pg": "^8.21.0",
+    "tackle-seeds": "file:../tackle-seeds"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",

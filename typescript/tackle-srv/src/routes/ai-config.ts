@@ -500,9 +500,16 @@ aiConfigRouter.post("/test", async (req, res) => {
 
     const projectRoot = process.env.PIPELINE_ROOT || "/home/codex/dev";
     // .conduit-data was deleted 2026-08-09 and mirrored to audit/CONDUIT_DATA
-    const sessionsDir = path.join(projectRoot, "nexus", "logs");
+    // Containment guard — sessionId is service-generated (`test-<id>-<ts>`),
+    // but resolve defensively so the log path can never escape the logs dir
+    // (CodeQL js/path-injection remediation, alerts #596-#598 family).
+    const sessionsDir = path.resolve(projectRoot, "nexus", "logs");
     fs.mkdirSync(sessionsDir, { recursive: true });
-    const sessionLogPath = path.join(sessionsDir, `${sessionId}.log`);
+    const sessionLogPath = path.resolve(sessionsDir, `${sessionId}.log`);
+    if (!sessionLogPath.startsWith(sessionsDir + path.sep)) {
+      res.status(500).json({ error: "session log path escaped logs dir" });
+      return;
+    }
     const logFd = fs.openSync(sessionLogPath, "a");
 
     const proc = spawn(harnessType, [
@@ -522,7 +529,9 @@ aiConfigRouter.post("/test", async (req, res) => {
     }
 
     const timestamp = new Date().toISOString();
-    console.log(`[${timestamp}] TEST INVOKE model=${model_id} session=${sessionId} pid=${proc.pid} log=${sessionLogPath}`);
+    // Static format string — request-derived values passed as args
+    // (CodeQL js/tainted-format-string remediation, alert #586).
+    console.log("[%s] TEST INVOKE model=%s session=%s pid=%s log=%s", timestamp, model_id, sessionId, proc.pid, sessionLogPath);
 
     res.json({
       started: true,
@@ -648,9 +657,13 @@ aiConfigRouter.post("/verify", async (req, res) => {
     });
 
     const projectRoot = process.env.PIPELINE_ROOT || "/home/codex/dev";
-    const sessionsDir = path.join(projectRoot, "nexus", "logs");
+    const sessionsDir = path.resolve(projectRoot, "nexus", "logs");
     fs.mkdirSync(sessionsDir, { recursive: true });
-    const sessionLogPath = path.join(sessionsDir, `${sessionId}.log`);
+    const sessionLogPath = path.resolve(sessionsDir, `${sessionId}.log`);
+    if (!sessionLogPath.startsWith(sessionsDir + path.sep)) {
+      res.status(500).json({ error: "session log path escaped logs dir" });
+      return;
+    }
     const logFd = fs.openSync(sessionLogPath, "a");
 
     const proc = spawn(harnessType, [
@@ -727,7 +740,9 @@ aiConfigRouter.post("/verify", async (req, res) => {
     }
 
     const timestamp = new Date().toISOString();
-    console.log(`[${timestamp}] VERIFY model=${model_id} session=${sessionId} pid=${proc.pid} log=${sessionLogPath}`);
+    // Static format string — request-derived values passed as args
+    // (CodeQL js/tainted-format-string remediation, alert #587).
+    console.log("[%s] VERIFY model=%s session=%s pid=%s log=%s", timestamp, model_id, sessionId, proc.pid, sessionLogPath);
 
     res.json({
       started: true,

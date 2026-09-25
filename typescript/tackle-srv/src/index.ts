@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import rateLimit from "express-rate-limit";
 import fs from "fs";
 import path from "path";
 import { loadEnv } from "./env";
@@ -38,6 +39,20 @@ process.on('uncaughtException', (err: Error & { code?: string }) => {
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Global request limiter — CodeQL js/missing-rate-limiting remediation
+// (alerts #402/#571/#608/#616). Same posture as nebula-srv's limiter.ts:
+// 300 req/min/IP keeps normal operator/agent polling well clear of the
+// ceiling while capping resource-exhaustion floods.
+app.use(
+  rateLimit({
+    windowMs: 60 * 1000,
+    max: 300,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    message: { error: "tackle-srv rate limit exceeded" },
+  }),
+);
 
 // Request logging middleware — fire-and-forget async DB writes
 app.use((req, res, next) => {
@@ -86,7 +101,15 @@ app.get("/log/:sessionId", (req, res) => {
   }
 
   const projectRoot = process.env.PIPELINE_ROOT || "/home/codex/dev";
-  const logPath = path.join(projectRoot, "nexus", "logs", `${sessionId}.log`);
+  // Containment guard — sessionId is regex-validated above, but resolve
+  // defensively so the streamed path can never escape the logs dir
+  // (CodeQL js/path-injection remediation, alerts #592-#595 family).
+  const logsDir = path.resolve(projectRoot, "nexus", "logs");
+  const logPath = path.resolve(logsDir, `${sessionId}.log`);
+  if (!logPath.startsWith(logsDir + path.sep)) {
+    res.status(400).json({ error: "Invalid session ID" });
+    return;
+  }
 
   res.writeHead(200, {
     "Content-Type": "text/event-stream",

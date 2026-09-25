@@ -26,8 +26,15 @@ router.get("/:sessionId", async (req, res) => {
     return;
   }
 
-  const sessionsDir = path.join(PIPELINE_DIR, "sessions");
-  const logPath = path.join(sessionsDir, `${sessionId}.log`);
+  // Containment guard — sessionId is regex-validated above, but resolve
+  // defensively so the streamed path can never escape the sessions dir
+  // (CodeQL js/path-injection remediation, alerts #752-#755).
+  const sessionsDir = path.resolve(PIPELINE_DIR, "sessions");
+  const logPath = path.resolve(sessionsDir, `${sessionId}.log`);
+  if (!logPath.startsWith(sessionsDir + path.sep)) {
+    res.status(400).json({ error: "Invalid session ID" });
+    return;
+  }
 
   res.writeHead(200, {
     "Content-Type": "text/event-stream",

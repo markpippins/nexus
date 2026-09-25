@@ -10,6 +10,7 @@
 
 import express from 'express';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import { Pool } from 'pg';
 import { createRoutes } from './routes';
 import { startHeartbeat } from 'heartbeat-client';
@@ -50,6 +51,21 @@ process.on('uncaughtException', (err: Error & { code?: string }) => {
 
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
+
+// Global request limiter — CodeQL js/missing-rate-limiting remediation
+// (alerts #668/#671 family, 18 sites). Same posture as nebula-srv's
+// limiter.ts: 300 req/min/IP keeps normal operator/agent polling (this
+// service is read-only observability) well clear of the ceiling while
+// capping resource-exhaustion floods.
+app.use(
+  rateLimit({
+    windowMs: 60 * 1000,
+    max: 300,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'execution-srv rate limit exceeded' },
+  }),
+);
 
 // ── API Routes ─────────────────────────────────────────────────────
 app.use('/api/execution', createRoutes(pool));

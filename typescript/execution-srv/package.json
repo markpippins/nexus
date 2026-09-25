@@ -1,7 +1,7 @@
 {
   "name": "execution-srv",
   "version": "1.0.0",
-  "description": "Express observability API server over the PostgreSQL execution schema \u2014 read-only views for requests, leases, attempts, receipts, and cross-table integrity scans.",
+  "description": "Express observability API server over the PostgreSQL execution schema — read-only views for requests, leases, attempts, receipts, and cross-table integrity scans.",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -10,9 +10,10 @@
     "test:witnessed-run": "tsx src/routes.test.ts"
   },
   "dependencies": {
-    "heartbeat-client": "file:../heartbeat-client",
     "cors": "^2.8.5",
     "express": "^4.21.0",
+    "express-rate-limit": "^7.5.1",
+    "heartbeat-client": "file:../heartbeat-client",
     "pg": "^8.13.0"
   },
   "devDependencies": {
