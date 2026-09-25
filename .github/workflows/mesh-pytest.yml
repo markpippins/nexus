@@ -34,6 +34,10 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
+          # hash the file the job actually installs from — the default search
+          # (requirements.txt/pyproject.toml repo-wide) never sees this file,
+          # so pin changes could not bust the cache (cache-dep-path rule)
+          cache-dependency-path: requirements-dev.txt
       - name: Install pytest (pinned via requirements-dev.txt)
         run: python3 -m pip install -r requirements-dev.txt
       - name: Record resolved pytest version in the run log

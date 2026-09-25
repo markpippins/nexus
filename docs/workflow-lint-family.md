@@ -1,6 +1,6 @@
 # Workflow lint family (`bin/wf_lint.py`)
 
-One harness, nine rules, one CI gate (`.github/workflows/wf-lint.yml`).
+One harness, ten rules, one CI gate (`.github/workflows/wf-lint.yml`).
 Every rule in this family was born from a real incident or drift class —
 the lint exists so those classes cannot quietly return.
 
@@ -29,6 +29,7 @@ Exit codes: `0` clean (warnings ok) · `1` violations · `2` usage error.
 | `maven-cache` | runner `mvn`/`mvnw` job with uncached `setup-java` | Maven Central 429 killed main CI (2026-09-25, #569) |
 | `node-cache` | lock-bearing `npm` job with uncached `setup-node` | same 429 class; fleet audit found 2 |
 | `pip-cache` | `pip install -r <file>` job with uncached `setup-python` | same 429 class; fleet audit (ad-hoc installs out of scope) |
+| `cache-dep-path` | cached setup-* whose key file isn't the action default, without `cache-dependency-path` | mesh-pytest's pip cache hashed the default repo-wide set while installing from requirements-dev.txt — pin changes could never bust it |
 
 ## Cache-first: writing a new workflow
 

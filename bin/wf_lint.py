@@ -78,6 +78,17 @@ Rules
                  arbitrary. The rule checks the requirements file actually
                  exists (repo root or a job working-directory) so the
                  remediation is real.
+  cache-dep-path a CACHED setup-node/setup-python whose key file is not
+                 the action default must declare cache-dependency-path.
+                 Node: exempt when a root package-lock.json exists (the
+                 default target is correct). Pip: exempt when the -r file
+                 is in pip's default search (requirements.txt /
+                 pyproject.toml at any depth). The live instance was
+                 mesh-pytest: cache: 'pip' hashing the default repo-wide
+                 set while installing from requirements-dev.txt — pin
+                 changes could never bust the cache. Declaration present
+                 always satisfies; nothing to hash = the other rules'
+                 subject, silent here.
 
 Escape hatch: '# wf-lint-allow' (bare) suppresses every rule for that
 line; '# wf-lint-allow: rule1,rule2' suppresses only the named rules;
@@ -864,11 +875,12 @@ def _job_runs_maven(body: list[str]) -> bool:
     return False
 
 
-def _uncached_setup_step_offsets(
-    body: list[str], setup_re, cache_ok
-) -> list[int]:
-    """Body offsets of setup-* steps matching `setup_re` whose with: block
-    carries no line satisfying `cache_ok` (the ecosystem's cache predicate).
+def _setup_step_windows(
+    body: list[str], setup_re
+) -> list[tuple[int, int, int]]:
+    """(body_offset, start, end) windows of setup-* steps matching `setup_re`:
+    start/end bracket the step's dash-item window (cache/with judgment runs
+    inside it only)."
 
     Step anatomy (house 2-space style): a list item's first property carries
     the `- ` marker (e.g. `- name:`), so its key sits two columns LEFT of the
@@ -885,7 +897,7 @@ def _uncached_setup_step_offsets(
     A step with no `with:` at all is uncached by definition. Quoted values
     and trailing comments are accepted.
     """
-    out: list[int] = []
+    out: list[tuple[int, int, int]] = []
     for i, raw in enumerate(body):
         if not setup_re.match(raw):
             continue
@@ -918,13 +930,34 @@ def _uncached_setup_step_offsets(
                     end = j
                     break
             j += 1
-        # The step's with: block: a `with:` key line inside the window.
-        with_idx = None
-        for j in range(start, end):
-            m = VALKEY_RE.match(body[j])
-            if m and m.group(2) == "with" and (m.group(1) == " " * u or m.group(1) == " " * (u + 2)):
-                with_idx = j
-                break
+        out.append((i, start, end))
+    return out
+
+
+def _step_with_block(body: list[str], start: int, end: int) -> int | None:
+    """Body offset of the step's `with:` key line within [start, end)."""
+    for j in range(start, end):
+        m = VALKEY_RE.match(body[j])
+        if m and m.group(2) == "with":
+            return j
+    return None
+
+
+def _uncached_setup_step_offsets(
+    body: list[str], setup_re, cache_ok
+) -> list[int]:
+    """Body offsets of setup-* steps matching `setup_re` whose with: block
+    carries no line satisfying `cache_ok` (the ecosystem's cache predicate).
+
+    The step's with: block lives INSIDE its dash-item window at the property
+    indent; cache: is judged only among that with:'s children, so another
+    step's cache or run-block text can never satisfy this step. A step with
+    no with: at all is uncached by definition. Quoted values and trailing
+    comments are accepted.
+    """
+    out: list[int] = []
+    for i, start, end in _setup_step_windows(body, setup_re):
+        with_idx = _step_with_block(body, start, end)
         cached = False
         if with_idx is not None:
             w = len(body[with_idx]) - len(body[with_idx].lstrip())
@@ -939,6 +972,24 @@ def _uncached_setup_step_offsets(
         if not cached:
             out.append(i)
     return out
+
+
+def _step_with_value(body: list[str], start: int, end: int, key: str) -> str | None:
+    """Scalar value of `key:` among the step's with: children (first match,
+    quotes stripped), or None when the step doesn't declare it."""
+    with_idx = _step_with_block(body, start, end)
+    if with_idx is None:
+        return None
+    w = len(body[with_idx]) - len(body[with_idx].lstrip())
+    for j in range(with_idx + 1, end):
+        line = body[j]
+        if line.strip():
+            if len(line) - len(line.lstrip()) <= w:
+                break  # dedent: with: block closed
+            m = re.match(rf"^\s*{re.escape(key)}:\s*['\"]?([^'\"#\s]+)", line)
+            if m:
+                return m.group(1)
+    return None
 
 
 class MavenCacheRule(Rule):
@@ -1181,6 +1232,126 @@ class PipCacheRule(_SetupCacheRuleBase):
 
 
 # --------------------------------------------------------------------------
+# rule: cache-dep-path (the silent partial-cache failure mode)
+# --------------------------------------------------------------------------
+
+SETUP_NODEPY_RE = re.compile(r"^\s*(?:-\s+)?uses:\s*actions/setup-(?:node|python)\b")
+# pip's default dependency search (setup-python README + runtime-verified):
+# a repo-wide glob over requirements.txt / pyproject.toml. Runtime proof:
+# mesh-pytest has NO root-level default file, yet its cache: pip runs green
+# and hit — so the default search found repo files at depth (the multiple
+# python/*/requirements.txt + pyproject.toml). Its two matrix jobs hashed
+# IDENTICAL keys — repo-constant, i.e. not the file the job installs from.
+DEFAULT_PIP_BASENAME_RE = re.compile(r"(?:requirements\.txt|pyproject\.toml)$")
+
+
+def _pip_default_covered(rule, reqs: set[str]) -> bool:
+    """True when any -r file the job installs from is in pip's default
+    search set (basename requirements.txt / pyproject.toml at any repo
+    depth) — the default hash then includes that exact file."""
+    return any(DEFAULT_PIP_BASENAME_RE.search(f) for f in reqs)
+
+
+class CacheDepPathRule(_SetupCacheRuleBase):
+    """A CACHED setup-node/setup-python step whose dependency key file is not
+    the action's default must declare cache-dependency-path — otherwise the
+    action hashes the wrong file (or a repo-wide grab-bag) and dependency
+    changes silently stop busting the cache. The live instance: mesh-pytest
+    installs from requirements-dev.txt but its cache: 'pip' key hashed the
+    default repo-wide requirements.txt/pyproject.toml set — a pytest pin
+    bump would not invalidate it.
+
+    Exemptions (the family's satisfiability discipline):
+    - node: a root package-lock.json exists (default path is correct) — the
+      declaration is unnecessary by definition.
+    - pip: every -r file the job installs from is default-search-covered
+      (requirements.txt/pyproject.toml at any depth).
+    - no lock / no existing requirements file: the pip/node-cache rules
+      govern that side; this rule stays silent (their subjects).
+    """
+
+    name = "cache-dep-path"
+    setup_re = SETUP_NODEPY_RE
+    cache_ok = staticmethod(lambda line: bool(CACHE_NPM_RE.match(line) or CACHE_PIP_RE.match(line)))
+
+    def scan_file(self, rel: str, lines: list[str]) -> list[Finding]:
+        out: list[Finding] = []
+        if not (
+            _has_top_level_key(lines, "on")
+            or _has_top_level_key(lines, "true")
+            or _has_top_level_key(lines, "true:")
+        ):
+            return []
+        for name, header_idx, _job_indent, uses_key, body in _locate_jobs(lines):
+            if uses_key:
+                continue
+            uncached = set(_uncached_setup_step_offsets(body, self.setup_re, self.cache_ok))
+            for i, start, end in _setup_step_windows(body, self.setup_re):
+                if i in uncached:
+                    continue  # cache absent entirely: node/pip-cache's subject
+                with_idx = _step_with_block(body, start, end)
+                if with_idx is None:
+                    continue
+                w = len(body[with_idx]) - len(body[with_idx].lstrip())
+                eco = None
+                for j in range(with_idx + 1, end):
+                    line = body[j]
+                    if line.strip():
+                        if len(line) - len(line.lstrip()) <= w:
+                            break
+                        if CACHE_NPM_RE.match(line):
+                            eco = "npm"
+                        elif CACHE_PIP_RE.match(line):
+                            eco = "pip"
+                if eco is None:
+                    continue
+                declared = _step_with_value(body, start, end, "cache-dependency-path")
+                if declared:
+                    continue  # explicit path: the step owns its key file
+                if eco == "npm":
+                    node_helper = NodeCacheRule()
+                    node_helper._target = self._target
+                    locks = node_helper._lock_dirs(body)
+                    if not locks:
+                        continue  # no lock anywhere: loud runtime failure, not a silent one
+                    if any(d == "." for d in locks):
+                        continue  # root lock: default path is correct
+                    out.append(Finding(
+                        "violation", rel, header_idx + i + 2, self.name,
+                        f"job `{name}` caches npm but its lock lives outside the repo root "
+                        f"({locks[0]}/package-lock.json) — the default hash target is wrong; "
+                        f"add `cache-dependency-path: {locks[0]}/package-lock.json`",
+                    ))
+                else:
+                    reqs = _pip_requirements_files(body)
+                    if not reqs:
+                        continue
+                    pip_helper = PipCacheRule()
+                    pip_helper._target = self._target
+                    existing = [
+                        f for f in sorted(reqs)
+                        if _exists_under_target(pip_helper, f)
+                        or any(
+                            (p := _contained_path(pip_helper, d))
+                            and os.path.isfile(os.path.join(p, f))
+                            for d in _cd_targets_in_body(body)
+                        )
+                    ]
+                    if not existing:
+                        continue  # nothing real to key on: pip-cache's subject
+                    if _pip_default_covered(self, reqs):
+                        continue  # -r file is in the default search: hash already includes it
+                    out.append(Finding(
+                        "violation", rel, header_idx + i + 2, self.name,
+                        f"job `{name}` caches pip but installs from {existing[0]}, which is "
+                        f"NOT in pip's default dependency search (requirements.txt / "
+                        f"pyproject.toml) — the cache key will not change when that file "
+                        f"does; add `cache-dependency-path: {existing[0]}`",
+                    ))
+        return out
+
+
+# --------------------------------------------------------------------------
 # allow markers
 # --------------------------------------------------------------------------
 
@@ -1221,6 +1392,7 @@ RULES: list[Rule] = [
     MavenCacheRule(),
     NodeCacheRule(),
     PipCacheRule(),
+    CacheDepPathRule(),
 ]
 
 
