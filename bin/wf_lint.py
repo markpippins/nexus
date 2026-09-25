@@ -60,7 +60,9 @@ Escape hatch: '# wf-lint-allow' (bare) suppresses every rule for that
 line; '# wf-lint-allow: rule1,rule2' suppresses only the named rules;
 '# wf-lint-allow: <free-text reason>' documents and suppresses all rules
 on the line. The postgres rule also honors its legacy '# pg-pin-allow'
-marker.
+marker. SQL files use the same marker with `--` comment syntax
+(`-- wf-lint-allow: ...`), e.g. migration files whose duplicates are
+deliberate historical records rather than runner-applied twins.
 
 Scope: postgres-pin / eol-runtime / action-ref / job-hardening scan
 .github/workflows YAML only; dead-base scans Dockerfiles anywhere under
@@ -886,10 +888,15 @@ class MigrationDupPrefixRule(Rule):
         for (mig_dir, version), hits in sorted(self._seen.items()):
             if len(hits) < 2:
                 continue
-            for rel, lineno, raw in hits[1:]:
-                if _suppressed(raw, self.name):
-                    suppressed += 1
-                    continue
+            # A marker on ANY member declares the whole group deliberate
+            # (one documented exception covers the pair) — findings would
+            # otherwise just migrate to whichever member is unmarked, since
+            # the group, not the file, is the unit of fault.
+            marked = [1 for _, _, raw in hits if _suppressed(raw, self.name)]
+            if marked:
+                suppressed += len(marked)
+                continue
+            for rel, lineno, _raw in hits[1:]:
                 others = ", ".join(sorted(os.path.basename(r) for r, _, _ in hits if r != rel))
                 findings.append(Finding(
                     "violation", rel, lineno, self.name,
@@ -906,7 +913,10 @@ class MigrationDupPrefixRule(Rule):
 # allow markers
 # --------------------------------------------------------------------------
 
-ALLOW_RE = re.compile(r"#\s*wf-lint-allow(?::\s*([\w,\s-]+))?", re.I)
+# Marker prefix is comment-syntax agnostic: `#` for YAML/Dockerfile/Python,
+# `--` for SQL (migration files are first-class scan targets since
+# migration-dup-prefix). `--` does not otherwise appear in YAML/Dockerfiles.
+ALLOW_RE = re.compile(r"(?:#|--)\s*wf-lint-allow(?::\s*([\w,\s-]+))?", re.I)
 LEGACY_PG_ALLOW = "pg-pin-allow"
 
 

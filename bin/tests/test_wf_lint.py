@@ -784,6 +784,18 @@ class WfLintTest(unittest.TestCase):
         self.assertIn("permissions:", fixed)
         self.assertIn("timeout-minutes:", fixed)
 
+    def test_sql_files_use_dash_marker_syntax(self):
+        # SQL comment syntax (`--`) carries the same escape hatch (`#` is not
+        # a comment in SQL); conduit's historical twins are the live case
+        self._write("svc/migrations/030-a.sql", "-- original\nSELECT 1;\n")
+        self._write(
+            "svc/migrations/030-b-v2.sql",
+            "-- wf-lint-allow: migration-dup-prefix — superseded rewrite kept as a historical record\nSELECT 1;\n",
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("1 allow-marker line(s)", proc.stdout)
+
     # -- real repo -----------------------------------------------------------------
 
     def test_real_repo_scan_does_not_crash(self):
