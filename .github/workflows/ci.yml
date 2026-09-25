@@ -20,10 +20,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Set up JDK 21
+        # cache: maven — the 2026-09-25 main failure (run 36088456372) was Maven
+        # Central HTTP 429: concurrent jobs cold-pulling Central hit its rate
+        # limiter. Cache keys on jvm/**/pom.xml; saves ~/.m2/repository.
         uses: actions/setup-java@v3
         with:
           java-version: '21'
           distribution: 'temurin'
+          cache: maven
       - name: Build modules
         run: mvn -B -f jvm/pom.xml -DskipTests=false test
 
@@ -40,6 +44,7 @@ jobs:
         with:
           java-version: '21'
           distribution: 'temurin'
+          cache: maven
       - name: Run JVM verifier (fixtures + fingerprint parity + drift matrix)
         run: mvn -B -f jvm/pom.xml -pl spring/conformance-verifier test
       - name: Upload verifier surefire reports

@@ -84,6 +84,7 @@ jobs:
         with:
           java-version: '21'
           distribution: 'temurin'
+          cache: maven
 
       - name: Run JVM verifier (fixtures + fingerprint parity + drift matrix)
         run: mvn -B -f jvm/pom.xml -pl spring/conformance-verifier test
