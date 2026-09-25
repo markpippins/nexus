@@ -7,6 +7,7 @@ touched behind main(), which is not imported here.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -46,6 +47,67 @@ class TestVerdict:
     def test_historical_mass_never_fails(self):
         # The whole point of the cutoff: June-era silence must not fail.
         assert mod.verdict_from_counts(0, 363) == "CLEAN"
+
+
+class TestWaivers:
+    """Ruled narrow waiver (architect ruling 6b42dd3f): enumerated rows
+    attested by closure evidence instead of events; never a broad
+    suppression surface."""
+
+    def test_load_real_waiver_file(self):
+        # The shipped file must parse, carry the ruling reference, and
+        # contain exactly the two ruled gen-1 rows — no more (narrow by
+        # ruling), no less (a silently-empty list would be a hole).
+        data = json.loads(mod.WAIVER_FILE.read_text())
+        assert data["ruling"]["decision_record_id"].startswith("6b42dd3f")
+        assert data["ruling"]["reason_code"] == "pre_event_emission_fix"
+        ids = {w["ticket_id"] for w in data["waivers"]}
+        assert ids == {
+            "ticket-8261654-builder-caea50cc-5bc9-4405-b0c1-8abb5de79ad1",
+            "ticket-8261654-reviewer-1790105437937",
+        }
+        loaded = mod.load_waiver_ids(mod.WAIVER_FILE)
+        assert set(loaded) == ids
+        assert loaded["ticket-8261654-reviewer-1790105437937"]["closure_evidence"]
+
+    def test_missing_waiver_file_is_fatal(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(mod, "WAIVER_FILE", tmp_path / "nope.json")
+        assert mod.main(["--dsn", ""]) == 2  # fail before any DB access
+
+    def test_malformed_waiver_file_is_fatal(self, tmp_path, monkeypatch):
+        bad = tmp_path / "waivers.json"
+        bad.write_text('{"waivers": "not-a-list"}')
+        monkeypatch.setattr(mod, "WAIVER_FILE", bad)
+        assert mod.main(["--dsn", ""]) == 2
+
+    def test_waiver_entry_without_ticket_id_is_fatal(self, tmp_path):
+        bad = tmp_path / "waivers.json"
+        bad.write_text(json.dumps({"waivers": [{"role": "builder"}]}))
+        with pytest.raises(ValueError):
+            mod.load_waiver_ids(bad)
+
+    def test_duplicate_waiver_is_fatal(self, tmp_path):
+        bad = tmp_path / "waivers.json"
+        tid = "ticket-x"
+        bad.write_text(json.dumps({"waivers": [{"ticket_id": tid},
+                                                {"ticket_id": tid}]}))
+        with pytest.raises(ValueError):
+            mod.load_waiver_ids(bad)
+
+    def test_apply_waivers_honored_vs_contradicted(self):
+        waived = {"w1", "w2"}
+        honored, contradicted = mod.apply_waivers(
+            {"w1": 0, "w2": 3, "t9": 0}, waived)
+        assert honored == {"w1"}
+        assert contradicted == {"w2"}  # grew an event after the ruling
+
+    def test_apply_waivers_absent_id_ignored(self):
+        honored, contradicted = mod.apply_waivers({"t9": 0}, {"gone"})
+        assert honored == set()
+        assert contradicted == set()
+
+    def test_apply_waivers_empty_is_noop(self):
+        assert mod.apply_waivers({"t1": 0, "t2": 2}, set()) == (set(), set())
 
 
 class TestConstants:

@@ -1,0 +1,46 @@
+{
+  "comment": "Narrow waiver list for the transition-event attestation checker (bin/check_transition_attestation.py). Per architect ruling 6b42dd3f-ae62-4abf-8cce-fdc01c41032e (record + AAR thread comment a6c7f5f5-f9bf-4cbe-8361-4d68cdf256ec): these enumerated historical rows are attested by their row-level closure evidence instead of a kernel.transition_event, because their closure predates the emission fix (PR #560) on the TS receipt-advance path. This list is the ONLY suppression surface: it must never grow except by an explicit architect ruling recorded here, and it never suppresses future rows. No transition_event rows were synthesized for any of these tickets.",
+  "ruling": {
+    "decision_record_id": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e",
+    "thread_comment_id": "a6c7f5f5-f9bf-4cbe-8361-4d68cdf256ec",
+    "requested_by_record": "8f58816f-e303-46dc-9de6-00114544f2ec",
+    "approved_by": "architect",
+    "reason_code": "pre_event_emission_fix",
+    "evidence_record": "2db79233-60ab-4333-8959-d90e61f280f2",
+    "emission_fix_pr": 560
+  },
+  "waivers": [
+    {
+      "ticket_id": "ticket-8261654-builder-caea50cc-5bc9-4405-b0c1-8abb5de79ad1",
+      "plan_id": "8261654",
+      "role": "builder",
+      "status": "completed",
+      "closed_at": "2026-09-22T19:30:37Z",
+      "closure_reason": "receipt:IMPLEMENTATION",
+      "closure_evidence": {
+        "store": "resolution.receipt",
+        "receipt_id": "d34323f3-ede6-47db-8395-df47765b7327",
+        "kind": "implementation",
+        "created_at": "2026-09-22T19:30:37Z",
+        "note": "ticket closed_at matches receipt to the second; payload cites artifact record 1840f9b6"
+      },
+      "reason_code": "pre_event_emission_fix"
+    },
+    {
+      "ticket_id": "ticket-8261654-reviewer-1790105437937",
+      "plan_id": "8261654",
+      "role": "reviewer",
+      "status": "failed",
+      "closed_at": "2026-09-22T19:33:34Z",
+      "closure_reason": "receipt:REVIEW_REJECT",
+      "closure_evidence": {
+        "store": "resolution.receipt",
+        "receipt_id": "b42a0daa-f5b7-4a8e-b415-59ae5e3908d4",
+        "kind": "review_reject",
+        "created_at": "2026-09-22T19:33:34Z",
+        "note": "ticket closed_at matches receipt to the second; payload carries the verbatim AC4/AC5 findings"
+      },
+      "reason_code": "pre_event_emission_fix"
+    }
+  ]
+}

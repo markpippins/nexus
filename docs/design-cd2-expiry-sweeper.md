@@ -140,6 +140,18 @@ misread as an empty result. Two design rules follow directly:
 2. **The join is the measurement:** no per-ticket existence probes that
    can fail independently; one LEFT JOIN between `vision.tickets` and
    `kernel.transition_event` is the single source of the verdict.
+3. **Waivers are ruled, enumerated, and contradiction-fatal
+   (ruling 6b42dd3f):** rows closed before the receipt-advance emission
+   fix (PR #560) may be attested by their closure evidence instead of an
+   event — but only the exact ids listed in
+   `bin/transition-attestation-waivers.json` (currently the two 8261654
+   gen-1 rows, with ticket/receipt provenance per the ruling). The list
+   grows only by an explicit architect ruling recorded in the file; a
+   malformed waiver file is FATAL (exit 2), and a waived id that has
+   grown an event is an audit contradiction (FATAL exit 2), never a
+   silent pass. No transition events are synthesized, ever; the list
+   never suppresses a row not named in it, so future terminal tickets
+   must emit.
 
 **Check definition (read-only, `bin/check_transition_attestation.py`):**
 
