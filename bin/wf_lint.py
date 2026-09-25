@@ -47,6 +47,14 @@ Rules
                  `--package-lock-only` (deliberate lock regeneration).
                  `npm i` shorthand is not recognized (house code writes
                  the long form).
+  migration-dup-prefix  duplicate NNN- version prefixes inside one
+                 migration directory fail. Numbered-SQL runners stamp their
+                 ledger per version, so the lex-second twin file is silently
+                 skipped on a fresh database — schema drift behind a green
+                 ledger (live instance: two 055-* in nebula-srv/migrations,
+                 thread 6bba5dd3). Cross-directory prefix reuse is normal;
+                 ordered file-based runners (adonisjs database/migrations)
+                 are exempt.
 
 Escape hatch: '# wf-lint-allow' (bare) suppresses every rule for that
 line; '# wf-lint-allow: rule1,rule2' suppresses only the named rules;
@@ -159,6 +167,20 @@ class Rule:
         """Optional --fix pass — default: no fixes. Edits are computed against
         the file as-read; the applier applies them in descending line order."""
         return []
+
+    def begin_scan(self) -> None:
+        """Optional per-scan reset — called once before the walk so rules
+        carrying cross-file state stay re-entrant across repeated scans
+        (--fix re-scans the tree after writing)."""
+        return None
+
+    def finalize_scan(self, findings: list[Finding]) -> int:
+        """Optional post-walk pass for cross-file rules — called once after
+        every file has been scanned; append whole-set findings and RETURN the
+        number of would-be findings suppressed via allow markers (counted in
+        the allow-marker tally, since suppression happens inside the rule —
+        the harness's per-line suppression cannot see cross-file anchors)."""
+        return 0
 
 
 class Edit:
@@ -804,6 +826,83 @@ class NpmCiRule(Rule):
 
 
 # --------------------------------------------------------------------------
+# rule: migration-dup-prefix
+# --------------------------------------------------------------------------
+
+class MigrationDupPrefixRule(Rule):
+    """Duplicate NNN- version prefixes inside one migration directory.
+
+    Numbered-SQL migration runners apply `NNN-*.sql` files and stamp their
+    schema ledger per version number, so when two files share a prefix the
+    lex-second twin is silently skipped on a fresh database — schema drift
+    behind a green ledger. The live instance (thread 6bba5dd3): two 055-*
+    files in typescript/nebula-srv/migrations, where the skipped twin
+    (055-allow-supervisor-role, lex-second) carried the supervisor role
+    widening — a fresh DB would 42503 on the first supervisor-role record.
+
+    Scope: SQL files whose basename starts with a 3-digit prefix, grouped by
+    their containing directory (each runner owns its own namespace, so
+    cross-directory reuse is normal). Ordered file-based runners whose
+    integrity comes from filename ordering rather than a version ledger
+    (adonisjs `database/migrations`) are exempt.
+    """
+
+    name = "migration-dup-prefix"
+
+    _EXEMPT_DIR_SUFFIXES = ("database/migrations",)
+
+    def __init__(self) -> None:
+        # (migration_dir, version) -> list[(rel, lineno)] in scan order
+        self._seen: dict[tuple[str, str], list[tuple[str, int]]] = {}
+
+    def begin_scan(self) -> None:
+        # cross-file state must reset per scan: --fix re-scans the tree with
+        # the same instance after writing
+        self._seen.clear()
+
+    def applies(self, rel: str, filename: str, target: str) -> bool:
+        if not filename.lower().endswith(".sql"):
+            return False
+        head = filename.split("-", 1)[0]
+        return len(head) == 3 and head.isdigit()
+
+    def scan_line(self, raw: str, rel: str, lineno: int) -> list[Finding]:
+        return []
+
+    def scan_file(self, rel: str, lines: list[str]) -> list[Finding]:
+        norm = rel.replace(os.sep, "/")
+        mig_dir, basename = norm.rsplit("/", 1) if "/" in norm else ("", norm)
+        if any(mig_dir == e or mig_dir.endswith("/" + e) for e in self._EXEMPT_DIR_SUFFIXES):
+            return []
+        version = basename.split("-", 1)[0]
+        # anchor on the file's header line (line 1) — an allow marker there
+        # suppresses this file's dup finding in finalize_scan, mirroring the
+        # per-line suppression every other rule gets for free
+        self._seen.setdefault((mig_dir, version), []).append((rel, 1, lines[0] if lines else ""))
+        return []
+
+    def finalize_scan(self, findings: list[Finding]) -> int:
+        suppressed = 0
+        for (mig_dir, version), hits in sorted(self._seen.items()):
+            if len(hits) < 2:
+                continue
+            for rel, lineno, raw in hits[1:]:
+                if _suppressed(raw, self.name):
+                    suppressed += 1
+                    continue
+                others = ", ".join(sorted(os.path.basename(r) for r, _, _ in hits if r != rel))
+                findings.append(Finding(
+                    "violation", rel, lineno, self.name,
+                    f"duplicate migration version {version} in {mig_dir}/ — "
+                    f"also claimed by {others}; the runner applies one file per "
+                    f"version and silently skips the lex-second twin on a fresh "
+                    f"database (renumber to the next free version; see thread "
+                    f"6bba5dd3)",
+                ))
+        return suppressed
+
+
+# --------------------------------------------------------------------------
 # allow markers
 # --------------------------------------------------------------------------
 
@@ -841,12 +940,15 @@ RULES: list[Rule] = [
     ActionRefRule(),
     JobHardeningRule(),
     NpmCiRule(),
+    MigrationDupPrefixRule(),
 ]
 
 
 def scan(target: str, rules: list[Rule]) -> tuple[list[Finding], int]:
     findings: list[Finding] = []
     allowed = 0
+    for rule in rules:
+        rule.begin_scan()
     for dirpath, dirnames, filenames in os.walk(target):
         # node_modules is guaranteed third-party: vendored packages ship their
         # own Dockerfiles/workflows that would flood every rule with findings
@@ -886,6 +988,8 @@ def scan(target: str, rules: list[Rule]) -> tuple[list[Finding], int]:
                     if _suppressed(raw, rule.name):
                         continue
                     findings.extend(rule.scan_line(raw, rel, lineno))
+    for rule in rules:
+        allowed += rule.finalize_scan(findings)
     findings.sort(key=lambda f: (f.rel, f.lineno, f.rule))
     return findings, allowed
 
