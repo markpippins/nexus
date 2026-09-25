@@ -21,7 +21,11 @@ One cycle:
      current base (the Structure-stack recovery, 2026-09-24). Repairs are
      --apply only, rate-limited (60m cooldown, 3 lifetime attempts per PR),
      verified head-unchanged immediately before mutation, and change-logged
-     per attempt.
+     per attempt. If three close/reopen attempts still leave the rollup
+     empty, the janitor ESCALATES to the workflow_dispatch fallback: it
+     dispatches the light gate workflows against the PR's head branch
+     (the #535/#536 manual recovery), once per PR, head-verified,
+     --apply only, change-logged.
 
 Safety rails (all non-negotiable):
   - --merge is passed to the gate only after an immediately-preceding
@@ -87,6 +91,23 @@ PROMOTABLE_FAIL = "pr open & ready"
 EMPTY_CI_MARKER = "no CI checks reported"
 REPAIR_COOLDOWN_S = 60 * 60   # min spacing between repair attempts per PR
 REPAIR_MAX_ATTEMPTS = 3       # lifetime close/reopen attempts per PR
+
+# Dispatch-fallback ladder (second rung): after REPAIR_MAX_ATTEMPTS
+# close/reopen cycles leave the rollup empty, dispatch these light gate
+# workflows against the head branch. They carry both pull_request and
+# workflow_dispatch triggers and no required inputs, so a dispatch run
+# populates the rollup exactly like the event the PR never fired.
+# Override with JANITOR_DISPATCH_WORKFLOWS (comma-separated) if the gate
+# set changes. Deliberately excludes the heavy e2e/image/wr-conf suites:
+# the gate needs a non-empty all-green rollup, not the full matrix.
+DISPATCH_WORKFLOWS = [
+    s.strip()
+    for s in os.environ.get(
+        "JANITOR_DISPATCH_WORKFLOWS",
+        "wf-lint.yml,sdk-drift-guard.yml,seed-guard.yml,apidocs.yml",
+    ).split(",")
+    if s.strip()
+]
 
 
 def _now_iso() -> str:
@@ -222,18 +243,17 @@ def repair_empty_rollup(
     attempts = _parse_int(rec.get("attempts"))
     if attempts >= REPAIR_MAX_ATTEMPTS:
         if not rec.get("exhausted_logged"):
-            print(f"  #{num}: repair attempts exhausted ({attempts}/{REPAIR_MAX_ATTEMPTS}) — needs human attention", file=out)
+            print(f"  #{num}: repair attempts exhausted ({attempts}/{REPAIR_MAX_ATTEMPTS}) — escalating to dispatch fallback", file=out)
             if post_change_log(
-                f"attestation-janitor: repair-blocked — PR #{num} repair attempts exhausted",
+                f"attestation-janitor: PR #{num} close/reopen repairs exhausted — escalating to dispatch fallback",
                 f"bin/attestation_janitor.py at {_now_iso()}: PR #{num} (head {head_full[:12]}) is "
                 f"attested but its CI rollup is still empty after {attempts} close/reopen repairs "
                 f"(cooldown {REPAIR_COOLDOWN_S // 60}m). The reopen events are not producing "
-                "check runs — human attention requested (candidate fallback: workflow_dispatch "
-                "the dispatchable gate workflows against the branch, as done for #535/#536).",
+                "check runs — the workflow_dispatch fallback fires next (gate workflows "
+                "against the head branch, as done manually for #535/#536).",
             ):
                 rec["exhausted_logged"] = True
-            return "capped"
-        return "capped"
+        return _dispatch_fallback(num, rec, apply, runner, out)
 
     last = _parse_float(rec.get("last_attempt"))
     if last and (now_s - last) < REPAIR_COOLDOWN_S:
@@ -275,6 +295,61 @@ def repair_empty_rollup(
     ):
         print(f"  #{num}: WARNING — change-log post failed (repair itself succeeded)", file=out)
     return "done"
+
+
+def _dispatch_fallback(
+    num: int,
+    rec: Dict[str, Any],
+    apply: bool,
+    runner: Callable,
+    out: Any = sys.stdout,
+) -> str:
+    """Second rung of the repair ladder: dispatch gate workflows at the branch.
+
+    Fires once per PR (guard flag recorded only after every dispatch
+    succeeded; a partial failure leaves the flag unset so the next tick
+    retries). Check-only prints intent and mutates nothing. Returns
+    'dispatched', 'waited', 'readonly', or 'failed'.
+    """
+    if rec.get("dispatch_attempted"):
+        print(f"  #{num}: dispatch fallback already fired ({rec.get('dispatch_at_iso', '?')}) — waiting for CI", file=out)
+        return "waited"
+    if not apply:
+        print(f"  #{num}: dispatch fallback pending ({len(DISPATCH_WORKFLOWS)} gate workflows) — would fire under --apply", file=out)
+        return "readonly"
+
+    try:
+        branch = gh_json("pr", "view", str(num), "--json", "headRefName", runner=runner).get("headRefName", "")
+    except RuntimeError as exc:
+        print(f"  #{num}: dispatch fallback failed — branch lookup error: {exc}", file=out)
+        return "failed"
+    if not branch:
+        print(f"  #{num}: dispatch fallback failed — empty head branch name (fork PR?)", file=out)
+        return "failed"
+
+    for wf in DISPATCH_WORKFLOWS:
+        d = runner(["gh", "workflow", "run", wf, "--ref", branch],
+                   capture_output=True, text=True, timeout=60)
+        if d.returncode != 0:
+            print(f"  #{num}: dispatch fallback FAILED on {wf}: {d.stderr.strip()[:160]} — will retry next tick", file=out)
+            return "failed"
+
+    rec["dispatch_attempted"] = True
+    rec["dispatch_at"] = time.time()
+    rec["dispatch_at_iso"] = _now_iso()
+    rec["dispatch_workflows"] = list(DISPATCH_WORKFLOWS)
+    rec["dispatch_branch"] = branch
+    print(f"  #{num}: dispatch fallback fired — {len(DISPATCH_WORKFLOWS)} gate workflows dispatched against '{branch}'; rollup populates as they complete", file=out)
+    if not post_change_log(
+        f"attestation-janitor: dispatch fallback fired for PR #{num}",
+        f"bin/attestation_janitor.py at {_now_iso()}: PR #{num} (head {branch}) remained "
+        "empty-rollup after the close/reopen ladder, so the gate workflows were "
+        f"dispatched against the head branch (manual-recovery precedent #535/#536): "
+        f"{', '.join(DISPATCH_WORKFLOWS)}. The merge gate re-runs and decides on a "
+        "later cycle once the rollup is populated.",
+    ):
+        print(f"  #{num}: WARNING — change-log post failed (dispatch itself succeeded)", file=out)
+    return "dispatched"
 
 
 def load_state(path: Path) -> Dict[str, Any]:
@@ -381,6 +456,9 @@ def run_cycle(
                     now_s, apply, runner, out,
                 )
                 if outcome in ("head-moved", "failed"):
+                    # note: the dispatch fallback's 'failed' lands here too
+                    # (it is a tool error), while 'waited'/'dispatched'/
+                    # 'readonly' are expected outcomes.
                     tool_error = True
                 held.append(num)
                 continue
