@@ -32,12 +32,17 @@
 # Phase-2 (design D5, deferred-post-phase-1, approved 2026-09-25): adds a
 # nats:2-alpine (-js) service, provisions the WRITE_QUEUE stream via
 # bin/ensure-write-queue-stream.py, boots the app with NATS_URL wired, and
-# runs one probe intent through the full produce→reconcile arc: publish →
+# runs two probe intents through the full produce→reconcile arc: publish →
 # JetStream stream → durable consumer (write_queue_reconciler, explicit
-# acks) → durable resolution.write_queue_applied row. The probe intent uses
-# an unmapped target so the arc is exercised without depending on seed data
-# (the interpreter's governed-transition path needs seed rows the
-# schema-only snapshot does not carry).
+# acks) → durable resolution.write_queue_applied row. Arc 1 (always) uses an
+# unmapped target — the staging-only branch, real and seed-independent. Arc
+# 2 (governed) drives the app's REAL producer route (POST
+# /api/solscript/transition-entity → WriteQueueProducer → CanonicalEnvelope
+# → JetStream, per tester inspection cbe83e25) with a transition-entity
+# intent: the reconciler hydrates the governed-transition interpreter from
+# the store at startup and decides committed/refused when seed data is
+# present, rejected (entity-not-found, durably recorded) on the schema-only
+# snapshot — a real governed decision either way.
 #
 # ACTIVATED 2026-09-23 by architect ruling 619049d6 (interim owner, D4):
 # runs on PRs touching nexus-core paths or sql/** (the pull_request trigger's
@@ -167,10 +172,29 @@ jobs:
             "SELECT count(*) FROM pg_tables WHERE schemaname = 'execution'")
           echo "execution tables: $EXEC_TABLES"
           [ "$EXEC_TABLES" -ge 4 ] || { echo "execution schema not provisioned"; exit 1; }
+          # Governed-transition surfaces report (hydration precondition):
+          # hydration is possible only when the store carries entities +
+          # state transitions. With no resolution.entity surface,
+          # hydrate_interpreter() logs an explicit unhydrated verdict and the
+          # governed probe expects the deterministic rejected branch
+          # (entity-not-found, durably recorded) — CI stays green on the
+          # schema-only snapshot and UPGRADES to committed/refused once a
+          # future bootstrap refresh (D2 cadence) carries seed rows.
+          if docker exec ci-pg psql -U nexus -d nexus -tAc \
+              "SELECT to_regclass('resolution.entity') IS NOT NULL" | grep -q t; then
+            N_ENT=$(docker exec ci-pg psql -U nexus -d nexus -tAc "SELECT count(*) FROM resolution.entity")
+            N_TR=$(docker exec ci-pg psql -U nexus -d nexus -tAc "SELECT count(*) FROM resolution.concept_state_transition")
+            echo "governed seed surfaces: entity=$N_ENT concept_state_transition=$N_TR"
+          else
+            echo "governed seed surfaces: resolution.entity absent (schema-only snapshot) — governed probe expects the rejected branch"
+          fi
 
       - name: Boot against provisioned schema
         run: |
-          docker run -d --name ci-app --network ci-boot-smoke \
+          # -p 8092:8092 — published so the runner-side governed probe can
+          # drive the app's real producer route (POST /api/solscript/
+          # transition-entity) through WriteQueueProducer.
+          docker run -d --name ci-app --network ci-boot-smoke -p 8092:8092 \
             -e NEXUS_CORE_DB_URL=jdbc:postgresql://ci-pg:5432/nexus \
             -e NEXUS_CORE_DB_USER=nexus \
             -e NEXUS_CORE_DB_PASSWORD=nexus \
@@ -201,29 +225,45 @@ jobs:
             echo "::error::health components.db is not UP — validate failed or datasource absent"; cat health.json; exit 1; }
           echo "boot validated against provisioned schema: status UP, db UP"
 
-      - name: "Write-queue arc probe (D5) — publish, stream, durable consumer, applied"
+      - name: "Write-queue arc probe (D5) — produce, stream, reconcile, verify"
         run: |
-          pip install --quiet nats-py psycopg2-binary
-          # The stream must exist before publish — JetStream drops subjects
-          # no stream matches, and the whole point is a durable arc.
+          # Pinned probes (inspection cbe83e25: bare unpinned pip bootstrap
+          # on a moving ubuntu-latest interpreter is non-reproducible).
+          python3 -m pip install --quiet \
+            "nats-py>=2.8,<3" "psycopg2-binary>=2.9,<3"
+          # The stream must exist before any publish — JetStream drops
+          # subjects no stream matches, and the whole point is a durable arc.
           python3 bin/ensure-write-queue-stream.py --nats nats://localhost:4222
           WRITE_ID="smoke-$(date -u +%Y%m%dT%H%M%SZ)"
-          echo "probe writeId: $WRITE_ID"
+          GOV_ID="smoke-gov-$(date -u +%Y%m%dT%H%M%SZ)"
+          echo "staging writeId: $WRITE_ID"
+          echo "governed writeId: $GOV_ID"
+          trap 'kill $RECONCILER_PID 2>/dev/null || true' EXIT
           # Start the reconciler (JetStream durable consumer, explicit acks)
-          # on the runner; it drains the stream into resolution.write_queue_applied.
+          # on the runner; it drains the stream into resolution.write_queue_applied
+          # and at startup hydrates the governed-transition interpreter from
+          # the store (unhydrated + explicit verdict on a seed-free snapshot).
           nohup env DATABASE_URL=postgres://nexus:nexus@localhost:5432/nexus \
             NATS_URL=nats://localhost:4222 \
             python3 python/cascade/write_queue_reconciler.py > reconciler.log 2>&1 &
           RECONCILER_PID=$!
-          sleep 6
-          # Publish ONE probe intent: a bare WriteQueueEntry with an unmapped
-          # target — the reconciler's staging-only branch, a real canonical
-          # apply (durable audit row) without seed-data dependence. The probe
-          # script also asserts JetStream actually persisted it (a publish to
-          # a subject no stream matches silently "succeeds" in core NATS).
+          # Real readiness: wait for the durable consumer to attach (a fixed
+          # sleep is a blind start — inspection cbe83e25).
+          for i in $(seq 1 30); do
+            grep -q "durable consumer .* attached" reconciler.log 2>/dev/null && break
+            sleep 1
+          done
+          grep -q "durable consumer .* attached" reconciler.log || {
+            echo "::error::reconciler never attached its durable consumer"
+            tail -40 reconciler.log
+            exit 1
+          }
+          # ── Arc 1 (always): staging-only branch via an unmapped target.
+          # The probe asserts JetStream actually persisted the publish (a
+          # publish to a subject no stream matches silently "succeeds" in
+          # core NATS).
           python3 bin/ci_write_queue_probe.py --nats nats://localhost:4222 \
             --write-id "$WRITE_ID"
-          # The reconciler must drain the stream into the canonical staging table.
           ok=""
           for i in $(seq 1 30); do
             n=$(docker exec ci-pg psql -U nexus -d nexus -tAc \
@@ -231,13 +271,26 @@ jobs:
             if [ "$n" -ge 1 ]; then ok=1; break; fi
             sleep 2
           done
-          kill $RECONCILER_PID 2>/dev/null || true
           if [ -z "$ok" ]; then
-            echo "::error::probe intent never reconciled into resolution.write_queue_applied"
+            echo "::error::staging intent never reconciled into resolution.write_queue_applied"
             tail -40 reconciler.log
             exit 1
           fi
-          echo "write-queue arc complete: publish → WRITE_QUEUE stream → durable consumer → resolution.write_queue_applied ($WRITE_ID)"
+          echo "staging arc complete: publish → WRITE_QUEUE stream → durable consumer → resolution.write_queue_applied ($WRITE_ID)"
+          # ── Arc 2 (governed): driven through the app's REAL producer route
+          # (POST /api/solscript/transition-entity → WriteQueueProducer →
+          # CanonicalEnvelope → JetStream), closing the coverage gap from
+          # tester inspection cbe83e25 (app producer path unexercised). The
+          # interpreter decides: committed/refused with seed data, rejected
+          # (entity-not-found, durably recorded) on the schema-only snapshot.
+          # The postcondition asserts the staging row AND the durable
+          # KeychainEvent by writeId — the interpreter path's canonical writes.
+          python3 bin/ci_write_queue_probe.py --mode governed \
+            --app-url http://localhost:8092 --write-id "$GOV_ID"
+          python3 bin/ci_governed_postcondition.py \
+            --dsn postgres://nexus:nexus@localhost:5432/nexus \
+            --write-id "$GOV_ID" --timeout 90
+          echo "governed arc complete: app route → producer → WRITE_QUEUE stream → interpreter decision → staging row + keychain_event_outbox ($GOV_ID)"
 
       - name: Route-family probes (soft — informational)
         continue-on-error: true
@@ -255,7 +308,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: boot-smoke-health
-          path: health.json
+          path: |
+            health.json
+            reconciler.log
           retention-days: 7
 
       - name: Tear down

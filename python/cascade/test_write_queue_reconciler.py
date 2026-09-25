@@ -199,5 +199,132 @@ class TestApply(unittest.TestCase):
             self.assertTrue(db.updates)
 
 
+class TestHydration(unittest.TestCase):
+    """Governed-transition interpreter hydration (startup seed loading).
+
+    The reconciler hydrates once via hydrate_interpreter(); with no usable
+    governed surfaces (entities + state transitions) it stays unhydrated and
+    _apply_transition_entity decides on a fresh empty interpreter — the
+    deterministic entity-not-found rejection, durably recorded.
+    """
+
+    def _reset(self):
+        wqr._HYDRATED_INTERPRETER = None
+        wqr._HYDRATION_ATTEMPTED = False
+
+    def setUp(self):
+        self._reset()
+
+    def tearDown(self):
+        self._reset()
+
+    def test_get_interpreter_hydrated_wins(self):
+        sentinel = object()
+        wqr._HYDRATED_INTERPRETER = sentinel
+        self.assertIs(wqr._get_interpreter(), sentinel)
+
+    def test_get_interpreter_unhydrated_is_fresh(self):
+        a = wqr._get_interpreter()
+        b = wqr._get_interpreter()
+        self.assertIsNot(a, b, "unhydrated path must hand out fresh empty interpreters")
+
+    def test_hydrate_without_dsn_is_false(self):
+        import asyncio
+        self.assertFalse(asyncio.run(wqr.hydrate_interpreter(None)))
+        self.assertTrue(wqr._HYDRATION_ATTEMPTED)
+        self.assertIsNone(wqr._HYDRATED_INTERPRETER)
+
+    def _patch_asyncpg(self, pool):
+        import types, unittest.mock as um
+        fake = types.SimpleNamespace()
+        async def _create_pool(*a, **kw):
+            return pool
+        fake.create_pool = _create_pool
+        return um.patch.dict("sys.modules", {"asyncpg": fake})
+
+    def test_hydrate_empty_store_stays_unhydrated(self):
+        """Schema-only store (no entities/transitions) → unhydrated verdict."""
+        import asyncio, types, unittest.mock as um
+
+        class _FakePool:
+            async def close(self):
+                pass
+
+        class _FakeLoader:
+            def __init__(self, interp, pool):
+                self.interp = interp
+            async def load_all(self):
+                pass  # store carries no seed rows
+
+        with self._patch_asyncpg(_FakePool()), \
+                um.patch("SOLScript.solscript.database_loader.DatabaseLoader", _FakeLoader):
+            ok = asyncio.run(wqr.hydrate_interpreter("postgres://x"))
+        self.assertFalse(ok, "empty store must not hydrate")
+        self.assertIsNone(wqr._HYDRATED_INTERPRETER)
+
+    def test_hydrate_with_seed_data_enables_governed_path(self):
+        """Entities + transitions present → hydrated; _apply uses it."""
+        import asyncio, types, unittest.mock as um
+
+        class _FakePool:
+            async def close(self):
+                pass
+
+        class _FakeLoader:
+            def __init__(self, interp, pool):
+                self.interp = interp
+            async def load_all(self):
+                self.interp.entities["e-1"] = object()
+                self.interp.state_transitions["t-1"] = object()
+
+        with self._patch_asyncpg(_FakePool()), \
+                um.patch("SOLScript.solscript.database_loader.DatabaseLoader", _FakeLoader):
+            ok = asyncio.run(wqr.hydrate_interpreter("postgres://x"))
+        self.assertTrue(ok)
+        self.assertIsNotNone(wqr._HYDRATED_INTERPRETER)
+
+        # The governed apply path must decide against the HYDRATED instance.
+        class _HydratedInterp:
+            last_transition_event = {"event_id": "evt-h"}
+            def transition_entity(self, entity_id, transition_id, **kw):
+                return True, [{"rule_id": "r1", "passed": True}]
+
+        wqr._HYDRATED_INTERPRETER = _HydratedInterp()
+        db = FakeDb()
+        intent = dict(BASE_INTENT)
+        intent["writeId"] = "tr-hyd"
+        intent["correlationId"] = "corr-hyd"
+        intent["payload"] = {"entityId": "e-1", "transitionId": "t-1"}
+        ok, detail = wqr._apply(intent, db)
+        self.assertTrue(ok)
+        self.assertIn("committed", detail)
+        self.assertEqual(len(db.outbox), 1, "KeychainEvent to outbox")
+
+    def test_governed_refusal_is_a_result_not_partial_application(self):
+        """Contract (typespec/v1/write-queue): a DECIDED refusal finished the
+        reconciliation — outcome result — it is NOT partial_application
+        ("only part of the mutation applied"). Empirically misclassified on
+        the first live governed arc, 2026-09-25.
+        """
+        import unittest.mock as um
+
+        class _RefusingInterp:
+            last_transition_event = {"event_id": "evt-r"}
+            def transition_entity(self, entity_id, transition_id, **kw):
+                return False, [{"rule_id": "r1", "passed": False}]
+
+        with _Ctx(), um.patch("SOLScript.solscript.interpreter.ResolutionInterpreter",
+                              return_value=_RefusingInterp()):
+            db = FakeDb()
+            intent = dict(BASE_INTENT)
+            intent["writeId"] = "tr-refuse"
+            intent["payload"] = {"entityId": "e-1", "transitionId": "t-1"}
+            ok, detail = wqr._apply(intent, db)
+        self.assertTrue(ok, "refused is a decided, completed reconciliation")
+        self.assertIn("refused", detail)
+        self.assertEqual(len(db.outbox), 1, "refusal KeychainEvent durably recorded")
+        self.assertEqual(db.outbox[0][3], "refused")
+
+
 if __name__ == "__main__":
     unittest.main()
