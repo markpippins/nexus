@@ -19,8 +19,12 @@ with every bound explicit:
 - **Deterministic ordering**: results sort by (depth, node_path,
   observation_id). Same read set in, same neighborhood out — byte-stable.
 - **Honest truncation**: when a budget cuts the traversal, the result
-  reports what was omitted (``truncated``, ``truncation`` detail with the
-  remaining frontier size) — partial results never masquerade as complete.
+  reports what was omitted (``truncated``, ``truncation`` detail whose
+  ``frontier_remaining`` counts nodes encountered but not returned under
+  that budget). ``max_depth`` exhaustion skips over-depth nodes but still
+  drains in-budget nodes behind them, so the omitted total is finalized
+  after the drain — measured, never assumed empty. Partial results never
+  masquerade as complete.
 - **Provenance on every item**: each returned item is (or embeds) a full
   observation dict with source/identity/anchor — no bare node paths.
 - **Visible missing/unparseable targets**: a references-hop naming an
@@ -198,6 +202,7 @@ def pull_neighborhood(run: dict[str, Any], query: dict[str, Any]) -> dict[str, A
     queued: set[str] = {anchor_id}
     bytes_used = 0
     truncated = False
+    depth_omitted = 0
     truncation: dict[str, Any] | None = None
     frontier: list[tuple[str, int]] = []
 
@@ -265,12 +270,14 @@ def pull_neighborhood(run: dict[str, Any], query: dict[str, Any]) -> dict[str, A
         if oid in emitted:  # invariant guard; _admit dedupes at push time
             continue
         if depth > max_depth:
-            # max_depth EXHAUSTION is not truncation — mark bounded-honesty
-            # and skip the node (never expanded), but keep draining the
-            # frontier so in-budget nodes behind it are still returned.
+            # max_depth EXHAUSTION: the node is never expanded; keep
+            # draining the frontier so in-budget nodes behind it are still
+            # returned. Honesty (tester finding 8a89a638): every node
+            # omitted under the depth bound is counted — the total is only
+            # final after the drain, so the truncation record is written
+            # post-loop, not hardcoded here.
             truncated = True
-            if truncation is None or truncation.get("budget") != "max_nodes":
-                truncation = {"budget": "max_depth", "frontier_remaining": 0}
+            depth_omitted += 1
             continue
         target = index.get(oid)
         if target is None:
@@ -305,6 +312,9 @@ def pull_neighborhood(run: dict[str, Any], query: dict[str, Any]) -> dict[str, A
             for nxt in sorted(set(edges.get(oid, []))):
                 _admit(nxt, depth + 1)
             frontier.sort(key=lambda t: _frontier_key(t, index))
+
+    if truncation is None and depth_omitted:
+        truncation = {"budget": "max_depth", "frontier_remaining": depth_omitted}
 
     items.sort(key=_sort_key)
     return {

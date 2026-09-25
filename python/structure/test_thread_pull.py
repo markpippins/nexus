@@ -213,6 +213,38 @@ def test_max_depth_budget_enforced() -> None:
     ids = {i["observation_id"] for i in out["items"]}
     assert gov in ids, "depth-1 nodes are returned"
     assert "deep-oid" not in ids, "depth-2 nodes are never expanded"
+    assert out["truncation"]["frontier_remaining"] == 1, (
+        "the single depth-2 node is counted as omitted"
+    )
+
+
+def test_max_depth_frontier_count_is_honest() -> None:
+    # Tester finding 8a89a638: at first depth exhaustion the recorded
+    # frontier_remaining was hardcoded to 0, understating omitted work.
+    # Regression: one depth-1 hop, then three distinct depth-2 targets —
+    # the recorded count must equal ALL nodes omitted under the bound
+    # (in-budget nodes behind the cut are still returned, so the total is
+    # finalized after the drain).
+    run = _corpus_run()
+    fk = next(o["observation_id"] for o in run["observations"]
+              if o["fact_kind"] == "foreign_key"
+              and o["payload"].get("references_table") == "governed_tag")
+    gov = _table_id(run, "governed_tag")
+    run = dict(run)
+    run["bridge"] = {"candidates": [
+        {"evidence_refs": [f"deep-{k}", gov]} for k in range(3)
+    ]}
+    out = _q(run, fk, direction="references",
+             budgets={"max_depth": 1, "max_nodes": 64, "max_bytes": 1 << 20})
+    assert out["truncated"] is True
+    assert out["truncation"]["budget"] == "max_depth"
+    ids = {i["observation_id"] for i in out["items"]}
+    assert gov in ids, "depth-1 nodes are still returned after the cut"
+    for k in range(3):
+        assert f"deep-{k}" not in ids, "depth-2 nodes are never expanded"
+    assert out["truncation"]["frontier_remaining"] == 3, (
+        "every depth-omitted node is counted, not just the first"
+    )
 
 
 def test_max_bytes_budget_enforced() -> None:
