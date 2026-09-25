@@ -57,6 +57,27 @@ Rules
                  of scope — no runner-level mvn, and the host cache would
                  not apply. mvnw counts (same cold-pull class); a wrong-
                  ecosystem cache (gradle/sbt) does not satisfy it.
+  node-cache     jobs that run npm (ci|install) inside a lock-bearing
+                 directory must cache the npm store: actions/setup-node
+                 without `cache: npm` re-downloads the dependency tree
+                 every run. The gate mirrors GitHub's own semantics —
+                 `cache: npm` hard-fails without a lockfile — so the rule
+                 fires only where the remediation is satisfiable: a
+                 package-lock.json must exist at the scan root or in one
+                 of the job's working-directory/cd targets. Lockless
+                 installs (deliberate, per npm-ci's opt-in stance) stay
+                 silent; the message names the lock so
+                 cache-dependency-path is copy-pasteable.
+  pip-cache      jobs that pip install from a requirements file (-r/--
+                 requirement) must cache the pip wheel store:
+                 actions/setup-python without `cache: pip` re-downloads
+                 wheels every run, and a -r install supplies a natural
+                 cache-dependency-path. Ad-hoc 1-2 package installs
+                 (pytest, psycopg2) stay silent on purpose: the wheel-
+                 cache win is marginal there and the key file would be
+                 arbitrary. The rule checks the requirements file actually
+                 exists (repo root or a job working-directory) so the
+                 remediation is real.
 
 Escape hatch: '# wf-lint-allow' (bare) suppresses every rule for that
 line; '# wf-lint-allow: rule1,rule2' suppresses only the named rules;
@@ -843,8 +864,11 @@ def _job_runs_maven(body: list[str]) -> bool:
     return False
 
 
-def _uncached_setup_java_offsets(body: list[str]) -> list[int]:
-    """Body offsets of setup-java steps lacking a `cache: maven` input.
+def _uncached_setup_step_offsets(
+    body: list[str], setup_re, cache_ok
+) -> list[int]:
+    """Body offsets of setup-* steps matching `setup_re` whose with: block
+    carries no line satisfying `cache_ok` (the ecosystem's cache predicate).
 
     Step anatomy (house 2-space style): a list item's first property carries
     the `- ` marker (e.g. `- name:`), so its key sits two columns LEFT of the
@@ -863,7 +887,7 @@ def _uncached_setup_java_offsets(body: list[str]) -> list[int]:
     """
     out: list[int] = []
     for i, raw in enumerate(body):
-        if not SETUP_JAVA_RE.match(raw):
+        if not setup_re.match(raw):
             continue
         u = len(raw) - len(raw.lstrip())
         # Step start: walk back to the `- ` item line at the property indent's
@@ -909,7 +933,7 @@ def _uncached_setup_java_offsets(body: list[str]) -> list[int]:
                 if line.strip():
                     if len(line) - len(line.lstrip()) <= w:
                         break  # dedent: with: block closed
-                    if CACHE_MAVEN_RE.match(line):
+                    if cache_ok(line):
                         cached = True
                         break
         if not cached:
@@ -952,7 +976,7 @@ class MavenCacheRule(Rule):
                 continue  # reusable-workflow caller: steps live elsewhere
             if not _job_runs_maven(body):
                 continue
-            uncached = _uncached_setup_java_offsets(body)
+            uncached = _uncached_setup_step_offsets(body, SETUP_JAVA_RE, CACHE_MAVEN_RE.match)
             if uncached:
                 anchor = header_idx + uncached[0] + 2  # 1-based lineno of body[uncached[0]]
                 out.append(Finding(
@@ -963,6 +987,197 @@ class MavenCacheRule(Rule):
                     f"to the step's with: block",
                 ))
         return out
+
+
+# --------------------------------------------------------------------------
+# rules: node-cache / pip-cache (npm + pip cold-pull hygiene)
+# --------------------------------------------------------------------------
+
+SETUP_NODE_RE = re.compile(r"^\s*(?:-\s+)?uses:\s*actions/setup-node\b")
+SETUP_PYTHON_RE = re.compile(r"^\s*(?:-\s+)?uses:\s*actions/setup-python\b")
+CACHE_NPM_RE = re.compile(r"^\s*cache:\s*['\"]?npm['\"]?\s*(?:#.*)?$")
+CACHE_PIP_RE = re.compile(r"^\s*cache:\s*['\"]?pip['\"]?\s*(?:#.*)?$")
+CACHE_DEP_PATH_RE = re.compile(r"^\s*cache-dependency-path:\s*['\"]?(\S+?)['\"]?\s*(?:#.*)?$")
+NPM_RUN_RE = re.compile(r"\bnpm\s+(?:ci|install)\b")
+PIP_R_RUN_RE = re.compile(r"\bpip(?:\d(?:\.\d+)?)?\s+(?:install\s+)?-r\s+|--requirement\s+(\S+)")
+PIP_R_ALT_RE = re.compile(r"(?:pip|pip3|python3?(?:\.\d+)?)\s+-m\s+pip\s+install.*(?:-r|--requirement)\s+(\S+)")
+RUN_LINE_RE = re.compile(r"^\s*(?:-\s+)?run:\s*")
+
+
+def _cd_targets_in_body(body: list[str]) -> set[str]:
+    """Directories the job's run blocks cd into (in-block `cd x`), plus any
+    step-level working-directory: values — the same resolution npm-ci uses,
+    approximated for the lock-presence gate."""
+    dirs: set[str] = set()
+    for raw in body:
+        m = WD_RE.match(raw)
+        if m:
+            dirs.add(m.group(1))
+        for cd in CD_RE.finditer(raw):
+            dirs.add(cd.group(1))
+    return dirs
+
+
+def _pip_requirements_files(body: list[str]) -> set[str]:
+    """Requirement files named by `-r`/`--requirement` in the job's run
+    blocks (both `pip install -r f` and `python3 -m pip install -r f`)."""
+    files: set[str] = set()
+    for raw in body:
+        for m in PIP_R_ALT_RE.finditer(raw):
+            files.add(m.group(1).strip("'\""))
+    return files
+
+
+def _root_of(rule: "NodeCacheRule | PipCacheRule") -> str:
+    return getattr(rule, "_target", ".")
+
+
+def _contained_path(rule, d: str) -> str | None:
+    """`d` resolved against the scan root, or None when it escapes the root
+    (mirror of _nearest_lock's stop-at-root). Without this, a cleanup
+    `cd ../..` in a run block made the sonar job's gate match the *dev
+    checkout's* lock one level above the repo — an existence check that
+    would silently leak host state into CI linting."""
+    root = os.path.abspath(_root_of(rule))
+    p = os.path.normpath(os.path.join(root, d))
+    if p != root and not p.startswith(root + os.sep):
+        return None
+    return p
+
+
+def _exists_under_target(rule, path: str) -> bool:
+    root = _root_of(rule)
+    candidate = path if os.path.isabs(path) else os.path.join(root, path)
+    return os.path.isfile(candidate)
+
+
+class _SetupCacheRuleBase(Rule):
+    """Shared machinery for the setup-node/setup-python cache rules: gate on
+    GitHub-reality (trigger present), skip caller jobs, find uncached setup
+    steps via the generalized step-window helper, then decide per job whether
+    the ecosystem's remediation is satisfiable (the npm-ci philosophy — the
+    rule never demands what GitHub's own action would reject)."""
+
+    setup_re: re.Pattern
+    cache_ok: object
+    _target = "."
+
+    def applies(self, rel: str, filename: str, target: str) -> bool:
+        self._target = target
+        return _in_workflows(rel, target) and filename.endswith((".yml", ".yaml"))
+
+    def scan_line(self, raw: str, rel: str, lineno: int) -> list[Finding]:
+        return []  # structural rule: judged via scan_file only
+
+    def _gate_ok(self, name: str, header_idx: int, body: list[str]) -> bool:
+        raise NotImplementedError
+
+    def scan_file(self, rel: str, lines: list[str]) -> list[Finding]:
+        out: list[Finding] = []
+        if not (
+            _has_top_level_key(lines, "on")
+            or _has_top_level_key(lines, "true")
+            or _has_top_level_key(lines, "true:")
+        ):
+            return []
+        for name, header_idx, _job_indent, uses_key, body in _locate_jobs(lines):
+            if uses_key:
+                continue
+            uncached = _uncached_setup_step_offsets(body, self.setup_re, self.cache_ok)
+            if not uncached:
+                continue
+            if not self._gate_ok(name, header_idx, body):
+                continue
+            anchor = header_idx + uncached[0] + 2
+            out.append(Finding(
+                "violation", rel, anchor, self.name,
+                self._message(name, body),
+            ))
+        return out
+
+    def _message(self, name: str, body: list[str]) -> str:  # pragma: no cover - abstract
+        raise NotImplementedError
+
+
+class NodeCacheRule(_SetupCacheRuleBase):
+    """npm cold-pulls in lock-bearing dirs: setup-node must cache the npm
+    store. Gate: a package-lock.json exists at the scan root, in a job
+    working-directory, or in an in-block cd target — mirroring npm-ci's
+    lock-presence trigger, and matching GitHub's own `cache: npm` hard
+    requirement so the rule never demands an unremediable fix."""
+
+    name = "node-cache"
+    setup_re = SETUP_NODE_RE
+    cache_ok = staticmethod(CACHE_NPM_RE.match)
+
+    def _lock_dirs(self, body: list[str]) -> list[str]:
+        """Job directories (root-relative, scan-root-contained) holding a
+        package-lock.json — the dirs `cache: npm` + cache-dependency-path
+        could key on. Escapees (`cd ../..`) are dropped by _contained_path."""
+        out = []
+        for d in _cd_targets_in_body(body):
+            p = _contained_path(self, d)
+            if p and os.path.isfile(os.path.join(p, "package-lock.json")):
+                out.append(os.path.relpath(p, os.path.abspath(self._target)).replace(os.sep, "/"))
+        return sorted(out)
+
+    def _gate_ok(self, name: str, header_idx: int, body: list[str]) -> bool:
+        # npm-run half-gate (mirrors maven's _job_runs_maven): a setup-node
+        # job that never runs npm ci/install is not a cold-pull subject.
+        # Comment lines never count; NPM_RUN_RE is npm-ci's own pattern.
+        if not any(
+            NPM_RUN_RE.search(l.strip())
+            for l in body
+            if l.strip() and not l.strip().startswith("#")
+        ):
+            return False
+        if os.path.isfile(os.path.join(self._target, "package-lock.json")):
+            return True
+        return bool(self._lock_dirs(body))
+
+    def _message(self, name: str, body: list[str]) -> str:
+        dirs = self._lock_dirs(body)
+        path = f"{dirs[0]}/package-lock.json" if dirs else "package-lock.json"
+        return (
+            f"job `{name}` runs npm in a lock-bearing directory but its actions/setup-node "
+            f"step has no `cache: npm` — every run re-downloads the dependency tree; add "
+            f"`cache: npm` with `cache-dependency-path: {path}` to the "
+            f"step's with: block"
+        )
+
+
+class PipCacheRule(_SetupCacheRuleBase):
+    """pip cold-pulls from requirements files: setup-python must cache the
+    pip wheel store. Gate: the job installs with `pip install -r <file>` AND
+    that file exists at the scan root or inside a job working-directory —
+    giving the cache a natural cache-dependency-path. Ad-hoc 1-2 package
+    installs stay silent (marginal wheel-cache win; arbitrary key file)."""
+
+    name = "pip-cache"
+    setup_re = SETUP_PYTHON_RE
+    cache_ok = staticmethod(CACHE_PIP_RE.match)
+
+    def _gate_ok(self, name: str, header_idx: int, body: list[str]) -> bool:
+        reqs = _pip_requirements_files(body)
+        if not reqs:
+            return False
+        for f in reqs:
+            if _exists_under_target(self, f):
+                return True
+            # relative to any contained job working-directory
+            for d in _cd_targets_in_body(body):
+                p = _contained_path(self, d)
+                if p and os.path.isfile(os.path.join(p, f)):
+                    return True
+        return False
+
+    def _message(self, name: str, body: list[str]) -> str:
+        reqs = sorted(_pip_requirements_files(body))
+        return (
+            f"job `{name}` pip-installs from {reqs[0]} but its actions/setup-python step "
+            f"has no `cache: pip` — every run re-downloads the wheels; add `cache: pip` "
+            f"with `cache-dependency-path: {reqs[0]}` to the step's with: block"
+        )
 
 
 # --------------------------------------------------------------------------
@@ -1004,6 +1219,8 @@ RULES: list[Rule] = [
     JobHardeningRule(),
     NpmCiRule(),
     MavenCacheRule(),
+    NodeCacheRule(),
+    PipCacheRule(),
 ]
 
 
