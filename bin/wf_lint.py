@@ -855,6 +855,7 @@ class NpmCiRule(Rule):
 # while maven-the-word, mvn-repo paths, and bare `mvn` (no args) do not.
 MVN_RUN_RE = re.compile(r"\b(?:mvn|mvnw)\s+\S")
 SETUP_JAVA_RE = re.compile(r"^\s*(?:-\s+)?uses:\s*actions/setup-java\b")
+ACTIONS_CACHE_RE = re.compile(r"^\s*(?:-\s+)?uses:\s*actions/cache\b")
 CACHE_MAVEN_RE = re.compile(r"^\s*cache:\s*['\"]?maven['\"]?\s*(?:#.*)?$")
 
 
@@ -993,14 +994,20 @@ def _step_with_value(body: list[str], start: int, end: int, key: str) -> str | N
 
 
 class MavenCacheRule(Rule):
-    """A job that runs mvn/mvnw with an uncached setup-java step cold-pulls
-    Maven Central; concurrent cold pulls trip its 429 rate limiter (2026-09-25
-    main incident, run 36088456372). One finding per offending job, anchored
-    at the first uncached setup-java step so the allow marker works there.
-    Structural (scan_file): needs the job body plus step windows, which no
-    single line can reveal. No --fix pass on purpose: the remediation depends
-    on whether the step already has a with: block, and the edit is one line —
-    review should see it in context.
+    """A job that runs mvn/mvnw must cache the Maven repository, by either
+    idiom: `cache: maven` on its actions/setup-java step, or an explicit
+    actions/cache step restoring ~/.m2. Two idioms because setup-java's
+    cache: maven hardcodes ONE repo-wide key — with several Maven workflows
+    the first-save race hands the entry to whichever job finishes first,
+    and a narrow -pl job starves the full-reactor entry (observed 2026-09-25:
+    the wrp parity job's ~10 MB subtree beat ci.yml's full reactor, leaving
+    every run re-downloading ~93% of Central artifacts). The actions/cache
+    idiom with a per-workflow key is the escape from that race.
+
+    One finding per offending job, anchored at the first uncached setup-java
+    step so the allow marker works there. Structural (scan_file). No --fix
+    pass on purpose: the remediation depends on whether the step already has
+    a with: block, and review should see the edit in context.
     """
 
     name = "maven-cache"
@@ -1010,6 +1017,30 @@ class MavenCacheRule(Rule):
 
     def scan_line(self, raw: str, rel: str, lineno: int) -> list[Finding]:
         return []  # structural rule: judged via scan_file only
+
+    @staticmethod
+    def _has_m2_cache_step(body: list[str]) -> bool:
+        """True when any actions/cache step in the job restores an ~/.m2 path
+        (single-line `path: ~/.m2/repository` or a block/list form — any
+        deeper-indented line under its with: mentioning .m2 counts).
+
+        Matched component-wise: a /-token must be exactly `.m2` or start with
+        `.m2` at a boundary — `~/.m2`, `~/.m2/repository` in; `~/.m2x` is a
+        DIFFERENT directory and must not satisfy this."""
+        for _i, start, end in _setup_step_windows(body, ACTIONS_CACHE_RE):
+            with_idx = _step_with_block(body, start, end)
+            if with_idx is None:
+                continue
+            w = len(body[with_idx]) - len(body[with_idx].lstrip())
+            for j in range(with_idx + 1, end):
+                line = body[j]
+                if not (line.strip() and len(line) - len(line.lstrip()) > w):
+                    continue
+                for token in line.split("/"):
+                    token = token.split(":")[-1].strip("'\"").rstrip(",")
+                    if token == ".m2" or token.startswith(".m2 ") or token.startswith(".m2/"):
+                        return True
+        return False
 
     def scan_file(self, rel: str, lines: list[str]) -> list[Finding]:
         out: list[Finding] = []
@@ -1028,15 +1059,19 @@ class MavenCacheRule(Rule):
             if not _job_runs_maven(body):
                 continue
             uncached = _uncached_setup_step_offsets(body, SETUP_JAVA_RE, CACHE_MAVEN_RE.match)
-            if uncached:
-                anchor = header_idx + uncached[0] + 2  # 1-based lineno of body[uncached[0]]
-                out.append(Finding(
-                    "violation", rel, anchor, self.name,
-                    f"job `{name}` runs mvn/mvnw but its actions/setup-java step has "
-                    f"no `cache: maven` — concurrent cold pulls hit Maven Central's "
-                    f"429 rate limiter (2026-09-25 incident, #569); add `cache: maven` "
-                    f"to the step's with: block",
-                ))
+            if not uncached:
+                continue
+            if self._has_m2_cache_step(body):
+                continue  # explicit actions/cache idiom: per-workflow keys, race-free
+            anchor = header_idx + uncached[0] + 2  # 1-based lineno of body[uncached[0]]
+            out.append(Finding(
+                "violation", rel, anchor, self.name,
+                f"job `{name}` runs mvn/mvnw but caches no Maven repository — concurrent "
+                f"cold pulls hit Maven Central's 429 rate limiter (2026-09-25 incident, "
+                f"#569); add `cache: maven` to the setup-java step, or an actions/cache "
+                f"step on ~/.m2/repository with a per-workflow key (the setup-java shared "
+                f"key loses its entry to whichever Maven job saves first)",
+            ))
         return out
 
 

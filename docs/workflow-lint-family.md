@@ -26,7 +26,7 @@ Exit codes: `0` clean (warnings ok) · `1` violations · `2` usage error.
 | `action-ref` | floating `uses:` refs (`@main`, bare) | pin-hygiene sweep |
 | `job-hardening` | jobs without `timeout-minutes`; workflows without `permissions:` | #507 gate |
 | `npm-ci` | `npm install` where a committed lockfile applies | lockfile adoption #518 |
-| `maven-cache` | runner `mvn`/`mvnw` job with uncached `setup-java` | Maven Central 429 killed main CI (2026-09-25, #569) |
+| `maven-cache` | runner `mvn`/`mvnw` job with uncached `setup-java` (either cache idiom satisfies: `cache: maven` or `actions/cache` on `~/.m2`) | Maven Central 429 killed main CI (2026-09-25, #569); shared-key save race → per-workflow keys (#570 follow-up) |
 | `node-cache` | lock-bearing `npm` job with uncached `setup-node` | same 429 class; fleet audit found 2 |
 | `pip-cache` | `pip install -r <file>` job with uncached `setup-python` | same 429 class; fleet audit (ad-hoc installs out of scope) |
 | `cache-dep-path` | cached setup-* whose key file isn't the action default, without `cache-dependency-path` | mesh-pytest's pip cache hashed the default repo-wide set while installing from requirements-dev.txt — pin changes could never bust it |
@@ -38,13 +38,28 @@ day one. The cache rules fire only where the remediation is *satisfiable*
 — GitHub's own actions hard-fail without their key files — so if your job
 meets the gate, add the cache:
 
-- **Java/Maven** — any `mvn`/`mvnw` on the runner:
+- **Java/Maven** — two valid idioms; prefer the per-workflow key for
+  anything Maven-heavy (see the race note below):
   ```yaml
+  # Simple: setup-java's built-in Maven cache (shared repo-wide key)
   - uses: actions/setup-java@v4
     with:
       java-version: '21'
       distribution: 'temurin'
       cache: maven
+  # Preferred: per-workflow actions/cache key — the built-in hardcodes ONE
+  # repo-wide key, and on its first save whichever Maven job finishes first
+  # wins it (a narrow -pl parity gate starved the full reactor: ~10 MB entry,
+  # 1546 re-downloads per run). Per-workflow keys never race across jobs.
+  - uses: actions/cache@v4
+    with:
+      path: ~/.m2/repository
+      key: maven-${{ github.workflow }}-${{ hashFiles('jvm/**/pom.xml') }}
+      restore-keys: maven-${{ github.workflow }}-
+  - uses: actions/setup-java@v4
+    with:
+      java-version: '21'
+      distribution: 'temurin'
   ```
 - **Node/npm** — any `npm ci`/`npm install` in a lock-bearing directory:
   ```yaml

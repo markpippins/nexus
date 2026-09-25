@@ -23,14 +23,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Set up JDK 21
-        # cache: maven — the 2026-09-25 main failure (run 36088456372) was Maven
-        # Central HTTP 429: concurrent jobs cold-pulling Central hit its rate
-        # limiter. Cache keys on jvm/**/pom.xml; saves ~/.m2/repository.
         uses: actions/setup-java@v3
         with:
           java-version: '21'
           distribution: 'temurin'
-          cache: maven
+      # Per-workflow cache key — NOT setup-java's `cache: maven`. That input
+      # hardcodes one repo-wide key shared by every Maven workflow, and the
+      # first-save race hands the entry to whichever job finishes first (the
+      # 2026-09-25 fleet incident: the narrow wrp parity job's ~10 MB subtree
+      # beat this full-reactor job's save, so every run re-downloaded ~93% of
+      # its Central artifacts). Own key = own entry, race-free.
+      - name: Cache Maven repository (full reactor)
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: maven-ci-${{ hashFiles('jvm/**/pom.xml') }}
+          restore-keys: maven-ci-
       - name: Build modules
         run: mvn -B -f jvm/pom.xml -DskipTests=false test
 
@@ -47,7 +55,15 @@ jobs:
         with:
           java-version: '21'
           distribution: 'temurin'
-          cache: maven
+      # Same per-workflow key namespace as the `build` job (maven-ci-*): this
+      # verifier runs the full reactor's deps via -f jvm/pom.xml, so sharing
+      # build's entry is correct and keeps ONE owner for the namespace.
+      - name: Cache Maven repository
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: maven-ci-${{ hashFiles('jvm/**/pom.xml') }}
+          restore-keys: maven-ci-
       - name: Run JVM verifier (fixtures + fingerprint parity + drift matrix)
         run: mvn -B -f jvm/pom.xml -pl spring/conformance-verifier test
       - name: Upload verifier surefire reports
