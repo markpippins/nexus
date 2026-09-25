@@ -14,6 +14,7 @@
  */
 
 import express from "express";
+import rateLimit from "express-rate-limit";
 import { resolveContext, resolveRoleModel, emitEvent, pool, redis, checkConfigAdmission, incrementConsumedUnits, emitGovernanceReceipt } from "./db.js";
 import { ADMISSION_OUTCOME } from "./admission.js";
 import { execFile, spawn } from "child_process";
@@ -21,16 +22,33 @@ import { promisify } from "util";
 import { createHash } from "crypto";
 import type { ServerResponse } from "http";
 import { writeFile, readFile, unlink, mkdir, appendFile } from "fs/promises";
-import { join } from "path";
+import { join, resolve } from "path";
 import { v4 as uuidv4 } from "uuid";
 
 const execFileAsync = promisify(execFile);
 const app = express();
 app.use(express.json());
 
+// Global request limiter — mirrored from the incumbent (CodeQL
+// js/missing-rate-limiting remediation): 300 req/min/IP, nebula-srv posture.
+// Deliberately generous relative to job cost — execute routes are gated by
+// admission + watchdog.
+app.use(
+  rateLimit({
+    windowMs: 60 * 1000,
+    max: 300,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    message: { error: "harness-srv rate limit exceeded" },
+  }),
+);
+
 const PORT = parseInt(process.env.HARNESS_PORT || "3420");
 const WORK_DIR = process.env.HARNESS_WORK_DIR || "/home/codex/dev";
-const PROMPT_DIR = join(WORK_DIR, ".harness", "prompts");
+// Resolved absolute form — prompt files are written and read exclusively
+// under this directory, so spawn/pass-through sites resolve against it and
+// verify containment (CodeQL js/path-injection remediation, alert #590).
+const PROMPT_DIR = resolve(WORK_DIR, ".harness", "prompts");
 
 // ── Runaway watchdog (T16 guardrail, 1285 remediation slice 2) ───
 const RUNAWAY_THRESHOLD_MS = 15 * 60 * 1000; // 15 min
@@ -41,6 +59,28 @@ const WATCHDOG_INTERVAL_MS = 60_000; // check every 60s
 // abandoned (exit 124 + marker) so the failover ladder can roll to the next
 // model instead of waiting out the full run timeout on a hung provider.
 const FIRST_TOKEN_TIMEOUT_MS = Number(process.env.FIRST_TOKEN_TIMEOUT_MS || 120_000);
+
+// Ceiling for user-supplied timeout_ms on the execute routes — the value
+// flows into child-process and abort timers, so it is clamped to 2 hours
+// (CodeQL js/resource-exhaustion remediation, alerts #649/#650 family).
+const MAX_RUN_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+
+// Allowed roots for user-supplied work_dir overrides — spawn cwd/`--dir`
+// must resolve under one of these (default: the service work root; extend
+// with HARNESS_EXTRA_WORK_ROOTS="a:b" if an operator needs more).
+// CodeQL js/path-injection remediation (alerts #590/#751 family).
+const WORK_ROOTS = [
+  resolve(WORK_DIR),
+  ...(process.env.HARNESS_EXTRA_WORK_ROOTS || "")
+    .split(":")
+    .filter(Boolean)
+    .map((r) => resolve(r)),
+];
+
+function workDirAllowed(candidate: string): boolean {
+  const abs = resolve(candidate);
+  return WORK_ROOTS.some((root) => abs === root || abs.startsWith(root + "/"));
+}
 
 interface TrackedSession {
   jobId: string;
@@ -456,8 +496,11 @@ app.post("/run", async (req, res) => {
       work_dir,
       harness_id,
       agent,
-      timeout_ms = 300_000,
+      timeout_ms: raw_timeout_ms = 300_000,
     } = req.body;
+    // Clamp the user-controlled duration before it reaches any timer
+    // (CodeQL js/resource-exhaustion remediation).
+    const timeoutMs = Math.min(Number(raw_timeout_ms) || 300_000, MAX_RUN_TIMEOUT_MS);
     const resolveOnly = req.body.resolve_only === true;
 
     if (!wind_task_id) {
@@ -529,7 +572,16 @@ app.post("/run", async (req, res) => {
 
     // 2. Merge overrides
     const effectiveHarnessId = harness_id || resolved.harness_id;
-    const effectiveWorkDir = work_dir || WORK_DIR;
+    // Resolve + boundary-check the user-supplied override before it can
+    // reach spawn cwd/--dir (CodeQL js/path-injection remediation).
+    const effectiveWorkDir = work_dir ? String(work_dir) : WORK_DIR;
+    if (!workDirAllowed(effectiveWorkDir)) {
+      return res.status(400).json({
+        job_id: jobId,
+        error: `work_dir must resolve under an allowed work root (${WORK_ROOTS.join(":")})`,
+      });
+    }
+    const resolvedWorkDir = resolve(effectiveWorkDir);
     const effectiveAgent = agent || resolved.role;
     const effectiveModel = resolved.model?.opencode_model_id;
 
@@ -638,12 +690,12 @@ app.post("/run", async (req, res) => {
             const result = await executeHarness({
               harness_id: attempt.harness_id,
               prompt_file: promptFile,
-              work_dir: effectiveWorkDir,
+              work_dir: resolvedWorkDir,
               agent: effectiveAgent,
               role: resolved.role,
               model: attempt.model,
               model_identifier: attempt.model_identifier,
-              timeout_ms,
+              timeout_ms: timeoutMs,
             });
             attemptExit = result.exitCode;
             attemptStdout = result.stdout;
@@ -858,10 +910,13 @@ app.post("/run-direct", async (req, res) => {
       model: modelOverride,
       work_dir,
       agent,
-      timeout_ms = 600_000,
+      timeout_ms: raw_timeout_ms = 600_000,
       channel = "duality",
       async: asyncMode = false,
     } = req.body;
+    // Clamp the user-controlled duration before it reaches any timer
+    // (CodeQL js/resource-exhaustion remediation).
+    const timeoutMs = Math.min(Number(raw_timeout_ms) || 600_000, MAX_RUN_TIMEOUT_MS);
 
     if (!role) {
       return res.status(400).json({ error: "role is required" });
@@ -1005,7 +1060,16 @@ app.post("/run-direct", async (req, res) => {
       });
     }
 
-    const effectiveWorkDir = work_dir || WORK_DIR;
+    // Resolve + boundary-check the user-supplied override before it can
+    // reach spawn cwd/--dir (CodeQL js/path-injection remediation).
+    const effectiveWorkDir = work_dir ? String(work_dir) : WORK_DIR;
+    if (!workDirAllowed(effectiveWorkDir)) {
+      return res.status(400).json({
+        job_id: jobId,
+        error: `work_dir must resolve under an allowed work root (${WORK_ROOTS.join(":")})`,
+      });
+    }
+    const resolvedWorkDir = resolve(effectiveWorkDir);
     const effectiveAgent = agent || role;
 
     await log("info", `run-direct job=${jobId} role=${role} model=${effectiveModel ?? "(harness default)"} channel=${channel}`);
@@ -1045,12 +1109,12 @@ app.post("/run-direct", async (req, res) => {
     const execParams: HarnessExecParams = {
       harness_id: harnessId,
       prompt_file: promptFile,
-      work_dir: effectiveWorkDir,
+      work_dir: resolvedWorkDir,
       agent: effectiveAgent,
       role,
       model: effectiveModel,
       model_identifier: modelConfig.model_identifier,
-      timeout_ms,
+      timeout_ms: timeoutMs,
       onEvent: (type, payload) => {
         // P1 item 6 — translate the opencode JSON stream ONCE here into the
         // same typed envelopes the duality SSE stream carries: reasoning →
@@ -1436,6 +1500,16 @@ interface HarnessExecResult {
 
 async function executeHarness(params: HarnessExecParams): Promise<HarnessExecResult> {
   const { harness_id, prompt_file, work_dir, agent, role, timeout_ms } = params;
+  // Containment assert — prompt files are service-generated under PROMPT_DIR
+  // and work_dir is boundary-checked at the handlers; this guards the
+  // executor invariant regardless of caller (CodeQL js/path-injection
+  // remediation, alert #590).
+  if (!resolve(prompt_file).startsWith(resolve(PROMPT_DIR) + "/")) {
+    throw new Error("prompt_file escaped PROMPT_DIR");
+  }
+  if (!workDirAllowed(work_dir)) {
+    throw new Error("work_dir escaped allowed work roots");
+  }
 
   // Read the prompt content from file
   const promptContent = await readFile(prompt_file, "utf-8");
@@ -1489,6 +1563,10 @@ async function executeOllama(
 ): Promise<HarnessExecResult> {
   const ollamaUrl = process.env.OLLAMA_URL || "http://192.168.1.202:11434";
   const effectiveModel = model || process.env.OLLAMA_MODEL || "qwen2.5:0.5b";
+  // Defense-in-depth clamp inside the executor too (CodeQL
+  // js/resource-exhaustion remediation): even if a future call site
+  // forgets the handler-level clamp, the timer duration stays bounded.
+  timeout_ms = Math.min(Number(timeout_ms) || 300_000, MAX_RUN_TIMEOUT_MS);
 
   await log("info", `ollama exec role=${role} model=${effectiveModel}`);
 
@@ -1496,22 +1574,30 @@ async function executeOllama(
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout_ms);
 
-    const resp = await fetch(`${ollamaUrl}/api/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: effectiveModel,
-        prompt,
-        stream: false,
-        options: {
-          num_predict: 1024,
-          temperature: 0.3,
-        },
-      }),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timer);
+    // try/finally guarantees the timeout timer is released even when the
+    // fetch rejects — an orphaned setTimeout keeps the event loop armed
+    // while a large response body streams (CodeQL js/resource-exhaustion
+    // remediation, alert #472 family). Aborts still surface as AbortError,
+    // so the timeout envelope below is unchanged.
+    let resp: Response;
+    try {
+      resp = await fetch(`${ollamaUrl}/api/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: effectiveModel,
+          prompt,
+          stream: false,
+          options: {
+            num_predict: 1024,
+            temperature: 0.3,
+          },
+        }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
 
     if (!resp.ok) {
       const body = await resp.text();

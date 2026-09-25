@@ -11,6 +11,7 @@
     "test:watch": "jest --watch"
   },
   "dependencies": {
+    "express-rate-limit": "^7.5.1",
     "ioredis": "^5.11.1",
     "moleculer": "^0.14.34",
     "moleculer-web": "^0.10.7",
