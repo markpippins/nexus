@@ -24,10 +24,23 @@ const REPO_ROOT = path.resolve(BROKER_DIR, '..', '..')
 const BRIDGE = path.join(REPO_ROOT, 'python', 'nexus_core', 'wrp', 'harness_bridge.py')
 dotenv.config({ path: path.join(BROKER_DIR, '.env') })
 
+// Kernel base URL is env-overridable (defaults to the historical
+// localhost:8098). CI and parallel local runs retarget it to an
+// OS-assigned port; the python bridge spawn below inherits this same
+// env (git_claim_producer reads PEB_BASE_URL), so probe and producer
+// can never disagree about where the kernel lives.
+const PEB_BASE_URL = process.env.PEB_BASE_URL || 'http://localhost:8098'
+
 function kernelUp() {
+  // The kernel's health path is /actuator/health (Spring management port =
+  // server port). /api/health is NOT served — probing it made this gate
+  // silently skip everywhere, including against the live titanium kernel.
+  // Substring match tolerates both the standard actuator body
+  // ({"status":"UP","components":...}) and the custom fleet shape
+  // ({"status":"UP","database":"reachable",...}).
   try {
-    execFileSync('curl', ['-s', '--max-time', '2', 'http://localhost:8098/api/health'], { stdio: 'pipe' })
-    return true
+    const body = execFileSync('curl', ['-s', '--max-time', '2', `${PEB_BASE_URL}/actuator/health`], { stdio: 'pipe' }).toString()
+    return body.includes('"status":"UP"')
   } catch {
     return false
   }
