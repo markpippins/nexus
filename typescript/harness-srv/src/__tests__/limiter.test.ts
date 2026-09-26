@@ -32,8 +32,14 @@ afterAll(async () => {
 
 describe("global rate limiter (PR #575, tester GAP 1) — runs last, exhausts the window", () => {
   it("sets the draft-7 RateLimit headers on a normal request", async () => {
-    const res = await fetch(`${baseUrl}/health`);
-    expect(res.status).toBe(200);
+    // HERMETIC: the 404 catch-all touches no database. /health looks like
+    // the obvious probe but it queries pg+redis and answers 503 when they
+    // are unreachable — exactly the case in CI (ts-unit-tests.yml has no
+    // services block). The limiter sits above the router and stamps its
+    // headers on every response, so the catch-all exercises it just as
+    // well (same fix as execution-srv/src/limiter.test.ts, 3ef28597).
+    const res = await fetch(`${baseUrl}/definitely/not/a/route`);
+    expect(res.status).toBe(404);
     // express-rate-limit 7.5.1 emits `ratelimit` (combined) + `ratelimit-policy`
     // for draft-7 — NOT the legacy `ratelimit-limit`/`x-ratelimit-*` names.
     expect(res.headers.get("ratelimit")).toMatch(/limit=300/);
@@ -41,14 +47,14 @@ describe("global rate limiter (PR #575, tester GAP 1) — runs last, exhausts th
   });
 
   it("does not emit legacy X-RateLimit-* headers", async () => {
-    const res = await fetch(`${baseUrl}/health`);
+    const res = await fetch(`${baseUrl}/definitely/not/a/route`);
     expect(res.headers.get("x-ratelimit-limit")).toBeNull();
   });
 
   it("returns the documented 429 envelope once the ceiling is exceeded", async () => {
     let saw429 = false;
     for (let i = 0; i < 305; i++) {
-      const res = await fetch(`${baseUrl}/health`);
+      const res = await fetch(`${baseUrl}/definitely/not/a/route`);
       if (res.status === 429) {
         saw429 = true;
         expect(await res.json()).toEqual({
