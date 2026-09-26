@@ -14,6 +14,9 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import http from "node:http";
+import { mkdtemp, mkdir, writeFile, symlink, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 vi.mock("../db", () => {
   const pool = {
@@ -68,6 +71,46 @@ describe("SSE log-path containment guard (tester review 269a6ca5)", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/event-stream");
     await res.body?.cancel();
+  });
+
+  it("refuses to stream a log file symlinked OUTSIDE the logs dir", async () => {
+    // The negative half of the guard (tester review ecfe5977 GAP 2). The
+    // case above only proves the happy path. This builds the real attack: a
+    // sessionId that passes the regex and whose path is textually inside the
+    // logs dir, but which is a symlink resolving OUTSIDE it. A lexical
+    // startsWith guard cannot see this — only realpath can.
+    const tmpRoot = await mkdtemp(path.join(tmpdir(), "tackle-sse-"));
+    const outsideDir = await mkdtemp(path.join(tmpdir(), "tackle-outside-"));
+    const secret = path.join(outsideDir, "secret.log");
+    await writeFile(secret, "TOP-SECRET-CONTENT\n");
+
+    const logsDir = path.join(tmpRoot, "nexus", "logs");
+    await mkdir(logsDir, { recursive: true });
+    await symlink(secret, path.join(logsDir, "escaped.log"));
+
+    // The route reads PIPELINE_ROOT per request, so this stays hermetic.
+    const prevRoot = process.env.PIPELINE_ROOT;
+    process.env.PIPELINE_ROOT = tmpRoot;
+    try {
+      const res = await fetch(`${baseUrl}/log/escaped`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/event-stream");
+
+      const reader = res.body!.getReader();
+      const { value } = await reader.read();
+      const text = new TextDecoder().decode(value);
+      // The symlink target is not inside logs/, so it must read as absent and
+      // its content must never be emitted.
+      expect(text).toContain("session_log_meta");
+      expect(text).toContain('"logFileExists":false');
+      expect(text).not.toContain("TOP-SECRET-CONTENT");
+      await reader.cancel();
+    } finally {
+      if (prevRoot === undefined) delete process.env.PIPELINE_ROOT;
+      else process.env.PIPELINE_ROOT = prevRoot;
+      await rm(tmpRoot, { recursive: true, force: true });
+      await rm(outsideDir, { recursive: true, force: true });
+    }
   });
 });
 

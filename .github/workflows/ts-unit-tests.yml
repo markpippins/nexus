@@ -1,0 +1,45 @@
+name: TypeScript unit tests
+
+# The four services hardened in PR #575 ship their regression suites under
+# `npm test`, but until now no workflow executed them — "CI green" did not
+# attest to any of them (tester review ecfe5977, GAP 3). This job makes the
+# suites a real gate.
+#
+# hermetic: the suites stub pg/Redis and bind ephemeral ports, so no
+# database, broker, or service dependency is required.
+on:
+  push:
+    branches: [ main, master, dev, feature/* ]
+  pull_request:
+    branches: [ main, master, dev, feature/* ]
+
+permissions:
+  contents: read
+
+jobs:
+  ts-unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [ tackle-srv, conduit-srv, execution-srv, harness-srv ]
+    name: unit tests (${{ matrix.service }})
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install dependencies
+        working-directory: typescript/${{ matrix.service }}
+        # `npm ci` when a committed lockfile exists (reproducible), otherwise
+        # `npm install`. conduit-srv deliberately gitignores its lockfile, so
+        # `npm ci` alone would fail there and take the whole job red.
+        run: npm ci || npm install
+      - name: Typecheck
+        working-directory: typescript/${{ matrix.service }}
+        run: npm run typecheck
+      - name: Unit tests
+        working-directory: typescript/${{ matrix.service }}
+        run: npm test
