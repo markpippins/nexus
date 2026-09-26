@@ -60,6 +60,7 @@ MOLECULER_MIRRORS = {
     "moleculer/execution": "typescript/execution-srv",
     "moleculer/conduit": "typescript/conduit-srv",
     "moleculer/peb": "typescript/peb-srv",
+    "moleculer/aegis": "typescript/aegis-srv",
 }
 
 

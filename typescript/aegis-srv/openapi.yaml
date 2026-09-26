@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: aegis-srv — Aegis State-Machine Registry API
-  version: 1.0.540cd196
+  version: 1.0.cae62083
   description: 'REST API for the aegis schema: TLA+ state-machine registries (constants, variables, states, transitions, invariants,
     properties, temporal properties, resolution-schema mappings), validation and model-check results, and audited execution
     logs.
@@ -1178,6 +1178,42 @@ paths:
                 $ref: '#/components/schemas/Error'
       summary: the TLA+ module with invariants/properties as cfg checks. - Otherwise fall back to the deterministic structural
         state-space checker (model-c
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/registries/{id}/model-check-results:
+    get:
+      tags:
+      - registries
+      operationId: get_registries_id_model_check_results
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
       parameters:
       - name: id
         in: path
