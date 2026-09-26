@@ -66,6 +66,38 @@ Scrap: disposable `postgres:17-alpine` container (`scrap-tsp-eav`, port
    `depth 4 exceeds maximum 3 (C1 shallow-hierarchy doctrine)` at
    `check_stereotype_acyclic()`, 0 rows persisted after rollback.
 
+## Mongo-side contract loader (the enforcement companion)
+
+The emitter compiles TypeSpec stereotypes INTO the catalog;
+`src/contract-loader.ts` reads the compiled contract back OUT and gates
+documents before they reach MongoDB — the dispatcher design's
+"Shrapnel = type authority, Mongo = instances" split, enforced:
+
+```
+.tsp --(emitter)--> shrapnel catalog --(loader reads back)--> validate
+                                                                |
+                                                valid ----> mongo insert
+                                                invalid --> rejected w/ per-gate issues
+```
+
+Compile-once, validate-many: `loadContract(pool, name)` +
+`hydrateFingerprint()` read `stereotype_resolve`,
+`stereotype_effective_contract`, field types, and the instance-storage
+registry; `validateDocument(doc, contract)` is a pure function checking
+five gates:
+
+| Gate | Rejects |
+|---|---|
+| registry | docs aimed at mongo when the instance-storage registry says otherwise (unregistered stereotypes pass until 0007 is ruled) |
+| metadata | `stereotype` / `schema_version` / `schema_fingerprint` mismatch — the staleness gate: stale fingerprint means re-emit and rebuild |
+| sanity | `_id` not the UUID string form |
+| contract | required field missing/null; any present field's value not conforming to its `field_type_code` (1=Long integral, 2=String, 3=Double, 4=Boolean, 5=Date/ISO, 6=JSONB shape, 7=UUID regex) |
+
+`src/demo-mongo-validate.ts` runs the whole arc against throwaway PG+Mongo:
+one valid insert and five rejection cases, exit code asserts 1/5. The
+validator being pure makes it directly unit-testable; the DB reads are the
+only I/O and they sit in the loader.
+
 ## Known limits (prototype scope)
 
 - Re-running the emitted migration creates **v2 revisions** (append-only

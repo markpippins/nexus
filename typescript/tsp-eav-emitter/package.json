@@ -15,9 +15,13 @@
     "watch": "tsc -p . --watch"
   },
   "dependencies": {
-    "@typespec/compiler": "^1.0.0"
+    "@types/pg": "^8.23.1",
+    "@typespec/compiler": "^1.0.0",
+    "mongodb": "^7.6.0",
+    "pg": "^8.23.0"
   },
   "devDependencies": {
+    "@types/node": "^26.6.3",
     "typescript": "^5.4.0"
   },
   "peerDependencies": {
