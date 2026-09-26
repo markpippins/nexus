@@ -448,14 +448,32 @@ def process_service(svc_path, name):
             files[rel] = parse_file(fp, rel)
     if fastapi:
         return dedupe(fastapi)
-    index = None
-    for candidate in ("src/index.ts", "src/index.js", "src/index.mjs", "index.ts", "index.js", "src/server.ts", "src/server.js"):
-        if candidate in files:
-            index = candidate
-            break
-    if index is None:
-        return []
-    return dedupe(flatten(index, files))
+    # Candidate entry points, most-specific first. A service may split its
+    # Express app (routes + middleware) out of the process entry point so
+    # tests can import it without binding a port — e.g. src/app.ts holds the
+    # route surface while src/index.ts only owns listen/heartbeat/signals.
+    # We therefore try each candidate in order and keep the first that
+    # actually yields routes, rather than taking whichever file merely
+    # exists first (which would silently report zero endpoints and show up
+    # as "in spec, not in source" drift in the OpenAPI check).
+    for candidate in (
+        "src/index.ts",
+        "src/index.js",
+        "src/index.mjs",
+        "index.ts",
+        "index.js",
+        "src/app.ts",
+        "src/app.js",
+        "app.ts",
+        "src/server.ts",
+        "src/server.js",
+    ):
+        if candidate not in files:
+            continue
+        endpoints = dedupe(flatten(candidate, files))
+        if endpoints:
+            return endpoints
+    return []
 
 
 def dedupe(endpoints):

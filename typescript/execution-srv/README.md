@@ -110,6 +110,33 @@ Environment variables (all optional — defaults in `src/index.ts`):
 
 The pool pins `search_path=execution` as the default namespace. Cross-schema reads (the `pipeline-origin` endpoint) qualify their target explicitly (`vision.receipts`).
 
+## Rate limiting
+
+An app-level limiter caps requests at **300 req/min/IP**, and a second
+router-level limiter sits under `/api/execution` so the surface stays covered
+wherever the router is mounted. Both advertise draft-7 `RateLimit` /
+`RateLimit-Policy` headers; exceeding the ceiling returns `429` with
+`{ "error": "execution-srv rate limit exceeded" }`.
+
+This is a CodeQL `js/missing-rate-limiting` remediation. The ceiling sits well
+above normal operator/agent polling — this service is read-only observability —
+so it only bites on resource-exhaustion floods.
+
+Unknown paths return a JSON `404` envelope (`{ "error": "not_found", "hint": ... }`)
+rather than Express's default HTML page.
+
+## Tests
+
+```bash
+npm test        # vitest — rate limiter + 404 envelope
+npm run typecheck
+```
+
+The Express app lives in `src/app.ts` and the process lifecycle (listen,
+heartbeat, signal handlers) in `src/index.ts`, so tests import the real app
+without binding a port. `src/routes.test.ts` and `src/metrics.test.ts` are
+standalone `tsx` conformance scripts, not vitest suites.
+
 ## Related
 
 - [`conduit-mcp`](../conduit-mcp/) — owns the write path and pipeline lifecycle for `execution.*`
