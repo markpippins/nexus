@@ -504,16 +504,19 @@ aiConfigRouter.post("/test", async (req, res) => {
     // js/path-injection remediation, alerts #596-#598 family).
     const sessionsDir = path.resolve(projectRoot, "nexus", "logs");
     fs.mkdirSync(sessionsDir, { recursive: true });
-    // Symlink-hardened containment: verify the REAL directory (not just the
-    // lexical join) is the logs dir before opening for append — a swapped
-    // symlink could otherwise redirect the write (CodeQL js/path-injection
-    // remediation; lexical startsWith alone is not a sanitizer).
+    // Symlink-hardened containment: resolve the REAL directory and require
+    // the resolved log path to sit under it. Validating the FILE path
+    // directly (rather than comparing the directory to its own realpath)
+    // is what makes the check dominate the open() below — a directory
+    // self-comparison says nothing about where the file resolves once a
+    // symlink is involved (CodeQL js/path-injection remediation; a lexical
+    // startsWith alone is not a sanitizer either).
     const realSessionsDir = fs.realpathSync(sessionsDir);
-    if (realSessionsDir !== sessionsDir) {
+    const sessionLogPath = path.resolve(realSessionsDir, `${sessionId}.log`);
+    if (!sessionLogPath.startsWith(realSessionsDir + path.sep)) {
       res.status(500).json({ error: "session log path escaped logs dir" });
       return;
     }
-    const sessionLogPath = path.resolve(realSessionsDir, `${sessionId}.log`);
     const logFd = fs.openSync(sessionLogPath, "a");
 
     const proc = spawn(harnessType, [
@@ -663,16 +666,19 @@ aiConfigRouter.post("/verify", async (req, res) => {
     const projectRoot = process.env.PIPELINE_ROOT || "/home/codex/dev";
     const sessionsDir = path.resolve(projectRoot, "nexus", "logs");
     fs.mkdirSync(sessionsDir, { recursive: true });
-    // Symlink-hardened containment: verify the REAL directory (not just the
-    // lexical join) is the logs dir before opening for append — a swapped
-    // symlink could otherwise redirect the write (CodeQL js/path-injection
-    // remediation; lexical startsWith alone is not a sanitizer).
+    // Symlink-hardened containment: resolve the REAL directory and require
+    // the resolved log path to sit under it. Validating the FILE path
+    // directly (rather than comparing the directory to its own realpath)
+    // is what makes the check dominate the open() below — a directory
+    // self-comparison says nothing about where the file resolves once a
+    // symlink is involved (CodeQL js/path-injection remediation; a lexical
+    // startsWith alone is not a sanitizer either).
     const realSessionsDir = fs.realpathSync(sessionsDir);
-    if (realSessionsDir !== sessionsDir) {
+    const sessionLogPath = path.resolve(realSessionsDir, `${sessionId}.log`);
+    if (!sessionLogPath.startsWith(realSessionsDir + path.sep)) {
       res.status(500).json({ error: "session log path escaped logs dir" });
       return;
     }
-    const sessionLogPath = path.resolve(realSessionsDir, `${sessionId}.log`);
     const logFd = fs.openSync(sessionLogPath, "a");
 
     const proc = spawn(harnessType, [

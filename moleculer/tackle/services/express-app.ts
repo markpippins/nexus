@@ -117,15 +117,34 @@ app.get("/log/:sessionId", (req, res) => {
   });
 
   let lastSize = 0;
+
+  // Real (symlink-resolved) logs dir — this is the containment BASE for the
+  // poll loop below. Comparing the realpath of the log file against the
+  // realpath of the directory is what actually closes the symlink-escape
+  // hole: a lexical `startsWith(logsDir)` is satisfied by any path that
+  // merely looks like it is under logs/, which is exactly what a symlink
+  // produces. Resolving the base also keeps the comparison correct when the
+  // project root itself sits behind a symlink, where realPath would never
+  // lexically start with logsDir.
+  let realLogsDir = logsDir;
+  try {
+    realLogsDir = fs.realpathSync(logsDir);
+  } catch {
+    // logs dir not present yet — realpathSync in the poll below throws
+    // ENOENT until it appears, which the catch handles.
+  }
+
   const sendLines = () => {
     try {
-      if (!fs.existsSync(logPath)) return;
-      // Re-resolve the real path at every open: a symlink swapped in after
-      // the initial check could otherwise point outside the logs dir
-      // (CodeQL js/path-injection remediation — lexical startsWith guards
-      // don't cover runtime symlink escapes).
+      // Resolve and validate FIRST, before touching the file at all. There
+      // is deliberately no fs.existsSync(logPath) pre-check: it would be an
+      // fs operation on the unvalidated user-derived path, and realpathSync
+      // already throws ENOENT for a missing file (or dangling symlink),
+      // which the surrounding catch handles exactly as the old `return`
+      // did. Containment is then a single unconditional check that
+      // dominates every fs call below it.
       const realPath = fs.realpathSync(logPath);
-      if (realPath !== logPath && !realPath.startsWith(logsDir + path.sep)) {
+      if (!realPath.startsWith(realLogsDir + path.sep)) {
         return;
       }
       const stats = fs.statSync(realPath);
@@ -154,7 +173,7 @@ app.get("/log/:sessionId", (req, res) => {
   let logExists = false;
   try {
     const initialReal = fs.realpathSync(logPath);
-    logExists = initialReal === logPath || initialReal.startsWith(logsDir + path.sep);
+    logExists = initialReal.startsWith(realLogsDir + path.sep);
   } catch {
     logExists = false;
   }
