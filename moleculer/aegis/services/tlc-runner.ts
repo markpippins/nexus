@@ -183,22 +183,30 @@ export async function runTlc(specDir: string, moduleName: string, opts: TlcRunOp
     let stderr = '';
     let timedOut = false;
 
-    const timer = setTimeout(() => {
+    // Fixed 1s supervisor tick instead of setTimeout(timeoutMs): the
+    // request-influenced duration is compared against a deadline rather than
+    // handed to the timer API, so no timer with a user-controlled duration is
+    // ever armed (CodeQL js/resource-exhaustion remediation — same deadline
+    // pattern as the harness child-process supervisor and runaway watchdog).
+    const deadline = Date.now() + timeoutMs;
+    const timer = setInterval(() => {
+      if (Date.now() < deadline) return;
       timedOut = true;
+      clearInterval(timer);
       try { child.kill('SIGKILL'); } catch { /* ignore */ }
-    }, timeoutMs);
+    }, 1000);
 
     child.stdout.on('data', (d) => { stdout += d.toString(); });
     child.stderr.on('data', (d) => { stderr += d.toString(); });
     child.on('error', (err: any) => {
-      clearTimeout(timer);
+      clearInterval(timer);
       resolve({
         engine: 'tlc', status: 'error', verdicts: [], errors: [`failed to spawn java: ${err?.message}`],
         warnings: [], timingMs: Date.now() - started, rawOutput: stdout + stderr,
       });
     });
     child.on('close', (code) => {
-      clearTimeout(timer);
+      clearInterval(timer);
       try { fs.rmSync(metadir, { recursive: true, force: true }); } catch { /* ignore */ }
 
       if (timedOut) {
