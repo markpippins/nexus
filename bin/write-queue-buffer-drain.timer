@@ -1,0 +1,19 @@
+[Unit]
+Description=Schedule the write-queue buffer drainer every 15 minutes
+Documentation=https://github.com/markpippins/nexus/pull/587
+
+[Timer]
+# Every 15 minutes (:00, :15, :30, :45). Post-outage drains are the whole
+# point: Persistent=true replays a tick missed while the machine was down
+# at the next activation, and a tick that fires while NATS is still down
+# costs nothing (the drainer's stream gate refuses cleanly, exit 1).
+OnCalendar=*:0/15
+Persistent=true
+# Skew so this never collides head-on with other :00/:15 jobs.
+RandomizedDelaySec=30
+# If a drain is somehow still running, don't queue another — the flock in
+# the tool already prevents overlap; this keeps missed ticks from piling.
+Unit=write-queue-buffer-drain.service
+
+[Install]
+WantedBy=timers.target

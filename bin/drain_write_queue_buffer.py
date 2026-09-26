@@ -54,8 +54,12 @@ it is documented rather than hidden.
 Concurrency: an flock on <buffer>.drain.lock prevents two drainers at once
 (exit 3 if busy). The producer needs no coordination.
 
-Operating model: run manually after restoring NATS, or wire a systemd
-timer (decision deliberately left explicit — no unit is auto-created).
+Operating model: scheduled via the in-tree user-level systemd pair
+(bin/write-queue-buffer-drain.timer + .service, OnCalendar=*:0/15,
+Persistent=true — see docs/write-queue-buffer-drainer-deployment.md),
+so post-outage drains need no human memory. Installation on a host is
+still an explicit deployment step; until then, run manually after
+restoring NATS, or `systemctl --user start write-queue-buffer-drain.service`.
 Exits: 0 drained/nothing-to-do · 1 gate failure · 2 publish failure
 (aborted, untruncated) · 3 another drainer holds the lock · 4 bad usage.
 

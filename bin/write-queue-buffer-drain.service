@@ -1,0 +1,39 @@
+[Unit]
+Description=Cascade write-queue buffer drainer — replays buffered_local JSONL intents onto the WRITE_QUEUE JetStream stream
+Documentation=https://github.com/markpippins/nexus/pull/587
+# Pairs with write-queue-reconciler.service: the reconciler drains the
+# stream into the canonical schema; THIS drains the producer's local
+# fallback buffer INTO the stream. Both must run for the offline fallback
+# path to be end-to-end durable.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=codex
+Group=codex
+WorkingDirectory=/home/codex/dev/nexus
+
+# ── Environment ────────────────────────────────────────────────────────
+# NATS bus lives on thallium (the nexus-core host). NOTE: unlike the
+# reconciler unit, NO DATABASE_URL — the drainer never touches PG
+# (gate = stream helper, publish = JetStream; dedup is reconciler-side
+# via the staging write_id PK). The buffer directory default
+# (/tmp/nexus-writequeue) matches the Java producer's default; override
+# NEXUS_CORE_WRITEQUEUE_DIR here if the producer's environment moves.
+Environment=NATS_URL=nats://192.168.1.82:4222
+
+# ── Executable ─────────────────────────────────────────────────────────
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/drain_write_queue_buffer.py
+
+# ── Failure semantics (exit codes are the tool's contract) ─────────────
+# 0 nothing-to-do/drained · 1 stream gate refused · 2 publish failure
+# (buffer intact, next tick retries) · 3 another drain still running.
+# NONE are masked as success — every failure shows in the journal and
+# leaves the timer's last result visible (`systemctl list-timers` /
+# `systemctl status write-queue-buffer-drain.service`).
+TimeoutStartSec=300
+SyslogIdentifier=write-queue-buffer-drain
+
+[Install]
+WantedBy=default.target
