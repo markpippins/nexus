@@ -1,47 +1,49 @@
 /**
- * TesterAttestationRequest — the type definition for the architect's
- * "Design: Shrapnel-typed MongoDB tester attestation dispatcher (no new
- * table)" proposal (Discussions thread 8d431a5d, 2026-09-24), authored in
- * TypeSpec and compiled by tsp-eav-emitter into a shrapnel
- * stereotype_create_revision migration.
+ * TesterAttestationRequest — the dispatcher design's type (thread
+ * 8d431a5d), now a KIND OF WorkRequest:
  *
- * Field table = the design's own table, one TypeSpec property per design
- * row. Type mapping through the 0001 registry:
- *   Long -> int64 (code 1)      String -> string (code 2)
- *   JSONB -> string[] (code 6)  Timestamp -> utcDateTime (code 5)
- *   UUID -> uuid (code 7)
+ *     WorkRequest  <-  TesterAttestationRequest extends WorkRequest
  *
- * Required/optional mirrors the design's lifecycle semantics: fields that
- * exist from request creation are required; claim/lease/terminal/completion
- * fields arrive later and are optional.
+ * Inheritance semantics (this is the concrete answer to "how do we
+ * indicate inheritance, starting from TypeSpec"):
+ *   - TypeSpec `extends` is the authoring surface — the same mechanism the
+ *     language already enforces (override-property-mismatch blocks
+ *     required->optional weakening at compile time).
+ *   - The EMITTER compiles it: base properties ride along implicitly in
+ *     TypeSpec, but shrapnel's superset-v2 trigger requires child
+ *     revisions to DECLARE every parent-required field — so the emitter
+ *     materializes inherited required fields transitively into the child
+ *     contract (the DB oracle caught exactly this on the first-generation
+ *     output; see README).
+ *   - The DATABASE enforces it durably: depth<=3 (C1), acyclicity,
+ *     fingerprint v2 over the full declared field document, and
+ *     stereotype_extends() answering "is X a Y" transitively at query
+ *     time.
+ *
+ * Own additions beyond WorkRequest: attestation-specific identity
+ * (request_key idempotency, work_ref/head_sha target, G1 attribution,
+ * evidence, dispatch state machine, completion back-reference).
+ * id/title/created_by/created_at/updated_at are INHERITED from
+ * WorkRequest (title reused, never weakened).
  */
-@doc(
-  "A durable request asking the tester to attest a specific head of work. Shrapnel is the type/contract authority; MongoDB holds the request instances (dispatch state) per the dispatcher design. Mongo documents carry the stereotype name, schema_version, and schema_fingerprint of this revision."
+import "./work-request.tsp";
+import "tsp-eav-emitter";
+
+namespace ShrapnelDispatch {
+
+@ShrapnelCatalog.instanceStorage("mongodb")
+@ShrapnelCatalog.extendsRationale(
+  "An attestation request is a work request whose ask is verification of a specific head; it inherits identity/attribution/lifecycle from WorkRequest and adds only the attestation-specific target, evidence, and dispatch-state fields."
 )
-namespace ShrapnelDispatch;
-
-// This @typespec/compiler version ships no uuid scalar. Declared here so the
-// design's UUID typing is faithful; the emitter maps a scalar NAMED `uuid`
-// to field_type_code 7 by name (mapping.ts).
-scalar uuid;
-
-model TesterAttestationRequest {
-  @doc("Immutable request identity; doubles as the Mongo _id.")
-  request_id: uuid;
-
-  @doc(
-    "Idempotency key, derived from work ref + head SHA (unique per request; a new head gets a new request)."
-  )
+model TesterAttestationRequest extends WorkRequest {
+  @doc("Idempotency key, derived from work ref + head SHA (unique per request).")
   request_key: string;
 
-  @doc("PR, agent record, or artifact reference being verified.")
+  @doc("Work reference being verified (PR, agent record, artifact).")
   work_ref: string;
 
   @doc("Exact code head being verified.")
   head_sha: string;
-
-  @doc("Authoring role; input to the G1 self-attestation gate.")
-  requested_by: string;
 
   @doc("Pre-staged evidence offered to the tester (CI runs, logs).")
   evidence: string[];
@@ -51,12 +53,6 @@ model TesterAttestationRequest {
 
   @doc("Bounded invocation count.")
   attempts: int64;
-
-  @doc("Request creation time.")
-  created_at: utcDateTime;
-
-  @doc("Last state-transition time.")
-  updated_at: utcDateTime;
 
   @doc("Fencing token for the current worker; null while pending.")
   claim_token?: string;
@@ -69,4 +65,5 @@ model TesterAttestationRequest {
 
   @doc("V179 attestation event identity, set on completion.")
   attestation_id?: uuid;
+}
 }
