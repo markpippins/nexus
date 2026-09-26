@@ -1,0 +1,26 @@
+{
+  "name": "tsp-eav-emitter",
+  "version": "0.1.0",
+  "description": "TypeSpec -> shrapnel EAV catalog compiler: walks TypeSpec models and emits an ordered SQL migration of stereotype_create_revision() calls. Invariants (fingerprint v2, superset v2, depth<=3, freeze) are enforced by the database, not the emitter.",
+  "type": "module",
+  "main": "dist/src/index.js",
+  "exports": {
+    ".": {
+      "typespec": "./dist/src/index.js",
+      "default": "./dist/src/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "watch": "tsc -p . --watch"
+  },
+  "dependencies": {
+    "@typespec/compiler": "^1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  },
+  "peerDependencies": {
+    "@typespec/compiler": "^1.0.0"
+  }
+}
