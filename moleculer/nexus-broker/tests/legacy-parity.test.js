@@ -165,10 +165,12 @@ test('witnessed-runs parity — shared 200 with identical projection JSON (rulin
   const { Pool } = require('pg')
   const key = `witnessed-v3-smoke-${randomUUID()}`
   const pool = new Pool({
-    host: process.env.PG_HOST,
+    // Defaults mirror services/execution.worker.ts so the suite runs with
+    // only MONGO_URL set (titanium PG is the parity-shared database).
+    host: process.env.PG_HOST || 'localhost',
     port: Number(process.env.PG_PORT || 5432),
-    user: process.env.PG_USER,
-    password: process.env.PG_PASSWORD,
+    user: process.env.PG_USER || 'pguser',
+    password: process.env.PG_PASSWORD || 'pgpass',
     database: process.env.PG_DB_NAME || 'nexus',
   })
   const uuid = () => randomUUID()
