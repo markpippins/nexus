@@ -50,6 +50,9 @@ public class WriteQueueProducer {
      * @param originComponent which disconnected context queued it
      * @param correlationId idempotency/provenance link
      * @return the publish outcome ("queued" when JetStream accepted,
+     *         "dropped_core_nats" when only core NATS was available — the
+     *         publish succeeds at the server but NO stream/consumer holds
+     *         it, so the intent is not durably held for reconciliation;
      *         "buffered_local" when NATS was unavailable and the intent was
      *         written to the durable local fallback)
      */
@@ -85,15 +88,21 @@ public class WriteQueueProducer {
                     js.publish(subject, bytes);
                     return "queued";
                 } catch (Exception jsErr) {
-                    // JetStream unavailable — fall back to core NATS (parity with nats_publisher)
+                    // JetStream unavailable — core-NATS publish is the only
+                    // remaining transport, but the write-queue reconciler
+                    // consumes from the JetStream STREAM, not from a core
+                    // subscription, so this intent reaches nothing durable
+                    // (vocabulary ruled in f63bfbc7 / Option A: honesty over
+                    // optimism). Callers that need durability must provision
+                    // the stream (bin/ensure-write-queue-stream.py).
                     conn.publish(subject, bytes);
                     conn.flush(java.time.Duration.ofSeconds(2));
-                    return "queued_core_nats";
+                    return "dropped_core_nats";
                 }
             }
             conn.publish(subject, bytes);
             conn.flush(java.time.Duration.ofSeconds(2));
-            return "queued_core_nats";
+            return "dropped_core_nats";
         } catch (Exception e) {
             return bufferLocally(envelope, subject);
         }
