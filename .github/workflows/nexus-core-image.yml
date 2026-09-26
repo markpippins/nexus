@@ -229,14 +229,17 @@ jobs:
         run: |
           # Exact-pinned probes (inspection cbe83e25: range pins on a moving
           # ubuntu-latest interpreter are still non-reproducible — pin exact,
-          # bump deliberately).
+          # bump deliberately). One interpreter is shared by the provisioning
+          # helper, probe, and reconciler, so the EFFECTIVE nats-py pin is the
+          # one declared here: 2.10.0 (2.x api-subset import surface the
+          # helper needs; matches the CLI pin). The probe's exercised surface
+          # was verified executing end-to-end on 2.10.0 (run 36198075169).
+          # Bump the probe pin only via a two-venv split — declared pin must
+          # equal executed pin (tester note 1, attestation c6d800c2).
           python3 -m pip install --quiet \
-            "nats-py==2.16.0" "psycopg2-binary==2.9.13" "asyncpg==0.31.0"
+            "nats-py==2.10.0" "psycopg2-binary==2.9.13" "asyncpg==0.31.0"
           # The stream must exist before any publish — JetStream drops
           # subjects no stream matches, and the whole point is a durable arc.
-          # (nats-py 2.x dropped the nats.js.api subset import surface; the
-          # provisioning helper is held at 2.10.0 to match the CLI pin.)
-          python3 -m pip install --quiet "nats-py==2.10.0"
           python3 bin/ensure-write-queue-stream.py --nats nats://localhost:4222
           # NATS readiness gate (inspection cbe83e25): the reconciler's
           # provisioning retries are NOT a readiness signal — assert the
