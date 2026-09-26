@@ -504,11 +504,16 @@ aiConfigRouter.post("/test", async (req, res) => {
     // js/path-injection remediation, alerts #596-#598 family).
     const sessionsDir = path.resolve(projectRoot, "nexus", "logs");
     fs.mkdirSync(sessionsDir, { recursive: true });
-    const sessionLogPath = path.resolve(sessionsDir, `${sessionId}.log`);
-    if (!sessionLogPath.startsWith(sessionsDir + path.sep)) {
+    // Symlink-hardened containment: verify the REAL directory (not just the
+    // lexical join) is the logs dir before opening for append — a swapped
+    // symlink could otherwise redirect the write (CodeQL js/path-injection
+    // remediation; lexical startsWith alone is not a sanitizer).
+    const realSessionsDir = fs.realpathSync(sessionsDir);
+    if (realSessionsDir !== sessionsDir) {
       res.status(500).json({ error: "session log path escaped logs dir" });
       return;
     }
+    const sessionLogPath = path.resolve(realSessionsDir, `${sessionId}.log`);
     const logFd = fs.openSync(sessionLogPath, "a");
 
     const proc = spawn(harnessType, [
@@ -658,11 +663,16 @@ aiConfigRouter.post("/verify", async (req, res) => {
     const projectRoot = process.env.PIPELINE_ROOT || "/home/codex/dev";
     const sessionsDir = path.resolve(projectRoot, "nexus", "logs");
     fs.mkdirSync(sessionsDir, { recursive: true });
-    const sessionLogPath = path.resolve(sessionsDir, `${sessionId}.log`);
-    if (!sessionLogPath.startsWith(sessionsDir + path.sep)) {
+    // Symlink-hardened containment: verify the REAL directory (not just the
+    // lexical join) is the logs dir before opening for append — a swapped
+    // symlink could otherwise redirect the write (CodeQL js/path-injection
+    // remediation; lexical startsWith alone is not a sanitizer).
+    const realSessionsDir = fs.realpathSync(sessionsDir);
+    if (realSessionsDir !== sessionsDir) {
       res.status(500).json({ error: "session log path escaped logs dir" });
       return;
     }
+    const sessionLogPath = path.resolve(realSessionsDir, `${sessionId}.log`);
     const logFd = fs.openSync(sessionLogPath, "a");
 
     const proc = spawn(harnessType, [
@@ -711,13 +721,13 @@ aiConfigRouter.post("/verify", async (req, res) => {
         }
         await endSession(sessionId, exitCode ?? -1, doneIso);
       } catch (e: any) {
-        console.error(`[verify] ${sessionId} post-exit update failed:`, e.message);
+        console.error("[verify] %s post-exit update failed: %s", sessionId, e.message);
       }
-      console.log(`[verify] model=${model_id} session=${sessionId} exit=${exitCode} → ${success ? "VERIFIED" : "FAILED"}`);
+      console.log("[verify] model=%s session=%s exit=%s → %s", model_id, sessionId, exitCode, success ? "VERIFIED" : "FAILED");
     };
     proc.on("exit", (code) => onDone(code));
     proc.on("error", (err) => {
-      console.error(`[verify] ${sessionId} spawn error:`, err.message);
+      console.error("[verify] %s spawn error: %s", sessionId, err.message);
       onDone(null);
     });
 

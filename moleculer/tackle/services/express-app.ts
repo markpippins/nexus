@@ -120,10 +120,18 @@ app.get("/log/:sessionId", (req, res) => {
   const sendLines = () => {
     try {
       if (!fs.existsSync(logPath)) return;
-      const stats = fs.statSync(logPath);
+      // Re-resolve the real path at every open: a symlink swapped in after
+      // the initial check could otherwise point outside the logs dir
+      // (CodeQL js/path-injection remediation — lexical startsWith guards
+      // don't cover runtime symlink escapes).
+      const realPath = fs.realpathSync(logPath);
+      if (realPath !== logPath && !realPath.startsWith(logsDir + path.sep)) {
+        return;
+      }
+      const stats = fs.statSync(realPath);
       if (stats.size <= lastSize) return;
 
-      const fd = fs.openSync(logPath, "r");
+      const fd = fs.openSync(realPath, "r");
       const buf = Buffer.alloc(stats.size - lastSize);
       fs.readSync(fd, buf, 0, buf.length, lastSize);
       fs.closeSync(fd);
@@ -143,7 +151,13 @@ app.get("/log/:sessionId", (req, res) => {
     }
   };
 
-  const logExists = fs.existsSync(logPath);
+  let logExists = false;
+  try {
+    const initialReal = fs.realpathSync(logPath);
+    logExists = initialReal === logPath || initialReal.startsWith(logsDir + path.sep);
+  } catch {
+    logExists = false;
+  }
   res.write(
     `data: ${JSON.stringify({
       type: "session_log_meta",
