@@ -17,6 +17,9 @@ Pins the safety rails from the janitor docstring:
   - empty-rollup repair: fires ONLY for attested PRs whose sole failing gate
     is the empty-CI-rollup marker; head-unchanged verified first; cooldown +
     lifetime attempt cap; --apply only; never merges through a repair
+  - dispatch fallback: after the attempt cap, gate workflows are dispatched
+    against the head branch — once per PR, --apply only, partial failures
+    retried on a later tick, cooldown still precedes it
 """
 
 from __future__ import annotations
@@ -100,6 +103,12 @@ def _view(head: str):
 
 
 HEAD_600 = "b" * 40  # DISCOVERY's headRefOid for PR 600
+BRANCH_600 = "engineer/feature-x"
+OK_CMD = {"returncode": 0, "stdout": "✓ queued", "stderr": ""}
+
+
+def _branch_view(name: str):
+    return {"returncode": 0, "stdout": json.dumps({"headRefName": name}), "stderr": ""}
 
 
 def make_runner(plan):
@@ -431,25 +440,35 @@ def test_repair_cooldown_waits_silently():
 
 
 def test_repair_attempt_cap_alerts_once():
+    # Exhaution now ESCALATES to the dispatch fallback (second rung) instead
+    # of blocking: the alert still fires exactly once, then the fallback
+    # fires and the PR waits for CI.
     tmp = Path(tempfile.mkdtemp())
     state_path = tmp / "state.json"
     state_path.write_text(json.dumps({"repairs": {"600": {"attempts": 3}}}))
     plan = [("pr list", DISCOVERY),
             ("merge_pr.py 600", {"returncode": 1, "stdout": EMPTY_CI, "stderr": ""}),
-            ("pr view 600", _view(HEAD_600))]
+            ("pr view 600", _view(HEAD_600)),
+            ("pr view 600", _branch_view(BRANCH_600)),
+            ("workflow run wf-lint.yml", OK_CMD),
+            ("workflow run sdk-drift-guard.yml", OK_CMD),
+            ("workflow run seed-guard.yml", OK_CMD),
+            ("workflow run apidocs.yml", OK_CMD)]
     rc, out, state, calls, pre, logs = _cycle_with_runner(
         plan, apply=True, only_pr=600, state_path=state_path)
-    assert not any("pr close" in c for c in calls), "cap blocks mutation"
-    assert "exhausted" in out
-    assert any("repair-blocked" in t and "exhausted" in t for t in logs), "exhaustion surfaces once"
-    assert state["repairs"]["600"].get("exhausted_logged") is True
-    # second cycle: still held, but no duplicate forum alert
+    assert not any("pr close" in c for c in calls), "cap blocks close/reopen"
+    assert "exhausted" in out and "escalating" in out
+    assert any("repairs exhausted" in t for t in logs), "exhaustion surfaces once"
+    assert any("dispatch fallback fired" in t for t in logs), "fallback fired in the same tick"
+    assert state["repairs"]["600"].get("dispatch_attempted") is True
+    # second cycle: still held, but no duplicate forum alert and no re-dispatch
     runner2 = make_runner([("pr list", DISCOVERY),
                            ("merge_pr.py 600", {"returncode": 1, "stdout": EMPTY_CI, "stderr": ""}),
                            ("pr view 600", _view(HEAD_600))])
     rc2, out2, state2, pre2, logs2 = run_cycle(
         runner=runner2, apply=True, only_pr=600, state_path=state_path)
     assert logs2 == [], "exhaustion alert fires once, not every tick"
+    assert "waiting for CI" in out2
     assert state2["runs"][-1]["held"] == [600]
 
 
@@ -464,6 +483,107 @@ def test_repair_reopen_failure_leaves_loud_trail():
     assert "PR IS CLOSED" in out
     assert any("closed but not reopened" in t for t in logs)
     assert "repairs" not in state, "a failed cycle records no attempt"
+
+
+# ── dispatch fallback (second rung of the repair ladder) ───────────────
+
+
+def _exhausted_state(state_path: Path) -> None:
+    state_path.write_text(json.dumps({"repairs": {"600": {"attempts": 3}}}))
+
+
+def test_dispatch_fallback_fires_once_on_exhaustion():
+    tmp = Path(tempfile.mkdtemp())
+    state_path = tmp / "state.json"
+    _exhausted_state(state_path)
+    plan = [("pr list", DISCOVERY),
+            ("merge_pr.py 600", {"returncode": 1, "stdout": EMPTY_CI, "stderr": ""}),
+            ("pr view 600", _view(HEAD_600)),
+            ("pr view 600", _branch_view(BRANCH_600)),
+            ("workflow run wf-lint.yml", OK_CMD),
+            ("workflow run sdk-drift-guard.yml", OK_CMD),
+            ("workflow run seed-guard.yml", OK_CMD),
+            ("workflow run apidocs.yml", OK_CMD)]
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        plan, apply=True, only_pr=600, state_path=state_path)
+    assert rc == 0
+    assert sum(1 for c in calls if "workflow run" in c) == len(janitor.DISPATCH_WORKFLOWS)
+    assert all(f"gh workflow run {w} --ref {BRANCH_600}" in calls for w in janitor.DISPATCH_WORKFLOWS), \
+        "every gate workflow is dispatched against the head branch"
+    assert "dispatch fallback fired" in out
+    assert state["repairs"]["600"]["dispatch_attempted"] is True
+    assert any("dispatch fallback fired for PR #600" in t for t in logs)
+    # second tick: no re-dispatch — waiting for CI
+    plan2 = [("pr list", DISCOVERY),
+             ("merge_pr.py 600", {"returncode": 1, "stdout": EMPTY_CI, "stderr": ""}),
+             ("pr view 600", _view(HEAD_600))]
+    runner2 = make_runner(plan2)
+    rc2, out2, state2, pre2, logs2 = run_cycle(
+        runner=runner2, apply=True, only_pr=600, state_path=state_path)
+    assert not any("workflow run" in c for c in runner2.calls), "fallback fires once per PR"
+    assert "waiting for CI" in out2 and logs2 == []
+    assert rc2 == 0
+
+def test_dispatch_fallback_check_only_does_not_fire():
+    tmp = Path(tempfile.mkdtemp())
+    state_path = tmp / "state.json"
+    _exhausted_state(state_path)
+    plan = [("pr list", DISCOVERY),
+            ("merge_pr.py 600", {"returncode": 1, "stdout": EMPTY_CI, "stderr": ""}),
+            ("pr view 600", _view(HEAD_600))]
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        plan, apply=False, only_pr=600, state_path=state_path)
+    assert not any("workflow run" in c for c in calls)
+    assert "would fire under --apply" in out
+
+
+def test_dispatch_fallback_partial_failure_retries_next_tick():
+    tmp = Path(tempfile.mkdtemp())
+    state_path = tmp / "state.json"
+    _exhausted_state(state_path)
+    plan = [("pr list", DISCOVERY),
+            ("merge_pr.py 600", {"returncode": 1, "stdout": EMPTY_CI, "stderr": ""}),
+            ("pr view 600", _view(HEAD_600)),
+            ("pr view 600", _branch_view(BRANCH_600)),
+            ("workflow run wf-lint.yml", OK_CMD),
+            ("workflow run sdk-drift-guard.yml", {"returncode": 1, "stdout": "", "stderr": "rate limited"})]
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        plan, apply=True, only_pr=600, state_path=state_path)
+    assert rc == 1, "a partial dispatch is a tool error"
+    assert "FAILED on sdk-drift-guard.yml" in out
+    assert state["repairs"]["600"].get("dispatch_attempted") is None, \
+        "partial failure leaves the guard flag unset for retry"
+    assert all("dispatch fallback fired for PR #600" not in t for t in logs), \
+        "no 'fired' entry when the dispatch did not complete"
+    assert any("repairs exhausted" in t for t in logs), "exhaustion alert still logged"
+
+
+def test_dispatch_fallback_branch_lookup_failure_is_tool_error():
+    tmp = Path(tempfile.mkdtemp())
+    state_path = tmp / "state.json"
+    _exhausted_state(state_path)
+    plan = [("pr list", DISCOVERY),
+            ("merge_pr.py 600", {"returncode": 1, "stdout": EMPTY_CI, "stderr": ""}),
+            ("pr view 600", _view(HEAD_600)),
+            ("pr view 600", {"returncode": 1, "stdout": "", "stderr": "boom"})]
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        plan, apply=True, only_pr=600, state_path=state_path)
+    assert rc == 1 and "branch lookup" in out
+    assert not any("workflow run" in c for c in calls)
+
+
+def test_dispatch_fallback_never_fires_before_exhaustion():
+    # attempts < max: the cooldown path returns before the ladder's second rung
+    tmp = Path(tempfile.mkdtemp())
+    state_path = tmp / "state.json"
+    state_path.write_text(json.dumps({"repairs": {"600": {"attempts": 1, "last_attempt": janitor.time.time()}}}))
+    plan = [("pr list", DISCOVERY),
+            ("merge_pr.py 600", {"returncode": 1, "stdout": EMPTY_CI, "stderr": ""}),
+            ("pr view 600", _view(HEAD_600))]
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        plan, apply=True, only_pr=600, state_path=state_path)
+    assert not any("workflow run" in c for c in calls), "cooldown precedes dispatch"
+    assert "cooldown" in out
 
 
 # ── dual-runnable runner ─────────────────────────────────────────────────
