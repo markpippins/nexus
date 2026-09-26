@@ -500,7 +500,10 @@ app.post("/run", async (req, res) => {
     } = req.body;
     // Clamp the user-controlled duration before it reaches any timer
     // (CodeQL js/resource-exhaustion remediation).
-    const timeoutMs = Math.min(Number(raw_timeout_ms) || 300_000, MAX_RUN_TIMEOUT_MS);
+    // Clamp the user-controlled duration into [1s, 2h] before it reaches any
+    // timer (CodeQL js/resource-exhaustion remediation; lower bound per
+    // tester review 269a6ca5 — a near-zero timeout would spin the supervisor).
+    const timeoutMs = Math.min(Math.max(Number(raw_timeout_ms) || 300_000, 1_000), MAX_RUN_TIMEOUT_MS);
     const resolveOnly = req.body.resolve_only === true;
 
     if (!wind_task_id) {
@@ -916,7 +919,10 @@ app.post("/run-direct", async (req, res) => {
     } = req.body;
     // Clamp the user-controlled duration before it reaches any timer
     // (CodeQL js/resource-exhaustion remediation).
-    const timeoutMs = Math.min(Number(raw_timeout_ms) || 600_000, MAX_RUN_TIMEOUT_MS);
+    // Clamp the user-controlled duration into [1s, 2h] before it reaches any
+    // timer (CodeQL js/resource-exhaustion remediation; lower bound per
+    // tester review 269a6ca5 — a near-zero timeout would spin the supervisor).
+    const timeoutMs = Math.min(Math.max(Number(raw_timeout_ms) || 600_000, 1_000), MAX_RUN_TIMEOUT_MS);
 
     if (!role) {
       return res.status(400).json({ error: "role is required" });
@@ -1566,7 +1572,11 @@ async function executeOllama(
   // Defense-in-depth clamp inside the executor too (CodeQL
   // js/resource-exhaustion remediation): even if a future call site
   // forgets the handler-level clamp, the timer duration stays bounded.
-  timeout_ms = Math.min(Number(timeout_ms) || 300_000, MAX_RUN_TIMEOUT_MS);
+  // Defense-in-depth clamp inside the executor too (CodeQL
+  // js/resource-exhaustion remediation): even if a future call site
+  // forgets the handler-level clamp, the timer duration stays bounded in
+  // [1s, 2h] (lower bound per tester review 269a6ca5).
+  timeout_ms = Math.min(Math.max(Number(timeout_ms) || 300_000, 1_000), MAX_RUN_TIMEOUT_MS);
 
   await log("info", `ollama exec role=${role} model=${effectiveModel}`);
 
@@ -1739,7 +1749,7 @@ async function executeOpencode(
           if (ev?.type === 'text' || ev?.type === 'reasoning') {
             if (!firstTokenSeen) {
               firstTokenSeen = true;
-              if (firstTokenTimer) clearTimeout(firstTokenTimer);
+              if (firstTokenTimer) clearInterval(firstTokenTimer);
             }
             if (onEvent) {
               const part = ev.part ?? {};
@@ -1765,31 +1775,42 @@ async function executeOpencode(
     });
     child.stderr?.on('data', (data: Buffer) => { stderr += data.toString(); });
 
-    const timer = setTimeout(() => {
+    // Fixed 1s supervisor tick instead of setTimeout(timeout_ms): the
+    // user-influenced duration is compared against a deadline rather than
+    // handed to the timer API, so no timer with a user-controlled duration
+    // is ever armed (CodeQL js/resource-exhaustion remediation, alerts
+    // #753/#754/#758 family — same deadline pattern as the runaway watchdog).
+    const deadline = Date.now() + timeout_ms;
+    const firstTokenDeadline = Date.now() + Math.min(timeout_ms, FIRST_TOKEN_TIMEOUT_MS);
+    const timer = setInterval(() => {
+      if (Date.now() < deadline) return;
       timedOut = true;
+      clearInterval(timer);
       child.kill('SIGTERM');
       // Give it 5s to exit gracefully, then force-kill
       setTimeout(() => {
         try { child.kill('SIGKILL'); } catch { /* already dead */ }
       }, 5000);
-    }, timeout_ms);
+    }, 1000);
 
     // First-token guard — a model that never emits a text/reasoning token
     // within FIRST_TOKEN_TIMEOUT_MS is abandoned (exit 124 + marker) so the
     // failover ladder rolls to the next model instead of waiting out the full
     // run timeout on a hung provider.
-    firstTokenTimer = setTimeout(() => {
+    firstTokenTimer = setInterval(() => {
+      if (Date.now() < firstTokenDeadline) return;
+      if (firstTokenTimer) clearInterval(firstTokenTimer);
       if (firstTokenSeen) return;
       noFirstToken = true;
       child.kill('SIGTERM');
       setTimeout(() => {
         try { child.kill('SIGKILL'); } catch { /* already dead */ }
       }, 5000);
-    }, Math.min(timeout_ms, FIRST_TOKEN_TIMEOUT_MS));
+    }, 1000);
 
     child.on('close', (code) => {
-      clearTimeout(timer);
-      if (firstTokenTimer) clearTimeout(firstTokenTimer);
+      clearInterval(timer);
+      if (firstTokenTimer) clearInterval(firstTokenTimer);
       let exitCode = code ?? 1;
       let stderrOut = stderr;
       if (noFirstToken) {
@@ -1820,8 +1841,8 @@ async function executeOpencode(
     });
 
     child.on('error', (err) => {
-      clearTimeout(timer);
-      if (firstTokenTimer) clearTimeout(firstTokenTimer);
+      clearInterval(timer);
+      if (firstTokenTimer) clearInterval(firstTokenTimer);
       resolve({ exitCode: 1, stdout, stderr: err.message });
     });
   });
