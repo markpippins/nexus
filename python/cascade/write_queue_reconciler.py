@@ -40,6 +40,23 @@ Config: WRITE_QUEUE_DURABLE (default write_queue_reconciler),
 WRITE_QUEUE_STREAM (default WRITE_QUEUE), WRITE_QUEUE_ACK_WAIT_S (60),
 WRITE_QUEUE_MAX_DELIVER (-1 = retry forever, loud).
 
+STARTUP SEMANTICS — FAIL-FAST (ruling thread f63bfbc7, Option A):
+On startup this process refuses to run without its prerequisites; it
+never retries or waits for them:
+  • NATS unreachable at connect      → exit 1 (NoServersError)
+  • WRITE_QUEUE stream missing       → exit 1 (NotFoundError on the
+    consumer lookup/subscribe — exits, NOT a retry loop)
+  • staging table absent             → RuntimeError naming the canonical
+    DDL (assert-dont-create: drift must be loud, never self-healed)
+Mid-run DISCONNECTS are different: nats-py's reconnect loop keeps the
+process alive and delivery resumes when the server returns (verified
+empirically, 2026-09-25: scratch-stack matrix T1/T2/T3).
+Consequence: stream provisioning and DB schema are DEPLOYMENT
+prerequisites, owned by the caller — use
+bin/start_write_queue_reconciler.py, which enforces the gate order
+provision → readiness → pre-existence → start → attach-wait before
+starting this process (see docs/write-queue-startup-gate-order.md).
+
 Usage::
 
     DATABASE_URL=postgres://pguser:pgpass@localhost:5432/nexus \\

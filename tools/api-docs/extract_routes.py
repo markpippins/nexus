@@ -72,6 +72,7 @@ MOLECULER_SERVICES = {
     "moleculer/tackle": "moleculer/tackle",
     "moleculer/prompt-sync": "moleculer/prompt-sync",
     "moleculer/execution": "moleculer/execution",
+    "moleculer/conduit": "moleculer/conduit",
     "moleculer/harness": "moleculer/harness",
 }
 

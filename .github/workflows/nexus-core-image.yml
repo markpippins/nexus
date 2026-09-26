@@ -229,18 +229,24 @@ jobs:
         run: |
           # Exact-pinned probes (inspection cbe83e25: range pins on a moving
           # ubuntu-latest interpreter are still non-reproducible — pin exact,
-          # bump deliberately). One interpreter is shared by the provisioning
-          # helper, probe, and reconciler, so the EFFECTIVE nats-py pin is the
-          # one declared here: 2.10.0 (2.x api-subset import surface the
-          # helper needs; matches the CLI pin). The probe's exercised surface
-          # was verified executing end-to-end on 2.10.0 (run 36198075169).
-          # Bump the probe pin only via a two-venv split — declared pin must
-          # equal executed pin (tester note 1, attestation c6d800c2).
-          python3 -m pip install --quiet \
-            "nats-py==2.10.0" "psycopg2-binary==2.9.13" "asyncpg==0.31.0"
+          # bump deliberately). TWO venvs (to-do c6efabe1, tester note 1 in
+          # attestation c6d800c2): the provisioning helper needs nats-py's
+          # 2.10.0-era api-subset import surface (2.x dropped nats.js.api
+          # subset imports), while the probe/reconciler side runs the current
+          # 2.16.0 line. One venv per pin keeps declared pin = executed pin
+          # on BOTH sides — no downgrade dance in a shared interpreter.
+          python3 -m venv .venv-provision
+          .venv-provision/bin/python -m pip install --quiet "nats-py==2.10.0"
+          python3 -m venv .venv-probe
+          .venv-probe/bin/python -m pip install --quiet \
+            "nats-py==2.16.0" "psycopg2-binary==2.9.13" "asyncpg==0.31.0"
+          # Evidence over assertion: print what each venv actually resolved.
+          .venv-provision/bin/python -c "from importlib.metadata import version; print('provision venv nats-py:', version('nats-py'))"
+          .venv-probe/bin/python -c "from importlib.metadata import version; print('probe venv nats-py:', version('nats-py')); print('probe venv psycopg2-binary:', version('psycopg2-binary'))"
           # The stream must exist before any publish — JetStream drops
           # subjects no stream matches, and the whole point is a durable arc.
-          python3 bin/ensure-write-queue-stream.py --nats nats://localhost:4222
+          # (Runs in the PROVISION venv: the helper is the 2.10.0 surface.)
+          .venv-provision/bin/python bin/ensure-write-queue-stream.py --nats nats://localhost:4222
           # NATS readiness gate (inspection cbe83e25): the reconciler's
           # provisioning retries are NOT a readiness signal — assert the
           # server is actually accepting requests before anything publishes.
@@ -250,13 +256,13 @@ jobs:
           # the first validation dispatch, run 36197088565).
           NATS_READY='import nats; nats.connect("nats://localhost:4222", max_reconnect_attempts=1, connect_timeout=2).close()'
           for i in $(seq 1 30); do
-            if python3 -c "$NATS_READY" 2>/dev/null; then
+            if .venv-probe/bin/python -c "$NATS_READY" 2>/dev/null; then
               echo "NATS ready: accepting client connections"
               break
             fi
             sleep 2
           done
-          python3 -c "$NATS_READY" || {
+          .venv-probe/bin/python -c "$NATS_READY" || {
             echo "::error::NATS never became ready (no client connection within 60s)"
             docker logs ci-nats 2>&1 | tail -30
             exit 1
@@ -272,7 +278,7 @@ jobs:
           # the store (unhydrated + explicit verdict on a seed-free snapshot).
           nohup env DATABASE_URL=postgres://nexus:nexus@localhost:5432/nexus \
             NATS_URL=nats://localhost:4222 \
-            python3 python/cascade/write_queue_reconciler.py > reconciler.log 2>&1 &
+            .venv-probe/bin/python python/cascade/write_queue_reconciler.py > reconciler.log 2>&1 &
           RECONCILER_PID=$!
           # Real readiness: wait for the durable consumer to attach (a fixed
           # sleep is a blind start — inspection cbe83e25).
@@ -299,7 +305,7 @@ jobs:
           # The probe asserts JetStream actually persisted the publish (a
           # publish to a subject no stream matches silently "succeeds" in
           # core NATS).
-          python3 bin/ci_write_queue_probe.py --nats nats://localhost:4222 \
+          .venv-probe/bin/python bin/ci_write_queue_probe.py --nats nats://localhost:4222 \
             --write-id "$WRITE_ID"
           ok=""
           for i in $(seq 1 30); do
@@ -322,9 +328,9 @@ jobs:
           # (entity-not-found, durably recorded) on the schema-only snapshot.
           # The postcondition asserts the staging row AND the durable
           # KeychainEvent by writeId — the interpreter path's canonical writes.
-          python3 bin/ci_write_queue_probe.py --mode governed \
+          .venv-probe/bin/python bin/ci_write_queue_probe.py --mode governed \
             --app-url http://localhost:8092 --write-id "$GOV_ID"
-          python3 bin/ci_governed_postcondition.py \
+          .venv-probe/bin/python bin/ci_governed_postcondition.py \
             --dsn postgres://nexus:nexus@localhost:5432/nexus \
             --write-id "$GOV_ID" --timeout 90
           echo "governed arc complete: app route → producer → WRITE_QUEUE stream → interpreter decision → staging row + keychain_event_outbox ($GOV_ID)"

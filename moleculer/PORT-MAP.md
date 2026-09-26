@@ -28,6 +28,7 @@
 | 4410 | `tackle` (canary twin of `typescript/tackle-srv`) | `tackle` | `typescript/tackle-srv :3410` (roundtable read/write backbone: AI config, roles, prompts, tasks, scheduler, memory registry, projections, sessions, logs, audit; dispatch-through-Express — verbatim incumbent app behind `tackle.dispatch`, 86 aliases; callers tackle-ui proxy chain + role-memory twin; real writes (sessions kill, projections render, config mutations) stay incumbent-owned; contract pinned to incumbent `openapi.yaml`) | CANARY — submitted with this row (PR for the port), canary-diffed byte-identical (54/54 read/negative + SSE header parity), **not cut over / not deployed** |
 | 4501 | `prompt-sync` (canary twin of `typescript/tackle-prompt-sync-srv`) | `prompt-sync` | `typescript/tackle-prompt-sync-srv :3501` (Prompt Registry: PG→Redis sync — tackle.prompts/tackle.tasks → prompt:proc/idx, task:idx, prompt:meta; callers tackle-prompt-bridge, tackle-cli; no auth gate on incumbent; contract pinned to incumbent `openapi.yaml`) | CANARY — submitted with this row (PR for the port), canary-diffed byte-identical (44/44 incl. POST /refresh convergence), **not cut over / not deployed** |
 | 4110 | `execution` (canary twin of `typescript/execution-srv`) | `execution` | `typescript/execution-srv :3110` (Execution Observability: read-only REST over the `execution` schema — paginated request/lease/attempt/receipt catalogs, lifecycle state, lease integrity, cross-table integrity scan, fleet views, witnessed-run projections + diagnostics, pipeline-origin lineage; no auth gate on incumbent; contract pinned to incumbent `openapi.yaml`. Note: the moleculer broker tier (:4080 `worker.execution`) already mirrors a SUBSET for the UI — this twin mirrors the FULL legacy REST surface) | CANARY — submitted with this row (PR for the port), dispatch-through-Express, full-surface read-only canary, **not cut over / not deployed** |
+| 4104 | `conduit` (canary twin of `typescript/conduit-srv`) | `conduit` | `typescript/conduit-srv :3104` (WorkRequest pipeline REST: workflows, ticket detection/lineage, tokens, config, SSE session logs, governance replay/events, vision requests/receipts, projection drift; contract pinned to incumbent `openapi.yaml`) | CANARY — submitted with this row (PR for the port), dispatch-through-Express with reads/validation-negative canary only, **not cut over / not deployed** |
 | 4420 | `harness` (canary twin of `typescript/harness-srv`) | `harness` | `typescript/harness-srv :3420` (Generic agent execution harness: POST /run + /run-direct spawn opencode/ollama with failover ladders + runaway watchdog, /resolve-context dry-run, async job registry with replayable SSE; 8 routes; contract pinned to incumbent `openapi.yaml`. Note: nexus-broker `worker.harness` on :4080 mirrors a subset — same pattern as execution/worker.execution) | CANARY — submitted with this row (PR for the port), dispatch-through-Express, reads + validation negatives canary ONLY (execute routes spawn agents/mutate state), **not cut over / not deployed** |
 
 ## Shared infrastructure (NOT moleculer-owned — do not claim)
@@ -45,7 +46,7 @@
 | Component | Address |
 |-----------|---------|
 | NATS broker | `nats://localhost:4222` (services default via `NATS_URL` env, `nats://localhost:4222`) |
-| Namespaces | one per service family: `search`, `solscript`, `broker`, `voyager`, `cascade`, `kernel`, `draft`, `knowledge`, `role-memory`, `semantics`, `tackle`, `prompt-sync`, `execution`, `harness` |
+| Namespaces | one per service family: `search`, `solscript`, `broker`, `voyager`, `cascade`, `kernel`, `draft`, `knowledge`, `role-memory`, `semantics`, `tackle`, `prompt-sync`, `execution`, `conduit`, `harness` |
 
 ## Host posture on titanium (DBA gate, 2026-09-23)
 
@@ -75,7 +76,7 @@ Moleculer does **not run locally** on titanium — enforced, not assumed:
 - Any port change ratified in `jvm/ARCHITECTURE.md` must be mirrored here and
   in the owning service's config + launch units in the same change; the
   terrain registry entry follows at the next registration heartbeat.
-- Canary/deployment ports (4100/4106/4109/4110/4114/4150/4160/4170/4410/4420/4501) are the exception to
+- Canary/deployment ports (4100/4104/4106/4109/4110/4114/4150/4160/4170/4410/4420/4501) are the exception to
   one-live-authority: a canary twin may co-listen on its 41xx twin while its
   incumbent stays live, and must be removed from the map when cutover completes
   (dead routes die). Canary rows in this table require architect ratification
@@ -84,7 +85,8 @@ Moleculer does **not run locally** on titanium — enforced, not assumed:
   rows 4100/4106/4114/4170 were RATIFIED 2026-09-23 (architect decision on
   the port-band), 4150/4160 ratified with their merges, 4410 (+1000 band,
   submitted with the tackle PR) and 4501 (+1000 band, submitted with the
-  prompt-sync PR) extend the same scheme; 4420
+  prompt-sync PR) extend the same scheme; 4104
+  (conduit, submitted with the conduit port PR) follows that pattern; 4420
   (harness, submitted with the harness port PR) follows that pattern; 4110
   (execution, submitted with the execution port PR) follows that pattern;
   record); row 4109 (PR #480) follows the same pattern and is submitted for
