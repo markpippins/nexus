@@ -123,7 +123,37 @@ _HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _canonical(value: Any) -> str:
+    _check_digest_json(value, "$")
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _check_digest_json(value: Any, path: str) -> None:
+    """Digest material is canonical-JSON restricted (cross-runtime rule).
+
+    Floats digest differently across runtimes (Python reprs 1.0, JavaScript
+    prints 1) and integers beyond IEEE-752 safe range lose precision in
+    JavaScript — so both are REJECTED in digest material. Exposed by the
+    S6 cross-runtime conformance work; payloads are string/int/list/dict/
+    bool/None territory.
+    """
+    if isinstance(value, float):
+        raise ValueError(
+            f"canonical JSON digest material must not contain floats ({path}); "
+            "use a string or Decimal-as-string representation"
+        )
+    if isinstance(value, int) and not isinstance(value, bool) and abs(value) > 2**53 - 1:
+        raise ValueError(
+            f"canonical JSON digest material must not contain integers beyond "
+            f"2^53-1 ({path}); JavaScript cannot represent them exactly"
+        )
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if not isinstance(k, str):
+                raise ValueError(f"canonical JSON object keys must be strings ({path})")
+            _check_digest_json(v, f"{path}.{k}")
+    elif isinstance(value, (list, tuple)):
+        for i, v in enumerate(value):
+            _check_digest_json(v, f"{path}[{i}]")
 
 
 def _digest(value: Any) -> str:
