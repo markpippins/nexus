@@ -9,6 +9,13 @@ on:
     branches: [ main, master, dev, feature/* ]
   pull_request:
     branches: [ main, master, dev, feature/* ]
+    # GATE VERIFICATION (work item 7017d5ce + enforce_admins ruling): paths
+    # filter on ci.yml's own PR trigger makes required contexts build and
+    # conformance-verifier ABSENT on this PR. An admin merge attempt must
+    # now be REFUSED (enforce_admins=true). Probe closed unmerged after the
+    # observation.
+    paths:
+      - "nonexistent-path-xyz/**" 
   # On-demand runs: cache verification (per-workflow Maven keys from #573 —
   # miss+save then hit can be proven without a throwaway push).
   workflow_dispatch:
