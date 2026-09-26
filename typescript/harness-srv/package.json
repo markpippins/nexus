@@ -7,7 +7,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
-    "test": "tsx tests/timeout-clamp.test.ts && tsx tests/admission.test.ts && tsx tests/governance-receipt.test.ts && tsx tests/opencode-model-id.test.ts && tsx tests/regex-escape.test.ts",
+    "test": "vitest run && tsx tests/timeout-clamp.test.ts && tsx tests/admission.test.ts && tsx tests/governance-receipt.test.ts && tsx tests/opencode-model-id.test.ts && tsx tests/regex-escape.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
