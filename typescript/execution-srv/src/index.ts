@@ -7,32 +7,14 @@
 // conduit-mcp owns those.
 //
 // Pattern follows vision-srv (TypeScript + Express + pg.Pool).
+//
+// The Express app itself lives in ./app.ts (extracted verbatim so tests can
+// import it without triggering listen/heartbeat — PR #575, tester review
+// 269a6ca5). This file owns the process lifecycle only.
 
-import express from 'express';
-import cors from 'cors';
-import { Pool } from 'pg';
-import { createRoutes } from './routes';
 import { startHeartbeat } from 'heartbeat-client';
+import { app, pool } from './app';
 
-// ── PostgreSQL Connection ──────────────────────────────────────────
-// The execution schema lives in the same `nexus` database as the rest of
-// the system. We pin search_path to execution as the default namespace so
-// unqualified table names resolve there, but cross-schema joins to
-// vision.receipts still work because we qualify them explicitly.
-const pool = new Pool({
-  host: process.env.PGHOST || 'localhost',
-  port: process.env.PGPORT ? parseInt(process.env.PGPORT) : 5432,
-  user: process.env.PGUSER || 'pguser',
-  password: process.env.PGPASSWORD || 'pgpass',
-  database: process.env.PGDATABASE || 'nexus',
-  options: '-c search_path=execution',
-  max: 10,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
-});
-
-// ── Express Setup ──────────────────────────────────────────────────
-const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3110;
 
 // ── Process-level safety net ─────────────────────────────────────
@@ -46,43 +28,6 @@ process.on('uncaughtException', (err: Error & { code?: string }) => {
     return;
   }
   console.error('[execution-srv] uncaughtException:', err.message, err.stack?.split('\n').slice(0, 3).join('\n'));
-});
-
-app.use(cors());
-app.use(express.json({ limit: '1mb' }));
-
-// ── API Routes ─────────────────────────────────────────────────────
-app.use('/api/execution', createRoutes(pool));
-
-// ── Health Check ───────────────────────────────────────────────────
-// Two-level health: process-up + DB-reachable. The integrity-scan
-// endpoint (/api/execution/health/integrity-scan) is the deeper check.
-app.get('/health', async (_req, res) => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT
-         (SELECT count(*) FROM requests)   AS requests,
-         (SELECT count(*) FROM leases)     AS leases,
-         (SELECT count(*) FROM attempts)   AS attempts,
-         (SELECT count(*) FROM receipts)   AS receipts`
-    );
-    res.json({
-      status: 'ok',
-      db: true,
-      schema: 'execution',
-      counts: rows[0],
-    });
-  } catch (err: any) {
-    res.status(503).json({ status: 'error', db: false, message: err.message });
-  }
-});
-
-// ── 404 for unknown routes (read-only service) ─────────────────────
-app.use((_req, res) => {
-  res.status(404).json({
-    error: 'not_found',
-    hint: 'execution-srv is read-only. Available endpoints live under /api/execution and /health. See REST API.md for the full catalog.',
-  });
 });
 
 // ── Start ──────────────────────────────────────────────────────────

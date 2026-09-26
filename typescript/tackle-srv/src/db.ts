@@ -1477,7 +1477,9 @@ export async function upsertConfigBundles(
   if (bundles.length === 0) return;
   const now = new Date().toISOString();
 
-  console.log(`[upsertConfigBundles] Starting for role: ${role}, bundles: ${bundles.length}`);
+  // Static format string — role/bundle values passed as args
+  // (CodeQL js/tainted-format-string remediation, alert #674).
+  console.log("[upsertConfigBundles] Starting for role: %s, bundles: %s", role, bundles.length);
 
   // Verified-model gate: any bundle in the batch whose model is unverified is
   // inserted inactive (this path previously hardcoded is_active=1, which would
@@ -1486,7 +1488,7 @@ export async function upsertConfigBundles(
 
   await withTransaction(async (client) => {
     const deleteResult = await tRun(client, "DELETE FROM config_bundle WHERE role = @role", { role });
-    console.log(`[upsertConfigBundles] Deleted rows for role ${role}:`, deleteResult);
+    console.log("[upsertConfigBundles] Deleted rows for role %s:", role, deleteResult);
     
     // INTERACTIVE-hosted guard: the resolver picks the ascending-priority
     // first active bundle, so an INTERACTIVE (harn-freebuff) bundle must sit
@@ -1503,7 +1505,7 @@ export async function upsertConfigBundles(
         b.invocation_mode !== "INTERACTIVE" && Number.isFinite(minInteractivePriority) && b.priority < minInteractivePriority
           ? minInteractivePriority + b.priority
           : b.priority;
-      console.log(`[upsertConfigBundles] Inserting bundle: ${id} (priority ${priority})`);
+    console.log("[upsertConfigBundles] Inserting bundle: %s (priority %s)", id, priority);
       await tRun(client,
         `INSERT INTO config_bundle
            (id, name, role, model_id, provider_id, harness_id, priority, invocation_mode,
@@ -1534,7 +1536,7 @@ export async function upsertConfigBundles(
         }
       );
     }
-    console.log(`[upsertConfigBundles] Completed for role: ${role}`);
+    console.log("[upsertConfigBundles] Completed for role: %s", role);
   });
 }
 
