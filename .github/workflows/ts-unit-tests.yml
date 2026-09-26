@@ -31,6 +31,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24'
+      # tackle/conduit/execution depend on `file:../heartbeat-client`, whose
+      # `types` entry points at dist/index.d.ts. dist/ is gitignored build
+      # output, so a fresh checkout has no types for it and tsc fails with
+      # "Cannot find module 'heartbeat-client'". Build it first.
+      - name: "Build heartbeat-client (file: dependency)"
+        working-directory: typescript/heartbeat-client
+        run: npm install --no-audit --no-fund && npm run build
       - name: Install dependencies
         working-directory: typescript/${{ matrix.service }}
         # `npm ci` when a committed lockfile exists (reproducible), otherwise

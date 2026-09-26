@@ -1592,10 +1592,21 @@ async function executeOllama(
 
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeout_ms);
+    // Fixed 1s supervisor tick instead of setTimeout(timeout_ms): the
+    // user-influenced duration is compared against a deadline rather than
+    // handed to the timer API, so no timer with a user-controlled duration
+    // is ever armed (CodeQL js/resource-exhaustion remediation, alerts
+    // #649/#650 family — same deadline pattern as the child-process
+    // supervisor and the runaway watchdog).
+    const deadline = Date.now() + timeout_ms;
+    const timer = setInterval(() => {
+      if (Date.now() < deadline) return;
+      clearInterval(timer);
+      controller.abort();
+    }, 1000);
 
     // try/finally guarantees the timeout timer is released even when the
-    // fetch rejects — an orphaned setTimeout keeps the event loop armed
+    // fetch rejects — an orphaned timer keeps the event loop armed
     // while a large response body streams (CodeQL js/resource-exhaustion
     // remediation, alert #472 family). Aborts still surface as AbortError,
     // so the timeout envelope below is unchanged.
@@ -1616,7 +1627,7 @@ async function executeOllama(
         signal: controller.signal,
       });
     } finally {
-      clearTimeout(timer);
+      clearInterval(timer);
     }
 
     if (!resp.ok) {
