@@ -55,6 +55,38 @@ describe("/log/:sessionId containment (tester review 269a6ca5)", () => {
     await reader.cancel();
   });
 
+  it("refuses to stream a log file symlinked OUTSIDE the sessions dir", async () => {
+    // The actual security property the realpath re-check exists for: a
+    // sessionId that passes the regex can still name a symlink whose target
+    // lives outside sessions/. The lexical startsWith guard cannot see this
+    // (the path IS textually under sessions/), only realpath can.
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "conduit-slog-outside-"));
+    const secret = path.join(outsideDir, "secret.log");
+    fs.writeFileSync(secret, "TOP-SECRET-CONTENT\n");
+
+    const sessionsDir = path.join(tmpDir, "sessions");
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    fs.symlinkSync(secret, path.join(sessionsDir, "escaped.log"));
+
+    const res = await fetch(`${baseUrl}/log/escaped`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+
+    // Read the first SSE frame only — the stream stays open by design, so a
+    // full-body read would block until the route's end-of-stream timer.
+    const reader = res.body!.getReader();
+    const { value } = await reader.read();
+    const text = new TextDecoder().decode(value);
+    // The meta event must report the file as absent: the symlink target is
+    // not inside sessions/, so the guard refuses it before any read happens.
+    expect(text).toContain("session_log_meta");
+    expect(text).toContain('"logFileExists":false');
+    expect(text).not.toContain("TOP-SECRET-CONTENT");
+    await reader.cancel();
+
+    fs.rmSync(outsideDir, { recursive: true, force: true });
+  });
+
   it("streams existing log content through the realpath-hardened read path", async () => {
     const sessionsDir = path.join(tmpDir, "sessions");
     fs.mkdirSync(sessionsDir, { recursive: true });

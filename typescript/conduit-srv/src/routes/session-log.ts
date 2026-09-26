@@ -47,15 +47,31 @@ router.get("/:sessionId", async (req, res) => {
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let resolved = false;
 
+  // Real (symlink-resolved) sessions dir — this is the containment BASE for
+  // the poll loop below. Comparing the realpath of the log file against the
+  // realpath of the directory is what actually closes the symlink-escape
+  // hole: a lexical `startsWith(sessionsDir)` is satisfied by any path that
+  // merely looks like it is under sessions/, including one reached through a
+  // symlink swapped in after the request-time check. Resolving the base too
+  // also keeps the comparison correct when PIPELINE_DIR itself sits behind a
+  // symlink (realPath would then never lexically start with sessionsDir, and
+  // a naive check would refuse to stream a legitimate log).
+  let realSessionsDir = sessionsDir;
+  try {
+    realSessionsDir = fs.realpathSync(sessionsDir);
+  } catch {
+    // sessions dir not present yet — existsSync below gates the poll anyway.
+  }
+
   const sendLines = () => {
     try {
       if (!fs.existsSync(logPath)) return;
-      // Re-resolve the real path at every open: a symlink swapped in after
-      // the initial check could otherwise point outside the sessions dir
-      // (CodeQL js/path-injection remediation — lexical startsWith guards
-      // don't cover runtime symlink escapes; tester review 269a6ca5).
+      // Re-resolve at every open, then require containment unconditionally.
+      // A single dominating check (not `a !== b && !c`) so the guard is
+      // provably true for every path that reaches the fs calls below
+      // (CodeQL js/path-injection remediation; tester review 269a6ca5).
       const realPath = fs.realpathSync(logPath);
-      if (realPath !== logPath && !realPath.startsWith(sessionsDir + path.sep)) {
+      if (!realPath.startsWith(realSessionsDir + path.sep)) {
         resolved = true;
         return;
       }
@@ -93,7 +109,7 @@ router.get("/:sessionId", async (req, res) => {
   let logExists = false;
   try {
     const initialReal = fs.realpathSync(logPath);
-    logExists = initialReal === logPath || initialReal.startsWith(sessionsDir + path.sep);
+    logExists = initialReal.startsWith(realSessionsDir + path.sep);
   } catch {
     logExists = false;
   }

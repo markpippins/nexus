@@ -112,15 +112,31 @@ app.get("/log/:sessionId", (req, res) => {
   let lastSize = 0;
   let resolved = false;
 
+  // Real (symlink-resolved) logs dir — this is the containment BASE for the
+  // poll loop below. Comparing the realpath of the log file against the
+  // realpath of the directory is what actually closes the symlink-escape
+  // hole: a lexical `startsWith(logsDir)` is satisfied by any path that
+  // merely looks like it is under logs/, including one reached through a
+  // symlink swapped in after the request-time check. Resolving the base too
+  // also keeps the comparison correct when the project root itself sits
+  // behind a symlink (realPath would then never lexically start with
+  // logsDir, and a naive check would refuse to stream a legitimate log).
+  let realLogsDir = logsDir;
+  try {
+    realLogsDir = fs.realpathSync(logsDir);
+  } catch {
+    // logs dir not present yet — existsSync below gates the poll anyway.
+  }
+
   const sendLines = () => {
     try {
       if (!fs.existsSync(logPath)) return;
-      // Re-resolve the real path at every open: a symlink swapped in after
-      // the initial check could otherwise point outside the logs dir
-      // (CodeQL js/path-injection remediation — lexical startsWith guards
-      // don't cover runtime symlink escapes).
+      // Re-resolve at every open, then require containment unconditionally.
+      // A single dominating check (not `a !== b && !c`) so the guard is
+      // provably true for every path that reaches the fs calls below
+      // (CodeQL js/path-injection remediation).
       const realPath = fs.realpathSync(logPath);
-      if (realPath !== logPath && !realPath.startsWith(logsDir + path.sep)) {
+      if (!realPath.startsWith(realLogsDir + path.sep)) {
         resolved = true;
         return;
       }
@@ -150,7 +166,7 @@ app.get("/log/:sessionId", (req, res) => {
   let logExists = false;
   try {
     const initialReal = fs.realpathSync(logPath);
-    logExists = initialReal === logPath || initialReal.startsWith(logsDir + path.sep);
+    logExists = initialReal.startsWith(realLogsDir + path.sep);
   } catch {
     logExists = false;
   }
