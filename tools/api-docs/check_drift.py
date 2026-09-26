@@ -59,6 +59,7 @@ MOLECULER_MIRRORS = {
     "moleculer/prompt-sync": "typescript/tackle-prompt-sync-srv",
     "moleculer/execution": "typescript/execution-srv",
     "moleculer/conduit": "typescript/conduit-srv",
+    "moleculer/peb": "typescript/peb-srv",
 }
 
 
