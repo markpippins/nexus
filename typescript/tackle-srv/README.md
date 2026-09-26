@@ -211,6 +211,33 @@ proxies to `role-memory-srv` to trigger a PG → Redis sync.
 | `MEMORY_REDIS_URL` | `redis://localhost:6379` | `memory.ts` | Redis connection for the Role Memory reader |
 | `MEMORY_SRV_URL` | `http://localhost:3500` | `memory.ts` | `role-memory-srv` URL for `POST /memory/refresh` proxy |
 
+## Rate limiting
+
+An app-level limiter caps requests at **300 req/min/IP** and advertises the
+draft-7 `RateLimit` / `RateLimit-Policy` headers; exceeding the ceiling returns
+`429`. This is a CodeQL `js/missing-rate-limiting` remediation — the ceiling is
+well above normal operator/agent polling, so it only bites on floods.
+
+## Session log path containment
+
+`/log/:sessionId` (SSE) and the `/config/ai/test` + `/config/ai/verify` session
+logs validate `sessionId` against `/^[a-zA-Z0-9_-]+$/` and then resolve the path
+defensively. Because a lexical `startsWith` guard does not cover a symlink swapped
+in *after* the check, both paths also re-resolve with `fs.realpathSync` and confirm
+the real target is still inside the logs/sessions directory. This is a CodeQL
+`js/path-injection` remediation.
+
+## Tests
+
+```bash
+npm test        # vitest
+npm run typecheck
+```
+
+The Express app lives in `src/app.ts` and the process lifecycle (DB init, Redis,
+listen, heartbeat, signal handlers) in `src/index.ts`, so tests import the real
+app without binding a port.
+
 ---
 
 ## Source File Map

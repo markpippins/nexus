@@ -15,6 +15,12 @@ WorkingDirectory=/home/codex/dev/nexus/typescript/harness-srv
 # ── Environment ────────────────────────────────────────────────────────
 Environment=HARNESS_PORT=3420
 Environment=HARNESS_WORK_DIR=/home/codex/dev
+# Extra allowed roots for user-supplied work_dir overrides, colon-separated
+# (CodeQL js/path-injection containment, alerts #590/#751). A work_dir must
+# resolve under HARNESS_WORK_DIR OR one of these. Empty = work_dir may only
+# resolve under the service work root. Add roots here rather than widening
+# the check in code.
+#Environment=HARNESS_EXTRA_WORK_ROOTS=
 Environment=NODE_ENV=production
 Environment=OPENCODE_BIN=/home/codex/.opencode/bin/opencode
 Environment=PATH=/home/codex/.nvm/versions/node/v24.15.0/bin:/home/codex/.opencode/bin:/usr/local/bin:/usr/bin:/bin

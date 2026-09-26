@@ -92,6 +92,10 @@ services:
       REDIS_HOST: ${REDIS_HOST:-redis}
       REDIS_PORT: ${REDIS_PORT:-6379}
       HARNESS_WORK_DIR: ${HARNESS_WORK_DIR:-/nexus}
+      # Extra allowed roots for user-supplied work_dir overrides,
+      # colon-separated (CodeQL js/path-injection containment). Empty =
+      # work_dir may only resolve under HARNESS_WORK_DIR.
+      HARNESS_EXTRA_WORK_ROOTS: ${HARNESS_EXTRA_WORK_ROOTS:-}
       NEXUS_LOG_DIR: ${NEXUS_LOG_DIR:-/nexus/logs}
       OPENCODE_BIN: ${OPENCODE_BIN:-opencode}
       OLLAMA_URL: ${OLLAMA_URL:-http://192.168.1.202:11434}
