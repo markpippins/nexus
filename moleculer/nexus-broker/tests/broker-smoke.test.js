@@ -108,7 +108,7 @@ async function ensureKeychainSeed() {
     port: Number(process.env.PG_PORT || 5432),
     user: process.env.PG_USER || 'pguser',
     password: process.env.PG_PASSWORD || 'pgpass',
-    database: 'sol',
+    database: process.env.PG_DB_NAME || 'nexus',
   })
   try {
     await pool.query(
@@ -739,7 +739,7 @@ test('SOL outbox events are delivered into Keychains and replayed idempotently',
     port: Number(process.env.PG_PORT || 5432),
     user: process.env.PG_USER || 'pguser',
     password: process.env.PG_PASSWORD || 'pgpass',
-    database: 'sol',
+    database: process.env.PG_DB_NAME || 'nexus',
   })
   const sourceNamespace = `sol-e2e-${process.pid}-${Date.now()}`
   const sourceEventId = randomUUID()
