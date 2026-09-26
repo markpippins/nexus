@@ -47,6 +47,48 @@ Rules
                  `--package-lock-only` (deliberate lock regeneration).
                  `npm i` shorthand is not recognized (house code writes
                  the long form).
+  maven-cache    jobs that run mvn/mvnw on the runner must cache the Maven
+                 repository: an actions/setup-java step without `cache:
+                 maven` cold-pulls Central, and concurrent cold pulls trip
+                 its rate limiter (the 2026-09-25 main 429 incident, run
+                 36088456372; fixed in #569, guarded here). Fires once per
+                 job, anchored at the first uncached setup-java step.
+                 Docker-internal Maven builds (docker-gate shape) are out
+                 of scope — no runner-level mvn, and the host cache would
+                 not apply. mvnw counts (same cold-pull class); a wrong-
+                 ecosystem cache (gradle/sbt) does not satisfy it.
+  node-cache     jobs that run npm (ci|install) inside a lock-bearing
+                 directory must cache the npm store: actions/setup-node
+                 without `cache: npm` re-downloads the dependency tree
+                 every run. The gate mirrors GitHub's own semantics —
+                 `cache: npm` hard-fails without a lockfile — so the rule
+                 fires only where the remediation is satisfiable: a
+                 package-lock.json must exist at the scan root or in one
+                 of the job's working-directory/cd targets. Lockless
+                 installs (deliberate, per npm-ci's opt-in stance) stay
+                 silent; the message names the lock so
+                 cache-dependency-path is copy-pasteable.
+  pip-cache      jobs that pip install from a requirements file (-r/--
+                 requirement) must cache the pip wheel store:
+                 actions/setup-python without `cache: pip` re-downloads
+                 wheels every run, and a -r install supplies a natural
+                 cache-dependency-path. Ad-hoc 1-2 package installs
+                 (pytest, psycopg2) stay silent on purpose: the wheel-
+                 cache win is marginal there and the key file would be
+                 arbitrary. The rule checks the requirements file actually
+                 exists (repo root or a job working-directory) so the
+                 remediation is real.
+  cache-dep-path a CACHED setup-node/setup-python whose key file is not
+                 the action default must declare cache-dependency-path.
+                 Node: exempt when a root package-lock.json exists (the
+                 default target is correct). Pip: exempt when the -r file
+                 is in pip's default search (requirements.txt /
+                 pyproject.toml at any depth). The live instance was
+                 mesh-pytest: cache: 'pip' hashing the default repo-wide
+                 set while installing from requirements-dev.txt — pin
+                 changes could never bust the cache. Declaration present
+                 always satisfies; nothing to hash = the other rules'
+                 subject, silent here.
 
 Escape hatch: '# wf-lint-allow' (bare) suppresses every rule for that
 line; '# wf-lint-allow: rule1,rule2' suppresses only the named rules;
@@ -54,12 +96,13 @@ line; '# wf-lint-allow: rule1,rule2' suppresses only the named rules;
 on the line. The postgres rule also honors its legacy '# pg-pin-allow'
 marker.
 
-Scope: postgres-pin / eol-runtime / action-ref / job-hardening scan
-.github/workflows YAML only; dead-base scans Dockerfiles anywhere under
-the target; npm-ci judges both surfaces (workflow run blocks with
-working-directory/cd resolution, and Dockerfile RUNs with build-context
-lock resolution — repo-side approximation of the build context, since
-the actual -f/--context flags are unknowable from the files alone).
+Scope: postgres-pin / eol-runtime / action-ref / job-hardening /
+maven-cache scan .github/workflows YAML only; dead-base scans
+Dockerfiles anywhere under the target; npm-ci judges both surfaces
+(workflow run blocks with working-directory/cd resolution, and
+Dockerfile RUNs with build-context lock resolution — repo-side
+approximation of the build context, since the actual -f/--context
+flags are unknowable from the files alone).
 Compose-file PG pins are host-stack concerns (fleet rulings R1/R3) and
 deliberately out of scope here.
 
@@ -804,6 +847,689 @@ class NpmCiRule(Rule):
 
 
 # --------------------------------------------------------------------------
+# rule: maven-cache (Central rate-limit hygiene)
+# --------------------------------------------------------------------------
+
+# `mvn`/`mvnw` as a standalone token followed by whitespace + an argument.
+# Word-boundary form so ./mvnw, `run: mvn ...`, and `x && mvn ...` all match,
+# while maven-the-word, mvn-repo paths, and bare `mvn` (no args) do not.
+MVN_RUN_RE = re.compile(r"\b(?:mvn|mvnw)\s+\S")
+SETUP_JAVA_RE = re.compile(r"^\s*(?:-\s+)?uses:\s*actions/setup-java\b")
+ACTIONS_CACHE_RE = re.compile(r"^\s*(?:-\s+)?uses:\s*actions/cache\b")
+CACHE_MAVEN_RE = re.compile(r"^\s*cache:\s*['\"]?maven['\"]?\s*(?:#.*)?$")
+
+
+def _job_runs_maven(body: list[str]) -> bool:
+    """True when any executable line of the job body invokes mvn/mvnw on the
+    runner. Comment lines (shell comments inside run blocks included) never
+    count. Docker-internal Maven (docker build / docker run ... mvn) is out
+    of scope for the same reason the docker-gate is exempt: a host-runner
+    cache does not reach inside the container."""
+    for raw in body:
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if "docker build" in stripped or "docker run" in stripped:
+            continue
+        if MVN_RUN_RE.search(stripped):
+            return True
+    return False
+
+
+def _setup_step_windows(
+    body: list[str], setup_re
+) -> list[tuple[int, int, int]]:
+    """(body_offset, start, end) windows of setup-* steps matching `setup_re`:
+    start/end bracket the step's dash-item window (cache/with judgment runs
+    inside it only)."
+
+    Step anatomy (house 2-space style): a list item's first property carries
+    the `- ` marker (e.g. `- name:`), so its key sits two columns LEFT of the
+    step's other properties (`uses:`, `with:`, `run:` all share one indent);
+    when `uses:` is itself the first property, it owns the dash. The step's
+    window therefore runs from its `- ` item line to the next dash item or
+    job-level key, and `with:` lives INSIDE that window at the property
+    indent — the naive "stop at the uses: line's own indent" read amputates
+    the with: block and false-positives every correctly cached step (caught
+    live against the #569-fixed workflows before this shipped).
+
+    `cache:` is judged only among the `with:` block's children, so another
+    step's cache, or text inside a run block, can never satisfy this step.
+    A step with no `with:` at all is uncached by definition. Quoted values
+    and trailing comments are accepted.
+    """
+    out: list[tuple[int, int, int]] = []
+    for i, raw in enumerate(body):
+        if not setup_re.match(raw):
+            continue
+        u = len(raw) - len(raw.lstrip())
+        # Step start: walk back to the `- ` item line at the property indent's
+        # dash column — present unless uses: itself carries the dash.
+        start = i
+        if not raw.lstrip().startswith("- "):
+            k = i
+            while k > 0:
+                line = body[k]
+                s = line.strip()
+                if s:
+                    ind = len(line) - len(line.lstrip())
+                    if ind < u and s.startswith("- "):
+                        start = k
+                        break
+                    if ind < u:
+                        break  # job-level key: degenerate, stay at i
+                k -= 1
+        # Step end: next dash item at the step level, or any dedent below it.
+        end = len(body)
+        j = start + 1
+        while j < len(body):
+            line = body[j]
+            s = line.strip()
+            if s:
+                ind = len(line) - len(line.lstrip())
+                if ind < u or (ind == u and s.startswith("- ")):
+                    end = j
+                    break
+            j += 1
+        out.append((i, start, end))
+    return out
+
+
+def _step_with_block(body: list[str], start: int, end: int) -> int | None:
+    """Body offset of the step's `with:` key line within [start, end)."""
+    for j in range(start, end):
+        m = VALKEY_RE.match(body[j])
+        if m and m.group(2) == "with":
+            return j
+    return None
+
+
+def _uncached_setup_step_offsets(
+    body: list[str], setup_re, cache_ok
+) -> list[int]:
+    """Body offsets of setup-* steps matching `setup_re` whose with: block
+    carries no line satisfying `cache_ok` (the ecosystem's cache predicate).
+
+    The step's with: block lives INSIDE its dash-item window at the property
+    indent; cache: is judged only among that with:'s children, so another
+    step's cache or run-block text can never satisfy this step. A step with
+    no with: at all is uncached by definition. Quoted values and trailing
+    comments are accepted.
+    """
+    out: list[int] = []
+    for i, start, end in _setup_step_windows(body, setup_re):
+        with_idx = _step_with_block(body, start, end)
+        cached = False
+        if with_idx is not None:
+            w = len(body[with_idx]) - len(body[with_idx].lstrip())
+            for j in range(with_idx + 1, end):
+                line = body[j]
+                if line.strip():
+                    if len(line) - len(line.lstrip()) <= w:
+                        break  # dedent: with: block closed
+                    if cache_ok(line):
+                        cached = True
+                        break
+        if not cached:
+            out.append(i)
+    return out
+
+
+def _step_with_value(body: list[str], start: int, end: int, key: str) -> str | None:
+    """Scalar value of `key:` among the step's with: children (first match,
+    quotes stripped), or None when the step doesn't declare it."""
+    with_idx = _step_with_block(body, start, end)
+    if with_idx is None:
+        return None
+    w = len(body[with_idx]) - len(body[with_idx].lstrip())
+    for j in range(with_idx + 1, end):
+        line = body[j]
+        if line.strip():
+            if len(line) - len(line.lstrip()) <= w:
+                break  # dedent: with: block closed
+            m = re.match(rf"^\s*{re.escape(key)}:\s*['\"]?([^'\"#\s]+)", line)
+            if m:
+                return m.group(1)
+    return None
+
+
+class MavenCacheRule(Rule):
+    """A job that runs mvn/mvnw must cache the Maven repository, by either
+    idiom: `cache: maven` on its actions/setup-java step, or an explicit
+    actions/cache step restoring ~/.m2. Two idioms because setup-java's
+    cache: maven hardcodes ONE repo-wide key — with several Maven workflows
+    the first-save race hands the entry to whichever job finishes first,
+    and a narrow -pl job starves the full-reactor entry (observed 2026-09-25:
+    the wrp parity job's ~10 MB subtree beat ci.yml's full reactor, leaving
+    every run re-downloading ~93% of Central artifacts). The actions/cache
+    idiom with a per-workflow key is the escape from that race.
+
+    One finding per offending job, anchored at the first uncached setup-java
+    step so the allow marker works there. Structural (scan_file). No --fix
+    pass on purpose: the remediation depends on whether the step already has
+    a with: block, and review should see the edit in context.
+    """
+
+    name = "maven-cache"
+
+    def applies(self, rel: str, filename: str, target: str) -> bool:
+        return _in_workflows(rel, target) and filename.endswith((".yml", ".yaml"))
+
+    def scan_line(self, raw: str, rel: str, lineno: int) -> list[Finding]:
+        return []  # structural rule: judged via scan_file only
+
+    @staticmethod
+    def _has_m2_cache_step(body: list[str]) -> bool:
+        """True when any actions/cache step in the job restores an ~/.m2 path
+        (single-line `path: ~/.m2/repository` or a block/list form — any
+        deeper-indented line under its with: mentioning .m2 counts).
+
+        Matched component-wise: a /-token must be exactly `.m2` or start with
+        `.m2` at a boundary — `~/.m2`, `~/.m2/repository` in; `~/.m2x` is a
+        DIFFERENT directory and must not satisfy this."""
+        for _i, start, end in _setup_step_windows(body, ACTIONS_CACHE_RE):
+            with_idx = _step_with_block(body, start, end)
+            if with_idx is None:
+                continue
+            w = len(body[with_idx]) - len(body[with_idx].lstrip())
+            for j in range(with_idx + 1, end):
+                line = body[j]
+                if not (line.strip() and len(line) - len(line.lstrip()) > w):
+                    continue
+                for token in line.split("/"):
+                    token = token.split(":")[-1].strip("'\"").rstrip(",")
+                    if token == ".m2" or token.startswith(".m2 ") or token.startswith(".m2/"):
+                        return True
+        return False
+
+    def scan_file(self, rel: str, lines: list[str]) -> list[Finding]:
+        out: list[Finding] = []
+        # Same GitHub-reality gate as job-hardening: no trigger, not a file
+        # GitHub would run — scratch fixtures and malformed files are out of
+        # scope for the whole rule.
+        if not (
+            _has_top_level_key(lines, "on")
+            or _has_top_level_key(lines, "true")
+            or _has_top_level_key(lines, "true:")
+        ):
+            return []
+        for name, header_idx, _job_indent, uses_key, body in _locate_jobs(lines):
+            if uses_key:
+                continue  # reusable-workflow caller: steps live elsewhere
+            if not _job_runs_maven(body):
+                continue
+            uncached = _uncached_setup_step_offsets(body, SETUP_JAVA_RE, CACHE_MAVEN_RE.match)
+            if not uncached:
+                continue
+            if self._has_m2_cache_step(body):
+                continue  # explicit actions/cache idiom: per-workflow keys, race-free
+            anchor = header_idx + uncached[0] + 2  # 1-based lineno of body[uncached[0]]
+            out.append(Finding(
+                "violation", rel, anchor, self.name,
+                f"job `{name}` runs mvn/mvnw but caches no Maven repository — concurrent "
+                f"cold pulls hit Maven Central's 429 rate limiter (2026-09-25 incident, "
+                f"#569); add `cache: maven` to the setup-java step, or an actions/cache "
+                f"step on ~/.m2/repository with a per-workflow key (the setup-java shared "
+                f"key loses its entry to whichever Maven job saves first)",
+            ))
+        return out
+
+
+# --------------------------------------------------------------------------
+# rules: node-cache / pip-cache (npm + pip cold-pull hygiene)
+# --------------------------------------------------------------------------
+
+SETUP_NODE_RE = re.compile(r"^\s*(?:-\s+)?uses:\s*actions/setup-node\b")
+SETUP_PYTHON_RE = re.compile(r"^\s*(?:-\s+)?uses:\s*actions/setup-python\b")
+CACHE_NPM_RE = re.compile(r"^\s*cache:\s*['\"]?npm['\"]?\s*(?:#.*)?$")
+CACHE_PIP_RE = re.compile(r"^\s*cache:\s*['\"]?pip['\"]?\s*(?:#.*)?$")
+CACHE_DEP_PATH_RE = re.compile(r"^\s*cache-dependency-path:\s*['\"]?(\S+?)['\"]?\s*(?:#.*)?$")
+NPM_RUN_RE = re.compile(r"\bnpm\s+(?:ci|install)\b")
+PIP_R_RUN_RE = re.compile(r"\bpip(?:\d(?:\.\d+)?)?\s+(?:install\s+)?-r\s+|--requirement\s+(\S+)")
+PIP_R_ALT_RE = re.compile(r"(?:pip|pip3|python3?(?:\.\d+)?)\s+-m\s+pip\s+install.*(?:-r|--requirement)\s+(\S+)")
+RUN_LINE_RE = re.compile(r"^\s*(?:-\s+)?run:\s*")
+
+
+def _cd_targets_in_body(body: list[str]) -> set[str]:
+    """Directories the job's run blocks cd into (in-block `cd x`), plus any
+    step-level working-directory: values — the same resolution npm-ci uses,
+    approximated for the lock-presence gate."""
+    dirs: set[str] = set()
+    for raw in body:
+        m = WD_RE.match(raw)
+        if m:
+            dirs.add(m.group(1))
+        for cd in CD_RE.finditer(raw):
+            dirs.add(cd.group(1))
+    return dirs
+
+
+def _pip_requirements_files(body: list[str]) -> set[str]:
+    """Requirement files named by `-r`/`--requirement` in the job's run
+    blocks (both `pip install -r f` and `python3 -m pip install -r f`)."""
+    files: set[str] = set()
+    for raw in body:
+        for m in PIP_R_ALT_RE.finditer(raw):
+            files.add(m.group(1).strip("'\""))
+    return files
+
+
+def _root_of(rule: "NodeCacheRule | PipCacheRule") -> str:
+    return getattr(rule, "_target", ".")
+
+
+def _contained_path(rule, d: str) -> str | None:
+    """`d` resolved against the scan root, or None when it escapes the root
+    (mirror of _nearest_lock's stop-at-root). Without this, a cleanup
+    `cd ../..` in a run block made the sonar job's gate match the *dev
+    checkout's* lock one level above the repo — an existence check that
+    would silently leak host state into CI linting."""
+    root = os.path.abspath(_root_of(rule))
+    p = os.path.normpath(os.path.join(root, d))
+    if p != root and not p.startswith(root + os.sep):
+        return None
+    return p
+
+
+def _exists_under_target(rule, path: str) -> bool:
+    root = _root_of(rule)
+    candidate = path if os.path.isabs(path) else os.path.join(root, path)
+    return os.path.isfile(candidate)
+
+
+class _SetupCacheRuleBase(Rule):
+    """Shared machinery for the setup-node/setup-python cache rules: gate on
+    GitHub-reality (trigger present), skip caller jobs, find uncached setup
+    steps via the generalized step-window helper, then decide per job whether
+    the ecosystem's remediation is satisfiable (the npm-ci philosophy — the
+    rule never demands what GitHub's own action would reject)."""
+
+    setup_re: re.Pattern
+    cache_ok: object
+    _target = "."
+
+    def applies(self, rel: str, filename: str, target: str) -> bool:
+        self._target = target
+        return _in_workflows(rel, target) and filename.endswith((".yml", ".yaml"))
+
+    def scan_line(self, raw: str, rel: str, lineno: int) -> list[Finding]:
+        return []  # structural rule: judged via scan_file only
+
+    def _gate_ok(self, name: str, header_idx: int, body: list[str]) -> bool:
+        raise NotImplementedError
+
+    def scan_file(self, rel: str, lines: list[str]) -> list[Finding]:
+        out: list[Finding] = []
+        if not (
+            _has_top_level_key(lines, "on")
+            or _has_top_level_key(lines, "true")
+            or _has_top_level_key(lines, "true:")
+        ):
+            return []
+        for name, header_idx, _job_indent, uses_key, body in _locate_jobs(lines):
+            if uses_key:
+                continue
+            uncached = _uncached_setup_step_offsets(body, self.setup_re, self.cache_ok)
+            if not uncached:
+                continue
+            if not self._gate_ok(name, header_idx, body):
+                continue
+            anchor = header_idx + uncached[0] + 2
+            out.append(Finding(
+                "violation", rel, anchor, self.name,
+                self._message(name, body),
+            ))
+        return out
+
+    def _message(self, name: str, body: list[str]) -> str:  # pragma: no cover - abstract
+        raise NotImplementedError
+
+
+class NodeCacheRule(_SetupCacheRuleBase):
+    """npm cold-pulls in lock-bearing dirs: setup-node must cache the npm
+    store. Gate: a package-lock.json exists at the scan root, in a job
+    working-directory, or in an in-block cd target — mirroring npm-ci's
+    lock-presence trigger, and matching GitHub's own `cache: npm` hard
+    requirement so the rule never demands an unremediable fix."""
+
+    name = "node-cache"
+    setup_re = SETUP_NODE_RE
+    cache_ok = staticmethod(CACHE_NPM_RE.match)
+
+    def _lock_dirs(self, body: list[str]) -> list[str]:
+        """Job directories (root-relative, scan-root-contained) holding a
+        package-lock.json — the dirs `cache: npm` + cache-dependency-path
+        could key on. Escapees (`cd ../..`) are dropped by _contained_path."""
+        out = []
+        for d in _cd_targets_in_body(body):
+            p = _contained_path(self, d)
+            if p and os.path.isfile(os.path.join(p, "package-lock.json")):
+                out.append(os.path.relpath(p, os.path.abspath(self._target)).replace(os.sep, "/"))
+        return sorted(out)
+
+    def _gate_ok(self, name: str, header_idx: int, body: list[str]) -> bool:
+        # npm-run half-gate (mirrors maven's _job_runs_maven): a setup-node
+        # job that never runs npm ci/install is not a cold-pull subject.
+        # Comment lines never count; NPM_RUN_RE is npm-ci's own pattern.
+        if not any(
+            NPM_RUN_RE.search(l.strip())
+            for l in body
+            if l.strip() and not l.strip().startswith("#")
+        ):
+            return False
+        if os.path.isfile(os.path.join(self._target, "package-lock.json")):
+            return True
+        return bool(self._lock_dirs(body))
+
+    def _message(self, name: str, body: list[str]) -> str:
+        dirs = self._lock_dirs(body)
+        path = f"{dirs[0]}/package-lock.json" if dirs else "package-lock.json"
+        return (
+            f"job `{name}` runs npm in a lock-bearing directory but its actions/setup-node "
+            f"step has no `cache: npm` — every run re-downloads the dependency tree; add "
+            f"`cache: npm` with `cache-dependency-path: {path}` to the "
+            f"step's with: block"
+        )
+
+
+class PipCacheRule(_SetupCacheRuleBase):
+    """pip cold-pulls from requirements files: setup-python must cache the
+    pip wheel store. Gate: the job installs with `pip install -r <file>` AND
+    that file exists at the scan root or inside a job working-directory —
+    giving the cache a natural cache-dependency-path. Ad-hoc 1-2 package
+    installs stay silent (marginal wheel-cache win; arbitrary key file)."""
+
+    name = "pip-cache"
+    setup_re = SETUP_PYTHON_RE
+    cache_ok = staticmethod(CACHE_PIP_RE.match)
+
+    def _gate_ok(self, name: str, header_idx: int, body: list[str]) -> bool:
+        reqs = _pip_requirements_files(body)
+        if not reqs:
+            return False
+        for f in reqs:
+            if _exists_under_target(self, f):
+                return True
+            # relative to any contained job working-directory
+            for d in _cd_targets_in_body(body):
+                p = _contained_path(self, d)
+                if p and os.path.isfile(os.path.join(p, f)):
+                    return True
+        return False
+
+    def _message(self, name: str, body: list[str]) -> str:
+        reqs = sorted(_pip_requirements_files(body))
+        return (
+            f"job `{name}` pip-installs from {reqs[0]} but its actions/setup-python step "
+            f"has no `cache: pip` — every run re-downloads the wheels; add `cache: pip` "
+            f"with `cache-dependency-path: {reqs[0]}` to the step's with: block"
+        )
+
+
+# --------------------------------------------------------------------------
+# rule: cache-dep-path (the silent partial-cache failure mode)
+# --------------------------------------------------------------------------
+
+SETUP_NODEPY_RE = re.compile(r"^\s*(?:-\s+)?uses:\s*actions/setup-(?:node|python)\b")
+# pip's default dependency search (setup-python README + runtime-verified):
+# a repo-wide glob over requirements.txt / pyproject.toml. Runtime proof:
+# mesh-pytest has NO root-level default file, yet its cache: pip runs green
+# and hit — so the default search found repo files at depth (the multiple
+# python/*/requirements.txt + pyproject.toml). Its two matrix jobs hashed
+# IDENTICAL keys — repo-constant, i.e. not the file the job installs from.
+DEFAULT_PIP_BASENAME_RE = re.compile(r"(?:requirements\.txt|pyproject\.toml)$")
+
+
+def _pip_default_covered(rule, reqs: set[str]) -> bool:
+    """True when any -r file the job installs from is in pip's default
+    search set (basename requirements.txt / pyproject.toml at any repo
+    depth) — the default hash then includes that exact file."""
+    return any(DEFAULT_PIP_BASENAME_RE.search(f) for f in reqs)
+
+
+class CacheDepPathRule(_SetupCacheRuleBase):
+    """A CACHED setup-node/setup-python step whose dependency key file is not
+    the action's default must declare cache-dependency-path — otherwise the
+    action hashes the wrong file (or a repo-wide grab-bag) and dependency
+    changes silently stop busting the cache. The live instance: mesh-pytest
+    installs from requirements-dev.txt but its cache: 'pip' key hashed the
+    default repo-wide requirements.txt/pyproject.toml set — a pytest pin
+    bump would not invalidate it.
+
+    Exemptions (the family's satisfiability discipline):
+    - node: a root package-lock.json exists (default path is correct) — the
+      declaration is unnecessary by definition.
+    - pip: every -r file the job installs from is default-search-covered
+      (requirements.txt/pyproject.toml at any depth).
+    - no lock / no existing requirements file: the pip/node-cache rules
+      govern that side; this rule stays silent (their subjects).
+    """
+
+    name = "cache-dep-path"
+    setup_re = SETUP_NODEPY_RE
+    cache_ok = staticmethod(lambda line: bool(CACHE_NPM_RE.match(line) or CACHE_PIP_RE.match(line)))
+
+    def scan_file(self, rel: str, lines: list[str]) -> list[Finding]:
+        out: list[Finding] = []
+        if not (
+            _has_top_level_key(lines, "on")
+            or _has_top_level_key(lines, "true")
+            or _has_top_level_key(lines, "true:")
+        ):
+            return []
+        for name, header_idx, _job_indent, uses_key, body in _locate_jobs(lines):
+            if uses_key:
+                continue
+            uncached = set(_uncached_setup_step_offsets(body, self.setup_re, self.cache_ok))
+            for i, start, end in _setup_step_windows(body, self.setup_re):
+                if i in uncached:
+                    continue  # cache absent entirely: node/pip-cache's subject
+                with_idx = _step_with_block(body, start, end)
+                if with_idx is None:
+                    continue
+                w = len(body[with_idx]) - len(body[with_idx].lstrip())
+                eco = None
+                for j in range(with_idx + 1, end):
+                    line = body[j]
+                    if line.strip():
+                        if len(line) - len(line.lstrip()) <= w:
+                            break
+                        if CACHE_NPM_RE.match(line):
+                            eco = "npm"
+                        elif CACHE_PIP_RE.match(line):
+                            eco = "pip"
+                if eco is None:
+                    continue
+                declared = _step_with_value(body, start, end, "cache-dependency-path")
+                if declared:
+                    continue  # explicit path: the step owns its key file
+                if eco == "npm":
+                    node_helper = NodeCacheRule()
+                    node_helper._target = self._target
+                    locks = node_helper._lock_dirs(body)
+                    if not locks:
+                        continue  # no lock anywhere: loud runtime failure, not a silent one
+                    if any(d == "." for d in locks):
+                        continue  # root lock: default path is correct
+                    out.append(Finding(
+                        "violation", rel, header_idx + i + 2, self.name,
+                        f"job `{name}` caches npm but its lock lives outside the repo root "
+                        f"({locks[0]}/package-lock.json) — the default hash target is wrong; "
+                        f"add `cache-dependency-path: {locks[0]}/package-lock.json`",
+                    ))
+                else:
+                    reqs = _pip_requirements_files(body)
+                    if not reqs:
+                        continue
+                    pip_helper = PipCacheRule()
+                    pip_helper._target = self._target
+                    existing = [
+                        f for f in sorted(reqs)
+                        if _exists_under_target(pip_helper, f)
+                        or any(
+                            (p := _contained_path(pip_helper, d))
+                            and os.path.isfile(os.path.join(p, f))
+                            for d in _cd_targets_in_body(body)
+                        )
+                    ]
+                    if not existing:
+                        continue  # nothing real to key on: pip-cache's subject
+                    if _pip_default_covered(self, reqs):
+                        continue  # -r file is in the default search: hash already includes it
+                    out.append(Finding(
+                        "violation", rel, header_idx + i + 2, self.name,
+                        f"job `{name}` caches pip but installs from {existing[0]}, which is "
+                        f"NOT in pip's default dependency search (requirements.txt / "
+                        f"pyproject.toml) — the cache key will not change when that file "
+                        f"does; add `cache-dependency-path: {existing[0]}`",
+                    ))
+        return out
+
+
+# --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# rule: nats-postcondition
+# --------------------------------------------------------------------------
+
+# A run block that PUBLISHES an intent/event into NATS. Matched as a closed
+# vocabulary of real publisher shapes (runner-side JetStream publishes, the
+# nats CLI, and invocations of the house producer route / probe). Stream
+# provisioning alone (ensure-write-queue-stream, nats stream info) is NOT
+# publishing, and neither is a plain subscriber.
+NATS_PUBLISH_RE = re.compile(
+    r"\b(?:js|nc|conn)\.publish\s*\("            # nats client publishes
+    r"|\bnats\s+pub\s"                           # nats CLI publish
+    r"|\bsolscript/transition-entity\b"          # house producer route (app -> JetStream)
+    r"|\bci_write_queue_probe\.py\b"             # house probe (publishes by design)
+)
+
+# A run block that VERIFIES the published intent actually landed: a committed
+# postcondition script, a poll/assert loop on the canonical outcome, a
+# JetStream state assertion, or a log assert for the applied/outcome marker.
+NATS_ASSERT_RE = re.compile(
+    r"postcondition"                              # committed postcondition script
+    r"|stream_info|consumer_info"                  # JetStream state assertion
+    r"|nats\s+(?:stream|consumer)\s+(?:info|view)" # nats CLI state read
+    r"|grep\s+-q"                                 # log/outcome-marker assert
+    r"|SELECT count\(\*\)"                         # house poll-assert on canonical rows
+)
+
+
+class NatsPostconditionRule(Rule):
+    """A workflow job that publishes to NATS must VERIFY the publish landed.
+
+    Born from the write-queue arc (2026-09-25): a JetStream publish to a
+    subject no stream matches returns success (the silent no-op class), and
+    a publish whose consumer is down still succeeds — the intent just sits
+    in the stream. A smoke test that publishes and then walks away proves
+    nothing: it stays green while the whole arc behind the publish is broken
+    (the failure mode the D5 arc was built to expose, and the same shape as
+    the old broker health-poll fooling). The postcondition must be IN the
+    workflow — visible to review and to this lint — not buried in a helper.
+
+    Satisfiers (any, anywhere in the same job, order-agnostic): a committed
+    postcondition script, a JetStream/consumer state assertion, a poll loop
+    on the canonical outcome, or a grep -q assert on a reconciler/service
+    log. Anchored at the first publish line so the allow marker works there.
+    One finding per offending job. Structural (scan_file); no --fix pass —
+    the honest remediation is choosing the right assertion for the arc,
+    which review should see in context.
+    """
+
+    name = "nats-postcondition"
+
+    def applies(self, rel: str, filename: str, target: str) -> bool:
+        return _in_workflows(rel, target) and filename.endswith((".yml", ".yaml"))
+
+    def scan_line(self, raw: str, rel: str, lineno: int) -> list[Finding]:
+        return []  # structural rule: judged via scan_file only
+
+    @staticmethod
+    def _run_blocks(body: list[str]) -> list[list[tuple[int, str]]]:
+        """(body_offset, code_line) per `run:` block, boundaries by indent.
+
+        A run block opens at a `run:` property — including the dash-carrying
+        first-property form (`- run: |`, where VALKEY_RE cannot match past
+        the `- ` marker — caught live against a fixture before shipping) —
+        and spans every following deeper-indented line. The boundary is the
+        run key's PROPERTY indent (dash column + 2), so sibling step
+        properties and the next dash item both close the block. Whole-line
+        comments are dropped so a commented-out assert can never satisfy the
+        rule — a silent assert is exactly the failure mode in scope. Offsets
+        are kept per code line so findings anchor at the REAL publish line
+        (the allow marker lives there; a block-index anchor points at the
+        wrong line and suppressions silently stop working)."""
+        run_re = re.compile(r"^(\s*)(?:-\s+)?([A-Za-z0-9_-]+):(?:\s.*)?$")
+        blocks: list[list[tuple[int, str]]] = []
+        i = 0
+        n = len(body)
+        while i < n:
+            m = run_re.match(body[i])
+            if not m or m.group(2) != "run":
+                i += 1
+                continue
+            key_indent = len(m.group(1))
+            if body[i].lstrip().startswith("- "):
+                key_indent += 2  # the dash item's property indent
+            code: list[tuple[int, str]] = []
+            j = i + 1
+            while j < n:
+                line = body[j]
+                if not line.strip():
+                    j += 1
+                    continue
+                ind = len(line) - len(line.lstrip())
+                if ind <= key_indent:
+                    break
+                s = line.strip()
+                if not s.startswith("#"):
+                    code.append((j, s))
+                j += 1
+            blocks.append(code)
+            i = j
+        return blocks
+
+    def scan_file(self, rel: str, lines: list[str]) -> list[Finding]:
+        if not any(STEPS_KEY_RE.match(l) for l in lines):
+            return []
+        findings: list[Finding] = []
+        for name, idx, _indent, _caller, body in _locate_jobs(lines):
+            if _has_top_level_key(body, "uses"):
+                continue  # reusable-workflow caller: nothing to lint here
+            blocks = self._run_blocks(body)
+            hit_offset = None
+            for code in blocks:
+                for j, s in code:
+                    if NATS_PUBLISH_RE.search(s):
+                        hit_offset = j
+                        break
+                if hit_offset is not None:
+                    break
+            if hit_offset is None:
+                continue
+            verified = False
+            for code2 in blocks:
+                if NATS_ASSERT_RE.search("\n".join(s for _j, s in code2)):
+                    verified = True
+                    break
+            if verified:
+                continue
+            findings.append(Finding(
+                "violation", rel, idx + 2 + hit_offset, self.name,
+                f"job `{name}` publishes to NATS but never verifies the "
+                "publish landed — a JetStream publish to a subject no "
+                "stream matches returns success, and a publish with the "
+                "consumer down also succeeds (the intent just sits in the "
+                "stream). Add a postcondition in this job: a postcondition "
+                "script, a JetStream/consumer state assert (stream_info/"
+                "consumer_info), a poll loop on the canonical outcome, or a "
+                "grep -q assert on the reconciler/service log — or mark the "
+                "publish line '# wf-lint-allow: <reason>' if this arc is "
+                "verified elsewhere."
+            ))
+        return findings
+
+
 # allow markers
 # --------------------------------------------------------------------------
 
@@ -841,6 +1567,11 @@ RULES: list[Rule] = [
     ActionRefRule(),
     JobHardeningRule(),
     NpmCiRule(),
+    MavenCacheRule(),
+    NodeCacheRule(),
+    PipCacheRule(),
+    CacheDepPathRule(),
+    NatsPostconditionRule(),
 ]
 
 

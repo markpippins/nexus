@@ -39,6 +39,19 @@ LINT = os.path.join(REPO_ROOT, "bin", "wf_lint.py")
 FROZEN = {"WF_LINT_AS_OF": "2026-09-01"}
 
 
+def _nats_wf(pub_step: str, verify_step: str = "") -> str:
+    """Minimal hardened workflow with one publishing job (+ optional verifier)."""
+    return (
+        "on: push\npermissions:\n  contents: read\n"
+        "jobs:\n"
+        "  smoke:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    timeout-minutes: 10\n"
+        "    steps:\n"
+        + pub_step + verify_step
+    )
+
+
 class WfLintTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="wflint-")
@@ -694,12 +707,762 @@ class WfLintTest(unittest.TestCase):
         self.assertEqual(1, proc.returncode)  # real.yml's missing blocks fire
         self.assertNotIn("node_modules", proc.stdout + proc.stderr)
 
+    # -- maven-cache ----------------------------------------------------------------
+
+    MAVEN_OK = (
+        "on: push\n"
+        "jobs:\n"
+        "  build:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@v4\n"
+        "      - name: Set up JDK\n"
+        "        uses: actions/setup-java@v3\n"
+        "        with:\n"
+        "          java-version: '21'\n"
+        "          distribution: temurin\n"
+        "          cache: maven\n"
+        "      - run: mvn -B test\n"
+    )
+
+    def test_uncached_setup_java_with_mvn_fails(self):
+        # The drift class: the 2026-09-25 main 429 (run 36088456372) — setup-java
+        # without cache: maven + a runner mvn invocation, concurrent jobs cold-pull.
+        body = self.MAVEN_OK.replace("          cache: maven\n", "")
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("[maven-cache]", proc.stderr)
+        self.assertIn("cache: maven", proc.stderr)
+
+    def test_cached_maven_passes(self):
+        self._write(".github/workflows/ci.yml", self.MAVEN_OK)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_quoted_and_commented_cache_values_pass(self):
+        for variant in ("          cache: 'maven'  # fleet standard\n",
+                        '          cache: "maven"\n'):
+            body = self.MAVEN_OK.replace("          cache: maven\n", variant)
+            self._write(".github/workflows/ci.yml", body)
+            proc = self._run(self.tree, None, "--rule", "maven-cache")
+            self.assertEqual(0, proc.returncode, variant)
+
+    def test_no_setup_java_no_finding(self):
+        # Maven via a preinstalled JDK (no setup-java step) is not the rule's
+        # subject — nothing to attach cache: maven to.
+        body = self.MAVEN_OK.replace(
+            "      - name: Set up JDK\n"
+            "        uses: actions/setup-java@v3\n"
+            "        with:\n"
+            "          java-version: '21'\n"
+            "          distribution: temurin\n"
+            "          cache: maven\n",
+            "",
+        )
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_no_mvn_no_finding(self):
+        # setup-java without any runner mvn (e.g. java-only tooling) is not a
+        # cold-pull risk — the rule requires both halves.
+        body = self.MAVEN_OK.replace("      - run: mvn -B test\n", "      - run: java -jar app.jar\n")
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_mvnw_counts(self):
+        # Same cold-pull class, different wrapper spelling.
+        body = self.MAVEN_OK.replace(
+            "      - run: mvn -B test\n",
+            "      - run: ./mvnw -B test\n",
+        )
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_docker_internal_maven_not_in_scope(self):
+        # docker-gate shape: mvn executes inside the container; a host cache
+        # would not reach it, and docker build/run lines are excluded.
+        body = self.MAVEN_OK.replace(
+            "      - run: mvn -B test\n",
+            "      - run: docker build -f jvm/Dockerfile .\n",
+        )
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_wrong_ecosystem_cache_still_fails(self):
+        # cache: gradle does not cover ~/.m2 — the rule demands maven.
+        body = self.MAVEN_OK.replace("          cache: maven\n", "          cache: gradle\n")
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("[maven-cache]", proc.stderr)
+
+    # -- maven-cache: actions/cache idiom (per-workflow keys, 2026-09-25) -------
+    # setup-java's `cache: maven` hardcodes ONE repo-wide key; on the first
+    # post-merge run (36148478232) a narrow -pl parity job won the save race
+    # and starved the full reactor (~10 MB entry, 1546 re-downloads every
+    # run). The remediation is per-workflow actions/cache keys, so an
+    # actions/cache step covering ~/.m2 must satisfy this rule too.
+
+    def test_actions_cache_m2_idiom_passes(self):
+        # The converted fleet shape: uncached setup-java + explicit actions/cache
+        # restoring ~/.m2 under a per-workflow key.
+        body = (
+            "on: push\n"
+            "jobs:\n"
+            "  build:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - uses: actions/checkout@v4\n"
+            "      - uses: actions/cache@v4\n"
+            "        with:\n"
+            "          path: ~/.m2/repository\n"
+            "          key: maven-ci-${{ hashFiles('jvm/**/pom.xml') }}\n"
+            "          restore-keys: maven-ci-\n"
+            "      - name: Set up JDK\n"
+            "        uses: actions/setup-java@v3\n"
+            "        with:\n"
+            "          java-version: '21'\n"
+            "          distribution: temurin\n"
+            "      - run: mvn -B test\n"
+        )
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_actions_cache_wrong_path_still_fails(self):
+        # An actions/cache step that does NOT cover ~/.m2 cannot satisfy the
+        # rule — gradle-style path or a different dir is not a Maven repo.
+        for path in ("~/.gradle/caches", "~/.m2x/repository"):
+            body = self.MAVEN_OK.replace(
+                "          cache: maven\n", ""
+            ) + (
+                "      - uses: actions/cache@v4\n"
+                "        with:\n"
+                f"          path: {path}\n"
+                "          key: x-${{ hashFiles('**/pom.xml') }}\n"
+            )
+            self._write(".github/workflows/ci.yml", body)
+            proc = self._run(self.tree, None, "--rule", "maven-cache")
+            self.assertEqual(1, proc.returncode, path)
+
+    def test_uncached_message_names_both_remedies(self):
+        # The finding must present both valid remedies so the operator can
+        # pick either idiom.
+        body = self.MAVEN_OK.replace("          cache: maven\n", "")
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("cache: maven", proc.stderr)
+        self.assertIn("actions/cache", proc.stderr)
+
+    def test_actions_cache_other_job_does_not_leak(self):
+        # Same cross-window discipline as the cache: input — an actions/cache
+        # ~/.m2 step in job `ok` must not satisfy the uncached job `bad`.
+        ok = (
+            "  ok:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - uses: actions/cache@v4\n"
+            "        with:\n"
+            "          path: ~/.m2/repository\n"
+            "          key: maven-ok-\n"
+            "      - uses: actions/setup-java@v3\n"
+            "      - run: mvn -B test\n"
+        )
+        bad = (
+            "  bad:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - uses: actions/setup-java@v3\n"
+            "      - run: mvn -B test\n"
+        )
+        self._write(".github/workflows/ci.yml", "on: push\njobs:\n" + ok + bad)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("job `bad`", proc.stderr)
+        self.assertNotIn("job `ok`", proc.stderr)
+
+    def test_other_steps_cache_does_not_leak(self):
+        # A DIFFERENT setup-java-family step cached elsewhere must not satisfy
+        # the uncached one; each step is judged within its own window.
+        body = (
+            "on: push\n"
+            "jobs:\n"
+            "  build:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - name: Cached gradle step\n"
+            "        uses: gradle/actions/setup-gradle@v3\n"
+            "        with:\n"
+            "          cache: maven\n"
+            "      - name: Uncached java step\n"
+            "        uses: actions/setup-java@v3\n"
+            "      - run: mvn -B test\n"
+        )
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(1, proc.returncode)
+
+    def test_multi_job_one_offender_fails_with_anchor(self):
+        # Two mvn jobs in ONE document; only `bad` is uncached. Finding
+        # anchors at that job's setup-java line so the allow marker works
+        # there. (Concatenating two YAML documents is invalid — the line-based
+        # job locator reads the first jobs: block only.)
+        body = self.MAVEN_OK.replace("  build:\n", "  ok:\n") + self.MAVEN_OK.replace(
+            "          cache: maven\n", ""
+        ).replace("  build:\n", "  bad:\n").replace("on: push\n", "").replace("jobs:\n", "", 1)
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("job `bad`", proc.stderr)
+        self.assertNotIn("job `ok`", proc.stderr)
+
+    def test_allow_marker_on_uses_line_suppresses(self):
+        body = self.MAVEN_OK.replace("          cache: maven\n", "").replace(
+            "        uses: actions/setup-java@v3\n",
+            "        uses: actions/setup-java@v3  # wf-lint-allow: deliberate cold-pull\n",
+        )
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(0, proc.returncode)
+        self.assertIn("allow-marker", proc.stdout)
+
+    def test_reusable_workflow_caller_job_exempt(self):
+        body = self.MAVEN_OK.replace(
+            "  build:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - uses: actions/checkout@v4\n"
+            "      - name: Set up JDK\n"
+            "        uses: actions/setup-java@v3\n"
+            "        with:\n"
+            "          java-version: '21'\n"
+            "          distribution: temurin\n"
+            "          cache: maven\n"
+            "      - run: mvn -B test\n",
+            "  build:\n"
+            "    uses: ./.github/workflows/reusable.yml\n",
+        )
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_no_trigger_scratch_file_ignored(self):
+        body = self.MAVEN_OK.replace("          cache: maven\n", "").replace("on: push\n", "")
+        self._write(".github/workflows/draft.yml", body)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_maven_cache_rule_alone_selectable(self):
+        body = self.MAVEN_OK.replace("          cache: maven\n", "")
+        self._write(".github/workflows/ci.yml", body)
+        proc = self._run(self.tree, None, "--rule", "maven-cache")
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("rules: maven-cache", proc.stdout)
+
+    def test_real_repo_maven_workflows_green(self):
+        # Born-green invariant: the #569-fixed fleet must pass the new rule —
+        # this test rots the moment someone drops a cache: maven input again.
+        proc = self._run(os.path.join(REPO_ROOT, ".github", "workflows"), None, "--rule", "maven-cache")
+        self.assertEqual(0, proc.returncode)
+
+    # -- node-cache / pip-cache ------------------------------------------------------
+
+    NODE_WF = (
+        "on: push\n"
+        "jobs:\n"
+        "  build:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@v4\n"
+        "      - uses: actions/setup-node@v4\n"
+        "        with:\n"
+        "          node-version: '22'\n"
+        "      - name: Install\n"
+        "        working-directory: svc\n"
+        "        run: npm ci\n"
+    )
+
+    PIP_WF = (
+        "on: push\n"
+        "jobs:\n"
+        "  test:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@v4\n"
+        "      - uses: actions/setup-python@v5\n"
+        "        with:\n"
+        "          python-version: '3.11'\n"
+        "      - name: Install\n"
+        "        run: python3 -m pip install -r requirements-dev.txt\n"
+    )
+
+    def test_node_uncached_lockbearing_fails_and_names_lock(self):
+        self._write("svc/package-lock.json", "{}\n")
+        self._write(".github/workflows/ci.yml", self.NODE_WF)
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("[node-cache]", proc.stderr)
+        self.assertIn("svc/package-lock.json", proc.stderr)
+
+    def test_node_root_lock_fails(self):
+        self._write("package-lock.json", "{}\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.NODE_WF.replace("        working-directory: svc\n", ""),
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("[node-cache]", proc.stderr)
+
+    def test_node_cached_passes(self):
+        self._write("svc/package-lock.json", "{}\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.NODE_WF.replace(
+                "          node-version: '22'\n",
+                "          node-version: '22'\n"
+                "          cache: npm\n"
+                "          cache-dependency-path: svc/package-lock.json\n",
+            ),
+        )
+        proc = self._run(self.tree, None, "--rule", "node-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_node_lockless_dir_silent(self):
+        # GitHub's cache: npm hard-fails without a lock — the rule must not
+        # demand an unremediable fix (npm-ci's opt-in philosophy).
+        self._write(".github/workflows/ci.yml", self.NODE_WF)
+        proc = self._run(self.tree, None, "--rule", "node-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_node_no_npm_silent(self):
+        self._write("svc/package-lock.json", "{}\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.NODE_WF.replace("        run: npm ci\n", "        run: node app.js\n"),
+        )
+        proc = self._run(self.tree, None, "--rule", "node-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_node_wrong_ecosystem_cache_fails(self):
+        self._write("svc/package-lock.json", "{}\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.NODE_WF.replace("          node-version: '22'\n", "          node-version: '22'\n          cache: pnpm\n"),
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+
+    def test_node_cd_into_lockdir_resolved(self):
+        self._write("svc/package-lock.json", "{}\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.NODE_WF.replace(
+                "      - name: Install\n        working-directory: svc\n        run: npm ci\n",
+                "      - name: Install\n        run: cd svc && npm ci\n",
+            ),
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("[node-cache]", proc.stderr)
+
+    def test_pip_uncached_requirements_install_fails(self):
+        self._write("requirements-dev.txt", "pytest\n")
+        self._write(".github/workflows/ci.yml", self.PIP_WF)
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("[pip-cache]", proc.stderr)
+        self.assertIn("requirements-dev.txt", proc.stderr)
+
+    def test_pip_cached_quoted_passes(self):
+        # mesh-pytest's live shape: cache: 'pip' with quotes.
+        self._write("requirements-dev.txt", "pytest\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.PIP_WF.replace(
+                "          python-version: '3.11'\n",
+                "          python-version: '3.11'\n          cache: 'pip'\n          cache-dependency-path: requirements-dev.txt\n",
+            ),
+        )
+        proc = self._run(self.tree, None, "--rule", "pip-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_pip_missing_requirements_file_silent(self):
+        # -r naming a file the repo doesn't ship: cache-dependency-path would
+        # be fiction — GitHub's cache: pip would also fail. Silent.
+        self._write(".github/workflows/ci.yml", self.PIP_WF)
+        proc = self._run(self.tree, None, "--rule", "pip-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_pip_adhoc_install_silent(self):
+        # The ~40 wr-conf jobs install pytest/psycopg2 ad hoc — marginal
+        # wheel-cache win, arbitrary key file. Deliberately out of scope.
+        self._write("requirements-dev.txt", "pytest\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.PIP_WF.replace(
+                "        run: python3 -m pip install -r requirements-dev.txt\n",
+                "        run: python3 -m pip install --quiet pytest psycopg2-binary\n",
+            ),
+        )
+        proc = self._run(self.tree, None, "--rule", "pip-cache")
+        self.assertEqual(0, proc.returncode)
+
+    def test_pip_requirements_via_working_directory(self):
+        self._write("svc/requirements.txt", "pytest\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.PIP_WF.replace(
+                "requirements-dev.txt", "requirements.txt"
+            ).replace(
+                "      - name: Install\n",
+                "      - name: Install\n        working-directory: svc\n",
+            ),
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("[pip-cache]", proc.stderr)
+
+    def test_node_pip_allow_marker_on_uses_line(self):
+        self._write("svc/package-lock.json", "{}\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.NODE_WF.replace(
+                "      - uses: actions/setup-node@v4\n",
+                "      - uses: actions/setup-node@v4  # wf-lint-allow: node-cache — runner pre-warms the store\n",
+            ),
+        )
+        proc = self._run(self.tree, None, "--rule", "node-cache")
+        self.assertEqual(0, proc.returncode)
+        self.assertIn("allow-marker", proc.stdout)
+
+    def test_node_pip_rules_alone_selectable(self):
+        # --rule takes one name per flag (a comma blob reads as one unknown
+        # rule and exits 2).
+        self._write(".github/workflows/ci.yml", self.NODE_WF)
+        proc = self._run(self.tree, None, "--rule", "node-cache", "--rule", "pip-cache")
+        self.assertEqual(0, proc.returncode)
+        self.assertIn("rules: node-cache,pip-cache", proc.stdout)
+
+    def test_real_repo_node_pip_workflows_green(self):
+        # Born-green invariant on the remediated fleet (broker-e2e +
+        # vanadium-sonar carry cache: npm; mesh-pytest/vanadium-sonar pip
+        # already cached). Rots the moment a lock-bearing npm job or a -r
+        # pip job drops its cache input again.
+        proc = self._run(
+            os.path.join(REPO_ROOT, ".github", "workflows"),
+            None, "--rule", "node-cache", "--rule", "pip-cache",
+        )
+        self.assertEqual(0, proc.returncode)
+
+    # -- cache-dep-path --------------------------------------------------------------
+
+    NODE_CACHED_NONROOT = (
+        "on: push\n"
+        "jobs:\n"
+        "  build:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@v4\n"
+        "      - uses: actions/setup-node@v4\n"
+        "        with:\n"
+        "          node-version: '22'\n"
+        "          cache: npm\n"
+        "      - name: Install\n"
+        "        working-directory: svc\n"
+        "        run: npm ci\n"
+    )
+
+    PIP_CACHED_DEVREQS = (
+        "on: push\n"
+        "jobs:\n"
+        "  test:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@v4\n"
+        "      - uses: actions/setup-python@v5\n"
+        "        with:\n"
+        "          python-version: '3.11'\n"
+        "          cache: 'pip'\n"
+        "      - name: Install\n"
+        "        run: python3 -m pip install -r requirements-dev.txt\n"
+    )
+
+    def test_dep_path_node_nonroot_lock_fails_and_names_path(self):
+        # The #572 remediation shape WITHOUT the path declaration: cache: npm
+        # is set but the lock is in svc/ — the default hash target is wrong.
+        self._write("svc/package-lock.json", "{}\n")
+        self._write(".github/workflows/ci.yml", self.NODE_CACHED_NONROOT)
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("[cache-dep-path]", proc.stderr)
+        self.assertIn("cache-dependency-path: svc/package-lock.json", proc.stderr)
+
+    def test_dep_path_node_root_lock_exempt(self):
+        # Root lock = the action's default target; declaration unnecessary.
+        self._write("package-lock.json", "{}\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.NODE_CACHED_NONROOT.replace("        working-directory: svc\n", ""),
+        )
+        proc = self._run(self.tree, None, "--rule", "cache-dep-path")
+        self.assertEqual(0, proc.returncode)
+
+    def test_dep_path_node_declaration_present_passes(self):
+        self._write("svc/package-lock.json", "{}\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.NODE_CACHED_NONROOT.replace(
+                "          cache: npm\n",
+                "          cache: npm\n          cache-dependency-path: svc/package-lock.json\n",
+            ),
+        )
+        proc = self._run(self.tree, None, "--rule", "cache-dep-path")
+        self.assertEqual(0, proc.returncode)
+
+    def test_dep_path_node_no_lock_silent(self):
+        # cache: npm with no lock anywhere fails loudly at runtime — the
+        # node-cache/pip family's satisfiability gate, not this rule's subject.
+        self._write(".github/workflows/ci.yml", self.NODE_CACHED_NONROOT)
+        proc = self._run(self.tree, None, "--rule", "cache-dep-path")
+        self.assertEqual(0, proc.returncode)
+
+    def test_dep_path_pip_nondefault_reqs_fails(self):
+        # The live mesh-pytest defect: cached pip, installing from a file pip
+        # does NOT default-search — pin changes could never bust the cache.
+        self._write("requirements-dev.txt", "pytest\n")
+        self._write(".github/workflows/ci.yml", self.PIP_CACHED_DEVREQS)
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("[cache-dep-path]", proc.stderr)
+        self.assertIn("cache-dependency-path: requirements-dev.txt", proc.stderr)
+
+    def test_dep_path_pip_default_reqs_exempt(self):
+        # requirements.txt IS in pip's default repo-wide search — the default
+        # hash already includes it.
+        self._write("requirements.txt", "pytest\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.PIP_CACHED_DEVREQS.replace("requirements-dev.txt", "requirements.txt"),
+        )
+        proc = self._run(self.tree, None, "--rule", "cache-dep-path")
+        self.assertEqual(0, proc.returncode)
+
+    def test_dep_path_pip_nested_default_reqs_exempt(self):
+        # A deep requirements.txt is still default-covered (repo-wide search,
+        # runtime-verified: mesh-pytest's default-keyed cache ran green with
+        # files only at python/*/ depth).
+        self._write("svc/requirements.txt", "pytest\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.PIP_CACHED_DEVREQS.replace(
+                "        run: python3 -m pip install -r requirements-dev.txt\n",
+                "        run: cd svc && python3 -m pip install -r requirements.txt\n",
+            ),
+        )
+        proc = self._run(self.tree, None, "--rule", "cache-dep-path")
+        self.assertEqual(0, proc.returncode)
+
+    def test_dep_path_pip_declaration_present_passes(self):
+        self._write("requirements-dev.txt", "pytest\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.PIP_CACHED_DEVREQS.replace(
+                "          cache: 'pip'\n",
+                "          cache: 'pip'\n          cache-dependency-path: requirements-dev.txt\n",
+            ),
+        )
+        proc = self._run(self.tree, None, "--rule", "cache-dep-path")
+        self.assertEqual(0, proc.returncode)
+
+    def test_dep_path_pip_missing_reqs_file_silent(self):
+        # -r file not shipped: nothing real to key on — pip-cache's subject.
+        self._write(".github/workflows/ci.yml", self.PIP_CACHED_DEVREQS)
+        proc = self._run(self.tree, None, "--rule", "cache-dep-path")
+        self.assertEqual(0, proc.returncode)
+
+    def test_dep_path_uncached_step_silent(self):
+        # No cache input at all: the node/pip-cache rules own that finding;
+        # this rule judges only steps that DO cache.
+        self._write("requirements-dev.txt", "pytest\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.PIP_CACHED_DEVREQS.replace("          cache: 'pip'\n", ""),
+        )
+        proc = self._run(self.tree)
+        self.assertEqual(1, proc.returncode)  # pip-cache fires
+        self.assertNotIn("[cache-dep-path]", proc.stderr)
+
+    def test_dep_path_allow_marker_on_uses_line(self):
+        self._write("requirements-dev.txt", "pytest\n")
+        self._write(
+            ".github/workflows/ci.yml",
+            self.PIP_CACHED_DEVREQS.replace(
+                "      - uses: actions/setup-python@v5\n",
+                "      - uses: actions/setup-python@v5  # wf-lint-allow: cache-dep-path — deliberate default hash\n",
+            ),
+        )
+        proc = self._run(self.tree, None, "--rule", "cache-dep-path")
+        self.assertEqual(0, proc.returncode)
+        self.assertIn("allow-marker", proc.stdout)
+
+    def test_dep_path_selectable_alone(self):
+        self._write(".github/workflows/ci.yml", self.NODE_CACHED_NONROOT)
+        proc = self._run(self.tree, None, "--rule", "cache-dep-path")
+        self.assertEqual(0, proc.returncode)  # no lock -> silent
+        self.assertIn("rules: cache-dep-path", proc.stdout)
+
+    def test_real_repo_cache_dep_path_green(self):
+        # Born-green invariant on the remediated fleet (mesh-pytest now
+        # declares cache-dependency-path). Rots if a cached setup-* step
+        # with a non-default key file drops its declaration again.
+        proc = self._run(os.path.join(REPO_ROOT, ".github", "workflows"), None, "--rule", "cache-dep-path")
+        self.assertEqual(0, proc.returncode)
+
     # -- real repo -----------------------------------------------------------------
 
     def test_real_repo_scan_does_not_crash(self):
         proc = self._run(os.path.join(REPO_ROOT, ".github", "workflows"))
         self.assertIn(proc.returncode, (0, 1))
         self.assertIn("wf-lint:", proc.stdout)
+
+
+    # -- rule: nats-postcondition -------------------------------------------
+    # A job that publishes to NATS must verify the publish landed. Born from
+    # the write-queue arc: a JetStream publish to a subject no stream matches
+    # returns success, and a publish with the consumer down also succeeds — a
+    # publish-then-walk-away smoke stays green while the whole arc behind it
+    # is broken.
+
+    PUB_ONLY = _nats_wf(
+        "      - run: |\n"
+        "          python3 bin/ci_write_queue_probe.py --nats nats://localhost:4222 --write-id w1\n"
+        "          echo done\n"
+    )
+
+    PUB_WITH_POSTCONDITION = _nats_wf(
+        "      - run: |\n"
+        "          python3 bin/ci_write_queue_probe.py --nats nats://localhost:4222 --write-id w1\n"
+        "      - name: verify\n"
+        "        run: |\n"
+        "          python3 bin/ci_governed_postcondition.py --write-id w1\n"
+    )
+
+    def test_publish_without_assert_fails(self):
+        self._write(".github/workflows/pub.yml", self.PUB_ONLY)
+        proc = self._run(self.tree, None, "--rule", "nats-postcondition")
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("nats-postcondition", proc.stderr)
+        self.assertIn("publishes to NATS but never verifies", proc.stderr)
+
+    def test_committed_postcondition_script_satisfies(self):
+        self._write(".github/workflows/pub.yml", self.PUB_WITH_POSTCONDITION)
+        proc = self._run(self.tree, None, "--rule", "nats-postcondition")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+
+    def test_poll_assert_in_later_step_satisfies(self):
+        body = _nats_wf(
+            "      - run: |\n"
+            "          python3 bin/ci_write_queue_probe.py --nats nats://localhost:4222 --write-id w1\n",
+            "      - name: verify\n"
+            "        run: |\n"
+            "          for i in $(seq 1 30); do\n"
+            "            n=$(psql -tAc \"SELECT count(*) FROM resolution.write_queue_applied WHERE write_id='w1'\")\n"
+            "            [ \"$n\" -ge 1 ] && break\n"
+            "            sleep 2\n"
+            "          done\n",
+        )
+        self._write(".github/workflows/pub.yml", body)
+        proc = self._run(self.tree, None, "--rule", "nats-postcondition")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+
+    def test_grep_q_log_assert_satisfies(self):
+        body = _nats_wf(
+            "      - run: |\n"
+            "          nats pub nexus.write-queue.v1.t.u hello\n",
+            "      - name: verify\n"
+            "        run: |\n"
+            "          grep -q 'arc complete' reconciler.log\n",
+        )
+        self._write(".github/workflows/pub.yml", body)
+        proc = self._run(self.tree, None, "--rule", "nats-postcondition")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+
+    def test_js_publish_requires_verification_too(self):
+        body = _nats_wf(
+            "      - run: |\n"
+            "          python3 -c \"import asyncio,nats\"\n"
+            "          echo placeholder\n"
+            "      - name: verify\n"
+            "        run: |\n"
+            "          echo nothing verified\n",
+        )
+        # swap in a real js.publish line so the publish detector fires
+        body = body.replace("echo placeholder", 'python3 -c "await js.publish(sub, b)"')
+        self._write(".github/work/workflows/x.yml", body) if False else None
+        self._write(".github/workflows/pub.yml", body)
+        proc = self._run(self.tree, None, "--rule", "nats-postcondition")
+        self.assertEqual(1, proc.returncode, "js.publish without verification must fail")
+
+    def test_commented_out_assert_never_satisfies(self):
+        body = _nats_wf(
+            "      - run: |\n"
+            "          python3 bin/ci_write_queue_probe.py --nats nats://localhost:4222 --write-id w1\n"
+            "      - name: verify\n"
+            "        run: |\n"
+            "          # python3 bin/ci_governed_postcondition.py --write-id w1\n"
+            "          echo walked away\n",
+        )
+        self._write(".github/workflows/pub.yml", body)
+        proc = self._run(self.tree, None, "--rule", "nats-postcondition")
+        self.assertEqual(1, proc.returncode, "a commented-out postcondition is a silent assert")
+
+    def test_allow_marker_on_publish_line_suppresses(self):
+        body = _nats_wf(
+            "      - run: |\n"
+            "          python3 bin/ci_write_queue_probe.py --nats nats://localhost:4222 --write-id w1  # wf-lint-allow: verified in downstream arc job\n"
+            "          echo done\n"
+        )
+        self._write(".github/workflows/pub.yml", body)
+        proc = self._run(self.tree, None, "--rule", "nats-postcondition")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn("allow-marker", proc.stdout)
+
+    def test_provisioning_alone_is_not_publishing(self):
+        body = _nats_wf(
+            "      - run: |\n"
+            "          python3 bin/ensure-write-queue-stream.py --nats nats://localhost:4222\n"
+            "          echo provisioning only\n"
+        )
+        self._write(".github/workflows/pub.yml", body)
+        proc = self._run(self.tree, None, "--rule", "nats-postcondition")
+        self.assertEqual(0, proc.returncode, "stream provisioning is not a publish")
+
+    def test_reusable_workflow_caller_exempt(self):
+        body = (
+            "on: push\npermissions:\n  contents: read\n"
+            "jobs:\n"
+            "  smoke:\n"
+            "    uses: ./.github/workflows/reusable.yml\n"
+        )
+        self._write(".github/workflows/pub.yml", body)
+        publish_lines = [l for l in body.splitlines() if "publish" in l]
+        self.assertEqual([], publish_lines)
+        proc = self._run(self.tree, None, "--rule", "nats-postcondition")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+
+    def test_nats_rule_alone_selectable(self):
+        self._write(".github/workflows/pub.yml", self.PUB_ONLY)
+        proc = self._run(self.tree, None, "--rule", "nats-postcondition")
+        self.assertEqual(1, proc.returncode)
+        proc = self._run(self.tree, None, "--rule", "postgres-pin")
+        self.assertEqual(0, proc.returncode, proc.stderr)
 
 
 if __name__ == "__main__":

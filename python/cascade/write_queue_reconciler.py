@@ -88,6 +88,79 @@ RESULT = "result"
 # Default capability the reconciling context must hold. Extend per target.
 REQUIRED_CAPABILITY = os.getenv("WRITE_QUEUE_CAPABILITY", "nexus.storage.canonical")
 
+# ── Governed-transition interpreter (hydration-gated) ────────────────
+# The interpreter path (solscript.proposition / transition-entity) decides
+# against the loaded ResolutionInterpreter state. With no seed data the
+# interpreter is empty and every governed intent deterministically rejects
+# (entity-not-found) — still a real, recorded decision (durable KeychainEvent
+# to the outbox). When the store carries seed data (entities + state
+# transitions), hydration enables committed/refused guard decisions.
+# run_reconciler() hydrates once at startup; _apply_transition_entity()
+# picks up the hydrated instance via _get_interpreter().
+_HYDRATED_INTERPRETER: Any = None
+_HYDRATION_ATTEMPTED = False
+
+
+async def hydrate_interpreter(pg_dsn: str | None) -> bool:
+    """Load resolution seed data into the governed-transition interpreter.
+
+    Returns True only when the interpreter came up with usable governed
+    surfaces (entities AND state transitions — the pair transition_entity
+    decides against). Any failure logs and leaves the reconciler unhydrated:
+    governed intents then decide on the empty interpreter (deterministic
+    rejections, still durably recorded) — hydration problems can never
+    crash the consumer or block the staging-only arc.
+    """
+    global _HYDRATED_INTERPRETER, _HYDRATION_ATTEMPTED
+    if _HYDRATION_ATTEMPTED:
+        return _HYDRATED_INTERPRETER is not None
+    _HYDRATION_ATTEMPTED = True
+    if not pg_dsn:
+        _log("interpreter hydration: no DATABASE_URL — governed transitions run unhydrated")
+        return False
+    try:
+        import asyncpg  # the loader's driver; optional for the staging-only arc
+        from SOLScript.solscript.database_loader import DatabaseLoader
+    except Exception as e:
+        _log("interpreter hydration unavailable (%s) — governed transitions run unhydrated", e)
+        return False
+
+    from SOLScript.solscript.interpreter import ResolutionInterpreter
+    interp = ResolutionInterpreter()
+
+    async def _load() -> None:
+        pool = await asyncpg.create_pool(pg_dsn, min_size=1, max_size=1)  # type: ignore[attr-defined]
+        try:
+            await DatabaseLoader(interp, pool).load_all()
+        finally:
+            await pool.close()
+
+    try:
+        await asyncio.wait_for(_load(), timeout=60)
+    except Exception as e:
+        _log("interpreter hydration failed (%s) — governed transitions run unhydrated", e)
+        return False
+
+    entities = len(getattr(interp, "entities", {}) or {})
+    transitions = len(getattr(interp, "state_transitions", {}) or {})
+    if entities == 0 or transitions == 0:
+        _log("interpreter hydration: store carries no governed surfaces "
+             "(entities=%d, state_transitions=%d) — running unhydrated",
+             entities, transitions)
+        return False
+    _HYDRATED_INTERPRETER = interp
+    _log("interpreter hydrated from resolution store: entities=%d, state_transitions=%d",
+         entities, transitions)
+    return True
+
+
+def _get_interpreter() -> Any:
+    """The hydrated interpreter when available, else a fresh (empty) one."""
+    if _HYDRATED_INTERPRETER is not None:
+        return _HYDRATED_INTERPRETER
+    from SOLScript.solscript.interpreter import ResolutionInterpreter
+    return ResolutionInterpreter()
+
 _seen: set[str] = set()
 _SEEN_CAP = 100_000
 _shutdown = asyncio.Event()
@@ -201,13 +274,25 @@ def _apply(intent: dict[str, Any], db) -> tuple[bool, str]:
 
 
 def _stage_applied(intent: dict[str, Any], db) -> None:
-    """Record the write in the audit staging row (idempotent)."""
+    """Record the write in the audit staging row (idempotent).
+
+    The table is provisioned by the canonical DDL (nexus-ci-bootstrap.sql
+    snapshot and production migrations) — the reconciler asserts
+    pre-existence and fails loudly rather than silently re-creating a
+    divergent copy (tester inspection cbe83e25: self-provisioning masked
+    snapshot drift; a stale local shape would reconcile invisibly wrong).
+    """
     cur = db.cursor()
     cur.execute(
-        "CREATE TABLE IF NOT EXISTS resolution.write_queue_applied ("
-        " write_id TEXT PRIMARY KEY, target TEXT, verb TEXT, "
-        " payload JSONB, outcome TEXT, applied_at TIMESTAMPTZ DEFAULT now())"
+        "SELECT to_regclass('resolution.write_queue_applied') IS NOT NULL"
     )
+    exists = cur.fetchone()
+    if not exists or not str(exists[0]).lower().startswith("t"):
+        raise RuntimeError(
+            "resolution.write_queue_applied is missing — provision it via the "
+            "canonical DDL (nexus-ci-bootstrap.sql / V-migrations); the "
+            "reconciler no longer self-provisions"
+        )
     cur.execute(
         "INSERT INTO resolution.write_queue_applied (write_id, target, verb, payload, outcome) "
         "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (write_id) DO NOTHING",
@@ -238,7 +323,7 @@ def _apply_transition_entity(intent: dict[str, Any], db) -> tuple[bool, str]:
     if not entity_id or not transition_id:
         return False, "transition-entity intent missing entityId/transitionId"
 
-    interpreter = ResolutionInterpreter()
+    interpreter = _get_interpreter()
     passed, results = interpreter.transition_entity(
         entity_id, transition_id,
         source_event_id=intent.get("writeId"),
@@ -250,6 +335,34 @@ def _apply_transition_entity(intent: dict[str, Any], db) -> tuple[bool, str]:
     event = getattr(interpreter, "last_transition_event", None)
     outcome = "committed" if passed else "refused"
 
+    def _event_json(e: Any) -> str:
+        """Serialize the KeychainEvent (dataclass or dict) for the outbox row.
+
+        Empirically caught 2026-09-25: last_transition_event is a KeychainEvent
+        dataclass — json.dumps(event) raises "Object of type KeychainEvent is
+        not JSON serializable", which failed the governed apply with
+        partial_application and stalled the intent in nak-redelivery. The
+        event carries nested dataclasses, hence default=asdict.
+        """
+        if e is None:
+            return "{}"
+        if isinstance(e, dict):
+            return json.dumps(e)
+        try:
+            from dataclasses import asdict
+            return json.dumps(asdict(e))
+        except Exception:
+            return json.dumps(str(e))
+
+    # Return semantics (contract: typespec/v1/write-queue ReconciliationOutcome
+    # + WriteQueueStatus): a DECIDED outcome — committed OR refused — means the
+    # reconciliation finished and produced a result (outcome "result", and the
+    # refusal/commit KeychainEvent IS the produced canonical event). Returning
+    # False here is reserved for machinery failures (interpreter unavailable,
+    # missing ids, outbox write failure); mislabeling a clean governed refusal
+    # as partial_application would contradict "only part of the mutation
+    # applied". Empirically observed 2026-09-25 on the first live governed arc.
+    #
     # Record the durable KeychainEvent to the canonical outbox surface.
     try:
         cur = db.cursor()
@@ -269,7 +382,7 @@ def _apply_transition_entity(intent: dict[str, Any], db) -> tuple[bool, str]:
                 intent.get("correlationId"),
                 str((intent.get("actor") or {}).get("role", "")),
                 json.dumps(results),
-                json.dumps(event or {}),
+                _event_json(event),
             ),
         )
         cur.execute(
@@ -281,7 +394,8 @@ def _apply_transition_entity(intent: dict[str, Any], db) -> tuple[bool, str]:
         db.rollback()
         return False, f"outbox write failed: {e}"
 
-    return passed, f"{outcome}: {results}"
+    # Decided outcome → completed reconciliation, regardless of commit/refuse.
+    return True, f"{outcome}: {results}"
 
 
 async def _emit_reconciled(nc, entry: dict[str, Any], outcome: str, write_id: str,
@@ -332,6 +446,14 @@ async def run_reconciler() -> None:
         pg_conn.autocommit = True
     except Exception as e:
         _log("PostgreSQL unavailable (%s) — proceeding without version/capability checks", e)
+
+    # Hydrate the governed-transition interpreter once at startup. On a
+    # schema-only store this logs the unhydrated verdict and moves on; with
+    # seed data the interpreter decides real committed/refused transitions.
+    try:
+        await hydrate_interpreter(DATABASE_URL if pg_conn is not None else None)
+    except Exception as e:
+        _log("interpreter hydration crashed (%s) — continuing unhydrated", e)
 
     nc = await nats.connect(NATS_URL, name="write_queue_reconciler")
     _log("NATS connected to %s", NATS_URL)
