@@ -1,0 +1,16 @@
+{
+  "name": "structure-conformance",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cross-runtime conformance verifier for the Structure contract (Structure S6). Second runtime proving the S1 contract is implementable outside CPython.",
+  "scripts": {
+    "test": "node --test src/",
+    "verify": "node src/cli.js --verify ../../python/structure/fixtures/conformance_vectors.json",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "~5.8.2"
+  }
+}

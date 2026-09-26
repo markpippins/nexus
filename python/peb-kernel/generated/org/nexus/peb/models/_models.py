@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from .. import models as _models
 
 
-class PebAdmissionResult(_Model):
+class PebAdmissionResult(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """Envelope-aware admission result (W1.12).
 
     Carries the envelope identity + evaluation fingerprint alongside the
@@ -73,7 +73,7 @@ class PebAdmissionResult(_Model):
         super().__init__(*args, **kwargs)
 
 
-class PebHealthResponse(_Model):
+class PebHealthResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """Actuator-compatible health response for the PEB database boundary.
 
     :ivar status: Health status, normally UP or DOWN. Required.
@@ -121,7 +121,7 @@ class PebHealthResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class PebTransactionRequest(_Model):
+class PebTransactionRequest(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """Request payload for the PEB MCP facade endpoint.
 
     W1.12: optionally carries governance envelope identity + evaluation

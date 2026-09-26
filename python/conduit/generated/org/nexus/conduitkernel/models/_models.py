@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from .. import models as _models
 
 
-class BreakerFailureRecoveryConfig(_Model):
+class BreakerFailureRecoveryConfig(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """BreakerFailureRecoveryConfig.
 
     :ivar max_retries_per_model:
@@ -63,7 +63,7 @@ class BreakerFailureRecoveryConfig(_Model):
         super().__init__(*args, **kwargs)
 
 
-class BreakerStateResponse(_Model):
+class BreakerStateResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """BreakerStateResponse.
 
     :ivar state: Required.
@@ -151,7 +151,7 @@ class BreakerStateResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class BreakerTripRequest(_Model):
+class BreakerTripRequest(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """BreakerTripRequest.
 
     :ivar error: Required.
@@ -193,7 +193,7 @@ class BreakerTripRequest(_Model):
         super().__init__(*args, **kwargs)
 
 
-class CompareResponse(_Model):
+class CompareResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """CompareResponse.
 
     :ivar differences: Required.
@@ -226,7 +226,7 @@ class CompareResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class ConsistencyCheckResponse(_Model):
+class ConsistencyCheckResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """ConsistencyCheckResponse.
 
     :ivar consistent: Required.
@@ -259,7 +259,7 @@ class ConsistencyCheckResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class DeleteReceiptsResponse(_Model):
+class DeleteReceiptsResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """Delete receipts response.
 
     :ivar deleted: Required.
@@ -301,7 +301,7 @@ class DeltaApplyRequest(_Model):
     """DeltaApplyRequest."""
 
 
-class DeltaResponse(_Model):
+class DeltaResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """DeltaResponse.
 
     :ivar applied: Required.
@@ -333,7 +333,7 @@ class DeltaResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class GraphResponse(_Model):
+class GraphResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """State graph with pagination.
 
     :ivar nodes: Required.
@@ -381,7 +381,7 @@ class GraphResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class IdentityListResponse(_Model):
+class IdentityListResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """IdentityListResponse.
 
     :ivar identities: Required.
@@ -411,7 +411,7 @@ class IdentityListResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class IdentityResolutionResponse(_Model):
+class IdentityResolutionResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """Identity resolution response.
 
     :ivar id: Required.
@@ -462,7 +462,7 @@ class IdentityResolutionResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class IdentityResponse(_Model):
+class IdentityResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """A work-request identity record.
 
     :ivar identity_id: Required.
@@ -519,7 +519,7 @@ class IdentityResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class IdentityUpdateResponse(_Model):
+class IdentityUpdateResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """IdentityUpdateResponse.
 
     :ivar identity_id: Required.
@@ -552,7 +552,7 @@ class IdentityUpdateResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class LatestReceiptTypeResponse(_Model):
+class LatestReceiptTypeResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """Latest receipt type for a plan.
 
     :ivar plan_id: Required.
@@ -586,7 +586,7 @@ class LatestReceiptTypeResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class LineageResponse(_Model):
+class LineageResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """Lineage events.
 
     :ivar events: Required.
@@ -619,7 +619,7 @@ class LineageResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class LivenessResponse(_Model):
+class LivenessResponse(_Model):  # pylint: disable=docstring-missing-param
     """Liveness probe response.
 
     :ivar status: Required. Default value is "alive".
@@ -634,7 +634,7 @@ class LivenessResponse(_Model):
         self.status: Literal["alive"] = "alive"
 
 
-class MetricsResponse(_Model):
+class MetricsResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """MetricsResponse.
 
     :ivar metrics: Required.
@@ -662,7 +662,7 @@ class MetricsResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class PlanDetailResponse(_Model):
+class PlanDetailResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """PlanDetailResponse.
 
     :ivar plan_num: Required.
@@ -742,7 +742,7 @@ class PlanDetailResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class PlanRawReceiptsResponse(_Model):
+class PlanRawReceiptsResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """Raw receipt rows for a plan.
 
     :ivar plan_id: Required.
@@ -780,7 +780,7 @@ class PlanRawReceiptsResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class PlanReceiptItem(_Model):
+class PlanReceiptItem(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """Plan detail with WRP state machine position.
 
     :ivar id:
@@ -827,7 +827,7 @@ class PlanReceiptItem(_Model):
         super().__init__(*args, **kwargs)
 
 
-class PlanReceiptsResponse(_Model):
+class PlanReceiptsResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """Formatted receipts list for a plan.
 
     :ivar plan_id: Required.
@@ -865,7 +865,7 @@ class PlanReceiptsResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class ReadinessResponse(_Model):
+class ReadinessResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """Readiness probe response.
 
     :ivar status: Required. Is either a Literal["ready"] type or a Literal["unready"] type.
@@ -897,7 +897,7 @@ class ReadinessResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class ReceiptByIdResponse(_Model):
+class ReceiptByIdResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """Single receipt by ID.
 
     :ivar id: Required.
@@ -930,7 +930,7 @@ class ReceiptByIdResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class ReceiptInsertRequest(_Model):
+class ReceiptInsertRequest(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """Receipt insert request (C1 single persistence path).
 
     :ivar id: Required.
@@ -1027,7 +1027,7 @@ class ReceiptInsertRequest(_Model):
         super().__init__(*args, **kwargs)
 
 
-class ReceiptInsertResponse(_Model):
+class ReceiptInsertResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """Receipt insert response.
 
     :ivar ok: Required.
@@ -1065,7 +1065,7 @@ class ReceiptInsertResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class ReceiptResponse(_Model):
+class ReceiptResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """Receipt record (unified view from nebula.receipts_unified).
 
     :ivar receipt_id: Required.
@@ -1128,7 +1128,7 @@ class ReceiptResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class ReceiptsByPlanResponse(_Model):
+class ReceiptsByPlanResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """Receipts by plan number.
 
     :ivar plan_num: Required.
@@ -1166,7 +1166,7 @@ class ReceiptsByPlanResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class ReplayResponse(_Model):
+class ReplayResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """ReplayResponse.
 
     :ivar replayed: Required.
@@ -1198,7 +1198,7 @@ class ReplayResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class RootResponse(_Model):
+class RootResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """Root service info.
 
     :ivar service: Required. Default value is "WRP Kernel Runtime".
@@ -1236,7 +1236,7 @@ class RootResponse(_Model):
         self.service: Literal["WRP Kernel Runtime"] = "WRP Kernel Runtime"
 
 
-class SessionCostUpdateRequest(_Model):
+class SessionCostUpdateRequest(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """SessionCostUpdateRequest.
 
     :ivar cost_usd: Required.
@@ -1264,7 +1264,7 @@ class SessionCostUpdateRequest(_Model):
         super().__init__(*args, **kwargs)
 
 
-class SessionCostUpdateResponse(_Model):
+class SessionCostUpdateResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """SessionCostUpdateResponse.
 
     :ivar updated: Required.
@@ -1302,7 +1302,7 @@ class SessionCostUpdateResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class SessionHeartbeatRequest(_Model):
+class SessionHeartbeatRequest(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """SessionHeartbeatRequest.
 
     :ivar role:
@@ -1341,7 +1341,7 @@ class SessionHeartbeatRequest(_Model):
         super().__init__(*args, **kwargs)
 
 
-class SessionHeartbeatResponse(_Model):
+class SessionHeartbeatResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """SessionHeartbeatResponse.
 
     :ivar updated: Required.
@@ -1379,7 +1379,7 @@ class SessionHeartbeatResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class SessionKillResult(_Model):
+class SessionKillResult(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """SessionKillResult.
 
     :ivar killed: Required.
@@ -1426,7 +1426,7 @@ class SessionKillResult(_Model):
         super().__init__(*args, **kwargs)
 
 
-class SessionListResponse(_Model):
+class SessionListResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """SessionListResponse.
 
     :ivar sessions: Required.
@@ -1459,7 +1459,7 @@ class SessionListResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class SessionResponse(_Model):
+class SessionResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """SessionResponse.
 
     :ivar session_id: Required.
@@ -1537,7 +1537,7 @@ class SessionResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class StateHealthResponse(_Model):
+class StateHealthResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """State health check.
 
     :ivar status: Required. Default value is "ok".
@@ -1570,7 +1570,7 @@ class StateHealthResponse(_Model):
         self.status: Literal["ok"] = "ok"
 
 
-class StateSummaryResponse(_Model):
+class StateSummaryResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """StateSummaryResponse.
 
     :ivar state:
@@ -1601,7 +1601,7 @@ class StateSummaryResponse(_Model):
         super().__init__(*args, **kwargs)
 
 
-class SystemInfoResponse(_Model):
+class SystemInfoResponse(_Model):  # pylint: disable=docstring-keyword-should-match-keyword-only
     """System info summary.
 
     :ivar kernel_version: Required.
