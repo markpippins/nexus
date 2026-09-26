@@ -2,7 +2,7 @@
 # dependabot remediation plan (record efb0fb8c).
 #
 # One entry per distinct manifest directory, discovered from the tree on
-# 2026-09-24 (pip 25, npm 80, maven 59; cargo 1 added 2026-09-24 —
+# 2026-09-24 (pip 24, npm 80, maven 59; cargo 1 added 2026-09-24 —
 # rust/wrp/ccnf-verifier, the repo's single Cargo.toml, audited clean:
 # 0 open RustSec advisories on its locked deps). Semantics:
 #   schedule weekly .................. all ecosystems checked every Monday
@@ -1320,14 +1320,12 @@ updates:
   groups:
     security-updates:
       applies-to: security-updates
-- package-ecosystem: pip
-  directory: python/vision/losm-kernel
-  schedule:
-    interval: weekly
-  open-pull-requests-limit: 0
-  groups:
-    security-updates:
-      applies-to: security-updates
+# python/vision/losm-kernel: NOT registered (was in the 2026-09-24 sweep as
+# pip entry #25, dropped 2026-09-26). It is a gitlink (mode 160000, submodule
+# nexus-losm-kernel-python) — Dependabot runs from the superproject config and
+# cannot read manifests inside submodules, so an entry here would be inert.
+# Coverage is governed by that repository's own Dependabot config.
+# Disposition per tester finding 8d66381f (PR #578).
 - package-ecosystem: cargo
   directory: /rust/wrp/ccnf-verifier
   schedule:
