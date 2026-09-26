@@ -85,6 +85,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: npm
+          cache-dependency-path: moleculer/nexus-broker/package-lock.json
       - name: Install + build (dist/ is untracked)
         working-directory: moleculer/nexus-broker
         run: npm ci && npm run build
