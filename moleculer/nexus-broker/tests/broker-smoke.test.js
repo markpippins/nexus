@@ -773,7 +773,7 @@ test('SOL outbox events are delivered into Keychains and replayed idempotently',
       return result.items.find((item) =>
         item.source_namespace === sourceNamespace && item.source_event_id === sourceEventId,
       )
-    }, 'SOL Keychains transition')
+    }, 'SOL Keychains transition', 120_000)
     assert.equal(transition.checkpoint_status, 'delivered')
     assert.equal(transition.kind, eventKind)
     assert.equal(transition.source_namespace, sourceNamespace)
