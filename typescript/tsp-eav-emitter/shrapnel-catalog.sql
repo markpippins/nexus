@@ -12,13 +12,18 @@ INSERT INTO shrapnel.field (is_calculated, field_index, label, name, property_na
 INSERT INTO shrapnel.field (is_calculated, field_index, label, name, property_name, field_type_code) VALUES (false, 2, 'External verification reference.', 'verificationId', 'verificationId', 2) ON CONFLICT (property_name) DO NOTHING;
 INSERT INTO shrapnel.field (is_calculated, field_index, label, name, property_name, field_type_code) VALUES (false, 1, 'Subject of the credential.', 'subjectId', 'subjectId', 2) ON CONFLICT (property_name) DO NOTHING;
 INSERT INTO shrapnel.field (is_calculated, field_index, label, name, property_name, field_type_code) VALUES (false, 2, 'Credential kind.', 'kind', 'kind', 2) ON CONFLICT (property_name) DO NOTHING;
-INSERT INTO shrapnel.field (is_calculated, field_index, label, name, property_name, field_type_code) VALUES (false, 3, 'Credential score, if scored.', 'score', 'score', 3) ON CONFLICT (property_name) DO NOTHING;
+INSERT INTO shrapnel.field (is_calculated, field_index, label, name, property_name, field_type_code) VALUES (true, 3, 'Credential score, if scored (derived from payload when present).', 'score', 'score', 3) ON CONFLICT (property_name) DO NOTHING;
 INSERT INTO shrapnel.field (is_calculated, field_index, label, name, property_name, field_type_code) VALUES (false, 4, 'Raw credential payload.', 'payload', 'payload', 6) ON CONFLICT (property_name) DO NOTHING;
+INSERT INTO shrapnel.field (is_calculated, field_index, label, name, property_name, field_type_code) VALUES (false, 2, 'Stored credential document.', 'document', 'document', 6) ON CONFLICT (property_name) DO NOTHING;
 
 -- ── stereotype revisions (topological; parent = parent's head) ──
 SELECT shrapnel.stereotype_create_revision('Person', NULL, NULL, ARRAY['givenName', 'familyName']::text[], ARRAY['dateOfBirth']::text[]);
-SELECT shrapnel.stereotype_create_revision('VerifiedPerson', (SELECT head_revision_id FROM shrapnel.stereotype_resolve('Person')), 'Extends Person because verification is a distinct lifecycle stage with its own evidence, not a flag on the base record.', ARRAY['verifiedAt', 'verificationId', 'givenName', 'familyName']::text[], ARRAY[]::text[]);
+SELECT shrapnel.stereotype_create_revision('VerifiedPerson', (SELECT head_revision_id FROM shrapnel.stereotype_resolve('Person')), 'Verification is a distinct lifecycle stage with its own evidence, not a flag on the base record.', ARRAY['verifiedAt', 'verificationId', 'givenName', 'familyName']::text[], ARRAY[]::text[]);
 SELECT shrapnel.stereotype_create_revision('Credential', NULL, NULL, ARRAY['subjectId', 'kind']::text[], ARRAY['score', 'payload']::text[]);
+SELECT shrapnel.stereotype_create_revision('CredentialRecord', NULL, NULL, ARRAY['subjectId', 'document']::text[], ARRAY[]::text[]);
+
+-- ── instance-storage registrations (metadata, NOT contract) ──
+INSERT INTO shrapnel.stereotype_instance_storage (stereotype_name, storage_class, revision_ref) VALUES ('CredentialRecord', 'mongodb', (SELECT id FROM shrapnel.stereotype_revision WHERE stereotype_id = (SELECT id FROM shrapnel.stereotype WHERE name = 'CredentialRecord') ORDER BY version DESC LIMIT 1)) ON CONFLICT (stereotype_name) DO UPDATE SET storage_class = EXCLUDED.storage_class, revision_ref = EXCLUDED.revision_ref;
 
 -- ── verification echo: what the catalog now holds ──
 SELECT s.name AS stereotype_name, r.version, r.depth, r.contract_fingerprint,

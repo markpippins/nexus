@@ -1,47 +1,28 @@
 /**
- * tsp-eav-emitter — TypeSpec -> shrapnel EAV catalog compiler.
+ * Library entry points for decorator resolution.
  *
- * Approach (operator-approved DeepSeek chat "TypeSpec EAV emitter start"):
- * this is NOT a code emitter. It is a compiler backend whose target is a
- * relational catalog: a navigateProgram walk of the TypeSpec program
- * produces an ordered SQL migration that populates the shrapnel EAV
- * stereotype tables through the database's own construction API
- * (shrapnel.stereotype_create_revision, 0005_stereotype_api.sql:437).
- *
- * Invariant ownership (deliberate):
- *   - contract fingerprint v2  -> computed SERVER-side by the function
- *     (reimplementing PG jsonb canonicalization client-side is a rabbit
- *     hole and the canonical source of truth is the DB itself);
- *   - superset v2 / depth<=3 / acyclicity / freeze -> enforced by the
- *     deferred triggers at COMMIT (0004_stereotype_model.sql §5);
- *   - the emitter adds only what the DB cannot know: TypeSpec mapping
- *     policy (model -> stereotype, property -> field, scalar ->
- *     field_type_code) and C2-compliant extends rationales.
- *
- * Mapping decisions:
- *   - model                     -> stereotype + stereotype_revision v1
- *   - model property            -> field (get-or-create by property_name;
- *                                  field_index = 1-based declaration order,
- *                                  mirroring the 0004 backfill precedent)
- *   - TypeSpec scalar           -> field_type_code (1..7 registry, 0001)
- *   - model extends             -> parent = stereotype_resolve(parent).head,
- *                                  rationale REQUIRED: taken from @doc on the
- *                                  extending model. The DB CHECK
- *                                  ck_sterev_parent_rationale rejects a
- *                                  parent with an empty rationale — so the
- *                                  emitter refuses at compile time instead,
- *                                  honoring C2 (extends is opt-in AND
- *                                  justified) rather than writing a lie.
- *   - prop.optional             -> stereotype_field.required = false
- *
- * Output: one .sql file, runner-safe (no psql meta-commands), wrapped in
- * BEGIN/COMMIT so the deferred fingerprint/superset triggers verify the
- * whole migration atomically.
+ * `tsp` reads `$lib` (library definition) and `$decorators` (decorator
+ * implementations, shaped { Namespace: { name: fn } } with UNPREFIXED
+ * names — the `$` on the JS functions is stripped by the binder) from the
+ * package entrypoint resolved via the "typespec" export condition.
  */
 import type { EmitContext } from "@typespec/compiler";
 import { walkTsp } from "./walker.js";
 import { renderSql } from "./emit-sql.js";
 import type { Catalog } from "./catalog.js";
+import { lib, ShrapnelCatalog } from "./decorators.js";
+
+// Decorator implementations for consuming .tsp files.
+export const $decorators = {
+  ShrapnelCatalog: {
+    instanceStorage: ShrapnelCatalog.$instanceStorage,
+    extendsRationale: ShrapnelCatalog.$extendsRationale,
+    calculated: ShrapnelCatalog.$calculated,
+  },
+};
+
+// Library definition (diagnostics, name).
+export const $lib = lib;
 
 export interface TspEavEmitterOptions {
   /** Output SQL file name (relative to the emit output dir). Default: shrapnel-catalog.sql */
@@ -55,6 +36,7 @@ export async function $onEmit(context: EmitContext<TspEavEmitterOptions>): Promi
     stereotypes: new Map(),
     fields: new Map(),
     revisions: [],
+    storageRegistrations: [],
     diagnostics: [],
   };
 

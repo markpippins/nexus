@@ -19,6 +19,16 @@ export interface FieldRow {
   field_index: number;
 }
 
+/** Storage classes for the instance-locality registration artifact. */
+export type StorageClass = "shrapnel" | "mongodb" | "jsonb_table";
+
+export interface StorageRegistration {
+  stereotypeName: string;
+  storage: StorageClass;
+  /** The revision whose contract the registration pins (symbolic: name@version-in-walk). */
+  revisionIndex: number;
+}
+
 export interface RevisionRow {
   stereotypeName: string;
   parentStereotypeName?: string;
@@ -38,6 +48,8 @@ export interface Catalog {
   /** Keyed by property_name (the DB's own unique key, uq_field_property_name). */
   fields: Map<string, FieldRow>;
   revisions: RevisionRow[];
+  /** @instanceStorage registrations — metadata OUTSIDE the frozen contract. */
+  storageRegistrations: StorageRegistration[];
   diagnostics: WalkerDiagnostic[];
 }
 
@@ -46,6 +58,7 @@ export function createCatalog(): Catalog {
     stereotypes: new Map(),
     fields: new Map(),
     revisions: [],
+    storageRegistrations: [],
     diagnostics: [],
   };
 }

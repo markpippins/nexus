@@ -17,6 +17,8 @@ import { navigateProgram, getDoc, getTypeName } from "@typespec/compiler";
 import type { Catalog, RevisionRow } from "./catalog.js";
 import { DIAG } from "./catalog.js";
 import { mapScalarToTypeCode, CODE_JSONB } from "./mapping.js";
+import { getInstanceStorage, getExtendsRationale, isCalculatedField } from "./decorators.js";
+import type { StorageClass } from "./catalog.js";
 
 export function walkTsp(program: Program, catalog: Catalog, namespaceFilter?: string): void {
   const models: Model[] = [];
@@ -86,7 +88,9 @@ function emitModel(program: Program, model: Model, catalog: Catalog): void {
 
   if (parentModel && parentModel.name) {
     parentStereotypeName = parentModel.name;
-    rationale = description?.trim() || undefined;
+    // Rationale precedence: dedicated decorator, then @doc fallback.
+    rationale =
+      getExtendsRationale(program, model) || description?.trim() || undefined;
     if (!rationale) {
       catalog.diagnostics.push({
         code: DIAG.EXTENDS_MISSING_DOC,
@@ -129,7 +133,7 @@ function emitModel(program: Program, model: Model, catalog: Catalog): void {
         label: getDoc(program, prop) ?? propName,
         name: propName,
         field_type_code: code,
-        is_calculated: false,
+        is_calculated: isCalculatedField(program, prop),
         // 1-based declaration order within the model (the 0004 backfill
         // precedent: field_index is NOT NULL with no other convention).
         field_index: fields.length + 1,
@@ -176,7 +180,18 @@ function emitModel(program: Program, model: Model, catalog: Catalog): void {
     rationale,
     fields,
   };
+  const revisionIndex = catalog.revisions.length;
   catalog.revisions.push(revision);
+
+  // @instanceStorage: registration artifact, OUTSIDE the frozen contract.
+  const storage = getInstanceStorage(program, model);
+  if (storage) {
+    catalog.storageRegistrations.push({
+      stereotypeName: model.name,
+      storage: storage as StorageClass,
+      revisionIndex,
+    });
+  }
 }
 
 function resolvePropertyTypeCode(

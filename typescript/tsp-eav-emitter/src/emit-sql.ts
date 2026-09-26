@@ -60,6 +60,25 @@ export function renderSql(catalog: Catalog): string {
   }
   lines.push(``);
 
+  // ── 1b. Instance-storage registrations (@instanceStorage) ─────────────
+  // Deliberately OUTSIDE the type contract: no stereotype_field rows, no
+  // fingerprint involvement. The registration table must exist before this
+  // migration runs (see README: migration 0007 proposal, pending DBA).
+  if (catalog.storageRegistrations.length > 0) {
+    lines.push(`-- ── instance-storage registrations (metadata, NOT contract) ──`);
+    for (const r of catalog.storageRegistrations) {
+      lines.push(
+        `INSERT INTO shrapnel.stereotype_instance_storage (stereotype_name, storage_class, revision_ref) ` +
+          `VALUES (${sqlString(r.stereotypeName)}, ${sqlString(r.storage)}, ` +
+          `(SELECT id FROM shrapnel.stereotype_revision WHERE stereotype_id = ` +
+          `(SELECT id FROM shrapnel.stereotype WHERE name = ${sqlString(r.stereotypeName)}) ` +
+          `ORDER BY version DESC LIMIT 1)) ` +
+          `ON CONFLICT (stereotype_name) DO UPDATE SET storage_class = EXCLUDED.storage_class, revision_ref = EXCLUDED.revision_ref;`
+      );
+    }
+    lines.push(``);
+  }
+
   // ── 3. Verification echo (the migration's own evidence) ───────────────
   lines.push(`-- ── verification echo: what the catalog now holds ──`);
   lines.push(`SELECT s.name AS stereotype_name, r.version, r.depth, r.contract_fingerprint,`);
