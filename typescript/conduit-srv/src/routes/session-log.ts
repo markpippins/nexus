@@ -60,15 +60,19 @@ router.get("/:sessionId", async (req, res) => {
   try {
     realSessionsDir = fs.realpathSync(sessionsDir);
   } catch {
-    // sessions dir not present yet — existsSync below gates the poll anyway.
+    // sessions dir not present yet — realpathSync in the poll below throws
+    // ENOENT until it appears, which the catch handles.
   }
 
   const sendLines = () => {
     try {
-      if (!fs.existsSync(logPath)) return;
-      // Re-resolve at every open, then require containment unconditionally.
-      // A single dominating check (not `a !== b && !c`) so the guard is
-      // provably true for every path that reaches the fs calls below
+      // Resolve and validate FIRST, before touching the file at all. There
+      // is deliberately no fs.existsSync(logPath) pre-check here: it would
+      // be an fs operation on the unvalidated user-derived path, and
+      // realpathSync already throws ENOENT for a missing file (including a
+      // dangling symlink), which the surrounding catch handles exactly as
+      // the old `return` did. Containment is then a single unconditional
+      // check that dominates every fs call below it
       // (CodeQL js/path-injection remediation; tester review 269a6ca5).
       const realPath = fs.realpathSync(logPath);
       if (!realPath.startsWith(realSessionsDir + path.sep)) {
