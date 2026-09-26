@@ -21,13 +21,28 @@
 # provisioned reactors, this goes red exactly where the peb-api drift would
 # have been caught — at merge time, not at deployment time.
 #
-# ─── Boot smoke (phase-1, ACTIVE per architect ruling 619049d6 / D4) ────────
+# ─── Boot smoke (phase-1 ACTIVE per ruling 619049d6/D4; phase-2 ACTIVE 2026-09-25) ─
 # The boot-smoke job below boots the built image against a schema-provisioned
 # postgres:17-alpine (sql/ci-bootstrap/nexus-ci-bootstrap.sql) and asserts
 # /actuator/health returns UP with components.db UP — a real ddl-auto=validate
 # pass, which the build-only gate cannot exercise. Validated empirically on
 # titanium 2026-09-22 (scratch PG 17, clean bootstrap apply, health UP + db UP
 # in ~60s); see CI Postgres design record 55aa59a4 and DBA thread 218017e1.
+#
+# Phase-2 (design D5, deferred-post-phase-1, approved 2026-09-25): adds a
+# nats:2-alpine (-js) service, provisions the WRITE_QUEUE stream via
+# bin/ensure-write-queue-stream.py, boots the app with NATS_URL wired, and
+# runs two probe intents through the full produce→reconcile arc: publish →
+# JetStream stream → durable consumer (write_queue_reconciler, explicit
+# acks) → durable resolution.write_queue_applied row. Arc 1 (always) uses an
+# unmapped target — the staging-only branch, real and seed-independent. Arc
+# 2 (governed) drives the app's REAL producer route (POST
+# /api/solscript/transition-entity → WriteQueueProducer → CanonicalEnvelope
+# → JetStream, per tester inspection cbe83e25) with a transition-entity
+# intent: the reconciler hydrates the governed-transition interpreter from
+# the store at startup and decides committed/refused when seed data is
+# present, rejected (entity-not-found, durably recorded) on the schema-only
+# snapshot — a real governed decision either way.
 #
 # ACTIVATED 2026-09-23 by architect ruling 619049d6 (interim owner, D4):
 # runs on PRs touching nexus-core paths or sql/** (the pull_request trigger's
@@ -129,10 +144,17 @@ jobs:
         run: |
           docker network create ci-boot-smoke
           # postgres:17-alpine — matches the dump vintage and production
-          # (vanadium runs 17); DBA decision D1 pending, pin assumed for now.
-          docker run -d --name ci-pg --network ci-boot-smoke \
+          # (vanadium runs 17); DBA decision D1, ratified.
+          # -p 5432:5432 — published so the runner-side reconciler can reach
+          # the DB for the D5 arc (the app itself uses the docker network).
+          docker run -d --name ci-pg --network ci-boot-smoke -p 5432:5432 \
             -e POSTGRES_USER=nexus -e POSTGRES_PASSWORD=nexus \
             -e POSTGRES_DB=nexus postgres:17-alpine
+          # D5 (phase 2): JetStream server for the write-queue arc probe.
+          # -p 4222:4222 — same rationale: runner-side stream provisioning
+          # and the probe publisher live on the runner.
+          docker run -d --name ci-nats --network ci-boot-smoke -p 4222:4222 \
+            nats:2-alpine -js
           # Real readiness: validate the DB, not just the port — pg_isready
           # alone races the initdb temp-server phase and lies about `nexus`.
           for i in $(seq 1 30); do
@@ -150,13 +172,33 @@ jobs:
             "SELECT count(*) FROM pg_tables WHERE schemaname = 'execution'")
           echo "execution tables: $EXEC_TABLES"
           [ "$EXEC_TABLES" -ge 4 ] || { echo "execution schema not provisioned"; exit 1; }
+          # Governed-transition surfaces report (hydration precondition):
+          # hydration is possible only when the store carries entities +
+          # state transitions. With no resolution.entity surface,
+          # hydrate_interpreter() logs an explicit unhydrated verdict and the
+          # governed probe expects the deterministic rejected branch
+          # (entity-not-found, durably recorded) — CI stays green on the
+          # schema-only snapshot and UPGRADES to committed/refused once a
+          # future bootstrap refresh (D2 cadence) carries seed rows.
+          if docker exec ci-pg psql -U nexus -d nexus -tAc \
+              "SELECT to_regclass('resolution.entity') IS NOT NULL" | grep -q t; then
+            N_ENT=$(docker exec ci-pg psql -U nexus -d nexus -tAc "SELECT count(*) FROM resolution.entity")
+            N_TR=$(docker exec ci-pg psql -U nexus -d nexus -tAc "SELECT count(*) FROM resolution.concept_state_transition")
+            echo "governed seed surfaces: entity=$N_ENT concept_state_transition=$N_TR"
+          else
+            echo "governed seed surfaces: resolution.entity absent (schema-only snapshot) — governed probe expects the rejected branch"
+          fi
 
       - name: Boot against provisioned schema
         run: |
-          docker run -d --name ci-app --network ci-boot-smoke \
+          # -p 8092:8092 — published so the runner-side governed probe can
+          # drive the app's real producer route (POST /api/solscript/
+          # transition-entity) through WriteQueueProducer.
+          docker run -d --name ci-app --network ci-boot-smoke -p 8092:8092 \
             -e NEXUS_CORE_DB_URL=jdbc:postgresql://ci-pg:5432/nexus \
             -e NEXUS_CORE_DB_USER=nexus \
             -e NEXUS_CORE_DB_PASSWORD=nexus \
+            -e NATS_URL=nats://ci-nats:4222 \
             nexus-core/nexus-core:ci
           # Boot + Spring context + ddl-auto=validate typically ~60s; 120s cap.
           ok=""
@@ -183,6 +225,116 @@ jobs:
             echo "::error::health components.db is not UP — validate failed or datasource absent"; cat health.json; exit 1; }
           echo "boot validated against provisioned schema: status UP, db UP"
 
+      - name: "Write-queue arc probe (D5) — produce, stream, reconcile, verify"
+        run: |
+          # Exact-pinned probes (inspection cbe83e25: range pins on a moving
+          # ubuntu-latest interpreter are still non-reproducible — pin exact,
+          # bump deliberately). TWO venvs (to-do c6efabe1, tester note 1 in
+          # attestation c6d800c2): the provisioning helper needs nats-py's
+          # 2.10.0-era api-subset import surface (2.x dropped nats.js.api
+          # subset imports), while the probe/reconciler side runs the current
+          # 2.16.0 line. One venv per pin keeps declared pin = executed pin
+          # on BOTH sides — no downgrade dance in a shared interpreter.
+          python3 -m venv .venv-provision
+          .venv-provision/bin/python -m pip install --quiet "nats-py==2.10.0"
+          python3 -m venv .venv-probe
+          .venv-probe/bin/python -m pip install --quiet \
+            "nats-py==2.16.0" "psycopg2-binary==2.9.13" "asyncpg==0.31.0"
+          # Evidence over assertion: print what each venv actually resolved.
+          .venv-provision/bin/python -c "from importlib.metadata import version; print('provision venv nats-py:', version('nats-py'))"
+          .venv-probe/bin/python -c "from importlib.metadata import version; print('probe venv nats-py:', version('nats-py')); print('probe venv psycopg2-binary:', version('psycopg2-binary'))"
+          # The stream must exist before any publish — JetStream drops
+          # subjects no stream matches, and the whole point is a durable arc.
+          # (Runs in the PROVISION venv: the helper is the 2.10.0 surface.)
+          .venv-provision/bin/python bin/ensure-write-queue-stream.py --nats nats://localhost:4222
+          # NATS readiness gate (inspection cbe83e25): the reconciler's
+          # provisioning retries are NOT a readiness signal — assert the
+          # server is actually accepting requests before anything publishes.
+          # NOTE: connect()'s first positional parameter IS `servers` —
+          # passing the URL positionally AND servers= as a kwarg raises
+          # "got multiple values for argument 'servers'" (caught live by
+          # the first validation dispatch, run 36197088565).
+          NATS_READY='import nats; nats.connect("nats://localhost:4222", max_reconnect_attempts=1, connect_timeout=2).close()'
+          for i in $(seq 1 30); do
+            if .venv-probe/bin/python -c "$NATS_READY" 2>/dev/null; then
+              echo "NATS ready: accepting client connections"
+              break
+            fi
+            sleep 2
+          done
+          .venv-probe/bin/python -c "$NATS_READY" || {
+            echo "::error::NATS never became ready (no client connection within 60s)"
+            docker logs ci-nats 2>&1 | tail -30
+            exit 1
+          }
+          WRITE_ID="smoke-$(date -u +%Y%m%dT%H%M%SZ)"
+          GOV_ID="smoke-gov-$(date -u +%Y%m%dT%H%M%SZ)"
+          echo "staging writeId: $WRITE_ID"
+          echo "governed writeId: $GOV_ID"
+          trap 'kill $RECONCILER_PID 2>/dev/null || true' EXIT
+          # Start the reconciler (JetStream durable consumer, explicit acks)
+          # on the runner; it drains the stream into resolution.write_queue_applied
+          # and at startup hydrates the governed-transition interpreter from
+          # the store (unhydrated + explicit verdict on a seed-free snapshot).
+          nohup env DATABASE_URL=postgres://nexus:nexus@localhost:5432/nexus \
+            NATS_URL=nats://localhost:4222 \
+            .venv-probe/bin/python python/cascade/write_queue_reconciler.py > reconciler.log 2>&1 &
+          RECONCILER_PID=$!
+          # Real readiness: wait for the durable consumer to attach (a fixed
+          # sleep is a blind start — inspection cbe83e25).
+          for i in $(seq 1 30); do
+            grep -q "durable consumer .* attached" reconciler.log 2>/dev/null && break
+            sleep 1
+          done
+          grep -q "durable consumer .* attached" reconciler.log || {
+            echo "::error::reconciler never attached its durable consumer"
+            tail -40 reconciler.log
+            exit 1
+          }
+          # The staging surface is canonical DDL (bootstrap + prod migrations);
+          # the reconciler asserts pre-existence and fails loudly rather than
+          # self-provisioning (inspection cbe83e25). Assert it here too, before
+          # any intent flows, so a missing surface fails at the gate, not mid-arc.
+          docker exec ci-pg psql -U nexus -d nexus -tAc \
+            "SELECT to_regclass('resolution.write_queue_applied') IS NOT NULL" \
+            | grep -q t || {
+            echo "::error::resolution.write_queue_applied missing from the bootstrap snapshot — reconciler will (correctly) refuse to self-provision"
+            exit 1
+          }
+          # ── Arc 1 (always): staging-only branch via an unmapped target.
+          # The probe asserts JetStream actually persisted the publish (a
+          # publish to a subject no stream matches silently "succeeds" in
+          # core NATS).
+          .venv-probe/bin/python bin/ci_write_queue_probe.py --nats nats://localhost:4222 \
+            --write-id "$WRITE_ID"
+          ok=""
+          for i in $(seq 1 30); do
+            n=$(docker exec ci-pg psql -U nexus -d nexus -tAc \
+              "SELECT count(*) FROM resolution.write_queue_applied WHERE write_id='$WRITE_ID'")
+            if [ "$n" -ge 1 ]; then ok=1; break; fi
+            sleep 2
+          done
+          if [ -z "$ok" ]; then
+            echo "::error::staging intent never reconciled into resolution.write_queue_applied"
+            tail -40 reconciler.log
+            exit 1
+          fi
+          echo "staging arc complete: publish → WRITE_QUEUE stream → durable consumer → resolution.write_queue_applied ($WRITE_ID)"
+          # ── Arc 2 (governed): driven through the app's REAL producer route
+          # (POST /api/solscript/transition-entity → WriteQueueProducer →
+          # CanonicalEnvelope → JetStream), closing the coverage gap from
+          # tester inspection cbe83e25 (app producer path unexercised). The
+          # interpreter decides: committed/refused with seed data, rejected
+          # (entity-not-found, durably recorded) on the schema-only snapshot.
+          # The postcondition asserts the staging row AND the durable
+          # KeychainEvent by writeId — the interpreter path's canonical writes.
+          .venv-probe/bin/python bin/ci_write_queue_probe.py --mode governed \
+            --app-url http://localhost:8092 --write-id "$GOV_ID"
+          .venv-probe/bin/python bin/ci_governed_postcondition.py \
+            --dsn postgres://nexus:nexus@localhost:5432/nexus \
+            --write-id "$GOV_ID" --timeout 90
+          echo "governed arc complete: app route → producer → WRITE_QUEUE stream → interpreter decision → staging row + keychain_event_outbox ($GOV_ID)"
+
       - name: Route-family probes (soft — informational)
         continue-on-error: true
         run: |
@@ -199,9 +351,34 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: boot-smoke-health
-          path: health.json
+          path: |
+            health.json
+            reconciler.log
           retention-days: 7
+
+      - name: Stop reconciler and upload its log
+        if: always()
+        run: |
+          # Explicit kill + log upload under always() (inspection cbe83e25):
+          # reconciler.log is written on the RUNNER, so teardown must happen in
+          # a step that runs even when the arc step failed — nohup children
+          # would otherwise survive the step and log upload would be skipped.
+          if [ -n "$RECONCILER_PID" ]; then
+            kill $RECONCILER_PID 2>/dev/null || true
+            sleep 1
+          fi
+          pkill -f write_queue_reconciler.py 2>/dev/null || true
+          if [ -f reconciler.log ]; then
+            echo "=== reconciler.log (tail) ==="
+            tail -30 reconciler.log
+          else
+            echo "reconciler.log absent — reconciler never started"
+          fi
 
       - name: Tear down
         if: always()
-        run: docker rm -f ci-app ci-pg || true
+        run: |
+          docker rm -f ci-app ci-pg ci-nats || true
+          # Network teardown also under always() — a leaked ci-boot-smoke
+          # network would collide with the next run's `docker network create`.
+          docker network rm ci-boot-smoke || true

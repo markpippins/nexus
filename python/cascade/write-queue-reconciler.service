@@ -21,7 +21,12 @@ Environment=WRITE_QUEUE_DURABLE=write_queue_reconciler
 Environment=WRITE_QUEUE_STREAM=WRITE_QUEUE
 
 # ── Executable ─────────────────────────────────────────────────────────
-ExecStart=/usr/bin/python3 /home/codex/dev/nexus/python/cascade/write_queue_reconciler.py
+# Start through the Option A deployment wrapper (f63bfbc7): it enforces
+# provision → readiness → staging pre-existence gates, starts the
+# fail-fast reconciler, and waits for durable-consumer attach before
+# reporting success. Restart=on-failure then covers any post-attach
+# crash; a prerequisite regression surfaces as loud gate failures.
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/start_write_queue_reconciler.py
 
 # ── Restart behavior ───────────────────────────────────────────────────
 # Persistent service, not a timer. Since PR #452 the reconciler is a

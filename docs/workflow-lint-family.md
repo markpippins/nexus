@@ -1,6 +1,6 @@
 # Workflow lint family (`bin/wf_lint.py`)
 
-One harness, ten rules, one CI gate (`.github/workflows/wf-lint.yml`).
+One harness, eleven rules, one CI gate (`.github/workflows/wf-lint.yml`).
 Every rule in this family was born from a real incident or drift class —
 the lint exists so those classes cannot quietly return.
 
@@ -30,6 +30,7 @@ Exit codes: `0` clean (warnings ok) · `1` violations · `2` usage error.
 | `node-cache` | lock-bearing `npm` job with uncached `setup-node` | same 429 class; fleet audit found 2 |
 | `pip-cache` | `pip install -r <file>` job with uncached `setup-python` | same 429 class; fleet audit (ad-hoc installs out of scope) |
 | `cache-dep-path` | cached setup-* whose key file isn't the action default, without `cache-dependency-path` | mesh-pytest's pip cache hashed the default repo-wide set while installing from requirements-dev.txt — pin changes could never bust it |
+| `nats-postcondition` | a job that publishes to NATS (JetStream publish, `nats pub`, the house producer route or probe) without an in-job verification — a postcondition script, JetStream/consumer state assert, poll loop on the canonical outcome, or `grep -q` log assert. A publish to a subject no stream matches returns success; a publish with the consumer down also succeeds | the write-queue arc (2026-09-25): publish-then-walk-away smokes stay green while the whole arc behind the publish is broken; the D5 governed probe exists precisely to close that gap |
 
 ## Cache-first: writing a new workflow
 
