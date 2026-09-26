@@ -77,8 +77,12 @@ async def _governed(app_url: str, write_id: str) -> int:
 
     The app publishes on our behalf (WriteQueueProducer), so there is no
     runner-side JetStream ack to assert — the route response's `outcome`
-    IS the persistence proof (only 'queued' / 'queued_core_nats' mean the
-    stream accepted the envelope; 'buffered_local' / errors mean it did not).
+    IS the proof. ONLY 'queued' means the JetStream stream accepted and
+    now durably holds the envelope. 'dropped_core_nats' means the
+    producer's core-NATS fallback fired: the publish succeeds at the
+    server but no stream/consumer holds it — the reconciler will never
+    see the intent (vocabulary per f63bfbc7 / Option A), so it is a
+    FAILURE here. 'buffered_local' / errors also fail.
     """
     body = json.dumps({
         "writeId": write_id,
@@ -98,8 +102,9 @@ async def _governed(app_url: str, write_id: str) -> int:
         print(f"::error::producer route did not accept the intent (HTTP {status})")
         return 1
     outcome = str(out.get("outcome", ""))
-    if outcome not in ("queued", "queued_core_nats"):
-        print(f"::error::producer outcome '{outcome}' — intent never reached the stream")
+    if outcome != "queued":
+        print(f"::error::producer outcome '{outcome}' — intent is NOT durably held on the stream "
+              f"(only 'queued' proves JetStream acceptance)")
         return 1
     print(f"producer outcome: {outcome} (WriteQueueProducer -> JetStream accepted)")
     return 0
