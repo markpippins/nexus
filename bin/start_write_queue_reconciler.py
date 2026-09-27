@@ -138,7 +138,9 @@ def gate_preexistence(dsn: str) -> tuple[bool, str]:
                 )
             cur.execute(
                 "SELECT 1 FROM pg_constraint con JOIN pg_class rel ON rel.oid = con.conrelid "
-                "WHERE con.contype = 'p' AND rel.relname = 'write_queue_applied'"
+                "JOIN pg_namespace ns ON ns.oid = rel.relnamespace "
+                "WHERE con.contype = 'p' AND rel.relname = 'write_queue_applied' "
+                "AND ns.nspname !~ '^pg_' AND ns.nspname <> 'information_schema'"
             )
             if cur.fetchone() is None:
                 return False, (

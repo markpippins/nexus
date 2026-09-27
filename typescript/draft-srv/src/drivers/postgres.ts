@@ -188,8 +188,8 @@ export class PostgresDriver implements DbDriver {
         await pool.query(`
         SELECT n.nspname AS schema_name
         FROM pg_namespace n
-        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
-          AND n.nspname NOT LIKE 'pg_temp%'
+        WHERE n.nspname !~ '^pg_'
+          AND n.nspname <> 'information_schema'
         ORDER BY n.nspname`),
         await pool.query(`
         SELECT n.nspname AS schema_name,
@@ -199,16 +199,16 @@ export class PostgresDriver implements DbDriver {
         FROM pg_class c
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE c.relkind IN ('r', 'p')
-          AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
-          AND n.nspname NOT LIKE 'pg_temp%'
+          AND n.nspname !~ '^pg_'
+          AND n.nspname <> 'information_schema'
         ORDER BY n.nspname, c.relname`),
         await pool.query(`
         SELECT c.table_schema, c.table_name, c.column_name, c.data_type,
                c.is_nullable = 'YES' AS is_nullable,
                COALESCE(c.column_default, '') AS column_default
         FROM information_schema.columns c
-        WHERE c.table_schema NOT IN ('pg_catalog', 'information_schema')
-          AND c.table_schema NOT LIKE 'pg_temp%'
+        WHERE c.table_schema !~ '^pg_'
+          AND c.table_schema <> 'information_schema'
         ORDER BY c.table_schema, c.table_name, c.ordinal_position`),
         // PK columns straight from pg_catalog — the per-column correlated
         // EXISTS over information_schema views this replaces cost seconds on
@@ -223,7 +223,8 @@ export class PostgresDriver implements DbDriver {
         CROSS JOIN LATERAL unnest(pk.conkey) AS k(attnum)
         JOIN pg_attribute att ON att.attrelid = pk.conrelid AND att.attnum = k.attnum
         WHERE pk.contype = 'p'
-          AND ns.nspname NOT IN ('pg_catalog', 'information_schema')`),
+          AND ns.nspname !~ '^pg_'
+          AND ns.nspname <> 'information_schema'`),
         // FK edges via pg_constraint — information_schema.constraint_column_usage
         // is an expensive expansion and alone took ~7.6s on the local nexus DB.
         await pool.query(`
@@ -242,18 +243,22 @@ export class PostgresDriver implements DbDriver {
         JOIN pg_namespace fns ON fns.oid = fcls.relnamespace
         CROSS JOIN LATERAL unnest(con.confkey) WITH ORDINALITY AS cfk(attnum, ord)
         JOIN pg_attribute fatt ON fatt.attrelid = con.confrelid AND fatt.attnum = cfk.attnum
-        WHERE con.contype = 'f' AND ck.ord = cfk.ord`),
+        WHERE con.contype = 'f' AND ck.ord = cfk.ord
+          AND ns.nspname !~ '^pg_'
+          AND ns.nspname <> 'information_schema'
+          AND fns.nspname !~ '^pg_'
+          AND fns.nspname <> 'information_schema'`),
         await pool.query(`
         SELECT schemaname, tablename, indexname, indexdef
         FROM pg_indexes
-        WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
-          AND schemaname NOT LIKE 'pg_temp%'
+        WHERE schemaname !~ '^pg_'
+          AND schemaname <> 'information_schema'
         ORDER BY schemaname, tablename, indexname`),
         await pool.query(`
         SELECT table_schema, table_name, view_definition
         FROM information_schema.views
-        WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
-          AND table_schema NOT LIKE 'pg_temp%'
+        WHERE table_schema !~ '^pg_'
+          AND table_schema <> 'information_schema'
         ORDER BY table_schema, table_name`),
         await pool.query(`
         SELECT n.nspname AS schema_name,
@@ -275,7 +280,8 @@ export class PostgresDriver implements DbDriver {
         JOIN pg_namespace n ON n.oid = c.relnamespace
         LEFT JOIN pg_proc p ON p.oid = t.tgfoid
         WHERE NOT t.tgisinternal
-          AND n.nspname NOT IN ('pg_catalog', 'information_schema')`),
+          AND n.nspname !~ '^pg_'
+          AND n.nspname <> 'information_schema'`),
         await pool.query(`
         SELECT n.nspname AS schema_name,
                p.proname AS procedure_name,
@@ -286,7 +292,8 @@ export class PostgresDriver implements DbDriver {
         FROM pg_proc p
         JOIN pg_namespace n ON n.oid = p.pronamespace
         LEFT JOIN pg_description d ON d.objoid = p.oid
-        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+        WHERE n.nspname !~ '^pg_'
+          AND n.nspname <> 'information_schema'
           AND p.prokind IN ('f', 'p')
           AND p.oid NOT IN (SELECT objid FROM pg_depend WHERE deptype = 'e')`),
       ]);
