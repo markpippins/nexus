@@ -17,7 +17,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import static org.hamcrest.Matchers.nullValue;
 
 /**
  * Integration slice covering the JSON deserialization of
@@ -120,7 +123,15 @@ class AdmissionControllerFacadeTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(COMPLETE_PAYLOAD))
             .andExpect(status().isOk())
-            .andExpect(content().string("Mutation processed"));
+            // #552 admission contract: JSON envelope matching the Python
+            // kernel's PebAdmissionResult.to_dict() ({transaction_id,
+            // admission_result, message, admitted}). The stubbed engine does
+            // not run, so admission_result is null — same expectation as the
+            // peb-api twin suite (#552).
+            .andExpect(jsonPath("$.transaction_id").isNotEmpty())
+            .andExpect(jsonPath("$.admission_result").value(nullValue()))
+            .andExpect(jsonPath("$.message").value("Mutation processed"))
+            .andExpect(jsonPath("$.admitted").value(true));
     }
 
     @Test
@@ -132,7 +143,10 @@ class AdmissionControllerFacadeTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(COMPLETE_PAYLOAD))
             .andExpect(status().isUnprocessableEntity())
-            .andExpect(content().string("Admission denied by invariant validator"));
+            .andExpect(jsonPath("$.transaction_id").isNotEmpty())
+            .andExpect(jsonPath("$.admission_result").value(nullValue()))
+            .andExpect(jsonPath("$.message").value("Admission denied by invariant validator"))
+            .andExpect(jsonPath("$.admitted").value(false));
     }
 
     // ── Boundary guard: malformed input -> 400 (regression for the 500) ──
