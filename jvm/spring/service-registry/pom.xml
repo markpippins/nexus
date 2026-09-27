@@ -7,6 +7,14 @@
         <groupId>com.aibizarchitect.nexus</groupId>
         <artifactId>nexus</artifactId>
         <version>1.0.0-SNAPSHOT</version>
+        <!-- relativePath ../service-broker/pom.xml: inside the reactor the
+             parent (GAV com.aibizarchitect.nexus:nexus, same as service-broker's
+             aggregator POM) resolves reactor-side and this path is never
+             consulted. Outside a reactor (the service-registry container
+             build) the file must EXIST for deterministic file-based parent
+             resolution on cold Maven caches: the service-registry Dockerfile
+             therefore COPYs spring/service-broker/pom.xml to this exact
+             relative location. Verified cold-cache in a container. -->
         <relativePath>../service-broker/pom.xml</relativePath>
     </parent>
 

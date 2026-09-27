@@ -2,11 +2,18 @@
 --
 -- Adds kernel_event_id and kernel_event_type columns to peb.transactions
 -- so each PEB governance decision records its corresponding kernel
--- transition event. Also grants USAGE on the kernel schema so PEB can
--- call kernel.sys_transition().
+-- transition event.
 --
 -- The kernel schema is in the same database (nexus), separate schema.
--- ====================================================================
+-- It is created by the kernel subsystem's own bootstrapping, NOT by this
+-- chain — so on fresh databases (CI throwaway DBs) the grants below are
+-- skipped via the DO block. On databases where the kernel schema exists
+-- (titanium production), re-granting is idempotent.
+--
+-- 2026-09-27 (PR #594): kernel columns were hand-applied to titanium and
+-- Flyway was left disabled, so this migration never flew anywhere. It now
+-- runs on fresh DBs as part of the peb-kernel fresh-database bootstrap
+-- proven in the #594 CI build job.
 
 -- ── Add kernel linkage columns to peb.transactions ──
 ALTER TABLE peb.transactions
@@ -28,8 +35,15 @@ CREATE INDEX IF NOT EXISTS idx_peb_transactions_kernel_event
     WHERE kernel_event_id IS NOT NULL;
 
 -- ── Grant kernel schema access to the application user ──
--- This allows the PEB Spring Boot app (which connects as pguser)
--- to call kernel.sys_transition() and read kernel views.
-GRANT USAGE ON SCHEMA kernel TO pguser;
-GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA kernel TO pguser;
-GRANT SELECT ON ALL TABLES IN SCHEMA kernel TO pguser;
+-- Conditional: the kernel schema is created by the kernel subsystem, not
+-- this migration. Fresh throwaway DBs legitimately lack it.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = 'kernel') THEN
+        GRANT USAGE ON SCHEMA kernel TO pguser;
+        GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA kernel TO pguser;
+        GRANT SELECT ON ALL TABLES IN SCHEMA kernel TO pguser;
+    ELSE
+        RAISE NOTICE 'V4: kernel schema absent — grants skipped (fresh DB; peb columns still applied)';
+    END IF;
+END $$;

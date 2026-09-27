@@ -14,6 +14,14 @@ WORKDIR /build
 # in a restructure). Install it non-recursively so service-registry resolves.
 COPY spring/pom.xml spring-parent.pom.xml
 RUN --mount=type=cache,target=/root/.m2 mvn -B -q -f spring-parent.pom.xml -N install
+# service-registry's pom.xml declares parent relativePath
+# ../service-broker/pom.xml. Inside a Maven reactor the parent resolves
+# reactor-side and that path is never consulted, but this container build
+# is NOT a reactor — the file must exist here or parent resolution falls
+# through to repository lookup, which fails on cold Maven caches (CI
+# runner 2026-09-27: 'Non-resolvable parent POM'). COPY it to the exact
+# relative location so resolution is file-based and cache-independent.
+COPY spring/service-broker/pom.xml spring/service-broker/pom.xml
 # Sibling API modules service-registry compiles against (normally provided
 # by host ~/.m2): install them first so the container build is self-contained.
 COPY shared/broker-service-api/pom.xml shared/broker-service-api/

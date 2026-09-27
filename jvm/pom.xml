@@ -11,6 +11,7 @@
     <module>spring/service-registry</module>
     <module>spring/terrain</module>
     <module>spring/conformance-verifier</module>
+    <module>spring/peb-kernel</module>
   </modules>
   <properties>
     <maven.compiler.source>21</maven.compiler.source>

@@ -58,9 +58,13 @@ import static org.junit.jupiter.api.Assertions.*;
     "spring.jackson.visibility.getter=any",
     "spring.jackson.visibility.setter=any",
     "spring.jackson.visibility.creator=any",
-    "spring.datasource.url=jdbc:postgresql://localhost:5432/nexus?currentSchema=peb",
+    // Dedicated throwaway database — see AdmissionControllerFacadeTest for
+    // the rationale (fresh-database bootstrap via Flyway; no dependency on
+    // the host's persistent nexus DB). Locally: createdb nexus_peb_test once.
+    "spring.datasource.url=jdbc:postgresql://${PEB_TEST_PG_HOST:localhost}:5432/${PEB_TEST_PG_DB:nexus_peb_test}",
     "spring.datasource.username=pguser",
     "spring.datasource.password=pgpass",
+    "spring.flyway.enabled=true",
     "spring.jpa.hibernate.ddl-auto=validate",
 })
 @Transactional

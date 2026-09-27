@@ -19,6 +19,25 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # peb-kernel's @SpringBootTest integration tests (PebGovernanceEngineAuditTest,
+    # AdmissionControllerFacadeTest in peb-bootstrap) need a reachable PostgreSQL.
+    # They ran nowhere before PR #594 joined peb-kernel to the reactor; on the
+    # first CI run they failed with PSQLException (localhost:5432 refused) that
+    # local runs never saw because titanium has live PG on 5432.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: nexus
+          POSTGRES_USER: pguser
+          POSTGRES_PASSWORD: pgpass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pguser -d nexus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -39,6 +58,27 @@ jobs:
           path: ~/.m2/repository
           key: maven-ci-${{ hashFiles('jvm/**/pom.xml') }}
           restore-keys: maven-ci-
+      # pg_isready health checks validate neither credentials nor database.
+      # peb-kernel's Flyway migrations and the integration tests need an
+      # authenticated connection as the real user — same pattern as the
+      # broker-e2e job and the #456 boot-smoke apply.
+      - name: Wait for real postgres readiness (authenticated probe)
+        run: |
+          for i in $(seq 1 60); do
+            if PGPASSWORD=pgpass psql -h localhost -U pguser -d nexus -tAc 'SELECT 1' >/dev/null 2>&1; then
+              echo "postgres accepting authenticated connections (attempt $i)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "postgres never accepted an authenticated connection"
+          exit 1
+      # peb-kernel's @SpringBootTest classes bootstrap nexus_peb_test via
+      # Flyway (fresh-database bootstrap; see AdmissionControllerFacadeTest).
+      # Titanium-style persistent dev DBs create it once via `createdb
+      # nexus_peb_test`.
+      - name: Create peb-kernel throwaway test database
+        run: PGPASSWORD=pgpass psql -h localhost -U pguser -d postgres -c 'CREATE DATABASE nexus_peb_test'
       - name: Build modules
         run: mvn -B -f jvm/pom.xml -DskipTests=false test
 
