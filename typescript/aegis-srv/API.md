@@ -5,7 +5,7 @@
 
 REST API for the aegis schema: TLA+ state-machine registries (constants, variables, states, transitions, invariants, properties, temporal properties, resolution-schema mappings), validation and model-check results, and audited execution logs.
 
-**71 endpoints** — inventory generated from source route registrations (`nexus/tools/api-docs/`).
+**72 endpoints** — inventory generated from source route registrations (`nexus/tools/api-docs/`).
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -40,6 +40,7 @@ REST API for the aegis schema: TLA+ state-machine registries (constants, variabl
 | GET | `/api/registries/:id/invariants/:cid` |  |
 | PATCH | `/api/registries/:id/invariants/:cid` |  |
 | POST | `/api/registries/:id/model-check` | the TLA+ module with invariants/properties as cfg checks. - Otherwise fall back to the deterministic structural state-space checker (model-checker.ts) over the structured aegis graph. Persists the result to aegis.model_check_result. TLC is failure-isolated: a checker crash/timeout yields an `error`  |
+| GET | `/api/registries/:id/model-check-results` |  |
 | GET | `/api/registries/:id/properties` | properties |
 | POST | `/api/registries/:id/properties` |  |
 | DELETE | `/api/registries/:id/properties/:cid` |  |
