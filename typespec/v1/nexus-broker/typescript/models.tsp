@@ -297,6 +297,67 @@ namespace org.nexus.nexusbroker {
     items: KeychainTriggerEvent[];
   }
 
+  /** Per-procedure-card observational cohort within a doctrine hash set. */
+  model KeychainDoctrineCardEvidence {
+    procedure_card_hash: string;
+    activation_count: int32;
+    high_activation: boolean;
+    successful_conduit_transition_count: int32;
+    successful_conduit_ticket_count: int32;
+    successful_conduit_ticket_count_complete: boolean;
+    low_influence_evidence: Record<unknown>;
+  }
+
+  /** GET /api/keychain-snapshot/agent-records/doctrine-sets response. */
+  model KeychainDoctrineSetGroup {
+    doctrine_snapshot_id: string;
+    snapshot_available: boolean;
+    system_prompt_hash: string | null;
+    bootstrap_hash: string | null;
+    active_procedure_card_count: int32 | null;
+    transition_count: int32;
+    outcomes: Record<unknown>;
+    successful_conduit_transition_count: int32;
+    successful_conduit_ticket_count: int32;
+    cards: KeychainDoctrineCardEvidence[];
+  }
+
+  model KeychainDoctrineSetsResult {
+    generated_at: string;
+    attribution_basis: string;
+    transition_count: int32;
+    doctrine_set_count: int32;
+    unattributed_transition_count: int32;
+    truncated: boolean;
+    high_activation_min: int32;
+    success_outcomes: string[];
+    sets: KeychainDoctrineSetGroup[];
+  }
+
+  /** GET/POST /api/keychain-snapshot/agent-records/doctrine-reconstruction report. */
+  model KeychainDoctrineReconstructionResult {
+    generated_at: string;
+    mode: string;
+    read_only: boolean;
+    checkpoint_count: int32;
+    referenced_checkpoint_count: int32;
+    catalog_resolved_checkpoint_count: int32;
+    catalog_resolution_percent: float64;
+    dangling_reference_count: int32;
+    reference_coverage_percent: float64;
+    recoverable_unreferenced_count: int32;
+    referenced_catalog_repair_count: int32;
+    unrecoverable_unreferenced_count: int32;
+    checkpoint_scan_truncated?: boolean;
+    applied_checkpoint_count?: int32;
+    conflicts?: Record<unknown>[];
+    error?: string;
+    reference_conflict_count: int32;
+    backfill_candidates: Record<unknown>[];
+    dedupe: Record<unknown>;
+    limitation: string;
+  }
+
   /** GET /api/keychain-snapshot/agent-records/rewind response. */
   model KeychainRewindResult {
     ok: boolean;
