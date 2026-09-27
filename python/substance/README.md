@@ -2,7 +2,7 @@
 
 FastAPI service for the "segment sets" scheme: reusable, possibly
 non-contiguous collections of transcript chunks (`nebula.segments_history`
-rows) that candidates, intent records, and requirements point at instead of
+rows) that candidates and requirements point at instead of
 copying source text forward.
 
 ## Setup
@@ -52,7 +52,8 @@ Keys:
 
 ### Domain links
 
-`{domain_type}` is one of `candidates`, `intent-records`, `requirements`.
+`{domain_type}` is one of `candidates`, `requirements`. (Intent records were
+removed as a domain concept — see 002_drop_intent_record_segment_sets.sql.)
 
 | Method | Path | Notes |
 |---|---|---|

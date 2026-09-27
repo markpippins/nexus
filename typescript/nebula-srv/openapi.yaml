@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: nebula-srv — Nebula Knowledge-Graph API
-  version: 1.0.142a001b
+  version: 1.0.11974401
   description: 'Canonical asset graph: systems, subsystems, features, documents, harvests, agent records, projections, knowledge
     graph, and cross-references.
 
@@ -52,6 +52,7 @@ tags:
 - name: roles
 - name: search
 - name: seed
+- name: segment-sets
 - name: segments
 - name: sessions
 - name: snapshots
@@ -2949,6 +2950,43 @@ paths:
         required: true
         schema:
           type: string
+  /api/harvest-candidates/{id}/segment-sets:
+    get:
+      tags:
+      - harvest-candidates
+      operationId: get_harvest_candidates_id_segment_sets
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      summary: GET /api/harvest-candidates/:id/segment-sets — evidence for a candidate
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
   /api/harvest-candidates/{id}/spawn-plan:
     post:
       tags:
@@ -5374,6 +5412,43 @@ paths:
         required: true
         schema:
           type: string
+  /api/requirements/{id}/segment-sets:
+    get:
+      tags:
+      - requirements
+      operationId: get_requirements_id_segment_sets
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      summary: GET /api/requirements/:id/segment-sets — evidence for a requirement
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
   /api/requirements/batch:
     patch:
       tags:
@@ -5972,6 +6047,75 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       summary: POST /api/seed — seed default example data (Plan 0087, idempotent, atomic)
+  /api/segment-sets:
+    get:
+      tags:
+      - segment-sets
+      operationId: get_segment_sets
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      summary: SEGMENT SETS (evidence — proxied read-only to substance :3115) Substance owns the segment-set scheme (nebula.segment_sets
+        + join tables) inc
+  /api/segment-sets/{id}:
+    get:
+      tags:
+      - segment-sets
+      operationId: get_segment_sets_id
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      summary: GET /api/segment-sets/:id — resolved segment set (members + source segments)
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
   /api/segments:
     post:
       tags:

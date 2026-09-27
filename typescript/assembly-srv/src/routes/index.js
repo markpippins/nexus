@@ -23,6 +23,7 @@ import { searchRouter } from './search.js';
 import { bridgesRouter } from './bridges.js';
 import { dualityRouter } from './duality.js';
 import { decisionsRouter } from './decisions.js';
+import { segmentSetsRouter } from './segment-sets.js';
 
 export const routes = Router();
 
@@ -36,6 +37,11 @@ routes.use('/work-requests', workRequestsRouter);
 routes.use('/requirements', requirementsRouter);
 routes.use('/agendas', agendasRouter);
 routes.use('/candidates', candidatesRouter);
+// segment-sets router defines FULL domain paths (/candidates/:id/segment-sets,
+// /requirements/:id/segment-sets, /intent-records/:id/segment-sets) plus its
+// own /segment-sets list+get — mounted LAST so its `/:id` route cannot shadow
+// other mounts (Express tries layers in registration order and this router
+// has a root-relative `/:id`).
 routes.use('/harvests', harvestsRouter);
 routes.use('/conversations', conversationsRouter);
 
@@ -50,3 +56,4 @@ routes.use('/plans', plansRouter);
 routes.use('/bridges', bridgesRouter);
 routes.use('/duality', dualityRouter);
 routes.use('/decisions', decisionsRouter);
+routes.use('/', segmentSetsRouter);

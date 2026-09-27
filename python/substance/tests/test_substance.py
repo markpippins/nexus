@@ -141,12 +141,16 @@ class TestRepositoryHelpers:
             "candidate_id",
         )
 
-    def test_domain_table_intent_records(self):
-        """domain_table('intent-records') returns correct table/fk."""
-        assert domain_table("intent-records") == (
-            "nebula.intent_record_segment_sets",
-            "intent_record_id",
-        )
+    def test_domain_table_intent_records_removed(self):
+        """domain_table('intent-records') raises — intent records were
+        eliminated as a domain concept; the join table is dropped by
+        002_drop_intent_record_segment_sets.sql."""
+        try:
+            domain_table("intent-records")
+        except ValueError as e:
+            assert "unknown domain_type" in str(e)
+        else:
+            raise AssertionError("domain_table('intent-records') should raise ValueError")
 
     def test_domain_table_requirements(self):
         """domain_table('requirements') returns correct table/fk."""
