@@ -1,0 +1,56 @@
+# Migration rehearsal guard suite
+#
+# Runs the hermetic test suite for bin/rehearse-migration.py — the helper that
+# runs a migration inside a guaranteed ROLLBACK.
+#
+# The suite is deliberately hermetic: every test is a pure-function test or
+# drives the CLI in --plan-only mode, which by construction never connects. A
+# test asserting the guard works must not itself require the thing the guard
+# protects, so there is no database service here by design.
+#
+# It pins behaviour against the REAL repository, not only synthetic fixtures:
+# the failure this guards against (2026-09-25, 28,428 rows committed to the live
+# database) happened against a checked-in migration, so the suite asserts that
+# real migrations which self-transact are detected and refused.
+#
+# Path-filtered to the script, its tests, and this workflow itself.
+
+name: Migration Rehearsal Guard
+
+on:
+  push:
+    branches: [ main, master, feature/*, dev ]
+    paths:
+      - 'bin/rehearse-migration.py'
+      - 'bin/tests/test_rehearse_migration.py'
+      - 'typescript/nebula-srv/migrations/**'
+      - 'typescript/shrapnel/migrations/**'
+      - '.github/workflows/rehearsal-guard.yml'
+  pull_request:
+    branches: [ main, master, feature/* ]
+    paths:
+      - 'bin/rehearse-migration.py'
+      - 'bin/tests/test_rehearse_migration.py'
+      - 'typescript/nebula-srv/migrations/**'
+      - 'typescript/shrapnel/migrations/**'
+      - '.github/workflows/rehearsal-guard.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rehearsal-guard:
+    name: "rehearse-migration: self-transaction + DSN guards (hermetic)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: 'pip'
+      - name: Install test deps
+        run: python3 -m pip install --quiet pytest
+      - name: Run suite (hermetic — no database by design)
+        run: python3 -m pytest bin/tests/test_rehearse_migration.py -v
