@@ -1,0 +1,69 @@
+# Memory-cache refresh + role-surface verification units
+#
+# Two hermetic suites that guard the systemd units which keep the PG→Redis
+# memory caches fresh and the canonical roles.json honest:
+#
+#   bin/tests/test_memory_cache_refresh.py
+#     - refresh script failure semantics (a dead service must not read as
+#       success, and must not starve the healthy service)
+#     - the cadence invariant: role-memory-srv reports "degraded" when its
+#       cache is older than STALE_THRESHOLD_MS (1h) and the sync services are
+#       event-driven, so this timer firing often enough is the ONLY thing
+#       keeping that status truthful. Asserted against the constant parsed out
+#       of the service source, not a hardcoded number.
+#     - roles.json stays canonical INPUT: the verify unit must never write it.
+#
+# Hermetic — curl is stubbed on PATH, no database, no network. (Same doctrine
+# as assembly-sql-ownership.yml.) This exists because a guard that never runs
+# is not a guard: nebula-mcp had no test suite and no CI entry until PR #597,
+# which is how a dropped-filter defect survived 29 days.
+
+name: Memory Cache Units
+
+on:
+  push:
+    branches: [ main, master, dev, feature/* ]
+    paths:
+      - '.github/workflows/memory-cache-units.yml'
+      - 'bin/memory-cache-refresh.sh'
+      - 'bin/memory-cache-refresh.service'
+      - 'bin/memory-cache-refresh.timer'
+      - 'bin/role-surface-verify.service'
+      - 'bin/role-surface-verify.timer'
+      - 'bin/tests/test_memory_cache_refresh.py'
+      - 'config/roles/roles.json'
+      - 'typescript/role-memory-srv/**'
+      - 'typescript/tackle-prompt-sync-srv/**'
+  pull_request:
+    branches: [ main, master, dev, feature/* ]
+    paths:
+      - '.github/workflows/memory-cache-units.yml'
+      - 'bin/memory-cache-refresh.sh'
+      - 'bin/memory-cache-refresh.service'
+      - 'bin/memory-cache-refresh.timer'
+      - 'bin/role-surface-verify.service'
+      - 'bin/role-surface-verify.timer'
+      - 'bin/tests/test_memory_cache_refresh.py'
+      - 'config/roles/roles.json'
+      - 'typescript/role-memory-srv/**'
+      - 'typescript/tackle-prompt-sync-srv/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  memory-cache-units:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    name: memory-cache units (refresh semantics, cadence invariant, roles.json canonical)
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test deps
+        run: python3 -m pip install --quiet pytest
+      - name: Unit tests
+        run: python3 -m pytest bin/tests/test_memory_cache_refresh.py -v
