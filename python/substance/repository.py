@@ -15,9 +15,11 @@ from .db import get_pool
 _FOREVER = "9999-12-31 00:00:00+00"
 
 # maps the public "domain_type" path segment to (join_table, fk_column)
+# NOTE: "intent-records" was removed — intent records were eliminated as a
+# domain concept (nebula.intent_records no longer exists); its join table is
+# dropped by 002_drop_intent_record_segment_sets.sql.
 _DOMAIN_TABLES: dict[str, tuple[str, str]] = {
     "candidates": ("nebula.candidate_segment_sets", "candidate_id"),
-    "intent-records": ("nebula.intent_record_segment_sets", "intent_record_id"),
     "requirements": ("nebula.requirement_segment_sets", "requirement_id"),
 }
 

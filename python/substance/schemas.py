@@ -5,7 +5,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 Role = Literal["primary", "supporting"]
-DomainType = Literal["candidates", "intent-records", "requirements"]
+DomainType = Literal["candidates", "requirements"]  # intent-records removed (concept eliminated)
 
 
 class SegmentMemberIn(BaseModel):

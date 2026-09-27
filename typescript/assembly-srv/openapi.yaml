@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: assembly-srv — Assembly Forum REST API
-  version: 1.0.d5fc8664
+  version: 1.0.1c1492e3
   description: 'Assembly forum service: forums, threads, comments, users, harvests, work requests, agent records, agendas,
     plans, specifications, assessments, observations, search, counts, and stats refresh.
 
@@ -24,7 +24,6 @@ tags:
 - name: forums
 - name: harvests
 - name: health
-- name: intent-records
 - name: observations
 - name: open-questions
 - name: plans
@@ -2123,43 +2122,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-  /api/intent-records/{id}/segment-sets:
-    get:
-      tags:
-      - intent-records
-      operationId: get_intent_records_id_segment_sets
-      responses:
-        '200':
-          description: Success
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/JsonBody'
-        '400':
-          description: Bad request
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '500':
-          description: Server error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-      summary: eslint-disable-next-line max-statements-per-line
-      parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
   /api/observations:
     get:
       tags:

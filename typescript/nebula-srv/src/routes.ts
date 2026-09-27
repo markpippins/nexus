@@ -338,15 +338,9 @@ export function createRoutes(pool: Pool): Router {
     }
   });
 
-  // GET /api/intent-records/:id/segment-sets — evidence for an intent record
-  router.get('/intent-records/:id/segment-sets', async (req: Request, res: Response) => {
-    try {
-      const data = await fetchSubstance(`/intent-records/${req.params.id}/segment-sets`);
-      res.json({ items: substanceToCamel(data), total: Array.isArray(data) ? data.length : 0 });
-    } catch (err: any) {
-      res.status(502).json({ error: err.message });
-    }
-  });
+  /* No intent-record segment-set route: intent records were removed as a
+     domain concept (nebula.intent_records no longer exists; substance
+     dropped its join table and DomainType entry via migration 002). */
 
   // ════════════════════════════════════════════════════════════════
   //  SYSTEMS

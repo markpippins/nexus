@@ -19,14 +19,17 @@
 //   GET /segment-sets/:id                 → resolved set (members + source segments)
 //   GET /candidates/:id/segment-sets      → evidence linked to a harvest candidate
 //   GET /requirements/:id/segment-sets    → evidence linked to a requirement
-//   GET /intent-records/:id/segment-sets  → evidence linked to an intent record
+//
+// No intent-record route: intent records were eliminated as a domain concept
+// (nebula.intent_records no longer exists; substance dropped its join table
+// and DomainType entry via 002_drop_intent_record_segment_sets.sql).
 
 import { Router } from 'express';
 import { fetchSubstance, substanceToCamel } from '../substance-proxy.js';
 
 export const segmentSetsRouter = Router();
 
-const DOMAIN_TYPES = ['candidates', 'requirements', 'intent-records'];
+const DOMAIN_TYPES = ['candidates', 'requirements'];
 
 /** Shared handler for the three domain-evidence routes (unrolled below —
  *  tools/api-docs/extract_routes.py parses one route per line, so the
@@ -46,8 +49,6 @@ async function domainSegmentSets(req, res, next) {
 segmentSetsRouter.get('/candidates/:id/segment-sets', (req, res, next) => { req.params.domainType = 'candidates'; return domainSegmentSets(req, res, next); });
 // eslint-disable-next-line max-statements-per-line
 segmentSetsRouter.get('/requirements/:id/segment-sets', (req, res, next) => { req.params.domainType = 'requirements'; return domainSegmentSets(req, res, next); });
-// eslint-disable-next-line max-statements-per-line
-segmentSetsRouter.get('/intent-records/:id/segment-sets', (req, res, next) => { req.params.domainType = 'intent-records'; return domainSegmentSets(req, res, next); });
 
 void DOMAIN_TYPES;
 

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: nebula-srv — Nebula Knowledge-Graph API
-  version: 1.0.552e7944
+  version: 1.0.11974401
   description: 'Canonical asset graph: systems, subsystems, features, documents, harvests, agent records, projections, knowledge
     graph, and cross-references.
 
@@ -37,7 +37,6 @@ tags:
 - name: import
 - name: inbox-pointer
 - name: inbox-pointers
-- name: intent-records
 - name: inventory
 - name: knowledge
 - name: observations
@@ -3562,43 +3561,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       summary: GET /api/inbox-pointers — list all inbox pointers (debugging)
-  /api/intent-records/{id}/segment-sets:
-    get:
-      tags:
-      - intent-records
-      operationId: get_intent_records_id_segment_sets
-      responses:
-        '200':
-          description: Success
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/JsonBody'
-        '400':
-          description: Bad request
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '500':
-          description: Server error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-      summary: GET /api/intent-records/:id/segment-sets — evidence for an intent record
-      parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
   /api/inventory:
     get:
       tags:

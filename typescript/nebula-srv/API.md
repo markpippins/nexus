@@ -5,7 +5,7 @@
 
 Canonical asset graph: systems, subsystems, features, documents, harvests, agent records, projections, knowledge graph, and cross-references.
 
-**232 endpoints** — inventory generated from source route registrations (`nexus/tools/api-docs/`).
+**231 endpoints** — inventory generated from source route registrations (`nexus/tools/api-docs/`).
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -112,7 +112,6 @@ Canonical asset graph: systems, subsystems, features, documents, harvests, agent
 | GET | `/api/inbox-pointer/:role` | INBOX POINTERS — per-role watermark for unread messages GET /api/inbox-pointer/:role — get the inbox pointer for a role |
 | PUT | `/api/inbox-pointer/:role` | PUT /api/inbox-pointer/:role — set the inbox pointer for a role |
 | GET | `/api/inbox-pointers` | GET /api/inbox-pointers — list all inbox pointers (debugging) |
-| GET | `/api/intent-records/:id/segment-sets` | GET /api/intent-records/:id/segment-sets — evidence for an intent record |
 | GET | `/api/inventory` | GET /api/inventory — rollup counts for the full hierarchy tree Returns per-node counts (systems/subsystems/features) for tree badges plus global totals. Single query, no per-node N+1. |
 | GET | `/api/knowledge/cross-references` | GET /api/knowledge/cross-references — list cross-references for graph overlay with pagination. Also includes harvest_candidate spawn-requirement cross-references from nebula.cross_references. |
 | GET | `/api/knowledge/edges` | GET /api/knowledge/edges — list graph edges with optional filters and pagination |

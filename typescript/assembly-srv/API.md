@@ -5,7 +5,7 @@
 
 Assembly forum service: forums, threads, comments, users, harvests, work requests, agent records, agendas, plans, specifications, assessments, observations, search, counts, and stats refresh.
 
-**89 endpoints** — inventory generated from source route registrations (`nexus/tools/api-docs/`).
+**88 endpoints** — inventory generated from source route registrations (`nexus/tools/api-docs/`).
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -71,7 +71,6 @@ Assembly forum service: forums, threads, comments, users, harvests, work request
 | GET | `/api/harvests` |  |
 | GET | `/api/harvests/:id` |  |
 | GET | `/api/health` |  |
-| GET | `/api/intent-records/:id/segment-sets` | eslint-disable-next-line max-statements-per-line |
 | GET | `/api/observations` |  |
 | GET | `/api/observations/:id` |  |
 | GET | `/api/open-questions` | GET / — paginated list of open questions |
