@@ -231,6 +231,21 @@ namespace org.nexus.nexusbroker {
   @doc("Terminate a pty session.")
   op ptyKill(@path id: string): Record<unknown>;
 
+  @route("/api/workers/pty/{id}/write")
+  @post
+  @doc("Write data to a running pty session's stdin.")
+  op ptyWrite(@path id: string, @body body: PtyWriteRequest): PtyWriteResult;
+
+  @route("/api/workers/pty/{id}/resize")
+  @post
+  @doc("Resize a pty session's terminal (falls back to the session's current size when a dimension is omitted).")
+  op ptyResize(@path id: string, @body body: PtyResizeRequest): PtyResizeResult;
+
+  @route("/api/workers/pty-transport/health")
+  @get
+  @doc("WebSocket TTY transport adapter health: WS endpoint, live client-session count.")
+  op ptyTransportHealth(): PtyTransportHealth;
+
   @route("/api/workers/harness")
   @get
   @doc("Harness worker health: DB connectivity + active session count.")
