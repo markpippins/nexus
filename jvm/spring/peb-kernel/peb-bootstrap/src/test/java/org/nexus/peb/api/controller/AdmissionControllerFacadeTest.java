@@ -17,7 +17,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import static org.hamcrest.Matchers.nullValue;
 
 /**
  * Integration slice covering the JSON deserialization of
@@ -63,12 +66,20 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
     "spring.jackson.visibility.getter=any",
     "spring.jackson.visibility.setter=any",
     "spring.jackson.visibility.creator=any",
-    // Shared nexus database in the running pgvector container.
-    // Schema is validated (not managed) by Hibernate ddl-auto=validate.
-    "spring.datasource.url=jdbc:postgresql://localhost:5432/nexus?currentSchema=peb",
+    // Dedicated throwaway database, NOT the shared nexus DB: CI runners (and
+    // any dev machine) bootstrap nexus_peb_test via Flyway from the V1-V4
+    // chain, so these tests exercise a real fresh-database bootstrap instead
+    // of silently depending on whatever schema the host's persistent DB
+    // happens to carry (the 2026-09-27 CI discovery). Override host/db via
+    // PEB_TEST_PG_HOST / PEB_TEST_PG_DB if your test DB lives elsewhere.
+    // CI creates nexus_peb_test in the build job; locally run once:
+    //   createdb nexus_peb_test
+    "spring.datasource.url=jdbc:postgresql://${PEB_TEST_PG_HOST:localhost}:5432/${PEB_TEST_PG_DB:nexus_peb_test}",
     "spring.datasource.username=pguser",
     "spring.datasource.password=pgpass",
-    // Schema validation only — Flyway is disabled; V1 SQL is canonical reference.
+    // Flyway bootstraps the throwaway DB from db/migration; Hibernate then
+    // validates the entities against what actually flew.
+    "spring.flyway.enabled=true",
     "spring.jpa.hibernate.ddl-auto=validate",
 })
 class AdmissionControllerFacadeTest {
@@ -112,7 +123,15 @@ class AdmissionControllerFacadeTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(COMPLETE_PAYLOAD))
             .andExpect(status().isOk())
-            .andExpect(content().string("Mutation processed"));
+            // #552 admission contract: JSON envelope matching the Python
+            // kernel's PebAdmissionResult.to_dict() ({transaction_id,
+            // admission_result, message, admitted}). The stubbed engine does
+            // not run, so admission_result is null — same expectation as the
+            // peb-api twin suite (#552).
+            .andExpect(jsonPath("$.transaction_id").isNotEmpty())
+            .andExpect(jsonPath("$.admission_result").value(nullValue()))
+            .andExpect(jsonPath("$.message").value("Mutation processed"))
+            .andExpect(jsonPath("$.admitted").value(true));
     }
 
     @Test
@@ -124,7 +143,10 @@ class AdmissionControllerFacadeTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(COMPLETE_PAYLOAD))
             .andExpect(status().isUnprocessableEntity())
-            .andExpect(content().string("Admission denied by invariant validator"));
+            .andExpect(jsonPath("$.transaction_id").isNotEmpty())
+            .andExpect(jsonPath("$.admission_result").value(nullValue()))
+            .andExpect(jsonPath("$.message").value("Admission denied by invariant validator"))
+            .andExpect(jsonPath("$.admitted").value(false));
     }
 
     // ── Boundary guard: malformed input -> 400 (regression for the 500) ──

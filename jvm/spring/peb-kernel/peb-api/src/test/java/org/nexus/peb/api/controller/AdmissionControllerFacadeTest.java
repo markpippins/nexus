@@ -9,11 +9,15 @@ import org.nexus.peb.core.violation.PebViolationEngine;
 import org.nexus.peb.domain.dto.AdmissionResponse;
 import org.nexus.peb.domain.entity.PebTransaction;
 import org.nexus.peb.domain.enums.AdmissionPath;
+import org.nexus.peb.domain.enums.AdmissionResult;
 import org.nexus.peb.domain.exception.MalformedAdmissionRequestException;
+import org.nexus.peb.store.repository.PebTransactionRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -49,12 +53,45 @@ class AdmissionControllerFacadeTest {
     }
 
     private StubGovernanceEngine governanceEngine;
+    private PebTransactionRepository transactionRepository;
     private AdmissionControllerFacade controller;
+    /** When non-null, the repository reports this as a previously recorded transaction. */
+    private PebTransaction replayTransaction;
+
+    /**
+     * Stub for the idempotency repository built on a JDK dynamic Proxy — the
+     * Mockito-free equivalent of a mock (Mockito is incompatible with Java 25
+     * on these classes, same rationale as StubGovernanceEngine). Only the two
+     * methods the controller exercises are implemented; anything else fails
+     * loudly instead of silently doing nothing.
+     */
+    private static PebTransactionRepository newTransactionRepository(
+            java.util.function.Supplier<PebTransaction> existingSupplier) {
+        return (PebTransactionRepository) java.lang.reflect.Proxy.newProxyInstance(
+                PebTransactionRepository.class.getClassLoader(),
+                new Class<?>[]{PebTransactionRepository.class},
+                (proxy, method, args) -> {
+                    switch (method.getName()) {
+                        case "findByIdempotencyKey":
+                            return java.util.Optional.ofNullable(existingSupplier.get());
+                        case "toString":
+                            return "RecordingTransactionRepository(proxy)";
+                        case "hashCode":
+                            return System.identityHashCode(proxy);
+                        case "equals":
+                            return proxy == args[0];
+                        default:
+                            throw new UnsupportedOperationException(
+                                "stub does not implement " + method.getName());
+                    }
+                });
+    }
 
     @BeforeEach
     void setUp() {
         governanceEngine = new StubGovernanceEngine();
-        controller = new AdmissionControllerFacade(governanceEngine);
+        transactionRepository = newTransactionRepository(() -> replayTransaction);
+        controller = new AdmissionControllerFacade(governanceEngine, transactionRepository);
     }
 
     /**
@@ -104,7 +141,7 @@ class AdmissionControllerFacadeTest {
                     makeTransaction("peb_validate_transition"));
 
             assertEquals(HttpStatus.OK, result.getStatusCode());
-            assertEquals("Validated", result.getBody());
+            assertJsonBody(result.getBody(), true, "Validated");
         }
 
         @Test
@@ -115,7 +152,7 @@ class AdmissionControllerFacadeTest {
                     makeTransaction("peb_record_decision"));
 
             assertEquals(HttpStatus.OK, result.getStatusCode());
-            assertEquals("Mutated", result.getBody());
+            assertJsonBody(result.getBody(), true, "Mutated");
         }
 
         @Test
@@ -166,8 +203,81 @@ class AdmissionControllerFacadeTest {
                     makeTransaction("some_random_tool"));
 
             assertEquals(HttpStatus.OK, result.getStatusCode());
-            assertEquals("ROUTED: unknown tool", result.getBody());
+            assertJsonBody(result.getBody(), true, "ROUTED: unknown tool");
         }
+    }
+
+    // ── IDEMPOTENT REPLAY PATH (parity with the Python kernel's api.py) ─
+
+    @Nested
+    @DisplayName("ReplayPath - idempotency-key replays mirror the Python kernel")
+    class ReplayPath {
+
+        @Test
+        @DisplayName("same key + same payload -> recorded outcome replayed (200, original id)")
+        void same_payload_replays_recorded_outcome() {
+            stubAccepted("Mutated");
+            controller.submitTransaction(makeTransaction("peb_record_decision"));
+
+            PebTransaction prior = new PebTransaction();
+            ReflectionTestUtils.setField(prior, "idempotencyKey", "test-key");
+            ReflectionTestUtils.setField(prior, "entityId", "test-entity");
+            ReflectionTestUtils.setField(prior, "toolName", "peb_record_decision");
+            ReflectionTestUtils.setField(prior, "input",
+                    JsonNodeFactory.instance.objectNode());
+            prior.ensureId();
+            prior.setAdmissionResult(AdmissionResult.ALLOWED);
+            replayTransaction = prior;
+
+            ResponseEntity<String> result = controller.submitTransaction(
+                    makeTransaction("peb_record_decision"));
+
+            assertEquals(HttpStatus.OK, result.getStatusCode());
+            JsonNode body = readJson(result.getBody());
+            assertEquals(prior.getId().toString(), body.path("transaction_id").asText());
+            assertEquals("ALLOWED", body.path("admission_result").asText());
+            assertTrue(body.path("admitted").asBoolean());
+        }
+
+        @Test
+        @DisplayName("same key + different payload -> 409 conflict")
+        void conflicting_payload_is_409() {
+            PebTransaction prior = new PebTransaction();
+            ReflectionTestUtils.setField(prior, "idempotencyKey", "test-key");
+            ReflectionTestUtils.setField(prior, "entityId", "test-entity");
+            ReflectionTestUtils.setField(prior, "toolName", "peb_record_decision");
+            ReflectionTestUtils.setField(prior, "input",
+                    JsonNodeFactory.instance.objectNode().put("different", true));
+            prior.ensureId();
+            replayTransaction = prior;
+
+            ResponseEntity<String> result = controller.submitTransaction(
+                    makeTransaction("peb_record_decision"));
+
+            assertEquals(HttpStatus.CONFLICT, result.getStatusCode());
+            assertFalse(readJson(result.getBody()).path("admitted").asBoolean());
+        }
+    }
+
+    // ── JSON body contract helpers ──────────────────────────────
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    private static JsonNode readJson(String body) {
+        try {
+            return MAPPER.readTree(body);
+        } catch (Exception ex) {
+            throw new AssertionError("Response body is not valid JSON: " + body, ex);
+        }
+    }
+
+    /** Asserts the Python-kernel contract shape: {transaction_id, admission_result, message, admitted}. */
+    private static void assertJsonBody(String body, boolean admitted, String message) {
+        JsonNode json = readJson(body);
+        assertTrue(json.hasNonNull("transaction_id") && !json.path("transaction_id").asText().isEmpty());
+        assertEquals(admitted, json.path("admitted").asBoolean());
+        assertEquals(message, json.path("message").asText());
+        assertTrue(json.has("admission_result"));
     }
 
     // ── MALFORMED PATH ──────────────────────────────────────────
@@ -248,7 +358,7 @@ class AdmissionControllerFacadeTest {
                     makeTransaction("peb_validate_transition"));
 
             assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, result.getStatusCode());
-            assertEquals("Invariant violation: hash mismatch", result.getBody());
+            assertJsonBody(result.getBody(), false, "Invariant violation: hash mismatch");
         }
 
         @Test

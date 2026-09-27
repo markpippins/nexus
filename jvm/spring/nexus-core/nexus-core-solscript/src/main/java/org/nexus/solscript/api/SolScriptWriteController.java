@@ -56,8 +56,9 @@ public class SolScriptWriteController {
         String outcome = producer.enqueue(intent, "nexus-core-solscript", writeId);
 
         int status = switch (outcome) {
-            case "queued", "queued_core_nats" -> HttpStatus.ACCEPTED.value(); // 202 — queued for reconciliation
-            case "buffered_local" -> HttpStatus.ACCEPTED.value();             // 202 — queued locally (offline)
+            case "queued" -> HttpStatus.ACCEPTED.value();                  // 202 — held durably on the stream
+            case "dropped_core_nats" -> HttpStatus.ACCEPTED.value();       // 202 — handed to core NATS only; NOT durable (no stream/consumer holds it; reconciler will never see it)
+            case "buffered_local" -> HttpStatus.ACCEPTED.value();          // 202 — queued locally (offline)
             default -> HttpStatus.SERVICE_UNAVAILABLE.value();                // 503 — could not queue
         };
 

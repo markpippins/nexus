@@ -1038,7 +1038,14 @@ export default class HarnessWorker extends Service {
 
     try {
       const stdout = await new Promise<string>((resolve, reject) => {
-        const child = spawn(pythonBin, [scriptPath], { cwd: repoRoot });
+        const child = spawn(pythonBin, [scriptPath], {
+          cwd: repoRoot,
+          // The bridge → PEB kernel base URL is env-overridable
+          // (git_claim_producer reads PEB_BASE_URL); the spawned python
+          // does not inherit the test's shell env through moleculer-runner
+          // unless forwarded explicitly.
+          env: { ...process.env, PEB_BASE_URL: process.env.PEB_BASE_URL || "http://localhost:8098" },
+        });
         let out = "";
         let errBuf = "";
         const timer = setTimeout(() => {

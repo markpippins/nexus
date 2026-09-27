@@ -12,6 +12,78 @@
 
 BEGIN;
 
+-- =============================================================================
+-- PREFLIGHT GATE (fail-closed).
+--
+-- The "apply only after the role-memory restore/V199 incident is resolved"
+-- rule used to live in the header comment alone, so the migration would apply
+-- regardless of whether its stated precondition held. This block enforces it.
+-- Reviewer/tester finding: the file was ungated.
+--
+-- G1. tackle.role_memory must carry the uq_role_memory_validity exclusion
+--     constraint. Without it, role-memory assignment validity is unenforced —
+--     exactly the V178/V199 incident this migration is sequenced behind.
+-- G2. Every card in the minimum assignment set must already exist, so a
+--     missing card cannot silently produce a half-populated role.
+-- G3. No active (role, memory_id) pair may already be duplicated, which the
+--     restored constraint would otherwise reject mid-apply.
+-- =============================================================================
+DO $$
+DECLARE
+    missing_cards text[];
+BEGIN
+    -- G1: restored validity constraint
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint con
+        WHERE con.conrelid = 'tackle.role_memory'::regclass
+          AND con.contype = 'x'
+          AND con.conname = 'uq_role_memory_validity'
+    ) THEN
+        RAISE EXCEPTION
+            'supervisor persona migration PREFLIGHT FAIL: tackle.role_memory.uq_role_memory_validity is absent. The V199 repair must be applied first (its absence was the live-DB regression of 2026-09-23).';
+    END IF;
+
+    -- G2: minimum assignment set is satisfiable
+    SELECT array_agg(want ORDER BY want)
+      INTO missing_cards
+      FROM unnest(ARRAY[
+          'role-creation',
+          'agent-config-template',
+          'bootstrap-self-update',
+          'pipeline-health-check',
+          'inbox-query-procedure',
+          'tag-routing-reference',
+          'thread-tracking',
+          'post-turn-self-update',
+          'role-governance',
+          'knowledge-stratification',
+          'pr-protocol',
+          'worktree-development-workflow'
+      ]) AS want
+     WHERE NOT EXISTS (SELECT 1 FROM tackle.memory m WHERE m.slug = want);
+
+    IF missing_cards IS NOT NULL THEN
+        RAISE EXCEPTION
+            'supervisor persona migration PREFLIGHT FAIL: required procedure card(s) missing: %',
+            missing_cards;
+    END IF;
+
+    -- G3: no conflicting active assignments
+    IF EXISTS (
+        SELECT 1
+        FROM tackle.role_memory rm
+        WHERE rm.expiration_dt IS NULL
+        GROUP BY rm.role, rm.memory_id
+        HAVING count(*) > 1
+    ) THEN
+        RAISE EXCEPTION
+            'supervisor persona migration PREFLIGHT FAIL: duplicate active (role, memory_id) assignments exist; resolve before applying.';
+    END IF;
+
+    RAISE NOTICE 'supervisor persona migration preflight: G1 validity constraint present, G2 all 12 cards present, G3 no duplicate active assignments.';
+END $$;
+
 -- Keep the Tackle role registry and persona FK target in sync.
 INSERT INTO tackle.roles (name, description, created_at, updated_at)
 VALUES (

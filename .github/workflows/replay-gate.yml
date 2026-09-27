@@ -84,6 +84,16 @@ jobs:
         with:
           java-version: '21'
           distribution: 'temurin'
+      # Per-workflow key (NOT setup-java's shared repo-wide cache: maven key):
+      # the first-save race hands one shared entry to whichever Maven job
+      # finishes first — observed 2026-09-25, a narrow parity job starved the
+      # full-reactor entry. Own key = own entry, race-free.
+      - name: Cache Maven repository
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: maven-replay-gate-${{ hashFiles('jvm/**/pom.xml') }}
+          restore-keys: maven-replay-gate-
 
       - name: Run JVM verifier (fixtures + fingerprint parity + drift matrix)
         run: mvn -B -f jvm/pom.xml -pl spring/conformance-verifier test

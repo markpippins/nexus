@@ -84,6 +84,29 @@ namespace org.nexus.nexusbroker {
   @doc("List recorded snapshot-trigger events (decision points).")
   op keychainAgentRecordsTransitions(): KeychainTransitionsResult;
 
+  @route("/api/keychain-snapshot/agent-records/doctrine-sets")
+  @get
+  @doc("Read-only cohort report: group recorded transitions by content-addressed doctrine set, count successful Conduit tickets, and report descriptive per-card activation evidence.")
+  op keychainAgentRecordsDoctrineSets(
+    @query limit?: int32,
+    @query from?: utcDateTime,
+    @query to?: utcDateTime,
+    @query outcome?: string,
+    @query source_namespace?: string,
+    @query doctrine_snapshot_id?: string,
+    @query high_activation_min?: int32,
+  ): KeychainDoctrineSetsResult;
+
+  @route("/api/keychain-snapshot/agent-records/doctrine-reconstruction")
+  @get
+  @doc("Read-only historical checkpoint doctrine coverage and dedupe report; never reconstructs unknown historical inputs.")
+  op keychainAgentRecordsDoctrineReconstruction(@query limit?: int32): KeychainDoctrineReconstructionResult;
+
+  @route("/api/keychain-snapshot/agent-records/doctrine-reconstruction/backfill")
+  @post
+  @doc("Explicitly apply verified, append-only historical doctrine references from complete embedded hash manifests; body must set apply=true.")
+  op keychainAgentRecordsDoctrineBackfill(@body body: Record<unknown>): KeychainDoctrineReconstructionResult;
+
   @route("/api/keychain-snapshot/agent-records/rewind")
   @get
   @doc("Rewind: reconstruct the per-record-type state vector as of a past decision-point snapshot version.")
@@ -207,6 +230,21 @@ namespace org.nexus.nexusbroker {
   @delete
   @doc("Terminate a pty session.")
   op ptyKill(@path id: string): Record<unknown>;
+
+  @route("/api/workers/pty/{id}/write")
+  @post
+  @doc("Write data to a running pty session's stdin.")
+  op ptyWrite(@path id: string, @body body: PtyWriteRequest): PtyWriteResult;
+
+  @route("/api/workers/pty/{id}/resize")
+  @post
+  @doc("Resize a pty session's terminal (falls back to the session's current size when a dimension is omitted).")
+  op ptyResize(@path id: string, @body body: PtyResizeRequest): PtyResizeResult;
+
+  @route("/api/workers/pty-transport/health")
+  @get
+  @doc("WebSocket TTY transport adapter health: WS endpoint, live client-session count.")
+  op ptyTransportHealth(): PtyTransportHealth;
 
   @route("/api/workers/harness")
   @get

@@ -1,0 +1,1709 @@
+{
+  "contract_fingerprint": "6ea822280a8f650f7662fbf70b8da4b6d155614f4fbd971986ec4d1d61b7cb6e",
+  "contract_manifest": {
+    "authority_boundary": {
+      "absence_never_asserts_nonexistence": true,
+      "authority_status": "non_authoritative",
+      "escalation_finding_code": "authority_escalation_denied",
+      "governed_identity_owner": "aspects",
+      "grants_governed_identity": false,
+      "invented_predicates": [],
+      "invents_predicates": false,
+      "relation_authority_owner": "resolution-aspects",
+      "self_authorizes_relations": false,
+      "state_boundary": [
+        "structural_fact",
+        "relation_candidate",
+        "evaluated_relation",
+        "admitted_relation"
+      ],
+      "structure_is": "reader",
+      "unresolved_shapes_become": "explicit_unresolved_candidate"
+    },
+    "authority_status": "non_authoritative",
+    "candidate_statuses": [
+      "ambiguous",
+      "resolved",
+      "unmapped",
+      "unsupported"
+    ],
+    "contract_revision": "structure-v0.1",
+    "expression_envelope": {
+      "bridging_fields": [],
+      "field_semantics": {
+        "content_hash": "sha256 hex digest of the exact bytes parsed",
+        "revision": "source revision identifier (git rev, migration stamp)",
+        "source_uri": "canonical URI of the parsed artifact"
+      },
+      "implicit_taxonomy_growth": false,
+      "shared_fields": [
+        "revision",
+        "content_hash",
+        "source_uri"
+      ]
+    },
+    "fact_kinds": [
+      "column",
+      "enum_type",
+      "foreign_key",
+      "index",
+      "named_constraint",
+      "operation",
+      "seed_value",
+      "table",
+      "unsupported_syntax"
+    ],
+    "finding_codes": [
+      "authority_escalation_denied",
+      "grammar_drift",
+      "identity_collision",
+      "missing_anchor",
+      "parser_drift",
+      "stale_source_revision",
+      "unsupported_syntax"
+    ],
+    "fingerprint_version": 1,
+    "observation_id_version": 1,
+    "owner": "structure",
+    "parse_statuses": [
+      "complete",
+      "failed",
+      "partial",
+      "unsupported"
+    ],
+    "read_set_fingerprint_algorithm": "sha256-canonical-json-v1",
+    "relation_mapping_statuses": [
+      "mapped",
+      "unmapped"
+    ],
+    "source_fact_id_version": 1,
+    "source_kinds": [
+      "jvm_source",
+      "python_source",
+      "seed_sql",
+      "solscript",
+      "sql_ddl",
+      "sql_migration",
+      "typespec",
+      "unknown"
+    ]
+  },
+  "contract_revision": "structure-v0.1",
+  "expected_verdict_hash": "464424fe5a9aea89747c3302f2e651a3850ed7b35bbc95682595b9cf19af0824",
+  "grammar_revision": "sql-ddl-v0.3.0",
+  "parser": {
+    "grammar_revision": "sql-ddl-v0.3.0",
+    "parser_identity": "structure-sql-parser",
+    "parser_revision": "v0.2.0"
+  },
+  "schema_version": 1,
+  "vectors": [
+    {
+      "expectation": "the contract fingerprint re-derives from the semantic manifest alone; any conforming implementation computes the same value from its own manifest assembly",
+      "expected": "6ea822280a8f650f7662fbf70b8da4b6d155614f4fbd971986ec4d1d61b7cb6e",
+      "inputs": {},
+      "kind": "contract_fingerprint",
+      "name": "contract-fingerprint-stable"
+    },
+    {
+      "expectation": "canonical JSON emits non-ASCII characters raw (no \\u escapes) and sorts object keys by unicode code point — a conforming runtime must byte-match the reference",
+      "expected": "726f446b33f55b47d2e5cf902ad8b049d09426406c1d16fe5c7cffba5b8d1d30",
+      "inputs": {
+        "value": {
+          "a": null,
+          "b": true,
+          "chîne": [
+            "x",
+            "y"
+          ],
+          "table": "rolê_memória",
+          "z": 1
+        }
+      },
+      "kind": "canonical_json",
+      "name": "unicode-is-raw-utf8-in-canonical-json"
+    },
+    {
+      "expectation": "source_fact_id binds (source_uri, revision, content_hash, node_path, fact_kind) and nothing else — parser-independent location identity per the two-identities ruling",
+      "expected": "8a0c569c4ab951e6ee236ea5f7de6e7260fc7c18fac203806a48f4aa664678d8",
+      "inputs": {
+        "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+        "fact_kind": "table",
+        "node_path": "statements[1].table.role_memory",
+        "revision": "v178-fixture",
+        "source_uri": "db/migrations/V178__role_memory.sql"
+      },
+      "kind": "source_fact_id",
+      "name": "source-fact-id-is-location-identity"
+    },
+    {
+      "expectation": "read_set_fingerprint sorts entries by (source_uri, revision) before digesting — input order must not change the value",
+      "expected": "c73ef8f235e26d9c338045e7e6713493e55eaeb3d1d1242c928c989357d2b046",
+      "inputs": {
+        "read_set": [
+          {
+            "content_hash": "35148c93a1e3c84afcfba82a8f810c4bb392b1864d874d7cc25f2236a701b1d9",
+            "revision": "r2",
+            "source_uri": "db/migrations/V900__other.sql"
+          },
+          {
+            "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+            "revision": "v178-fixture",
+            "source_uri": "db/migrations/V178__role_memory.sql"
+          },
+          {
+            "content_hash": "39565f1b6e4be18ac23e47cc1d07c9068aab93a30490c4e7e89ae02153332248",
+            "revision": "r3",
+            "source_uri": "db/migrations/V901__third.sql"
+          }
+        ]
+      },
+      "kind": "read_set_fingerprint",
+      "name": "read-set-fingerprint-is-order-independent"
+    },
+    {
+      "expectation": "observation_id is a function of source_fact_id, parser identity/revision, grammar revision, canonical payload, and the run's read-set fingerprint — two replays under the same pinned revisions agree; a grammar change does not",
+      "expected": "e3e9ffda686b8f660117c3ae41161e71986f468f391990e5196247e021efa8c4",
+      "inputs": {
+        "parser": {
+          "grammar_revision": "sql-ddl-v0.3.0",
+          "parser_identity": "structure-sql-parser",
+          "parser_revision": "v0.2.0"
+        },
+        "payload": {
+          "fact_kind": "table",
+          "statement_index": 1,
+          "table": "role_memory"
+        },
+        "read_set_fingerprint": "c73ef8f235e26d9c338045e7e6713493e55eaeb3d1d1242c928c989357d2b046",
+        "source_fact_id": "8a0c569c4ab951e6ee236ea5f7de6e7260fc7c18fac203806a48f4aa664678d8"
+      },
+      "kind": "observation_id",
+      "name": "observation-id-binds-parser-grammar-and-read-set"
+    },
+    {
+      "expectation": "unresolved candidates are first-class: the same ambiguous shape re-emits the same candidate_id on rerun (reason 'ambiguous', FK from role_memory_tag to governed_tag)",
+      "expected": "5e6720f9e507601be58816c666c5548063758244be1e145eb0628e281d0d40ee",
+      "inputs": {
+        "node_path": "statements[3].table.role_memory_tag.fks[1]",
+        "parser": {
+          "grammar_revision": "sql-ddl-v0.3.0",
+          "parser_identity": "structure-sql-parser",
+          "parser_revision": "v0.2.0"
+        },
+        "reason": "ambiguous",
+        "source_content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77"
+      },
+      "kind": "candidate_id",
+      "name": "candidate-id-pins-ambiguous-fk-shape"
+    },
+    {
+      "checks": {
+        "expected_fact_kinds": [
+          "table",
+          "column",
+          "named_constraint",
+          "foreign_key",
+          "index",
+          "operation",
+          "seed_value",
+          "enum_type"
+        ],
+        "expected_structural_facts": [
+          {
+            "fact_kind": "table",
+            "payload": {
+              "table": "role_memory"
+            }
+          },
+          {
+            "fact_kind": "column",
+            "payload": {
+              "name": "key"
+            }
+          },
+          {
+            "fact_kind": "column",
+            "payload": {
+              "name": "value"
+            }
+          },
+          {
+            "fact_kind": "seed_value",
+            "payload": {
+              "table": "role_memory",
+              "values": [
+                "bootstrap",
+                "v1"
+              ]
+            }
+          }
+        ],
+        "expected_unsupported": [],
+        "min_observations": 20
+      },
+      "expectation": "the parsed run's identity chain verifies without a parser: text hashes to content_hash, the read-set fingerprint re-derives, every observation validates under the S1 contract and re-derives to its own source_fact_id and observation_id, and the expected inventory is present",
+      "expected": null,
+      "inputs": {
+        "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+        "grammar_revision": "sql-ddl-v0.3.0",
+        "language": "sql",
+        "observations": [
+          {
+            "anchor": {
+              "node_path": "statements[0].create_type.tag_origin",
+              "span": {
+                "end_col": 62,
+                "end_line": 5,
+                "start_col": 1,
+                "start_line": 5
+              }
+            },
+            "authority_status": "non_authoritative",
+            "fact_kind": "enum_type",
+            "observation_id": "305b7caf6505e1aceb251098ac9762e7c934bdded6361df2f1c18a072c1fab4e",
+            "parse_status": "complete",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "labels": [
+                "human",
+                "nlp",
+                "structural"
+              ],
+              "statement_index": 0,
+              "type_name": "tag_origin"
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "68f713ec256fe9a94e9a04c0bfe39e1880e177d8daa5dd4566f3f63f7df9033f"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[1].table.role_memory",
+              "span": {
+                "end_col": 2,
+                "end_line": 13,
+                "start_col": 1,
+                "start_line": 7
+              }
+            },
+            "authority_status": "non_authoritative",
+            "diagnostics": [
+              {
+                "anchor": {
+                  "node_path": "statements[1].table.role_memory",
+                  "span": {
+                    "end_col": 2,
+                    "end_line": 13,
+                    "start_col": 16,
+                    "start_line": 12
+                  }
+                },
+                "code": "unsupported_syntax",
+                "message": "trailing CREATE TABLE options not in grammar: )); table/column facts are complete for the paren body only"
+              }
+            ],
+            "fact_kind": "table",
+            "observation_id": "ca6d14e4b46fd78d79a7041b2ea0c2ad5583d1cbd1a31b45834165e12aeb4a73",
+            "parse_status": "partial",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "column_count": 4,
+              "statement_index": 1,
+              "table": "role_memory"
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "8a0c569c4ab951e6ee236ea5f7de6e7260fc7c18fac203806a48f4aa664678d8"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[1].table.role_memory.columns[0]",
+              "span": {
+                "end_col": 29,
+                "end_line": 8,
+                "start_col": 5,
+                "start_line": 8
+              }
+            },
+            "authority_status": "non_authoritative",
+            "fact_kind": "column",
+            "observation_id": "26f974ba065bc3e6665394c8be6b3f06021ab51c4ef8439dbe03265061697084",
+            "parse_status": "complete",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "name": "id",
+              "primary_key": true,
+              "statement_index": 1,
+              "table": "role_memory",
+              "type": "BIGSERIAL"
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "fa46119200b2b4d566b4b97d4d9934992692f8b6c20df94ae011f44130270b35"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[1].table.role_memory.columns[1]",
+              "span": {
+                "end_col": 22,
+                "end_line": 9,
+                "start_col": 5,
+                "start_line": 9
+              }
+            },
+            "authority_status": "non_authoritative",
+            "fact_kind": "column",
+            "observation_id": "c47919dc026776dbeca72476a6d4c2bb7790260a426e06af4065315cf7cdc410",
+            "parse_status": "complete",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "name": "key",
+              "nullable": false,
+              "statement_index": 1,
+              "table": "role_memory",
+              "type": "TEXT"
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "6f3e5e1b661c697bb157be0d114778ffca55ce318e9a8e7171f9e0a155ff844e"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[1].table.role_memory.columns[2]",
+              "span": {
+                "end_col": 26,
+                "end_line": 10,
+                "start_col": 5,
+                "start_line": 10
+              }
+            },
+            "authority_status": "non_authoritative",
+            "fact_kind": "column",
+            "observation_id": "5bb51eb64e0df9acc4f77451a54fc48bdcf4dc0f2bb9caa7dfe82cb613193577",
+            "parse_status": "complete",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "default": "",
+              "name": "value",
+              "statement_index": 1,
+              "table": "role_memory",
+              "type": "TEXT"
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "404a7d70edfba2ac4d9041cb62bd7254d2d22c03d6c7c7335bc7f7e04b62386a"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[1].table.role_memory.columns[3]",
+              "span": {
+                "end_col": 42,
+                "end_line": 11,
+                "start_col": 5,
+                "start_line": 11
+              }
+            },
+            "authority_status": "non_authoritative",
+            "fact_kind": "column",
+            "observation_id": "fbe2cfbd8e1c5b5bf516a0fba5300cba9fb6d9bc12ad821dba902a819946e73b",
+            "parse_status": "complete",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "default": {
+                "raw": "now()"
+              },
+              "name": "recorded_at",
+              "statement_index": 1,
+              "table": "role_memory",
+              "type": "TIMESTAMPTZ"
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "bdb1132f61d6014e1e242305f093b9c3ed3820e0d1bc1a82dd8f1ce2d2e8bb59"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[1].table.role_memory.constraints[0]",
+              "span": {
+                "end_col": 17,
+                "end_line": 12,
+                "start_col": 5,
+                "start_line": 12
+              }
+            },
+            "authority_status": "non_authoritative",
+            "fact_kind": "named_constraint",
+            "observation_id": "14261c4a122a7a1a4a8ccd6118a3e582c0c85eabc0af28425885fe6ce3f6f2aa",
+            "parse_status": "complete",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "columns": [
+                "key"
+              ],
+              "constraint_name": null,
+              "kind": "unique",
+              "statement_index": 1,
+              "table": "role_memory"
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "b2d4ed8b2a81ab6cf03a683ee968303675f708c03ed9b8836c522dd1711ee42a"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[2].table.governed_tag",
+              "span": {
+                "end_col": 2,
+                "end_line": 21,
+                "start_col": 1,
+                "start_line": 15
+              }
+            },
+            "authority_status": "non_authoritative",
+            "diagnostics": [
+              {
+                "anchor": {
+                  "node_path": "statements[2].table.governed_tag",
+                  "span": {
+                    "end_col": 2,
+                    "end_line": 21,
+                    "start_col": 58,
+                    "start_line": 20
+                  }
+                },
+                "code": "unsupported_syntax",
+                "message": "trailing CREATE TABLE options not in grammar: )); table/column facts are complete for the paren body only"
+              }
+            ],
+            "fact_kind": "table",
+            "observation_id": "e652487f7e88cdaf408cdf3a23ae1574f6dea46be6c741c2aacb631ee5f12deb",
+            "parse_status": "partial",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "column_count": 4,
+              "statement_index": 2,
+              "table": "governed_tag"
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "2c0873008ad1f94d5cf2c90b71dd4eadad7b5e12460bc813a30149d968d4b93a"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[2].table.governed_tag.columns[0]",
+              "span": {
+                "end_col": 50,
+                "end_line": 16,
+                "start_col": 5,
+                "start_line": 16
+              }
+            },
+            "authority_status": "non_authoritative",
+            "fact_kind": "column",
+            "observation_id": "fe29d4008464d440fe1c4fc5dc9f89d96ee0384e167d190fd969c8fcfbeeae24",
+            "parse_status": "complete",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "default": {
+                "raw": "gen_random_uuid()"
+              },
+              "name": "id",
+              "primary_key": true,
+              "statement_index": 2,
+              "table": "governed_tag",
+              "type": "UUID"
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "f348485598a8c06e66e93d3c4c3c0f7f0660cd7553f35cd68b30609bf5055e16"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[2].table.governed_tag.columns[1]",
+              "span": {
+                "end_col": 28,
+                "end_line": 17,
+                "start_col": 5,
+                "start_line": 17
+              }
+            },
+            "authority_status": "non_authoritative",
+            "fact_kind": "column",
+            "observation_id": "5f0e87d2bb9b91ad5b70c069d006156149775c60b5f6ac8b8016b0301bfb3900",
+            "parse_status": "complete",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "name": "namespace",
+              "nullable": false,
+              "statement_index": 2,
+              "table": "governed_tag",
+              "type": "TEXT"
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "39352520c5612d96f0ffe933c16699afe50569d835428b85738cccc19768abcb"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[2].table.governed_tag.columns[2]",
+              "span": {
+                "end_col": 26,
+                "end_line": 18,
+                "start_col": 5,
+                "start_line": 18
+              }
+            },
+            "authority_status": "non_authoritative",
+            "fact_kind": "column",
+            "observation_id": "e1b1ba66b278ddb8d746269d31e71c60d0863cec6d2a7dcc4d65e14ed2396b1c",
+            "parse_status": "complete",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "name": "tag_key",
+              "nullable": false,
+              "statement_index": 2,
+              "table": "governed_tag",
+              "type": "TEXT"
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "466f9172e4552b38748a4ec98a14a11516e607468b2c677dfc1033df8507a86f"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[2].table.governed_tag.columns[3]",
+              "span": {
+                "end_col": 47,
+                "end_line": 19,
+                "start_col": 5,
+                "start_line": 19
+              }
+            },
+            "authority_status": "non_authoritative",
+            "fact_kind": "column",
+            "observation_id": "19e70f06d2bba50a1b78f2614958e3994094c6eb3ae86faeb6f52c002ad33d9c",
+            "parse_status": "complete",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "default": "human",
+              "name": "origin",
+              "nullable": false,
+              "statement_index": 2,
+              "table": "governed_tag",
+              "type": "tag_origin"
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "a3b15c1271a54d2f8fb8408d506e2084b6f6612b0f976a2fc4651faa1e5cc7aa"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[2].table.governed_tag.constraints[0]",
+              "span": {
+                "end_col": 59,
+                "end_line": 20,
+                "start_col": 5,
+                "start_line": 20
+              }
+            },
+            "authority_status": "non_authoritative",
+            "fact_kind": "named_constraint",
+            "observation_id": "eb7b362e7ba1955eb85f909b7e330e6cae96e28be83e9058f3b6eb4c5eb184d6",
+            "parse_status": "complete",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "columns": [
+                "namespace",
+                "tag_key"
+              ],
+              "constraint_name": "uq_governed_tag",
+              "kind": "unique",
+              "statement_index": 2,
+              "table": "governed_tag"
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "842e78d09751cca221972e5d482400ead1e455e11b0a7260d3ea775092f1589a"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[3].table.role_memory_tag",
+              "span": {
+                "end_col": 2,
+                "end_line": 27,
+                "start_col": 1,
+                "start_line": 23
+              }
+            },
+            "authority_status": "non_authoritative",
+            "diagnostics": [
+              {
+                "anchor": {
+                  "node_path": "statements[3].table.role_memory_tag",
+                  "span": {
+                    "end_col": 2,
+                    "end_line": 27,
+                    "start_col": 49,
+                    "start_line": 26
+                  }
+                },
+                "code": "unsupported_syntax",
+                "message": "trailing CREATE TABLE options not in grammar: )); table/column facts are complete for the paren body only"
+              }
+            ],
+            "fact_kind": "table",
+            "observation_id": "92a77335ade19a2a3d75c9efe2c4ee033c5e39ec4a3bd36b05bb6e21af1d719c",
+            "parse_status": "partial",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "column_count": 2,
+              "statement_index": 3,
+              "table": "role_memory_tag"
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "5923f1ebcf9c0609c8452f83cfc6eaeee330d7efc7c920f664ff69afaf957649"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[3].table.role_memory_tag.columns[0]",
+              "span": {
+                "end_col": 80,
+                "end_line": 24,
+                "start_col": 5,
+                "start_line": 24
+              }
+            },
+            "authority_status": "non_authoritative",
+            "fact_kind": "column",
+            "observation_id": "7175aeb186211295f4322d6e955decdcabed2d35a7d25ed93fbc19b92870d985",
+            "parse_status": "complete",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "name": "role_memory_id",
+              "nullable": false,
+              "statement_index": 3,
+              "table": "role_memory_tag",
+              "type": "BIGINT"
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "192ac16e145441ab408a797d53580bbec9ade0ff16ab3d609553539b0816a42f"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[3].table.role_memory_tag.columns[1]",
+              "span": {
+                "end_col": 62,
+                "end_line": 25,
+                "start_col": 5,
+                "start_line": 25
+              }
+            },
+            "authority_status": "non_authoritative",
+            "fact_kind": "column",
+            "observation_id": "db9120acf0d5a5e41eec5ead3bb242f1752d119d2a8a3656fd01602141b5a799",
+            "parse_status": "complete",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "name": "governed_tag_id",
+              "nullable": false,
+              "statement_index": 3,
+              "table": "role_memory_tag",
+              "type": "UUID"
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "643c08ab941b4c3ff02af4d93d44cfffee810e28faa9cdbfb9a39ef54ca73459"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[3].table.role_memory_tag.constraints[0]",
+              "span": {
+                "end_col": 50,
+                "end_line": 26,
+                "start_col": 5,
+                "start_line": 26
+              }
+            },
+            "authority_status": "non_authoritative",
+            "fact_kind": "named_constraint",
+            "observation_id": "a0227ce6b136ed1636d9eb38c7f455a45ad2e1fe8485a2c505892c63e44e102d",
+            "parse_status": "complete",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "columns": [
+                "role_memory_id",
+                "governed_tag_id"
+              ],
+              "constraint_name": null,
+              "kind": "primary_key",
+              "statement_index": 3,
+              "table": "role_memory_tag"
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "16b8015ba07c909eb6e6cc380e91d1d45bd258f2a1b5ffad67a290a6a51894e5"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[3].table.role_memory_tag.fks[0]",
+              "span": {
+                "end_col": 80,
+                "end_line": 24,
+                "start_col": 5,
+                "start_line": 24
+              }
+            },
+            "authority_status": "non_authoritative",
+            "fact_kind": "foreign_key",
+            "observation_id": "fe678f98cebebbc9dda5715ff88e1135a84dcdb6ea96cf055280ccf834123e27",
+            "parse_status": "complete",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "columns": [
+                "role_memory_id"
+              ],
+              "constraint_name": null,
+              "on_delete": "CASCADE",
+              "on_update": null,
+              "references_columns": [
+                "id"
+              ],
+              "references_table": "role_memory",
+              "statement_index": 3,
+              "table": "role_memory_tag"
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "relation_mapping": {
+              "status": "unmapped"
+            },
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "f80e812c444474f55d6af490a43b8036b929730c34ad3bd47e3f277b6e7b4085"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[3].table.role_memory_tag.fks[1]",
+              "span": {
+                "end_col": 62,
+                "end_line": 25,
+                "start_col": 5,
+                "start_line": 25
+              }
+            },
+            "authority_status": "non_authoritative",
+            "fact_kind": "foreign_key",
+            "observation_id": "d1796f03b0a22cab4629fc77e21e12715b8cb383f3b96c79a0dfa6018dd433e0",
+            "parse_status": "complete",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "columns": [
+                "governed_tag_id"
+              ],
+              "constraint_name": null,
+              "on_delete": null,
+              "on_update": null,
+              "references_columns": [
+                "id"
+              ],
+              "references_table": "governed_tag",
+              "statement_index": 3,
+              "table": "role_memory_tag"
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "relation_mapping": {
+              "status": "unmapped"
+            },
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "8ca66048ffa21558de26b41162941776e9579564166c00a32a77b7f24d942a61"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[4].create_index",
+              "span": {
+                "end_col": 78,
+                "end_line": 29,
+                "start_col": 1,
+                "start_line": 29
+              }
+            },
+            "authority_status": "non_authoritative",
+            "diagnostics": [
+              {
+                "anchor": {
+                  "node_path": "statements[4].create_index",
+                  "span": {
+                    "end_col": 78,
+                    "end_line": 29,
+                    "start_col": 59,
+                    "start_line": 29
+                  }
+                },
+                "code": "unsupported_syntax",
+                "message": "partial-index WHERE clause recorded verbatim; semantics not modeled"
+              }
+            ],
+            "fact_kind": "index",
+            "observation_id": "2771315b19bf07c7194e3c0a8d192e11a8a0e89d2635058aa3eaf18e46ae7b0d",
+            "parse_status": "partial",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "columns": [
+                "namespace",
+                "tag_key"
+              ],
+              "index_name": "idx_governed_tag_key",
+              "method": null,
+              "statement_index": 4,
+              "table": "governed_tag",
+              "unique": true,
+              "where": "namespace, tag_key)"
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "043a7dfad58860eacb7faf03a2ae67638e3fccf5c28506ff7bc9c356456f5c97"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[5].create_index",
+              "span": {
+                "end_col": 66,
+                "end_line": 30,
+                "start_col": 1,
+                "start_line": 30
+              }
+            },
+            "authority_status": "non_authoritative",
+            "diagnostics": [
+              {
+                "anchor": {
+                  "node_path": "statements[5].create_index",
+                  "span": {
+                    "end_col": 66,
+                    "end_line": 30,
+                    "start_col": 37,
+                    "start_line": 30
+                  }
+                },
+                "code": "unsupported_syntax",
+                "message": "partial-index WHERE clause recorded verbatim; semantics not modeled"
+              }
+            ],
+            "fact_kind": "index",
+            "observation_id": "6bfb29a7da1fae2f01131acc189dfd263d44242179ad9e5bbce0cf5589a5887a",
+            "parse_status": "partial",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "columns": [
+                "key"
+              ],
+              "index_name": "idx_role_memory_key",
+              "method": "btree",
+              "statement_index": 5,
+              "table": "role_memory",
+              "unique": false,
+              "where": "role_memory USING btree(key)"
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "659cd70207b0441c378ce54a86e2075acd5e2265559f8cbd6ed908c3a6c47537"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[6].table.role_memory.columns[0]",
+              "span": {
+                "end_col": 62,
+                "end_line": 32,
+                "start_col": 36,
+                "start_line": 32
+              }
+            },
+            "authority_status": "non_authoritative",
+            "fact_kind": "column",
+            "observation_id": "b9c09292925b927c8b642efe46cdf1b67ba1055c2c0ed8d7d7238b3f5f4690ae",
+            "parse_status": "complete",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "default": "1.0",
+              "name": "weight",
+              "statement_index": 6,
+              "table": "role_memory",
+              "type": "NUMERIC"
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "d8c799c18b7d3adcb69b112994fce9d9abc97acf9cbc050d8b7a05a71d4e2ac9"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[7].table.governed_tag.constraints[0]",
+              "span": {
+                "end_col": 88,
+                "end_line": 33,
+                "start_col": 30,
+                "start_line": 33
+              }
+            },
+            "authority_status": "non_authoritative",
+            "fact_kind": "named_constraint",
+            "observation_id": "5c2ed2faea55ac1a9c120d88402958d7daf996be7bf1bf554cd5936b2ac77b05",
+            "parse_status": "complete",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "constraint_name": "fk_governed_tag_key",
+              "expr": "length(tag_key) > 0",
+              "kind": "check",
+              "statement_index": 7,
+              "table": "governed_tag"
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "d6b7c0fd16d55a8d8605a29be856f8fa61f045b67e6dabd35e9791b3387a6378"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[8].insert.role_memory.values[0]",
+              "span": {
+                "end_col": 63,
+                "end_line": 35,
+                "start_col": 46,
+                "start_line": 35
+              }
+            },
+            "authority_status": "non_authoritative",
+            "fact_kind": "seed_value",
+            "observation_id": "49fae04667cd846aae490f4fd8b6a523c732aa24f1921282019a06a32a264b0a",
+            "parse_status": "complete",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "columns": [
+                "key",
+                "value"
+              ],
+              "ordinal": 0,
+              "statement_index": 8,
+              "table": "role_memory",
+              "values": [
+                "bootstrap",
+                "v1"
+              ]
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "c3ea4b7984738f0bb39e5f5250638f39597b7f03a9da52868a64c18fd21701b1"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[8].insert.role_memory.values[1]",
+              "span": {
+                "end_col": 81,
+                "end_line": 35,
+                "start_col": 67,
+                "start_line": 35
+              }
+            },
+            "authority_status": "non_authoritative",
+            "fact_kind": "seed_value",
+            "observation_id": "e49eed4e471023d4aa4751d608365eeb8e35e25f9269b7027721fc0183c8ac9e",
+            "parse_status": "complete",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "columns": [
+                "key",
+                "value"
+              ],
+              "ordinal": 1,
+              "statement_index": 8,
+              "table": "role_memory",
+              "values": [
+                "aspect",
+                "g6"
+              ]
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "c45c238118ebc40c38b6fcde31ec3fae91c53297cc253f8527b128fea6b6da82"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[9].create_function",
+              "span": {
+                "end_col": 24,
+                "end_line": 44,
+                "start_col": 1,
+                "start_line": 39
+              }
+            },
+            "authority_status": "non_authoritative",
+            "diagnostics": [
+              {
+                "anchor": {
+                  "node_path": "statements[9].head",
+                  "span": {
+                    "end_col": 24,
+                    "end_line": 44,
+                    "start_col": 1,
+                    "start_line": 39
+                  }
+                },
+                "code": "unsupported_syntax",
+                "message": "create function is outside capability profile sql-ddl-v0.3.0 (procedural bodies, dynamic SQL and extension syntax are explicitly unsupported); no structural facts are claimed for its internals"
+              }
+            ],
+            "fact_kind": "operation",
+            "observation_id": "108363236177d15e35b30836cbdcd497cb9bf895f1fa58a17c6cb292033bbc43",
+            "parse_status": "unsupported",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "action": "create function",
+              "detail": "CREATE FUNCTION touch_role_memory(",
+              "statement_index": 9
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "1982a56382f7eb63084898a9e17b77e19e6f9fa9649fe94f9beb224f58174391"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[10].select",
+              "span": {
+                "end_col": 9,
+                "end_line": 46,
+                "start_col": 1,
+                "start_line": 46
+              }
+            },
+            "authority_status": "non_authoritative",
+            "diagnostics": [
+              {
+                "anchor": {
+                  "node_path": "statements[10].head",
+                  "span": {
+                    "end_col": 9,
+                    "end_line": 46,
+                    "start_col": 1,
+                    "start_line": 46
+                  }
+                },
+                "code": "unsupported_syntax",
+                "message": "select is outside capability profile sql-ddl-v0.3.0 (procedural bodies, dynamic SQL and extension syntax are explicitly unsupported); no structural facts are claimed for its internals"
+              }
+            ],
+            "fact_kind": "operation",
+            "observation_id": "3654c8399516a422d7490e1e752fd1b6290e4953b9ca3602c591ff2d7c9d0f18",
+            "parse_status": "unsupported",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "action": "select",
+              "detail": "SELECT 1",
+              "statement_index": 10
+            },
+            "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+            "source": {
+              "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+              "language": "sql",
+              "revision": "v178-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V178__role_memory.sql"
+            },
+            "source_fact_id": "219e0ae78bf273954ed6bdeb3df781196b989e3ab399a089f3c57c5150e8e616"
+          }
+        ],
+        "parser": {
+          "grammar_revision": "sql-ddl-v0.3.0",
+          "parser_identity": "structure-sql-parser",
+          "parser_revision": "v0.2.0"
+        },
+        "read_set_fingerprint": "3173eeb7769d07284e9c641c081ed05f139ff5bddf91f964fd2aa614d322d7a1",
+        "revision": "v178-fixture",
+        "role": "migration",
+        "source_kind": "sql_migration",
+        "source_uri": "db/migrations/V178__role_memory.sql",
+        "text": "-- V178: role memory and governed tag infrastructure.\n-- Line comments are skipped by the parser; they cannot yield facts.\n-- A nested block comment: /* outer /* inner still comment */ outer tail */\n\nCREATE TYPE tag_origin AS ENUM ('human', 'nlp', 'structural');\n\nCREATE TABLE role_memory (\n    id BIGSERIAL PRIMARY KEY,\n    key TEXT NOT NULL,\n    value TEXT DEFAULT '',\n    recorded_at TIMESTAMPTZ DEFAULT now(),\n    UNIQUE (key)\n);\n\nCREATE TABLE governed_tag (\n    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    namespace TEXT NOT NULL,\n    tag_key TEXT NOT NULL,\n    origin tag_origin NOT NULL DEFAULT 'human',\n    CONSTRAINT uq_governed_tag UNIQUE (namespace, tag_key)\n);\n\nCREATE TABLE role_memory_tag (\n    role_memory_id BIGINT NOT NULL REFERENCES role_memory(id) ON DELETE CASCADE,\n    governed_tag_id UUID NOT NULL REFERENCES governed_tag(id),\n    PRIMARY KEY (role_memory_id, governed_tag_id)\n);\n\nCREATE UNIQUE INDEX idx_governed_tag_key ON governed_tag (namespace, tag_key);\nCREATE INDEX idx_role_memory_key ON role_memory USING btree (key);\n\nALTER TABLE role_memory ADD COLUMN weight NUMERIC DEFAULT 1.0;\nALTER TABLE governed_tag ADD CONSTRAINT fk_governed_tag_key CHECK (length(tag_key) > 0);\n\nINSERT INTO role_memory (key, value) VALUES ('bootstrap', 'v1'), ('aspect', 'g6');\n\n-- Procedural body below is explicitly unsupported. Its internal semicolons\n-- must NOT split statements, and no facts may be claimed from inside it.\nCREATE FUNCTION touch_role_memory() RETURNS trigger AS $body$\nBEGIN\n  UPDATE role_memory SET recorded_at = now() WHERE id = NEW.id;\n  RETURN NEW;\nEND;\n$body$ LANGUAGE plpgsql;\n\nSELECT 1;\n"
+      },
+      "kind": "machine",
+      "name": "machine-parse-v178-identity-chain"
+    },
+    {
+      "checks": {
+        "expected_fact_kinds": [
+          "operation"
+        ],
+        "expected_structural_facts": [],
+        "expected_unsupported": [
+          {
+            "reason_code": "unsupported_syntax"
+          }
+        ],
+        "min_observations": 3
+      },
+      "expectation": "constructs outside the grammar yield explicit observations carrying unsupported_syntax diagnostics — absence never asserts non-existence",
+      "expected": null,
+      "inputs": {
+        "content_hash": "841ab6c727c3f2426eec24c1c344b561825b0699aa15049ba2d1bde3edf42b73",
+        "grammar_revision": "sql-ddl-v0.3.0",
+        "language": "sql",
+        "observations": [
+          {
+            "anchor": {
+              "node_path": "statements[0].create_extension",
+              "span": {
+                "end_col": 39,
+                "end_line": 6,
+                "start_col": 1,
+                "start_line": 6
+              }
+            },
+            "authority_status": "non_authoritative",
+            "diagnostics": [
+              {
+                "anchor": {
+                  "node_path": "statements[0].head",
+                  "span": {
+                    "end_col": 39,
+                    "end_line": 6,
+                    "start_col": 1,
+                    "start_line": 6
+                  }
+                },
+                "code": "unsupported_syntax",
+                "message": "create extension is outside capability profile sql-ddl-v0.3.0 (procedural bodies, dynamic SQL and extension syntax are explicitly unsupported); no structural facts are claimed for its internals"
+              }
+            ],
+            "fact_kind": "operation",
+            "observation_id": "628ecd6c13af45134f1b9b0fc9f5d4107d438d1e43aa8895bb23deaf987f3648",
+            "parse_status": "unsupported",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "action": "create extension",
+              "detail": "CREATE EXTENSION IF NOT",
+              "statement_index": 0
+            },
+            "read_set_fingerprint": "ac9ad3fa547a5dca3043a73d8be9e81984d15bd6c16e608fbbe1248e74a6bb70",
+            "source": {
+              "content_hash": "841ab6c727c3f2426eec24c1c344b561825b0699aa15049ba2d1bde3edf42b73",
+              "language": "sql",
+              "revision": "v900-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V900__negative.sql"
+            },
+            "source_fact_id": "559974efa82e314c82da1d80e209b5ca5fabdc97375bf83ccc513db704dbd5c7"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[1].create_view",
+              "span": {
+                "end_col": 54,
+                "end_line": 9,
+                "start_col": 1,
+                "start_line": 8
+              }
+            },
+            "authority_status": "non_authoritative",
+            "diagnostics": [
+              {
+                "anchor": {
+                  "node_path": "statements[1].head",
+                  "span": {
+                    "end_col": 54,
+                    "end_line": 9,
+                    "start_col": 1,
+                    "start_line": 8
+                  }
+                },
+                "code": "unsupported_syntax",
+                "message": "create view is outside capability profile sql-ddl-v0.3.0 (procedural bodies, dynamic SQL and extension syntax are explicitly unsupported); no structural facts are claimed for its internals"
+              }
+            ],
+            "fact_kind": "operation",
+            "observation_id": "e2223a8a8b16c371194a435b0c6613f55be62f7b17278fd5a338fa1149aac948",
+            "parse_status": "unsupported",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "action": "create view",
+              "detail": "CREATE OR REPLACE VIEW",
+              "statement_index": 1
+            },
+            "read_set_fingerprint": "ac9ad3fa547a5dca3043a73d8be9e81984d15bd6c16e608fbbe1248e74a6bb70",
+            "source": {
+              "content_hash": "841ab6c727c3f2426eec24c1c344b561825b0699aa15049ba2d1bde3edf42b73",
+              "language": "sql",
+              "revision": "v900-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V900__negative.sql"
+            },
+            "source_fact_id": "730da661fe9fa106610382fcb287a273eaec2d553fd1d716173bdebd5e26ff94"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[2].do",
+              "span": {
+                "end_col": 8,
+                "end_line": 16,
+                "start_col": 1,
+                "start_line": 11
+              }
+            },
+            "authority_status": "non_authoritative",
+            "diagnostics": [
+              {
+                "anchor": {
+                  "node_path": "statements[2].head",
+                  "span": {
+                    "end_col": 8,
+                    "end_line": 16,
+                    "start_col": 1,
+                    "start_line": 11
+                  }
+                },
+                "code": "unsupported_syntax",
+                "message": "do is outside capability profile sql-ddl-v0.3.0 (procedural bodies, dynamic SQL and extension syntax are explicitly unsupported); no structural facts are claimed for its internals"
+              }
+            ],
+            "fact_kind": "operation",
+            "observation_id": "f6992f9c0f1ce3cee6ae9d53b53b43e7ae234acbac63eb9592201f8f86f7bcf9",
+            "parse_status": "unsupported",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "action": "do",
+              "detail": "DO $…$",
+              "statement_index": 2
+            },
+            "read_set_fingerprint": "ac9ad3fa547a5dca3043a73d8be9e81984d15bd6c16e608fbbe1248e74a6bb70",
+            "source": {
+              "content_hash": "841ab6c727c3f2426eec24c1c344b561825b0699aa15049ba2d1bde3edf42b73",
+              "language": "sql",
+              "revision": "v900-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V900__negative.sql"
+            },
+            "source_fact_id": "60d4f7b3b776f31fe151feb3f5eb4eb2d7d6ae7834ca8664a72bef6be2eb98ad"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[3].execute",
+              "span": {
+                "end_col": 64,
+                "end_line": 18,
+                "start_col": 1,
+                "start_line": 18
+              }
+            },
+            "authority_status": "non_authoritative",
+            "diagnostics": [
+              {
+                "anchor": {
+                  "node_path": "statements[3].head",
+                  "span": {
+                    "end_col": 64,
+                    "end_line": 18,
+                    "start_col": 1,
+                    "start_line": 18
+                  }
+                },
+                "code": "unsupported_syntax",
+                "message": "execute is outside capability profile sql-ddl-v0.3.0 (procedural bodies, dynamic SQL and extension syntax are explicitly unsupported); no structural facts are claimed for its internals"
+              }
+            ],
+            "fact_kind": "operation",
+            "observation_id": "b27c9ef225c3bb81edb220deef9189cedfd643312ca7cbc9bc4f239e10a72f80",
+            "parse_status": "unsupported",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "action": "execute",
+              "detail": "EXECUTE format",
+              "statement_index": 3
+            },
+            "read_set_fingerprint": "ac9ad3fa547a5dca3043a73d8be9e81984d15bd6c16e608fbbe1248e74a6bb70",
+            "source": {
+              "content_hash": "841ab6c727c3f2426eec24c1c344b561825b0699aa15049ba2d1bde3edf42b73",
+              "language": "sql",
+              "revision": "v900-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V900__negative.sql"
+            },
+            "source_fact_id": "47771ffb8b095d959f2948de8f929462d7879feb716828a3a34d85d8ad4cc6d0"
+          },
+          {
+            "anchor": {
+              "node_path": "statements[4].create_trigger",
+              "span": {
+                "end_col": 50,
+                "end_line": 21,
+                "start_col": 1,
+                "start_line": 20
+              }
+            },
+            "authority_status": "non_authoritative",
+            "diagnostics": [
+              {
+                "anchor": {
+                  "node_path": "statements[4].head",
+                  "span": {
+                    "end_col": 50,
+                    "end_line": 21,
+                    "start_col": 1,
+                    "start_line": 20
+                  }
+                },
+                "code": "unsupported_syntax",
+                "message": "create trigger is outside capability profile sql-ddl-v0.3.0 (procedural bodies, dynamic SQL and extension syntax are explicitly unsupported); no structural facts are claimed for its internals"
+              }
+            ],
+            "fact_kind": "operation",
+            "observation_id": "e4740a07d3cbb5d05bf2e13d4a2ad4709b9efdfb55f2e9336bb00f669cb68e4c",
+            "parse_status": "unsupported",
+            "parser": {
+              "grammar_revision": "sql-ddl-v0.3.0",
+              "parser_identity": "structure-sql-parser",
+              "parser_revision": "v0.2.0"
+            },
+            "payload": {
+              "action": "create trigger",
+              "detail": "CREATE TRIGGER trg_touch BEFORE",
+              "statement_index": 4
+            },
+            "read_set_fingerprint": "ac9ad3fa547a5dca3043a73d8be9e81984d15bd6c16e608fbbe1248e74a6bb70",
+            "source": {
+              "content_hash": "841ab6c727c3f2426eec24c1c344b561825b0699aa15049ba2d1bde3edf42b73",
+              "language": "sql",
+              "revision": "v900-fixture",
+              "source_kind": "sql_migration",
+              "source_uri": "db/migrations/V900__negative.sql"
+            },
+            "source_fact_id": "75e8da83781dafec4ce58e600de442b8ed9981585aaf0f11bd159bc757bd4c42"
+          }
+        ],
+        "parser": {
+          "grammar_revision": "sql-ddl-v0.3.0",
+          "parser_identity": "structure-sql-parser",
+          "parser_revision": "v0.2.0"
+        },
+        "read_set_fingerprint": "ac9ad3fa547a5dca3043a73d8be9e81984d15bd6c16e608fbbe1248e74a6bb70",
+        "revision": "v900-fixture",
+        "role": "migration",
+        "source_kind": "sql_migration",
+        "source_uri": "db/migrations/V900__negative.sql",
+        "text": "-- Negative fixture: every statement in this file is outside the grammar.\n-- Each must yield exactly one explicit unsupported observation WITH\n-- diagnostics naming the construct. Nothing may be silently dropped, and\n-- nothing inside these constructs may become a fact.\n\nCREATE EXTENSION IF NOT EXISTS pg_trgm;\n\nCREATE OR REPLACE VIEW active_roles AS\n    SELECT * FROM role_memory WHERE value IS NOT NULL;\n\nDO $admin$\nBEGIN\n  EXECUTE 'CREATE INDEX idx_temp ON temp_table (col);';\n  INSERT INTO audit_log VALUES ('did things');\nEND;\n$admin$;\n\nEXECUTE format('ALTER TABLE %I ADD COLUMN c int', 'some_table');\n\nCREATE TRIGGER trg_touch BEFORE INSERT ON role_memory\nFOR EACH ROW EXECUTE FUNCTION touch_role_memory();\n"
+      },
+      "kind": "machine",
+      "name": "machine-parse-unsupported-syntax-is-explicit"
+    },
+    {
+      "expectation": "the validator refuses an observation claiming governed authority — Structure is a reader; the founding defect this layer exists to prevent must be mechanically unrepresentable",
+      "expected": null,
+      "inputs": {
+        "must_reject_with": "authority_status",
+        "observation": {
+          "anchor": {
+            "node_path": "statements[1].table.role_memory"
+          },
+          "authority_status": "authoritative",
+          "fact_kind": "table",
+          "observation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "parse_status": "complete",
+          "parser": {
+            "grammar_revision": "sql-ddl-v0.3.0",
+            "parser_identity": "structure-sql-parser",
+            "parser_revision": "v0.2.0"
+          },
+          "payload": {
+            "table": "role_memory"
+          },
+          "read_set_fingerprint": "c73ef8f235e26d9c338045e7e6713493e55eaeb3d1d1242c928c989357d2b046",
+          "source": {
+            "content_hash": "36f7fb6408264b630288dd0dec7ba5066c765f4f97a0cd226e43076aa0d24b77",
+            "language": "sql",
+            "revision": "v178-fixture",
+            "source_kind": "sql_migration",
+            "source_uri": "db/migrations/V178__role_memory.sql"
+          },
+          "source_fact_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "kind": "invalid_observation",
+      "name": "authority-escalation-is-rejected"
+    }
+  ]
+}

@@ -17,7 +17,7 @@ architect ruling 143b0e04 (discussions thread 2ecc4700):
 Capability profile is explicit (CAPABILITY_PROFILE): PL/pgSQL bodies, dynamic
 SQL, and extension syntax are named as unsupported, not assumed.
 
-Bounded grammar (grammar_revision SQL-DDL-v0.2.0):
+Bounded grammar (grammar_revision SQL-DDL-v0.3.0):
   CREATE TABLE (columns, PK/UNIQUE/CHECK/FK constraints, column REFERENCES)
   ALTER TABLE  (ADD COLUMN/CONSTRAINT, DROP COLUMN, other actions as operations)
   CREATE [UNIQUE] INDEX
@@ -40,7 +40,11 @@ except ImportError:  # pragma: no cover - direct-run / test harness context
 
 PARSER_IDENTITY = "structure-sql-parser"
 PARSER_REVISION = "v0.2.0"
-GRAMMAR_REVISION = "sql-ddl-v0.2.0"
+GRAMMAR_REVISION = "sql-ddl-v0.3.0"
+# v0.3.0: coherent node_path scheme — CREATE TABLE anchor + diagnostics share
+# the "table.<name>" subtree root with its columns/constraints/fks (S5
+# neighborhood queries need a connected path tree). Identity-affecting:
+# observation_id embeds node_path, so v0.2.0 populations are superseded.
 
 CAPABILITY_PROFILE = {
     "dialect": "postgresql",
@@ -395,6 +399,13 @@ def _path(stmt: Statement, *parts: str) -> str:
     return f"statements[{stmt.index}]." + ".".join(p for p in parts if p)
 
 
+def _path_key(name: str) -> str:
+    """Dotted object name -> single path segment (qualifier dots would
+    otherwise collide with the node_path separator and disconnect the
+    table's subtree from its children). Payloads carry the true name."""
+    return name.replace(".", "__")
+
+
 def _upper_seq(tokens: list[Token]) -> list[str]:
     return [t.text.upper() if t.kind == "word" else "" for t in tokens]
 
@@ -478,7 +489,7 @@ def _column_observation(
         "fact_kind": "column",
         "payload": payload,
         "anchor": {
-            "node_path": _path(stmt, "table", table.split(".")[-1], path_suffix),
+            "node_path": _path(stmt, "table", _path_key(table), path_suffix),
             "span": _loc(part),
         },
     }
@@ -506,7 +517,7 @@ def _column_with_fk(
         "fact_kind": "foreign_key",
         "payload": fk_payload,
         "anchor": {
-            "node_path": _path(stmt, "table", table.split(".")[-1], f"fks[{fk_index}]"),
+            "node_path": _path(stmt, "table", _path_key(table), f"fks[{fk_index}]"),
             "span": _loc(part),
         },
         "relation_mapping": {"status": "unmapped"},
@@ -566,7 +577,7 @@ def _constraint_observation(
         if kind == "foreign" else "named_constraint",
         "payload": payload,
         "anchor": {
-            "node_path": _path(stmt, "table", table.split(".")[-1], path_suffix),
+            "node_path": _path(stmt, "table", _path_key(table), path_suffix),
             "span": _loc(part),
         },
         **({"relation_mapping": {"status": "unmapped"}} if kind == "foreign" else {}),
@@ -683,7 +694,7 @@ def _parse_create_table(stmt: Statement, toks: list[Token]) -> list[dict[str, An
                     f"{_cap(_render(rest[:6]))}; table/column facts are "
                     "complete for the paren body only"
                 ),
-                "anchor": {"node_path": _path(stmt, "create_table", name),
+                "anchor": {"node_path": _path(stmt, "table", _path_key(name)),
                            "span": _loc(rest)},
             })
     else:
@@ -691,15 +702,19 @@ def _parse_create_table(stmt: Statement, toks: list[Token]) -> list[dict[str, An
         diagnostics.append({
             "code": "unsupported_syntax",
             "message": "CREATE TABLE without a parseable column body",
-            "anchor": {"node_path": _path(stmt, "create_table", name),
+            "anchor": {"node_path": _path(stmt, "table", _path_key(name)),
                        "span": _loc(toks)},
         })
 
+    # one coherent subtree key for the table AND every child (columns,
+    # constraints, fks): qualifier dots are flattened so node_path forms
+    # a connected tree for S5 neighborhood queries
+    table_root = _path(stmt, "table", _path_key(name))
     table_obs: dict[str, Any] = {
         "fact_kind": "table",
         "payload": {"table": name, "statement_index": stmt.index,
                     "column_count": len(columns)},
-        "anchor": {"node_path": _path(stmt, "create_table", name),
+        "anchor": {"node_path": table_root,
                    "span": _loc(stmt.tokens)},
     }
     if parse_status != "complete":
@@ -887,7 +902,7 @@ def _parse_insert(stmt: Statement, toks: list[Token]) -> list[dict[str, Any]]:
                 "fact_kind": "seed_value",
                 "payload": {"table": table, "columns": columns, "ordinal": ordinal,
                             "values": values, "statement_index": stmt.index},
-                "anchor": {"node_path": _path(stmt, "insert", table.split(".")[-1],
+                "anchor": {"node_path": _path(stmt, "insert", _path_key(table),
                                               f"values[{ordinal}]"),
                            "span": _loc(body[0])},
             })
@@ -900,7 +915,7 @@ def _parse_insert(stmt: Statement, toks: list[Token]) -> list[dict[str, Any]]:
             "payload": {"action": "insert_select", "table": table,
                         "source": _cap(_render(toks[i + si:])),
                         "statement_index": stmt.index},
-            "anchor": {"node_path": _path(stmt, "insert", table.split(".")[-1]),
+            "anchor": {"node_path": _path(stmt, "insert", _path_key(table)),
                        "span": _loc(stmt.tokens)},
             "parse_status": "partial",
             "diagnostics": [{

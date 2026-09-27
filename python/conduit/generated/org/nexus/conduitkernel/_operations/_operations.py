@@ -20,13 +20,12 @@ from corehttp.runtime import PipelineClient
 from corehttp.runtime.pipeline import PipelineResponse
 from corehttp.utils import case_insensitive_dict
 
-from .. import models as _models
+from .. import models as _models, types as _types
 from .._configuration import conduitkernelClientConfiguration
 from .._utils.model_base import SdkJSONEncoder, _deserialize
 from .._utils.serialization import Serializer
 from .._utils.utils import ClientMixinABC
 
-JSON = MutableMapping[str, Any]
 T = TypeVar("T")
 ClsType = Optional[Callable[[PipelineResponse[HttpRequest, HttpResponse], T, dict[str, Any]], Any]]
 
@@ -1141,13 +1140,13 @@ class _conduitkernelClientOperationsMixin(  # pylint: disable=too-many-public-me
 
     @overload
     def insert_receipt(
-        self, body: JSON, *, content_type: str = "application/json", **kwargs: Any
+        self, body: _types.ReceiptInsertRequest, *, content_type: str = "application/json", **kwargs: Any
     ) -> Union[_models.ReceiptInsertResponse, Any]:
         """Insert a receipt. C1 single persistence path for HTTP channel. Delegates to
         DBAdapter.insert_receipt with idempotency key (caller's id) and provenance stamping.
 
         :param body: Required.
-        :type body: JSON
+        :type body: ~org.nexus.conduitkernel.types.ReceiptInsertRequest
         :keyword content_type: Body Parameter content-type. Content type parameter for JSON body.
          Default value is "application/json".
         :paramtype content_type: str
@@ -1174,13 +1173,14 @@ class _conduitkernelClientOperationsMixin(  # pylint: disable=too-many-public-me
         """
 
     def insert_receipt(
-        self, body: Union[_models.ReceiptInsertRequest, JSON, IO[bytes]], **kwargs: Any
+        self, body: Union[_models.ReceiptInsertRequest, _types.ReceiptInsertRequest, IO[bytes]], **kwargs: Any
     ) -> Union[_models.ReceiptInsertResponse, Any]:
         """Insert a receipt. C1 single persistence path for HTTP channel. Delegates to
         DBAdapter.insert_receipt with idempotency key (caller's id) and provenance stamping.
 
-        :param body: Is one of the following types: ReceiptInsertRequest, JSON, IO[bytes] Required.
-        :type body: ~org.nexus.conduitkernel.models.ReceiptInsertRequest or JSON or IO[bytes]
+        :param body: Is either a ReceiptInsertRequest type or a IO[bytes] type. Required.
+        :type body: ~org.nexus.conduitkernel.models.ReceiptInsertRequest or
+         ~org.nexus.conduitkernel.types.ReceiptInsertRequest or IO[bytes]
         :return: ReceiptInsertResponse or any
         :rtype: ~org.nexus.conduitkernel.models.ReceiptInsertResponse or any
         :raises ~corehttp.exceptions.HttpResponseError:
@@ -2133,14 +2133,19 @@ class _conduitkernelClientOperationsMixin(  # pylint: disable=too-many-public-me
 
     @overload
     def update_session_cost(
-        self, session_id: str, body: JSON, *, content_type: str = "application/json", **kwargs: Any
+        self,
+        session_id: str,
+        body: _types.SessionCostUpdateRequest,
+        *,
+        content_type: str = "application/json",
+        **kwargs: Any
     ) -> Union[_models.SessionCostUpdateResponse, Any]:
         """Update session token cost.
 
         :param session_id: Required.
         :type session_id: str
         :param body: Required.
-        :type body: JSON
+        :type body: ~org.nexus.conduitkernel.types.SessionCostUpdateRequest
         :keyword content_type: Body Parameter content-type. Content type parameter for JSON body.
          Default value is "application/json".
         :paramtype content_type: str
@@ -2168,14 +2173,18 @@ class _conduitkernelClientOperationsMixin(  # pylint: disable=too-many-public-me
         """
 
     def update_session_cost(
-        self, session_id: str, body: Union[_models.SessionCostUpdateRequest, JSON, IO[bytes]], **kwargs: Any
+        self,
+        session_id: str,
+        body: Union[_models.SessionCostUpdateRequest, _types.SessionCostUpdateRequest, IO[bytes]],
+        **kwargs: Any
     ) -> Union[_models.SessionCostUpdateResponse, Any]:
         """Update session token cost.
 
         :param session_id: Required.
         :type session_id: str
-        :param body: Is one of the following types: SessionCostUpdateRequest, JSON, IO[bytes] Required.
-        :type body: ~org.nexus.conduitkernel.models.SessionCostUpdateRequest or JSON or IO[bytes]
+        :param body: Is either a SessionCostUpdateRequest type or a IO[bytes] type. Required.
+        :type body: ~org.nexus.conduitkernel.models.SessionCostUpdateRequest or
+         ~org.nexus.conduitkernel.types.SessionCostUpdateRequest or IO[bytes]
         :return: SessionCostUpdateResponse or any
         :rtype: ~org.nexus.conduitkernel.models.SessionCostUpdateResponse or any
         :raises ~corehttp.exceptions.HttpResponseError:
@@ -2263,14 +2272,19 @@ class _conduitkernelClientOperationsMixin(  # pylint: disable=too-many-public-me
 
     @overload
     def update_session_heartbeat(
-        self, session_id: str, body: Optional[JSON] = None, *, content_type: str = "application/json", **kwargs: Any
+        self,
+        session_id: str,
+        body: Optional[_types.SessionHeartbeatRequest] = None,
+        *,
+        content_type: str = "application/json",
+        **kwargs: Any
     ) -> Union[_models.SessionHeartbeatResponse, Any]:
         """Update session heartbeat timestamp and activity.
 
         :param session_id: Required.
         :type session_id: str
         :param body: Default value is None.
-        :type body: JSON
+        :type body: ~org.nexus.conduitkernel.types.SessionHeartbeatRequest
         :keyword content_type: Body Parameter content-type. Content type parameter for JSON body.
          Default value is "application/json".
         :paramtype content_type: str
@@ -2305,16 +2319,17 @@ class _conduitkernelClientOperationsMixin(  # pylint: disable=too-many-public-me
     def update_session_heartbeat(
         self,
         session_id: str,
-        body: Optional[Union[_models.SessionHeartbeatRequest, JSON, IO[bytes]]] = None,
+        body: Optional[Union[_models.SessionHeartbeatRequest, _types.SessionHeartbeatRequest, IO[bytes]]] = None,
         **kwargs: Any
     ) -> Union[_models.SessionHeartbeatResponse, Any]:
         """Update session heartbeat timestamp and activity.
 
         :param session_id: Required.
         :type session_id: str
-        :param body: Is one of the following types: SessionHeartbeatRequest, JSON, IO[bytes] Default
-         value is None.
-        :type body: ~org.nexus.conduitkernel.models.SessionHeartbeatRequest or JSON or IO[bytes]
+        :param body: Is either a SessionHeartbeatRequest type or a IO[bytes] type. Default value is
+         None.
+        :type body: ~org.nexus.conduitkernel.models.SessionHeartbeatRequest or
+         ~org.nexus.conduitkernel.types.SessionHeartbeatRequest or IO[bytes]
         :return: SessionHeartbeatResponse or any
         :rtype: ~org.nexus.conduitkernel.models.SessionHeartbeatResponse or any
         :raises ~corehttp.exceptions.HttpResponseError:
@@ -2510,12 +2525,12 @@ class _conduitkernelClientOperationsMixin(  # pylint: disable=too-many-public-me
 
     @overload
     def trip_breaker(
-        self, body: JSON, *, content_type: str = "application/json", **kwargs: Any
+        self, body: _types.BreakerTripRequest, *, content_type: str = "application/json", **kwargs: Any
     ) -> Union[_models.BreakerStateResponse, Any]:
         """Trip the circuit breaker.
 
         :param body: Required.
-        :type body: JSON
+        :type body: ~org.nexus.conduitkernel.types.BreakerTripRequest
         :keyword content_type: Body Parameter content-type. Content type parameter for JSON body.
          Default value is "application/json".
         :paramtype content_type: str
@@ -2541,12 +2556,13 @@ class _conduitkernelClientOperationsMixin(  # pylint: disable=too-many-public-me
         """
 
     def trip_breaker(
-        self, body: Union[_models.BreakerTripRequest, JSON, IO[bytes]], **kwargs: Any
+        self, body: Union[_models.BreakerTripRequest, _types.BreakerTripRequest, IO[bytes]], **kwargs: Any
     ) -> Union[_models.BreakerStateResponse, Any]:
         """Trip the circuit breaker.
 
-        :param body: Is one of the following types: BreakerTripRequest, JSON, IO[bytes] Required.
-        :type body: ~org.nexus.conduitkernel.models.BreakerTripRequest or JSON or IO[bytes]
+        :param body: Is either a BreakerTripRequest type or a IO[bytes] type. Required.
+        :type body: ~org.nexus.conduitkernel.models.BreakerTripRequest or
+         ~org.nexus.conduitkernel.types.BreakerTripRequest or IO[bytes]
         :return: BreakerStateResponse or any
         :rtype: ~org.nexus.conduitkernel.models.BreakerStateResponse or any
         :raises ~corehttp.exceptions.HttpResponseError:
@@ -2842,12 +2858,12 @@ class _conduitkernelClientOperationsMixin(  # pylint: disable=too-many-public-me
 
     @overload
     def save_failure_recovery(
-        self, body: JSON, *, content_type: str = "application/json", **kwargs: Any
+        self, body: _types.BreakerFailureRecoveryConfig, *, content_type: str = "application/json", **kwargs: Any
     ) -> Union[_models.BreakerFailureRecoveryConfig, Any]:
         """Save failure-recovery configuration.
 
         :param body: Required.
-        :type body: JSON
+        :type body: ~org.nexus.conduitkernel.types.BreakerFailureRecoveryConfig
         :keyword content_type: Body Parameter content-type. Content type parameter for JSON body.
          Default value is "application/json".
         :paramtype content_type: str
@@ -2873,13 +2889,15 @@ class _conduitkernelClientOperationsMixin(  # pylint: disable=too-many-public-me
         """
 
     def save_failure_recovery(
-        self, body: Union[_models.BreakerFailureRecoveryConfig, JSON, IO[bytes]], **kwargs: Any
+        self,
+        body: Union[_models.BreakerFailureRecoveryConfig, _types.BreakerFailureRecoveryConfig, IO[bytes]],
+        **kwargs: Any
     ) -> Union[_models.BreakerFailureRecoveryConfig, Any]:
         """Save failure-recovery configuration.
 
-        :param body: Is one of the following types: BreakerFailureRecoveryConfig, JSON, IO[bytes]
-         Required.
-        :type body: ~org.nexus.conduitkernel.models.BreakerFailureRecoveryConfig or JSON or IO[bytes]
+        :param body: Is either a BreakerFailureRecoveryConfig type or a IO[bytes] type. Required.
+        :type body: ~org.nexus.conduitkernel.models.BreakerFailureRecoveryConfig or
+         ~org.nexus.conduitkernel.types.BreakerFailureRecoveryConfig or IO[bytes]
         :return: BreakerFailureRecoveryConfig or any
         :rtype: ~org.nexus.conduitkernel.models.BreakerFailureRecoveryConfig or any
         :raises ~corehttp.exceptions.HttpResponseError:
@@ -3188,12 +3206,12 @@ class _conduitkernelClientOperationsMixin(  # pylint: disable=too-many-public-me
 
     @overload
     def apply_delta(
-        self, body: JSON, *, content_type: str = "application/json", **kwargs: Any
+        self, body: _types.DeltaApplyRequest, *, content_type: str = "application/json", **kwargs: Any
     ) -> Union[_models.DeltaResponse, Any]:
         """Apply a delta.
 
         :param body: Required.
-        :type body: JSON
+        :type body: ~org.nexus.conduitkernel.types.DeltaApplyRequest
         :keyword content_type: Body Parameter content-type. Content type parameter for JSON body.
          Default value is "application/json".
         :paramtype content_type: str
@@ -3219,12 +3237,13 @@ class _conduitkernelClientOperationsMixin(  # pylint: disable=too-many-public-me
         """
 
     def apply_delta(
-        self, body: Union[_models.DeltaApplyRequest, JSON, IO[bytes]], **kwargs: Any
+        self, body: Union[_models.DeltaApplyRequest, _types.DeltaApplyRequest, IO[bytes]], **kwargs: Any
     ) -> Union[_models.DeltaResponse, Any]:
         """Apply a delta.
 
-        :param body: Is one of the following types: DeltaApplyRequest, JSON, IO[bytes] Required.
-        :type body: ~org.nexus.conduitkernel.models.DeltaApplyRequest or JSON or IO[bytes]
+        :param body: Is either a DeltaApplyRequest type or a IO[bytes] type. Required.
+        :type body: ~org.nexus.conduitkernel.models.DeltaApplyRequest or
+         ~org.nexus.conduitkernel.types.DeltaApplyRequest or IO[bytes]
         :return: DeltaResponse or any
         :rtype: ~org.nexus.conduitkernel.models.DeltaResponse or any
         :raises ~corehttp.exceptions.HttpResponseError:

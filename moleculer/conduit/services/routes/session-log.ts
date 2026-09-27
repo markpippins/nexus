@@ -1,0 +1,129 @@
+// /log/:sessionId — SSE endpoint for streaming live session logs.
+// Extracted from conduit-mcp per Architect decision (No SQL in MCP Servers).
+import { Router } from "express";
+import path from "node:path";
+import fs from "node:fs";
+
+const router = Router();
+
+// The twin is one directory deeper than the incumbent build, so the
+// compatibility fallback includes that extra level.
+const PIPELINE_DIR =
+  process.env.PIPELINE_DIR ||
+  path.resolve(__dirname, "../../../../../../nexus/audit/CONDUIT_DATA");
+
+router.get("/:sessionId", async (req, res) => {
+  const { sessionId } = req.params;
+  if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) {
+    res.status(400).json({ error: "Invalid session ID" });
+    return;
+  }
+
+  // Containment guard — mirrored from the incumbent (CodeQL
+  // js/path-injection remediation, alerts #752-#755).
+  const sessionsDir = path.resolve(PIPELINE_DIR, "sessions");
+  const logPath = path.resolve(sessionsDir, `${sessionId}.log`);
+  if (!logPath.startsWith(sessionsDir + path.sep)) {
+    res.status(400).json({ error: "Invalid session ID" });
+    return;
+  }
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+    "Access-Control-Allow-Origin": "*",
+  });
+
+  let lastSize = 0;
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let resolved = false;
+
+  // Real (symlink-resolved) sessions dir — this is the containment BASE for
+  // the poll loop below. Comparing the realpath of the log file against the
+  // realpath of the directory is what actually closes the symlink-escape
+  // hole: a lexical `startsWith(sessionsDir)` is satisfied by any path that
+  // merely looks like it is under sessions/, which is exactly what a symlink
+  // produces. Resolving the base also keeps the comparison correct when
+  // PIPELINE_DIR itself sits behind a symlink, where realPath would never
+  // lexically start with sessionsDir.
+  let realSessionsDir = sessionsDir;
+  try {
+    realSessionsDir = fs.realpathSync(sessionsDir);
+  } catch {
+    // sessions dir not present yet — realpathSync in the poll below throws
+    // ENOENT until it appears, which the catch handles.
+  }
+
+  const sendLines = () => {
+    try {
+      // Resolve and validate FIRST, before touching the file at all. There
+      // is deliberately no fs.existsSync(logPath) pre-check: it would be an
+      // fs operation on the unvalidated user-derived path, and realpathSync
+      // already throws ENOENT for a missing file (or dangling symlink),
+      // which the surrounding catch handles exactly as the old `return`
+      // did. Containment is then a single unconditional check that
+      // dominates every fs call below it.
+      const realPath = fs.realpathSync(logPath);
+      if (!realPath.startsWith(realSessionsDir + path.sep)) {
+        resolved = true;
+        return;
+      }
+      const stats = fs.statSync(realPath);
+      if (stats.size <= lastSize) return;
+      const fd = fs.openSync(realPath, "r");
+      const buf = Buffer.alloc(stats.size - lastSize);
+      fs.readSync(fd, buf, 0, buf.length, lastSize);
+      fs.closeSync(fd);
+      lastSize = stats.size;
+      const newContent = buf.toString("utf-8");
+      const lines = newContent.split("\n");
+      for (const line of lines) {
+        if (line.length === 0) continue;
+        const isStderr = line.startsWith("[stderr] ") || line.startsWith("[stderr]");
+        const logType = isStderr ? "stderr" : "stdout";
+        const event = JSON.stringify({
+          type: "session_log",
+          data: { sessionId, line, timestamp: new Date().toISOString(), logType },
+        });
+        res.write(`data: ${event}\n\n`);
+      }
+    } catch {
+      // file may disappear — stop polling
+    }
+  };
+
+  let logExists = false;
+  try {
+    const initialReal = fs.realpathSync(logPath);
+    logExists = initialReal.startsWith(realSessionsDir + path.sep);
+  } catch {
+    logExists = false;
+  }
+  res.write(
+    `data: ${JSON.stringify({
+      type: "session_log_meta",
+      data: { sessionId, logFileExists: logExists, logPath },
+    })}\n\n`
+  );
+  if (logExists) {
+    sendLines();
+    pollTimer = setInterval(() => {
+      if (resolved) return;
+      sendLines();
+    }, 500);
+  }
+
+  const keepAlive = setInterval(() => {
+    if (resolved) return;
+    res.write(`: keepalive\n\n`);
+  }, 15000);
+
+  req.on("close", () => {
+    resolved = true;
+    if (pollTimer) clearInterval(pollTimer);
+    clearInterval(keepAlive);
+  });
+});
+
+export default router;

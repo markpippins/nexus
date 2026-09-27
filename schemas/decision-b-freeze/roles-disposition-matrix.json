@@ -577,6 +577,7 @@
    "lifecycle": "active",
    "authority_scope": "role-system administration only; no WorkRequest execution, receipt, review, settlement, or verification authority",
    "disposition": "Canonical role identity. Supervisor registers/configures roles and regenerates doctrine/OpenCode projections. Execution responsibilities remain deferred until Conduit resumes and a separate authority decision activates them.",
+   "note": "2026-09-26 supervisor validation sweep: tackle.roles row present live; persona (tackle.prompts), role_memory assignments, and the assembly.users alias listed in source_registries are PROJECTED, not yet live — they land with supervisor_persona_v1.sql (gated on the V199 uq_role_memory_validity repair) and the assembly-migration seed. verify-roles.py currently reports supervisor 3 surfaces FAIL for exactly this reason.",
    "owner": "architect"
   },
   {
