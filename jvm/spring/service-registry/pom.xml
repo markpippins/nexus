@@ -7,15 +7,15 @@
         <groupId>com.aibizarchitect.nexus</groupId>
         <artifactId>nexus</artifactId>
         <version>1.0.0-SNAPSHOT</version>
-        <!-- Parent POM lives at jvm/spring/pom.xml (GAV com.aibizarchitect.nexus:nexus).
-             relativePath must point at it so resolution works without any prior
-             install: repo CI (mvn -f jvm/pom.xml test), the service-registry
-             container build (Dockerfile COPYs spring/pom.xml), and cold-cache
-             environments alike. The old ../service-broker/pom.xml path resolved
-             only by accident — inside the container that file does not exist,
-             so parent resolution silently fell through to repository lookup,
-             which fails on cold Maven caches. -->
-        <relativePath>../pom.xml</relativePath>
+        <!-- relativePath ../service-broker/pom.xml: inside the reactor the
+             parent (GAV com.aibizarchitect.nexus:nexus, same as service-broker's
+             aggregator POM) resolves reactor-side and this path is never
+             consulted. Outside a reactor (the service-registry container
+             build) the file must EXIST for deterministic file-based parent
+             resolution on cold Maven caches: the service-registry Dockerfile
+             therefore COPYs spring/service-broker/pom.xml to this exact
+             relative location. Verified cold-cache in a container. -->
+        <relativePath>../service-broker/pom.xml</relativePath>
     </parent>
 
     <modelVersion>4.0.0</modelVersion>
