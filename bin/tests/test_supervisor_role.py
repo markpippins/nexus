@@ -90,7 +90,7 @@ class SupervisorRoleContract(unittest.TestCase):
 
     def test_assembly_and_nebula_surfaces_include_supervisor(self):
         assembly = read("typescript/assembly-srv/assembly-migration.sql")
-        nebula = read("typescript/nebula-srv/migrations/055-allow-supervisor-role.sql")
+        nebula = read("typescript/nebula-srv/migrations/058-allow-supervisor-role.sql")
         self.assertIn("'supervisor', 'supervisor@nexus.local'", assembly)
         self.assertIn("'supervisor'", nebula)
         self.assertIn("grants no WorkRequest", nebula)

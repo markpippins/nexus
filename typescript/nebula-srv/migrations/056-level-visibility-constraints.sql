@@ -4,8 +4,13 @@
 --
 -- Renumbered from 003-level-visibility-constraints.sql (thread 6bba5dd3):
 -- duplicate version prefixes make the startup runner (src/migrate.ts) skip
--- the lex-second twin on a fresh database. Content unchanged and replay-safe
--- (backfills + DO-block guards are idempotent).
+-- the lex-second twin on a fresh database.
+--
+-- NOT a verbatim copy, per DBA ruling 22c217bb-9b4f-42e9-9c91-3e752bd6141d:
+-- sections 1-3 (the level/visibility contract) are unchanged and replay-safe
+-- (backfills + DO-block guards are idempotent); the four INSTEAD OF trigger
+-- function bodies the original carried have been REMOVED, because replaying
+-- stale copies at v56 downgraded live trigger bodies. See section 4.
 
 SET search_path TO nebula;
 
@@ -64,139 +69,37 @@ BEGIN
     END IF;
 END $$;
 
--- ── 4. Update INSTEAD OF INSERT trigger: harvests ───────────────
-
-CREATE OR REPLACE FUNCTION nebula.harvests_insert_trigger()
-RETURNS TRIGGER AS $$
-DECLARE
-    new_id UUID;
-BEGIN
-    new_id := COALESCE(NEW.id, gen_random_uuid());
-
-    INSERT INTO nebula.harvests_history
-        (id, source_path, source_filename, model, total_candidates,
-         candidates, source_text, tags, metadata, created_at,
-         level, visibility_scope,
-         recorded_on_dt, recorded_until_dt, valid_from, valid_until)
-    VALUES
-        (new_id, NEW.source_path, NEW.source_filename, NEW.model,
-         NEW.total_candidates, NEW.candidates, NEW.source_text,
-         NEW.tags, NEW.metadata, COALESCE(NEW.created_at, NOW()),
-         COALESCE(NEW.level, 1), COALESCE(NEW.visibility_scope, 'all'),
-         NOW(), '9999-12-31 23:59:59+00',
-         COALESCE(NEW.valid_from, NOW()), COALESCE(NEW.valid_until, '9999-12-31 23:59:59+00'));
-
-    NEW.id := new_id;
-    NEW.created_at := COALESCE(NEW.created_at, NOW());
-    NEW.level := COALESCE(NEW.level, 1);
-    NEW.visibility_scope := COALESCE(NEW.visibility_scope, 'all');
-    NEW.recorded_on_dt := NOW();
-    NEW.recorded_until_dt := '9999-12-31 23:59:59+00';
-    NEW.valid_from := COALESCE(NEW.valid_from, NOW());
-    NEW.valid_until := COALESCE(NEW.valid_until, '9999-12-31 23:59:59+00');
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- ── 5. Update INSTEAD OF UPDATE trigger: harvests ───────────────
-
-CREATE OR REPLACE FUNCTION nebula.harvests_update_trigger()
-RETURNS TRIGGER AS $$
-DECLARE
-    r RECORD;
-BEGIN
-    UPDATE nebula.harvests_history
-    SET    recorded_until_dt = NOW()
-    WHERE  id = OLD.id AND recorded_until_dt = '9999-12-31 23:59:59+00';
-
-    INSERT INTO nebula.harvests_history
-        (id, source_path, source_filename, model, total_candidates,
-         candidates, source_text, tags, metadata, created_at,
-         level, visibility_scope,
-         recorded_on_dt, recorded_until_dt, valid_from, valid_until)
-    VALUES
-        (OLD.id, NEW.source_path, NEW.source_filename, NEW.model,
-         NEW.total_candidates, NEW.candidates, NEW.source_text,
-         NEW.tags, NEW.metadata, OLD.created_at,
-         COALESCE(NEW.level, 1), COALESCE(NEW.visibility_scope, 'all'),
-         NOW(), '9999-12-31 23:59:59+00',
-         OLD.valid_from, OLD.valid_until)
-    RETURNING id, source_path, source_filename, model, total_candidates,
-              candidates, source_text, tags, metadata, created_at,
-              level, visibility_scope,
-              recorded_on_dt, recorded_until_dt, valid_from, valid_until INTO r;
-
-    RETURN r;
-END;
-$$ LANGUAGE plpgsql;
-
--- ── 6. Update INSTEAD OF INSERT trigger: agent_records ──────────
-
-CREATE OR REPLACE FUNCTION nebula.agent_records_insert_trigger()
-RETURNS TRIGGER AS $$
-DECLARE
-    new_id UUID;
-BEGIN
-    new_id := COALESCE(NEW.id, gen_random_uuid());
-
-    INSERT INTO nebula.agent_records_history
-        (id, record_type, role, title, content, source_path,
-         metadata, tags, system_id, subsystem_id, feature_id,
-         plan_ref, created_at,
-         level, visibility_scope,
-         recorded_on_dt, recorded_until_dt, valid_from, valid_until)
-    VALUES
-        (new_id, NEW.record_type, NEW.role, NEW.title, NEW.content,
-         NEW.source_path, NEW.metadata, NEW.tags, NEW.system_id,
-         NEW.subsystem_id, NEW.feature_id, NEW.plan_ref,
-         COALESCE(NEW.created_at, NOW()),
-         COALESCE(NEW.level, 1), COALESCE(NEW.visibility_scope, 'all'),
-         NOW(), '9999-12-31 23:59:59+00',
-         COALESCE(NEW.valid_from, NOW()), COALESCE(NEW.valid_until, '9999-12-31 23:59:59+00'));
-
-    NEW.id := new_id;
-    NEW.created_at := COALESCE(NEW.created_at, NOW());
-    NEW.level := COALESCE(NEW.level, 1);
-    NEW.visibility_scope := COALESCE(NEW.visibility_scope, 'all');
-    NEW.recorded_on_dt := NOW();
-    NEW.recorded_until_dt := '9999-12-31 23:59:59+00';
-    NEW.valid_from := COALESCE(NEW.valid_from, NOW());
-    NEW.valid_until := COALESCE(NEW.valid_until, '9999-12-31 23:59:59+00');
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- ── 7. Update INSTEAD OF UPDATE trigger: agent_records ──────────
-
-CREATE OR REPLACE FUNCTION nebula.agent_records_update_trigger()
-RETURNS TRIGGER AS $$
-DECLARE
-    r RECORD;
-BEGIN
-    UPDATE nebula.agent_records_history
-    SET    recorded_until_dt = NOW()
-    WHERE  id = OLD.id AND recorded_until_dt = '9999-12-31 23:59:59+00';
-
-    INSERT INTO nebula.agent_records_history
-        (id, record_type, role, title, content, source_path,
-         metadata, tags, system_id, subsystem_id, feature_id,
-         plan_ref, created_at,
-         level, visibility_scope,
-         recorded_on_dt, recorded_until_dt, valid_from, valid_until)
-    VALUES
-        (OLD.id, NEW.record_type, NEW.role, NEW.title, NEW.content,
-         NEW.source_path, NEW.metadata, NEW.tags, NEW.system_id,
-         NEW.subsystem_id, NEW.feature_id, NEW.plan_ref,
-         OLD.created_at,
-         COALESCE(NEW.level, 1), COALESCE(NEW.visibility_scope, 'all'),
-         NOW(), '9999-12-31 23:59:59+00',
-         OLD.valid_from, OLD.valid_until)
-    RETURNING id, record_type, role, title, content, source_path,
-              metadata, tags, system_id, subsystem_id, feature_id,
-              plan_ref, created_at,
-              level, visibility_scope,
-              recorded_on_dt, recorded_until_dt, valid_from, valid_until INTO r;
-
-    RETURN r;
-END;
-$$ LANGUAGE plpgsql;
+-- ── 4. INSTEAD OF trigger functions: DELIBERATELY NOT REDEFINED HERE ──
+--
+-- DBA ruling, thread 6bba5dd3 (record 22c217bb-9b4f-42e9-9c91-3e752bd6141d),
+-- verified defect 3: this file previously carried verbatim copies of four
+-- trigger-function bodies:
+--
+--     nebula.harvests_insert_trigger()
+--     nebula.harvests_update_trigger()
+--     nebula.agent_records_insert_trigger()
+--     nebula.agent_records_update_trigger()
+--
+-- Replaying those copies at v56 DOWNGRADED live bodies. 023-add-harvest-file-size.sql
+-- is the current owner of the harvests pair and adds the file_size column that the
+-- copies here predate; because this file sorts after 023, replaying it stripped
+-- file_size from two production triggers (verified: pg_get_functiondef contained
+-- file_size before the replay and did not after). 013/022/023 progressively fixed
+-- these bodies over time; a renumbered file must not carry stale copies of them.
+--
+-- Ownership:
+--   * harvests pair      -> 023-add-harvest-file-size.sql (defines the bodies AND
+--                           creates trg_harvests_insert / trg_harvests_update).
+--   * agent_records pair -> scd-type4-bitemporal-upgrade.sql / -temporal.sql /
+--                           -fix-insert-returning.sql, which the D2 bootstrap
+--                           applies. The NNN-*.sql startup runner (src/migrate.ts)
+--                           creates no INSTEAD OF trigger on the agent_records
+--                           view, so under that runner alone these functions are
+--                           never called and are not needed here.
+--
+-- Consequence of removal, stated so the next reader does not have to re-derive it:
+-- on a fresh database the functions are created earlier in the sequence (023 for
+-- harvests, the D2 bootstrap for agent_records) or are never invoked; on an
+-- existing database the live bodies are left untouched, which is the point.
+-- Sections 1-3 above (backfill, defaults/NOT NULL, CHECK constraints) are the
+-- level/visibility contract this file exists to deliver and are unchanged.

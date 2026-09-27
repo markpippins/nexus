@@ -836,11 +836,17 @@ class MigrationDupPrefixRule(Rule):
 
     Numbered-SQL migration runners apply `NNN-*.sql` files and stamp their
     schema ledger per version number, so when two files share a prefix the
-    lex-second twin is silently skipped on a fresh database — schema drift
-    behind a green ledger. The live instance (thread 6bba5dd3): two 055-*
-    files in typescript/nebula-srv/migrations, where the skipped twin
+    second twin is silently skipped after an INTERRUPTED run — the ledger is
+    stamped per version, so a crash between twin-1's stamp and twin-2's exec
+    leaves a green ledger with one twin's effect missing. (Correction to the
+    original claim on thread 6bba5dd3: an uninterrupted run does NOT skip the
+    twin, because src/migrate.ts computes currentVersion once before the file
+    loop, so both twins pass the `version <= currentVersion` check.) The live
+    instance (thread 6bba5dd3): two 055-* files in
+    typescript/nebula-srv/migrations, where the interrupted twin
     (055-allow-supervisor-role, lex-second) carried the supervisor role
-    widening — a fresh DB would 42503 on the first supervisor-role record.
+    widening — a restart left `supervisor` absent and the first
+    supervisor-role record failed its CHECK constraint.
 
     Scope: SQL files whose basename starts with a 3-digit prefix, grouped by
     their containing directory (each runner owns its own namespace, so
