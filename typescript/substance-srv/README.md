@@ -146,6 +146,63 @@ Assembly (merged in #599). `src/http.test.ts` asserts this.
 Timestamps are emitted as ISO-8601 UTC (`...Z`) on both the cached and the
 uncached path, so the two never disagree.
 
+## Conformance to #599
+
+`#599` (`c207bdf8`) wired substance's reads into nebula-srv and assembly-srv and
+then, in the amend commit, eliminated the intent-record domain. The audit
+against that merged state:
+
+**Consumers, and what they call** — all four read paths are served, and none of
+the callers reference a path this service lacks:
+
+| Consumer | Calls on :3115 |
+|---|---|
+| `nebula-srv/src/routes.ts:293` | `GET /segment-sets?limit&offset` |
+| `nebula-srv/src/routes.ts:311` | `GET /segment-sets/:id` |
+| `nebula-srv/src/routes.ts:322` | `GET /candidates/:id/segment-sets` |
+| `nebula-srv/src/routes.ts:332` | `GET /requirements/:id/segment-sets` |
+| `assembly-srv/src/routes/segment-sets.js` | the same four |
+| `bin/transcript_ingest.py:342` | `POST /segment-sets/from-segments` (write) |
+| `bin/transcript_ingest.py:234` | `GET /segment-sets` (write-path lookup) |
+
+The amend removed `GET /api/intent-records/:id/segment-sets` from **both**
+consumers, so the `DOMAIN_TYPES` reduction to `candidates | requirements` is
+exactly right — nothing calls `/intent-records/...` any more, and
+`nebula.intent_record_segment_sets` is dropped by
+`002_drop_intent_record_segment_sets.sql`.
+
+**Response shape.** `SegmentSetOut`, `ResolvedSegment` and `DomainLinkOut` are
+key-for-key identical to the pydantic models, so `substanceToCamel` produces the
+same camelCase names the consumers already read. The list route returns a bare
+JSON array, which both list handlers assume (`total: Array.isArray(data) ? …`).
+`404` bodies keep FastAPI's `{"detail": "segment set not found"}`, so
+nebula-srv's `/substance 404/` → 404 mapping still fires. All of this is pinned
+in `src/contract.test.ts`.
+
+**Divergences, all unobservable and none of them regressions:**
+
+| | Python | Here | Why it does not matter |
+|---|---|---|---|
+| unknown `domain_type` | 422 (pydantic `Literal`) | 404 `unknown domain_type` | No consumer calls a retired domain; 404 keeps assembly-srv's `NotFoundError` mapping sane |
+| `limit` | unbounded | clamped to `[0, 1000]` | Both consumers already clamp before calling; Python's behaviour on a negative limit is a Postgres error, i.e. a 500 |
+| timestamps | `…T12:00:00+00:00` | `…T12:00:00.000Z` | No consumer reads them, and `new Date()` parses both. The `Z` form also matches nebula-srv's own `toISOString()` house style |
+| non-object `metadata` | 500 on response validation | coerced to `{}` | the column is `jsonb`; this only differs on data that should not exist |
+
+**One pre-existing defect found, in `bin/transcript_ingest.py` — not introduced
+here.** Line 238 calls `DELETE /segment-sets/{id}`, and that route has never
+existed on *either* runtime: `python/substance/routers/segment_sets.py` declares
+no `DELETE /{segment_set_id}`, and neither does this port. The call is doubly
+swallowed — `_delete_url` catches every exception and returns `False`, and the
+caller sits in a bare `try/except: pass` — so re-ingesting a transcript silently
+leaks the previous segment set instead of removing it.
+
+The fix belongs on the ingest side, not here: the scheme is soft-delete
+throughout (exclude and unlink close a validity window; nothing is ever
+removed), and `PATCH /segment-sets/{id}` with `status: "archived"` already
+exists and is the correct operation. Adding a hard-delete route to make the dead
+call succeed would contradict the design, so `src/contract.test.ts` pins its
+absence instead.
+
 ### TypeSpec drift — not fixed here
 
 `typespec/v1/substance/python/` is a loose reverse-engineering that has drifted
