@@ -172,6 +172,23 @@ Not done by this PR, deliberately:
 `python/substance` is left in place. Removing it is a separate decision once the
 TypeScript service has carried production traffic.
 
+### Two things to settle before deploying
+
+1. **System unit vs user unit.** The `substance-srv.service` shipped here is a
+   *system* unit (`WantedBy=default.target`), mirroring
+   `python/substance/substance.service`. But #601 (`bin/substance-service.sh`)
+   states that substance actually runs as a **systemd user** unit
+   (`~/.config/systemd/user/substance.service`). If that is the live shape, this
+   unit needs a user-unit variant — the `User=`/`Group=` lines are dropped,
+   `ProtectHome=read-only` has to be relaxed enough to reach the nvm Node
+   install, and `[Install]` becomes `WantedBy=default.target` under
+   `systemctl --user`. Whoever cuts over should confirm which shape the host
+   actually uses rather than assuming the Python file was authoritative.
+2. **The helper is already env-overridable.** #601 reads `SUBSTANCE_UNIT` and
+   `SUBSTANCE_HEALTH_URL`, so the same tooling drives both implementations:
+   `SUBSTANCE_UNIT=substance-srv.service bin/substance-service.sh restart`. No
+   edit to the helper is needed — which is fortunate, since #601 is still open.
+
 ## Layout
 
 ```
