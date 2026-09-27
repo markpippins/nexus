@@ -3,6 +3,14 @@ import { randomUUID } from "crypto";
 import { Service, ServiceBroker, Context } from "moleculer";
 import { Pool, PoolClient } from "pg";
 import { MongoClient } from "mongodb";
+import {
+  buildDoctrineReconstructionReport,
+  buildDoctrineSetReport,
+  doctrineSnapshotId,
+  DoctrineSnapshotRecord,
+  DoctrineTransitionRecord,
+  validDoctrineSnapshot,
+} from "../lib/doctrine-query";
 
 /**
  * KEYCHAIN SNAPSHOT service (renamed from sol-ir-snapshot per D-2026-08-31 keychains).
@@ -430,6 +438,114 @@ export default class KeychainService extends Service {
           },
         },
 
+        agentRecordsDoctrineSets: {
+          async handler(ctx: Context) {
+            const client = await this.getMongo();
+            const db = client.db("keychains");
+            const params = ctx.params as any;
+            const requestedLimit = Number(params?.limit || 5000);
+            const limit = Number.isInteger(requestedLimit) ? Math.max(1, Math.min(requestedLimit, 10000)) : 5000;
+            const highActivationMin = Number(params?.high_activation_min || 10);
+            if (!Number.isInteger(highActivationMin) || highActivationMin < 1) {
+              return { ok: false, error: "high_activation_min must be a positive integer" };
+            }
+            const createdAt: Record<string, string> = {};
+            for (const key of ["from", "to"]) {
+              if (params?.[key]) {
+                const date = new Date(params[key]);
+                if (Number.isNaN(date.getTime())) return { ok: false, error: `${key} must be a valid date` };
+                createdAt[key === "from" ? "$gte" : "$lte"] = date.toISOString();
+              }
+            }
+            const filter: Record<string, any> = {};
+            if (Object.keys(createdAt).length) filter.created_at = createdAt;
+            if (params?.outcome) filter.outcome = String(params.outcome);
+            if (params?.source_namespace) filter.source_namespace = String(params.source_namespace);
+            let queryFilter: Record<string, any> = filter;
+            if (params?.doctrine_snapshot_id) {
+              const snapshotId = String(params.doctrine_snapshot_id);
+              const [checkpointMatches, backfillMatches] = await Promise.all([
+                db.collection("ar_snapshots").find({ doctrine_snapshot_id: snapshotId }, { projection: { checkpoint_id: 1, version: 1 } }).toArray(),
+                db.collection("doctrine_backfills").find({ doctrine_snapshot_id: snapshotId }, { projection: { _id: 1 } }).toArray(),
+              ]);
+              const checkpointIds = [...new Set([
+                ...checkpointMatches.map((item: any) => String(item.checkpoint_id || "")),
+                ...backfillMatches.map((item: any) => String(item._id || "")),
+              ].filter(Boolean))];
+              const versions = checkpointMatches.map((item: any) => Number(item.version)).filter(Number.isInteger);
+              const idMatch: Record<string, any>[] = [
+                { doctrine_snapshot_id: snapshotId },
+                { "decision_context.doctrine_snapshot_id": snapshotId },
+                { "read_set.doctrine_snapshot_id": snapshotId },
+                { "read_set.doctrine_snapshot.snapshot_id": snapshotId },
+                { "decision_context.source_read_set.doctrine_snapshot.snapshot_id": snapshotId },
+                { "payload.doctrine_snapshot_id": snapshotId },
+                { "payload.doctrine_snapshot.snapshot_id": snapshotId },
+                { "meta.doctrine_snapshot_id": snapshotId },
+                { "meta.doctrine_snapshot.snapshot_id": snapshotId },
+                ...(checkpointIds.length ? [{ checkpoint_id: { $in: checkpointIds } }] : []),
+                ...(versions.length ? [{ snapshot_version: { $in: versions } }] : []),
+              ];
+              queryFilter = Object.keys(filter).length ? { $and: [filter, { $or: idMatch }] } : { $or: idMatch };
+            }
+            const rows = await db.collection("transitions").find(queryFilter)
+              .sort({ created_at: -1 }).limit(limit + 1).toArray();
+            const truncated = rows.length > limit;
+            const transitions = rows.slice(0, limit) as DoctrineTransitionRecord[];
+
+            // A B4 append-only backfill reference can make an old checkpoint
+            // queryable without rewriting its immutable checkpoint document.
+            const versions = [...new Set(transitions
+              .map((item: any) => Number(item.snapshot_version))
+              .filter((version: number) => Number.isInteger(version) && version > 0))];
+            const checkpoints = versions.length
+              ? await db.collection("ar_snapshots").find({ version: { $in: versions } }, {
+                  projection: { version: 1, checkpoint_id: 1, doctrine_snapshot_id: 1 },
+                }).toArray()
+              : [];
+            const checkpointByVersion = new Map(checkpoints.map((checkpoint: any) => [Number(checkpoint.version), checkpoint]));
+            const checkpointIds = checkpoints.map((checkpoint: any) => checkpoint.checkpoint_id).filter(Boolean);
+            const backfills = checkpointIds.length
+              ? await db.collection("doctrine_backfills").find({ _id: { $in: checkpointIds } }).toArray()
+              : [];
+            const backfillByCheckpoint = new Map(backfills.map((record: any) => [String(record._id), record]));
+            for (const transition of transitions as any[]) {
+              if (doctrineSnapshotId(transition)) continue;
+              const checkpoint = checkpointByVersion.get(Number(transition.snapshot_version)) as any;
+              if (!checkpoint) continue;
+              const backfill = backfillByCheckpoint.get(String(checkpoint.checkpoint_id)) as any;
+              const referencedId = checkpoint.doctrine_snapshot_id || backfill?.doctrine_snapshot_id;
+              if (referencedId) transition.doctrine_snapshot_id = referencedId;
+            }
+            const ids = [...new Set(transitions.map((transition) => doctrineSnapshotId(transition)).filter(Boolean) as string[])];
+            const catalogRows = ids.length
+              ? await db.collection("doctrine_snapshots").find({ _id: { $in: ids } }).toArray()
+              : [];
+            const catalog = new Map<string, DoctrineSnapshotRecord>();
+            for (const snapshot of catalogRows as any[]) {
+              const normalized = { ...snapshot, snapshot_id: snapshot._id || snapshot.snapshot_id };
+              if (validDoctrineSnapshot(normalized)) catalog.set(normalized.snapshot_id, normalized);
+            }
+            return buildDoctrineSetReport(transitions, catalog, { highActivationMin, truncated });
+          },
+        },
+
+        agentRecordsDoctrineReconstruction: {
+          async handler(ctx: Context) {
+            return this.runDoctrineReconstruction(ctx.params as any, false);
+          },
+        },
+
+        agentRecordsDoctrineBackfill: {
+          async handler(ctx: Context) {
+            const params = ctx.params as any;
+            if (params?.apply !== true) {
+              return { ok: false, mode: "apply_rejected", error: "POST requires apply=true to write verified append-only doctrine backfill records" };
+            }
+            return this.runDoctrineReconstruction(params, true);
+          },
+        },
+
         agentRecordsRewind: {
           /**
            * Rewind: reconstruct the state vector as of a past snapshot
@@ -666,6 +782,137 @@ export default class KeychainService extends Service {
         if (this.mongo) await this.mongo.close();
       },
     });
+  }
+
+  private async runDoctrineReconstruction(params: any, apply: boolean): Promise<any> {
+    const client = await this.getMongo();
+    const db = client.db("keychains");
+    const requestedLimit = Number(params?.limit || 5000);
+    if (!Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 10000) {
+      return { ok: false, mode: "rejected", error: "limit must be an integer between 1 and 10000" };
+    }
+    const limit = requestedLimit;
+    const filter = {
+      $or: [{ checkpoint_status: "committed" }, { checkpoint_status: { $exists: false } }],
+    };
+    const rows = await db.collection("ar_snapshots").find(filter)
+      .sort({ version: 1 }).limit(limit + 1).toArray();
+    const truncated = rows.length > limit;
+    const checkpoints = rows.slice(0, limit) as any[];
+    const sourcePairs = checkpoints.filter((item) => item.source_namespace && item.source_event_id);
+    const transitionFilter = sourcePairs.length
+      ? { $or: sourcePairs.map((item) => ({
+          source_namespace: item.source_namespace,
+          source_event_id: item.source_event_id,
+        })) }
+      : { _id: { $exists: false } };
+    const transitions: any[] = [];
+    for (let offset = 0; offset < sourcePairs.length; offset += 250) {
+      const batch = sourcePairs.slice(offset, offset + 250);
+      const batchFilter = { $or: batch.map((item) => ({
+        source_namespace: item.source_namespace,
+        source_event_id: item.source_event_id,
+      })) };
+      transitions.push(...await db.collection("transitions").find(batchFilter).toArray());
+    }
+    const checkpointIds = checkpoints.map((item) => item.checkpoint_id).filter(Boolean);
+    const backfills = checkpointIds.length
+      ? await db.collection("doctrine_backfills").find({ _id: { $in: checkpointIds } }).toArray()
+      : [];
+    const backfillById = new Map(backfills.map((record: any) => [String(record._id), record]));
+    for (const checkpoint of checkpoints) {
+      const backfill = backfillById.get(String(checkpoint.checkpoint_id)) as any;
+      if (backfill) checkpoint.backfill_reference = backfill;
+    }
+    const catalogRecords = await db.collection("doctrine_snapshots").find({}).toArray();
+    const report = buildDoctrineReconstructionReport(checkpoints, catalogRecords, transitions as DoctrineTransitionRecord[]) as any;
+    report.checkpoint_scan_truncated = truncated;
+    if (!apply) {
+      report.mode = "dry_run";
+      return report;
+    }
+    if (truncated) {
+      return { ...report, ok: false, mode: "apply_rejected", error: "refusing partial historical backfill; increase limit up to 10000 and retry" };
+    }
+
+    const applied: string[] = [];
+    const conflicts: Array<{ checkpoint_id: string; reason: string }> = [];
+    for (const candidate of report.backfill_candidates) {
+      if (!candidate.eligible_for_backfill || !validDoctrineSnapshot(candidate.snapshot)) continue;
+      const existingSnapshot = await db.collection("doctrine_snapshots").findOne({ _id: candidate.reconstructed_doctrine_snapshot_id });
+      if (existingSnapshot && !validDoctrineSnapshot({ ...existingSnapshot, snapshot_id: existingSnapshot._id || existingSnapshot.snapshot_id })) {
+        conflicts.push({ checkpoint_id: candidate.checkpoint_id, reason: "catalog snapshot is malformed" });
+        continue;
+      }
+      const normalizedExisting: DoctrineSnapshotRecord | null = existingSnapshot && validDoctrineSnapshot({ ...existingSnapshot, snapshot_id: existingSnapshot._id || existingSnapshot.snapshot_id })
+        ? { ...existingSnapshot, snapshot_id: String(existingSnapshot._id || existingSnapshot.snapshot_id) } as unknown as DoctrineSnapshotRecord
+        : null;
+      if (normalizedExisting && JSON.stringify({
+        system_prompt_hash: normalizedExisting.system_prompt_hash,
+        bootstrap_hash: normalizedExisting.bootstrap_hash,
+        active_procedure_cards: normalizedExisting.active_procedure_cards,
+      }) !== JSON.stringify({
+        system_prompt_hash: candidate.snapshot.system_prompt_hash,
+        bootstrap_hash: candidate.snapshot.bootstrap_hash,
+        active_procedure_cards: candidate.snapshot.active_procedure_cards,
+      })) {
+        conflicts.push({ checkpoint_id: candidate.checkpoint_id, reason: "catalog content conflicts with embedded historical snapshot" });
+        continue;
+      }
+      const existingBackfill = await db.collection("doctrine_backfills").findOne({ _id: candidate.checkpoint_id });
+      if (existingBackfill && existingBackfill.doctrine_snapshot_id !== candidate.reconstructed_doctrine_snapshot_id) {
+        conflicts.push({ checkpoint_id: candidate.checkpoint_id, reason: "a different backfill reference already exists" });
+        continue;
+      }
+      await db.collection("doctrine_snapshots").updateOne(
+        { _id: candidate.reconstructed_doctrine_snapshot_id },
+        { $setOnInsert: { ...candidate.snapshot, _id: candidate.reconstructed_doctrine_snapshot_id, created_at: new Date().toISOString() } },
+        { upsert: true },
+      );
+      const backfillDocument = {
+        doctrine_snapshot_id: candidate.reconstructed_doctrine_snapshot_id,
+        checkpoint_id: candidate.checkpoint_id,
+        checkpoint_version: candidate.version,
+        source: candidate.source,
+        snapshot: candidate.snapshot,
+        backfilled_at: new Date().toISOString(),
+      };
+      await db.collection("doctrine_backfills").updateOne(
+        { _id: candidate.checkpoint_id },
+        { $setOnInsert: { _id: candidate.checkpoint_id, ...backfillDocument } },
+        { upsert: true },
+      );
+      if (!existingBackfill) applied.push(candidate.checkpoint_id);
+    }
+    const refreshedCheckpoints = checkpoints.map((checkpoint) => {
+      const existing = backfillById.get(String(checkpoint.checkpoint_id));
+      return existing ? { ...checkpoint, backfill_reference: existing } : checkpoint;
+    });
+    const appliedByCheckpoint = new Map(report.backfill_candidates
+      .filter((candidate: any) => applied.includes(candidate.checkpoint_id))
+      .map((candidate: any) => [candidate.checkpoint_id, candidate]));
+    for (const checkpoint of refreshedCheckpoints) {
+      const candidate = appliedByCheckpoint.get(checkpoint.checkpoint_id) as any;
+      if (candidate) {
+        checkpoint.backfill_reference = {
+          doctrine_snapshot_id: candidate.reconstructed_doctrine_snapshot_id,
+          snapshot: candidate.snapshot,
+        };
+      }
+    }
+    const refreshed = buildDoctrineReconstructionReport(
+      refreshedCheckpoints,
+      await db.collection("doctrine_snapshots").find({}).toArray(),
+      transitions as DoctrineTransitionRecord[],
+    ) as any;
+    return {
+      ...refreshed,
+      read_only: false,
+      checkpoint_scan_truncated: false,
+      mode: "applied",
+      applied_checkpoint_count: applied.length,
+      conflicts,
+    };
   }
 
   private async getPool(): Promise<Pool> {
@@ -1804,13 +2051,12 @@ export default class KeychainService extends Service {
         ?? meta.read_set_manifest
         ?? readSet.manifest
         ?? ((readSet.manifest_id || readSet.digest || readSet.manifest_digest)
-          ? {
-              ...(readSet.manifest_id ? { manifest_id: readSet.manifest_id } : {}),
-              ...(readSet.digest ? { digest: readSet.digest } : {}),
-              ...(readSet.manifest_digest ? { manifest_digest: readSet.manifest_digest } : {}),
-            }
-          : null),
-      ...(doctrine.snapshotId ? { doctrine_snapshot_id: doctrine.snapshotId } : {}),
+          ? {      ...(readSet.manifest_id ? { manifest_id: readSet.manifest_id } : {}),
+      ...(readSet.digest ? { digest: readSet.digest } : {}),
+      ...(readSet.manifest_digest ? { manifest_digest: readSet.manifest_digest } : {}),
+    }
+    : null),
+  ...(doctrine.snapshotId ? { doctrine_snapshot_id: doctrine.snapshotId } : {}),
       ...(observationWindow ? { observation_window: observationWindow } : {}),
       ...(checkpointReference ? { checkpoint_reference: checkpointReference } : {}),
     };
