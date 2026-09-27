@@ -5,7 +5,7 @@
 
 Assembly forum service: forums, threads, comments, users, harvests, work requests, agent records, agendas, plans, specifications, assessments, observations, search, counts, and stats refresh.
 
-**84 endpoints** — inventory generated from source route registrations (`nexus/tools/api-docs/`).
+**89 endpoints** — inventory generated from source route registrations (`nexus/tools/api-docs/`).
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -29,6 +29,7 @@ Assembly forum service: forums, threads, comments, users, harvests, work request
 | GET | `/api/bridges/supporting-refs/post/:postId` |  |
 | GET | `/api/candidates` | Path remapping: assembly-srv /api/candidates → nebula-srv /api/harvest-candidates |
 | GET | `/api/candidates/:id` |  |
+| GET | `/api/candidates/:id/segment-sets` | eslint-disable-next-line max-statements-per-line -- one line per route for extract_routes.py |
 | GET | `/api/conversations` |  |
 | GET | `/api/conversations/:id` |  |
 | GET | `/api/counts` |  |
@@ -70,6 +71,7 @@ Assembly forum service: forums, threads, comments, users, harvests, work request
 | GET | `/api/harvests` |  |
 | GET | `/api/harvests/:id` |  |
 | GET | `/api/health` |  |
+| GET | `/api/intent-records/:id/segment-sets` | eslint-disable-next-line max-statements-per-line |
 | GET | `/api/observations` |  |
 | GET | `/api/observations/:id` |  |
 | GET | `/api/open-questions` | GET / — paginated list of open questions |
@@ -83,7 +85,10 @@ Assembly forum service: forums, threads, comments, users, harvests, work request
 | POST | `/api/refresh-stats` |  |
 | GET | `/api/requirements` |  |
 | GET | `/api/requirements/:id` |  |
+| GET | `/api/requirements/:id/segment-sets` | eslint-disable-next-line max-statements-per-line |
 | GET | `/api/search` |  |
+| GET | `/api/segment-sets` |  |
+| GET | `/api/segment-sets/:id` |  |
 | GET | `/api/specifications` |  |
 | GET | `/api/specifications/:id` |  |
 | GET | `/api/users` |  |

@@ -5,7 +5,7 @@
 
 Canonical asset graph: systems, subsystems, features, documents, harvests, agent records, projections, knowledge graph, and cross-references.
 
-**227 endpoints** — inventory generated from source route registrations (`nexus/tools/api-docs/`).
+**232 endpoints** — inventory generated from source route registrations (`nexus/tools/api-docs/`).
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -94,6 +94,7 @@ Canonical asset graph: systems, subsystems, features, documents, harvests, agent
 | GET | `/api/harvest-candidates/:id/completion` |  |
 | GET | `/api/harvest-candidates/:id/dependencies` | CANDIDATE DEPENDENCIES sub-resource GET /api/harvest-candidates/:id/dependencies |
 | POST | `/api/harvest-candidates/:id/promote` | POST /api/harvest-candidates/:id/promote — mark candidate as useful |
+| GET | `/api/harvest-candidates/:id/segment-sets` | GET /api/harvest-candidates/:id/segment-sets — evidence for a candidate |
 | POST | `/api/harvest-candidates/:id/spawn-plan` | POST /api/harvest-candidates/:id/spawn-plan — DEPRECATED alias (decision 319defa5): candidates promote ONLY to requirements; verb renamed to spawn-requirement. Fails loudly with a pointer so callers migrate. |
 | POST | `/api/harvest-candidates/:id/spawn-requirement` | POST /api/harvest-candidates/:id/spawn-requirement — full flow: link candidate to system, create a requirement derived from the candidate, and optionally cross-reference a conduit plan — all in one atomic transaction. (Renamed from spawn-plan per decision 319defa5.) |
 | POST | `/api/harvest-candidates/completion-sweep` | Batch variant: POST /api/harvest-candidates/completion-sweep { ids: [...] } Missing/unknown ids are reported per-id rather than failing the batch. |
@@ -111,6 +112,7 @@ Canonical asset graph: systems, subsystems, features, documents, harvests, agent
 | GET | `/api/inbox-pointer/:role` | INBOX POINTERS — per-role watermark for unread messages GET /api/inbox-pointer/:role — get the inbox pointer for a role |
 | PUT | `/api/inbox-pointer/:role` | PUT /api/inbox-pointer/:role — set the inbox pointer for a role |
 | GET | `/api/inbox-pointers` | GET /api/inbox-pointers — list all inbox pointers (debugging) |
+| GET | `/api/intent-records/:id/segment-sets` | GET /api/intent-records/:id/segment-sets — evidence for an intent record |
 | GET | `/api/inventory` | GET /api/inventory — rollup counts for the full hierarchy tree Returns per-node counts (systems/subsystems/features) for tree badges plus global totals. Single query, no per-node N+1. |
 | GET | `/api/knowledge/cross-references` | GET /api/knowledge/cross-references — list cross-references for graph overlay with pagination. Also includes harvest_candidate spawn-requirement cross-references from nebula.cross_references. |
 | GET | `/api/knowledge/edges` | GET /api/knowledge/edges — list graph edges with optional filters and pagination |
@@ -164,6 +166,7 @@ Canonical asset graph: systems, subsystems, features, documents, harvests, agent
 | POST | `/api/requirements/:id/dependencies` | POST /api/requirements/:id/dependencies — create a dependency link |
 | DELETE | `/api/requirements/:id/dependencies/:depId` | DELETE /api/requirements/:id/dependencies/:depId — remove a dependency link |
 | POST | `/api/requirements/:id/move` | SYSTEM FOLDERS POST /api/requirements/:id/move — kanban-friendly single-id status move (Plan 0131) |
+| GET | `/api/requirements/:id/segment-sets` | GET /api/requirements/:id/segment-sets — evidence for a requirement |
 | PATCH | `/api/requirements/batch` | PATCH /api/requirements/batch — batch status update (BEFORE /:id!) |
 | GET | `/api/role-leases` | GET /api/role-leases — list role leases (filters: role, status) |
 | POST | `/api/role-leases/:id/renew` | POST /api/role-leases/:id/renew — renew an ACTIVE lease (window + budget) |
@@ -182,6 +185,8 @@ Canonical asset graph: systems, subsystems, features, documents, harvests, agent
 | GET | `/api/search` | SEARCH (cross-entity full-text) GET /api/search?q=... |
 | POST | `/api/search/semantic` | SEMANTIC SEARCH POST /api/search/semantic — vector similarity search against knowledge graph Accepts a pre-embedded query vector (768-dim, matching nomic-embed-text) and returns similar entities from knowledge.graph_entity_embeddings. |
 | POST | `/api/seed` | POST /api/seed — seed default example data (Plan 0087, idempotent, atomic) |
+| GET | `/api/segment-sets` | SEGMENT SETS (evidence — proxied read-only to substance :3115) Substance owns the segment-set scheme (nebula.segment_sets + join tables) including its Redis cache and LISTEN/NOTIFY invalidation. These reads never touch the tables directly — see substance-proxy.ts. GET /api/segment-sets — list segmen |
+| GET | `/api/segment-sets/:id` | GET /api/segment-sets/:id — resolved segment set (members + source segments) |
 | POST | `/api/segments` | POST /api/segments — commit a user-defined segment |
 | DELETE | `/api/segments/:id` | DELETE /api/segments/:id — supersede (bitemporal expire) a segment |
 | PATCH | `/api/segments/:id` | PATCH /api/segments/:id — update segment (type, state, title, notes) |

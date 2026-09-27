@@ -7,6 +7,7 @@ import { promisify } from 'util';
 import { randomUUID } from 'crypto';
 import * as bs from './block-segmentation.service';
 import * as bsRedis from './services/block-segmentation-redis.service';
+import { fetchSubstance, substanceToCamel } from './substance-proxy';
 import { CrossReferenceType } from './crossref-taxonomy';
 import { attestationsLimiter } from './limiter';
 
@@ -281,6 +282,71 @@ function roleLeaseRecordTags(
 
 export function createRoutes(pool: Pool): Router {
   const router = Router();
+
+  // ════════════════════════════════════════════════════════════════
+  //  SEGMENT SETS (evidence — proxied read-only to substance :3115)
+  // ════════════════════════════════════════════════════════════════
+  // Substance owns the segment-set scheme (nebula.segment_sets + join
+  // tables) including its Redis cache and LISTEN/NOTIFY invalidation.
+  // These reads never touch the tables directly — see substance-proxy.ts.
+
+  // GET /api/segment-sets — list segment sets (limit/offset)
+  router.get('/segment-sets', async (req: Request, res: Response) => {
+    try {
+      const limit = Math.min(parseInt(String(req.query.limit || '200'), 10) || 200, 1000);
+      const offset = Math.max(parseInt(String(req.query.offset || '0'), 10) || 0, 0);
+      const data = await fetchSubstance(`/segment-sets?limit=${limit}&offset=${offset}`);
+      res.json({
+        items: substanceToCamel(data),
+        total: Array.isArray(data) ? data.length : 0,
+        limit,
+        offset,
+      });
+    } catch (err: any) {
+      res.status(502).json({ error: err.message });
+    }
+  });
+
+  // GET /api/segment-sets/:id — resolved segment set (members + source segments)
+  router.get('/segment-sets/:id', async (req: Request, res: Response) => {
+    try {
+      const data = await fetchSubstance(`/segment-sets/${req.params.id}`);
+      res.json(substanceToCamel(data));
+    } catch (err: any) {
+      const status = /substance 404/.test(err.message) ? 404 : 502;
+      res.status(status).json({ error: err.message });
+    }
+  });
+
+  // GET /api/harvest-candidates/:id/segment-sets — evidence for a candidate
+  router.get('/harvest-candidates/:id/segment-sets', async (req: Request, res: Response) => {
+    try {
+      const data = await fetchSubstance(`/candidates/${req.params.id}/segment-sets`);
+      res.json({ items: substanceToCamel(data), total: Array.isArray(data) ? data.length : 0 });
+    } catch (err: any) {
+      res.status(502).json({ error: err.message });
+    }
+  });
+
+  // GET /api/requirements/:id/segment-sets — evidence for a requirement
+  router.get('/requirements/:id/segment-sets', async (req: Request, res: Response) => {
+    try {
+      const data = await fetchSubstance(`/requirements/${req.params.id}/segment-sets`);
+      res.json({ items: substanceToCamel(data), total: Array.isArray(data) ? data.length : 0 });
+    } catch (err: any) {
+      res.status(502).json({ error: err.message });
+    }
+  });
+
+  // GET /api/intent-records/:id/segment-sets — evidence for an intent record
+  router.get('/intent-records/:id/segment-sets', async (req: Request, res: Response) => {
+    try {
+      const data = await fetchSubstance(`/intent-records/${req.params.id}/segment-sets`);
+      res.json({ items: substanceToCamel(data), total: Array.isArray(data) ? data.length : 0 });
+    } catch (err: any) {
+      res.status(502).json({ error: err.message });
+    }
+  });
 
   // ════════════════════════════════════════════════════════════════
   //  SYSTEMS
