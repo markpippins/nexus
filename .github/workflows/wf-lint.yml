@@ -48,6 +48,7 @@ on:
       - 'bin/lint_postgres_pins.py'
       - 'bin/tests/test_lint_postgres_pins.py'
       - '**/Dockerfile*'
+      - '**/migrations/**/*.sql'
   pull_request:
     branches: [ main, master, dev, feature/* ]
     paths:
@@ -57,6 +58,7 @@ on:
       - 'bin/lint_postgres_pins.py'
       - 'bin/tests/test_lint_postgres_pins.py'
       - '**/Dockerfile*'
+      - '**/migrations/**/*.sql'
   workflow_dispatch:
   schedule:
     # Weekly — catches EOL rollovers and standard drift without churn.
@@ -67,7 +69,7 @@ permissions:
 
 jobs:
   wf-lint:
-    name: "workflow lint family (pg pins, dead bases, EOL runtimes, action refs, job hardening, npm ci)"
+    name: "workflow lint family (pg pins, dead bases, EOL runtimes, action refs, job hardening, npm ci, migration dup prefixes)"
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

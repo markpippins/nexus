@@ -1,5 +1,32 @@
 -- ═══════════════════════════════════════════════════════════════════════
---  Migration 004 — Backfill Harvest References from Conversation Blocks
+--  Migration 057 — Backfill Harvest References from Conversation Blocks
+--
+--  RENUMBERED from 004-backfill-harvest-references.sql (thread 6bba5dd3):
+--  duplicate version prefixes make the startup runner (../src/migrate.ts)
+--  skip the lex-second twin on a fresh database.
+--
+--  NOT a verbatim copy, per DBA ruling 22c217bb-9b4f-42e9-9c91-3e752bd6141d
+--  (verified defect 2 — boot-unsafe on a POPULATED database). The three
+--  INSERTs now target nebula.harvest_references_history directly and supply
+--  `id` via gen_random_uuid(). Rationale, verified against live:
+--
+--    * nebula.harvest_references is a simple auto-updatable view, so an
+--      INSERT into it is rewritten into the base table harvest_references_history.
+--    * harvest_references_history.id is NOT NULL with NO DEFAULT, and the
+--      original INSERTs supplied no id.
+--    * On live titanium, nebula.conversation_blocks holds 29,430 rows, the
+--      adjacency CTE yields 28,201 pairs, and the WHERE NOT EXISTS guard
+--      reads a harvest_references_history that was empty — so nothing was
+--      filtered and the very first row raised:
+--          ERROR: null value in column "id" of relation
+--                 "harvest_references_history" violates not-null constraint
+--      That aborts the migration transaction, and this file runs at STARTUP,
+--      so it aborts nebula-srv boot on any populated environment. It passed
+--      CI only because a fresh bootstrap database has zero conversation
+--      blocks. Rehearsed inside ROLLBACK on live; the original failed on
+--      row 1, the fixed file completes.
+--
+--  Replay-safe: INSERT ... WHERE NOT EXISTS idempotency is unchanged.
 --
 --  Populates nebula.harvest_references_history with inferred references
 --  derived from existing conversation blocks. This creates the graph
@@ -47,12 +74,13 @@ WITH adjacent_pairs AS (
       AND cb2.content_hash != 'e3b0c44298fc1c14'
 ),
 adjacency_inserts AS (
-    INSERT INTO nebula.harvest_references
-        (conversation_id, snapshot_id,
+    INSERT INTO nebula.harvest_references_history
+        (id, conversation_id, snapshot_id,
          source_block_id, target_block_id,
          edge_type, confidence, state, source,
          reason, evidence_json)
     SELECT
+        gen_random_uuid(),
         p.conversation_id,
         p.snapshot_id,
         p.source_block_id,
@@ -118,12 +146,13 @@ content_matches AS (
       AND cb1.content_hash != ''
 ),
 content_inserts AS (
-    INSERT INTO nebula.harvest_references
-        (conversation_id, snapshot_id,
+    INSERT INTO nebula.harvest_references_history
+        (id, conversation_id, snapshot_id,
          source_block_id, target_block_id,
          edge_type, confidence, state, source,
          reason, evidence_json)
     SELECT
+        gen_random_uuid(),
         m.conversation_id,
         m.source_snapshot_id,
         m.source_block_id,
@@ -157,12 +186,13 @@ SELECT count(*) AS content_match_references_created FROM content_inserts;
 -- ═══════════════════════════════════════════════════════════════════════
 
 WITH parent_child AS (
-    INSERT INTO nebula.harvest_references
-        (conversation_id, snapshot_id,
+    INSERT INTO nebula.harvest_references_history
+        (id, conversation_id, snapshot_id,
          source_block_id, target_block_id,
          edge_type, confidence, state, source,
          reason, evidence_json)
     SELECT
+        gen_random_uuid(),
         cb.conversation_id,
         cb.snapshot_id,
         cb.parent_block_id AS source_block_id,

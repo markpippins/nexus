@@ -1,3 +1,4 @@
+-- wf-lint-allow: migration-dup-prefix — superseded rewrite of 026-migrate-receipts, kept as a historical record; conduit's schema ships via src/db.ts inline migrations, no file-runner applies these
 -- Migration 026-v2 — Migrate vision.receipts → execution.receipts (corrected)
 --
 -- CORRECTED VERSION: Joins with nebula.plans instead of conduit.plans.

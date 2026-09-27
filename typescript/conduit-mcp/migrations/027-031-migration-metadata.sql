@@ -1,3 +1,4 @@
+-- wf-lint-allow: migration-dup-prefix — metadata registry for the 027-031 series, not a runner-applied migration; conduit's schema ships via src/db.ts inline migrations
 -- Migration Registry: 027-031 TIMESTAMPTZ Conversion Series
 -- ====================================================================
 -- These five migrations convert all legacy TEXT timestamp columns to
