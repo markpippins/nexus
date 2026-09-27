@@ -1,0 +1,30 @@
+# Source of truth for ~/.config/systemd/user/memory-cache-refresh.service
+#
+# Deploy:
+#   cp bin/memory-cache-refresh.service ~/.config/systemd/user/
+#   cp bin/memory-cache-refresh.timer   ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now memory-cache-refresh.timer
+#
+# Why this file is in the repo: same doctrine as sdk-drift-stamp.service and
+# users-bcrypt-drift.service — host-only units drift from the corpus (the
+# 2026-09-21 helium probe incident, where the deployed ExecStart was invisible
+# to the repo for three days).
+#
+# The wrapper resolves the repo root from its own location, so any checkout
+# clone works. Exit 0 = both caches refreshed; 1 = at least one failed.
+
+[Unit]
+Description=Repopulate PG->Redis procedure and prompt caches (:3500, :3501)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/codex/dev/nexus
+ExecStart=/home/codex/dev/nexus/bin/memory-cache-refresh.sh
+StandardOutput=append:/home/codex/dev/nexus/logs/memory-cache-refresh.service.log
+StandardError=append:/home/codex/dev/nexus/logs/memory-cache-refresh.service.log
+
+[Install]
+WantedBy=default.target

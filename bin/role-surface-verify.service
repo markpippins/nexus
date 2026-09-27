@@ -1,0 +1,49 @@
+# Source of truth for ~/.config/systemd/user/role-surface-verify.service
+#
+# Deploy:
+#   cp bin/role-surface-verify.service ~/.config/systemd/user/
+#   cp bin/role-surface-verify.timer   ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now role-surface-verify.timer
+#
+# ── This unit VERIFIES. It does not "sync", and must never write ────────────
+#
+# config/roles/roles.json is CANONICAL INPUT, not a generated projection. Its
+# own header says so: "Canonical role-registration expectations. Source of truth
+# for role surface coverage ... Add a new role here + emit its artifacts, then
+# run bin/verify-roles.py."
+#
+# The authority direction is:
+#     roles.json  --emit artifacts-->  live system
+#     roles.json  <--verify-roles.py-- live system     (a CHECK, not a copy)
+#
+# A timer that pulled live state DOWN into roles.json would invert that, and
+# would be actively harmful: verify-roles.py compares the file against the live
+# system precisely to surface a role whose surface is missing. Overwriting the
+# file from live state would DELETE that expectation and permanently erase the
+# signal it exists to raise. It would also bake the currently-open DBA/dba role
+# identity split (Assembly issues thread d597f8d3 lineage; Supervisor-owned) into
+# the source of truth while that question is still undecided.
+#
+# So the correct scheduled action is DETECTION, which is what these two
+# already-existing tools do. role-vocab-drift.py's own docstring anticipates
+# this: "run it after any manual vocabulary change, any V-series apply, or on a
+# timer if desired."
+#
+# Exit 0 = canonical file and live system agree; 1 = drift, visible in the
+# journal and as a failed unit.
+
+[Unit]
+Description=Verify config/roles/roles.json against the live role surfaces (detector; never writes the file)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/codex/dev/nexus
+ExecStart=/bin/bash -c '/usr/bin/python3 bin/verify-roles.py --json; echo "--- role-vocab-drift ---"; /usr/bin/python3 bin/role-vocab-drift.py --json'
+StandardOutput=append:/home/codex/dev/nexus/logs/role-surface-verify.service.log
+StandardError=append:/home/codex/dev/nexus/logs/role-surface-verify.service.log
+
+[Install]
+WantedBy=default.target

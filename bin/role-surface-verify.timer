@@ -1,0 +1,18 @@
+# Source of truth for ~/.config/systemd/user/role-surface-verify.timer
+#
+# Daily 06:40 UTC — after sdk-drift-stamp (06:10) and users-bcrypt-drift
+# (06:20), so the other two drift checks run first and this reads the final
+# state of the morning. Deliberately daily, not 30-min: role-surface
+# conformance is a gate-style assertion, not a cache to keep warm. Its
+# freshness counterpart is memory-cache-refresh.timer.
+
+[Unit]
+Description=Daily role-surface conformance check (roles.json vs live)
+
+[Timer]
+OnCalendar=*-*-* 06:40:00 UTC
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

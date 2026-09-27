@@ -1,0 +1,21 @@
+# Source of truth for ~/.config/systemd/user/memory-cache-refresh.timer
+#
+# Cadence is 30 min, which MUST stay below role-memory-srv's
+# STALE_THRESHOLD_MS (1h) or :3500 reports "degraded" for a fully-populated
+# cache and the status becomes noise. bin/tests/test_memory_cache_refresh.py
+# parses that constant out of the service source and fails if the cadence
+# drifts above it — that invariant is the whole point of this unit.
+#
+# RandomizedDelaySec=60 spreads the POST away from other :0/:30 timers.
+# Persistent=true catches up if the machine was asleep at the slot.
+
+[Unit]
+Description=Refresh procedure + prompt caches every 30 min
+
+[Timer]
+OnCalendar=*:0/30
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target
