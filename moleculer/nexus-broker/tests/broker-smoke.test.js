@@ -15,17 +15,27 @@ const path = require('node:path')
 const dotenv = require('dotenv')
 const { Pool } = require('pg')
 const { MongoClient } = require('mongodb')
+const { getEphemeralPort } = require('./helpers/ephemeral-ports')
 
 dotenv.config({ path: path.join(__dirname, '..', '.env') })
 
 const BROKER_DIR = path.resolve(__dirname, '..')
-const TEST_PORT = process.env.TEST_SERVICE_PORT || '4098'
-const TEST_PTY_WS_PORT = process.env.TEST_PTY_WS_PORT || String(Number(TEST_PORT) + 1)
-const BASE = `http://localhost:${TEST_PORT}/api`
+// Ports are OS-assigned (ephemeral) by default — a fixed-port collision
+// used to make the health poll connect to an unrelated local server
+// (dev-server SPA fallbacks answer 200 on any port). HARNESS_FIXED_PORTS=1
+// restores the historical 4098/4099 for port-specific debugging.
+const FIXED_SERVICE_PORT = process.env.TEST_SERVICE_PORT || '4098'
+const FIXED_PTY_WS_PORT = process.env.TEST_PTY_WS_PORT || String(Number(FIXED_SERVICE_PORT) + 1)
+let TEST_PORT = null
+let TEST_PTY_WS_PORT = null
+let BASE = null
 
 let child = null
 
 async function startBroker() {
+  TEST_PORT = await getEphemeralPort(FIXED_SERVICE_PORT)
+  TEST_PTY_WS_PORT = await getEphemeralPort(FIXED_PTY_WS_PORT)
+  BASE = `http://localhost:${TEST_PORT}/api`
   child = spawn(
     process.execPath,
     ['node_modules/.bin/moleculer-runner', '--mask', '**/*.js', 'dist/services'],
@@ -80,8 +90,69 @@ async function waitFor(read, description, timeoutMs = 30_000) {
   throw new Error(`timed out waiting for ${description}; last value: ${JSON.stringify(lastValue)}`)
 }
 
+// CI/titanium-shape guarantee: the keychain-checkpoint family (status,
+// replay-idempotency, rewind) needs a committed checkpoint chain plus a
+// delivered outbox event. Production stores always have one; a fresh CI
+// store does not. Seed it through the service's own delivery path — an
+// outbox row the poller delivers into a checkpoint — never hand-crafted
+// mongo documents. Idempotent: skipped whenever a chain already exists.
+// The manifest rows go into nebula.agent_records_history (the temporal
+// table behind the agent_records view) with a fixed recorded_on_dt so the
+// PK makes re-seeding a no-op.
+async function ensureKeychainSeed() {
+  const probe = await (await fetch(`${BASE}/keychain-snapshot/agent-records/status`)).json()
+  if (Number.isInteger(probe.latestSnapshot) && probe.latestSnapshot > 0) return
+  const { Pool } = require('pg')
+  const pool = new Pool({
+    host: process.env.PG_HOST || 'localhost',
+    port: Number(process.env.PG_PORT || 5432),
+    user: process.env.PG_USER || 'pguser',
+    password: process.env.PG_PASSWORD || 'pgpass',
+    database: process.env.PG_DB_NAME || 'nexus',
+  })
+  try {
+    await pool.query(
+      `INSERT INTO nebula.agent_records_history
+         (id, record_type, role, title, content, tags, created_at, level, visibility_scope,
+          recorded_on_dt, recorded_until_dt, valid_from, valid_until)
+       VALUES
+         ('11111111-1111-4111-8111-111111111111', 'report', 'engineer', 'Report 05aa1111: initial issuance', 'initial body', '{}', '2026-01-01T00:29:00Z', 1, 'all', '2026-01-01T00:00:00Z', 'infinity', '2026-01-01T00:00:00Z', 'infinity'),
+         ('22222222-2222-4222-8222-222222222222', 'report', 'engineer', 'Report 05aa1111: amendment one', 'amended body', '{}', '2026-01-01T00:20:00Z', 1, 'all', '2026-01-01T00:00:01Z', 'infinity', '2026-01-01T00:00:01Z', 'infinity'),
+         ('33333333-3333-4333-8333-333333333333', 'analysis', 'analyst', 'Analysis: superseded baseline', 'baseline body', '{supersedes:}', '2026-01-01T00:15:00Z', 2, 'all', '2026-01-01T00:00:02Z', 'infinity', '2026-01-01T00:00:02Z', 'infinity'),
+         ('44444444-4444-4444-8444-444444444444', 'analysis', 'analyst', 'Analysis: superseding revision', 'revision body', '{supersedes:33333333}', '2026-01-01T00:10:00Z', 2, 'all', '2026-01-01T00:00:03Z', 'infinity', '2026-01-01T00:00:03Z', 'infinity'),
+         ('55555555-5555-4555-8555-555555555555', 'inspection', 'inspector', 'Inspection: standalone observation', 'inspection body', '{}', '2026-01-01T00:05:00Z', 3, 'all', '2026-01-01T00:00:04Z', 'infinity', '2026-01-01T00:00:04Z', 'infinity')
+       ON CONFLICT (id, recorded_on_dt) DO NOTHING`,
+    )
+    await pool.query(
+      `INSERT INTO resolution.keychain_event_outbox
+         (source_namespace, source_event_id, event_kind, outcome, actor, read_set, payload)
+       VALUES ($1, $2, 'sol.e2e.transition.committed', 'committed', 'broker-smoke-seed', '{}', '{}')
+       ON CONFLICT (source_namespace, source_event_id) DO NOTHING`,
+      [`broker-smoke-seed-${process.pid}`, randomUUID()],
+    )
+    const deadline = Date.now() + 20_000
+    for (;;) {
+      const status = await (await fetch(`${BASE}/keychain-snapshot/agent-records/status`)).json()
+      // The projection finalizes the transitions doc (checkpoint_status:
+      // 'delivered') only AFTER the checkpoint commits and promotes —
+      // /status flipping to latestSnapshot>0 does not imply the transition
+      // is visible yet. Downstream tests (replay idempotency) read
+      // /transitions, so the gate must wait through the finalize too.
+      if (Number.isInteger(status.latestSnapshot) && status.latestSnapshot > 0) {
+        const transitions = await (await fetch(`${BASE}/keychain-snapshot/agent-records/transitions?limit=50`)).json()
+        if ((transitions.items || []).some((t) => t.checkpoint_status === 'delivered')) return
+      }
+      if (Date.now() > deadline) throw new Error('keychain seed: outbox row never delivered into a checkpoint')
+      await new Promise((r) => setTimeout(r, 1000))
+    }
+  } finally {
+    await pool.end().catch(() => {})
+  }
+}
+
 test.before(async () => {
   await startBroker()
+  await ensureKeychainSeed()
 })
 
 test.after(async () => {
@@ -668,7 +739,7 @@ test('SOL outbox events are delivered into Keychains and replayed idempotently',
     port: Number(process.env.PG_PORT || 5432),
     user: process.env.PG_USER || 'pguser',
     password: process.env.PG_PASSWORD || 'pgpass',
-    database: 'sol',
+    database: process.env.PG_DB_NAME || 'nexus',
   })
   const sourceNamespace = `sol-e2e-${process.pid}-${Date.now()}`
   const sourceEventId = randomUUID()
@@ -702,7 +773,7 @@ test('SOL outbox events are delivered into Keychains and replayed idempotently',
       return result.items.find((item) =>
         item.source_namespace === sourceNamespace && item.source_event_id === sourceEventId,
       )
-    }, 'SOL Keychains transition')
+    }, 'SOL Keychains transition', 120_000)
     assert.equal(transition.checkpoint_status, 'delivered')
     assert.equal(transition.kind, eventKind)
     assert.equal(transition.source_namespace, sourceNamespace)
@@ -782,237 +853,7 @@ test('SOL outbox events are delivered into Keychains and replayed idempotently',
 
 // ═══════════════════════════════════════════════════════════════════════
 // M2 — execution read-catalog parity: the full legacy execution-srv
-// surface, aliased 1:1 under /api/workers/execution. Differential parity
-// vs the legacy service (:3110) is asserted by running the same probe
-// against both surfaces.
-// ═══════════════════════════════════════════════════════════════════════
-
-const LEGACY_BASE = process.env.LEGACY_EXECUTION_URL || 'http://localhost:3110'
-
-async function jsonOr404(url) {
-  const res = await fetch(url)
-  if (res.status === 404) return { __status: 404 }
-  assert.equal(res.status, 200, `expected 200 from ${url}, got ${res.status}`)
-  return res.json()
-}
-
-test('GET /api/workers/execution/requests shape matches legacy list contract', async () => {
-  const ours = await jsonOr404(`${BASE}/workers/execution/requests?limit=3`)
-  const theirs = await jsonOr404(`${LEGACY_BASE}/api/execution/requests?limit=3`)
-  if (theirs.__status === 404 && ours.__status === 404) return // both empty DBs
-  assert.equal(ours.total, theirs.total)
-  assert.equal(ours.limit, theirs.limit)
-  assert.equal(ours.offset, theirs.offset)
-  assert.equal(ours.items.length, theirs.items.length)
-  if (theirs.items.length > 0) {
-    // DB-native field names must be identical — no mapping layer.
-    assert.deepEqual(Object.keys(ours.items[0]).sort(), Object.keys(theirs.items[0]).sort())
-  }
-})
-
-test('receipts list filters by type identically to legacy', async () => {
-  const theirs = await jsonOr404(`${LEGACY_BASE}/api/execution/receipts?limit=5`)
-  if (theirs.__status === 404) return
-  const q = theirs.items.length > 0 && theirs.items[0].type ? `&type=${encodeURIComponent(theirs.items[0].type)}` : ''
-  // Compare filtered-vs-filtered on both surfaces. (The previous form compared
-  // the broker's FILTERED count against legacy's UNFILTERED count — it only
-  // passed while the head type had >=5 rows, which the first live
-  // EXECUTION_COMPLETE receipts exposed. Data-sensitivity, not parity drift.)
-  const theirsFiltered = await jsonOr404(`${LEGACY_BASE}/api/execution/receipts?limit=5${q}`)
-  const ours = await jsonOr404(`${BASE}/workers/execution/receipts?limit=5${q}`)
-  assert.equal(ours.items.length, theirsFiltered.items.length)
-  if (theirsFiltered.items.length > 0 && ours.items.length > 0) {
-    assert.deepEqual(Object.keys(ours.items[0]).sort(), Object.keys(theirsFiltered.items[0]).sort())
-  }
-})
-
-test('malformed UUID returns the legacy 400, not a 500', async () => {
-  const res = await fetch(`${BASE}/workers/execution/requests/not-a-uuid/state`)
-  assert.equal(res.status, 400)
-  const body = await res.json()
-  assert.match(body.error || body.message || '', /UUID/)
-})
-
-test('unknown UUID returns the legacy 404', async () => {
-  const res = await fetch(`${BASE}/workers/execution/requests/00000000-0000-0000-0000-000000000000/state`)
-  assert.equal(res.status, 404)
-})
-
-test('stale leases and status distribution match legacy shapes', async () => {
-  const oursStale = await jsonOr404(`${BASE}/workers/execution/leases/stale`)
-  const theirsStale = await jsonOr404(`${LEGACY_BASE}/api/execution/leases/stale`)
-  if (theirsStale.__status !== 404 && oursStale.__status !== 404) {
-    assert.equal(oursStale.count, theirsStale.count)
-    assert.ok(Array.isArray(oursStale.stale_leases))
-  }
-  const oursDist = await jsonOr404(`${BASE}/workers/execution/health/status-distribution`)
-  const theirsDist = await jsonOr404(`${LEGACY_BASE}/api/execution/health/status-distribution`)
-  if (theirsDist.__status !== 404) {
-    assert.deepEqual(oursDist.requests, theirsDist.requests)
-    assert.deepEqual(oursDist.receipts_by_type, theirsDist.receipts_by_type)
-  }
-})
-
-test('witnessed-runs requires both query params (legacy 400 parity)', async () => {
-  const res = await fetch(`${BASE}/workers/execution/witnessed-runs`)
-  assert.equal(res.status, 400)
-  const body = await res.json()
-  assert.match(body.error || body.message || '', /workflow_instance_id and node_id are required/)
-})
-
-test('witnessed-runs parity — shared 200 with identical projection JSON (ruling ffa4ffc5)', async () => {
-  // v3 (ruling ffa4ffc5): the phantom metadata legs are gone — the family no
-  // longer 500s. Parity now means: with a seeded business_key match, BOTH
-  // surfaces return 200 and byte-identical projection JSON (W3.05 AC4), with
-  // assessment/evidence sourced from resolution.* and envelope/manifest/law/
-  // replay rendering null. The 404 path (no such business_key) is also
-  // asserted for parity.
-  const key = `witnessed-v3-smoke-${randomUUID()}`
-  const pool = new Pool({
-    host: process.env.PG_HOST,
-    port: Number(process.env.PG_PORT || 5432),
-    user: process.env.PG_USER,
-    password: process.env.PG_PASSWORD,
-    database: process.env.PG_DB_NAME || 'nexus',
-  })
-  const uuid = () => randomUUID()
-  const attemptId = uuid()
-  const evidenceId = uuid()
-  const claimId = uuid()
-  const receiptId = uuid()
-  const leaseId = uuid()
-  let requestId = null
-  try {
-    await pool.query('BEGIN')
-    await pool.query("SET LOCAL search_path TO execution, resolution, public")
-    const req = await pool.query(
-      "INSERT INTO execution.requests (business_key, status) VALUES ($1, 'COMPILED') RETURNING id",
-      [key],
-    )
-    requestId = req.rows[0].id
-    await pool.query(
-      "INSERT INTO execution.leases (id, request_id, executor_id, status, ttl_seconds, acquired_at, expires_at) VALUES ($1, $2, 'smoke', 'ACTIVE', 3600, now(), now() + interval '1 hour')",
-      [leaseId, requestId],
-    )
-    await pool.query(
-      "INSERT INTO execution.attempts (id, request_id, lease_id, executor_id, status) VALUES ($1, $2, $3, 'smoke', 'RUNNING')",
-      [attemptId, requestId, leaseId],
-    )
-    // resolution.evidence is append-only (immutable trigger) with a
-    // content-unique index (source_system, evidence_kind, source_hash):
-    // seed idempotently by CONTENT — reuse the persisted row across runs.
-    let seededEvidenceId = evidenceId
-    const ev = await pool.query(
-      "SELECT id FROM resolution.execution_evidence WHERE source_system = 'git-verifier' AND evidence_kind = 'git_commit' AND source_hash = 'smoke-hash'",
-    )
-    if (ev.rows.length > 0) {
-      seededEvidenceId = ev.rows[0].id
-    } else {
-      await pool.query(
-        "INSERT INTO resolution.execution_evidence (id, evidence_key, evidence_kind, source_system, source_hash, captured_at, captured_by) VALUES ($1, $2, 'git_commit', 'git-verifier', 'smoke-hash', now(), 'broker-smoke')",
-        [evidenceId, `witnessed-v3-smoke:${key}`],
-      )
-    }
-    await pool.query(
-      "INSERT INTO resolution.execution_claim (id, claim_key, subject_kind, predicate, disposition, declared_by, attempt_id) VALUES ($1, $2, 'execution_attempt', 'witnessed-run-smoke', 'Proposed', 'broker-smoke', $3)",
-      [claimId, `witnessed-v3-smoke:${key}`, attemptId],
-    )
-    await pool.query(
-      "INSERT INTO resolution.execution_admission_receipt (id, peb_transaction_id, claim_id, evidence_id, evidence_kind, source_system, policy_version_hash, lease_id, grant_id, attempt_id, admitted, reason) VALUES ($1, $2, $3, $4, 'git_commit', 'git-verifier', 'smoke-policy', $5, 'smoke-grant', $6, true, 'smoke fixture: admitted')",
-      [receiptId, uuid(), claimId, seededEvidenceId, leaseId, attemptId],
-    )
-    await pool.query('COMMIT')
-
-    const q = `?workflow_instance_id=${encodeURIComponent(key)}&node_id=smoke`
-    const ours = await fetch(`${BASE}/workers/execution/witnessed-runs${q}`)
-    const theirs = await fetch(`${LEGACY_BASE}/api/execution/witnessed-runs${q}`)
-    assert.equal(ours.status, 200, `broker witnessed-runs should 200, got ${ours.status}`)
-    assert.equal(theirs.status, 200, `legacy witnessed-runs should 200, got ${theirs.status}`)
-    const oursBody = await ours.json()
-    const theirsBody = await theirs.json()
-    assert.deepEqual(oursBody, theirsBody)
-    const proj = oursBody.projection
-    assert.equal(proj.receipts.pebAdmission != null, true, 'peb admission correlated')
-    assert.equal(proj.assessment.disposition, true, 'assessment from admission receipt')
-    assert.equal(proj.assessment.status, 'admitted', 'assessment status derived')
-    assert.equal(proj.evidence.ids.length > 0, true, 'evidence id from resolution.execution_evidence')
-    assert.equal(proj.envelope.id, null, 'envelope renders null (v3)')
-    assert.equal(proj.manifest.id, null, 'manifest renders null (v3)')
-    assert.equal(proj.status, 'missing_lineage', 'status honest: envelope/manifest not produced yet')
-
-    const qMiss = `?workflow_instance_id=witnessed-v3-smoke-absent-${randomUUID()}&node_id=smoke`
-    const oursMiss = await fetch(`${BASE}/workers/execution/witnessed-runs${qMiss}`)
-    const theirsMiss = await fetch(`${LEGACY_BASE}/api/execution/witnessed-runs${qMiss}`)
-    assert.equal(oursMiss.status, 404)
-    assert.equal(theirsMiss.status, 404)
-
-    // Governed projection surface (/projections/witnessed-runs) — parity on
-    // the SAME receipt-bearing fixture. Regression guard: the projection
-    // handler's SELECT omitted the v3 assessment/evidence columns in #226,
-    // which rendered assessment null on legacy for every receipt-bearing run
-    // (exposed by the first marker adoption, #229). generatedAt is stripped
-    // before comparison — it is a per-request timestamp, not projection data.
-    const oursP = await fetch(`${BASE}/workers/execution/projections/witnessed-runs${q}`)
-    const theirsP = await fetch(`${LEGACY_BASE}/api/execution/projections/witnessed-runs${q}`)
-    assert.equal(oursP.status, 200, `broker projections/witnessed-runs should 200, got ${oursP.status}`)
-    assert.equal(theirsP.status, 200, `legacy projections/witnessed-runs should 200, got ${theirsP.status}`)
-    const oursPBody = await oursP.json()
-    const theirsPBody = await theirsP.json()
-    delete oursPBody.generatedAt
-    delete theirsPBody.generatedAt
-    assert.deepEqual(oursPBody, theirsPBody, 'projection parity on receipt-bearing fixture')
-    assert.equal(oursPBody.projectionVersion, 3)
-    assert.equal(oursPBody.assessment.status, 'admitted', 'projection assessment from admission receipt')
-    assert.equal(oursPBody.identities.evidenceIds.length > 0, true, 'projection evidenceIds populated')
-    assert.equal(oursPBody.status, 'missing_lineage', 'projection status honest')
-    assert.equal(oursPBody.missingLineage.includes('evidence_ids'), false, 'evidence not missing when receipt joined')
-    const oursPMiss = await fetch(`${BASE}/workers/execution/projections/witnessed-runs${qMiss}`)
-    const theirsPMiss = await fetch(`${LEGACY_BASE}/api/execution/projections/witnessed-runs${qMiss}`)
-    assert.equal(oursPMiss.status, 404)
-    assert.equal(theirsPMiss.status, 404)
-  } finally {
-    // Teardown in FK-safe order (claim → receipt → attempt → lease → request).
-    // The immutable evidence row persists by design; inert without its receipt.
-    try {
-      await pool.query('BEGIN')
-      await pool.query("SET LOCAL search_path TO execution, resolution, public")
-      await pool.query('DELETE FROM resolution.execution_admission_receipt WHERE id = $1', [receiptId])
-      await pool.query('DELETE FROM resolution.execution_claim WHERE id = $1', [claimId])
-      await pool.query('DELETE FROM execution.attempts WHERE id = $1', [attemptId])
-      await pool.query('DELETE FROM execution.leases WHERE id = $1', [leaseId])
-      if (requestId) await pool.query('DELETE FROM execution.requests WHERE id = $1', [requestId])
-      await pool.query('COMMIT')
-    } catch {
-      await pool.query('ROLLBACK').catch(() => {})
-    }
-    await pool.end().catch(() => {})
-  }
-})
-
-test('governance metrics snapshot has the registry shape', async () => {
-  const body = await jsonOr404(`${BASE}/workers/execution/metrics`)
-  if (body.__status === 404) return
-  assert.ok('counters' in body)
-  assert.ok('latencies' in body)
-  assert.ok('generatedAt' in body)
-})
-
-test('integrity scan returns named pathology kinds', async () => {
-  const body = await jsonOr404(`${BASE}/workers/execution/health/integrity-scan`)
-  if (body.__status === 404) return
-  assert.equal(body.schema, 'execution')
-  const kinds = body.scans.map((s) => s.kind)
-  assert.ok(kinds.includes('orphan_lease_request_mismatch'))
-  assert.ok(kinds.includes('receipt_attempt_mismatch'))
-})
-
-test('rich health (legacy GET /health) matches legacy per-status shape', async () => {
-  // Post-deploy parity fix: the initial catalog aliased only the simple
-  // health; the legacy router's rich probe (scanned_at + per-status counts)
-  // was missing. Normalized diff on scanned_at (clock skew between surfaces).
-  const norm = (b) => JSON.stringify({ ...b, scanned_at: '<TS>' })
-  const ours = await jsonOr404(`${BASE}/workers/execution/health`)
-  const theirs = await jsonOr404(`${LEGACY_BASE}/api/execution/health`)
-  if (theirs.__status === 404 || ours.__status === 404) return
-  assert.equal(norm(ours), norm(theirs))
-})
+// surface, aliased 1:1 under /api/workers/execution. The differential
+// parity family (same probe against both surfaces over one shared PG)
+// lives in tests/legacy-parity.test.js so CI can run it where a real
+// legacy surface exists (broker-pg-integration class).

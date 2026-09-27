@@ -45,6 +45,32 @@ It exposes operational endpoints for the pipeline's supporting systems:
 
 Full inventory with descriptions: [`API.md`](./API.md) · machine-readable: [`openapi.yaml`](./openapi.yaml).
 
+## Rate limiting
+
+An app-level limiter caps requests at **300 req/min/IP** and advertises the
+draft-7 `RateLimit` / `RateLimit-Policy` headers; exceeding the ceiling returns
+`429`. This is a CodeQL `js/missing-rate-limiting` remediation.
+
+## Session log path containment
+
+`/log/:sessionId` (SSE) validates `sessionId` against `/^[a-zA-Z0-9_-]+$/` and
+resolves the path defensively. Because a lexical `startsWith` guard does not cover
+a symlink swapped in *after* the check, the poll loop also re-resolves with
+`fs.realpathSync` on every open and stops streaming if the real target has moved
+outside the sessions directory. This is a CodeQL `js/path-injection` remediation.
+
+## Tests
+
+```bash
+npm test        # vitest
+npm run typecheck
+```
+
+The Express app lives in `src/app.ts` and the process lifecycle in
+`src/index.ts`, so tests import the real app without binding a port. The
+session-log test sets `PIPELINE_DIR` before importing `./app` because the route
+module captures it at load time.
+
 ## Regeneration
 
 ```bash

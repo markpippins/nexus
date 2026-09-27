@@ -12,6 +12,6 @@
     "declaration": false,
     "sourceMap": false
   },
-  "include": ["services/**/*.ts", "moleculer.config.ts"],
+  "include": ["services/**/*.ts", "lib/**/*.ts", "moleculer.config.ts"],
   "exclude": ["node_modules", "dist"]
 }

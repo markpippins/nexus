@@ -1,0 +1,54 @@
+# Assembly SQL-migration ownership guard
+#
+# assembly-mcp used to own the assembly schema: it had a `db.ts` migration
+# runner and its own copy of `assembly-migration.sql`. SQL ownership moved to
+# assembly-srv (`src/db.js` there still carries the "migrated from assembly-mcp
+# db.ts" marker), and `src/assembly-client.ts` states that assembly-mcp now has
+# ZERO direct pg dependencies.
+#
+# `src/db.ts` was deleted but `assembly-migration.sql` was not, leaving a dead
+# copy that drifted ~110 lines from the canonical one — missing the `builder`,
+# `tester`, and `supervisor` seeds. That drift is the bug class this guards:
+# a stale copy of a migration file reads as authoritative and invites the old
+# naive `split(';')` runner back.
+#
+# Deliberately BLOCKING and hermetic — no database, no network. bin/tests are
+# otherwise only exercised by path-filtered workflows, so without this the
+# ownership boundary would only be checked when someone remembered.
+
+name: Assembly SQL Ownership
+
+on:
+  push:
+    branches: [ main, master, dev, feature/* ]
+    paths:
+      - 'typescript/assembly-mcp/**'
+      - 'typescript/assembly-srv/**'
+      - 'bin/tests/test_assembly_sql_ownership.py'
+      - '.github/workflows/assembly-sql-ownership.yml'
+  pull_request:
+    branches: [ main, master, dev, feature/* ]
+    paths:
+      - 'typescript/assembly-mcp/**'
+      - 'typescript/assembly-srv/**'
+      - 'bin/tests/test_assembly_sql_ownership.py'
+      - '.github/workflows/assembly-sql-ownership.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  assembly-sql-ownership:
+    name: "assembly SQL-migration ownership (no dead copy in assembly-mcp)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test deps
+        run: python3 -m pip install --quiet pytest
+      - name: Pin SQL-migration ownership to assembly-srv
+        run: python3 -m pytest bin/tests/test_assembly_sql_ownership.py -v

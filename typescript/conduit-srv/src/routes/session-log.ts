@@ -26,8 +26,15 @@ router.get("/:sessionId", async (req, res) => {
     return;
   }
 
-  const sessionsDir = path.join(PIPELINE_DIR, "sessions");
-  const logPath = path.join(sessionsDir, `${sessionId}.log`);
+  // Containment guard — sessionId is regex-validated above, but resolve
+  // defensively so the streamed path can never escape the sessions dir
+  // (CodeQL js/path-injection remediation, alerts #752-#755).
+  const sessionsDir = path.resolve(PIPELINE_DIR, "sessions");
+  const logPath = path.resolve(sessionsDir, `${sessionId}.log`);
+  if (!logPath.startsWith(sessionsDir + path.sep)) {
+    res.status(400).json({ error: "Invalid session ID" });
+    return;
+  }
 
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -40,13 +47,42 @@ router.get("/:sessionId", async (req, res) => {
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let resolved = false;
 
+  // Real (symlink-resolved) sessions dir — this is the containment BASE for
+  // the poll loop below. Comparing the realpath of the log file against the
+  // realpath of the directory is what actually closes the symlink-escape
+  // hole: a lexical `startsWith(sessionsDir)` is satisfied by any path that
+  // merely looks like it is under sessions/, including one reached through a
+  // symlink swapped in after the request-time check. Resolving the base too
+  // also keeps the comparison correct when PIPELINE_DIR itself sits behind a
+  // symlink (realPath would then never lexically start with sessionsDir, and
+  // a naive check would refuse to stream a legitimate log).
+  let realSessionsDir = sessionsDir;
+  try {
+    realSessionsDir = fs.realpathSync(sessionsDir);
+  } catch {
+    // sessions dir not present yet — realpathSync in the poll below throws
+    // ENOENT until it appears, which the catch handles.
+  }
+
   const sendLines = () => {
     try {
-      if (!fs.existsSync(logPath)) return;
-      const stats = fs.statSync(logPath);
+      // Resolve and validate FIRST, before touching the file at all. There
+      // is deliberately no fs.existsSync(logPath) pre-check here: it would
+      // be an fs operation on the unvalidated user-derived path, and
+      // realpathSync already throws ENOENT for a missing file (including a
+      // dangling symlink), which the surrounding catch handles exactly as
+      // the old `return` did. Containment is then a single unconditional
+      // check that dominates every fs call below it
+      // (CodeQL js/path-injection remediation; tester review 269a6ca5).
+      const realPath = fs.realpathSync(logPath);
+      if (!realPath.startsWith(realSessionsDir + path.sep)) {
+        resolved = true;
+        return;
+      }
+      const stats = fs.statSync(realPath);
       if (stats.size <= lastSize) return;
 
-      const fd = fs.openSync(logPath, "r");
+      const fd = fs.openSync(realPath, "r");
       const buf = Buffer.alloc(stats.size - lastSize);
       fs.readSync(fd, buf, 0, buf.length, lastSize);
       fs.closeSync(fd);
@@ -74,7 +110,13 @@ router.get("/:sessionId", async (req, res) => {
     }
   };
 
-  const logExists = fs.existsSync(logPath);
+  let logExists = false;
+  try {
+    const initialReal = fs.realpathSync(logPath);
+    logExists = initialReal.startsWith(realSessionsDir + path.sep);
+  } catch {
+    logExists = false;
+  }
   res.write(
     `data: ${JSON.stringify({
       type: "session_log_meta",

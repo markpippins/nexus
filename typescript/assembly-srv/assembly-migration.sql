@@ -113,14 +113,16 @@ VALUES (gen_random_uuid(), 'tester', 'tester@nexus.local', 'tester-bot', false)
 ON CONFLICT (alias) DO NOTHING;
 
 -- 8c. Seed Supervisor posting identity. Initial authority is role-system
--- administration only; it receives no WorkRequest execution or receipt role.
+-- administration only. It receives no WorkRequest execution or receipt role.
+-- NOTE: keep prose semicolons out of these comments — naive `split(';')`
+-- consumers chunk on them and orphan the INSERT that follows.
 INSERT INTO assembly.users (id, alias, email, password, admin)
 VALUES (gen_random_uuid(), 'supervisor', 'supervisor@nexus.local', 'supervisor-bot', false)
 ON CONFLICT (alias) DO NOTHING;
 
 -- 9. Forums: as_of_dt / expiration_dt — soft-delete via row expiry.
 --    Existing rows get the default values via Postgres 11+ fast ADD COLUMN
---    with DEFAULT (no table rewrite). `expiration_dt = now()` retires a row;
+--    with DEFAULT (no table rewrite). `expiration_dt = now()` retires a row.
 --    the read filter `(expiration_dt = 'infinity'::timestamptz OR > now())`
 --    excludes it everywhere assembly.forums is surfaced.
 ALTER TABLE assembly.forums
@@ -169,10 +171,10 @@ ALTER TABLE duality.session_watches
 
 -- 12. V188 backport — forum_list_v grouped-aggregate rewrite + workhorse
 --     indexes (incident 2026-09-20: GET /api/forums 6.3-8.0s from per-row
---     count SubPlans over posts/comments; see sql/V188__assembly_forum_list_v_rewrite.sql
+--     count SubPlans over posts/comments. See sql/V188__assembly_forum_list_v_rewrite.sql
 --     for the gated migration with post-apply verification). This block is
 --     the idempotent boot-migration mirror so a service restart deploys the
---     fix; statement-level "already exists" tolerance in db.js covers re-runs.
+--     fix. Statement-level "already exists" tolerance in db.js covers re-runs.
 CREATE INDEX IF NOT EXISTS idx_posts_forum_uuid ON assembly.posts (forum_uuid);
 CREATE INDEX IF NOT EXISTS idx_comments_post_id ON assembly.comments (post_id);
 CREATE INDEX IF NOT EXISTS idx_posts_forum_uuid_current

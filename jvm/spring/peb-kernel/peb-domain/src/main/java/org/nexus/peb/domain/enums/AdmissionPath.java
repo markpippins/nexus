@@ -50,6 +50,17 @@ public enum AdmissionPath {
             case "peb_extension_proposal":
                 return MUTATE;
 
+            // wrp git_claim_producer submission path (execution-claim
+            // admission). The payload carries execution_claim/execution_evidence,
+            // which PebGovernanceEngine routes to the resolution admission
+            // adapter; discovered because the harness-bridge e2e gate
+            // (previously self-skipping on a bad health probe) first ran
+            // against a real kernel and every admission 422'd as an
+            // unknown tool. Treat as MUTATE: validator-gated, admitted on
+            // the adapter's resolution-side verdict.
+            case "peb_admit_git_execution_claim":
+                return MUTATE;
+
             case "peb_report_violation":
                 return REPORT_VIOLATION;
 
