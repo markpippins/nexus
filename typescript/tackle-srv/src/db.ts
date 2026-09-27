@@ -2142,6 +2142,8 @@ export async function getRoleReadiness(name: string): Promise<RoleReadiness> {
 
 export interface ProvisionSpec {
   name: string;
+  /** Omit to leave an EXISTING role's description untouched; passing it
+   *  updates the row. Either way the row is created if it does not exist. */
   description?: string;
   displayName?: string;
   // config bundle
@@ -2157,7 +2159,11 @@ export interface ProvisionSpec {
   // procedure cards
   procedures?: string[];
   procedureTemplateRole?: string;
-  // nebula.roles metadata (dual-registry sync)
+  // nebula.roles metadata (dual-registry sync).
+  // The row is CREATED if absent. Passing this field (or displayName) is
+  // what OPTS IN to overwriting an existing row — omit it when back-filling
+  // a single artefact on a role that already has governance metadata, or
+  // that metadata is replaced with the defaults below.
   nebula?: Record<string, any>;
   // assembly user
   createAssemblyUser?: boolean;
@@ -2180,12 +2186,17 @@ export async function provisionRole(spec: ProvisionSpec): Promise<{
     const steps: string[] = [];
 
     // 1. tackle.roles identity
+    // Creating the row is always wanted; OVERWRITING an existing role's
+    // description is not. `spec.description ?? ""` used to blank the
+    // description of any pre-existing role on every partial back-fill.
+    // The conflict arm is gated on the caller actually passing a description.
     await client.query(
       `INSERT INTO tackle.roles (name, description, created_at, updated_at)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (name) DO UPDATE
-       SET description = EXCLUDED.description, updated_at = EXCLUDED.updated_at`,
-      [name, spec.description ?? "", now, now]
+       SET description = EXCLUDED.description, updated_at = EXCLUDED.updated_at
+       WHERE $5`,
+      [name, spec.description ?? "", now, now, spec.description !== undefined]
     );
     steps.push("role_identity");
 
@@ -2290,8 +2301,18 @@ export async function provisionRole(spec: ProvisionSpec): Promise<{
     }
 
     // 6. nebula.roles dual-registry sync (Gap 7)
+    //
+    // CREATION is unconditional; the UPDATE arm is OPT-IN. This used to
+    // upsert with defaults, so provisioning an EXISTING role for a single
+    // missing artefact (e.g. back-filling just its persona prompt) silently
+    // overwrote a populated row with empty/false values — wiping
+    // owns_domains, escalates_to, visibility_scope, and flipping a real
+    // can_verify_work_requests=true to false. That is a binding governance
+    // capability, so the overwrite now happens only when the caller passes
+    // spec.nebula or spec.displayName, i.e. when they asked for it.
     const nb = spec.nebula || {};
     const displayName = spec.displayName || titleCaseProvision(name);
+    const updateExisting = spec.nebula !== undefined || spec.displayName !== undefined;
     await client.query(
       `INSERT INTO nebula.roles
          (name, display_name, description, owns_domains,
@@ -2316,7 +2337,8 @@ export async function provisionRole(spec: ProvisionSpec): Promise<{
            escalation_triggers = EXCLUDED.escalation_triggers,
            level_filter_primary = EXCLUDED.level_filter_primary,
            level_filter_allowed = EXCLUDED.level_filter_allowed,
-           visibility_scope = EXCLUDED.visibility_scope, updated_at = NOW()`,
+           visibility_scope = EXCLUDED.visibility_scope, updated_at = NOW()
+       WHERE $20`,
       [name, displayName, spec.description ?? null, nb.ownsDomains ?? [],
        nb.canGreenlight ?? false, nb.canCreateQuestions ?? false, nb.canCreateAgendas ?? false,
        nb.canResolveQuestions ?? false, nb.canVerifyWorkRequests ?? false,
@@ -2324,9 +2346,9 @@ export async function provisionRole(spec: ProvisionSpec): Promise<{
        nb.cronEnabled ?? false, nb.cronExpression ?? null, nb.cronDescription ?? null,
        nb.escalatesTo ?? [], nb.escalationTriggers ?? [],
        nb.levelFilterPrimary ?? "level <= 2", nb.levelFilterAllowed ?? "level <= 3",
-       nb.visibilityScope ?? ["planner", "all"]]
+       nb.visibilityScope ?? ["planner", "all"], updateExisting]
     );
-    steps.push("nebula_roles_sync");
+    steps.push(updateExisting ? "nebula_roles_sync" : "nebula_roles_create_only");
 
     // 7. assembly user (posting identity)
     if (spec.createAssemblyUser) {
