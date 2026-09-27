@@ -355,6 +355,39 @@ namespace org.nexus.nexusbroker {
     rows?: int32;
   }
 
+  /** POST /api/workers/pty/{id}/write request body. */
+  model PtyWriteRequest {
+    data: string;
+  }
+
+  /** POST /api/workers/pty/{id}/write response. */
+  model PtyWriteResult {
+    id: string;
+    status: string;
+  }
+
+  /** POST /api/workers/pty/{id}/resize request body. */
+  model PtyResizeRequest {
+    cols?: int32;
+    rows?: int32;
+  }
+
+  /** POST /api/workers/pty/{id}/resize response. */
+  model PtyResizeResult {
+    id: string;
+    cols: int32;
+    rows: int32;
+    status: string;
+  }
+
+  /** GET /api/workers/pty-transport/health response. */
+  model PtyTransportHealth {
+    status: string;
+    service: string;
+    ws: string;
+    sessions: int32;
+  }
+
   /** A harness session descriptor. */
   model HarnessSession {
     job_id: string;
