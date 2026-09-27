@@ -63,12 +63,20 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
     "spring.jackson.visibility.getter=any",
     "spring.jackson.visibility.setter=any",
     "spring.jackson.visibility.creator=any",
-    // Shared nexus database in the running pgvector container.
-    // Schema is validated (not managed) by Hibernate ddl-auto=validate.
-    "spring.datasource.url=jdbc:postgresql://localhost:5432/nexus?currentSchema=peb",
+    // Dedicated throwaway database, NOT the shared nexus DB: CI runners (and
+    // any dev machine) bootstrap nexus_peb_test via Flyway from the V1-V4
+    // chain, so these tests exercise a real fresh-database bootstrap instead
+    // of silently depending on whatever schema the host's persistent DB
+    // happens to carry (the 2026-09-27 CI discovery). Override host/db via
+    // PEB_TEST_PG_HOST / PEB_TEST_PG_DB if your test DB lives elsewhere.
+    // CI creates nexus_peb_test in the build job; locally run once:
+    //   createdb nexus_peb_test
+    "spring.datasource.url=jdbc:postgresql://${PEB_TEST_PG_HOST:localhost}:5432/${PEB_TEST_PG_DB:nexus_peb_test}",
     "spring.datasource.username=pguser",
     "spring.datasource.password=pgpass",
-    // Schema validation only — Flyway is disabled; V1 SQL is canonical reference.
+    // Flyway bootstraps the throwaway DB from db/migration; Hibernate then
+    // validates the entities against what actually flew.
+    "spring.flyway.enabled=true",
     "spring.jpa.hibernate.ddl-auto=validate",
 })
 class AdmissionControllerFacadeTest {

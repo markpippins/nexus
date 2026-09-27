@@ -73,6 +73,12 @@ jobs:
           done
           echo "postgres never accepted an authenticated connection"
           exit 1
+      # peb-kernel's @SpringBootTest classes bootstrap nexus_peb_test via
+      # Flyway (fresh-database bootstrap; see AdmissionControllerFacadeTest).
+      # Titanium-style persistent dev DBs create it once via `createdb
+      # nexus_peb_test`.
+      - name: Create peb-kernel throwaway test database
+        run: PGPASSWORD=pgpass psql -h localhost -U pguser -d postgres -c 'CREATE DATABASE nexus_peb_test'
       - name: Build modules
         run: mvn -B -f jvm/pom.xml -DskipTests=false test
 

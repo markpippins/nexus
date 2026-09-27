@@ -29,10 +29,14 @@ spring:
         format_sql: true
 
   flyway:
-    # Flyway disabled — V3 migration (public→peb schema, strip peb_ prefix)
-    # was applied manually. V1__init_peb_schema.sql has been updated to match
-    # the corrected table names (no peb_ prefix) in the peb schema.
-    # Hibernate ddl-auto=validate handles schema verification.
+    # Flyway stays disabled at runtime: titanium's flyway_schema_history
+    # holds V1-V3 applied 2026-06-19..22 (V4's kernel columns were
+    # hand-applied), and the repo chain has since drifted from those
+    # checksums — re-running here would fail checksum validation. Runtime
+    # schema verification is Hibernate ddl-auto=validate. The repaired
+    # fresh-database chain (V2/V3/V4, 2026-09-27, PR #594) runs only in
+    # tests, which enable Flyway explicitly against the throwaway
+    # nexus_peb_test database.
     enabled: false
     validate-on-migrate: false
     locations: classpath:db/migration
