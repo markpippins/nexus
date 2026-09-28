@@ -57,6 +57,24 @@ const REAL_CHAIN = readdirSync(MIGRATIONS_DIR)
   .filter((f) => f.endsWith('.sql'))
   .sort();
 
+/**
+ * A migration number that sorts AFTER every real migration.
+ *
+ * The rollback test below used to hard-code '0008_broken.sql' and the boundary
+ * `filename < '0008'`, which silently meant "whatever happens to be numbered
+ * below 8 today". The moment a real 0008 landed, the deliberately-broken file
+ * sorted *before* it, the real 0008 was never applied, and the "the migrations
+ * before it are still applied" count came out one short of REAL_CHAIN — a
+ * failure caused by the test's own hard-coding rather than by any regression.
+ *
+ * Deriving the number from the chain makes the test mean what it says no matter
+ * how many migrations exist later.
+ */
+const NEXT_NUM = String(
+  Math.max(...REAL_CHAIN.map((f) => parseInt(f.slice(0, 4), 10) || 0)) + 1
+).padStart(4, '0');
+const BROKEN_NAME = `${NEXT_NUM}_broken.sql`;
+
 /** Can we create a throwaway database? If not, every hermetic test skips. */
 let canCreateDb = false;
 {
@@ -310,10 +328,11 @@ describe('migration runner (hermetic)', { skip: canCreateDb ? false : 'cannot cr
     const dsn = await freshDb();
 
     // The real chain, plus a migration that creates a table and then fails.
+    // BROKEN_NAME sorts after every real migration (see NEXT_NUM).
     const dir = mkdtempSync(join(tmpdir(), 'shrapnel-migrate-'));
     cpSync(MIGRATIONS_DIR, dir, { recursive: true });
     writeFileSync(
-      join(dir, '0008_broken.sql'),
+      join(dir, BROKEN_NAME),
       [
         'BEGIN;',
         'CREATE TABLE shrapnel.must_not_survive (id int);',
@@ -326,7 +345,7 @@ describe('migration runner (hermetic)', { skip: canCreateDb ? false : 'cannot cr
     try {
       await assert.rejects(
         runMigrations({ dsn, migrationsDir: dir, log: quiet }),
-        /0008_broken\.sql|division by zero/
+        new RegExp(`${NEXT_NUM}_broken\\.sql|division by zero`)
       );
 
       const c = connect(dsn);
@@ -338,15 +357,20 @@ describe('migration runner (hermetic)', { skip: canCreateDb ? false : 'cannot cr
       assert.equal(table.rows[0].reg, null, 'partial DDL from a failed migration must not survive');
 
       const led = await c.query(
-        "SELECT count(*)::int AS n FROM shrapnel._migration_ledger WHERE filename = '0008_broken.sql'"
+        `SELECT count(*)::int AS n FROM shrapnel._migration_ledger WHERE filename = '${BROKEN_NAME}'`
       );
       assert.equal(led.rows[0].n, 0, 'a failed migration must not be ledgered');
 
-      // ...and the migrations before it are still applied and still ledgered.
+      // ...and every real migration before it is still applied and still ledgered.
       const ok = await c.query(
-        "SELECT count(*)::int AS n FROM shrapnel._migration_ledger WHERE filename >= '0001' AND filename < '0008'"
+        `SELECT count(*)::int AS n FROM shrapnel._migration_ledger
+          WHERE filename >= '0001' AND filename < '${NEXT_NUM}'`
       );
-      assert.equal(ok.rows[0].n, REAL_CHAIN.length);
+      assert.equal(
+        ok.rows[0].n,
+        REAL_CHAIN.length,
+        `expected all ${REAL_CHAIN.length} real migrations applied before ${BROKEN_NAME}`
+      );
       await c.end();
     } finally {
       rmSync(dir, { recursive: true, force: true });
