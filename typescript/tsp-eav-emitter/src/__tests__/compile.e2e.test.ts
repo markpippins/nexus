@@ -22,7 +22,7 @@
  * e.g. a CI matrix shard without the compiler toolchain. The unit suites
  * carry the hermetic coverage in that case.
  */
-import { describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
 import { readFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -87,6 +87,32 @@ async function findEmitted(outputFile: string): Promise<string> {
 }
 
 describe.runIf(tspAvailable)("tsp compile e2e (shipped samples)", () => {
+  let buildReady = true;
+  beforeAll(async () => {
+    // The `typespec` export condition points at dist/src/index.js, so the
+    // self-import needs a build. `npm test` builds via the pretest hook;
+    // a direct `npx vitest run` on a fresh tree does not — build here,
+    // and skip EXPLICITLY (with reason) if that fails.
+    if (existsSync(path.join(PKG_ROOT, "dist", "src", "index.js"))) return;
+    await new Promise<void>((resolve) => {
+      execFile("npm", ["run", "build"], { cwd: PKG_ROOT, timeout: 120_000 }, (err) => {
+        buildReady = !err;
+        resolve();
+      });
+    });
+    if (!buildReady || !existsSync(path.join(PKG_ROOT, "dist", "src", "index.js"))) {
+      buildReady = false;
+    }
+  });
+
+  beforeEach(() => {
+    if (!buildReady) {
+      throw new Error(
+        "explicit skip: dist/ build unavailable — `npm run build` failed in this environment",
+      );
+    }
+  });
+
   it("compiles main.tsp clean; emitted SQL is byte-identical to the committed evidence", async () => {
     const out = await tspCompile(
       path.join(SAMPLE_DIR, "main.tsp"),
