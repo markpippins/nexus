@@ -1853,7 +1853,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/JsonBody'
+                $ref: '#/components/schemas/ThreadDetail'
         '400':
           description: Bad request
           content:
@@ -3003,4 +3003,24 @@ components:
           type: string
           description: Human-readable error detail.
       additionalProperties: true
+    ThreadDetail:
+      type: object
+      description: 'A thread together with its comments. CRITICAL: `comments` is a TOP-LEVEL SIBLING of `thread`, not a field
+        inside it. The response envelope is {thread, comments} — reading `response.thread.comments` returns nothing and has
+        previously been mistaken for data loss.'
+      required:
+      - thread
+      - comments
+      properties:
+        thread:
+          type: object
+          description: The thread row.
+          additionalProperties: true
+        comments:
+          type: array
+          description: Comments on the thread, oldest first. Empty array when the thread has none.
+          items:
+            type: object
+            description: A comment row.
+            additionalProperties: true
 x-generated-by: nexus/tools/api-docs/gen_openapi.py
