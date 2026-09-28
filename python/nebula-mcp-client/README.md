@@ -11,6 +11,18 @@ Every session previously re-wrote a small MCP client (SSE handshake,
 session-id management, JSON-RPC framing) to query nebula-mcp. This module
 is the shared, tested version.
 
+## Install
+
+```bash
+pip install -e python/nebula-mcp-client
+```
+
+Without this the module is not importable — the directory name contains
+hyphens, so it can never be picked up as a package, and the distribution ships
+`nebula_mcp_client.py` as a top-level module. `AGENTS.md` R17 names the CLI
+form below as the canonical inbox path for every role, so an environment that
+has not run this step loses its inbox check by default.
+
 ## Usage
 
 ```python
