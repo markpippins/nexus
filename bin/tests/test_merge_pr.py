@@ -43,31 +43,31 @@ def rec(rec_id="aaaa1111", role="tester", created_ms=None, tags=None,
 # ── gate 2: checks_report ────────────────────────────────────────────────
 
 def test_checks_empty_rollup_fails_closed():
-    ok, detail = merge_pr.checks_report([])
+    ok, detail, code = merge_pr.checks_report([])
     assert not ok
     assert "fail closed" in detail
 
 
 def test_checks_all_success_pass():
-    ok, detail = merge_pr.checks_report([check("build"), check("sonar")])
+    ok, detail, code = merge_pr.checks_report([check("build"), check("sonar")])
     assert ok
     assert "2 checks" in detail
 
 
 def test_checks_pending_fails():
-    ok, detail = merge_pr.checks_report([check("build"), check("lint", status="IN_PROGRESS")])
+    ok, detail, code = merge_pr.checks_report([check("build"), check("lint", status="IN_PROGRESS")])
     assert not ok
     assert "not completed" in detail
 
 
 def test_checks_failed_conclusion_fails():
-    ok, detail = merge_pr.checks_report([check("build"), check("lint", conclusion="FAILURE")])
+    ok, detail, code = merge_pr.checks_report([check("build"), check("lint", conclusion="FAILURE")])
     assert not ok
     assert "1 failed check" in detail
 
 
 def test_checks_skipped_and_neutral_do_not_block():
-    ok, _ = merge_pr.checks_report([
+    ok, _, _ = merge_pr.checks_report([
         check("build"),
         check("optional", conclusion="SKIPPED"),
         check("neutral-thing", conclusion="NEUTRAL"),
@@ -102,14 +102,14 @@ def test_unrelated_pr_not_matched():
 
 def test_no_attestation_fails():
     records = [rec(role="engineer", title="to:tester — attest PR #487")]
-    ok, detail = merge_pr.evaluate_attestation(records, 487, NOW_MS)
+    ok, detail, code = merge_pr.evaluate_attestation(records, 487, NOW_MS)
     assert not ok
     assert "no tester attestation" in detail
 
 
 def test_non_tester_role_does_not_count():
     records = [rec(role="engineer", title="attest PR #487")]
-    ok, _ = merge_pr.evaluate_attestation(records, 487, NOW_MS)
+    ok, _, _ = merge_pr.evaluate_attestation(records, 487, NOW_MS)
     assert not ok
 
 
@@ -124,7 +124,7 @@ def test_intent_record_does_not_satisfy_gate3():
         tags=["to:engineer", "type:status-update", "attestations", "pr:492"],
         title="Tester intent: attest PR #491 seed file and PR #492 merge wrapper",
     )
-    ok, detail = merge_pr.evaluate_attestation([intent], 492, NOW_MS)
+    ok, detail, code = merge_pr.evaluate_attestation([intent], 492, NOW_MS)
     assert not ok
     assert "attestation marker" in detail
     assert "b8acd611" in detail
@@ -137,7 +137,7 @@ def test_rejection_finding_does_not_count():
         tags=["to:engineer", "type:rejection", "status:open", "pr:492"],
         title="Tester finding: PR #492 attestation gate accepts non-attestation records",
     )
-    ok, detail = merge_pr.evaluate_attestation([finding], 492, NOW_MS)
+    ok, detail, code = merge_pr.evaluate_attestation([finding], 492, NOW_MS)
     assert not ok
     assert "attestation marker" in detail
 
@@ -149,7 +149,7 @@ def test_canonical_attestation_shape_passes():
         recordType="assessment",
         tags=["to:engineer", "type:approval", "status:done", "attestations", "pr:491"],
     )
-    ok, detail = merge_pr.evaluate_attestation([att], 491, head_ms)
+    ok, detail, code = merge_pr.evaluate_attestation([att], 491, head_ms)
     assert ok
     assert "postdates" in detail
 
@@ -162,14 +162,14 @@ def test_legacy_type_attestation_tag_passes():
         recordType="report",
         tags=["to:dba", "type:attestation", "attestations", "pr:487"],
     )
-    ok, detail = merge_pr.evaluate_attestation([legacy], 487, NOW_MS - 7200_000)
+    ok, detail, code = merge_pr.evaluate_attestation([legacy], 487, NOW_MS - 7200_000)
     assert ok
     assert "postdates" in detail
 
 
 def test_assessment_without_approval_tag_fails():
     almost = rec(tags=["status:done", "pr:487"])
-    ok, detail = merge_pr.evaluate_attestation([almost], 487, NOW_MS)
+    ok, detail, code = merge_pr.evaluate_attestation([almost], 487, NOW_MS)
     assert not ok
     assert "attestation marker" in detail
 
@@ -186,7 +186,7 @@ def test_is_attestation_record_rejects_missing_recordtype():
 def test_fresh_attestation_passes():
     head_ms = NOW_MS - 7200_000  # head committed 2h ago
     records = [rec(created_ms=NOW_MS - 3600_000)]  # attested 1h ago
-    ok, detail = merge_pr.evaluate_attestation(records, 487, head_ms)
+    ok, detail, code = merge_pr.evaluate_attestation(records, 487, head_ms)
     assert ok
     assert "postdates" in detail
 
@@ -194,14 +194,14 @@ def test_fresh_attestation_passes():
 def test_attestation_older_than_head_fails():
     head_ms = NOW_MS - 600_000  # head committed 10 min ago
     records = [rec(created_ms=NOW_MS - 3600_000)]  # attested 1h ago
-    ok, detail = merge_pr.evaluate_attestation(records, 487, head_ms)
+    ok, detail, code = merge_pr.evaluate_attestation(records, 487, head_ms)
     assert not ok
     assert "predates head commit" in detail
 
 
 def test_unknown_head_date_fails_closed():
     records = [rec()]
-    ok, detail = merge_pr.evaluate_attestation(records, 487, None)
+    ok, detail, code = merge_pr.evaluate_attestation(records, 487, None)
     assert not ok
     assert "unknown" in detail
 
@@ -212,7 +212,7 @@ def test_newest_of_multiple_is_used():
         rec(rec_id="old1", created_ms=NOW_MS - 86_400_000),   # old attestation
         rec(rec_id="new1", created_ms=NOW_MS - 3600_000),     # fresh attestation
     ]
-    ok, detail = merge_pr.evaluate_attestation(records, 487, head_ms)
+    ok, detail, code = merge_pr.evaluate_attestation(records, 487, head_ms)
     assert ok
     assert "new1" in detail
 
@@ -451,3 +451,70 @@ def test_format_report_marks_and_verdict():
     assert "[FAIL] ci green" in report
     assert "[BYPASS] tester attestation" in report
     assert "GATE FAILURE" in report
+
+
+# ── structured gate-failure codes (spec 86017db0) ────────────────────────
+
+def test_checks_report_codes():
+    assert merge_pr.checks_report([])[2] == "CI_NO_CHECKS"
+    assert merge_pr.checks_report([check("build"), check("lint", status="IN_PROGRESS")])[2] == "CI_PENDING"
+    assert merge_pr.checks_report([check("build"), check("lint", conclusion="FAILURE")])[2] == "CI_FAIL"
+    assert merge_pr.checks_report([check("build")])[2] is None
+
+
+def test_attestation_codes_missing_vs_shape_unseen():
+    assert merge_pr.evaluate_attestation([], 487, NOW_MS)[2] == "ATT_MISSING"
+    # tester record that MENTIONS the PR but carries no attestation marker
+    mention_only = rec(rec_id="bbbb2222", tags=["pr:487"], recordType="report")
+    ok, detail, code = merge_pr.evaluate_attestation([mention_only], 487, NOW_MS)
+    assert not ok and code == "ATT_SHAPE_UNSEEN"
+
+
+def test_attestation_codes_freshness():
+    stale = rec(created_ms=NOW_MS - 7200_000)
+    assert merge_pr.evaluate_attestation([stale], 487, NOW_MS)[2] == "ATT_STALE_HEAD"
+    assert merge_pr.evaluate_attestation([rec()], 487, None)[2] == "HEAD_DATE_UNKNOWN"
+    assert merge_pr.evaluate_attestation([rec()], 487, NOW_MS - 7200_000)[2] is None
+
+
+def test_pr_ready_codes_deterministic_order():
+    assert merge_pr.pr_ready_code({"state": "MERGED", "isDraft": False, "mergeable": "MERGEABLE"}) == "PR_NOT_OPEN"
+    assert merge_pr.pr_ready_code({"state": "OPEN", "isDraft": True, "mergeable": "MERGEABLE"}) == "PR_DRAFT"
+    assert merge_pr.pr_ready_code({"state": "OPEN", "isDraft": False, "mergeable": "CONFLICTING"}) == "MERGE_CONFLICT"
+    assert merge_pr.pr_ready_code({"state": "OPEN", "isDraft": False, "mergeable": None}) == "MERGE_UNKNOWN"
+
+
+def test_format_report_includes_codes():
+    gates = [
+        merge_pr.GateResult("pr open & ready", True, "ok"),
+        merge_pr.GateResult("tester attestation", False, "predates head", code="ATT_STALE_HEAD"),
+    ]
+    report = merge_pr.format_report(487, gates)
+    assert "[FAIL] tester attestation (ATT_STALE_HEAD): predates head" in report
+    assert "[PASS] pr open & ready: ok" in report, "no code => no parens (additive)"
+
+
+def test_gates_to_json_shape():
+    gates = [
+        merge_pr.GateResult("pr open & ready", False, "conflicting", code="MERGE_CONFLICT"),
+        merge_pr.GateResult("ci green", True, "all green"),
+    ]
+    doc = merge_pr.gates_to_json(487, gates, {"headRefOid": "abc123"})
+    assert doc["pr"] == 487 and doc["head"] == "abc123" and doc["ok"] is False
+    assert doc["gates"][0] == {"name": "pr open & ready", "passed": False,
+                              "bypassed": False, "code": "MERGE_CONFLICT",
+                              "detail": "conflicting"}
+    assert doc["gates"][1]["code"] is None
+
+
+def test_extract_codes_ordered_unique_and_strict():
+    gc = merge_pr.gate_codes
+    text = ("  [FAIL] ci green (CI_FAIL): 2 failed\n"
+            "  [FAIL] tester attestation (ATT_STALE_HEAD): predates\n"
+            "  [BYPASS] tester attestation (BYPASSED) (ATT_BYPASSED): op\n")
+    assert gc.extract_codes(text) == ["CI_FAIL", "ATT_STALE_HEAD", "ATT_BYPASSED"]
+    assert gc.extract_codes("  [FAIL] tester attestation (BYPASSED): x") == []
+    assert gc.extract_codes("no codes here") == []
+    # every emitted vocabulary member round-trips
+    for c in gc.ALL_CODES:
+        assert gc.extract_codes(f"[FAIL] x ({c}): y") == [c]

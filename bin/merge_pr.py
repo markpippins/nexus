@@ -41,6 +41,11 @@ import re
 import subprocess
 import sys
 import urllib.request
+
+# Sibling module (bin/gate_codes.py); shim keeps the import working when this
+# file is loaded by path in tests (importlib) rather than run as a script.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import gate_codes
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -61,6 +66,9 @@ class GateResult:
     passed: bool
     detail: str
     bypassed: bool = False
+    # Structured failure code (gate_codes, spec 86017db0). None on pass or
+    # when no specific code applies -- additive, never changes gate semantics.
+    code: Optional[str] = None
 
 
 # ── I/O helpers (injectable for hermetic tests) ─────────────────────────
@@ -114,10 +122,14 @@ def fetch_head_commit_date_ms(
     return parse_iso_to_ms(date) if date else None
 
 
-def checks_report(rollup: List[Dict[str, Any]]) -> Tuple[bool, str]:
-    """Gate 2: every check COMPLETED and passing. Empty rollup fails closed."""
+def checks_report(rollup: List[Dict[str, Any]]) -> Tuple[bool, str, Optional[str]]:
+    """Gate 2: every check COMPLETED and passing. Empty rollup fails closed.
+
+    Returns (ok, detail, code) -- code is a gate_codes value on failure
+    (deterministic order: empty -> pending -> failed), None on pass.
+    """
     if not rollup:
-        return False, "no CI checks reported (fail closed)"
+        return False, "no CI checks reported (fail closed)", gate_codes.CI_NO_CHECKS
     pending = [c.get("name") for c in rollup if c.get("status") != "COMPLETED"]
     failed = [
         f"{c.get('name')}={c.get('conclusion')}"
@@ -126,10 +138,12 @@ def checks_report(rollup: List[Dict[str, Any]]) -> Tuple[bool, str]:
         and c.get("conclusion") not in PASSING_CONCLUSIONS
     ]
     if pending:
-        return False, f"{len(pending)} check(s) not completed: {pending[:3]}"
+        return (False, f"{len(pending)} check(s) not completed: {pending[:3]}",
+                gate_codes.CI_PENDING)
     if failed:
-        return False, f"{len(failed)} failed check(s): {failed[:3]}"
-    return True, f"all {len(rollup)} checks completed successfully"
+        return (False, f"{len(failed)} failed check(s): {failed[:3]}",
+                gate_codes.CI_FAIL)
+    return True, f"all {len(rollup)} checks completed successfully", None
 
 
 # ── Gate 3: tester attestation from the nebula agent records ────────────
@@ -188,14 +202,16 @@ def attestation_check(
     http_get: Callable[[str], Any],
     pr_number: int,
     head_date_ms: Optional[int],
-) -> Tuple[bool, str]:
+) -> Tuple[bool, str, Optional[str]]:
     """Gate 3 lookup, exact by preference: the indexed /api/attestations
     endpoint when available (server-side shape filter + GIN tags index),
     bounded-scan fallback otherwise. Both paths share the client-side
-    shape + freshness rules in evaluate_attestation()."""
+    shape + freshness rules in evaluate_attestation().
+
+    Returns (ok, detail, code) like evaluate_attestation()."""
     rows = fetch_attestations(http_get, pr_number)
     if rows is not None:
-        ok, detail = evaluate_attestation(rows, pr_number, head_date_ms)
+        ok, detail, code = evaluate_attestation(rows, pr_number, head_date_ms)
         if not rows:
             detail = (
                 f"no attestation-shaped tester record for PR #{pr_number} "
@@ -209,12 +225,15 @@ def attestation_check(
                     "carries an attestation marker (type:attestation tag, "
                     "or recordType=assessment with type:approval+status:done)"
                 )
+                code = gate_codes.ATT_SHAPE_UNSEEN
+            else:
+                code = gate_codes.ATT_MISSING
         else:
             detail += " (indexed lookup)"
-        return ok, detail
+        return ok, detail, code
     records = fetch_agent_records(http_get)
-    ok, detail = evaluate_attestation(records, pr_number, head_date_ms)
-    return ok, detail + " (scan fallback: /api/attestations unavailable)"
+    ok, detail, code = evaluate_attestation(records, pr_number, head_date_ms)
+    return ok, detail + " (scan fallback: /api/attestations unavailable)", code
 
 
 def attestation_mentions_pr(record: Dict[str, Any], pr_number: int) -> bool:
@@ -258,11 +277,15 @@ def evaluate_attestation(
     records: List[Dict[str, Any]],
     pr_number: int,
     head_date_ms: Optional[int],
-) -> Tuple[bool, str]:
+) -> Tuple[bool, str, Optional[str]]:
     """Gate 3: an explicit tester attestation for this PR must postdate the
     head commit (a push after attestation means the attested code is gone).
     Records must satisfy :func:`is_attestation_record` — a tester record that
-    merely mentions the PR (e.g. an intent row) does not count."""
+    merely mentions the PR (e.g. an intent row) does not count.
+
+    Returns (ok, detail, code) — code is a gate_codes value on failure
+    (ATT_MISSING / ATT_SHAPE_UNSEEN / HEAD_DATE_UNKNOWN / ATT_STALE_HEAD),
+    None on pass."""
     mentions = [
         r
         for r in records
@@ -282,14 +305,17 @@ def evaluate_attestation(
                 "but none carries an attestation marker: type:attestation tag, "
                 "or recordType=assessment with type:approval+status:done)"
             )
-        return (False, detail)
+        code = gate_codes.ATT_SHAPE_UNSEEN if mentions else gate_codes.ATT_MISSING
+        return (False, detail, code)
     newest = max(matches, key=lambda r: r.get("createdAt") or 0)
     created_ms = newest.get("createdAt") or 0
     created_iso = datetime.fromtimestamp(
         created_ms / 1000, tz=timezone.utc
     ).strftime("%Y-%m-%dT%H:%M:%SZ")
     if head_date_ms is None:
-        return False, f"attestation exists ({created_iso}) but head commit date is unknown (fail closed)"
+        return (False,
+                f"attestation exists ({created_iso}) but head commit date is unknown (fail closed)",
+                gate_codes.HEAD_DATE_UNKNOWN)
     if created_ms < head_date_ms:
         head_iso = datetime.fromtimestamp(
             head_date_ms / 1000, tz=timezone.utc
@@ -298,11 +324,13 @@ def evaluate_attestation(
             False,
             f"newest attestation {created_iso} predates head commit {head_iso} "
             "(a push after attestation invalidates it)",
+            gate_codes.ATT_STALE_HEAD,
         )
     return (
         True,
         f"tester attestation {created_iso} (record {str(newest.get('id'))[:8]}) "
         "postdates head commit",
+        None,
     )
 
 
@@ -340,7 +368,8 @@ def evaluate(
         # a traceback.
         return (
             [GateResult("github pr lookup", False,
-                        f"gh lookup failed: {_exc_brief(exc)} (fail closed)")],
+                        f"gh lookup failed: {_exc_brief(exc)} (fail closed)",
+                        code=gate_codes.GH_LOOKUP_FAILED)],
             {},
         )
     ready = (
@@ -354,19 +383,21 @@ def evaluate(
             ready,
             f"state={pr.get('state')} draft={pr.get('isDraft')} "
             f"mergeable={pr.get('mergeable')} head={str(pr.get('headRefOid'))[:8]}",
+            code=None if ready else pr_ready_code(pr),
         )
     )
 
-    ci_ok, ci_detail = checks_report(pr.get("statusCheckRollup") or [])
-    gates.append(GateResult("ci green", ci_ok, ci_detail))
+    ci_ok, ci_detail, ci_code = checks_report(pr.get("statusCheckRollup") or [])
+    gates.append(GateResult("ci green", ci_ok, ci_detail, code=ci_code))
 
     bypassed = env.get(BYPASS_ENV) == "1"
-    att_ok, att_detail = False, ""
+    att_ok, att_detail, att_code = False, "", None
     try:
         head_ms = fetch_head_commit_date_ms(pr_number, run_json)
-        att_ok, att_detail = attestation_check(http_get, pr_number, head_ms)
+        att_ok, att_detail, att_code = attestation_check(http_get, pr_number, head_ms)
     except Exception as exc:  # fail closed on any lookup failure
         att_detail = f"attestation lookup failed: {exc!r} (fail closed)"
+        att_code = gate_codes.ATT_LOOKUP_FAILED
     if bypassed and not att_ok:
         gates.append(
             GateResult(
@@ -374,12 +405,25 @@ def evaluate(
                 True,
                 f"{att_detail} [{BYPASS_ENV}=1 -- OPERATOR bypass; attestation gate only]",
                 bypassed=True,
+                code=gate_codes.ATT_BYPASSED,
             )
         )
     else:
-        gates.append(GateResult("tester attestation", att_ok, att_detail))
+        gates.append(GateResult("tester attestation", att_ok, att_detail, code=att_code))
 
     return gates, pr
+
+
+def pr_ready_code(pr: Dict[str, Any]) -> Optional[str]:
+    """Gate 1 failure code (deterministic order: closed > draft > conflict >
+    unknown-mergeable). Only called when the gate fails."""
+    if pr.get("state") != "OPEN":
+        return gate_codes.PR_NOT_OPEN
+    if pr.get("isDraft"):
+        return gate_codes.PR_DRAFT
+    if pr.get("mergeable") == "CONFLICTING":
+        return gate_codes.MERGE_CONFLICT
+    return gate_codes.MERGE_UNKNOWN
 
 
 def format_report(pr_number: int, gates: List[GateResult]) -> str:
@@ -388,10 +432,34 @@ def format_report(pr_number: int, gates: List[GateResult]) -> str:
         mark = "PASS" if g.passed else "FAIL"
         if g.bypassed:
             mark = "BYPASS"
-        lines.append(f"  [{mark}] {g.name}: {g.detail}")
+        code = f" ({g.code})" if g.code else ""
+        lines.append(f"  [{mark}] {g.name}{code}: {g.detail}")
     ok = all(g.passed for g in gates)
     lines.append(f"  => {'ALL GATES PASS' if ok else 'GATE FAILURE -- merge refused'}")
     return "\n".join(lines)
+
+
+def gates_to_json(
+    pr_number: int, gates: List[GateResult], pr: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """Machine-readable gate report (--json, spec 86017db0). Codes ride
+    alongside the unchanged human detail strings; consumers treat a null
+    code exactly as a missing one."""
+    return {
+        "pr": pr_number,
+        "head": (pr or {}).get("headRefOid"),
+        "ok": all(g.passed for g in gates),
+        "gates": [
+            {
+                "name": g.name,
+                "passed": g.passed,
+                "bypassed": g.bypassed,
+                "code": g.code,
+                "detail": g.detail,
+            }
+            for g in gates
+        ],
+    }
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -402,14 +470,23 @@ def main(argv: Optional[List[str]] = None) -> int:
         action="store_true",
         help="perform the squash merge if (and only if) every gate passes",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print the machine-readable report (gates_to_json) instead of text",
+    )
     args = parser.parse_args(argv)
 
     gates, pr = evaluate(args.pr_number)
-    print(format_report(args.pr_number, gates))
+    if args.json:
+        print(json.dumps(gates_to_json(args.pr_number, gates, pr), indent=1))
+    else:
+        print(format_report(args.pr_number, gates))
     if not all(g.passed for g in gates):
         return 1
     if not args.merge:
-        print("check-only mode: no action taken (use --merge to squash-merge)")
+        if not args.json:
+            print("check-only mode: no action taken (use --merge to squash-merge)")
         return 0
 
     _gh(

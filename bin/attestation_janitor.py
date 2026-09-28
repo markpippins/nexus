@@ -49,7 +49,10 @@ forum via bin/post-change-log.sh, individually:
   - repair    : empty-rollup close/reopen attempted (head verified unchanged)
   - repair-blocked: repair impossible — head moved or attempts exhausted
                     (human attention requested)
-  - refused   : an ATTESTED PR the gate refused (anomaly — surfaced loudly)
+  - refused   : an ATTESTED PR the gate refused (anomaly — surfaced loudly).
+                Classified by structured gate-failure codes (bin/gate_codes.py,
+                spec 86017db0) and deduplicated on (kind, PR, codes, head): a
+                repeat refusal at the same head posts ONCE, not once per tick.
   - bypass    : gate report contained BYPASS; merge refused
   - cap-hold  : attested+gated PR deferred by the per-cycle cap
 Routine "not attested yet" skips are NOT change-logged (a 15-minute timer
@@ -76,6 +79,11 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+
+# Sibling module (bin/gate_codes.py); shim keeps the import working when this
+# file is loaded by path in tests (importlib) rather than run as a script.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import gate_codes
 
 BIN_DIR = Path(__file__).resolve().parent
 MERGE_PR = BIN_DIR / "merge_pr.py"
@@ -168,6 +176,13 @@ def gate_failed_only_on_draft(proc: "subprocess.CompletedProcess", is_draft: boo
 
 def _gate_fail_lines(proc: "subprocess.CompletedProcess") -> List[str]:
     return [ln.split("[FAIL]", 1)[1].strip() for ln in proc.stdout.splitlines() if "[FAIL]" in ln]
+
+
+def _refusal_codes(proc: "subprocess.CompletedProcess") -> List[str]:
+    """Structured gate-failure codes (gate_codes, spec 86017db0) from the
+    gate report. Empty for reports predating code emission -- callers fall
+    back to the generic path."""
+    return gate_codes.extract_codes(proc.stdout)
 
 
 def _gate_pass_lines(proc: "subprocess.CompletedProcess") -> List[str]:
@@ -375,6 +390,77 @@ def post_change_log(title: str, body: str) -> bool:
         return False
 
 
+def _dedup_key(kind: str, num: int, codes: List[str], head: str) -> str:
+    """(kind, PR, code-set, head): a repeat of the same key is suppressed
+    until the head or the failure codes change (spec 86017db0)."""
+    return f"{kind}:{num}:{'+'.join(sorted(codes)) if codes else 'GENERIC'}:{head}"
+
+
+def _post_deduped(
+    anomalies: Dict[str, Any], key: str, num: int, title: str, body: str,
+    out: Any = sys.stdout,
+) -> bool:
+    """Change-log post with (kind, PR, codes, head) dedup. Returns False
+    only when a post was attempted and failed (tool error); a suppressed
+    repeat is success."""
+    seen = anomalies.get(key)
+    now_iso = _now_iso()
+    if seen:
+        seen["count"] = _parse_int(seen.get("count"), 1) + 1
+        seen["last"] = now_iso
+        seen["last_s"] = time.time()
+        print(
+            f"  #{num}: same refusal as {seen.get('first')} "
+            f"({seen['count']}x) — change-log post suppressed (dedup)",
+            file=out,
+        )
+        return True
+    if not post_change_log(title, body):
+        return False
+    anomalies[key] = {
+        "first": now_iso, "last": now_iso,
+        "last_s": time.time(), "count": 1, "title": title,
+    }
+    return True
+
+
+def _refusal_post_text(num: int, head: str, codes: List[str], fails: str):
+    """Title + body for an attested-PR refusal, classified by code (spec
+    86017db0 routing table). Unknown/absent codes keep the historical
+    ANOMALY wording."""
+    code_str = "+".join(codes) if codes else "GENERIC"
+    if codes == [gate_codes.MERGE_CONFLICT]:
+        title = (f"attestation-janitor: BLOCKED (not an anomaly) — PR #{num} has a "
+                 f"merge conflict ({gate_codes.MERGE_CONFLICT})")
+        lead = ("The gate refused at 'pr open & ready' because the branch is CONFLICTING — "
+                "this is author/branch action (rebase or update), not an anomaly.")
+    elif codes == [gate_codes.ATT_STALE_HEAD]:
+        title = f"attestation-janitor: RE-ATTESTATION REQUESTED — PR #{num} (ATT_STALE_HEAD)"
+        lead = ("The newest attestation predates the head commit (a push after attestation "
+                "invalidated it) — a fresh tester attestation against the current head "
+                "unblocks the gate (or carry-forward, per the f7a09d5a ruling once it lands).")
+    elif codes == [gate_codes.ATT_SHAPE_UNSEEN]:
+        title = f"attestation-janitor: ADJUDICATION REQUESTED — PR #{num} (ATT_SHAPE_UNSEEN)"
+        lead = ("Tester records mentioning this PR exist but none matches the recognized "
+                "attestation shape — this may be a valid attestation the gate cannot see "
+                "(spec 86017db0); tester/analyst adjudication requested, not a silent miss.")
+    elif codes == [gate_codes.CI_FAIL]:
+        title = f"attestation-janitor: CI FAILURE — attested PR #{num} refused (CI_FAIL)"
+        lead = ("Completed CI checks failed — never repaired automatically; human attention "
+                "requested.")
+    else:
+        title = f"attestation-janitor: ANOMALY — attested PR #{num} refused by gate"
+        lead = ("Human attention requested — possible head drift (attestation predates "
+                "current head), CI regression, or stale row.")
+    body = (
+        f"bin/attestation_janitor.py at {_now_iso()}: PR #{num} (head {head}) has an "
+        f"attestation row but the merge gate refused [{code_str}]: {fails[:400]}. {lead} "
+        "Repeat refusals with the same (codes, head) are suppressed (dedup per spec "
+        "86017db0); a new post appears when the head or the failure codes change."
+    )
+    return title, body
+
+
 def run_cycle(
     *,
     apply: bool,
@@ -391,7 +477,14 @@ def run_cycle(
     state = load_state(state_path)
     merged_book = state.setdefault("merged", {})
     repairs = state.setdefault("repairs", {})
+    anomalies = state.setdefault("anomaly_dedup", {})
     now_s = time.time()
+    # Dedup memory ages out at LOAD: a key unseen for 14 days may re-alert.
+    # (Pruning at load, not at save, so a stale key is gone before the
+    # post/suppress decision — a seen key refreshes its own window.)
+    for k in [k for k, v in anomalies.items()
+              if _parse_float(v.get("last_s")) < now_s - 14 * 86400]:
+        del anomalies[k]
     merged_count = 0
     held: List[int] = []
     tool_error = False
@@ -463,24 +556,33 @@ def run_cycle(
                 held.append(num)
                 continue
             if pre is True:
-                # Attested yet refused: anomaly worth a forum-visible alert.
-                if not post_change_log(
-                    f"attestation-janitor: ANOMALY — attested PR #{num} refused by gate",
-                    f"bin/attestation_janitor.py at {_now_iso()}: PR #{num} (head {head}) has "
-                    "an attestation row but the merge gate refused: "
-                    f"{fails[:400]}. Human attention requested — possible head drift "
-                    "(attestation predates current head), CI regression, or stale row.",
-                ):
-                    tool_error = True
+                # Attested yet refused: classify by structured gate-failure
+                # codes and surface ONCE per (kind, PR, codes, head) instead
+                # of once per 15-minute cycle (spec 86017db0).
+                codes = [c for c in _refusal_codes(proc)
+                         if c not in gate_codes.SILENT_CODES]
+                if codes and all(c in gate_codes.TRANSIENT_CODES for c in codes):
+                    print(f"  #{num}: transient refusal ({','.join(codes)}) — retry next cycle, no post", file=out)
+                else:
+                    title, body = _refusal_post_text(num, head, codes, fails)
+                    if not _post_deduped(
+                        anomalies, _dedup_key("REFUSAL", num, codes, head),
+                        num, title, body, out,
+                    ):
+                        tool_error = True
             held.append(num)
             continue
         if "BYPASS" in proc.stdout:
             print(f"  #{num}: gate report contains BYPASS — refusing to merge (bypasses are human decisions)", file=out)
-            if not post_change_log(
+            codes = [c for c in _refusal_codes(proc) if c == gate_codes.ATT_BYPASSED]
+            if not _post_deduped(
+                anomalies, _dedup_key("BYPASS", num, codes, head), num,
                 f"attestation-janitor: BYPASS in gate report for PR #{num} — merge refused",
                 f"bin/attestation_janitor.py at {_now_iso()}: PR #{num} (head {head}) passed "
                 "the gates only via a BYPASS marker; the janitor never merges bypassed "
-                "gates. Human decision required.",
+                "gates. Human decision required. Repeat BYPASS refusals at the same "
+                "(codes, head) are suppressed (dedup per spec 86017db0).",
+                out,
             ):
                 tool_error = True
             held.append(num)
@@ -536,6 +638,8 @@ def run_cycle(
         del repairs[k]
     if not repairs:
         state.pop("repairs", None)  # keep the state file free of empty ledgers
+    if not anomalies:
+        state.pop("anomaly_dedup", None)  # keep the state file free of empty ledgers
     state["runs"] = state["runs"][-50:]
     save_state(state_path, state)
     print(f"janitor: cycle complete — merged {merged_count}, held {len(held)}", file=out)

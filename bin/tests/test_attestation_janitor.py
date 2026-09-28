@@ -607,3 +607,107 @@ def _main() -> int:
 
 if __name__ == "__main__":
     sys.exit(_main())
+
+
+# ── structured codes + (kind, PR, codes, head) dedup (spec 86017db0) ─────
+
+CONFLICT_FAIL = gate_report(
+    passes=["ci green: all checks completed successfully",
+            "tester attestation: record postdates head"],
+    fails=["pr open & ready (MERGE_CONFLICT): state=OPEN draft=False mergeable=CONFLICTING head=abc"],
+)
+STALE_FAIL = gate_report(
+    passes=["pr open & ready: state=OPEN draft=False mergeable=MERGEABLE head=abc",
+            "ci green: all checks completed successfully"],
+    fails=["tester attestation (ATT_STALE_HEAD): newest attestation predates head commit"],
+)
+TRANSIENT_FAIL = gate_report(
+    passes=["ci green: all checks completed successfully",
+            "tester attestation: record postdates head"],
+    fails=["pr open & ready (MERGE_UNKNOWN): state=OPEN draft=False mergeable=UNKNOWN head=abc"],
+)
+DISCOVERY_600 = {"returncode": 0, "stdout": json.dumps([
+    {"number": 600, "isDraft": False, "headRefOid": "b" * 40, "title": "A"},
+]), "stderr": ""}
+DISCOVERY_600_NEWHEAD = {"returncode": 0, "stdout": json.dumps([
+    {"number": 600, "isDraft": False, "headRefOid": "c" * 40, "title": "A"},
+]), "stderr": ""}
+
+
+def _refusal_cycle(report, state_path, discovery=DISCOVERY_600, rc=1):
+    """One single-PR cycle; returns (rc, out, state, logs)."""
+    rc_, out, state, _calls, _pre, logs = _cycle_with_runner(
+        [("pr list", discovery),
+         ("merge_pr.py 600", {"returncode": rc, "stdout": report, "stderr": ""})],
+        state_path=state_path)
+    return rc_, out, state, logs
+
+
+def test_refusal_dedup_same_head_posts_once():
+    state_path = Path(tempfile.mkdtemp()) / "s.json"
+    _, _, _, logs1 = _refusal_cycle(ATTEST_FAIL, state_path)
+    rc, out, _, logs2 = _refusal_cycle(ATTEST_FAIL, state_path)
+    assert len(logs1) == 1 and "ANOMALY" in logs1[0]
+    assert logs2 == [], "same (codes, head) refusal must be suppressed"
+    assert "suppressed" in out
+
+
+def test_refusal_reposts_when_head_changes():
+    state_path = Path(tempfile.mkdtemp()) / "s.json"
+    _, _, _, logs1 = _refusal_cycle(ATTEST_FAIL, state_path, discovery=DISCOVERY_600)
+    _, _, _, logs2 = _refusal_cycle(ATTEST_FAIL, state_path, discovery=DISCOVERY_600_NEWHEAD)
+    assert len(logs1) == 1 and len(logs2) == 1, "new head re-alerts"
+
+
+def test_refusal_reposts_when_codes_change():
+    state_path = Path(tempfile.mkdtemp()) / "s.json"
+    _, _, _, logs1 = _refusal_cycle(ATTEST_FAIL, state_path)
+    _, _, _, logs2 = _refusal_cycle(STALE_FAIL, state_path)
+    assert len(logs1) == 1 and len(logs2) == 1, "new failure codes re-alert"
+    assert "RE-ATTESTATION REQUESTED" in logs2[0] and "ATT_STALE_HEAD" in logs2[0]
+
+
+def test_merge_conflict_is_not_an_anomaly():
+    rc, out, state, logs = _refusal_cycle(CONFLICT_FAIL, Path(tempfile.mkdtemp()) / "s.json")
+    assert len(logs) == 1
+    assert "BLOCKED (not an anomaly)" in logs[0] and "MERGE_CONFLICT" in logs[0]
+    assert "ANOMALY" not in logs[0]
+
+
+def test_transient_refusal_posts_nothing():
+    rc, out, state, logs = _refusal_cycle(TRANSIENT_FAIL, Path(tempfile.mkdtemp()) / "s.json")
+    assert logs == [], "MERGE_UNKNOWN is transient: retry silently"
+    assert "transient refusal" in out
+
+
+def test_shape_unseen_routes_to_adjudication():
+    rc, out, state, logs = _refusal_cycle(
+        gate_report(
+            passes=["pr open & ready: state=OPEN draft=False mergeable=MERGEABLE head=abc",
+                    "ci green: all checks completed successfully"],
+            fails=["tester attestation (ATT_SHAPE_UNSEEN): tester records mention the PR"]),
+        Path(tempfile.mkdtemp()) / "s.json")
+    assert len(logs) == 1 and "ADJUDICATION REQUESTED" in logs[0]
+
+
+def test_bypass_refusal_dedup():
+    state_path = Path(tempfile.mkdtemp()) / "s.json"
+    _, _, _, logs1 = _refusal_cycle(BYPASS_REPORT, state_path, rc=0)
+    rc, out, _, logs2 = _refusal_cycle(BYPASS_REPORT, state_path, rc=0)
+    assert len(logs1) == 1 and "BYPASS" in logs1[0]
+    assert logs2 == [], "BYPASS refusals dedup on (kind, PR, codes, head)"
+
+
+def test_dedup_state_prunes_after_14_days():
+    import time as _time
+    state_path = Path(tempfile.mkdtemp()) / "s.json"
+    _refusal_cycle(ATTEST_FAIL, state_path)
+    state = json.loads(state_path.read_text())
+    assert state.get("anomaly_dedup")
+    for entry in state["anomaly_dedup"].values():
+        entry["last_s"] = _time.time() - 15 * 86400
+    state_path.write_text(json.dumps(state))
+    _refusal_cycle(ATTEST_FAIL, state_path)
+    state = json.loads(state_path.read_text())
+    entries = state.get("anomaly_dedup", {})
+    assert all(v.get("count") == 1 for v in entries.values()), "stale key pruned => re-alert"
