@@ -16,7 +16,15 @@ export const TYPE_CODE = {
 } as const;
 
 export function mapScalarToTypeCode(program: Program, scalar: Scalar): number | undefined {
-  const name = scalar.name;
+  const direct = directCode(scalar.name);
+  if (direct !== undefined) return direct;
+  // Derived/custom scalars: chase extendsTarget up the chain so e.g.
+  // `scalar Email extends string` maps to String, not the fallback.
+  return chaseBase(program, scalar);
+}
+
+/** The 0001 registry lookup for a BUILT-IN scalar name (undefined if custom). */
+function directCode(name: string): number | undefined {
   switch (name) {
     case "int8":
     case "int16":
@@ -53,25 +61,27 @@ export function mapScalarToTypeCode(program: Program, scalar: Scalar): number | 
     case "bytes":
       return TYPE_CODE.JSONB;
     default:
-      // Derived/custom scalars: chase extendsTarget up the chain so e.g.
-      // `scalar Email extends string` maps to String, not the fallback.
-      return chaseBase(program, scalar);
+      return undefined;
   }
 }
 
-function chaseBase(program: Program, scalar: Scalar): number | undefined {
-  let cur: Scalar | undefined = scalar;
-  const seen = new Set<string>();
-  while (cur && !seen.has(cur.name)) {
+/**
+ * Walks the baseScalar chain ITERATIVELY. The cycle guard only works
+ * because there is no recursion here: a per-frame `seen` inside mutual
+ * mapScalarToTypeCode/chaseBase recursion re-created the set at every
+ * level, so a `scalar A extends B; scalar B extends A;` cycle blew the
+ * stack instead of returning undefined (found by the mapping unit test;
+ * the old comment claimed a guard the code did not perform — the 054
+ * comment/DDL defect class, caught by its own test this time).
+ */
+function chaseBase(_program: Program, scalar: Scalar): number | undefined {
+  const seen = new Set<string>([scalar.name]);
+  let cur = (scalar as unknown as { baseScalar?: Type }).baseScalar;
+  while (cur && cur.kind === "Scalar" && !seen.has(cur.name)) {
     seen.add(cur.name);
-    const base: Type | undefined = (cur as unknown as { baseScalar?: Type }).baseScalar;
-    if (base && base.kind === "Scalar") {
-      const mapped = mapScalarToTypeCode(program, base);
-      if (mapped !== undefined) return mapped;
-      cur = base;
-    } else {
-      return undefined;
-    }
+    const direct = directCode(cur.name);
+    if (direct !== undefined) return direct;
+    cur = (cur as unknown as { baseScalar?: Type }).baseScalar;
   }
   return undefined;
 }
