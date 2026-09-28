@@ -369,6 +369,16 @@ apidocs-gen:
 # Discovers bin/tests/test_*.py; anything skipped is declared with a reason and
 # an owner in bin/tests-ci-manifest.json. Never edit a hand-kept test list here:
 # a guard must not be able to become ungated by omission.
+#
+# To reproduce CI's conditions locally (no services, real non-root uid), run:
+#
+#   env -u PYTHONPATH unshare --map-user=$(id -u) --map-group=$(id -g) -n \
+#     python3 bin/run_bin_tests.py
+#
+# Not `unshare -rn`: -r maps you to uid 0 inside the namespace and root
+# bypasses permission checks, which makes test_drive_guard's
+# test_unwritable_target_fails_92 fail for the wrong reason. Scrubbing
+# PYTHONPATH is Decision 4 rule 4 and it does change verdicts.
 bintests:
 	@python3 bin/run_bin_tests.py
 

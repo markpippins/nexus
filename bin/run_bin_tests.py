@@ -18,6 +18,10 @@ Exit codes:
   0  every discovered guard ran and passed
   1  at least one guard failed
   2  the manifest is itself invalid (stale/undocumented exclusion)
+
+Guards are executed with `python3 -m pytest`, never as bare scripts, and a
+guard pytest collects 0 tests from is reported EMPTY (a failure). A guard that
+runs zero tests must never be counted as a pass -- see Decision 4.
 """
 from __future__ import annotations
 
@@ -51,11 +55,41 @@ def run_one(guard: pathlib.Path) -> tuple[int, str, float]:
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     t0 = time.time()
     try:
-        r = subprocess.run([sys.executable, str(guard)], capture_output=True,
-                           text=True, timeout=PER_GUARD_TIMEOUT, cwd=REPO, env=env)
+        # Run through pytest, NOT as a bare script. A pytest-style guard has no
+        # __main__ block, so `python3 guard.py` defines the test functions,
+        # executes nothing, and exits 0 -- a vacuous pass. That is how 25 of 79
+        # guards were reported PASS while running zero tests, and it is the
+        # failure mode Decision 4 names: a check that does not check the thing
+        # is worse than no check, because it is counted as evidence.
+        r = subprocess.run(
+            [sys.executable, "-m", "pytest", str(guard), "-q",
+             "-p", "no:cacheprovider", "-x"],
+            capture_output=True, text=True, timeout=PER_GUARD_TIMEOUT,
+            cwd=REPO, env=env,
+        )
         return r.returncode, (r.stdout + r.stderr), time.time() - t0
     except subprocess.TimeoutExpired:
         return -9, f"TIMEOUT >{PER_GUARD_TIMEOUT}s", time.time() - t0
+
+
+def collected(guard: pathlib.Path) -> int:
+    """How many tests pytest actually finds in a guard. 0 == it would run nothing."""
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    try:
+        r = subprocess.run(
+            [sys.executable, "-m", "pytest", str(guard), "--collect-only", "-q",
+             "-p", "no:cacheprovider"],
+            capture_output=True, text=True, timeout=PER_GUARD_TIMEOUT,
+            cwd=REPO, env=env,
+        )
+    except subprocess.TimeoutExpired:
+        return -1
+    for line in reversed(r.stdout.splitlines()):
+        parts = line.split()
+        if parts and parts[0].isdigit() and ("test" in line or "error" in line):
+            return int(parts[0])
+    return 0
 
 
 def main() -> int:
@@ -82,14 +116,27 @@ def main() -> int:
     print(f"bin/tests: {len(guards)} discovered, {len(run_set)} running, "
           f"{len(excluded)} excluded\n")
 
-    failures, total = [], 0.0
+    failures, total, ran = [], 0.0, 0
     for g in run_set:
+        n = collected(g)
         rc, out, dt = run_one(g)
         total += dt
-        if rc == 0:
-            print(f"  PASS  {g.name:52} {dt:6.1f}s")
+        ran += max(n, 0)
+        if rc == 0 and n <= 0:
+            # pytest exit 5 means "collected nothing". Without this branch a
+            # guard that pytest cannot see would be reported PASS forever.
+            print(f"  EMPTY {g.name:52} {dt:6.1f}s  (collected 0 tests)")
+            failures.append((g.name, 5,
+                             "pytest collected 0 tests from this file. It is "
+                             "named test_*.py but exposes nothing runnable, so "
+                             "the gate would be counting it as evidence while "
+                             "checking nothing. Either it is a real guard that "
+                             "needs a __main__/import fix, or it does not "
+                             "belong in bin/tests/."))
+        elif rc == 0:
+            print(f"  PASS  {g.name:52} {dt:6.1f}s  ({n} tests)")
         else:
-            print(f"  FAIL  {g.name:52} {dt:6.1f}s  (rc={rc})")
+            print(f"  FAIL  {g.name:52} {dt:6.1f}s  (rc={rc}, {n} tests)")
             failures.append((g.name, rc, out))
 
     if excluded:
@@ -98,7 +145,8 @@ def main() -> int:
             print(f"  - {name:52} {why.get('reason', '<no reason>')}")
             print(f"      owner={why.get('owner', '?')} tracked={why.get('tracked', '?')}")
 
-    print(f"\nran {len(run_set)} in {total:.1f}s; {len(failures)} failed")
+    print(f"\nran {len(run_set)} guards / {ran} tests in {total:.1f}s; "
+          f"{len(failures)} failed")
     if failures:
         for name, rc, out in failures:
             tail = [l for l in out.splitlines() if l.strip()][-6:]
