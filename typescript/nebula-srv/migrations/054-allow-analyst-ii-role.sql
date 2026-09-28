@@ -10,8 +10,10 @@
 -- The 'governance' registration (KNOWN_EXECUTORS) only affects receipt
 -- attribution; analyst-ii does not author binding authority.
 --
--- Idempotent (drop + recreate the CHECK). Applied to both nebula and scratch
--- schemas for parity (the role-surface verifier reads both).
+-- Idempotent (drop + recreate the CHECK). Alters the nebula mirror only —
+-- the startup-runner path maintains nebula alone; scratch-mirror parity is
+-- the operator-tier contract (sql/ migrations carrying the ROLE-VOCAB PIN).
+-- The role-surface verifier reads both surfaces.
 
 BEGIN;
 
