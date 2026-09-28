@@ -33,7 +33,7 @@ on:
       - 'typescript/shrapnel/**'
       - '.github/workflows/shrapnel-catalog-replay.yml'
   pull_request:
-    branches: [ main, master, feature/* ]
+    branches: [ main, master, dev, feature/* ]
     paths:
       - 'typescript/tsp-eav-emitter/**'
       - 'typescript/shrapnel/**'
@@ -84,8 +84,37 @@ jobs:
 
       # The gate is a plain script so it is runnable identically on a laptop
       # and in CI; the workflow only supplies the environment.
+      #
+      # Until migration 0008 (#623) is on main, the gate SKIPS with a loud
+      # banner rather than failing — there is no reconcile verb to replay yet,
+      # and a red check nobody can fix in this PR would be noise. Once 0008
+      # lands the same command starts enforcing with no further change. The
+      # skip step below makes that state impossible to mistake for a pass.
       - name: Run the replay gate
-        run: bash typescript/shrapnel/test/catalog_replay_gate.sh
+        # `shell: bash` is load-bearing, not decoration: it adds `-o pipefail`.
+        # GitHub's DEFAULT shell for `run:` is `bash -e` with no pipefail, so
+        # piping to tee would hand back tee's exit code and turn a failing gate
+        # into a green job.
+        shell: bash
+        run: bash typescript/shrapnel/test/catalog_replay_gate.sh 2>&1 | tee /tmp/replay-gate.log
+
+      - name: Surface a skip as a warning, never as a silent pass
+        run: |
+          if grep -q 'REPLAY GATE SKIPPED' /tmp/replay-gate.log 2>/dev/null; then
+            echo "::warning::The replay gate SKIPPED — migration 0008 is not on this branch yet, so replay-idempotence is NOT being enforced. This job is not evidence of anything."
+          fi
+        continue-on-error: true
+
+      - name: Confirm the gate actually ran
+        run: |
+          if grep -q 'REPLAY GATE PASSED' /tmp/replay-gate.log 2>/dev/null; then
+            echo "replay gate enforced and passed"
+          elif grep -q 'REPLAY GATE SKIPPED' /tmp/replay-gate.log 2>/dev/null; then
+            echo "replay gate dormant (0008 absent) — see the warning above"
+          else
+            echo "::error::The replay gate produced neither a pass nor a skip — treating as failure"
+            exit 1
+          fi
 
       - name: Explain a failure
         if: failure()
