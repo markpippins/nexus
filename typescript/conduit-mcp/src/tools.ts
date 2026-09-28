@@ -1009,7 +1009,7 @@ export function registerToolHandlers(
         plan_id: args.plan_id,
         type: args.type,
         agent_role: args.agent_role,
-        session_id: args.session_id || "",
+        session_id: args.session_id ?? null,
         ticket_id: ticketId || args.ticket_id || null,
         artifact_path: args.artifact_path || null,
         summary: args.summary || "",
@@ -1245,7 +1245,7 @@ export function registerToolHandlers(
         plan_id: revised.planNumber,
         type: "PLANNING",
         agent_role: "planner",
-        session_id: "",
+        session_id: null, // no interactive session context: null, not ""
         ticket_id: null,
         artifact_path: null,
         producer_id: "conduit-mcp",
@@ -2049,9 +2049,7 @@ export function registerToolHandlers(
         plan_id: args.planNumber,
         type: "PLAN_CREATE",
         agent_role: "planner",
-        session_id: "",
-        ticket_id: ticketId,
-        artifact_path: null,
+        session_id: null, // no interactive session context: null, not ""
         summary: `Unblocked: ${plan.title}`,
         metadata_json: JSON.stringify({
           unblocked: true,

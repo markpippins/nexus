@@ -3216,7 +3216,12 @@ export interface ReceiptRow {
   plan_id: string;
   type: string;
   agent_role: string;
-  session_id: string;
+  // Nullable per storage contract (session-null means "no interactive
+  // session", never ""). nebula.receipts_unified is a VIEW over
+  // resolution.receipt_unified_projection + vision.receipts; both columns
+  // are NULLABLE. The former non-null type forced callers into the || ""
+  // manufacturing defect (DBA finding f9201c18).
+  session_id: string | null;
   ticket_id: string | null;
   artifact_path: string | null;
   summary: string;
@@ -3318,7 +3323,7 @@ export async function getPlanReceipts(planId: string): Promise<Array<{
   id: string;
   type: string;
   agent_role: string;
-  session_id: string;
+  session_id: string | null;
   artifact_path: string | null;
   summary: string;
   metadata: any;

@@ -998,7 +998,9 @@ class DBAdapter:
         plan_id: str,
         receipt_type: str,
         agent_role: str,
-        session_id: str,
+        # Session-null contract (DBA finding f9201c18): None means "no
+        # interactive session" — stored as SQL NULL, never coerced to "".
+        session_id: Optional[str],
         ticket_id: str,
         summary: str = "",
         artifact_path: str = "",
