@@ -8,16 +8,46 @@
 #
 # Why this file is in the repo: same doctrine as nexus-todo-lifecycle.service
 # and sdk-drift-stamp.service — host-only units drift from the corpus
-# (2026-09-21 helium probe incident). The unit's ExecStart targets the primary
-# checkout's absolute path (same as todo-lifecycle), so it runs the gate from
-# main; the janitor itself takes no actions unless every gate of
-# bin/merge_pr.py passes for a PR's current head.
+# (2026-09-21 helium probe incident). Those two units still point ExecStart at
+# the primary checkout; this one no longer does, and the comment explaining why
+# is the point of the change.
+#
+# ── Why the dedicated deploy checkout ────────────────────────────────────────
+#
+# This unit used to run from /home/codex/dev/nexus — the primary checkout. That
+# is a mutable directory used for two incompatible purposes: a scratch branch
+# workspace AND a deploy target. The consequence was not theoretical.
+#
+# The primary sat on `fix/codeql-hardening` @ 3ef28597 while main had moved on.
+# That revision's bin/attestation_janitor.py contains ZERO dedup logic; main's
+# contains _dedup_key() and state.setdefault("anomaly_dedup", {}). The unit's
+# own comment claimed it "runs the gate from main" — it did not, and nothing
+# checked. Proof independent of the git log: the live state file
+# (~/.cache/attestation-janitor.json) had no `anomaly_dedup` key at all, which
+# main's code would have created on its first run.
+#
+# Result: 329+ duplicate ANOMALY threads in the change-log forum at ~8/hour,
+# every 15 minutes, for three days. The dedup added in #608 had never executed.
+#
+# The real defect was not the wrong path — it was that NOTHING ASSERTED the
+# deployed code matched main. A comment asserted it. Comments do not fail.
+# Hence ExecStartPre below, which makes "deployed == origin/main" a
+# precondition of every tick instead of a claim in a comment. A pinned clone
+# that is never updated would reproduce this bug on a delay.
+#
+# The checkout is dedicated: nothing else writes to it, so `reset --hard` is
+# safe and the janitor cannot be perturbed by in-progress work. The primary
+# checkout is left untouched.
 #
 # Failure model: exit 0 = cycle ran (merges are gated + capped); nonzero =
 # tool error (discovery failure, gh failure — unit shows failed). A PR failing
 # gates is an expected outcome, not an error; the per-run summary goes to the
 # state file (~/.cache/attestation-janitor.json) and every merge to the
 # Assembly change-log forum via bin/post-change-log.sh.
+#
+# A failed ExecStartPre fails the whole unit BEFORE the janitor runs, which is
+# the intended direction: a tick that cannot prove it is running current main
+# must not run a merge gate at all.
 
 [Unit]
 Description=Attestation auto-merge janitor (gated by bin/merge_pr.py, capped)
@@ -27,13 +57,15 @@ After=network-online.target
 Type=oneshot
 # gh needs repo context for `gh pr list` discovery; systemd starts in $HOME,
 # which broke every tick once the script went live on main (2026-09-24).
-WorkingDirectory=/home/codex/dev/nexus
-# ExecCondition: skip cleanly (result=skipped, unit NOT failed) until the
-# script exists on the primary checkout — i.e. until the PR carrying it
-# merges. Prevents up to 96 failed ticks/day between timer enablement and
-# merge. Once bin/attestation_janitor.py lands on main, every tick is live.
-ExecCondition=/usr/bin/test -f /home/codex/dev/nexus/bin/attestation_janitor.py
-ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/attestation_janitor.py --apply --cap 3
+WorkingDirectory=/home/codex/dev/nexus-janitor
+# Self-heal to origin/main before every tick. Fails the unit loudly rather than
+# letting a stale checkout keep gating merges. -q keeps the journal readable.
+ExecStartPre=/usr/bin/git -C /home/codex/dev/nexus-janitor fetch --quiet origin main
+ExecStartPre=/usr/bin/git -C /home/codex/dev/nexus-janitor reset --hard --quiet origin/main
+# Skip cleanly (result=skipped, unit NOT failed) if the script is not present
+# on the deploy checkout — i.e. if the clone predates the PR that adds it.
+ExecCondition=/usr/bin/test -f /home/codex/dev/nexus-janitor/bin/attestation_janitor.py
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus-janitor/bin/attestation_janitor.py --apply --cap 3
 TimeoutStartSec=600
 SyslogIdentifier=attestation-janitor
 
