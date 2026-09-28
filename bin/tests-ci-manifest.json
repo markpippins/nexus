@@ -1,0 +1,30 @@
+{
+  "_policy": "Every guard in bin/tests/ is either run by bin/run_bin_tests.py or named here with a reason, an owner, and the thing tracking the debt. There is no third state. Exclusions may only shrink: a guard that starts passing fails bin/tests/test_bin_tests_manifest.py and must be removed here in the same PR that fixes it. Ruled in architect record fb11ad19 (Decision 4).",
+  "_why_this_exists": "At origin/main 46cb20e9, 38 of 76 guards were referenced by no workflow and no Makefile target. The Makefile enumerated tests one per line, so a new guard was ungated by default. That gap hid a real defect for seven days: two migrations both numbered V194 (record ccc4c755).",
+  "excluded": {
+    "test_migration_number_uniqueness.py": {
+      "reason": "FAILS on a real collision at origin/main: V194 is claimed by both V194__decommission_qbe_empty_tables.sql (#424) and V194__expression_register_producer.sql (#422). Excluded because it is red, not because it is broken. It must not be added to the guard's HISTORICAL_DUPLICATES allowlist - that would silence the finding rather than fix it.",
+      "owner": "dba",
+      "tracked": "record ccc4c755 (renumber ruling); decision fb11ad19",
+      "clears_when": "V194 is renumbered on main, at which point this guard passes and the ratchet forces its removal here"
+    },
+    "test_backfill_propositions.py": {
+      "reason": "RuntimeError: CONDUIT_PG_DSN must be set - requires a live PostgreSQL. Not runnable on a bare runner.",
+      "owner": "dba",
+      "tracked": "record fb11ad19 (Decision 4), owed with the other two PG-dependent guards",
+      "clears_when": "folded into the pg-integration harness job, which already provides a throwaway postgres:17 stack via bin/run-pg-integration-e2e.sh"
+    },
+    "test_drift_intake.py": {
+      "reason": "RuntimeError: CONDUIT_PG_DSN must be set - requires a live PostgreSQL. Not runnable on a bare runner.",
+      "owner": "dba",
+      "tracked": "record fb11ad19 (Decision 4), owed with the other two PG-dependent guards",
+      "clears_when": "folded into the pg-integration harness job"
+    },
+    "test_shrapnel_bridge.py": {
+      "reason": "RuntimeError: CONDUIT_PG_DSN must be set - requires a live PostgreSQL. Not runnable on a bare runner.",
+      "owner": "dba",
+      "tracked": "record fb11ad19 (Decision 4), owed with the other two PG-dependent guards",
+      "clears_when": "folded into the pg-integration harness job"
+    }
+  }
+}

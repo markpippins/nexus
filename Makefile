@@ -364,6 +364,14 @@ apidocs-gen:
 	@echo "[apidocs] generating openapi.yaml + API.md..."
 	@python3 tools/api-docs/gen_openapi.py --inventory $(APIDOCS_INV) $(if $(SKIP_FASTAPI),--skip-fastapi,)
 
+# ─── bin/tests guards: discover-and-run (Decision 4, record fb11ad19) ──────
+# Backs .github/workflows/bin-tests.yml — same command locally and in CI.
+# Discovers bin/tests/test_*.py; anything skipped is declared with a reason and
+# an owner in bin/tests-ci-manifest.json. Never edit a hand-kept test list here:
+# a guard must not be able to become ungated by omission.
+bintests:
+	@python3 bin/run_bin_tests.py
+
 apidocs-validate:
 	@$(MAKE) apidocs-extract
 	@echo "[apidocs] drift check..."
