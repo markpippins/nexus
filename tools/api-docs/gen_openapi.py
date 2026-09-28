@@ -120,6 +120,14 @@ SERVICES = {
                 "consumers, identities, snapshots, observations, and drift findings.",
         "skip_openapi": True,  # has its own registry-derived spec
     },
+    "typescript/substance-srv": {
+        "title": "substance-srv — Segment Sets API",
+        "port": 3115,
+        "desc": "Segment sets over transcript chunks: reusable, possibly non-contiguous "
+                "collections of nebula.segments_history rows that candidates and "
+                "requirements reference instead of copying source text forward. "
+                "Reads are cached in Redis; writes invalidate rather than write through.",
+    },
     "typescript/tackle-prompt-sync-srv": {
         "title": "tackle-prompt-sync-srv — Prompt + Task Registry Sync",
         "port": 3501,

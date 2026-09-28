@@ -28,9 +28,21 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # validated main's routes, not the branch's (found remediating PR #500 CI).
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 
+# The opening quote is optional so multi-line (prettier) route calls match:
+# `router.get(` at end-of-line enters the verb branch and the path is recovered
+# by lookahead; calls whose first argument is a variable still yield no path
+# and are skipped, same as before.
+# The opening quote is REQUIRED here (single-line routes). Multi-line
+# (prettier) route calls are handled separately by VERB_OPEN_RE below, which
+# only matches when the call's open paren ends the line - the two patterns are
+# mutually exclusive, so single-line behavior is byte-identical to the
+# original extractor.
 VERB_RE = re.compile(r"\.(get|post|put|patch|delete)\s*\(\s*['\"`]")
+# Multi-line route call: `router.get(` at end-of-line, quoted path on a
+# following line (recovered by lookahead in parse_file).
+VERB_OPEN_RE = re.compile(r"\.(get|post|put|patch|delete)\s*\(\s*$")
 USE_RE = re.compile(r"\.use\s*\(\s*['\"`]([^'\"`]+)['\"`]\s*,\s*([A-Za-z_$][\w$]*(?:\s*\([^)]*\))?)")
-ROUTER_RE = re.compile(r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:express\.)?Router\s*\(")
+ROUTER_RE = re.compile(r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::\s*[\w.]+)?\s*=\s*(?:express\.)?Router\s*\(")
 IMPORT_RE = re.compile(
     r"^\s*import\s+(?:(?P<default>[A-Za-z_$][\w$]*)\s*(?:,\s*)?)?"
     r"(?:\{(?P<named>[^}]+)\})?\s*from\s*['\"](?P<mod>[^'\"]+)['\"]"
@@ -261,6 +273,25 @@ def parse_file(fp, rel):
         dm = DEFAULT_EXPORT_RE.match(line)
         if dm:
             info.default_var = dm.group(1)
+            continue
+        vo = VERB_OPEN_RE.search(line)
+        if vo:
+            # Multi-line (prettier) route call: the verb line ends with the
+            # open paren and the quoted "/"-path follows within the next few
+            # lines. Calls whose first argument is a variable yield no path
+            # and are skipped, same as single-line behavior.
+            var = line[: vo.start()].split(".")[-1].strip()
+            verb = vo.group(1).lower()
+            path = None
+            for j in range(i + 1, min(i + 4, len(lines))):
+                qm = re.search(r"['\"`](/[^'\"`]*)['\"`]", lines[j])
+                if qm:
+                    path = qm.group(1).strip()
+                    break
+            if path and path.startswith("/") and (
+                "router" in var or var in info.router_vars or var == "app"
+            ):
+                info.routes.setdefault(var, []).append((verb, path, comment_above(lines, i)))
             continue
         vm = VERB_RE.search(line)
         if vm:
