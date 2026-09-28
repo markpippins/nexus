@@ -1,0 +1,38 @@
+# Every guard in bin/tests/ runs here, except what bin/tests-ci-manifest.json
+# explicitly declares with a reason, an owner, and the debt tracking it.
+#
+# Ruled in architect record fb11ad19 (Decision 4). Before this workflow, 38 of
+# 76 guards were referenced by no workflow and no Makefile target - including
+# test_migration_number_uniqueness, which had been continuously reporting a live
+# V194 migration-number collision on main (record ccc4c755) that nobody saw.
+#
+# Same command locally and in CI: make bintests
+name: bin/tests guards
+
+on:
+  push:
+    branches: [main, master, feature/*, dev]
+  pull_request:
+    branches: [main, master, feature/*]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  guards:
+    name: bin/tests guards (stdlib + pyyaml)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install PyYAML
+        run: pip install --quiet pyyaml
+      # A guard that cannot run bare is declared in the manifest, not skipped
+      # here. Exit 2 means the manifest itself is invalid (stale exclusion),
+      # which is a real failure and must not be confused with a red guard.
+      - name: Discover and run every non-excluded guard
+        run: make bintests
