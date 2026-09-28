@@ -113,7 +113,8 @@ async function main() {
   console.log("4. Verifying no harvest_context tab before link...");
   const infoBefore = await httpGet(`/api/systems/${systemId}/info`);
   assert(infoBefore.status === 200, "GET system info succeeds");
-  const hasTabBefore = (infoBefore.body || []).some((t: any) => t.tab_id === "harvest_context");
+  const tabsBefore: any[] = Array.isArray(infoBefore.body?.items) ? infoBefore.body.items : [];
+  const hasTabBefore = tabsBefore.some((t: any) => (t.tabId ?? t.tab_id) === "harvest_context");
   assert(!hasTabBefore, "No harvest_context tab before linking");
 
   // 5. PATCH candidate with systemId → triggers auto-upsert
@@ -128,8 +129,8 @@ async function main() {
   console.log("6. Verifying harvest_context tab after link...");
   const infoAfter = await httpGet(`/api/systems/${systemId}/info`);
   assert(infoAfter.status === 200, "GET system info succeeds");
-  const tabs: any[] = infoAfter.body || [];
-  const harvestTab = tabs.find((t: any) => t.tab_id === "harvest_context");
+  const tabs: any[] = Array.isArray(infoAfter.body?.items) ? infoAfter.body.items : [];
+  const harvestTab = tabs.find((t: any) => (t.tabId ?? t.tab_id) === "harvest_context");
   assert(!!harvestTab, "harvest_context tab exists after linking");
   assert(
     harvestTab.content.includes(candidateId),
@@ -162,7 +163,8 @@ async function main() {
   // 9. Verify tab is gone
   console.log("9. Verifying tab no longer appears...");
   const infoAfterDelete = await httpGet(`/api/systems/${systemId}/info`);
-  const hasTabAfterDelete = (infoAfterDelete.body || []).some((t: any) => t.tab_id === "harvest_context");
+  const tabsAfterDelete: any[] = Array.isArray(infoAfterDelete.body?.items) ? infoAfterDelete.body.items : [];
+  const hasTabAfterDelete = tabsAfterDelete.some((t: any) => (t.tabId ?? t.tab_id) === "harvest_context");
   assert(!hasTabAfterDelete, "harvest_context tab is gone after delete");
 
   // 10. Clean up

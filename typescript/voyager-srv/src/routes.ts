@@ -2,12 +2,13 @@ import { Request, Response, Router } from 'express';
 import { Pool } from 'pg';
 
 // ── Helpers ───────────────────────────────────────────────────────
-function toNumber(v: any, fallback: number): number {
+// Exported for tests (src/normaliser.test.ts); behaviour is unchanged.
+export function toNumber(v: any, fallback: number): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
 }
 
-function camelCaseRow(row: Record<string, any>): Record<string, any> {
+export function camelCaseRow(row: Record<string, any>): Record<string, any> {
   const out: Record<string, any> = {};
   for (const [key, value] of Object.entries(row)) {
     const camelKey = key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
@@ -20,7 +21,7 @@ function camelCaseRow(row: Record<string, any>): Record<string, any> {
   return out;
 }
 
-function camelCaseRows(rows: Record<string, any>[]): Record<string, any>[] {
+export function camelCaseRows(rows: Record<string, any>[]): Record<string, any>[] {
   return rows.map(camelCaseRow);
 }
 
