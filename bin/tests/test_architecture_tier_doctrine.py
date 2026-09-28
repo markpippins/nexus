@@ -64,6 +64,21 @@ class TestTierDoctrine(unittest.TestCase):
         self.assertIn("Tester's attestation recorded", receipt)
         self.assertIn("self-attestation is not sufficient", receipt)
 
+    def test_contract_casing_ruling_is_wired(self):
+        # Ruling 19d6f725: consumer-visible surface is camelCase, enforced by a ratchet.
+        checker = ARCH.parent / "bin" / "check_contract_casing.py"
+        self.assertTrue(checker.exists(), "bin/check_contract_casing.py missing")
+        baseline = ARCH.parent / "bin" / "contract-casing-baseline.json"
+        self.assertTrue(baseline.exists(), "baseline missing")
+        import json
+        b = json.loads(baseline.read_text())
+        # The ratchet metric must be occurrence-counted, not file-counted: a file ratchet is
+        # blind to more column names piled onto an already-leaking contract.
+        self.assertIn("leaks", b, "baseline lacks the leak-occurrence metric")
+        self.assertGreater(b["leaks"], 0, "leak baseline should be non-zero today")
+        self.assertIn("Ruling 19d6f725", self.text + checker.read_text(),
+                      "checker does not cite the ruling it enforces")
+
     def test_no_tier_claims_unverifiable_paths(self):
         # Guard against naming a service that does not exist as an exemption example.
         # Every ``path`` cited in the exemption paragraph must resolve.
