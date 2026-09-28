@@ -1,0 +1,167 @@
+name: Contract casing ratchet
+
+# Ruling 19d6f725: the contract (typespec/v1) declares the consumer-visible
+# surface, which is camelCase and never names a database column.
+# bin/check_contract_casing.py measures that surface and bin/
+# contract-casing-baseline.json holds the ratchet floor (mixed 12 / snake 5 /
+# leaks 588 today). Until now the ratchet was measured by hand — nothing in
+# the build executed it, so a PR could silently add snake_case leaks to a
+# contract and "green" attested to nothing. This workflow makes the ratchet a
+# continuously checked property of the build, the same way the service-test
+# gates did for the never-run suites (PRs #615, #630).
+#
+# The script's own fail-closed default is the gate:
+#   * ratchet mode (no flag) — fails iff mixed, snake, or leak counts rise
+#     above the committed baseline. leaks counts snake_case OCCURRENCES, not
+#     files, so piling more column names onto an already-leaking contract is
+#     caught. Lowering the baseline (fixing leaks) is encouraged; adding
+#     violations fails the PR.
+#   * --strict — reserved for the day the baseline reaches zero; wired via a
+#     workflow_dispatch input so it can be exercised before being enforced.
+#
+# No services, no installs: the checker is stdlib-only and scans the
+# typespec/v1 tree. A typespec edit that adds a leak fails the PR on this
+# check; a typespec edit that fixes one still passes until the baseline is
+# lowered, which keeps the 12 corrections from being serialized behind the
+# first one.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'typespec/**'
+      - 'bin/check_contract_casing.py'
+      - 'bin/contract-casing-baseline.json'
+      - 'bin/tests/test_architecture_tier_doctrine.py'
+      - '.github/workflows/contract-casing-ratchet.yml'
+  pull_request:
+    paths:
+      - 'typespec/**'
+      - 'bin/check_contract_casing.py'
+      - 'bin/contract-casing-baseline.json'
+      - 'bin/tests/test_architecture_tier_doctrine.py'
+      - '.github/workflows/contract-casing-ratchet.yml'
+  # Lets the ratchet be re-run for a branch without a throwaway push, and
+  # lets an operator run the future --strict mode against current main.
+  workflow_dispatch:
+    inputs:
+      strict:
+        description: "Run with --strict (fail on ANY violation; for when the baseline reaches zero)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  contract-casing-ratchet:
+    name: contract casing ratchet (typespec/v1)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # Deliberately no setup-node / npm: stdlib-only Python, nothing to
+      # install, so the job has no dependency surface to cache or pin.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # The baseline file is load-bearing: if it is renamed or deleted the
+      # checker silently falls back to a ZERO floor and every remaining
+      # violation turns the build red with a confusing number. Fail loudly
+      # here instead, where the cause is obvious.
+      - name: Assert the baseline exists (absent = misconfigured, not zero)
+        run: |
+          if [ ! -f bin/contract-casing-baseline.json ]; then
+            echo "::error::bin/contract-casing-baseline.json is missing — the checker would fall back to a zero floor and fail everything; restore the baseline or finish the zero-violation migration first"
+            exit 1
+          fi
+
+      # Fail-closed guard against a silently emptied sweep: the checker only
+      # classifies files matching models.tsp. If that glob ever stops
+      # matching (directory move, extension change), scan() returns empty
+      # counts, everything reads as "improved", and the ratchet stops biting
+      # while looking greener than ever. typespec/v1 has 40+ camel models.tsp
+      # files today; asserting a floor of 1 keeps the sweep honest.
+      - name: Assert the sweep actually sees contracts
+        run: |
+          N=$(find typespec/v1 -name 'models.tsp' | wc -l)
+          echo "models.tsp files under typespec/v1: $N"
+          if [ "$N" -lt 1 ]; then
+            echo "::error::no models.tsp files found under typespec/v1 — the ratchet would sweep nothing and always pass; the checker or the tree layout changed, not the casing"
+            exit 1
+          fi
+
+      # The ratchet itself, plus the baseline-vs-reality sanity pair. The
+      # mixed/snake/leaks numbers are printed into the job summary so a PR
+      # author sees exactly which number their change moved.
+      - name: Run the casing ratchet
+        run: |
+          set -o pipefail
+          # ${GITHUB_STEP_SUMMARY:-/dev/null} rather than "$GITHUB_STEP_SUMMARY":
+          # the fallback keeps the step runnable outside Actions (which is how
+          # its guards were verified) and safe under set -u.
+          SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
+          STRICT_FLAG=""
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.strict }}" = "true" ]; then
+            STRICT_FLAG="--strict"
+          fi
+          # The checker's exit code IS the gate; the zero-sweep tripwire below
+          # runs only on success, and the summary is written LAST so a pipefail
+          # from the checker still fails the step.
+          python3 bin/check_contract_casing.py $STRICT_FLAG | tee /tmp/casing-report.txt
+          RATCHET_RC=${PIPESTATUS[0]}
+          if [ "$RATCHET_RC" != 0 ]; then
+            echo "::error::contract casing ratchet failed — a change above added violations; fix the leaks or (if you fixed some) lower bin/contract-casing-baseline.json"
+            exit "$RATCHET_RC"
+          fi
+          # Fail-closed: counts of 0 across every shape mean the sweep found
+          # nothing at all (checker regression), which must not read as a
+          # pass. `camel 0` alone would mean every contract regressed.
+          if grep -qE '^  (camel|mixed|snake) +0$' /tmp/casing-report.txt \
+             && ! grep -qE '^  (camel|mixed|snake) +[1-9]' /tmp/casing-report.txt; then
+            echo "::error::checker reported zero contracts in every shape — the sweep is empty, which is a checker regression, not a pass"
+            exit 1
+          fi
+          MIXED=$(grep -E '^  mixed +[0-9]+$' /tmp/casing-report.txt | grep -oE '[0-9]+' | tail -1)
+          LEAKS=$(grep -E 'leaked storage names.*: [0-9]+$' /tmp/casing-report.txt | grep -oE '[0-9]+' | tail -1)
+          BASE=$(python3 -c "import json; b=json.load(open('bin/contract-casing-baseline.json')); print(f\"mixed {b['mixed']}, snake {b['snake']}, leaks {b['leaks']}\")")
+          {
+            echo "### Contract casing ratchet"
+            echo ""
+            echo "| metric | value |"
+            echo "|--------|-------|"
+            echo "| mixed files | ${MIXED:-?} |"
+            echo "| leaked storage names (occurrences) | ${LEAKS:-?} |"
+            echo ""
+            echo "Ratchet floor (bin/contract-casing-baseline.json): $BASE — lower it when you fix leaks; never raise it."
+          } >> "$SUMMARY"
+
+      # The baseline must match measured reality: if reality is now BETTER
+      # than the baseline, the baseline is stale and should be lowered in the
+      # same PR (the ratchet only moves down). If reality is worse, the step
+      # above already failed. This runs on the JSON report so it cannot drift
+      # from the script's own exit code.
+      - name: Baseline is a floor, not a suggestion (lower it when reality improves)
+        if: always()
+        run: |
+          # Advisory: tells the author to lower the baseline when reality has
+          # improved. Never fails the job (the ratchet step above owns that).
+          # --json is machine-pure (verdict goes to stderr) so this parses.
+          if python3 bin/check_contract_casing.py --json > /tmp/casing.json 2>/dev/null; then
+            python3 - <<'EOF'
+          import json
+          report = json.load(open("/tmp/casing.json"))
+          counts = report["counts"]
+          total = report["leak_total"]
+          base = json.load(open("bin/contract-casing-baseline.json"))
+          if (counts["mixed"] < base["mixed"]) or (counts["snake"] < base["snake"]) or (total < base["leaks"]):
+              print("::notice::measured counts are below the baseline (mixed %d/%d, snake %d/%d, leaks %d/%d) — lower bin/contract-casing-baseline.json; the ratchet only moves down" % (
+                  counts["mixed"], base["mixed"], counts["snake"], base["snake"], total, base["leaks"]))
+          else:
+              print("baseline matches or is above reality (advisory check, no action)")
+          EOF
+          else
+            echo "checker exited non-zero (ratchet failed above); skipping the advisory baseline comparison"
+          fi
