@@ -7,11 +7,12 @@
  *
  * Test flow:
  *  1. Seed a system + subsystem + harvest + unlinked candidate
- *  2. POST /api/harvest-candidates/:id/spawn-plan → REQUIREMENT MUST carry
- *     candidate_id = candidate.id (the regression)
+ *  2. POST /api/harvest-candidates/:id/spawn-requirement → REQUIREMENT MUST
+ *     carry candidate_id = candidate.id (the regression; verb renamed from
+ *     spawn-plan per decision 319defa5)
  *  3. GET /api/requirements/:id → hydrated candidateId at read parity
  *  4. POST /api/harvest-candidates/promote-to-plan → 410 Gone with pointer to
- *     the canonical spawn-plan path (architect retirement ruling, e68449f2 A2)
+ *     the canonical spawn-requirement path (architect retirement ruling, e68449f2 A2)
  *  5. Clean up
  *
  * Usage: npx tsx tests/requirement-candidate-id.test.ts   (nebula-srv on :3101)
@@ -122,13 +123,13 @@ async function main() {
     candidateId = candidateRes.body.id;
 
     // 3. THE REGRESSION: promote via canonical spawn-plan flow
-    console.log("3. Promoting candidate via POST /spawn-plan...");
-    const spawnRes = await httpPost(`/api/harvest-candidates/${candidateId}/spawn-plan`, {
+    console.log("3. Promoting candidate via POST /spawn-requirement...");
+    const spawnRes = await httpPost(`/api/harvest-candidates/${candidateId}/spawn-requirement`, {
       systemId,
       subsystemId,
       status: "Backlog",
     });
-    assert(spawnRes.status === 201, `spawn-plan succeeded → ${spawnRes.status}`);
+    assert(spawnRes.status === 201, `spawn-requirement succeeded → ${spawnRes.status}`);
     const requirementId: string | undefined = spawnRes.body?.requirement?.id;
     assert(!!requirementId, "spawn-plan returned a requirement");
     assert(
@@ -152,8 +153,8 @@ async function main() {
     });
     assert(retireRes.status === 410, `promote-to-plan → 410 Gone (got ${retireRes.status})`);
     assert(
-      retireRes.body?.useInstead === "POST /api/harvest-candidates/:id/spawn-plan",
-      "410 body points at canonical spawn-plan path"
+      retireRes.body?.useInstead === "POST /api/harvest-candidates/:id/spawn-requirement",
+      "410 body points at canonical spawn-requirement path"
     );
 
     // Cleanup

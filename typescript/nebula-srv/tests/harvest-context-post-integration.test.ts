@@ -86,7 +86,8 @@ async function main() {
   console.log("3. Verifying no harvest_context tab before creating candidates...");
   const infoBefore = await httpGet(`/api/systems/${systemId}/info`);
   assert(infoBefore.status === 200, "GET system info succeeds");
-  const hasTabBefore = (infoBefore.body || []).some((t: any) => t.tab_id === "harvest_context");
+  const tabsBefore: any[] = Array.isArray(infoBefore.body?.items) ? infoBefore.body.items : [];
+  const hasTabBefore = tabsBefore.some((t: any) => t.tab_id === "harvest_context");
   assert(!hasTabBefore, "No harvest_context tab before creating linked candidate");
 
   // ════════════════════════════════════════════════════════════
@@ -113,8 +114,8 @@ async function main() {
   console.log("5. Verifying harvest_context tab after first candidate POST...");
   const info1 = await httpGet(`/api/systems/${systemId}/info`);
   assert(info1.status === 200, "GET system info succeeds");
-  const tabs1: any[] = info1.body || [];
-  const tab1 = tabs1.find((t: any) => t.tab_id === "harvest_context");
+  const tabs1: any[] = Array.isArray(info1.body?.items) ? info1.body.items : [];
+  const tab1 = tabs1.find((t: any) => (t.tabId ?? t.tab_id) === "harvest_context");
   assert(!!tab1, "harvest_context tab exists after POST with systemId + intent");
   assert(
     tab1.content.includes(candidate1Id),
@@ -153,8 +154,8 @@ async function main() {
   console.log("7. Verifying harvest_context tab reflects latest candidate...");
   const info2 = await httpGet(`/api/systems/${systemId}/info`);
   assert(info2.status === 200, "GET system info succeeds");
-  const tabs2: any[] = info2.body || [];
-  const tab2 = tabs2.find((t: any) => t.tab_id === "harvest_context");
+  const tabs2: any[] = Array.isArray(info2.body?.items) ? info2.body.items : [];
+  const tab2 = tabs2.find((t: any) => (t.tabId ?? t.tab_id) === "harvest_context");
   assert(!!tab2, "harvest_context tab still exists");
   assert(
     tab2.content.includes("Auto-Tab Candidate Two"),
@@ -198,12 +199,15 @@ async function main() {
   console.log("10. Verifying no tab appeared for unlinked candidate's system...");
   const infoUnlinked = await httpGet(`/api/systems/${system2Id}/info`);
   assert(infoUnlinked.status === 200, "GET second system info succeeds");
-  const hasTabOnSys2 = (infoUnlinked.body || []).some((t: any) => t.tab_id === "harvest_context");
+  const tabsUnlinked: any[] = Array.isArray(infoUnlinked.body?.items) ? infoUnlinked.body.items : [];
+  const hasTabOnSys2 = tabsUnlinked.some((t: any) => (t.tabId ?? t.tab_id) === "harvest_context");
   assert(!hasTabOnSys2, "No harvest_context tab on system 2 (unlinked candidate)");
 
   // Also verify system 1 still has only its own tab (not polluted by unlinked candidate)
   const infoSys1 = await httpGet(`/api/systems/${systemId}/info`);
-  const sys1Tabs = (infoSys1.body || []).filter((t: any) => t.tab_id === "harvest_context");
+  const sys1Tabs: any[] = Array.isArray(infoSys1.body?.items)
+    ? infoSys1.body.items.filter((t: any) => (t.tabId ?? t.tab_id) === "harvest_context")
+    : [];
   assert(sys1Tabs.length === 1, "System 1 still has exactly 1 harvest_context tab");
 
   // ════════════════════════════════════════════════════════════
@@ -231,7 +235,8 @@ async function main() {
   console.log("12. Verifying no tab when intent_description is null...");
   const infoNoIntent = await httpGet(`/api/systems/${system3Id}/info`);
   assert(infoNoIntent.status === 200, "GET third system info succeeds");
-  const hasTabNoIntent = (infoNoIntent.body || []).some((t: any) => t.tab_id === "harvest_context");
+  const tabsNoIntent: any[] = Array.isArray(infoNoIntent.body?.items) ? infoNoIntent.body.items : [];
+  const hasTabNoIntent = tabsNoIntent.some((t: any) => (t.tabId ?? t.tab_id) === "harvest_context");
   assert(!hasTabNoIntent, "No harvest_context tab when candidate has no intent_description");
 
   // ════════════════════════════════════════════════════════════

@@ -7,7 +7,8 @@
  *  3. GET /api/cross-references?sourceType=harvest_candidate&sourceId=<candidateId>
  *     → verify the cross-reference exists with rel_type='ag:spawns_plan'
  *  4. Verify the reverse lookup: GET /api/plans/:planRef/candidates returns the candidate
- *  5. Also test the spawn-plan endpoint: unlink first, then POST spawn-plan
+ *  5. Also test the spawn-requirement endpoint: unlink first, then POST
+ *     spawn-requirement (verb renamed from spawn-plan per decision 319defa5)
  *  6. Clean up
  *
  * Usage: npx ts-node tests/crossref-spawnplan-integration.test.ts
@@ -238,27 +239,27 @@ async function main() {
   console.log(`\n--- PART C: spawn-plan endpoint with planRef=${PLAN_REF_SPAWN} ---\n`);
 
   // 13. Create a fresh candidate for spawn-plan test
-  console.log("13. Creating fresh candidate for spawn-plan test...");
+  console.log("13. Creating fresh candidate for spawn-requirement test...");
   const freshCandRes = await httpPost("/api/harvest-candidates", {
     harvestId,
     title: "SpawnPlan Test Candidate",
-    intentDescription: "Intent: verify the spawn-plan endpoint creates requirement + cross-reference.",
+    intentDescription: "Intent: verify the spawn-requirement endpoint creates requirement + cross-reference.",
     tags: ["test", "spawn-plan"],
   });
   assert(freshCandRes.status === 201, `Created fresh candidate → ${freshCandRes.status}`);
   const freshCandidateId: string = freshCandRes.body.id;
   console.log(`   candidateId: ${freshCandidateId}`);
 
-  // 14. POST spawn-plan
-  console.log("14. Calling spawn-plan endpoint...");
-  const spawnRes = await httpPost(`/api/harvest-candidates/${freshCandidateId}/spawn-plan`, {
+  // 14. POST spawn-requirement
+  console.log("14. Calling spawn-requirement endpoint...");
+  const spawnRes = await httpPost(`/api/harvest-candidates/${freshCandidateId}/spawn-requirement`, {
     systemId,
     subsystemId,
     planRef: PLAN_REF_SPAWN,
     priority: "High",
     status: "ToDo",
   });
-  assert(spawnRes.status === 201, `spawn-plan succeeded → ${spawnRes.status}`);
+  assert(spawnRes.status === 201, `spawn-requirement succeeded → ${spawnRes.status}`);
   assert(spawnRes.body.candidate !== undefined, "Response includes candidate");
   assert(spawnRes.body.requirement !== undefined, "Response includes requirement");
   assert(spawnRes.body.crossReference !== null, "Response includes crossReference");
@@ -268,7 +269,7 @@ async function main() {
   console.log(`   crossReference.relType: ${spawnRes.body.crossReference.relType}`);
 
   // 15. Verify spawn-plan cross-reference exists
-  console.log(`15. Verifying spawn-plan cross-reference via GET /api/cross-references...`);
+  console.log(`15. Verifying spawn-requirement cross-reference via GET /api/cross-references...`);
   const xrefSpawn = await httpGet(
     `/api/cross-references?sourceType=harvest_candidate&sourceId=${freshCandidateId}`
   );
@@ -278,7 +279,7 @@ async function main() {
       x.target_id === PLAN_REF_SPAWN &&
       x.rel_type === "ag:spawns_plan"
   );
-  assert(!!spawnXref, "spawn-plan cross-reference exists in cross-references API");
+  assert(!!spawnXref, "spawn-requirement cross-reference exists in cross-references API");
   console.log(`   crossRefId: ${spawnXref.id}`);
 
   // 16. Verify reverse lookup for spawn-plan ref

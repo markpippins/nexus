@@ -46,9 +46,9 @@ async function domainSegmentSets(req, res, next) {
 }
 
 // eslint-disable-next-line max-statements-per-line -- one line per route for extract_routes.py
-segmentSetsRouter.get('/candidates/:id/segment-sets', (req, res, next) => { req.params.domainType = 'candidates'; return domainSegmentSets(req, res, next); });
+segmentSetsRouter.get('/candidates/:id/segment-sets', (req, res, next) => { Object.assign(req.params, { domainType: 'candidates' }); return domainSegmentSets(req, res, next); });
 // eslint-disable-next-line max-statements-per-line
-segmentSetsRouter.get('/requirements/:id/segment-sets', (req, res, next) => { req.params.domainType = 'requirements'; return domainSegmentSets(req, res, next); });
+segmentSetsRouter.get('/requirements/:id/segment-sets', (req, res, next) => { Object.assign(req.params, { domainType: 'requirements' }); return domainSegmentSets(req, res, next); });
 
 void DOMAIN_TYPES;
 

@@ -71,12 +71,24 @@ function assertError(res: any, expected: string, msg: string): void {
 async function main() {
   console.log("=== cross-reference taxonomy enforcement test ===\n");
 
-  // Two real agent_record ids for the valid ag:same_thread_as case.
-  const agentRecords = await httpGet("/api/agent-records?limit=2&role=engineer");
-  const items: any[] = agentRecords.body?.items ?? [];
-  assert(items.length >= 2, "Found ≥2 agent records for the valid case");
-  const sourceId: string = items[0].id;
-  const targetId: string = items[1].id;
+  // Two SELF-SEEDED agent_record ids for the valid ag:same_thread_as case.
+  // The create-crossref boundary only checks source/target type + existence,
+  // but a fresh database (CI) cannot rely on live rows being present — the
+  // original version fetched real engineer rows and failed on an empty DB.
+  const fixtureBody = (letter: string) => ({
+    recordType: "report",
+    role: "engineer",
+    title: `crossref-taxonomy-validation fixture ${letter}`,
+    content: "Self-seeded fixture for tests/crossref-taxonomy-validation.test.ts",
+    tags: ["test", "crossref-taxonomy-validation"],
+    level: 1,
+  });
+  const recA = await httpPost("/api/agent-records", fixtureBody("A"));
+  assert(recA.status === 201, `Fixture A created → ${recA.status}`);
+  const recB = await httpPost("/api/agent-records", fixtureBody("B"));
+  assert(recB.status === 201, `Fixture B created → ${recB.status}`);
+  const sourceId: string = recA.body.id;
+  const targetId: string = recB.body.id;
 
   // 1. Non-enum rel_type: promotes_to (legacy candidate→requirement drift)
   console.log("1. Reject non-enum rel_type 'promotes_to'...");
@@ -130,6 +142,10 @@ async function main() {
   console.log("5. Deleting the created cross-reference...");
   const del = await httpDelete(`/api/cross-references/${createdId}`);
   assert(del.status === 200 || del.status === 204, `Deleted created cross-ref → ${del.status}`);
+
+  await httpDelete(`/api/agent-records/${sourceId}`);
+  await httpDelete(`/api/agent-records/${targetId}`);
+  console.log("    Fixtures deleted.");
 
   console.log("\n✅ All taxonomy-enforcement tests passed!");
   process.exit(0);

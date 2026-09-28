@@ -84,14 +84,14 @@ async function run() {
   // ── Test 2: List entries ────────────────────────────────────────
   const listAll = await httpReq("GET", "/api/op-registry");
   assert("List entries returns 200", listAll.status === 200);
-  assert("List contains our entry", listAll.body.entries.some((e: any) => e.id === entryId));
+  assert("List contains our entry", (listAll.body.items || []).some((e: any) => e.id === entryId));
 
   const listFiltered = await httpReq("GET", "/api/op-registry?intent_id=TEST_SCAFFOLD_SERVICE");
   assert("Filter by intent_id works", listFiltered.status === 200);
-  assert("Filter returns exactly 1", listFiltered.body.count === 1, String(listFiltered.body.count));
+  assert("Filter returns exactly 1", (listFiltered.body.items || []).length === 1, String(listFiltered.body.total));
 
   const listSearch = await httpReq("GET", "/api/op-registry?search=Scaffold");
-  assert("Text search works", listSearch.status === 200 && listSearch.body.count >= 1);
+  assert("Text search works", listSearch.status === 200 && (listSearch.body.items || []).length >= 1, String(listSearch.body.total));
 
   // ── Test 3: Get single entry ────────────────────────────────────
   const getEntry = await httpReq("GET", `/api/op-registry/${encodeURIComponent(entryId)}`);
@@ -136,7 +136,7 @@ async function run() {
   const lineage = await httpReq("GET", `/api/op-registry/${encodeURIComponent(forkSourceId)}/lineage`);
   assert("Lineage returns 200", lineage.status === 200);
   assert("Lineage contains both versions", lineage.body.count === 2, String(lineage.body.count));
-  assert("Includes v2 entry", lineage.body.entries.some((e: any) => e.version === "v2"));
+  assert("Includes v2 entry", (lineage.body.entries || []).some((e: any) => e.version === "v2"));
 
   // ── Test 6: Soft-delete ─────────────────────────────────────────
   const deleted = await httpReq("DELETE", `/api/op-registry/${encodeURIComponent(entryId)}`);
