@@ -12,7 +12,10 @@
   },
   "scripts": {
     "build": "tsc -p .",
-    "watch": "tsc -p . --watch"
+    "watch": "tsc -p . --watch",
+    "test": "vitest run",
+    "pretest": "npm run build",
+    "typecheck": "tsc --noEmit -p ."
   },
   "dependencies": {
     "@types/pg": "^8.23.1",
@@ -22,7 +25,8 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "^4.1.10"
   },
   "peerDependencies": {
     "@typespec/compiler": "^1.0.0"
