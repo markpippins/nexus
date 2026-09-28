@@ -365,6 +365,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+          cache: npm
+          cache-dependency-path: typescript/nebula-srv/package-lock.json
 
       # nebula-srv is on main, so "missing" can only mean deleted. Deleted is
       # an error, not a skip.
@@ -576,6 +578,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+          cache: npm
+          cache-dependency-path: typescript/assembly-srv/package-lock.json
 
       - name: Assert the service exists (absent = deleted, not skipped)
         run: |
