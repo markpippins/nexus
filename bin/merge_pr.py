@@ -412,10 +412,37 @@ def evaluate_attestation(
     created_iso = datetime.fromtimestamp(
         created_ms / 1000, tz=timezone.utc
     ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    tags_newest = {
+        str(t).split(":", 1)[0].lower(): str(t).split(":", 1)[1]
+        for t in (newest.get("tags") or [])
+        if ":" in str(t or "")
+    }
     if head_date_ms is None:
         return (False,
                 f"attestation exists ({created_iso}) but head commit date is unknown (fail closed)",
                 gate_codes.HEAD_DATE_UNKNOWN)
+    # Decision 10: the head BINDING is a `head:<sha>` tag compared against
+    # headRefOid (minted only by the pgie-evidence.py head-minting helper via
+    # ls-remote at attestation time — never hand-typed). The timestamp
+    # predicate (created_ms >= head_date_ms) is SUBSUMED by the binding —
+    # a rebase/force-push changes headRefOid, so a stale attestation fails
+    # equality regardless of when it was posted. Prefix comparison either
+    # direction (the minted tag may carry 7-40 hex chars). Evaluated only
+    # when both sides exist; absent tags fall through to the content-based
+    # checks so the binding rule stays additive (legacy rows keep semantics).
+    if "head" in tags_newest and head_sha:
+        bound = tags_newest["head"].lower()
+        h = head_sha.lower()
+        if not (h.startswith(bound) or bound.startswith(h[:7])):
+            return (
+                False,
+                f"attestation head binding {bound[:8]} != PR head {h[:8]} "
+                "(Decision 10: binding is by SHA; re-issue the attestation via "
+                "the head-minting helper after the push)",
+                gate_codes.ATT_STALE_HEAD,
+            )
+    # Timestamp predicate kept unconditionally (belt-and-braces beneath the
+    # binding; the binding short-circuits above when a head: tag exists).
     if created_ms < head_date_ms:
         head_iso = datetime.fromtimestamp(
             head_date_ms / 1000, tz=timezone.utc

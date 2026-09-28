@@ -21,10 +21,14 @@ artifact with if: always(); the local runner must delegate likewise.
 """
 import json
 import os
+import shutil
 import subprocess
+import time
 import sys
 import tempfile
 import unittest
+
+PGIE = str(__import__("pathlib").Path(__file__).resolve().parents[1] / "pgie-evidence.py")
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 HELPER = os.path.join(_REPO_ROOT, "bin", "pgie-evidence.py")
@@ -177,6 +181,121 @@ class SingleAuthorityTests(unittest.TestCase):
         text = open(RUNNER, encoding="utf-8").read()
         self.assertIn("pgie-evidence.py guard", text)
         self.assertNotIn("record_result", text)
+
+def _load_merge_pr():
+    """Import bin/merge_pr.py for the gate-binding tests (same importlib
+    pattern this repo's bin test files use for script modules)."""
+    import importlib.util as _ilu
+    _mp = str(__import__("pathlib").Path(__file__).resolve().parents[1] / "merge_pr.py")
+    _spec = _ilu.spec_from_file_location("merge_pr_under_test", _mp)
+    _mod = _ilu.module_from_spec(_spec)
+    import sys as _sys
+    _sys.modules["merge_pr_under_test"] = _mod
+    _spec.loader.exec_module(_mod)
+    return _mod
+
+merge_pr = _load_merge_pr()
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  mint-head (Decision 10 head-binding tool) — output-shape + fail-closed
+# ══════════════════════════════════════════════════════════════════════
+
+class MintHead(unittest.TestCase):
+    """The minted tag must be `head:<sha7>` of the PR's CURRENT remote head,
+    and must fail closed (exit 2, ::error::) when the remote cannot be
+    resolved — never print a guessable or copied value."""
+
+    def _run(self, *args, monkey=None):
+        env = dict(os.environ)
+        if monkey:
+            env.update(monkey)
+        return subprocess.run(
+            [sys.executable, PGIE, "mint-head", *args],
+            capture_output=True, text=True, env=env, timeout=30)
+
+    def test_pr_635_head_binds_to_live_remote(self):
+        """Live: minted sha must equal the PR's headRefOid prefix. Skipped
+        when gh/network is unavailable (CI without token, offline laptop)."""
+        gh = shutil.which("gh")
+        if not gh:
+            self.skipTest("gh not available")
+        probe = subprocess.run(
+            ["gh", "pr", "view", "635", "--json", "headRefOid", "--jq", ".headRefOid"],
+            capture_output=True, text=True, timeout=30)
+        if probe.returncode != 0:
+            self.skipTest("gh unauthenticated or offline")
+        expected = probe.stdout.strip()[:7]
+        r = self._run("--pr", "635", "--repo", "markpippins/nexus")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertRegex(r.stdout.strip(), r"^head:[0-9a-f]{7}$")
+        self.assertEqual(r.stdout.strip().split(":")[1], expected)
+
+    def test_bogus_pr_fails_closed(self):
+        r = self._run("--pr", "999999999", "--repo", "markpippins/nexus")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("::error::", r.stderr + r.stdout)
+
+    def test_unresolvable_repo_fails_closed(self):
+        r = self._run("--pr", "1", "--repo", "definitely-not-a-real-repo-xyz/none")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("::error::", r.stderr + r.stdout)
+
+
+class GateHeadBinding(unittest.TestCase):
+    """merge_pr gate 3: `head:` tag equality vs headRefOid (Decision 10).
+    The tag subsumes the timestamp predicate: any push after the attestation
+    changes headRefOid and fails the binding regardless of created_ms."""
+
+    HEAD = "a8b1dfc600000000000000000000000000000000"
+
+    def _eval(self, tags, head_sha=HEAD, run_json=None):
+        rec = {
+            "id": "bind00001", "role": "tester",
+            "createdAt": int(time.time() * 1000) - 3600_000,
+            "tags": tags + ["type:approval", "status:done", "pr:487"],
+            "title": "Tester attestation: PR #487 — CI run 36000000001 success",
+            "content": "CI run 36000000001 success at head a8b1dfc6.",
+            "recordType": "assessment",
+        }
+        kwargs = {}
+        if run_json is not None:
+            kwargs["run_json"] = run_json
+        return merge_pr.evaluate_attestation(
+            [rec], 487, int(time.time() * 1000) - 7200_000,
+            head_sha=head_sha, **kwargs)
+
+    def _ok_run(self, *args):
+        return {"c": "success", "s": self.HEAD}
+
+    def test_matching_head_tag_passes(self):
+        ok, detail, code = self._eval(["head:a8b1dfc6"], run_json=self._ok_run)
+        self.assertTrue(ok, detail)
+        self.assertIsNone(code)
+
+    def test_long_form_tag_also_binds(self):
+        ok, detail, code = self._eval([f"head:{self.HEAD}"], run_json=self._ok_run)
+        self.assertTrue(ok, detail)
+
+    def test_wrong_head_tag_fails_even_when_fresh(self):
+        ok, detail, code = self._eval(["head:deadbeef"], run_json=self._ok_run)
+        self.assertFalse(ok)
+        self.assertEqual(code, "ATT_STALE_HEAD")
+        self.assertIn("binding is by SHA", detail)
+
+    def test_binding_defeats_timestamp_freshness(self):
+        """The incident case: a re-used/copied row (wrong head tag) must fail
+        on the BINDING even though its createdAt postdates the head commit —
+        the old timestamp predicate alone passed exactly this shape."""
+        ok, detail, code = self._eval(["head:deadbeef"], run_json=self._ok_run)
+        self.assertFalse(ok)
+        self.assertIn("binding", detail.lower())
+
+    def test_absent_head_tag_falls_through_to_content_rules(self):
+        """Legacy rows without a head: tag keep their additive semantics:
+        no binding check, content-based CI-evidence rule still applies."""
+        ok, detail, code = self._eval([], run_json=self._ok_run)
+        self.assertTrue(ok, detail)
 
 
 if __name__ == "__main__":
