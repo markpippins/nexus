@@ -6,9 +6,13 @@ One cycle:
      override with JANITOR_AUTHOR).
   2. Prefilter candidates via the indexed attestation lookup
      (GET {NEBULA_BASE}/api/attestations?pr=N, same NEBULA_BASE convention as
-     bin/merge_pr.py): a 200 with zero rows proves the PR unattested -> skip.
-     An unreachable/404 endpoint proves nothing -> evaluate anyway (fail-safe;
-     the gate's own scan fallback still decides).
+     bin/merge_pr.py): rows -> attested. A 200 with ZERO rows is NOT yet a
+     definitive absence: the index only sees canonical/legacy attestation
+     shapes, so the prefilter probes tester mentions (the gate's
+     ATT_SHAPE_UNSEEN input) and skips only when that probe is empty too
+     (Decision 8 fix A — an empty index proves "no canonical rows", not "no
+     tester approval"; defect 5c798810). Unreachable/404/ambiguous ->
+     evaluate anyway (fail-safe; the gate's own scan fallback still decides).
   3. Run bin/merge_pr.py <N> in CHECK-ONLY mode. Only if every gate passes:
      if --apply, merge via bin/merge_pr.py <N> --merge (the gate re-runs all
      checks at merge time), then post a change-log entry. If the sole failing
@@ -140,22 +144,58 @@ def discover_open_prs(author: str, runner: Callable) -> List[Dict[str, Any]]:
     return sorted(prs, key=lambda p: p["number"])
 
 
-def attestation_prefilter(pr_number: int, base_url: str) -> Optional[bool]:
-    """True=attested, False=proven unattested, None=unknown (endpoint down).
+def _urlopen_json(url: str, timeout: int = 8) -> Any:
+    """GET `url`, return parsed JSON; raise on non-200 / unreachable / bad JSON."""
+    with urllib.request.urlopen(url, timeout=timeout) as resp:
+        if resp.status != 200:
+            raise RuntimeError(f"unexpected status {resp.status} for {url}")
+        return json.loads(resp.read().decode("utf-8"))
 
-    Uses the same endpoint the gate's indexed path uses. A definitive empty
-    result lets the janitor skip without spending a gate run; anything else
-    (404 while migration 055 is undeployed, timeout, bad JSON) is treated as
-    unknown so the gate + its scan fallback remain the authority.
+
+def attestation_prefilter(
+    pr_number: int,
+    base_url: str,
+    http_get: Optional[Callable[[str], Any]] = None,
+) -> Optional[bool]:
+    """True=attested, False=proven unattested, None=unknown (evaluate anyway).
+
+    Uses the same endpoint the gate's indexed path uses. Rows -> attested.
+    On an EMPTY result, a definitive absence is NOT claimed until the same
+    tester-mentions probe the gate uses (GET /api/agent-records?role=tester
+    &tag=pr:N — the ATT_SHAPE_UNSEEN input) also comes back empty (Decision 8
+    fix A, triage a61218dd, defect 5c798810): a legacy-shape attestation
+    (report + type:approval + status:attested) is invisible to the indexed
+    shape filter, so an empty index proves "no canonical rows", not "no
+    tester approval". Mentions present -> None (the gate runs and emits
+    ATT_SHAPE_UNSEEN through the adjudication routing). Probe unusable
+    (endpoint down, bad shape) -> None (fail-safe: the gate + its scan
+    fallback remain the authority).
     """
+    fetch = http_get or _urlopen_json
     url = f"{base_url.rstrip('/')}/api/attestations?pr={pr_number}"
+    mentions_url = (
+        f"{base_url.rstrip('/')}/api/agent-records"
+        f"?role=tester&tag=pr:{pr_number}&limit=3"
+    )
     try:
-        with urllib.request.urlopen(url, timeout=8) as resp:
-            if resp.status != 200:
-                return None
-            data = json.loads(resp.read().decode("utf-8"))
-        return len(data.get("items", [])) > 0
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError):
+        data = fetch(url)
+        if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+            return None
+        if data["items"]:
+            return True
+        # Empty index: probe tester mentions before claiming a definitive
+        # absence. Any doubt here means UNKNOWN, never a skip — the pre-#608
+        # "definitive empty" call is exactly what hid #565/#568.
+        mentions = fetch(mentions_url)
+        if (
+            isinstance(mentions, dict)
+            and isinstance(mentions.get("items"), list)
+            and not mentions["items"]
+        ):
+            return False
+        return None
+    except Exception:
+        # Fail-safe: a lookup error (either call) is never a definitive skip.
         return None
 
 
@@ -506,10 +546,19 @@ def run_cycle(
             continue
         pre = attestation_prefilter(num, base_url)
         if pre is False:
-            print(f"  #{num}: no attestation rows (indexed lookup, definitive) — skip", file=out)
+            print(
+                f"  #{num}: no attestation rows and no tester mentions "
+                "(indexed lookup, definitive) — skip",
+                file=out,
+            )
             continue
         if pre is None:
-            print(f"  #{num}: attestation endpoint unavailable/unknown — evaluating via gate (fail-safe)", file=out)
+            print(
+                f"  #{num}: attestation unknown (endpoint down, or tester "
+                "records exist that the index cannot see) — evaluating via "
+                "gate (fail-safe)",
+                file=out,
+            )
 
         proc = run_gate(num, runner)
         if gate_failed_only_on_draft(proc, pr.get("isDraft", False)):
