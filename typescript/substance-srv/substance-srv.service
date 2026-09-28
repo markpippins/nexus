@@ -1,0 +1,37 @@
+[Unit]
+Description=Substance SRV — Segment Sets API (TypeScript, port 3115)
+Documentation=https://github.com/nexus/typescript/substance-srv
+After=network.target postgresql.service redis.service
+Wants=postgresql.service redis.service
+
+[Service]
+Type=simple
+User=codex
+Group=codex
+WorkingDirectory=/home/codex/dev/nexus/typescript/substance-srv
+
+# ── Environment ────────────────────────────────────────────────────────
+Environment=SUBSTANCE_PORT=3115
+Environment=NODE_ENV=production
+Environment=NEBULA_PG_DSN=postgresql://pguser:pgpass@localhost:5432/nexus
+Environment=NEBULA_REDIS_URL=redis://localhost:6379/0
+Environment=NEBULA_SEGSET_CACHE_TTL=3600
+Environment=PATH=/home/codex/.nvm/versions/node/v24.15.0/bin:/usr/local/bin:/usr/bin:/bin
+
+# ── Executable ─────────────────────────────────────────────────────────
+ExecStart=/home/codex/.nvm/versions/node/v24.15.0/bin/node dist/index.js
+ExecReload=/bin/kill -HUP $MAINPID
+
+# ── Restart behavior ───────────────────────────────────────────────────
+Restart=on-failure
+RestartSec=3
+
+# ── Hardening ──────────────────────────────────────────────────────────
+NoNewPrivileges=true
+ProtectSystem=strict
+PrivateTmp=true
+ProtectHome=read-only
+ReadWritePaths=/home/codex/dev/nexus/typescript/substance-srv
+
+[Install]
+WantedBy=default.target

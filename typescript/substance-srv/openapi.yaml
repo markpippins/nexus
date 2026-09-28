@@ -1,0 +1,429 @@
+openapi: 3.0.3
+info:
+  title: substance-srv — Segment Sets API
+  version: 1.0.af45d801
+  description: 'Segment sets over transcript chunks: reusable, possibly non-contiguous collections of nebula.segments_history
+    rows that candidates and requirements reference instead of copying source text forward. Reads are cached in Redis; writes
+    invalidate rather than write through.
+
+
+    Endpoint inventory generated from source route registrations by `nexus/tools/api-docs/`. Request/response bodies are generic;
+    field-level contracts live in the service code and its README.'
+servers:
+- url: http://localhost:3115
+tags:
+- name: healthz
+- name: segment-sets
+- name: '{domain_type}'
+paths:
+  /{domain_type}/{domain_id}/segment-sets:
+    get:
+      tags:
+      - '{domain_type}'
+      operationId: get_domain_type_domain_id_segment_sets
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: domain_type
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: domain_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags:
+      - '{domain_type}'
+      operationId: post_domain_type_domain_id_segment_sets
+      responses:
+        '201':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: domain_type
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: domain_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /{domain_type}/{domain_id}/segment-sets/{segment_set_id}:
+    delete:
+      tags:
+      - '{domain_type}'
+      operationId: delete_domain_type_domain_id_segment_sets_segment_set_id
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: domain_type
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: domain_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: segment_set_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /healthz:
+    get:
+      tags:
+      - healthz
+      operationId: get_healthz
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /segment-sets:
+    get:
+      tags:
+      - segment-sets
+      operationId: get_segment_sets
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      tags:
+      - segment-sets
+      operationId: post_segment_sets
+      responses:
+        '201':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /segment-sets/{segment_set_id}:
+    get:
+      tags:
+      - segment-sets
+      operationId: get_segment_sets_segment_set_id
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: segment_set_id
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      tags:
+      - segment-sets
+      operationId: patch_segment_sets_segment_set_id
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: segment_set_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /segment-sets/{segment_set_id}/members:
+    post:
+      tags:
+      - segment-sets
+      operationId: post_segment_sets_segment_set_id_members
+      responses:
+        '201':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: segment_set_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /segment-sets/{segment_set_id}/members/{segment_id}:
+    delete:
+      tags:
+      - segment-sets
+      operationId: delete_segment_sets_segment_set_id_members_segment_id
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: segment_set_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: segment_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /segment-sets/from-segments:
+    post:
+      tags:
+      - segment-sets
+      operationId: post_segment_sets_from_segments
+      responses:
+        '201':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonBody'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  schemas:
+    JsonBody:
+      type: object
+      additionalProperties: true
+      description: Generic JSON body (fields are service-specific).
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Machine-readable error code (e.g. not_found, validation_failed).
+        message:
+          type: string
+          description: Human-readable error detail.
+      additionalProperties: true
+x-generated-by: nexus/tools/api-docs/gen_openapi.py
