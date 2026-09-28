@@ -204,6 +204,73 @@ JSON_BODY_REF = "#/components/schemas/JsonBody"
 ERROR_REF = "#/components/schemas/Error"
 
 
+# ── Typed response envelopes ──────────────────────────────────────────
+# The generator's default for every success response is the generic `JsonBody`
+# (see build_operation). That is honest — most endpoints here do return
+# service-specific shapes — but it is wrong *expensively* for the few whose
+# envelope is known and load-bearing, because an undocumented shape is
+# indistinguishable from an undocumented-and-changed shape. Consumers guess.
+#
+# Cost of one such guess, measured rather than assumed:
+# `GET /api/forums/threads/{threadId}` returns `{thread, comments}` with
+# `comments` a TOP-LEVEL SIBLING of `thread`. Two agents independently read it
+# as `thread.comments` and filed a three-day "Assembly comments don't read
+# back" phantom outage, during which three DBA rulings escalated to the
+# architect were believed unread. The handler was correct the whole time and
+# the Angular UI reads it correctly (`(await a.json()).comments || []`); no
+# repo code was wrong. The spec simply never said. That is a governance-cost
+# defect, which is why it is worth a typed envelope rather than a wiki note.
+#
+# Deliberately opt-in, per endpoint. Add an entry ONLY when the envelope is
+# stable AND a consumer guessing wrong causes real harm. Typing every endpoint
+# is a different and much larger piece of work, and doing it by reflex here
+# would put unreviewed shapes into the contract of record.
+#
+# Keyed by service key, then by (METHOD, OpenAPI path) — the path must already
+# be in OpenAPI brace form, i.e. post-`path_to_openapi`. A key that matches no
+# route is a silent no-op, so the guard test asserts every override resolves.
+RESPONSE_OVERRIDES = {
+    "typescript/assembly-srv": {
+        ("GET", "/api/forums/threads/{threadId}"): "ThreadDetail",
+    },
+}
+
+# Named schemas referenced by RESPONSE_OVERRIDES. Emitted into
+# components.schemas ONLY for services that actually reference them, so an
+# unused service's spec does not grow a schema it never mentions.
+EXTRA_SCHEMAS = {
+    "typescript/assembly-srv": {
+        "ThreadDetail": {
+            "type": "object",
+            "description": (
+                "A thread together with its comments. CRITICAL: `comments` is a "
+                "TOP-LEVEL SIBLING of `thread`, not a field inside it. The "
+                "response envelope is {thread, comments} — reading "
+                "`response.thread.comments` returns nothing and has previously "
+                "been mistaken for data loss."
+            ),
+            "required": ["thread", "comments"],
+            "properties": {
+                "thread": {
+                    "type": "object",
+                    "description": "The thread row.",
+                    "additionalProperties": True,
+                },
+                "comments": {
+                    "type": "array",
+                    "description": "Comments on the thread, oldest first. Empty array when the thread has none.",
+                    "items": {
+                        "type": "object",
+                        "description": "A comment row.",
+                        "additionalProperties": True,
+                    },
+                },
+            },
+        },
+    },
+}
+
+
 def path_to_openapi(p):
     """Convert :param Express paths to {param} OpenAPI paths."""
     return re.sub(r":([A-Za-z_][\w]*)", r"{\1}", p)
@@ -230,7 +297,7 @@ def operation_id(method, path):
     return "_".join(parts)[:120]
 
 
-def build_operation(method, path, summary):
+def build_operation(method, path, summary, success_ref=None):
     status = {"GET": "200", "POST": "201", "PUT": "200", "PATCH": "200", "DELETE": "200"}.get(method, "200")
     op = {
         "tags": [tag_for_path(path)],
@@ -238,7 +305,7 @@ def build_operation(method, path, summary):
         "responses": {
             status: {
                 "description": "Success",
-                "content": {"application/json": {"schema": {"$ref": JSON_BODY_REF}}},
+                "content": {"application/json": {"schema": {"$ref": success_ref or JSON_BODY_REF}}},
             },
             "400": {"description": "Bad request", "content": {"application/json": {"schema": {"$ref": ERROR_REF}}}},
             "404": {"description": "Not found", "content": {"application/json": {"schema": {"$ref": ERROR_REF}}}},
@@ -260,12 +327,22 @@ def build_operation(method, path, summary):
     return op
 
 
-def build_spec(meta, endpoints):
+def build_spec(meta, endpoints, service_key=None):
     paths = {}
     tags = set()
+    overrides = RESPONSE_OVERRIDES.get(service_key, {}) if service_key else {}
     for e in endpoints:
         opath = path_to_openapi(e["path"])
-        paths.setdefault(opath, {})[e["method"].lower()] = build_operation(e["method"], opath, e.get("summary") or "")
+        override = overrides.get((e["method"].upper(), opath))
+        # The table stores a bare schema NAME for readability; OpenAPI needs the
+        # fully-qualified component ref. Emitting the bare name yields a
+        # relative ref like `$ref: ThreadDetail`, which resolves against the
+        # document root rather than components/schemas and silently breaks
+        # every consumer that dereferences it.
+        ref = f"#/components/schemas/{override}" if override else None
+        paths.setdefault(opath, {})[e["method"].lower()] = build_operation(
+            e["method"], opath, e.get("summary") or "", ref
+        )
         tags.add(tag_for_path(opath))
     import hashlib
     inv_digest = hashlib.sha1(
@@ -296,6 +373,7 @@ def build_spec(meta, endpoints):
                     },
                     "additionalProperties": True,
                 },
+                **((EXTRA_SCHEMAS.get(service_key) or {}) if service_key else {}),
             }
         },
         "x-generated-by": "nexus/tools/api-docs/gen_openapi.py",
@@ -404,7 +482,7 @@ def main(argv=None):
             except Exception as e:
                 print(f"  ! {key}: FastAPI fetch failed ({e}); falling back to generic")
         if kind == "generic":
-            spec = build_spec(meta, endpoints)
+            spec = build_spec(meta, endpoints, key)
             dump_yaml(spec, os.path.join(svc_dir, "openapi.yaml"))
         api_path = os.path.join(svc_dir, "API.md")
         generated = build_api_md(meta, endpoints, kind)
