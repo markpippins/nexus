@@ -29,6 +29,12 @@ export interface TspEavEmitterOptions {
   "output-file"?: string;
   /** Namespace to walk. Default: walk every namespace. */
   namespace?: string;
+  /**
+   * Emit `stereotype_reconcile` instead of `stereotype_create_revision`, so
+   * re-applying an unchanged compiled catalog mints no revisions (migration
+   * 0008). Opt-in; see RenderOptions.reconcile for why the default is false.
+   */
+  reconcile?: boolean;
 }
 
 export async function $onEmit(context: EmitContext<TspEavEmitterOptions>): Promise<void> {
@@ -55,7 +61,7 @@ export async function $onEmit(context: EmitContext<TspEavEmitterOptions>): Promi
   }
   if (catalog.diagnostics.length > 0) return;
 
-  const sql = renderSql(catalog);
+  const sql = renderSql(catalog, { reconcile: context.options["reconcile"] === true });
   const outFile = context.options["output-file"] ?? "shrapnel-catalog.sql";
   await context.program.host.writeFile(outFile, sql);
 }
