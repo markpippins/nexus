@@ -17,3 +17,10 @@ export function notFound(message) {
 export function conflict(message, details) {
   return new ApiError(409, message, details);
 }
+
+// 503: a dependency this route needs is not present. Used by the sheet routes
+// while sql/V166__sheet_phase1_manual_sheets.sql is still an unapplied DBA
+// draft — a client must be able to tell "not deployed yet" from "broken".
+export function unavailable(message, details) {
+  return new ApiError(503, message, details);
+}
