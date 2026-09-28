@@ -30,7 +30,9 @@ class ReceiptInsertRequest(BaseModel):
     plan_id: str
     type: str
     agent_role: str
-    session_id: str = ""
+    # Session-null contract (DBA finding f9201c18): absent session is
+    # Optional/None, never the manufactured empty string.
+    session_id: Optional[str] = None
     ticket_id: Optional[str] = None
     artifact_path: Optional[str] = None
     summary: str = ""
@@ -154,7 +156,7 @@ def insert_receipt(body: ReceiptInsertRequest):
         plan_id=body.plan_id,
         receipt_type=body.type,
         agent_role=body.agent_role,
-        session_id=body.session_id or "",
+        session_id=body.session_id,
         ticket_id=body.ticket_id,
         summary=body.summary or "",
         artifact_path=body.artifact_path,

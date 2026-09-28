@@ -176,7 +176,7 @@ export async function insertReceipt(r: {
   plan_id: string;
   type: string;
   agent_role: string;
-  session_id?: string;
+  session_id?: string | null;
   ticket_id?: string | null;
   artifact_path?: string | null;
   summary?: string;
@@ -194,7 +194,10 @@ export async function insertReceipt(r: {
     plan_id: r.plan_id,
     type: r.type,
     agent_role: r.agent_role,
-    session_id: r.session_id || "",
+    // session_id: absent stays absent (JSON null) — manufactured "" was the
+    // producer defect in DBA finding f9201c18. Python receiver accepts null
+    // (Optional[str], session-null contract) since the same change.
+    session_id: r.session_id ?? null,
     ticket_id: r.ticket_id || null,
     artifact_path: r.artifact_path || null,
     summary: r.summary || "",
