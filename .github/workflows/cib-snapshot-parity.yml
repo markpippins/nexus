@@ -1,0 +1,129 @@
+# ci-bootstrap snapshot parity — does the committed artifact survive the
+# branch's own migration chain?
+#
+# ─── Why this exists ───────────────────────────────────────────────────────
+#
+# sql/ci-bootstrap/nexus-ci-bootstrap.sql is `pg_dump --schema-only`. A fresh
+# apply therefore leaves shrapnel._migration_ledger EMPTY, and the branch's
+# migration chain replays from the first migration. Several migrations re-issue
+# the same function:
+#
+#   0005_stereotype_api.sql:437          CREATE OR REPLACE shrapnel.stereotype_create_revision
+#   0008_stereotype_reconcile.sql:123   CREATE OR REPLACE shrapnel.stereotype_create_revision
+#   0005                                  CREATE OR REPLACE shrapnel.forbid_stereotype_field_mutation
+#   0009_..._subtransaction.sql:98       CREATE OR REPLACE shrapnel.forbid_stereotype_field_mutation
+#
+# Last writer wins. A snapshot dumped from a database AHEAD of the branch is
+# silently rewritten back to the older body the moment the chain replays — with
+# no error, every function still present, and no test failing.
+#
+# Reproduced 2026-09-28: a snapshot carrying 0008+0009, replayed over with
+# main's 0001-0006 chain, restored 0005's `txid_current` arithmetic to
+# forbid_stereotype_field_mutation and removed `under_construction` — the exact
+# subtransaction-freeze defect 0009 fixes. stereotype_reconcile survived the
+# whole thing, so "does the function exist" would have stayed green.
+#
+# refresh.sh (PR #629) refuses the mistake at the source. This gate is the
+# other side: it verifies the committed artifact itself, on every PR that could
+# plausibly change it.
+#
+# ─── What it proves, and what it does not ───────────────────────────────────
+#
+# PROVED:
+#   1. Replaying the branch's chain over the snapshot CHANGES no existing
+#      function body. Any change is reported by name and fails the build.
+#   2. The comparison can actually fail — the script's --self-test mutates a
+#      real function body in a clone and requires detection. A gate that cannot
+#      go red is worse than no gate, and the self-test failing FAILS this job.
+#   3. The run was real, not degenerate: the fingerprint met a floor and the
+#      self-test reported detection. Both asserted explicitly below.
+#
+# NOT PROVED, and deliberately not claimed:
+#   * The other 16 schemas in the snapshot. shrapnel is the only one with both
+#     a real migrations/ chain and a filename ledger; widening GUARDED_SCHEMAS
+#     is a deliberate, reviewed act, not a default.
+#   * That the snapshot is UP TO DATE. A snapshot that lags the branch is
+#     reported as a ::warning::, not a failure — the chain creating a missing
+#     object is the safe direction, and failing on it would make this gate red
+#     every time a merge outruns a refresh.
+#   * Anything about production behaviour.
+name: ci-bootstrap snapshot parity
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sql/ci-bootstrap/nexus-ci-bootstrap.sql'
+      - 'sql/ci-bootstrap/check-snapshot-parity.sh'
+      - 'sql/ci-bootstrap/refresh.sh'
+      - 'typescript/shrapnel/migrations/**'
+      - '.github/workflows/cib-snapshot-parity.yml'
+  pull_request:
+    paths:
+      - 'sql/ci-bootstrap/nexus-ci-bootstrap.sql'
+      - 'sql/ci-bootstrap/check-snapshot-parity.sh'
+      - 'sql/ci-bootstrap/refresh.sh'
+      - 'typescript/shrapnel/migrations/**'
+      - '.github/workflows/cib-snapshot-parity.yml'
+  # Lets an operator re-run this for a branch without a throwaway push, and
+  # confirm the guard still fails closed rather than trusting a green from a
+  # week ago.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot-parity:
+    name: ci-bootstrap snapshot parity (throwaway PostgreSQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: nexus
+          POSTGRES_USER: pguser
+          POSTGRES_PASSWORD: pgpass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pguser -d nexus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGPASSWORD: pgpass
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run the parity check (with self-test)
+        working-directory: sql/ci-bootstrap
+        # --self-test makes the script prove it can fail before it reports PASS.
+        # Any non-zero exit here is already a real failure, so `set -e` is fine;
+        # the assertions below are about proving the PASS was meaningful.
+        run: |
+          set -o pipefail
+          ./check-snapshot-parity.sh localhost 5432 pguser nexus --self-test \
+            2>&1 | tee /tmp/parity.log
+
+      # Fail-closed guards. A green from this job is only worth something if the
+      # run actually happened over a real schema and the detection path was
+      # exercised. Both are asserted explicitly rather than inferred from exit 0.
+      - name: Assert the run was real (fingerprint met floor, self-test proved detection)
+        run: |
+          grep -q '^snapshot parity: PASS$' /tmp/parity.log \
+            || { echo "::error::parity check did not report PASS"; exit 1; }
+
+          # The shrapnel schema holds ~22 functions on main. A fingerprint far
+          # below the script's own floor means it was pointed at the wrong
+          # database or the schema never materialised, and the comparison would
+          # have been vacuously green.
+          FP=$(grep -oE 'parity check: [0-9]+ function' /tmp/parity.log | grep -oE '[0-9]+' | head -1)
+          [ "${FP:-0}" -ge 10 ] \
+            || { echo "::error::only ${FP:-0} functions fingerprinted (floor 10) — the comparison was vacuous, not clean"; exit 1; }
+
+          grep -q '^self-test: OK' /tmp/parity.log \
+            || { echo "::error::self-test did not confirm detection — this check cannot detect a clobber and must not be trusted"; exit 1; }
+
+          echo "snapshot parity gate OK: ${FP} functions fingerprinted, 0 modified, self-test proved detection"
