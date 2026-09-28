@@ -11,6 +11,11 @@ import {
   DoctrineTransitionRecord,
   validDoctrineSnapshot,
 } from "../lib/doctrine-query";
+import {
+  buildCensusReportIndex,
+  CensusStoredReport,
+  validateCensusReportMetadata,
+} from "../lib/census-report";
 
 /**
  * KEYCHAIN SNAPSHOT service (renamed from sol-ir-snapshot per D-2026-08-31 keychains).
@@ -543,6 +548,89 @@ export default class KeychainService extends Service {
               return { ok: false, mode: "apply_rejected", error: "POST requires apply=true to write verified append-only doctrine backfill records" };
             }
             return this.runDoctrineReconstruction(params, true);
+          },
+        },
+
+        /**
+         * Census reports (CDLC A2b). Read-only, derived on demand from the canonical
+         * `nebula.agent_records` rows, mirroring the agentRecordsDoctrineSets shape so A5
+         * does not have to build a second read model.
+         *
+         * Queries **PG**, not Mongo — the sibling B3/B4 actions read Mongo because keychain
+         * checkpoints live there. Census reports are canonical in nebula. Do not copy the
+         * B3 query layer into this action.
+         *
+         * NOTE ON COST: this predicates on `tags` and `metadata`, neither of which is
+         * indexed for this shape yet, so it is currently a sequential scan. The GIN/btree
+         * index is approved (`c3d1c0a8` Q7) and filed with the DBA as a `type:db-change`;
+         * it sits on A5's read path, not A4's write path, so it does not block either.
+         */
+        agentRecordsCensus: {
+          async handler(ctx: Context) {
+            const params = ctx.params as any;
+            const requestedLimit = Number(params?.limit || 1000);
+            if (!Number.isInteger(requestedLimit)) {
+              return { ok: false, error: "limit must be an integer" };
+            }
+            const limit = Math.max(1, Math.min(requestedLimit, 5000));
+            const where: string[] = ["record_type = 'report'", "'census' = ANY(tags)"];
+            const values: any[] = [];
+
+            if (params?.execution_id) {
+              values.push(String(params.execution_id));
+              where.push(`metadata->'census'->>'execution_id' = $${values.length}`);
+            }
+            if (params?.census_id) {
+              values.push(String(params.census_id));
+              where.push(`metadata->'census'->>'census_id' = $${values.length}`);
+            }
+            if (params?.doctrine_snapshot_id) {
+              values.push(String(params.doctrine_snapshot_id));
+              where.push(`metadata->'frame'->>'doctrine_snapshot_id' = $${values.length}`);
+            }
+            for (const key of ["from", "to"]) {
+              if (params?.[key]) {
+                const date = new Date(params[key]);
+                if (Number.isNaN(date.getTime())) return { ok: false, error: `${key} must be a valid date` };
+                values.push(date.toISOString());
+                where.push(`created_at ${key === "from" ? ">=" : "<="} $${values.length}`);
+              }
+            }
+            values.push(limit + 1);
+
+            const pool = await this.getPool();
+            const { rows } = await pool.query(
+              `SELECT id, created_at, metadata FROM nebula.agent_records
+                 WHERE ${where.join(" AND ")}
+                 ORDER BY created_at DESC
+                 LIMIT $${values.length}`,
+              values,
+            );
+
+            const truncated = rows.length > limit;
+            const slice = truncated ? rows.slice(0, limit) : rows;
+            const rejected: Array<{ id: string; errors: string[] }> = [];
+            const reports: CensusStoredReport[] = [];
+            for (const row of slice as any[]) {
+              // Validate on read as well as on write: a census row that cannot be read back
+              // through its own contract is reported, not silently counted into the rollups.
+              const validation = validateCensusReportMetadata(row.metadata);
+              if (!validation.ok) {
+                rejected.push({ id: String(row.id), errors: validation.errors });
+                continue;
+              }
+              reports.push({
+                id: String(row.id),
+                created_at: new Date(row.created_at).toISOString(),
+                metadata: row.metadata,
+              });
+            }
+
+            return {
+              ...buildCensusReportIndex(reports, { truncated }),
+              rejected_report_count: rejected.length,
+              rejected_reports: rejected,
+            };
           },
         },
 

@@ -107,6 +107,18 @@ namespace org.nexus.nexusbroker {
   @doc("Explicitly apply verified, append-only historical doctrine references from complete embedded hash manifests; body must set apply=true.")
   op keychainAgentRecordsDoctrineBackfill(@body body: Record<unknown>): KeychainDoctrineReconstructionResult;
 
+  @route("/api/keychain-snapshot/agent-records/census")
+  @get
+  @doc("Read-only derived census index (CDLC A2b): per-card observation counts and category totals over canonical nebula.agent_records rows tagged `census`. Applies no governance threshold — threshold policy is A5.")
+  op keychainAgentRecordsCensus(
+    @query limit?: int32,
+    @query from?: utcDateTime,
+    @query to?: utcDateTime,
+    @query execution_id?: string,
+    @query census_id?: string,
+    @query doctrine_snapshot_id?: string,
+  ): KeychainCensusResult;
+
   @route("/api/keychain-snapshot/agent-records/rewind")
   @get
   @doc("Rewind: reconstruct the per-record-type state vector as of a past decision-point snapshot version.")

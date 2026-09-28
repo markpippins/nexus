@@ -110,6 +110,7 @@ export default class ApiService extends Service {
               "GET /keychain-snapshot/agent-records/doctrine-reconstruction": "keychain-snapshot.agentRecordsDoctrineReconstruction",
               "POST /keychain-snapshot/agent-records/doctrine-reconstruction/backfill": "keychain-snapshot.agentRecordsDoctrineBackfill",
               "GET /keychain-snapshot/agent-records/rewind": "keychain-snapshot.agentRecordsRewind",
+              "GET /keychain-snapshot/agent-records/census": "keychain-snapshot.agentRecordsCensus",
             },
 
             bodyParsers: {
