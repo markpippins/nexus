@@ -283,6 +283,7 @@ jobs:
       # pattern: broker-e2e, ci.yml, #456 boot-smoke).
       - name: Wait for real postgres readiness (authenticated probe)
         run: |
+          date -u +%s > /tmp/pgie-run-start.ts   # evidence artifact duration anchor
           for i in $(seq 1 60); do
             if psql -h localhost -U pguser -d nexus -tAc 'SELECT 1' >/dev/null 2>&1; then
               echo "postgres accepting authenticated connections (attempt $i)"
@@ -358,6 +359,14 @@ jobs:
       # (no kernel, no PG); in THIS job a skip means the environment silently
       # degraded and must fail the run. `# fail 0` alone is not enough —
       # every test could skip and still report fail 0.
+      # ── Evidence instrumentation ─────────────────────────────────────────
+      # Each suite tees its TAP log and records a results row via the SHARED
+      # helper bin/pgie-evidence.py (single authority for the TAP contract —
+      # the same guard+emitter the local runner bin/run-pg-integration-e2e.sh
+      # uses; the artifact schema is pgie-evidence/1 in both worlds). The
+      # final steps emit + upload the artifact with if:always(), so FAILED
+      # runs produce evidence too. NOTE: these steps are the only callers;
+      # do not duplicate guard logic inline — change the helper instead.
       - name: E2E — harness bridge producer cycle + attempt lifecycle
         working-directory: moleculer/nexus-broker
         env:
@@ -367,10 +376,7 @@ jobs:
           node --test --test-reporter=tap \
             tests/harness-bridge.e2e.test.js tests/attempt-lifecycle.test.js \
             2>&1 | tee /tmp/tap-bridge-lifecycle.log
-          grep -q '^# fail 0$' /tmp/tap-bridge-lifecycle.log || { echo "FAIL: test failures"; exit 1; }
-          grep -Eq '^# (skip|skipped) 0$' /tmp/tap-bridge-lifecycle.log || { echo "FAIL: tests skipped — integration env degraded"; exit 1; }
-          PASS=$(grep -E '^# pass [0-9]+$' /tmp/tap-bridge-lifecycle.log | grep -oE '[0-9]+' | tail -1)
-          [ "${PASS:-0}" -ge 10 ] || { echo "FAIL: only ${PASS:-0} passed (expected >= 10)"; exit 1; }
+          python3 ../../bin/pgie-evidence.py guard /tmp/tap-bridge-lifecycle.log 10 "bridge+attempt-lifecycle" /tmp/pgie-results.tsv
 
       - name: E2E — broker boot smoke + keychain checkpoints/rewind/SOL outbox
         working-directory: moleculer/nexus-broker
@@ -378,10 +384,7 @@ jobs:
           set -o pipefail
           node --test --test-reporter=tap tests/broker-smoke.test.js \
             2>&1 | tee /tmp/tap-broker-smoke.log
-          grep -q '^# fail 0$' /tmp/tap-broker-smoke.log || { echo "FAIL: test failures"; exit 1; }
-          grep -Eq '^# (skip|skipped) 0$' /tmp/tap-broker-smoke.log || { echo "FAIL: tests skipped — integration env degraded"; exit 1; }
-          PASS=$(grep -E '^# pass [0-9]+$' /tmp/tap-broker-smoke.log | grep -oE '[0-9]+' | tail -1)
-          [ "${PASS:-0}" -ge 12 ] || { echo "FAIL: only ${PASS:-0} passed (expected >= 12)"; exit 1; }
+          python3 ../../bin/pgie-evidence.py guard /tmp/tap-broker-smoke.log 12 "broker-smoke" /tmp/pgie-results.tsv
 
       # execution-srv's file:../heartbeat-client dependency has no committed
       # lock and needs its dist/ built (same two steps as its Dockerfile build
@@ -416,11 +419,37 @@ jobs:
             2>&1 | tee /tmp/tap-legacy-parity.log
           STATUS=$?
           kill $SRV_PID 2>/dev/null || true
-          grep -q '^# fail 0$' /tmp/tap-legacy-parity.log || { echo "FAIL: test failures"; exit 1; }
-          grep -Eq '^# (skip|skipped) 0$' /tmp/tap-legacy-parity.log || { echo "FAIL: tests skipped — integration env degraded"; exit 1; }
-          PASS=$(grep -E '^# pass [0-9]+$' /tmp/tap-legacy-parity.log | grep -oE '[0-9]+' | tail -1)
-          [ "${PASS:-0}" -ge 8 ] || { echo "FAIL: only ${PASS:-0} passed (expected >= 8)"; exit 1; }
+          python3 ../../bin/pgie-evidence.py guard /tmp/tap-legacy-parity.log 8 "legacy-parity" /tmp/pgie-results.tsv
           exit $STATUS
+
+      # pgie-evidence/1 artifact — SAME schema as local runs. On failure the
+      # results TSV carries the verdict rows the guard recorded; on a crash
+      # before any suite, the emit still produces a minimal fail artifact.
+      - name: Emit pgie-evidence/1 run artifact
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then VERDICT=pass; else VERDICT=fail; fi
+          mkdir -p evidence
+          python3 bin/pgie-evidence.py emit \
+            --verdict "$VERDICT" \
+            --exit-code "$( [ "$VERDICT" = "pass" ] && echo 0 || echo 1 )" \
+            --results-tsv /tmp/pgie-results.tsv \
+            --start-ts "$(cat /tmp/pgie-run-start.ts 2>/dev/null || echo 0)" \
+            --suite all \
+            --pg-port 5432 --mongo-port 28017 --kernel-port 18099 --legacy-port 32110 \
+            --out evidence/pgie-evidence.json
+          cp /tmp/tap-bridge-lifecycle.log /tmp/tap-broker-smoke.log \
+             /tmp/tap-legacy-parity.log evidence/ 2>/dev/null || true
+          cat evidence/pgie-evidence.json
+
+      - name: Upload pgie-evidence/1 artifact (pass and fail runs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pgie-evidence-${{ github.run_id }}
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Stop peb-kernel (always)
         if: always()
