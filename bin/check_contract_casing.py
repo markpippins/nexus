@@ -105,10 +105,23 @@ def main() -> int:
             else {"mixed": 0, "snake": 0, "leaks": 0})
     base_leaks = base.get("leaks", 0)
 
+    # The ratchet verdict, computed before any output path so both the JSON
+    # early-return and the default-mode verdict below can use it.
+    grew = (len(data["mixed"]) > base["mixed"]) or (len(data["snake"]) > base["snake"]) \
+        or (data["leak_total"] > base_leaks)
+
     if args.json:
+        # --json must be machine-pure: JSON on stdout, human verdict on
+        # stderr, and an early return so the default-mode verdict print at
+        # the bottom cannot leak onto stdout and corrupt the JSON. The exit
+        # code still carries the ratchet verdict for shell callers.
         print(json.dumps({"counts": {k: len(v) for k, v in data.items() if isinstance(v, list)},
                           "leak_total": data["leak_total"],
-                          "violations": violations}, indent=2))
+                          "violations": violations}), file=sys.stdout)
+        print(f"{len(violations)} violation file(s), leaks {data['leak_total']} "
+              f"(ratchet baseline: mixed {base['mixed']}, snake {base['snake']}, leaks {base_leaks})",
+              file=sys.stderr)
+        return 1 if grew else 0
     else:
         print("contract casing (Ruling 19d6f725: consumer-visible surface is camelCase)")
         for shape in ("camel", "mixed", "snake", "empty"):
