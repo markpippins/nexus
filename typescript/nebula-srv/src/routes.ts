@@ -10,6 +10,17 @@ import * as bsRedis from './services/block-segmentation-redis.service';
 import { fetchSubstance, substanceToCamel } from './substance-proxy';
 import { CrossReferenceType } from './crossref-taxonomy';
 import { attestationsLimiter } from './limiter';
+import {
+  camelCaseRow,
+  AGENT_RECORD_LIST_COLUMNS,
+  AGENT_RECORD_LIST_COLUMNS_FULL,
+} from './agent-record-projection';
+
+export {
+  camelCaseRow,
+  AGENT_RECORD_LIST_COLUMNS,
+  AGENT_RECORD_LIST_COLUMNS_FULL,
+};
 
 const execFileAsync = promisify(execFile);
 
@@ -171,20 +182,6 @@ function toEpochMs(row: any, ...cols: string[]): any {
   for (const col of cols) {
     if (out[col] && typeof out[col] === 'object' && out[col].getTime) {
       out[col] = out[col].getTime();
-    }
-  }
-  return out;
-}
-
-/** Convert snake_case DB row keys to camelCase and Date values to epoch ms */
-function camelCaseRow(row: Record<string, any>): Record<string, any> {
-  const out: Record<string, any> = {};
-  for (const [key, value] of Object.entries(row)) {
-    const camelKey = key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
-    if (value instanceof Date) {
-      out[camelKey] = value.getTime();
-    } else {
-      out[camelKey] = value;
     }
   }
   return out;
@@ -5021,14 +5018,14 @@ export function createRoutes(pool: Pool): Router {
       const where = clauses.length > 0 ? 'WHERE ' + clauses.join(' AND ') : '';
 
       // content is excluded from the default list projection to keep list
-      // payloads small (MCP inbox checks, etc.). ?includeContent=true opts in
-      // for UIs that render record bodies in the list (agent-records/reports).
-      const listColumns = `id, record_type, role, model, title, source_path, tags,
-           system_id, subsystem_id, feature_id, plan_ref, created_at, recorded_on_dt,
-           level, visibility_scope`;
-      const columns = req.query.includeContent === 'true'
-        ? `${listColumns}, content`
-        : listColumns;
+      // payloads small (MCP inbox checks, etc.), but contentLength is ALWAYS
+      // included so list/search consumers can distinguish "body exists, not
+      // projected" from "empty body" — the reader-side blind spot behind the
+      // lost-write incident (record b9b88010; engineer finding eb4e219a).
+      // ?full=1 opts in to full bodies in list output (legacy alias:
+      // ?includeContent=true, kept for agent-records/reports UIs).
+      const wantFull = req.query.full === '1' || req.query.includeContent === 'true';
+      const columns = wantFull ? AGENT_RECORD_LIST_COLUMNS_FULL : AGENT_RECORD_LIST_COLUMNS;
 
       const [dataResult, countResult] = await Promise.all([
         pool.query(
@@ -5163,7 +5160,7 @@ export function createRoutes(pool: Pool): Router {
       const where = clauses.length > 0 ? 'WHERE ' + clauses.join(' AND ') : '';
 
       const { rows } = await pool.query(
-        `SELECT id, record_type, role, model, title, source_path, tags, system_id, subsystem_id, feature_id, plan_ref, created_at, recorded_on_dt, level, visibility_scope
+        `SELECT ${AGENT_RECORD_LIST_COLUMNS}
          FROM nebula.agent_records ${where}
          ORDER BY created_at DESC LIMIT $${i} OFFSET $${i + 1}`,
         [...vals, maxLimit, offset]
@@ -5176,7 +5173,20 @@ export function createRoutes(pool: Pool): Router {
         vals
       );
 
-      res.json({ records: rows, count: parseInt(count), limit: maxLimit, offset });
+      // Response shape normalized to match GET /agent-records and the
+      // control-plane UI/mock contract: camelCase rows under `items`, `total`
+      // count. `count` is kept as a deprecated mirror of `total` for one
+      // transition window; the old raw-rows `records` key is removed (the
+      // previous shape broke the UI's live-mode parametric search, which
+      // reads `items`).
+      const total = parseInt(count, 10);
+      res.json({
+        items: rows.map(camelCaseRow),
+        total,
+        count: total,
+        limit: maxLimit,
+        offset,
+      });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
