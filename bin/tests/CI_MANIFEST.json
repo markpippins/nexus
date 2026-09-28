@@ -1,0 +1,140 @@
+{
+  "$comment": [
+    "Single source of truth for which bin/tests/ files CI runs. Read by",
+    "bin/run-bin-tests.py (the runner) and bin/tests/test_ci_manifest.py",
+    "(the coverage guard). Every bin/tests/test_*.py MUST appear in exactly",
+    "one tier \u2014 that guard is what stops a new test being silently ungated,",
+    "which is the whole defect class this manifest exists to close (ff3264f0).",
+    "",
+    "Tiers were derived by MEASUREMENT, not assumption: each file was run",
+    "under `unshare --map-user=$(id -u) --map-group=$(id -g) -n` (real network",
+    "isolation, uid preserved) and the failures re-run with live services.",
+    "Do not move a file between tiers on reasoning alone \u2014 move it after",
+    "re-measuring, and say so in the PR.",
+    "",
+    "NOTE on the harness: plain `unshare -rn` maps you to uid 0 inside the",
+    "namespace, and root bypasses permission checks \u2014 it made",
+    "test_drive_guard::test_unwritable_target_fails_92 fail spuriously. Always",
+    "preserve the uid."
+  ],
+  "gated": [
+    "test_adapter_health_probe.py",
+    "test_apply_v184_package.py",
+    "test_assembly_sql_ownership.py",
+    "test_assert_moleculer_ports.py",
+    "test_attestation_janitor.py",
+    "test_boot_attest.py",
+    "test_boot_blackboard.py",
+    "test_boot_conn_record.py",
+    "test_boot_digest.py",
+    "test_buffer_drain_units.py",
+    "test_calendar_consolidate.py",
+    "test_calendar_emit.py",
+    "test_calendar_fleet_rollout.py",
+    "test_calendar_typespec.py",
+    "test_canonical_shape_parity.py",
+    "test_census_expiry_exposure.py",
+    "test_check_plan_gating.py",
+    "test_check_sdk_drift.py",
+    "test_check_transition_attestation.py",
+    "test_ci_manifest.py",
+    "test_consolidate_wiring.py",
+    "test_cpf_compute_drift_guard.py",
+    "test_drain_write_queue_buffer.py",
+    "test_drift_check_run.py",
+    "test_drive_guard.py",
+    "test_endpoint_register.py",
+    "test_fleet_blackboard_digest.py",
+    "test_fleet_manifest_from_ansible.py",
+    "test_fleet_registry_sync.py",
+    "test_fleet_spec_shape.py",
+    "test_flow_emit_aegis.py",
+    "test_flow_recorder_v0.py",
+    "test_governance_bindings.py",
+    "test_helium_core_probe.py",
+    "test_lease_probe.py",
+    "test_lease_soak_report.py",
+    "test_lint_postgres_pins.py",
+    "test_memory_cache_refresh.py",
+    "test_merge_pr.py",
+    "test_migration_commit_lint.py",
+    "test_operator_lease.py",
+    "test_persona_bridge_parity.py",
+    "test_pg_escape_hatch.py",
+    "test_pg_logging_check_wrap.py",
+    "test_pg_schema_filters.py",
+    "test_post_agent_record_path_guard.py",
+    "test_r9_replication_verify.py",
+    "test_reconcile_plan_provenance.py",
+    "test_record_durability_wrap.py",
+    "test_repair_registry_health_paths.py",
+    "test_resolver_soak_report.py",
+    "test_role_vocab_drift.py",
+    "test_role_vocab_parity.py",
+    "test_role_vocab_parity_runner.py",
+    "test_sdk_drift_stamp_wrap.py",
+    "test_session1_minutes.py",
+    "test_sonar_preflight.py",
+    "test_start_write_queue_reconciler.py",
+    "test_supervisor_role.py",
+    "test_terrain_status_sync.py",
+    "test_thallium_core_probe.py",
+    "test_todo_lifecycle_sweep.py",
+    "test_token_retrofit_campaign.py",
+    "test_users_bcrypt_drift_wrap.py",
+    "test_vdci_backup.py",
+    "test_wf_lint.py",
+    "test_worktree_drift.py",
+    "test_wr_repoint_verify.py"
+  ],
+  "service_dependent": [
+    {
+      "file": "test_grants_e2e.py",
+      "reason": "Creates and drops its own throwaway database (e2e_grants_<pid>) from a skeleton, then applies the real grant files. Needs a reachable PostgreSQL. NOTE: also latent hang \u2014 it shells out to psql with no -w and no stdin=DEVNULL, so without PGPASSWORD it blocks on an interactive password prompt forever instead of failing."
+    },
+    {
+      "file": "test_mark_operator_go_applied.py",
+      "reason": "Asserts the operator-go migration is marked applied against live nebula state."
+    },
+    {
+      "file": "test_mesh_register_probe.py",
+      "reason": "Probes the live mesh-register service over the network."
+    },
+    {
+      "file": "test_post_agent_record_tags.py",
+      "reason": "Round-trips records through the live Nebula REST API (:3101) to check tag persistence."
+    },
+    {
+      "file": "test_substance_service.py",
+      "reason": "Exercises the live substance-service over HTTP."
+    },
+    {
+      "file": "test_terrain_drift_check.py",
+      "reason": "Runs the real drift checker against live terrain state."
+    },
+    {
+      "file": "test_write_canary_lib.py",
+      "reason": "Requires the live write-canary library/service."
+    }
+  ],
+  "dsn_gated": [
+    {
+      "file": "test_backfill_propositions.py",
+      "reason": "Raises at import: 'CONDUIT_PG_DSN must be set to run tests (PG is mandatory)'. Needs a provisioned conduit DSN against a live database, not merely a reachable server \u2014 the backfill writes rows, so it cannot be exercised against a skeleton."
+    },
+    {
+      "file": "test_drift_intake.py",
+      "reason": "Raises at import: 'CONDUIT_PG_DSN must be set to run tests (PG is mandatory)'. Exercises drift-intake against live nebula state, so it needs a provisioned conduit DSN rather than a reachable-but-empty server."
+    },
+    {
+      "file": "test_shrapnel_bridge.py",
+      "reason": "Raises at import: 'CONDUIT_PG_DSN must be set to run tests (PG is mandatory)'. The shrapnel bridge reconciles live table state, so it requires a provisioned conduit DSN and real rows to reconcile against."
+    }
+  ],
+  "known_red": [
+    {
+      "file": "test_migration_number_uniqueness.py",
+      "reason": "RED \u2014 a real defect, not a test bug. sql/ carries duplicate Flyway version prefixes (040 045 046 051 125 194); e.g. sql/V194__decommission_qbe_empty_tables.sql and sql/V194__expression_register_producer.sql both claim V194. A version-ledger runner applies one file per version and silently skips the lex-second twin on a fresh database \u2014 schema drift behind a green ledger. The guard is correct; the repo is not. Renumbering V194 needs owner intent, so it is deliberately NOT fixed here. Filed separately (see finding)."
+    }
+  ]
+}

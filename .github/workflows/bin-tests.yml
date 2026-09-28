@@ -1,0 +1,79 @@
+# bin/tests gate — the workflow ff3264f0 asked for
+#
+# Before this, no workflow ran bin/tests/ as a set. Seven workflows mention
+# the directory, but each names individual files under narrow `paths:`
+# filters, so roughly nine of 78 guards were covered. Green CI therefore did
+# NOT mean the guards held — which is how test_migration_number_uniqueness.py
+# sat red against duplicate sql/ version prefixes, and how
+# test_r9_replication_verify.py went red on 2026-09-21, with nothing running
+# either to notice.
+#
+# What runs is decided by bin/tests/CI_MANIFEST.json, not by this file. The
+# manifest's tiers were derived by measurement (each file run with no
+# services, then with services), not by assumption; see its $comment. This
+# workflow runs the `gated` tier — the 68 files that pass with no services
+# running — and bin/run-bin-tests.py prints the excluded tiers with their
+# reasons so exclusions are visible in the log instead of silent.
+#
+# The anti-drift guard is test_ci_manifest.py, which is itself in the gated
+# tier: a new bin/tests/test_*.py that nobody classifies fails the gate at PR
+# time. That is the part that keeps this workflow from decaying back into the
+# state ff3264f0 describes.
+#
+# Deliberately BLOCKING (no continue-on-error): a gate that cannot go red
+# guards nothing — the same reasoning as wf-lint.yml.
+#
+# NOT handled here, and deliberately so:
+#   - sql/ has duplicate Flyway version prefixes (040 045 046 051 125 194),
+#     e.g. V194__decommission_qbe_empty_tables.sql and
+#     V194__expression_register_producer.sql. The one test that catches this
+#     is red because the repo is wrong, not the test. Renumbering needs
+#     owner intent, so it is parked in the manifest's known_red tier with the
+#     reason attached rather than papered over here.
+#   - wf_lint.py's migration-dup-prefix rule cannot see these: it splits the
+#     filename on '-' and requires a 3-digit head, so a Flyway V194__ name
+#     never matches. Two independent detectors miss the same defect class.
+#     Filed separately; widening the rule is its own change.
+#   - The service_dependent and dsn_gated tiers need live infrastructure and
+#     are not attempted here. They are listed, with reasons, in the log.
+
+name: bin/tests Gate
+
+on:
+  push:
+    branches: [ main, master, dev, feature/* ]
+    paths:
+      - 'bin/**'
+      - 'sql/**'
+      - 'typescript/**'
+      - 'moleculer/**'
+      - '.github/workflows/bin-tests.yml'
+  pull_request:
+    branches: [ main, master, dev, feature/* ]
+    paths:
+      - 'bin/**'
+      - 'sql/**'
+      - 'typescript/**'
+      - 'moleculer/**'
+      - '.github/workflows/bin-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bin-tests:
+    name: "bin/tests gate (gated tier, manifest-classified)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test deps
+        run: python3 -m pip install --quiet pytest
+      - name: Manifest coverage (no test may be silently ungated)
+        run: python3 -m pytest bin/tests/test_ci_manifest.py -q -p no:cacheprovider
+      - name: Run the gated tier
+        run: python3 bin/run-bin-tests.py

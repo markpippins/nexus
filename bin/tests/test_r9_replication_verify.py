@@ -253,14 +253,25 @@ class Battery(unittest.TestCase):
 
 class Main(unittest.TestCase):
     def _main(self, argv, runner):
-        orig = r9rv.Runners.real
+        # main() -> run_battery(..., now=None) falls back to dt.datetime.now().
+        # The fake_runner's systemctl fixture is frozen at NOW (2026-09-20),
+        # so against the real clock V2 ("last trigger 190.6h old, >28h") and
+        # V9 (missing nights 2026-09-21..) both age into FAIL and this test
+        # went red on 2026-09-21 without anyone running it. Inject the pinned
+        # clock the rest of the module already uses (see run() above), which
+        # is what run_battery's `now` seam exists for.
+        orig_real = r9rv.Runners.real
+        orig_battery = r9rv.run_battery
         r9rv.Runners.real = classmethod(lambda cls: runner)
+        r9rv.run_battery = lambda r, **kw: orig_battery(
+            r, **({"now": NOW, **kw} if "now" not in kw else kw))
         buf = io.StringIO()
         try:
             with contextlib.redirect_stdout(buf):
                 return r9rv.main(argv)
         finally:
-            r9rv.Runners.real = orig
+            r9rv.Runners.real = orig_real
+            r9rv.run_battery = orig_battery
 
     def test_exit0_on_skip_only(self):
         r = fake_runner(ssh=lambda a: (255, "", "unreachable"))
