@@ -16,21 +16,34 @@ SCORING COMPONENTS:
 Total: 1.00
 
 Usage:
-    source /home/codex/dev/nexus/python/rover/.venv/bin/activate
     python3 bin/cpf_compute.py                     # compute all candidates
     python3 bin/cpf_compute.py --candidate <uuid>  # compute single candidate
     python3 bin/cpf_compute.py --dry-run            # preview without writing
+
+Logs go to the repository's logs/ by default; override with CPF_COMPUTE_LOG_DIR.
 """
 
 import argparse
 import json
 import logging
+import os
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 
-LOG_DIR = Path("/home/codex/dev/nexus/logs")
+# Log destination is configurable, and defaults to the repository's own
+# gitignored logs/ rather than a path baked in at authoring time. The previous
+# literal, Path("/home/codex/dev/nexus/logs"), was one machine's checkout, and
+# because the mkdir below runs at import time, importing this module on any
+# other host died with:
+#   PermissionError: [Errno 13] Permission denied: '/home/codex'
+# which is how bin/tests/test_cpf_compute_drift_guard.py failed in CI. Set
+# CPF_COMPUTE_LOG_DIR to override.
+LOG_DIR = Path(
+    os.environ.get("CPF_COMPUTE_LOG_DIR")
+    or (Path(__file__).resolve().parent.parent / "logs")
+)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 log = logging.getLogger("cpf_compute")

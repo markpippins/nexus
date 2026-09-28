@@ -1,0 +1,59 @@
+# Every guard in bin/tests/ runs here, except what bin/tests-ci-manifest.json
+# explicitly declares with a reason, an owner, and the debt tracking it.
+#
+# Ruled in architect record fb11ad19 (Decision 4). Before this workflow, 38 of
+# 76 guards were referenced by no workflow and no Makefile target - including
+# test_migration_number_uniqueness, which had been continuously reporting a live
+# V194 migration-number collision on main (record ccc4c755) that nobody saw.
+#
+# Same command locally and in CI: make bintests
+name: bin/tests guards
+
+on:
+  push:
+    branches: [main, master, feature/*, dev]
+  pull_request:
+    branches: [main, master, feature/*]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  guards:
+    name: bin/tests guards (pytest + setuptools + pyyaml)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # pytest is REQUIRED, not optional. run_bin_tests.py executes every guard
+      # as `sys.executable -m pytest <guard>`; the runner inherits whatever
+      # interpreter invoked it. actions/setup-python selects an isolated
+      # toolcache Python that does NOT carry the runner image's system pytest,
+      # so omitting it makes every guard exit rc=1 with 0 tests:
+      #   /opt/hostedtoolcache/Python/3.13.15/x64/bin/python3: No module named pytest
+      # which surfaces only as "ran 72 guards / 0 tests in 0.7s; 72 failed".
+      #
+      # This job was named "(stdlib + pyyaml)" because the original runner
+      # invoked each guard as a bare script and genuinely needed only stdlib.
+      # That name outlived the change and made this expensive to diagnose.
+      #
+      # setuptools is required by test_mcp_client_packaging, which deliberately
+      # runs `pip install --no-build-isolation` to use the already-installed
+      # setuptools rather than provisioning a build env from PyPI. The
+      # toolcache Python has no setuptools, so the guard failed with
+      # BackendUnavailable: Cannot import 'setuptools.build_meta'.
+      #
+      # psycopg2 is deliberately NOT here: the guards that touch a database
+      # import it behind try/except and skip. check_record_durability.py also
+      # defers its import into scan() for the same reason.
+      - name: Install test dependencies
+        run: pip install --quiet pyyaml pytest setuptools
+      # A guard that cannot run bare is declared in the manifest, not skipped
+      # here. Exit 2 means the manifest itself is invalid (stale exclusion),
+      # which is a real failure and must not be confused with a red guard.
+      - name: Discover and run every non-excluded guard
+        run: make bintests
