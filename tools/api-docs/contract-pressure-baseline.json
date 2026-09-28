@@ -1,0 +1,6 @@
+{
+  "_comment": "Ratchet floor for tools/api-docs/check_contract_pressure.py. Gestalt pressure source #5. Lower these as contracts are compiled, specs are regenerated with real bodies, and boundaries get modelled. Failing above a baseline means pressure GREW, not that a class was fixed. See agent records 19d6f725 and c6aed48c.",
+  "typed-contract-ignored": 10,
+  "unmodeled-boundary": 9,
+  "uncompiled-contract": 8
+}

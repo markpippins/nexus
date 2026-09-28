@@ -32,6 +32,8 @@ import yaml
 
 import extract_routes  # noqa: E402 — JVM_SERVICES module-dir registry
 
+ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+
 # ── Service metadata: key = inventory key, port = default listen port ──────
 SERVICES = {
     "typescript/assembly-srv": {
@@ -208,6 +210,82 @@ SKIPPED_KEYS = {k for k, v in SERVICES.items() if v.get("skip_openapi")}
 # the canonical inventory; the hand-authored section is a UI/consumer spec.
 API_SPEC_BEGIN = "<!-- API-SPEC-BEGIN -->"
 
+# ---------------------------------------------------------------------------
+# Contract of record (Gestalt pressure source #5)
+# ---------------------------------------------------------------------------
+# The contract is the contract of record; the runtime is evidence (Ruling
+# 19d6f725, ARCHITECTURE.md 8.4). This generator only ever sees route
+# *registrations* -- it never inspects a handler's return type -- so it cannot
+# infer a response shape and emits JsonBody for every success body. That is a
+# deliberate limit, not an oversight, but the result was that 18 committed
+# specs sat in the place a consumer looks for the contract while declaring
+# nothing.
+#
+# Two corrections:
+#   1. Say so in the spec, unmissably, rather than only in prose.
+#   2. Point at the contract of record when one exists, so the spec is a
+#      pointer to the authority rather than a substitute for it.
+#
+# Mapped explicitly. A fuzzy name match could point a spec at the wrong
+# contract, which is worse than admitting there is none.
+CONTRACT_OF_RECORD = {
+    "typescript/aegis-srv": "aegis-srv",
+    "typescript/assembly-srv": "assembly-srv",
+    "typescript/cascade-srv": "cascade-srv",
+    "typescript/draft-srv": "draft-srv",
+    "typescript/execution-srv": "execution-srv",
+    "typescript/harness-srv": "harness-srv",
+    "typescript/nebula-srv": "nebula-srv",
+    "typescript/terrain-srv": "terrain",
+    "typescript/wind-srv": "wind-srv",
+    "python/vision-srv": "vision-srv",
+    "jvm/nexus-core-aegis": "aegis-srv",
+    "jvm/nexus-core-shrapnel": "shrapnel",
+}
+
+
+def service_dir(key, root=ROOT):
+    """Resolve a SERVICES key to its source directory.
+
+    JVM port modules do not live at their key (extract_routes.JVM_SERVICES
+    holds their module dir); everything else maps directly. main() used to do
+    this inline, which meant the drift checker and the writer could disagree
+    about where a spec lives -- and did, silently dropping both JVM services
+    from the pressure count. One rule, one place.
+    """
+    jvm_rel = extract_routes.JVM_SERVICES.get(key)
+    if jvm_rel:
+        return os.path.join(root, jvm_rel)
+    return os.path.join(root, key.replace("/", os.sep))
+
+
+def spec_path(key, root=ROOT):
+    """Where this service's committed openapi.yaml is (or would be) written."""
+    return os.path.join(service_dir(key, root), "openapi.yaml")
+
+
+def contract_of_record(key, root=ROOT):
+    """Return {source, compiled} paths for a service's contract, or None.
+
+    `source` is the TypeSpec contract directory; `compiled` is the OpenAPI
+    emitted from it, which exists only where `npx tsp compile` has been run
+    (see Makefile / sdk-drift-guard.yml). Both are repo-relative.
+    """
+    name = CONTRACT_OF_RECORD.get(key)
+    if not name:
+        return None
+    src = f"typespec/v1/{name}"
+    if not os.path.isdir(os.path.join(root, src)):
+        return None
+    out = {"source": src, "compiled": None}
+    for cand in (f"{src}/generated/schema/openapi.yaml",
+                 f"{src}/generated/openapi.yaml"):
+        if os.path.isfile(os.path.join(root, cand)):
+            out["compiled"] = cand
+            break
+    return out
+
+
 JSON_BODY_REF = "#/components/schemas/JsonBody"
 ERROR_REF = "#/components/schemas/Error"
 
@@ -335,10 +413,10 @@ def build_operation(method, path, summary, success_ref=None):
     return op
 
 
-def build_spec(meta, endpoints, service_key=None):
+def build_spec(meta, endpoints, key=None, root=ROOT):
     paths = {}
     tags = set()
-    overrides = RESPONSE_OVERRIDES.get(service_key, {}) if service_key else {}
+    overrides = RESPONSE_OVERRIDES.get(key, {}) if key else {}
     for e in endpoints:
         opath = path_to_openapi(e["path"])
         override = overrides.get((e["method"].upper(), opath))
@@ -372,7 +450,17 @@ def build_spec(meta, endpoints, service_key=None):
         "paths": paths,
         "components": {
             "schemas": {
-                "JsonBody": {"type": "object", "additionalProperties": True, "description": "Generic JSON body (fields are service-specific)."},
+                "JsonBody": {
+                    "type": "object",
+                    "additionalProperties": True,
+                    "description": "UNSHAPED. This is a placeholder, not a schema: it pins no "
+                                   "property names, no types, and no field casing. It exists because "
+                                   "the generator reads route registrations only and never inspects a "
+                                   "handler return type. Do not generate a client from this property -- "
+                                   "use the contract of record (see x-contract-of-record), or the "
+                                   "service source. Counting this as a modelled response shape is the "
+                                   "error Gestalt pressure source #5 exists to catch.",
+                },
                 "Error": {
                     "type": "object",
                     "properties": {
@@ -381,10 +469,12 @@ def build_spec(meta, endpoints, service_key=None):
                     },
                     "additionalProperties": True,
                 },
-                **((EXTRA_SCHEMAS.get(service_key) or {}) if service_key else {}),
+                **((EXTRA_SCHEMAS.get(key) or {}) if key else {}),
             }
         },
         "x-generated-by": "nexus/tools/api-docs/gen_openapi.py",
+        "x-response-bodies": "untyped",
+        "x-contract-of-record": contract_of_record(key, root) if key else None,
     }
 
 
@@ -490,7 +580,7 @@ def main(argv=None):
             except Exception as e:
                 print(f"  ! {key}: FastAPI fetch failed ({e}); falling back to generic")
         if kind == "generic":
-            spec = build_spec(meta, endpoints, key)
+            spec = build_spec(meta, endpoints, key=key, root=args.root)
             dump_yaml(spec, os.path.join(svc_dir, "openapi.yaml"))
         api_path = os.path.join(svc_dir, "API.md")
         generated = build_api_md(meta, endpoints, kind)
