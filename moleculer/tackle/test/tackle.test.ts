@@ -67,9 +67,25 @@ import request from "supertest";
 // ── 1. Static parity surfaces ──────────────────────────────────────
 
 // Repo checkout root: jest compiles in place, so __dirname is the real
-// test/ dir (…/moleculer-tackle-port/moleculer/tackle/test). The incumbent
-// source lives in the MAIN checkout: up 5 = /home/codex/dev, then /nexus.
-const REPO = path.resolve(__dirname, "..", "..", "..", "..", "..", "nexus");
+// The incumbent source lives in THIS checkout, not a sibling one.
+// Previously: path.resolve(__dirname, "..","..","..","..","..","nexus") —
+// "up 5 = /home/codex/dev, then /nexus", i.e. a hardcoded path to the original
+// author's machine. It resolved on any dev box that happens to have that
+// directory and threw ENOENT everywhere else, including a clean CI checkout:
+//
+//   ENOENT: no such file or directory, open
+//   '/home/runner/work/nexus/typescript/tackle-srv/src/routes/ai-config.ts'
+//
+// So the parity assertion was only ever checked where that path happened to
+// exist. It is the same anti-pattern the SEEDS_FILES note below already calls
+// out and avoids ("the main checkout's working tree can carry in-flight
+// uncommitted regenerations") — the routes just kept the old form.
+//
+// typescript/tackle-srv/src/routes/*.ts are tracked in this repo (13 files),
+// and byte-identical to the copy the hardcoded path reached (verified 13/13),
+// so this changes where the baseline is read from and nothing about what is
+// asserted.
+const REPO = path.resolve(__dirname, "../../..");
 // Drift baseline is THIS worktree's committed typescript/tackle-seeds copy
 // (the main checkout's working tree can carry in-flight uncommitted seed
 // regenerations from the DBA — the vendored copy tracks the branch, not
