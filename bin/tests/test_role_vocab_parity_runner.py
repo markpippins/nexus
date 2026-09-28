@@ -68,6 +68,13 @@ CLAIM_RE = re.compile(
     r"|schemas|mirrors)|nebula\s+and\s+scratch|scratch\s+and\s+nebula",
     re.I,
 )
+# L3 eligibility (pre-blocking sweep 66c90fae, false positives 041/044):
+# a comment line inside a Rollback section documents the REVERSE path, and
+# a line referencing another migration is historical narration of THAT
+# file's defects — neither may assert this file's forward claim.
+ROLLBACK_SECTION_RE = re.compile(r"^\s*--\s*rollback\b", re.I)
+OTHER_MIGRATION_RE = re.compile(
+    r"migration\s+\d{3}\b|\b[Vv]\d{3}\b|\b0\d{2}\b", re.I)
 
 
 def _read(path):
@@ -102,6 +109,35 @@ def _comments_and_ddl(text):
     return "\n".join(comments), "\n".join(ddl)
 
 
+def _eligible_claim_text(comments):
+    """Comment text on which a forward claim MAY be asserted (L3).
+
+    Drops, at line granularity: lines from the first Rollback-section
+    marker onward (rollback docs describe the reverse path; house style
+    keeps forward-scope claims above them), and lines referencing another
+    migration ('migration NNN', 'VNNN', bare '0NNN' — narration of that
+    file's defects, the 041 shape). Eligible lines are REJOINED with
+    newlines so multi-line claims still match (054's own claim spans two
+    comment lines). A parenthetical claim about other files WITHOUT any
+    NNN/VNNN token is not mechanically detectable — recorded as an
+    inspector caveat in the sweep record, not code.
+    """
+    eligible, in_rollback = [], False
+    for line in comments.splitlines():
+        stripped = line.strip()
+        if ROLLBACK_SECTION_RE.match(stripped):
+            in_rollback = True
+        if in_rollback or OTHER_MIGRATION_RE.search(stripped):
+            continue
+        eligible.append(stripped)
+    return "\n".join(eligible)
+
+
+def _claims_multi_schema(comments):
+    """True iff eligible comment text asserts the multi-schema claim."""
+    return bool(CLAIM_RE.search(_eligible_claim_text(comments)))
+
+
 def _role_check_blocks(text):
     """All agent_records_role_check rebuilds: [(table, check_body), ...]."""
     return ROLE_CHECK_RE.findall(text)
@@ -128,8 +164,11 @@ def check_runner_files(pin_vocab, files_text):
         blocks = _role_check_blocks(text)
 
         # ── R3: mirror-claim honesty (both directions) ──
+        # Claims are evaluated on L3-ELIGIBLE comment text only (see
+        # _eligible_claim_text): rollback-section lines and other-migration
+        # narration can neither assert nor be required to document scope.
         comments, ddl = _comments_and_ddl(text)
-        claims_multi = bool(CLAIM_RE.search(comments))
+        claims_multi = _claims_multi_schema(comments)
         ddl_scratch = "scratch." in ddl
         if claims_multi and not ddl_scratch:
             violations.append(
@@ -298,6 +337,56 @@ class ExtractorUnits(unittest.TestCase):
         """A directory whose files have no role-checks must not emit a
         born-clean violation against a phantom final snapshot."""
         files = {"001-unrelated.sql": "SELECT 1;\n"}
+        self.assertEqual(check_runner_files(self.PIN, files), [])
+
+    # ── L3 eligibility (pre-blocking sweep 66c90fae, 041/044 shapes) ──
+
+    def test_rollback_section_claim_is_ineligible(self):
+        """044 shape: claim-worded text inside the Rollback section
+        documents the REVERSE path and must not assert this file's
+        forward scope (nor be required to)."""
+        comment = ("-- Migration 044: add entity_key.\n"
+                   "-- Rollback: DROP INDEX + DROP COLUMN + recreate view\n"
+                   "-- without entity_key for both schemas.")
+        files = {"044-like.sql": self._migrate(self.PIN, comment=comment)}
+        self.assertEqual(check_runner_files(self.PIN, files), [])
+
+    def test_other_migration_narration_is_ineligible(self):
+        """041 shape: narration about ANOTHER migration's defect must
+        not be construed as this file's claim — even when the narration
+        line carries claim wording, as long as that wording sits on the
+        migration-referencing (dropped) line. Claim wording on an
+        otherwise-eligible line still counts (see the 054 anchor test)."""
+        comment = ("-- Restore the auto-segment trigger.\n"
+                   "-- (DROP TRIGGER loop) and recreated only the bitemporal\n"
+                   "-- core set. The INSTEAD OF triggers (migration 003) were\n"
+                   "-- NOT recreated for both schemas. Result: ...".replace(
+                       "were\n-- NOT recreated for both schemas",
+                       "were NOT recreated for both schemas"))
+        files = {"041-like.sql": self._migrate(self.PIN, comment=comment)}
+        self.assertEqual(check_runner_files(self.PIN, files), [])
+
+    def test_054_style_claim_still_fires_across_lines(self):
+        """The anchor: 054's real claim spans two comment lines and sits
+        near narration lines that carry other migration numbers. L3
+        eligibility must drop the narration WITHOUT breaking the
+        multi-line claim match."""
+        comment = ("-- Role-surface parity. Same pattern as migrations\n"
+                   "-- 049/050/051/052/053.\n"
+                   "--\n"
+                   "-- Idempotent (drop + recreate the CHECK). Applied to\n"
+                   "-- both nebula and scratch schemas for parity.")
+        files = {"054-like.sql": self._migrate(self.PIN, comment=comment)}
+        v = check_runner_files(self.PIN, files)
+        self.assertTrue(any("multi-schema" in x for x in v), v)
+
+    def test_or_replace_recreate_wording_alone_is_silent(self):
+        """027 shape (L1 lesson): 'Recreate the view' language without a
+        multi-schema claim is outside R3's contract in both directions —
+        the sweep's recreate-vs-DROP false-positive class must never be
+        introduced here by future claim-wording broadening."""
+        comment = "-- Recreate the view to include role (appended at end)."
+        files = {"027-like.sql": self._migrate(self.PIN, comment=comment)}
         self.assertEqual(check_runner_files(self.PIN, files), [])
 
     def test_structural_empty_literal_excluded(self):
