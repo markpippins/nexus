@@ -247,9 +247,98 @@ durable state, per `AGENTS.md` (the governing doctrine):
 ## 8. Platform Architecture
 
 - `jvm/ARCHITECTURE.md` — JVM platform defaults (Java 21, Spring Boot 3.5.0, port range 8080–8099)
+## 8. Platform Architecture
+
+- `jvm/ARCHITECTURE.md` — JVM platform defaults (Java 21, Spring Boot 3.5.0, port range 8080–8099)
 - `typescript/ARCHITECTURE.md` — TypeScript platform defaults (Node 20, TS 5.x, ranges 8080–8099 / 3333–3349)
 
 Both inherit from this document.
+
+### 8.1 Implementation Tiers
+
+Nexus is proven **at the contract level**. The contract is the unit of correctness; an
+implementation is evidence. One implementation is an assertion; N implementations agreeing on
+one contract is a proof — and the agreement is the deliverable, not the code.
+
+Tiers overlap deliberately. Moleculer and the JVM tier each reproduce services that already
+exist in TypeScript, and modules continue to be extracted from Python into the "legacy
+TypeScript" tier. Some services exist at three or four tiers at once. **That is the intended
+state, not drift.**
+
+| Tier | Location | Role |
+|---|---|---|
+| TypeScript | `typescript/<service>/` | Current-preference implementation |
+| Python | `python/<service>/` | Live, retained, de-kicked from titanium where a newer tier runs |
+| Moleculer | `moleculer/<service>/` | Reproduces services that also exist elsewhere |
+| JVM | `jvm/` | Reproduces services that also exist elsewhere |
+
+Overlap is **growing, not complete**: as of this writing the multi-tier names are the
+`python`+`moleculer` pairs (`aegis`, `cascade`, `conduit`, `tackle`, `voyager`) plus
+`solscript` in `typescript`+`moleculer`. Extraction from Python into the "legacy TypeScript"
+tier is in progress, not finished. Treat this table as the shape, and the directory listing as
+the current truth.
+
+We cannot run every implementation on one machine. Placement is a scheduling decision, not a
+lifecycle one.
+
+### 8.2 Two independent axes
+
+| Axis | Question | States | Default |
+|---|---|---|---|
+| **Liveness** | Is it maintained and serving? | `live` / `legacy` | **`live`** |
+| **Host affinity** | Should it run on *this* host? | `preferred` / `not-preferred` / `exempt` | `not-preferred` unless asserted |
+
+**Liveness is opt-out.** Code is `live` unless *explicitly* moved into `legacy/`. That
+directory is the only path to not-live.
+
+**Host affinity is a placement, not a lifecycle.** A `not-preferred` implementation is not
+deprecated, not retired, and not headed for deletion. It is a live implementation this machine
+should not be running — possibly because another host is running it right now. Host affinity
+implies nothing about maintenance, correctness, or convergence.
+
+**`exempt` means required everywhere.** Some things cannot be deployed in multiple
+implementations and are tier-exempt: one implementation, required on every host. The role
+vocabulary (`config/roles/roles.json`, read by `bin/verify-roles.py`) is the clear case — it is
+a single canonical input, not a service, and every tier resolves against it. `python/timeclock`
+(:3600) is the same shape: no sibling tier. Converging these is not the goal, and a port that
+splits one is a bug.
+
+Nothing here ends in deletion. Porting to a new tier **adds** an implementation; it never
+removes the previous one. Deleting an implementation requires an explicit recorded decision —
+it is never the implicit default of a completed port. A future Rust or Go Nexus enters at the
+same standing as every other tier.
+
+### 8.3 Ports find holes — they do not migrate
+
+**We are not "moving from X to Y". We are "finding holes in X by implementing in Y."**
+
+Every port surfaces errors and untrue assumptions in the source of the port. That is not a
+defect in the porting process — it is the reason the process exists, and the highest-value
+output of the work. Writing the new implementation and correcting the old one are **the same
+deliverable**.
+
+A port's output is a defect report on X, not a service that replaces X.
+
+**A port that surfaces zero discrepancies has failed.** It means the second implementation was
+too similar to be independent, not that the first was correct. Treat a clean port as a prompt
+to ask whether the instrument had teeth — the same way a test suite that cannot fail is a
+prompt to ask what it is not checking. Port receipts must carry a **falsification count**; see
+`docs/PORT-RECEIPT.md`.
+
+### 8.4 Contract provenance
+
+Where a contract and a runtime disagree, **the contract is the contract of record**. The
+runtime is evidence about the contract, not the reverse.
+
+The language segment in `typespec/v1/<service>/<language>/` records which implementation the
+contract was reverse-engineered from. It is provenance, not canonicality — `python/` does not
+mean Python is canonical, and the segment must not be collapsed.
+
+When a legacy implementation proves wrong, the error belongs to the **contract**, and the
+correction propagates outward: to the contract, to sibling implementations, and back into the
+legacy implementation. A port therefore produces contract changes, governed exactly as any
+other contract change is.
+
 
 ---
 
@@ -263,4 +352,5 @@ Both inherit from this document.
 | `harvest-candidate-to-requirement-pipeline.md` | The full harvest → WorkRequest pipeline walkthrough |
 | `docs/BITEMPORAL-API-CHANGES.md` | nebula SCD4 bitemporal refactor, API breaking changes |
 | `docs/architect.md` | Architect status briefing (system health, pipeline state, open decisions) |
+| `docs/PORT-RECEIPT.md` | Required template for tier ports — independence argument, falsification count, source disposition |
 | `README.md` | Legacy three-layer broker mesh (historical) |
