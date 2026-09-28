@@ -1,0 +1,150 @@
+# ci-bootstrap snapshot semantics — do the shrapnel behavioural suites still
+# pass against the artifact CI actually deploys?
+#
+# ─── Why this exists ───────────────────────────────────────────────────────
+#
+# Two gates now defend sql/ci-bootstrap/nexus-ci-bootstrap.sql, and they catch
+# different things:
+#
+#   cib-snapshot-parity.yml   compares function BODIES (md5 of pg_proc.prosrc).
+#                             Catches a reverted function. Blind to a snapshot
+#                             with the right bodies but a wrong trigger, a
+#                             missing constraint, or a dropped column.
+#
+#   cib-snapshot-semantics.yml (this file)
+#                             runs shrapnel's real-database behavioural suites
+#                             against a snapshot-bootstrapped database. Catches
+#                             the thing parity cannot see: an object that is
+#                             present, correctly named, and behaviourally wrong.
+#
+# ─── The gap this closes ───────────────────────────────────────────────────
+#
+# The shrapnel suites in typescript/shrapnel/test/*.sql each CREATE their own
+# database from the migrations chain, so they have only ever validated the
+# MIGRATIONS. The two worlds were disjoint: the artifact CI actually deploys —
+# the snapshot — was never behaviourally tested by anything. That is precisely
+# where a stale or hand-edited artifact hides, because the objects are still
+# there and still have the right names.
+#
+# ─── What it proves, and what it does not ───────────────────────────────────
+#
+# PROVED:
+#   1. Every tap-format shrapnel suite that is PRESENT on the branch passes
+#      against a database bootstrapped from the snapshot, with the migration
+#      chain replayed over it.
+#   2. The report was not truncated: the suite's own `total|passed|failed`
+#      summary must agree with the number of verdict lines printed, and the
+#      passing count must meet a declared floor. A suite reporting 0 checks
+#      fails rather than passing vacuously.
+#
+# NOT PROVED, and deliberately not claimed:
+#   * That the snapshot is UP TO DATE. A snapshot that lags a merged migration
+#     simply lacks those objects; that is reported by parity, not here.
+#   * Anything outside the two listed suites. The list is explicit — see the
+#     script header for why, and note that rehearsal_0007_wr_stereotypes.sql
+#     uses the older NOTICE-based convention and stays covered by
+#     service-test-gates.yml.
+#   * That non-shrapnel schemas are correct.
+#
+# ─── A known, deliberate gap while #623 and #628 are unmerged ──────────────
+#
+# Both listed suites live on branches that have not merged, so on main this job
+# runs ZERO suites and passes with a ::warning::. That is honest — a branch
+# legitimately predates a migration — but it does mean the job is currently a
+# no-op that turns real the moment those PRs land. The guard below fails the
+# job if a suite that DID run did not pass; it deliberately does not fail on
+# "no suites present", because that would put main permanently red. Watch the
+# `::warning::NO SUITES RAN` annotation to know when this gate became real.
+name: ci-bootstrap snapshot semantics
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sql/ci-bootstrap/nexus-ci-bootstrap.sql'
+      - 'sql/ci-bootstrap/check-snapshot-semantics.sh'
+      - 'typescript/shrapnel/migrations/**'
+      - 'typescript/shrapnel/test/**'
+      - '.github/workflows/cib-snapshot-semantics.yml'
+  pull_request:
+    paths:
+      - 'sql/ci-bootstrap/nexus-ci-bootstrap.sql'
+      - 'sql/ci-bootstrap/check-snapshot-semantics.sh'
+      - 'typescript/shrapnel/migrations/**'
+      - 'typescript/shrapnel/test/**'
+      - '.github/workflows/cib-snapshot-semantics.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot-semantics:
+    name: ci-bootstrap snapshot semantics (freeze + reconcile vs the artifact)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: nexus
+          POSTGRES_USER: pguser
+          POSTGRES_PASSWORD: pgpass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pguser -d nexus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGPASSWORD: pgpass
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run the behavioural suites against the snapshot
+        working-directory: sql/ci-bootstrap
+        run: |
+          set -o pipefail
+          ./check-snapshot-semantics.sh localhost 5432 pguser nexus \
+            2>&1 | tee /tmp/semantics.log
+
+      # Fail-closed guard. The script already exits non-zero on any failing
+      # suite; this step makes the pass/fail accounting explicit and auditable
+      # rather than inferred, and refuses to report a green that is really a
+      # "no suite ran" green without saying so.
+      - name: Assert the accounting
+        run: |
+          if grep -q '^::error::' /tmp/semantics.log; then
+            echo "::error::the semantics check reported a failure"
+            grep -E '^(::error::|    NOT OK - )' /tmp/semantics.log || true
+            exit 1
+          fi
+
+          RAN=$(grep -oE '^semantics check: [0-9]+ suite\(s\)' /tmp/semantics.log \
+               | sed -E 's/^semantics check: ([0-9]+) suite.*/\1/' | tail -1)
+          RAN=${RAN:-0}
+
+          if [ "$RAN" -eq 0 ]; then
+            echo "::warning::0 suites executed. This gate is a NO-OP on this branch — the freeze/reconcile suites are not present yet."
+            echo "::warning::It becomes real once #623 and #628 merge. Do not read this green as 'the snapshot is behaviourally verified'."
+            exit 0
+          fi
+
+          # Floors, so a suite that runs but reports almost nothing cannot pass.
+          # Extract with sed, not `grep -oE '[0-9]+'`: the suite FILENAMES
+          # contain digits (0009, 0008), so a bare numeric extraction picks up
+          # "0009" from the filename and the floor comparison silently
+          # compares the wrong number.
+          FREEZE=$(grep -oE 'freeze_subtransaction_0009\.sql: [0-9]+ passed' /tmp/semantics.log \
+                   | sed -E 's/.*sql: ([0-9]+) passed/\1/' | head -1)
+          RECON=$(grep -oE 'reconcile_0008_stereotype_reconcile\.sql: [0-9]+ passed' /tmp/semantics.log \
+                  | sed -E 's/.*sql: ([0-9]+) passed/\1/' | head -1)
+          if [ -n "$FREEZE" ] && [ "$FREEZE" -lt 14 ]; then
+            echo "::error::freeze suite passed only $FREEZE check(s), floor 14"; exit 1
+          fi
+          if [ -n "$RECON" ] && [ "$RECON" -lt 32 ]; then
+            echo "::error::reconcile suite passed only $RECON check(s), floor 32"; exit 1
+          fi
+
+          echo "snapshot semantics gate OK: $RAN suite(s) green against the artifact (freeze=${FREEZE:-absent}, reconcile=${RECON:-absent})"
