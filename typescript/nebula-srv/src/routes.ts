@@ -5173,7 +5173,20 @@ export function createRoutes(pool: Pool): Router {
         vals
       );
 
-      res.json({ records: rows, count: parseInt(count), limit: maxLimit, offset });
+      // Response shape normalized to match GET /agent-records and the
+      // control-plane UI/mock contract: camelCase rows under `items`, `total`
+      // count. `count` is kept as a deprecated mirror of `total` for one
+      // transition window; the old raw-rows `records` key is removed (the
+      // previous shape broke the UI's live-mode parametric search, which
+      // reads `items`).
+      const total = parseInt(count, 10);
+      res.json({
+        items: rows.map(camelCaseRow),
+        total,
+        count: total,
+        limit: maxLimit,
+        offset,
+      });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
