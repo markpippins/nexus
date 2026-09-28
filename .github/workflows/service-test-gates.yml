@@ -1,0 +1,312 @@
+# Service test gates — shrapnel + substance-srv
+#
+# ── Why this exists ────────────────────────────────────────────────────────
+#
+# Two services ship real regression suites that no workflow executed:
+#
+#   typescript/shrapnel/test/**        (node:test, hermetic PostgreSQL)
+#   typescript/substance-srv/src/**    (vitest, hermetic — fakes pg + ioredis)
+#
+# "CI green" therefore attested to neither. An engine record claiming "103
+# tests pass" or "166 tests pass" was self-attestation: the number came from
+# one agent's local run, and nothing in the build would have contradicted it.
+# That is the gap ruling 7d655f3d(d) names — conformance must be a
+# continuously checked property of the build, not a per-PR assertion — and the
+# gap the tester role cannot close with a certificate it has to trust.
+#
+# This workflow makes both suites a required check. It is deliberately NOT a
+# "collect coverage and hope" job: see the fail-closed guards below.
+#
+# ── What each job actually proves, and what it does not ────────────────────
+#
+# PROVED:
+#   1. The suite runs, on a real PostgreSQL 17, in the real build environment.
+#   2. Zero failures and ZERO SKIPS. This is the load-bearing guard. Both
+#      suites self-skip when their environment is missing (shrapnel's hermetic
+#      files skip when the admin DSN cannot create a database; that is correct
+#      for a laptop and a fail-open hole in CI). `# fail 0` alone is not
+#      enough — every test could skip and still report `fail 0`.
+#   3. No test file present on the merge base has been deleted. Removing a
+#      test to make a PR go green fails the build.
+#   4. For substance-srv, the set of files vitest actually ran is compared
+#      against the set of test files on disk, in both directions.
+#   5. A pass floor, so a suite cannot be quietly emptied.
+#
+# NOT PROVED, and deliberately not claimed:
+#   * That a test removed AND a floor lowered in the same PR is caught. That is
+#     review's job; this workflow makes the removal loud, not invisible.
+#   * Any claim about production behaviour. Both suites are hermetic: the
+#     `nexus` database is never touched and no real traffic is exercised.
+#
+# ── Empirics (2026-09-28, local runs before this file was written) ──────────
+#
+#   shrapnel, Node 24, PostgreSQL 17.11:
+#     `node --test --test-reporter=tap "test/**/*.test.js"`
+#       -> # tests 54 / # pass 54 / # fail 0 / # skipped 0   (~25 s local)
+#     Floor below is 35, which is main's count today; PR #614 raises it to 54.
+#     Raise the floor when the suite grows — it is a floor, not a target.
+#
+#   substance-srv, Node 24, vitest 4.1:
+#     `vitest run --reporter=json --outputFile=…`
+#       -> numTotalTests 166 / numPassedTests 166 / numPendingTests 0,
+#          7 test files
+#
+# ── Substance-srv is not on main yet ───────────────────────────────────────
+#
+# typescript/substance-srv arrives with PR #603, which has not merged. Until it
+# does, the `substance-srv-tests` job has nothing to run. That state is handled
+# EXPLICITLY below, not with a silent `if: exists(...)`:
+#
+#   * service present              -> run the suite
+#   * service absent, PR did not
+#     touch typescript/substance-srv -> ::notice:: and skip. Documented no-op,
+#     NOT a pass. The job is reported as skipped, so nobody can read green as
+#     "substance is tested".
+#   * service absent, PR DID touch typescript/substance-srv -> ::error:: and
+#     fail. That is a deletion, and a deletion must not look like a skip.
+#
+# The same shape is used for shrapnel (which IS on main): absent means deleted,
+# so absent is an error, full stop.
+name: service-test-gates
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'typescript/shrapnel/**'
+      - 'typescript/substance-srv/**'
+      - 'typescript/heartbeat-client/**'
+      - '.github/workflows/service-test-gates.yml'
+  pull_request:
+    paths:
+      - 'typescript/shrapnel/**'
+      - 'typescript/substance-srv/**'
+      - 'typescript/heartbeat-client/**'
+      - '.github/workflows/service-test-gates.yml'
+  # Lets the gate be re-run for a branch without a throwaway push, and lets an
+  # operator confirm the guard itself still fails closed.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A hung test must not hold a runner for six hours. shrapnel's local run is
+# ~25 s; substance-srv's is ~6 s. 20 min is generous and still bounded.
+jobs:
+  shrapnel-tests:
+    name: shrapnel (node:test, throwaway PostgreSQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: nexus
+          POSTGRES_USER: pguser
+          POSTGRES_PASSWORD: pgpass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pguser -d nexus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # The hermetic suites create and drop their own databases from this DSN.
+      # This is the ONLY postgres the job needs — no seed, no ci-bootstrap
+      # snapshot: shrapnel's migrations/ chain is its own schema.
+      SHRAPNEL_TEST_ADMIN_DSN: postgresql://pguser:pgpass@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so the anti-deletion guard can diff against the merge
+          # base. Shallow clones make `git diff base...HEAD` unreliable.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # shrapnel is on main, so "missing" can only mean it was deleted in this
+      # change. That is a deletion, and a deletion must not read as a skip.
+      - name: Assert the service exists (absent = deleted, not skipped)
+        run: |
+          if [ ! -f typescript/shrapnel/package.json ]; then
+            echo "::error::typescript/shrapnel is absent from the tree but this workflow gates it — the service was deleted, not skipped"
+            exit 1
+          fi
+
+      # pg_isready validates neither credentials nor database — it passes with
+      # any server that accepts connections. The only honest readiness signal
+      # for "can we actually run DDL" is an authenticated query as the real
+      # user against the real database (house pattern: broker-e2e, ci.yml,
+      # #456 boot-smoke).
+      - name: Wait for real postgres readiness (authenticated probe)
+        env:
+          PGPASSWORD: pgpass
+        run: |
+          for i in $(seq 1 60); do
+            if psql -h localhost -U pguser -d postgres -tAc 'SELECT 1' >/dev/null 2>&1; then
+              echo "postgres accepting authenticated connections (attempt $i)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "postgres never accepted an authenticated connection"
+          exit 1
+
+      # A PR that deletes a test file must not be able to go green. Files that
+      # exist on the merge base must still exist here.
+      - name: No test file present on the merge base may be missing
+        run: |
+          BASE="${{ github.base_ref }}"
+          if [ -n "$BASE" ] && git rev-parse --verify --quiet "origin/$BASE" >/dev/null; then
+            RANGE="origin/$BASE...HEAD"
+          else
+            RANGE="HEAD^"
+          fi
+          MISSING=0
+          while read -r f; do
+            [ -z "$f" ] && continue
+            if [ ! -f "$f" ]; then
+              echo "::error::test file deleted: $f (present on $RANGE)"
+              MISSING=1
+            fi
+          done <<EOF
+          $(git ls-tree -r --name-only "$RANGE" -- typescript/shrapnel/test | grep -E '\.test\.js$' || true)
+          EOF
+          exit $MISSING
+
+      # shrapnel depends on `file:../heartbeat-client`, whose `types` entry
+      # points at dist/index.d.ts. dist/ is gitignored build output, so a fresh
+      # checkout has no types for it and tsc fails with "Cannot find module
+      # 'heartbeat-client'". Same reason ts-unit-tests.yml builds it first.
+      - name: "Build heartbeat-client (file: dependency)"
+        working-directory: typescript/heartbeat-client
+        run: npm install --no-audit --no-fund && npm run build
+
+      - name: Install shrapnel dependencies
+        working-directory: typescript/shrapnel
+        # No committed lockfile in this service, so `npm ci` alone would fail
+        # and take the job red. Same fallback ts-unit-tests.yml uses.
+        run: npm ci || npm install
+
+      - name: Typecheck
+        working-directory: typescript/shrapnel
+        run: npm run typecheck
+
+      - name: Test suite (TAP, for the fail-closed guard below)
+        working-directory: typescript/shrapnel
+        run: |
+          set -o pipefail
+          node --test --test-reporter=tap "test/**/*.test.js" \
+            2>&1 | tee /tmp/tap-shrapnel.log
+
+      # Fail-closed guard. The suites carry skip-guards for local runs (no
+      # admin DSN => no database => skip); in THIS job a skip means the
+      # environment silently degraded and the whole gate is worthless.
+      - name: Assert the run was real (fail 0, skipped 0, floor met)
+        run: |
+          grep -q '^# fail 0$' /tmp/tap-shrapnel.log \
+            || { echo "::error::shrapnel suite reported failures"; exit 1; }
+          grep -Eq '^# (skip|skipped) 0$' /tmp/tap-shrapnel.log \
+            || { echo "::error::shrapnel tests SKIPPED — the hermetic suites self-skip when they cannot create a database, so this is a degraded gate, not a pass"; grep -E '^# (skip|skipped)' /tmp/tap-shrapnel.log; exit 1; }
+          grep -Eq '^# cancelled 0$' /tmp/tap-shrapnel.log \
+            || { echo "::error::shrapnel tests were cancelled"; exit 1; }
+          PASS=$(grep -E '^# pass [0-9]+$' /tmp/tap-shrapnel.log | grep -oE '[0-9]+' | tail -1)
+          # Floor, not a target. main is at 35 today; PR #614 takes it to 54.
+          # Raise this when the suite grows, and never lower it to let a removal through.
+          [ "${PASS:-0}" -ge 35 ] \
+            || { echo "::error::only ${PASS:-0} shrapnel tests passed (floor 35) — was the suite gutted?"; exit 1; }
+          echo "shrapnel gate OK: ${PASS} passed, 0 failed, 0 skipped"
+
+  substance-srv-tests:
+    name: substance-srv (vitest, hermetic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # The honest handling of "the service has not landed yet" — see the
+      # header. Present => run. Absent and untouched => documented no-op.
+      # Absent and touched => deleted, which is an error.
+      - name: Locate the service (deleted is an error; not-yet-landed is a notice)
+        id: locate
+        run: |
+          set -uo pipefail
+          # ${GITHUB_OUTPUT:-/dev/null} rather than "$GITHUB_OUTPUT": this step
+          # runs under `set -u`, and the fallback also makes the step runnable
+          # outside Actions (which is how its three branches were tested).
+          OUT="${GITHUB_OUTPUT:-/dev/null}"
+          if [ -f typescript/substance-srv/package.json ]; then
+            echo "present=true" >> "$OUT"
+            exit 0
+          fi
+          BASE="${{ github.base_ref }}"
+          if [ -n "$BASE" ] && git rev-parse --verify --quiet "origin/$BASE" >/dev/null; then
+            RANGE="origin/$BASE...HEAD"
+          elif git rev-parse --verify --quiet HEAD^ >/dev/null; then
+            RANGE="HEAD^"
+          else
+            RANGE=""
+          fi
+          if [ -n "$RANGE" ] && \
+             git diff --name-only "$RANGE" -- typescript/substance-srv | grep -q .; then
+            echo "::error::typescript/substance-srv is touched by this change but absent from the tree — a service was deleted, not skipped"
+            exit 1
+          fi
+          echo "::notice::typescript/substance-srv does not exist on this branch yet (lands with PR #603). This job is a documented NO-OP, not a pass: substance-srv is NOT gated until the service is on the base branch. Remove this step's notice once #603 merges."
+
+      - name: Install substance-srv dependencies
+        if: steps.locate.outputs.present == 'true'
+        working-directory: typescript/substance-srv
+        run: npm ci || npm install
+
+      - name: Typecheck
+        if: steps.locate.outputs.present == 'true'
+        working-directory: typescript/substance-srv
+        run: npm run typecheck
+
+      - name: Test suite (vitest, JSON reporter for the guard below)
+        if: steps.locate.outputs.present == 'true'
+        working-directory: typescript/substance-srv
+        run: npx vitest run --reporter=json --outputFile=/tmp/vitest-substance.json
+
+      # vitest exits non-zero on failure, so this step is about the things a
+      # zero exit code does NOT tell you: that nothing was skipped, and that
+      # the set of files vitest ran is the set of test files on disk. A
+      # deleted or renamed-away test file shows up as a diff between the two
+      # sets even when the remaining suite is green.
+      - name: Assert the run was real (fail 0, skipped 0, every test file ran, floor met)
+        if: steps.locate.outputs.present == 'true'
+        run: |
+          node --input-type=module -e '
+            import { readFileSync, readdirSync } from "node:fs";
+            const SERVICE = "typescript/substance-srv";
+            const r = JSON.parse(readFileSync("/tmp/vitest-substance.json", "utf8"));
+            // Both sides normalised to service-relative paths ("src/x.test.ts"),
+            // so the comparison cannot pass or fail on a path prefix.
+            const ran = new Set(r.testResults.map(t => t.name.split("substance-srv/").pop()));
+            const walk = (d) => readdirSync(d, { withFileTypes: true }).flatMap(e =>
+              e.isDirectory()
+                ? walk(`${d}/${e.name}`)
+                : (e.name.endsWith(".test.ts") ? [`${d}/${e.name}`.slice(SERVICE.length + 1)] : []));
+            const onDisk = new Set(walk(`${SERVICE}/src`));
+            const fail = (m) => { console.error("::error::" + m); process.exitCode = 1; };
+            if (r.numFailedTests !== 0) fail(`substance-srv reported ${r.numFailedTests} failing tests`);
+            if (r.numPendingTests > 0)  fail(`substance-srv has ${r.numPendingTests} skipped tests — a skipped suite is a hole, not a pass`);
+            for (const f of onDisk) if (!ran.has(f)) fail(`test file never ran: ${f}`);
+            for (const f of ran)   if (!onDisk.has(f)) fail(`vitest reported a file that is not on disk: ${f}`);
+            if (onDisk.size === 0)   fail("no test files found on disk — the suite is gone");
+            // Floor, not a target. 166 today. Raise it when the suite grows;
+            // never lower it to let a removal through.
+            if (r.numPassedTests < 150) fail(`only ${r.numPassedTests} substance-srv tests passed (floor 150) — was the suite gutted?`);
+            if (process.exitCode) { console.error(r.testResults.map(t => `${t.name}: ${t.status}`).join("\n")); process.exit(1); }
+            console.log(`substance-srv gate OK: ${r.numPassedTests} passed across ${ran.size} files, 0 failed, 0 skipped`);
+          '
