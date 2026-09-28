@@ -1,0 +1,234 @@
+#!/usr/bin/env bash
+#
+# run-pg-integration-e2e.sh — one-command local mirror of the seeded-
+# PostgreSQL integration job (job `pg-integration-e2e` in
+# .github/workflows/broker-e2e.yml, delivered by PR #607).
+#
+# Brings up the SAME throwaway chain the CI job runs, on isolated default
+# ports so it is safe to run on titanium alongside the live services:
+#
+#   postgres:17  (docker, port 55442)  seeded from
+#                sql/ci-bootstrap/nexus-ci-bootstrap.sql
+#   mongo:7      (docker, port 28018)
+#   peb-kernel   (fat jar,  port 18098) booted against the seeded DB
+#   legacy execution-srv (port 32110)   for the parity suite
+#
+# then runs the gated suites with the same fail-closed TAP guard as CI
+# (fail 0 AND skipped 0 AND a pass floor), so a silent skip cannot masquerade
+# as green locally either.
+#
+# KEEP IN SYNC with the workflow: the workflow is the source of truth for the
+# gating contract. If you change steps here, change the job there (or vice
+# versa) and say so in the PR. Verified end-to-end 2026-09-28: 35/35, 0
+# skipped on a fresh run of the full chain.
+#
+# Usage:
+#   bin/run-pg-integration-e2e.sh                 # full chain, all suites
+#   bin/run-pg-integration-e2e.sh bridge          # harness-bridge + attempt-lifecycle only
+#   bin/run-pg-integration-e2e.sh smoke           # broker-smoke only
+#   bin/run-pg-integration-e2e.sh parity          # legacy-parity only
+#   bin/run-pg-integration-e2e.sh --skip-build    # reuse existing jar/dist/node_modules
+#   bin/run-pg-integration-e2e.sh --keep          # leave the stack up after the run
+#
+# Ports are env-overridable: PGIE_PG_PORT, PGIE_MONGO_PORT, PGIE_KERNEL_PORT,
+# PGIE_LEGACY_PORT. Credentials match the CI job (pguser/pgpass/nexus) — they
+# are throwaway containers, not the live DB.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+PG_PORT="${PGIE_PG_PORT:-55442}"
+MONGO_PORT="${PGIE_MONGO_PORT:-28018}"
+KERNEL_PORT="${PGIE_KERNEL_PORT:-18098}"
+LEGACY_PORT="${PGIE_LEGACY_PORT:-32110}"
+PG_CONTAINER="pgie-local-pg"
+MONGO_CONTAINER="pgie-local-mongo"
+KERNEL_JAR="jvm/spring/peb-kernel/peb-bootstrap/target/peb-bootstrap-1.0.0-SNAPSHOT.jar"
+
+SKIP_BUILD=0
+KEEP=0
+SUITE="all"
+for arg in "$@"; do
+  case "$arg" in
+    --skip-build) SKIP_BUILD=1 ;;
+    --keep)       KEEP=1 ;;
+    -h|--help)    sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    all|bridge|smoke|parity) SUITE="$arg" ;;
+    *) echo "unknown argument: $arg (see --help)"; exit 2 ;;
+  esac
+done
+
+say()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+die()  { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
+
+# ── Preflight ────────────────────────────────────────────────────────────
+for dep in docker psql node mvn java curl python3 grep; do
+  command -v "$dep" >/dev/null 2>&1 || die "missing dependency: $dep (install it, or run this on titanium)"
+done
+JAVA_HOME_OK=""
+if [ -z "${JAVA_HOME:-}" ] && [ -d /usr/lib/jvm/java-21-openjdk-amd64 ]; then
+  export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+  JAVA_HOME_OK=" (JAVA_HOME defaulted to $JAVA_HOME)"
+fi
+say "suite: $SUITE | pg:$PG_PORT mongo:$MONGO_PORT kernel:$KERNEL_PORT legacy:$LEGACY_PORT${JAVA_HOME_OK}"
+
+PIDS=()
+cleanup() {
+  if [ "$KEEP" = "1" ]; then
+    say "--keep: stack left up. Tear down with:"
+    say "  docker rm -f $PG_CONTAINER $MONGO_CONTAINER; pkill -f 'peb-bootstrap-1.0.0-SNAPSHOT.jar.*--server.port=$KERNEL_PORT'"
+    [ -n "${LEGACY_PID:-}" ] && say "  kill $LEGACY_PID  # legacy execution-srv on :$LEGACY_PORT"
+    return
+  fi
+  say "tearing down throwaway stack"
+  for pid in "${PIDS[@]:-}"; do kill "$pid" 2>/dev/null || true; done
+  docker rm -f "$PG_CONTAINER" "$MONGO_CONTAINER" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+# ── Throwaway containers ─────────────────────────────────────────────────
+say "starting throwaway containers ($PG_CONTAINER :$PG_PORT, $MONGO_CONTAINER :$MONGO_PORT)"
+docker rm -f "$PG_CONTAINER" "$MONGO_CONTAINER" >/dev/null 2>&1 || true
+docker run -d --name "$PG_CONTAINER" -p "$PG_PORT:5432" \
+  -e POSTGRES_DB=nexus -e POSTGRES_USER=pguser -e POSTGRES_PASSWORD=pgpass \
+  postgres:17 >/dev/null
+docker run -d --name "$MONGO_CONTAINER" -p "$MONGO_PORT:27017" mongo:7 >/dev/null
+
+export PGPASSWORD=pgpass
+for i in $(seq 1 60); do
+  psql -h localhost -p "$PG_PORT" -U pguser -d nexus -tAc 'SELECT 1' >/dev/null 2>&1 && break
+  [ "$i" = 60 ] && die "postgres never accepted an authenticated connection"
+  sleep 2
+done
+say "postgres accepting authenticated connections"
+for i in $(seq 1 30); do
+  docker exec "$MONGO_CONTAINER" mongosh --quiet --eval 'db.adminCommand({ping: 1}).ok' 2>/dev/null | grep -q 1 && break
+  [ "$i" = 30 ] && die "mongo never became ready"
+  sleep 2
+done
+say "mongo ready"
+
+# ── Seed: repo-canonical CI bootstrap (same single file as CI) ────────────
+say "seeding throwaway DB from sql/ci-bootstrap/nexus-ci-bootstrap.sql"
+psql -v ON_ERROR_STOP=1 -h localhost -p "$PG_PORT" -U pguser -d nexus -q \
+  -f sql/ci-bootstrap/nexus-ci-bootstrap.sql
+psql -v ON_ERROR_STOP=1 -h localhost -p "$PG_PORT" -U pguser -d nexus -tAc "
+  SELECT to_regclass('execution.attempts'),
+         to_regclass('resolution.execution_claim'),
+         to_regclass('resolution.execution_claim_evidence'),
+         to_regclass('resolution.execution_evidence'),
+         to_regclass('resolution.execution_admission_receipt'),
+         to_regclass('resolution.keychain_event_outbox'),
+         to_regclass('nebula.agent_records'),
+         to_regclass('peb.transactions');
+" | tee /tmp/pgie-seed-objects.txt | grep -q 'execution.admission_receipt' \
+  || die "seed missing gated-suite objects"
+V4=$(psql -h localhost -p "$PG_PORT" -U pguser -d nexus -tAc \
+  "SELECT count(*) FROM information_schema.columns \
+   WHERE table_schema='peb' AND table_name='transactions' \
+     AND column_name IN ('kernel_event_id','kernel_event_type');")
+[ "$V4" = "2" ] || die "peb.transactions missing kernel V4 columns — kernel ddl-auto=validate would fail"
+say "seed OK: all gated-suite objects present (V4 kernel columns: 2/2)"
+
+# ── Builds ────────────────────────────────────────────────────────────────
+if [ "$SKIP_BUILD" != "1" ]; then
+  say "building broker (npm ci + tsc)"
+  (cd moleculer/nexus-broker && npm ci --silent && npm run build --silent)
+  say "packaging peb-kernel fat jar (reactor -pl peb-bootstrap -am; module-pom direct builds resolve stale ~/.m2 jars)"
+  mvn -q -B -f jvm/pom.xml -pl spring/peb-kernel/peb-bootstrap -am -DskipTests package
+else
+  say "--skip-build: reusing existing build artifacts"
+fi
+[ -f "$KERNEL_JAR" ] || die "kernel jar missing: $KERNEL_JAR (run without --skip-build)"
+[ -f moleculer/nexus-broker/dist/services/harness.worker.js ] || die "broker dist missing (run without --skip-build)"
+
+# psycopg2 for the git claim producer (PEP 668-safe fallback chain)
+if ! python3 -c 'import psycopg2' 2>/dev/null; then
+  say "installing psycopg2-binary"
+  python3 -m pip install --quiet psycopg2-binary 2>/dev/null \
+    || python3 -m pip install --quiet --break-system-packages psycopg2-binary \
+    || die "could not install psycopg2-binary (install it into your python3 and re-run)"
+fi
+
+# ── peb-kernel boot (same config as CI: Flyway off, ddl-auto=validate) ────
+say "booting peb-kernel on :$KERNEL_PORT against the throwaway DB"
+java -jar "$KERNEL_JAR" \
+  --server.port="$KERNEL_PORT" \
+  --spring.datasource.url="jdbc:postgresql://localhost:$PG_PORT/nexus?currentSchema=peb" \
+  --spring.datasource.username=pguser \
+  --spring.datasource.password=pgpass \
+  --spring.jpa.hibernate.ddl-auto=validate \
+  > /tmp/pgie-kernel.log 2>&1 &
+KERNEL_PID=$!
+PIDS+=("$KERNEL_PID")
+for i in $(seq 1 90); do
+  curl -sf --max-time 2 "http://localhost:$KERNEL_PORT/actuator/health" 2>/dev/null | grep -q '"UP"' && break
+  [ "$i" = 90 ] && { tail -40 /tmp/pgie-kernel.log; die "peb-kernel never became healthy (log: /tmp/pgie-kernel.log)"; }
+  sleep 2
+done
+say "peb-kernel UP (pid $KERNEL_PID)"
+
+# ── Fail-closed TAP guard (identical contract to the CI job) ──────────────
+tap_guard() { # $1 log, $2 floor, $3 label
+  grep -q '^# fail 0$' "$1"            || die "$3: test failures (log: $1)"
+  grep -Eq '^# (skip|skipped) 0$' "$1" || die "$3: tests SKIPPED — integration env degraded; a skip must fail here (log: $1)"
+  PASS=$(grep -E '^# pass [0-9]+$' "$1" | grep -oE '[0-9]+' | tail -1)
+  [ "${PASS:-0}" -ge "$2" ] || die "$3: only ${PASS:-0} passed (expected >= $2)"
+  printf '\033[1;32m  ✓ %s: %s passed, 0 failed, 0 skipped\033[0m\n' "$3" "$PASS"
+}
+SUITE_ENV=(PG_HOST=localhost PG_PORT="$PG_PORT" PG_USER=pguser PG_PASSWORD=pgpass PG_DB_NAME=nexus \
+           MONGO_URL="mongodb://localhost:$MONGO_PORT/nexus")
+
+run_bridge() {
+  say "E2E: harness bridge producer cycle + attempt lifecycle"
+  ( cd moleculer/nexus-broker && env PEB_BASE_URL="http://localhost:$KERNEL_PORT" "${SUITE_ENV[@]}" \
+      node --test --test-reporter=tap \
+      tests/harness-bridge.e2e.test.js tests/attempt-lifecycle.test.js ) \
+    > /tmp/pgie-tap-bridge.log 2>&1 || true
+  tap_guard /tmp/pgie-tap-bridge.log 10 "bridge + attempt-lifecycle"
+}
+
+run_smoke() {
+  say "E2E: broker boot smoke + keychain checkpoints/rewind/SOL outbox"
+  ( cd moleculer/nexus-broker && env "${SUITE_ENV[@]}" \
+      node --test --test-reporter=tap tests/broker-smoke.test.js ) \
+    > /tmp/pgie-tap-smoke.log 2>&1 || true
+  tap_guard /tmp/pgie-tap-smoke.log 12 "broker-smoke"
+}
+
+run_parity() {
+  say "building heartbeat-client (file: dependency of execution-srv)"
+  if [ "$SKIP_BUILD" != "1" ]; then
+    ( cd typescript/heartbeat-client && npm install --no-package-lock --silent && npm run build --silent )
+  fi
+  [ -f typescript/heartbeat-client/dist/index.js ] || die "heartbeat-client dist missing (run without --skip-build)"
+  say "booting legacy execution-srv on :$LEGACY_PORT"
+  ( cd typescript/execution-srv
+    if [ "$SKIP_BUILD" != "1" ]; then npm ci --silent && npm run build --silent; fi
+    [ -f dist/index.js ] || die "execution-srv dist missing (run without --skip-build)"
+    env PGHOST=localhost PGPORT="$PG_PORT" PGUSER=pguser PGPASSWORD=pgpass PGDATABASE=nexus \
+      PORT="$LEGACY_PORT" node dist/index.js > /tmp/pgie-execution-srv.log 2>&1 &
+    echo $! > /tmp/pgie-legacy.pid )
+  LEGACY_PID="$(cat /tmp/pgie-legacy.pid)"
+  PIDS+=("$LEGACY_PID")
+  for i in $(seq 1 30); do
+    curl -sf --max-time 2 "http://localhost:$LEGACY_PORT/health" >/dev/null 2>&1 && break
+    [ "$i" = 30 ] && { tail -30 /tmp/pgie-execution-srv.log; die "execution-srv never became healthy"; }
+    sleep 1
+  done
+  say "E2E: legacy execution-srv parity"
+  ( cd moleculer/nexus-broker && env LEGACY_EXECUTION_URL="http://localhost:$LEGACY_PORT" "${SUITE_ENV[@]}" \
+      node --test --test-reporter=tap tests/legacy-parity.test.js ) \
+    > /tmp/pgie-tap-parity.log 2>&1 || true
+  tap_guard /tmp/pgie-tap-parity.log 8 "legacy-parity"
+}
+
+case "$SUITE" in
+  bridge) run_bridge ;;
+  smoke)  run_smoke ;;
+  parity) run_parity ;;
+  all)    run_bridge; run_smoke; run_parity ;;
+esac
+
+say "DONE — suite '$SUITE' green on the throwaway stack (logs: /tmp/pgie-tap-*.log)"
