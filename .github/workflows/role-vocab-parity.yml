@@ -1,0 +1,78 @@
+# Role-vocab parity suite — the C3 gate
+#
+# Runs the runner-path role-vocabulary parity battery
+# (bin/tests/test_role_vocab_parity_runner.py): R1 subset-of-PIN, R2
+# born-clean final snapshot, R3 mirror-claim honesty (with L3-eligible
+# comment text — rollback sections and other-migration narration can
+# neither assert nor owe a claim; pre-blocking sweep 66c90fae), R4
+# canonical-tables guard. Blocking: a runner migration that widens or
+# drifts the role vocabulary without moving the ROLE-VOCAB PIN, or whose
+# comments claim a scope its DDL does not perform (the 054 defect class,
+# consolidated decision request 46fe074f), must fail THIS check.
+#
+# Also runs bin/tests/test_role_vocab_parity_live.py when present
+# (Decision 5, thread 62ca3c1c: "a comment is a description; a test is a
+# guarantee" — cross-schema pg_get_constraintdef parity). That suite
+# SKIPS EXPLICITLY on runners without a reachable seeded postgres, so it
+# is safe here by design; it bites on seeded/operator stacks.
+#
+# Path-filtered to the runner migrations, the battery + live-parity
+# tests, sql/ (PIN moves and bootstrap vocabulary changes must re-run
+# this gate), and this workflow itself. Weekly cron catches silent
+# collection breakage — a battery that stops collecting tests would
+# otherwise pass vacuously until the next role-file change.
+
+name: Role Vocab Parity Suite
+
+on:
+  push:
+    branches: [ main, master, feature/*, dev ]
+    paths:
+      - 'typescript/nebula-srv/migrations/**'
+      - 'bin/tests/test_role_vocab_parity_runner.py'
+      - 'bin/tests/test_role_vocab_parity_live.py'
+      - 'sql/**'
+      - '.github/workflows/role-vocab-parity.yml'
+  pull_request:
+    branches: [ main, master, feature/* ]
+    paths:
+      - 'typescript/nebula-srv/migrations/**'
+      - 'bin/tests/test_role_vocab_parity_runner.py'
+      - 'bin/tests/test_role_vocab_parity_live.py'
+      - 'sql/**'
+      - '.github/workflows/role-vocab-parity.yml'
+  workflow_dispatch:
+  schedule:
+    # Weekly — vacuous-pass guard: a battery that silently stops
+    # collecting tests must still be noticed between role-file changes.
+    - cron: '40 4 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  role-vocab-parity:
+    name: "role-vocab-parity: runner-path vocabulary + claim honesty (hermetic)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: 'pip'
+      - name: Install test deps
+        run: python3 -m pip install --quiet pytest
+      - name: Runner-path battery (hermetic, blocking)
+        run: python3 -m pytest bin/tests/test_role_vocab_parity_runner.py -v
+      # Present once PR #616 merges; its live probes skip explicitly on
+      # this runner (no seeded postgres service in this job) — the skip
+      # is reported, never silent. The conditional keeps this workflow
+      # green on the pre-#616 window instead of failing on a missing file.
+      - name: Live cross-schema parity (Decision 5; explicit skips here)
+        run: |
+          if [ -f bin/tests/test_role_vocab_parity_live.py ]; then
+            python3 -m pytest bin/tests/test_role_vocab_parity_live.py -v
+          else
+            echo "live-parity suite not on this ref yet (PR #616 pending) — nothing to run"
+          fi
