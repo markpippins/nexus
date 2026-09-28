@@ -91,58 +91,13 @@ fi
 # and from die() (verdict=fail) once the run has started.
 json_emit() { # $1 verdict, $2 exit_code
   [ "$JSON_MODE" = "1" ] || return 0
-  python3 - "$1" "$2" "$JSON_PATH" "$RESULTS_TSV" "$RUN_START_TS" "$SUITE" \
-      "$PG_PORT" "$MONGO_PORT" "$KERNEL_PORT" "$LEGACY_PORT" <<'PYEOF'
-import datetime, json, os, subprocess, sys
-verdict, exit_code = sys.argv[1], int(sys.argv[2])
-path, tsv, start_ts, suite = sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6]
-ports = {k: int(v) for k, v in zip(("pg", "mongo", "kernel", "legacy"), sys.argv[7:11])}
-
-def git(*args):
-    try:
-        return subprocess.run(("git",) + args, capture_output=True, text=True,
-                              timeout=5).stdout.strip()
-    except Exception:
-        return ""
-
-end_ts = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
-suites = []
-totals = {"pass": 0, "fail": 0, "skipped": 0}
-for line in open(tsv, encoding="utf-8"):
-    parts = line.rstrip("\n").split("\t")
-    if len(parts) != 7:
-        continue
-    label, passed, failed, skipped, floor, s_verdict, log = parts
-    suites.append({"suite": label, "pass": int(passed), "fail": int(failed),
-                   "skipped": int(skipped), "pass_floor": int(floor),
-                   "verdict": s_verdict, "tap_log": log})
-    totals["pass"] += int(passed)
-    if failed.isdigit():
-        totals["fail"] += int(failed)
-    if skipped.isdigit():
-        totals["skipped"] += int(skipped)
-artifact = {
-    "schema": "pgie-evidence/1",
-    "generated_at": datetime.datetime.now(datetime.timezone.utc)
-                    .replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-    "suite_selector": suite,
-    "verdict": verdict,
-    "exit_code": exit_code,
-    "duration_seconds": max(end_ts - int(start_ts), 0),
-    "git": {"head": git("rev-parse", "HEAD"),
-            "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
-            "dirty": git("status", "--porcelain") != ""},
-    "stack_ports": ports,
-    "suites": suites,
-    "totals": totals,
-}
-tmp = path + ".tmp"
-with open(tmp, "w", encoding="utf-8") as fh:
-    json.dump(artifact, fh, indent=2)
-    fh.write("\n")
-os.replace(tmp, path)
-print(f"evidence artifact: {path}")
-PYEOF
+  python3 "$REPO_ROOT/bin/pgie-evidence.py" emit \
+    --verdict "$1" --exit-code "$2" \
+    --results-tsv "$RESULTS_TSV" --start-ts "$RUN_START_TS" \
+    --suite "$SUITE" \
+    --pg-port "$PG_PORT" --mongo-port "$MONGO_PORT" \
+    --kernel-port "$KERNEL_PORT" --legacy-port "$LEGACY_PORT" \
+    --out "$JSON_PATH"
 }
 
 die()  {
@@ -276,31 +231,16 @@ done
 say "peb-kernel UP (pid $KERNEL_PID)"
 
 # ── Fail-closed TAP guard (identical contract to the CI job) ──────────────
-record_result() { # $1 label, $2 pass, $3 fail, $4 skip, $5 floor, $6 verdict, $7 log
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$RESULTS_TSV"
-}
-
 tap_guard() { # $1 log, $2 floor, $3 label
-  # Same contract as CI, checked in the same order: fail-first,
-  # skip-must-fail, then the pass floor. Counts feed the evidence artifact;
-  # "unknown" means the TAP summary line never appeared (crash mid-suite).
-  PASSC=$(grep -E '^# pass [0-9]+$' "$1" | grep -oE '[0-9]+' | tail -1)
-  FAILC=$(grep -E '^# fail [0-9]+$' "$1" | grep -oE '[0-9]+' | tail -1)
-  SKIPC=$(grep -E '^# (skip|skipped) [0-9]+$' "$1" | grep -oE '[0-9]+' | tail -1)
-  if ! grep -q '^# fail 0$' "$1"; then
-    record_result "$3" "${PASSC:-0}" "${FAILC:-unknown}" "${SKIPC:-0}" "$2" fail "$1"
-    die "$3: test failures (log: $1)"
+  # Single authority for the CI contract: bin/pgie-evidence.py guard
+  # (fail-first, skip-must-fail, pass floor; records the results row that
+  # feeds the pgie-evidence/1 artifact). Silent on pass.
+  if python3 "$REPO_ROOT/bin/pgie-evidence.py" guard "$1" "$2" "$3" "$RESULTS_TSV"; then
+    PASSC=$(grep -E '^# pass [0-9]+$' "$1" | grep -oE '[0-9]+' | tail -1)
+    printf '\033[1;32m  ✓ %s: %s passed, 0 failed, 0 skipped\033[0m\n' "$3" "$PASSC"
+  else
+    die "$3: TAP guard failed (see GUARD FAIL message above)"
   fi
-  if ! grep -Eq '^# (skip|skipped) 0$' "$1"; then
-    record_result "$3" "${PASSC:-0}" "${FAILC:-0}" "${SKIPC:-unknown}" "$2" fail "$1"
-    die "$3: tests SKIPPED — integration env degraded; a skip must fail here (log: $1)"
-  fi
-  if [ "${PASSC:-0}" -lt "$2" ]; then
-    record_result "$3" "${PASSC:-0}" 0 "${SKIPC:-0}" "$2" fail "$1"
-    die "$3: only ${PASSC:-0} passed (expected >= $2)"
-  fi
-  record_result "$3" "${PASSC:-0}" 0 "${SKIPC:-0}" "$2" pass "$1"
-  printf '\033[1;32m  ✓ %s: %s passed, 0 failed, 0 skipped\033[0m\n' "$3" "$PASSC"
 }
 SUITE_ENV=(PG_HOST=localhost PG_PORT="$PG_PORT" PG_USER=pguser PG_PASSWORD=pgpass PG_DB_NAME=nexus \
            MONGO_URL="mongodb://localhost:$MONGO_PORT/nexus")
