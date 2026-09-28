@@ -740,3 +740,108 @@ transaction.
 - `negative_path_check.sql` — proves the type-guard trigger in `0002` fires
   on each failure mode (wrong extension, second extension, no parent).
   Run with `npm run dbcheck`.
+
+> **Defect (pre-existing, not introduced here): `npm run migrate` cannot apply
+> `0007_work_request_stereotypes.sql`.** That file uses the psql meta-command
+> `\gset` three times to thread one `stereotype_create_revision` id into the
+> next `CREATE`. `\gset` is a *client* directive, not SQL, so
+> `src/scripts/migrate.js` — which pipes each file to `pool.query()` — dies
+> with `syntax error at or near "\"`. The file has never been applied on this
+> host: it is absent from `shrapnel._migration_ledger` and
+> `shrapnel.stereotype_crud` does not exist. The ledger currently ends at
+> `0006_reconcile_legacy_field.sql`.
+>
+> Two independent causes, either of which alone would block it: the `\gset`
+> above, and `0003`'s top-level `SAVEPOINT`/`ROLLBACK TO SAVEPOINT`, which is
+> likewise illegal through the driver. Until this is fixed, migrations must be
+> applied with `psql -v ON_ERROR_STOP=1 -1 -f <file>` (which is what the
+> hermetic sheet tests do). Reported to the architect; **no fix applied here**,
+> as the SQL and the runner are both DBA/architect-owned.
+
+## Sheets (phase 1, V166)
+
+Manual sheets are **windows over the existing EAV store**, not a parallel
+storage system. `src/routes/sheets.js` exposes the 9 functions and 3 views
+defined by `sql/V166__sheet_phase1_manual_sheets.sql`.
+
+> **V166 is a DBA draft marked "NOT APPLIED TO LIVE" and this service's
+> `migrations/` chain deliberately does not include it.** Applying it is the
+> roundtable's decision, not this PR's. Until then the sheet routes return
+> **503** with `error.details.sheets_code = "SHEETS-SCHEMA"` — a client can tell
+> "not deployed yet" from "broken". Every sheet request passes a
+> `requireSheetSchema` guard, and the availability probe is cached per process.
+
+### Doctrine the endpoints enforce
+
+| | Rule | Enforced by |
+|---|---|---|
+| D1 | Dropping a sheet/row/column kills the *window*; objects, fields and OAV facts survive. No cascade into user data. | `DELETE /api/sheets/:id` (+ column/row removal) |
+| D2 | `set_cell` **is** a direct OAV write — no shadow store, no override layer. | `PUT /api/sheets/:id/cells` |
+| D3 | One value row per `(object, field)`; updating a cell rewrites in place, never duplicates. | `PUT /api/sheets/:id/cells` |
+| D4 | Sparse by construction: an empty cell is an **absent OAV row**, never a stored NULL. Clearing reference-counts the value row away. | `DELETE /api/sheets/:id/cells/*` |
+| D5 | Values go through the same 7-type encode path as `/api/encode`. | `POST /api/sheets/:id/encode` |
+
+### Endpoints
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/sheets` | list with `column_count` / `row_count` |
+| `GET` | `/api/sheets/:id` | |
+| `DELETE` | `/api/sheets/:id` | D1 — window dies, data survives |
+| `GET` | `/api/sheets/:id/columns` | projection, in display order |
+| `POST` | `/api/sheets/:id/columns` | `field_id`, optional `column_index` / `display_label` |
+| `DELETE` | `/api/sheets/:id/columns/:fieldId` | D1 |
+| `GET` | `/api/sheets/:id/rows` | membership, in rank order |
+| `POST` | `/api/sheets/:id/rows` | `object_id`, optional `row_index` |
+| `DELETE` | `/api/sheets/:id/rows/:objectId` | D1 |
+| `POST` | `/api/sheets/:id/rows/:objectId/move` | O(1) fractional rank |
+| `GET` | `/api/sheets/:id/cells` | scoped to the sheet window |
+| `PUT` | `/api/sheets/:id/rows/:objectId/fields/:fieldId` | `{ type_code, value }` |
+| `DELETE` | `/api/sheets/:id/rows/:objectId/fields/:fieldId` | D4 — sparse absence |
+| `POST` | `/api/sheets/encode` | D5 — standalone literal, no cell binding |
+| `GET` | `/api/sheets/:id/grid` | sparse render; empty cells are `null` |
+
+### Error codes
+
+Domain violations are raised by the DDL as `SHEETS-0nn` and mapped to **409**:
+
+| Code | Meaning |
+|---|---|
+| `SHEETS-001` | field is not a projected column of this sheet |
+| `SHEETS-002` | object is not a row of this sheet |
+| `SHEETS-003` | `type_code` disagrees with the field declaration |
+| `SHEETS-005` | invalid literal, or a non-canonical boolean |
+| `SHEETS-006` | sheet name must be a non-empty string |
+| `SHEETS-007` | duplicate sheet name |
+| `SHEETS-009` | unknown field |
+| `SHEETS-010` | duplicate column projection |
+| `SHEETS-011` | unknown object |
+| `SHEETS-012` | duplicate row membership |
+| `SHEETS-014` | cannot move a non-member |
+
+A **malformed request** (missing/non-string name, no `row_index` on a move,
+out-of-registry `type_code`) is a **400** and is rejected before the database
+is touched. The two are deliberately distinct: a blank name is a well-formed
+request that breaks a domain rule (`SHEETS-006` → 409), a missing name is not a
+request this endpoint can act on (400).
+
+### Tests
+
+- `test/sheets.test.js` — pure unit tests for the router helpers.
+- `test/sheets.hermetic.test.js` — 38 end-to-end tests that create a throwaway
+  database, apply the service chain **plus the real V166** via `psql`, drive
+  the HTTP layer, and drop the database. The live `nexus` database is never
+  touched. This is the same hermetic pattern
+  `python/shrapnel_sheet/tests/test_sheet_phase1.py` uses, and it is the only
+  way to exercise this surface while V166 remains unapplied.
+
+  It **skips** (38 skipped, 0 failed) when the admin DSN cannot create a
+  database, so `npm test` stays useful on a host without that privilege:
+
+  ```bash
+  SHRAPNEL_TEST_ADMIN_DSN=postgresql://pguser:pgpass@localhost:5432/postgres npm test
+  ```
+
+  The harness uses `psql` rather than the pg driver for the reasons given under
+  **Migrations** above.
+

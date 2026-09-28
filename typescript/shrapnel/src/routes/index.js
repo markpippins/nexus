@@ -5,6 +5,7 @@ import { fieldsRouter } from './fields.js';
 import { objectsRouter } from './objects.js';
 import { encodeRouter } from './encode.js';
 import { stereotypesRouter } from './stereotypes.js';
+import { sheetsRouter } from './sheets.js';
 
 export const routes = Router();
 
@@ -14,3 +15,5 @@ routes.use('/fields', fieldsRouter);
 routes.use('/objects', objectsRouter);
 routes.use('/encode', encodeRouter);
 routes.use('/stereotypes', stereotypesRouter);
+// Sheet phase 1 (V166). 503 until the DBA applies the draft migration.
+routes.use('/sheets', sheetsRouter);
