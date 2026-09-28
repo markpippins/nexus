@@ -2142,6 +2142,8 @@ export async function getRoleReadiness(name: string): Promise<RoleReadiness> {
 
 export interface ProvisionSpec {
   name: string;
+  /** Omit to leave an EXISTING role's description untouched; passing it
+   *  updates the row. Either way the row is created if it does not exist. */
   description?: string;
   displayName?: string;
   // config bundle
@@ -2157,7 +2159,11 @@ export interface ProvisionSpec {
   // procedure cards
   procedures?: string[];
   procedureTemplateRole?: string;
-  // nebula.roles metadata (dual-registry sync)
+  // nebula.roles metadata (dual-registry sync).
+  // The row is CREATED if absent. Passing this field (or displayName) is
+  // what OPTS IN to overwriting an existing row — omit it when back-filling
+  // a single artefact on a role that already has governance metadata, or
+  // that metadata is replaced with the defaults below.
   nebula?: Record<string, any>;
   // assembly user
   createAssemblyUser?: boolean;
@@ -2180,12 +2186,17 @@ export async function provisionRole(spec: ProvisionSpec): Promise<{
     const steps: string[] = [];
 
     // 1. tackle.roles identity
+    // Creating the row is always wanted; OVERWRITING an existing role's
+    // description is not. `spec.description ?? ""` used to blank the
+    // description of any pre-existing role on every partial back-fill.
+    // The conflict arm is gated on the caller actually passing a description.
     await client.query(
       `INSERT INTO tackle.roles (name, description, created_at, updated_at)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (name) DO UPDATE
-       SET description = EXCLUDED.description, updated_at = EXCLUDED.updated_at`,
-      [name, spec.description ?? "", now, now]
+       SET description = EXCLUDED.description, updated_at = EXCLUDED.updated_at
+       WHERE $5`,
+      [name, spec.description ?? "", now, now, spec.description !== undefined]
     );
     steps.push("role_identity");
 
@@ -2290,43 +2301,109 @@ export async function provisionRole(spec: ProvisionSpec): Promise<{
     }
 
     // 6. nebula.roles dual-registry sync (Gap 7)
+    //
+    // `nebula.roles` is a VIEW over `nebula.roles_history` (SCD4): it projects
+    // the single currently-open row. The previous form here did
+    //
+    //     INSERT INTO nebula.roles (...) ON CONFLICT (name) DO UPDATE ...
+    //
+    // which can NEVER work — ON CONFLICT needs an arbiter index and a view
+    // has none. Every call therefore died with "there is no unique or
+    // exclusion constraint matching the ON CONFLICT specification", which
+    // aborted the whole provisionRole transaction. Uniqueness is not
+    // missing: `roles_name_open_key` is a partial UNIQUE index on
+    // nebula.roles_history (name) WHERE valid_until = '9999-12-31'.
+    //
+    // The SCD4-correct write, following the pattern the role grants already
+    // use in sql/grants/*.sql:
+    //   * no open row   -> INSERT a new open row
+    //   * one open row  -> close it (valid_until / recorded_until_dt = now)
+    //                      then INSERT the successor, carrying forward
+    //                      created_at and the cron_* columns
+    //   * several       -> refuse; that violates the partial unique index
+    //                      and silently picking one would lose data
+    //
+    // The successor write is OPT-IN. Provisioning an EXISTING role for a
+    // single missing artefact (e.g. back-filling just its persona prompt)
+    // must not close its open row and replace its governance metadata —
+    // owns_domains, escalates_to, visibility_scope and a binding
+    // can_verify_work_requests would all be replaced by defaults. So an
+    // existing role is left untouched unless the caller passed spec.nebula
+    // or spec.displayName, i.e. unless they asked for it.
+    //
+    // Note ProvisionSpec carries no cron_* fields, so those are inherited
+    // from the closed row rather than reset — matching the grant files,
+    // which pass false/NULL/NULL only on the fresh-role path.
     const nb = spec.nebula || {};
     const displayName = spec.displayName || titleCaseProvision(name);
-    await client.query(
-      `INSERT INTO nebula.roles
-         (name, display_name, description, owns_domains,
-          can_greenlight, can_create_questions, can_create_agendas,
-          can_resolve_questions, can_verify_work_requests,
-          max_open_questions, requires_approval_from,
-          cron_enabled, cron_expression, cron_description,
-          escalates_to, escalation_triggers,
-          level_filter_primary, level_filter_allowed, visibility_scope)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
-       ON CONFLICT (name) DO UPDATE
-       SET display_name = EXCLUDED.display_name, description = EXCLUDED.description,
-           owns_domains = EXCLUDED.owns_domains, can_greenlight = EXCLUDED.can_greenlight,
-           can_create_questions = EXCLUDED.can_create_questions,
-           can_create_agendas = EXCLUDED.can_create_agendas,
-           can_resolve_questions = EXCLUDED.can_resolve_questions,
-           can_verify_work_requests = EXCLUDED.can_verify_work_requests,
-           max_open_questions = EXCLUDED.max_open_questions,
-           requires_approval_from = EXCLUDED.requires_approval_from,
-           cron_enabled = EXCLUDED.cron_enabled, cron_expression = EXCLUDED.cron_expression,
-           cron_description = EXCLUDED.cron_description, escalates_to = EXCLUDED.escalates_to,
-           escalation_triggers = EXCLUDED.escalation_triggers,
-           level_filter_primary = EXCLUDED.level_filter_primary,
-           level_filter_allowed = EXCLUDED.level_filter_allowed,
-           visibility_scope = EXCLUDED.visibility_scope, updated_at = NOW()`,
-      [name, displayName, spec.description ?? null, nb.ownsDomains ?? [],
-       nb.canGreenlight ?? false, nb.canCreateQuestions ?? false, nb.canCreateAgendas ?? false,
-       nb.canResolveQuestions ?? false, nb.canVerifyWorkRequests ?? false,
-       nb.maxOpenQuestions ?? null, nb.requiresApprovalFrom ?? [],
-       nb.cronEnabled ?? false, nb.cronExpression ?? null, nb.cronDescription ?? null,
-       nb.escalatesTo ?? [], nb.escalationTriggers ?? [],
-       nb.levelFilterPrimary ?? "level <= 2", nb.levelFilterAllowed ?? "level <= 3",
-       nb.visibilityScope ?? ["planner", "all"]]
+    const updateExisting = spec.nebula !== undefined || spec.displayName !== undefined;
+    const OPEN_UNTIL = "9999-12-31 00:00:00+00";
+
+    const openRes = await client.query(
+      `SELECT id, created_at, cron_enabled, cron_expression, cron_description
+         FROM nebula.roles_history
+        WHERE name = $1
+          AND valid_until = $2::timestamptz
+          AND recorded_until_dt = $2::timestamptz
+        FOR UPDATE`,
+      [name, OPEN_UNTIL],
     );
-    steps.push("nebula_roles_sync");
+    if (openRes.rows.length > 1) {
+      throw new Error(
+        `Role '${name}' has ${openRes.rows.length} open snapshots in ` +
+          `nebula.roles_history; expected at most 1. Refusing to guess which ` +
+          `to close — resolve the duplicate open rows first.`,
+      );
+    }
+    const prev = openRes.rows[0] ?? null;
+
+    if (prev && !updateExisting) {
+      steps.push("nebula_roles_preserved");
+    } else {
+      if (prev) {
+        // Close the open snapshot. recorded_until_dt moves too: this is a
+        // bitemporal table, and a correction is a new recorded version.
+        const closed = await client.query(
+          `UPDATE nebula.roles_history
+              SET valid_until = NOW(), recorded_until_dt = NOW(), updated_at = NOW()
+            WHERE id = $1`,
+          [prev.id],
+        );
+        if (closed.rowCount !== 1) {
+          throw new Error(
+            `Failed to close open snapshot ${prev.id} for role '${name}'.`,
+          );
+        }
+      }
+      await client.query(
+        `INSERT INTO nebula.roles_history
+           (name, display_name, description, owns_domains,
+            can_greenlight, can_create_questions, can_create_agendas,
+            can_resolve_questions, can_verify_work_requests,
+            max_open_questions, requires_approval_from,
+            cron_enabled, cron_expression, cron_description,
+            escalates_to, escalation_triggers,
+            level_filter_primary, level_filter_allowed, visibility_scope,
+            created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+        [name, displayName, spec.description ?? null, nb.ownsDomains ?? [],
+         nb.canGreenlight ?? false, nb.canCreateQuestions ?? false, nb.canCreateAgendas ?? false,
+         nb.canResolveQuestions ?? false, nb.canVerifyWorkRequests ?? false,
+         nb.maxOpenQuestions ?? null, nb.requiresApprovalFrom ?? [],
+         prev ? prev.cron_enabled : false,
+         prev ? prev.cron_expression : null,
+         prev ? prev.cron_description : null,
+         nb.escalatesTo ?? [], nb.escalationTriggers ?? [],
+         nb.levelFilterPrimary ?? "level <= 2", nb.levelFilterAllowed ?? "level <= 3",
+         nb.visibilityScope ?? ["planner", "all"],
+         prev ? prev.created_at : new Date()],
+      );
+      // valid_from / valid_until / recorded_on_dt / recorded_until_dt are left
+      // to the column defaults (now() and '9999-12-31'), which is what makes
+      // the inserted row the single open, currently-recorded snapshot the
+      // nebula.roles view projects.
+      steps.push(prev ? "nebula_roles_regrant" : "nebula_roles_create");
+    }
 
     // 7. assembly user (posting identity)
     if (spec.createAssemblyUser) {
