@@ -258,7 +258,10 @@ class Main(unittest.TestCase):
         buf = io.StringIO()
         try:
             with contextlib.redirect_stdout(buf):
-                return r9rv.main(argv)
+                # NOW is mandatory here: the fixtures pin 2026-09-20, so letting
+                # main() read the wall clock dates them the day after this test
+                # was written. See the note on main()'s `now` seam.
+                return r9rv.main(argv, now=NOW)
         finally:
             r9rv.Runners.real = orig
 

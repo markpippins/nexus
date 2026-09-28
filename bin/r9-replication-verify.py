@@ -465,7 +465,13 @@ def run_battery(r, *, lookback=7, applied_after=None, do_verify=True,
     return report
 
 
-def main(argv=None):
+def main(argv=None, now=None):
+    # `now` is a test seam, not a flag. Without it main() falls through to
+    # run_battery's wall-clock default, so any test driving main() with pinned
+    # fixture timestamps silently measures them against the real date. That made
+    # test_exit0_on_skip_only red on 2026-09-21 and test_exit1_on_fail green for
+    # the wrong reason (everything stale -> FAIL -> exit 1). Ruled in architect
+    # record fb11ad19 (Decision 4) and fixed under the guard-discovery gate.
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--json", action="store_true", help="machine summary only")
     ap.add_argument("--lookback", type=int, default=7,
@@ -489,7 +495,7 @@ def main(argv=None):
     escape_since = dt.date.fromisoformat(args.escape_since)
     report = run_battery(
         Runners.real(), lookback=args.lookback, applied_after=applied_after,
-        do_verify=not args.skip_verify_last, escape_since=escape_since,
+        do_verify=not args.skip_verify_last, escape_since=escape_since, now=now,
     )
 
     if not args.json:

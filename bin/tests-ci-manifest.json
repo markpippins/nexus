@@ -1,0 +1,83 @@
+{
+  "_policy": "Every guard in bin/tests/ is either run by bin/run_bin_tests.py or named here with a reason, an owner, and the thing tracking the debt. There is no third state. Ruled in architect record fb11ad19 (Decision 4). Each exclusion also declares a `kind`, and the kind decides how it is retired. `defect` means the guard is red because THE REPO IS WRONG; the moment that is fixed the guard passes and the ratchet forces the entry to be removed in the same PR, so debt cannot outlive its cause. `infrastructure` means the guard is red because a bare CI runner has no database and no live services; it may well pass on a developer machine that happens to have them running, so a green run is NOT evidence the debt is closed and those entries are retired by landing the named harness work, not by observing a pass. Conflating the two would either force a green run to be treated as a fix (and turn CI red) or weaken the ratchet on real defects. Exclusions may only shrink.",
+  "_why_this_exists": "At origin/main 46cb20e9, 38 of 76 guards were referenced by no workflow and no Makefile target. The Makefile enumerated tests one per line, so a new guard was ungated by default. That gap hid a real defect for seven days: two migrations both numbered V194 (record ccc4c755). 2026-09-28 update: the first cut of this runner invoked each guard as a bare script (`python3 guard.py`). 25 of 79 guards have no __main__ block, so they executed zero tests and were reported PASS - the headline '75 run, 0 failed' overstated coverage, since only 50 actually ran. The runner now executes via `python3 -m pytest` and reports a guard that collects 0 tests as EMPTY, a failure. Doing that surfaced the 7 service-dependent exclusions above, which had been silently 'passing'.",
+  "excluded": {
+    "test_migration_number_uniqueness.py": {
+      "kind": "defect",
+      "reason": "FAILS on a real collision at origin/main: V194 is claimed by both V194__decommission_qbe_empty_tables.sql (#424) and V194__expression_register_producer.sql (#422). Excluded because it is red, not because it is broken. It must not be added to the guard's HISTORICAL_DUPLICATES allowlist - that would silence the finding rather than fix it.",
+      "owner": "dba",
+      "tracked": "record ccc4c755 (renumber ruling); decision fb11ad19",
+      "clears_when": "V194 is renumbered on main, at which point this guard passes and the ratchet forces its removal here"
+    },
+    "test_backfill_propositions.py": {
+      "kind": "infrastructure",
+      "reason": "RuntimeError: CONDUIT_PG_DSN must be set - requires a live PostgreSQL. Not runnable on a bare runner.",
+      "owner": "dba",
+      "tracked": "record fb11ad19 (Decision 4), owed with the other two PG-dependent guards",
+      "clears_when": "folded into the pg-integration harness job, which already provides a throwaway postgres:17 stack via bin/run-pg-integration-e2e.sh"
+    },
+    "test_drift_intake.py": {
+      "kind": "infrastructure",
+      "reason": "RuntimeError: CONDUIT_PG_DSN must be set - requires a live PostgreSQL. Not runnable on a bare runner.",
+      "owner": "dba",
+      "tracked": "record fb11ad19 (Decision 4), owed with the other two PG-dependent guards",
+      "clears_when": "folded into the pg-integration harness job"
+    },
+    "test_shrapnel_bridge.py": {
+      "kind": "infrastructure",
+      "reason": "RuntimeError: CONDUIT_PG_DSN must be set - requires a live PostgreSQL. Not runnable on a bare runner.",
+      "owner": "dba",
+      "tracked": "record fb11ad19 (Decision 4), owed with the other two PG-dependent guards",
+      "clears_when": "folded into the pg-integration harness job"
+    },
+    "test_grants_e2e.py": {
+      "kind": "infrastructure",
+      "reason": "Needs a reachable PostgreSQL: creates and drops its own throwaway database (e2e_grants_<pid>) from a skeleton, then applies the real grant files. Also carries a latent hang: it shells out to psql with no -w and no stdin=DEVNULL, so without PGPASSWORD it blocks on an interactive password prompt forever instead of failing. Fix the psql call before wiring this into any harness.",
+      "owner": "engineer",
+      "tracked": "Assembly 27027c44 (psql -w / stdin=DEVNULL fix); architect Decision 4 fb11ad19",
+      "clears_when": "the psql invocation passes -w and stdin=DEVNULL AND the test is folded into the pg-integration harness job, which already provides a throwaway postgres:17 stack"
+    },
+    "test_mark_operator_go_applied.py": {
+      "kind": "infrastructure",
+      "reason": "Asserts the operator-go migration is marked applied against live nebula state (20 tests, 10 of which fail bare). Needs a migrated database, not merely a reachable server.",
+      "owner": "dba",
+      "tracked": "architect Decision 4 fb11ad19 (PG-dependent guards, owed together)",
+      "clears_when": "folded into the pg-integration harness job"
+    },
+    "test_mesh_register_probe.py": {
+      "kind": "infrastructure",
+      "reason": "Probes the live mesh-register service over the network (16 tests, 9 of which fail bare). Needs the service up.",
+      "owner": "engineer",
+      "tracked": "architect Decision 4 fb11ad19; tester finding ff3264f0 (moleculer/mesh family ungated)",
+      "clears_when": "the service is started by the harness that runs this guard, so a bare runner can execute it"
+    },
+    "test_post_agent_record_tags.py": {
+      "kind": "infrastructure",
+      "reason": "Round-trips records through the live Nebula REST API (:3101) to check tag persistence. Needs nebula-srv up and reachable.",
+      "owner": "engineer",
+      "tracked": "architect Decision 4 fb11ad19",
+      "clears_when": "a hermetic harness (or an in-process fake) replaces the live REST round-trip"
+    },
+    "test_substance_service.py": {
+      "kind": "infrastructure",
+      "reason": "Exercises the live substance-service over HTTP (17 tests, 2 of which fail bare on curl rc=7 cannot reach /healthz). Needs the service up.",
+      "owner": "engineer",
+      "tracked": "architect Decision 4 fb11ad19",
+      "clears_when": "the harness starts substance-service before this guard runs"
+    },
+    "test_terrain_drift_check.py": {
+      "kind": "infrastructure",
+      "reason": "Runs the real drift checker against live terrain state (15 tests, 1 of which fails bare). Depends on services/terrain state that a bare runner does not have.",
+      "owner": "engineer",
+      "tracked": "architect Decision 4 fb11ad19",
+      "clears_when": "the terrain state it reads is provisioned hermetically, or the assertion is scoped to what a bare runner can provide"
+    },
+    "test_write_canary_lib.py": {
+      "kind": "infrastructure",
+      "reason": "Requires the live write-canary library/service to be present (14 tests, 2 of which fail bare).",
+      "owner": "engineer",
+      "tracked": "architect Decision 4 fb11ad19",
+      "clears_when": "write-canary is provisioned by the harness that runs this guard"
+    }
+  }
+}

@@ -25,8 +25,6 @@ import os
 import re
 import sys
 
-import psycopg2
-
 DSN = os.environ.get("SRCDSN",
                      "postgresql://pguser:pgpass@localhost:5432/nexus")
 
@@ -73,6 +71,21 @@ def is_exempt(role: str, metadata: dict | None) -> bool:
 def scan(since: str) -> tuple[list[dict], str]:
     """Return (findings, max_created_at_iso) for records created after
     `since`. max_created_at is the new pointer (None when no rows)."""
+    # Imported lazily, and only here: psycopg2 is needed to reach the database
+    # and for nothing else. A module-level import made `import
+    # check_record_durability` fail on any host without the driver, which
+    # turned bin/tests/test_record_durability_wrap.py into a pytest
+    # COLLECTION error (rc=2, 0 tests) rather than a skip — so the pure
+    # hollow_reasons/is_exempt logic below could not be tested at all on a
+    # bare runner. The real CLI path still fails fast, just later and with a
+    # message that names the missing dependency.
+    try:
+        import psycopg2
+    except ImportError as exc:  # pragma: no cover - environment-dependent
+        raise RuntimeError(
+            "psycopg2 is required to scan the database; "
+            "install psycopg2 or run against a host that has it"
+        ) from exc
     with psycopg2.connect(DSN) as conn, conn.cursor() as cur:
         cur.execute(
             """
