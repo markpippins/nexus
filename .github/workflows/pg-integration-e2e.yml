@@ -1,0 +1,304 @@
+# pg-integration-e2e — the throwaway-DB job (seeded-PostgreSQL integration class)
+#
+# Productizes the manual harness-bridge throwaway environment (proven by hand
+# 2026-09-27, agent records a49479cf / ab704ba1 / 55e8cf77) so the suites that
+# were excluded from broker-e2e for needing a seeded PostgreSQL + PEB kernel
+# run automatically. These four suites are the "ungated" set from the
+# broker-e2e.yml exclusion header — they never ran in CI before this job.
+#
+# Suites covered (all previously skip-guarded or simply not run in CI):
+#   tests/harness-bridge.e2e.test.js  — producer cycle: bridge → git_claim_producer
+#                                     persists claim/evidence/link into
+#                                     resolution.execution_claim*, then POSTs
+#                                     peb_admit_git_execution_claim to the live
+#                                     kernel; asserts admitted receipts. Skips
+#                                     itself when kernel/PG are down (skip-guard
+#                                     kernelUp()) — the fail-closed TAP guard
+#                                     below turns a silent skip into job failure.
+#   tests/attempt-lifecycle.test.js   — real exported SQL constants executed
+#                                     against the live execution schema inside a
+#                                     rolled-back transaction (drift guard).
+#   tests/broker-smoke.test.js        — real broker boot; keychain checkpoint,
+#                                     rewind, SOL-outbox families (seeded PG).
+#   tests/legacy-parity.test.js       — broker worker surface vs legacy
+#                                     execution-srv surface over the SAME
+#                                     PostgreSQL (v3 parity contract, ruling
+#                                     ffa4ffc5). This file's own header names
+#                                     the class: "postgres:17 +
+#                                     nexus-ci-bootstrap.sql + execution-srv".
+#
+# The single seed is the repo-canonical whole-schema snapshot
+# sql/ci-bootstrap/nexus-ci-bootstrap.sql (pg_dump --schema-only of the live
+# DB, --no-owner --no-privileges, meta-commands stripped). refresh.sh proves
+# on every regeneration that it applies to an EMPTY database (fail-closed
+# fresh-apply check), so no per-suite seeding is needed here. It carries
+# everything at once: execution.attempts/leases/requests (attempt-lifecycle),
+# resolution.execution_claim + admit_verified_execution_claim +
+# execution_admission_receipt (harness-bridge), peb.transactions WITH the V4
+# kernel_event_id/kernel_event_type columns (kernel ddl-auto=validate — the
+# snapshot IS the live schema the kernel already validates against on
+# titanium), nebula.agent_records_history + resolution.keychain_event_outbox
+# (broker-smoke keychain family), witnessed-run tables (legacy-parity).
+#
+# peb-kernel build: the aggregator reactor build (-pl peb-bootstrap -am) is
+# REQUIRED — invoking peb-bootstrap's module pom directly (or spring-boot:run
+# without a preceding phase) resolves sibling modules from STALE ~/.m2 jars
+# (run-peb-kernel.sh header documents the same trap for installs). Package
+# once into the Spring Boot fat jar, boot it with plain java.
+#
+# Kernel runtime config: Flyway stays disabled (default per application.yml —
+# the schema is pre-seeded) and hibernate ddl-auto=validate is the runtime
+# contract. Do NOT enable Flyway here: the ci-bootstrap checksums do not match
+# the migration chain and must not.
+#
+# Empirics (2026-09-27, full local dry-run of this exact chain on a fresh
+# postgres:17 + mongo:7): ci-bootstrap seed applied clean (3.5 s); kernel fat
+# jar (reactor -am package, 2 min) booted UP against the seeded DB —
+# ddl-auto=validate accepts the snapshot, including the peb V4 kernel
+# columns; harness-bridge + attempt-lifecycle 13 pass / 0 skipped;
+# broker-smoke 12 pass / 0 skipped (checkpoint, rewind, SOL-outbox families
+# all green on a fresh seed); legacy-parity 10 pass / 0 skipped against a
+# freshly built execution-srv. 35/35, 0 skipped.
+name: PG Integration E2E (throwaway DB)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'moleculer/nexus-broker/**'
+      - 'python/nexus_core/wrp/**'
+      - 'sql/ci-bootstrap/**'
+      - 'jvm/spring/peb-kernel/**'
+      - 'typescript/execution-srv/**'
+      - 'typescript/heartbeat-client/**'
+      - '.github/workflows/pg-integration-e2e.yml'
+  pull_request:
+    paths:
+      - 'moleculer/nexus-broker/**'
+      - 'python/nexus_core/wrp/**'
+      - 'sql/ci-bootstrap/**'
+      - 'jvm/spring/peb-kernel/**'
+      - 'typescript/execution-srv/**'
+      - 'typescript/heartbeat-client/**'
+      - '.github/workflows/pg-integration-e2e.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pg-integration-e2e:
+    name: "Throwaway-DB integration class (harness-bridge, attempt-lifecycle, broker-smoke, legacy-parity)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: nexus
+          POSTGRES_USER: pguser
+          POSTGRES_PASSWORD: pgpass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pguser -d nexus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      mongo:
+        image: mongo:7
+        ports:
+          - 28017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping: 1}).ok'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Both PG env families: the node suites and the broker read
+      # PG_HOST/PG_USER/PG_PASSWORD/PG_DB_NAME/PG_PORT; execution-srv reads
+      # PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE.
+      PG_HOST: localhost
+      PG_PORT: '5432'
+      PG_USER: pguser
+      PG_PASSWORD: pgpass
+      PG_DB_NAME: nexus
+      PGHOST: localhost
+      PGPORT: '5432'
+      PGUSER: pguser
+      PGPASSWORD: pgpass
+      PGDATABASE: nexus
+      MONGO_URL: mongodb://localhost:28017/nexus
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            moleculer/nexus-broker/package-lock.json
+            typescript/execution-srv/package-lock.json
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v3
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Cache Maven repository (peb-kernel build)
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: maven-pg-integration-${{ hashFiles('jvm/**/pom.xml') }}
+          restore-keys: maven-pg-integration-
+
+      # pg_isready validates neither credentials nor database; the only honest
+      # readiness signal is an authenticated query as the real user (house
+      # pattern: broker-e2e, ci.yml, #456 boot-smoke).
+      - name: Wait for real postgres readiness (authenticated probe)
+        run: |
+          for i in $(seq 1 60); do
+            if psql -h localhost -U pguser -d nexus -tAc 'SELECT 1' >/dev/null 2>&1; then
+              echo "postgres accepting authenticated connections (attempt $i)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "postgres never accepted an authenticated connection"
+          exit 1
+
+      - name: Seed throwaway DB from repo-canonical CI bootstrap
+        run: |
+          psql -v ON_ERROR_STOP=1 -h localhost -U pguser -d nexus -q \
+            -f sql/ci-bootstrap/nexus-ci-bootstrap.sql
+          # Fail-closed postconditions: the exact objects the gated suites
+          # touch. A seed drift must fail HERE, not as a confusing test error.
+          psql -v ON_ERROR_STOP=1 -h localhost -U pguser -d nexus -tAc "
+            SELECT to_regclass('execution.attempts'),
+                   to_regclass('resolution.execution_claim'),
+                   to_regclass('resolution.execution_claim_evidence'),
+                   to_regclass('resolution.execution_evidence'),
+                   to_regclass('resolution.execution_admission_receipt'),
+                   to_regclass('resolution.keychain_event_outbox'),
+                   to_regclass('nebula.agent_records'),
+                   to_regclass('peb.transactions');
+          " | tee /tmp/seed-objects.txt
+          grep -q 'execution.admission_receipt' /tmp/seed-objects.txt || { echo 'seed missing gated-suite objects'; exit 1; }
+          psql -v ON_ERROR_STOP=1 -h localhost -U pguser -d nexus -tAc \
+            "SELECT count(*) FROM information_schema.columns \
+             WHERE table_schema='peb' AND table_name='transactions' \
+               AND column_name IN ('kernel_event_id','kernel_event_type');" \
+          | grep -q '^2$' || { echo 'peb.transactions missing kernel V4 columns — kernel ddl-auto=validate will fail'; exit 1; }
+          echo 'seed OK: all gated-suite objects present'
+
+      - name: Install + build broker (dist/ is untracked)
+        working-directory: moleculer/nexus-broker
+        run: npm ci && npm run build
+
+      # The bridge imports psycopg2 lazily inside the persist step; a missing
+      # module would surface as a confusing producer failure mid-test.
+      # (GitHub runners export PIP_BREAK_SYSTEM_PACKAGES=1, so the house
+      # plain-pip pattern works; --break-system-packages is implicit.)
+      - name: Install psycopg2 for the git claim producer
+        run: python3 -m pip install --quiet psycopg2-binary
+
+      # Reactor build with -am: compiles peb-domain/store/hash/core/adapters/
+      # api FRESH and packages peb-bootstrap's Spring Boot fat jar. Do not
+      # swap for a module-pom direct call — that resolves stale ~/.m2 jars.
+      - name: Package peb-kernel bootstrap (fat jar, reactor -am)
+        run: mvn -B -f jvm/pom.xml -pl spring/peb-kernel/peb-bootstrap -am -DskipTests package
+
+      - name: Boot peb-kernel against the throwaway DB (wait for health)
+        run: |
+          java -jar jvm/spring/peb-kernel/peb-bootstrap/target/peb-bootstrap-1.0.0-SNAPSHOT.jar \
+            --server.port=18099 \
+            --spring.datasource.url='jdbc:postgresql://localhost:5432/nexus?currentSchema=peb' \
+            --spring.datasource.username=pguser \
+            --spring.datasource.password=pgpass \
+            --spring.jpa.hibernate.ddl-auto=validate \
+            > /tmp/peb-kernel.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf --max-time 2 http://localhost:18099/actuator/health 2>/dev/null | grep -q '"UP"'; then
+              echo "peb-kernel UP (attempt $i)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "peb-kernel never became healthy; last log lines:"
+          tail -60 /tmp/peb-kernel.log
+          exit 1
+
+      # Fail-closed TAP guard: the suites carry skip-guards for local runs
+      # (no kernel, no PG); in THIS job a skip means the environment silently
+      # degraded and must fail the run. `# fail 0` alone is not enough —
+      # every test could skip and still report fail 0.
+      - name: E2E — harness bridge producer cycle + attempt lifecycle
+        working-directory: moleculer/nexus-broker
+        env:
+          PEB_BASE_URL: http://localhost:18099
+        run: |
+          set -o pipefail
+          node --test --test-reporter=tap \
+            tests/harness-bridge.e2e.test.js tests/attempt-lifecycle.test.js \
+            2>&1 | tee /tmp/tap-bridge-lifecycle.log
+          grep -q '^# fail 0$' /tmp/tap-bridge-lifecycle.log || { echo "FAIL: test failures"; exit 1; }
+          grep -Eq '^# (skip|skipped) 0$' /tmp/tap-bridge-lifecycle.log || { echo "FAIL: tests skipped — integration env degraded"; exit 1; }
+          PASS=$(grep -E '^# pass [0-9]+$' /tmp/tap-bridge-lifecycle.log | grep -oE '[0-9]+' | tail -1)
+          [ "${PASS:-0}" -ge 10 ] || { echo "FAIL: only ${PASS:-0} passed (expected >= 10)"; exit 1; }
+
+      - name: E2E — broker boot smoke + keychain checkpoints/rewind/SOL outbox
+        working-directory: moleculer/nexus-broker
+        run: |
+          set -o pipefail
+          node --test --test-reporter=tap tests/broker-smoke.test.js \
+            2>&1 | tee /tmp/tap-broker-smoke.log
+          grep -q '^# fail 0$' /tmp/tap-broker-smoke.log || { echo "FAIL: test failures"; exit 1; }
+          grep -Eq '^# (skip|skipped) 0$' /tmp/tap-broker-smoke.log || { echo "FAIL: tests skipped — integration env degraded"; exit 1; }
+          PASS=$(grep -E '^# pass [0-9]+$' /tmp/tap-broker-smoke.log | grep -oE '[0-9]+' | tail -1)
+          [ "${PASS:-0}" -ge 12 ] || { echo "FAIL: only ${PASS:-0} passed (expected >= 12)"; exit 1; }
+
+      # execution-srv's file:../heartbeat-client dependency has no committed
+      # lock and needs its dist/ built (same two steps as its Dockerfile build
+      # stage). Without this, `node dist/index.js` dies with MODULE_NOT_FOUND
+      # on heartbeat-client (proven locally 2026-09-27).
+      - name: "Build heartbeat-client (file: dependency of execution-srv)"
+        working-directory: typescript/heartbeat-client
+        run: npm install --no-package-lock && npm run build
+
+      # legacy-parity boots its own broker (ephemeral ports) and compares the
+      # worker surface against the REAL legacy execution-srv over the same PG.
+      # execution-srv on a non-standard port (nothing on the runner may already
+      # own 3110, but the explicit pair removes the dependence entirely).
+      - name: E2E — legacy execution-srv parity (broker-pg-integration class)
+        working-directory: moleculer/nexus-broker
+        env:
+          LEGACY_EXECUTION_URL: http://localhost:32110
+        run: |
+          set -o pipefail
+          pushd ../../typescript/execution-srv
+          npm ci && npm run build
+          PGHOST=localhost PGPORT=5432 PGUSER=pguser PGPASSWORD=pgpass PGDATABASE=nexus \
+            PORT=32110 node dist/index.js > /tmp/execution-srv.log 2>&1 &
+          SRV_PID=$!
+          popd
+          for i in $(seq 1 30); do
+            curl -sf --max-time 2 http://localhost:32110/health >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -sf http://localhost:32110/health >/dev/null || { echo "execution-srv never became healthy"; tail -40 /tmp/execution-srv.log; exit 1; }
+          node --test --test-reporter=tap tests/legacy-parity.test.js \
+            2>&1 | tee /tmp/tap-legacy-parity.log
+          STATUS=$?
+          kill $SRV_PID 2>/dev/null || true
+          grep -q '^# fail 0$' /tmp/tap-legacy-parity.log || { echo "FAIL: test failures"; exit 1; }
+          grep -Eq '^# (skip|skipped) 0$' /tmp/tap-legacy-parity.log || { echo "FAIL: tests skipped — integration env degraded"; exit 1; }
+          PASS=$(grep -E '^# pass [0-9]+$' /tmp/tap-legacy-parity.log | grep -oE '[0-9]+' | tail -1)
+          [ "${PASS:-0}" -ge 8 ] || { echo "FAIL: only ${PASS:-0} passed (expected >= 8)"; exit 1; }
+          exit $STATUS
+
+      - name: Stop peb-kernel (always)
+        if: always()
+        run: |
+          pkill -f 'peb-bootstrap-1.0.0-SNAPSHOT.jar' 2>/dev/null || true
+          tail -20 /tmp/peb-kernel.log 2>/dev/null || true

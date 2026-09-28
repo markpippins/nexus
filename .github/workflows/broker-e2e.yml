@@ -37,6 +37,13 @@
 #     keychain-snapshot service fix (13 pass / 9 fail both ways).
 #   - attempt-lifecycle / harness-bridge: seeded-PostgreSQL integration
 #     class, not Mongo.
+#
+# NOTE (2026-09-27): the seeded-PostgreSQL integration class above now HAS
+# its gate — .github/workflows/pg-integration-e2e.yml (throwaway DB from
+# sql/ci-bootstrap/nexus-ci-bootstrap.sql + live peb-kernel + legacy
+# execution-srv) runs attempt-lifecycle, harness-bridge.e2e, broker-smoke
+# (checkpoint / rewind / SOL-outbox families), and legacy-parity on every
+# PR touching the broker, wrp bridge, peb-kernel, or execution-srv.
 name: broker-e2e
 
 on:
