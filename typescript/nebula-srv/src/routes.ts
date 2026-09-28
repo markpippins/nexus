@@ -6419,8 +6419,13 @@ export function createRoutes(pool: Pool): Router {
     try {
       const { id } = req.params;
       const now = new Date().toISOString();
+      // Explicit casts: deleted_at/updated_at are text while valid_until is
+      // timestamptz, and one untyped $2 feeding all three makes PG deduce
+      // inconsistent types ("inconsistent types deduced for parameter $2").
+      // Surfaced by the service-test-gates suite (first run of this route's
+      // integration test).
       const { rows: [row] } = await pool.query(
-        'UPDATE nebula.op_registry SET deleted_at = $2, updated_at = $2, valid_until = $2 WHERE id = $1 AND deleted_at IS NULL RETURNING *',
+        'UPDATE nebula.op_registry SET deleted_at = $2::text, updated_at = $2::text, valid_until = $2::timestamptz WHERE id = $1 AND deleted_at IS NULL RETURNING *',
         [id, now]
       );
       if (!row) return res.status(404).json({ error: `Registry entry ${id} not found` });

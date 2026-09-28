@@ -2,15 +2,20 @@
  * Integration test: GET /api/attestations?pr=<N> — exact, indexed
  * attestation lookup for merge-gate gate 3 (bin/merge_pr.py).
  *
- * Verifies against real agent-record data (read-only):
- *  1. 200 + items[] with role=tester, exact pr:<N> tag, attestation shape
- *     (canonical: assessment + type:approval + status:done; legacy:
+ * SELF-SEEDED (fresh-DB CI): the endpoint is a pure function of seeded
+ * agent_records, so the test creates its own tester-shaped rows under unique
+ * PR tags and cleans up after itself. It does not depend on live database
+ * contents, which made the original version unrunnable on a fresh database.
+ *
+ * Verifies:
+ *  1. 200 + items[] with role=tester, exact pr:<N> tag match, attestation
+ *     shape (canonical: assessment + type:approval + status:done; legacy:
  *     type:attestation) — tester finding 84ca2388's rule, server-side
  *  2. newest-first ordering
- *  3. known canonical rows resolve: pr:487 -> 7a668bd1, pr:491 -> b47510d6
- *  4. validation: missing/garbage pr => 400
- *  5. regression: tester records that merely MENTION a PR (intent row
- *     b8acd611 for pr:492, finding 84ca2388) never satisfy the shape
+ *  3. regression: records that merely MENTION the PR (wrong shape / wrong
+ *     role) never satisfy the lookup
+ *  4. exact tag match: no cross-PR leakage
+ *  5. validation: missing/garbage/negative pr => 400
  *
  * Usage: npx tsx tests/attestations-lookup.test.ts
  * Requires a reachable nebula-srv (BASE below) on the target database.
@@ -18,7 +23,12 @@
 
 import * as http from "http";
 
-const BASE = process.env.NEBULA_TEST_BASE || "http://localhost:3111";
+const BASE = process.env.NEBULA_TEST_BASE || "http://localhost:3101";
+
+// Unique PR tags for this run — never collide with real attestation rows.
+const PR_MAIN = "491911";
+const PR_MENTION = "491912";
+const PR_ABSENT = "491913";
 
 function httpReq(method: string, path: string, body?: any): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
@@ -68,56 +78,86 @@ function isAttestationShaped(r: any): boolean {
 async function run() {
   console.log(`attestations-lookup integration test against ${BASE}`);
 
-  // 1. canonical row for pr:491
-  const r491 = await httpReq("GET", "/api/attestations?pr=491");
-  assert("pr=491 returns 200", r491.status === 200, `got ${r491.status}`);
-  assert("pr=491 items is an array", Array.isArray(r491.body.items));
-  assert("pr=491 finds the canonical attestation b47510d6",
-    r491.body.items.some((r: any) => String(r.id).startsWith("b47510d6")),
-    JSON.stringify(r491.body.items).slice(0, 200));
-  for (const r of r491.body.items) {
-    assert(`pr=491 row ${String(r.id).slice(0, 8)} is tester-shaped`, r.role === "tester" && isAttestationShaped(r));
+  // ── Seed fixtures ────────────────────────────────────────────────
+  // Canonical-shaped attestation (assessment + type:approval + status:done)
+  // and a legacy-shaped one (type:attestation), both tester-role, pr:491911.
+  const canonical = await httpReq("POST", "/api/agent-records", {
+    recordType: "assessment",
+    role: "tester",
+    title: "attestations-lookup fixture: canonical shape",
+    content: "Self-seeded fixture for tests/attestations-lookup.test.ts",
+    tags: [`pr:${PR_MAIN}`, "type:approval", "status:done"],
+    level: 1,
+  });
+  assert("canonical fixture created", canonical.status === 201, `got ${canonical.status}`);
+
+  const legacy = await httpReq("POST", "/api/agent-records", {
+    recordType: "report",
+    role: "tester",
+    title: "attestations-lookup fixture: legacy shape",
+    content: "Self-seeded legacy-shape fixture (type:attestation)",
+    tags: [`pr:${PR_MAIN}`, "type:attestation"],
+    level: 1,
+  });
+  assert("legacy fixture created", legacy.status === 201, `got ${legacy.status}`);
+
+  // A row that merely MENTIONS the PR: wrong role and not attestation-shaped.
+  // It must never satisfy the lookup (regression from finding 84ca2388).
+  const mention = await httpReq("POST", "/api/agent-records", {
+    recordType: "analysis",
+    role: "engineer",
+    title: "attestations-lookup fixture: mention, wrong shape",
+    content: "Mentions pr without attestation shape — must be excluded",
+    tags: [`pr:${PR_MENTION}`, "type:approval"],
+    level: 1,
+  });
+  assert("mention fixture created", mention.status === 201, `got ${mention.status}`);
+
+  // 1. canonical + legacy rows resolve for the seeded PR
+  const rMain = await httpReq("GET", `/api/attestations?pr=${PR_MAIN}`);
+  assert(`pr=${PR_MAIN} returns 200`, rMain.status === 200, `got ${rMain.status}`);
+  assert(`pr=${PR_MAIN} items is an array`, Array.isArray(rMain.body.items));
+  assert(`pr=${PR_MAIN} finds the canonical attestation`,
+    rMain.body.items.some((r: any) => String(r.id).startsWith(canonical.body.id)),
+    JSON.stringify(rMain.body.items).slice(0, 200));
+  assert(`pr=${PR_MAIN} finds the legacy attestation`,
+    rMain.body.items.some((r: any) => String(r.id).startsWith(legacy.body.id)));
+  for (const r of rMain.body.items) {
+    assert(`pr=${PR_MAIN} row ${String(r.id).slice(0, 8)} is tester-shaped`,
+      r.role === "tester" && isAttestationShaped(r));
   }
 
-  // 2. canonical row for pr:487
-  const r487 = await httpReq("GET", "/api/attestations?pr=487");
-  assert("pr=487 finds the canonical attestation 7a668bd1",
-    r487.body.items.some((r: any) => String(r.id).startsWith("7a668bd1")));
+  // 2. newest-first ordering
+  const times = rMain.body.items.map((r: any) => r.createdAt as number);
+  assert("ordered newest-first",
+    times.every((t: number, i: number) => i === 0 || times[i - 1] >= t));
 
-  // 3. newest-first ordering
-  const times = r487.body.items.map((r: any) => r.createdAt as number);
-  assert("pr=487 ordered newest-first", times.every((t: number, i: number) => i === 0 || times[i - 1] >= t));
+  // 3. regression: mention-only rows never satisfy the shape
+  const rMention = await httpReq("GET", `/api/attestations?pr=${PR_MENTION}`);
+  assert(`pr=${PR_MENTION} returns 200`, rMention.status === 200);
+  assert(`pr=${PR_MENTION} excludes non-attestation mentions`,
+    Array.isArray(rMention.body.items) && rMention.body.items.length === 0,
+    JSON.stringify(rMention.body.items).slice(0, 200));
 
-  // 4. regression: intent/finding rows for pr:492 must NOT satisfy the shape.
-  // (pr:492 legitimately HAS an attestation — re-attestation row 36b47e81 at
-  // head 1a9bfd77, per architect ruling f8e82dba — so assert shape purity,
-  // not emptiness: every returned row must be attestation-shaped.)
-  const r492 = await httpReq("GET", "/api/attestations?pr=492");
-  assert("pr=492 returns 200", r492.status === 200);
-  for (const r of r492.body.items) {
-    assert(`pr=492 row ${String(r.id).slice(0, 8)} is attestation-shaped`, isAttestationShaped(r),
-      JSON.stringify(r).slice(0, 200));
-  }
-  assert("pr=492 excludes marker-less mentions (b8acd611 intent, 84ca2388 finding)",
-    !r492.body.items.some((r: any) =>
-      String(r.id).startsWith("b8acd611") || String(r.id).startsWith("84ca2388")),
-    JSON.stringify(r492.body.items).slice(0, 200));
-  assert("pr=492 finds the re-attestation 36b47e81 (head 1a9bfd77)",
-    r492.body.items.some((r: any) => String(r.id).startsWith("36b47e81")));
+  // 4. exact tag match: no cross-PR leakage
+  const rAbsent = await httpReq("GET", `/api/attestations?pr=${PR_ABSENT}`);
+  assert(`pr=${PR_ABSENT} exact-tag match finds nothing (no #48/#487 confusion)`,
+    Array.isArray(rAbsent.body.items) && rAbsent.body.items.length === 0,
+    JSON.stringify(rAbsent.body.items).slice(0, 200));
 
-  // 5. exact tag match: no cross-PR leakage
-  const r48 = await httpReq("GET", "/api/attestations?pr=48");
-  assert("pr=48 exact-tag match finds nothing (no #48/#487 confusion)",
-    Array.isArray(r48.body.items) && r48.body.items.length === 0,
-    JSON.stringify(r48.body.items).slice(0, 200));
-
-  // 6. validation
+  // 5. validation
   const bad = await httpReq("GET", "/api/attestations");
   assert("missing pr => 400", bad.status === 400, `got ${bad.status}`);
   const garbage = await httpReq("GET", "/api/attestations?pr=abc");
   assert("non-integer pr => 400", garbage.status === 400, `got ${garbage.status}`);
   const negative = await httpReq("GET", "/api/attestations?pr=-3");
   assert("negative pr => 400", negative.status === 400, `got ${negative.status}`);
+
+  // ── Cleanup ──────────────────────────────────────────────────────
+  for (const id of [canonical.body.id, legacy.body.id, mention.body.id]) {
+    await httpReq("DELETE", `/api/agent-records/${id}`);
+  }
+  console.log("  ✓ fixtures cleaned up");
 
   console.log("attestations-lookup integration test: ALL PASS");
   process.exit(0);
