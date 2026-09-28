@@ -104,11 +104,27 @@
 # header now tells in one place.
 name: broker-e2e
 
+# The path filters below cover the broker AND all five moleculer jest twins
+# (tackle, conduit, harness, peb, aegis — see the `moleculer-twins` job). They
+# have to be widened together: GitHub filters `on.paths` at the WORKFLOW level,
+# so if a twin's package path is missing here, the matrix job never fires for a
+# change to that twin — a gate that looks present and runs on nothing. That is
+# the same failure class as the #608 change-log dedup that sat deployed-but-
+# never-executed for three days.
+#
+# There is no per-job path filter in Actions, so a change to any one package
+# also runs its sibling jobs (broker-e2e measures ~2 min across 8 recent runs).
+# Accepted for now; a separate workflow file would decouple them.
 on:
   push:
     branches: [main]
     paths:
       - 'moleculer/nexus-broker/**'
+      - 'moleculer/tackle/**'
+      - 'moleculer/conduit/**'
+      - 'moleculer/harness/**'
+      - 'moleculer/peb/**'
+      - 'moleculer/aegis/**'
       - 'python/nexus_core/wrp/**'
       - 'sql/ci-bootstrap/**'
       - 'jvm/spring/peb-kernel/**'
@@ -118,6 +134,11 @@ on:
   pull_request:
     paths:
       - 'moleculer/nexus-broker/**'
+      - 'moleculer/tackle/**'
+      - 'moleculer/conduit/**'
+      - 'moleculer/harness/**'
+      - 'moleculer/peb/**'
+      - 'moleculer/aegis/**'
       - 'python/nexus_core/wrp/**'
       - 'sql/ci-bootstrap/**'
       - 'jvm/spring/peb-kernel/**'
@@ -456,3 +477,52 @@ jobs:
         run: |
           pkill -f 'peb-bootstrap-1.0.0-SNAPSHOT.jar' 2>/dev/null || true
           tail -20 /tmp/peb-kernel.log 2>/dev/null || true
+
+  # ── The five moleculer jest twins ───────────────────────────────────────────
+  #
+  # tackle / conduit / harness / peb / aegis are five ports of one service to a
+  # new port, each shipping the same test harness: a jest.config.js, a
+  # test/<name>.test.ts, and `npm test` = `jest --forceExit --detectOpenHandles`.
+  #
+  # The first twin set the pattern and the next four copied the source but not
+  # the CI step, because the CI step was never part of the pattern to copy. For
+  # three days, five sibling PRs carried jest suites that no workflow executed
+  # — five tester attestations resting on single local runs with nothing behind
+  # them. Closing that is one matrix entry.
+  #
+  # Hermetic, deliberately: the suites jest.mock("../services/db") and drive the
+  # real Express app through supertest, so — unlike the broker job above — this
+  # needs no mongo, no postgres, and no 15-minute budget.
+  #
+  # KNOWN LIMITATION (follow-on, do not read this gate as hermetic): none of
+  # the five commits a package-lock.json, so `npm ci` cannot be used — npm
+  # rejects it outright without one. `npm install` is what runs, and it resolves
+  # floating versions on every run, so a dependency bump upstream can redden
+  # this job with no change to the code under test. wf_lint's `npm-ci` rule is
+  # silent here by design ("silent where no lock applies"), which is a policy
+  # choice rather than an endorsement. The fix is to generate and commit the
+  # five lockfiles, after which this step becomes `npm ci`.
+  moleculer-twins:
+    name: moleculer twin (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      # fail-fast: false — one red twin must not mask the other four. A
+      # matrix that goes all-or-nothing is how five packages stay silently
+      # unverified in the first place.
+      fail-fast: false
+      matrix:
+        service: [tackle, conduit, harness, peb, aegis]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install
+        working-directory: moleculer/${{ matrix.service }}
+        run: npm install --no-audit --no-fund
+      - name: Test (${{ matrix.service }})
+        working-directory: moleculer/${{ matrix.service }}
+        run: npm test
