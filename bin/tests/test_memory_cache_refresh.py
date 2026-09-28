@@ -224,3 +224,80 @@ def test_role_surface_timer_is_daily_not_a_cache_warm():
     assert int(match.group(1)) > 6 or (int(match.group(1)) == 6 and int(match.group(2)) >= 30), (
         "run after the 06:10/06:20 drift slots so it reads final morning state"
     )
+
+
+def _role_surface_payload() -> str:
+    """Extract the shell payload from the role-surface unit's ExecStart line."""
+    text = read(ROLE_SERVICE)
+    match = re.search(r"^ExecStart=/bin/bash -c '(.*)'$", text, re.M)
+    assert match, "role-surface ExecStart should be a /bin/bash -c payload"
+    return match.group(1)
+
+
+def _stub_pair(tmp_path, first_code: int, second_code: int) -> "os.PathLike":
+    """Create bin/verify-roles.py + bin/role-vocab-drift.py with the given exit codes."""
+    bin_dir = os.path.join(str(tmp_path), "bin")
+    os.makedirs(bin_dir, exist_ok=True)
+    for name, code in (("verify-roles.py", first_code), ("role-vocab-drift.py", second_code)):
+        path = os.path.join(bin_dir, name)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("import sys\nsys.exit(%d)\n" % code)
+    return tmp_path
+
+
+def _run_role_surface(workdir, first_code: int, second_code: int) -> int:
+    _stub_pair(workdir, first_code, second_code)
+    return subprocess.run(
+        ["/bin/bash", "-c", _role_surface_payload()],
+        cwd=str(workdir), capture_output=True, timeout=60,
+    ).returncode
+
+
+def test_role_surface_propagates_verify_roles_failure(tmp_path):
+    """verify-roles.py failing must not be masked by a clean role-vocab-drift.py.
+
+    This is the regression guard for the `;`-separated ExecStart, which reported only
+    the last command's status and so exited 0 while drift was present.
+    """
+    assert _run_role_surface(tmp_path, 1, 0) != 0, (
+        "verify-roles.py reported drift but the unit exited 0 — a `;`-separated "
+        "ExecStart reports only the last command's status, which masks the finding"
+    )
+
+
+def test_role_surface_propagates_vocab_drift_failure(tmp_path):
+    assert _run_role_surface(tmp_path, 0, 1) != 0, (
+        "role-vocab-drift.py reported drift but the unit exited 0"
+    )
+
+
+def test_role_surface_exits_zero_only_when_both_agree(tmp_path):
+    assert _run_role_surface(tmp_path, 0, 0) == 0, (
+        "both tools agreed but the unit failed — exit status must track drift, not plumbing"
+    )
+
+
+def test_role_surface_runs_both_tools_even_when_the_first_fails(tmp_path):
+    """Both reports must appear in one journal entry, so neither is `;`-short-circuited."""
+    _stub_pair(tmp_path, 1, 0)
+    result = subprocess.run(
+        ["/bin/bash", "-c", _role_surface_payload()],
+        cwd=str(tmp_path), capture_output=True, timeout=60,
+    )
+    assert b"role-vocab-drift" in result.stdout, (
+        "role-vocab-drift.py did not run — the operator loses the second report"
+    )
+
+
+def test_role_surface_execstart_does_not_bare_semicolon_chain():
+    """Structural guard: the two tool invocations must not be `;`-chained bare."""
+    payload = _role_surface_payload()
+    assert not re.search(r"verify-roles\.py --json;\s*echo", payload), (
+        "ExecStart reverts to `;` between the two tools, which drops the first exit code"
+    )
+    assert "|| rc=$?" in payload, (
+        "ExecStart must guard each tool with `|| rc=$?` so a failure is not discarded"
+    )
+    assert re.search(r"exit \$rc'?$", payload.rstrip()), (
+        "ExecStart must exit with the accumulated rc, not with the last command's status"
+    )
