@@ -11,7 +11,9 @@ Pins the safety rails from the janitor docstring:
   - draft promotion ONLY when the sole failing gate is the draft gate
   - BYPASS in a gate report refuses the merge
   - per-cycle cap bounds merges
-  - attestation prefilter: definitive-empty skips; unknown evaluates (fail-safe)
+  - attestation prefilter: indexed rows -> attested; empty index requires an
+    empty tester-mentions probe before a definitive skip (Decision 8 fix A);
+    any probe doubt evaluates via the gate (fail-safe)
   - state file makes merges idempotent across cycles
   - change-log post fires on every merge
   - empty-rollup repair: fires ONLY for attested PRs whose sole failing gate
@@ -205,6 +207,108 @@ def test_prefilter_unknown_evaluates_gate_failsafe():
         _prefilter=None)
     assert "evaluating via gate" in out
     assert "gate refuses" in out
+
+
+# ── prefilter mentions-probe (Decision 8 fix A, defect 5c798810) ────────────
+
+def _prefilter_with_fetch(get_map):
+    """Run the real attestation_prefilter with a canned http_get.
+
+    get_map maps URL substring -> response; an unmapped URL raises.
+    Returns (result, probed_urls)."""
+    probed = []
+
+    def fetch(url):
+        probed.append(url)
+        for needle, payload in get_map.items():
+            if needle in url:
+                return payload
+        raise RuntimeError("unexpected url " + url)
+
+    return janitor.attestation_prefilter(600, "http://neb", http_get=fetch), probed
+
+
+def test_prefilter_empty_index_with_mentions_is_unknown():
+    """Empty indexed lookup + tester records mentioning the PR must NOT be a
+    definitive skip — the index cannot see legacy-shape attestations, so the
+    gate must run and emit ATT_SHAPE_UNSEEN (Decision 8 fix A)."""
+    result, probed = _prefilter_with_fetch({
+        "/api/attestations?pr=600": {"items": [], "total": 0, "pr": 600},
+        "/api/agent-records?role=tester&tag=pr:600": {
+            "items": [{"id": "x"}], "total": 1},
+    })
+    assert result is None, "mentions present -> unknown (gate evaluates)"
+    assert any("/api/agent-records" in u for u in probed), "mentions probe ran"
+
+
+def test_prefilter_empty_index_without_mentions_is_definitive():
+    """Empty indexed lookup AND empty mentions probe is the only shape that
+    still proves unattested."""
+    result, _ = _prefilter_with_fetch({
+        "/api/attestations?pr=600": {"items": [], "total": 0, "pr": 600},
+        "/api/agent-records?role=tester&tag=pr:600": {
+            "items": [], "total": 0},
+    })
+    assert result is False
+
+
+def test_prefilter_mention_probe_failure_is_unknown():
+    """A probe error (endpoint down, bad JSON) is never a definitive skip."""
+    result, probed = _prefilter_with_fetch({
+        "/api/attestations?pr=600": {"items": [], "total": 0, "pr": 600},
+    })
+    assert result is None
+    assert any("/api/agent-records" in u for u in probed)
+
+
+def test_prefilter_indexed_rows_short_circuit_without_probe():
+    """Rows in the indexed lookup -> attested, no mentions probe spent."""
+    result, probed = _prefilter_with_fetch({
+        "/api/attestations?pr=600": {
+            "items": [{"id": "att1"}], "total": 1, "pr": 600},
+    })
+    assert result is True
+    assert not any("/api/agent-records" in u for u in probed)
+
+
+def test_cycle_skips_only_when_index_and_mentions_both_empty():
+    """End-to-end: a PR whose index is empty but who has tester mentions must
+    reach the gate (which refuses with ATT_SHAPE_UNSEEN), not be skipped."""
+    plan = [
+        ("pr list", DISCOVERY),
+        ("merge_pr.py 600", {"returncode": 1,
+                             "stdout": "merge gate for PR #600:\n"
+                                       "  [FAIL] tester attestation (ATT_SHAPE_UNSEEN): tester records "
+                                       "mention the PR but none carries an attestation marker\n"
+                                       "  => GATE FAILURE -- merge refused\n",
+                             "stderr": ""}),
+        ("merge_pr.py 601", {"returncode": 1, "stdout": ATTEST_FAIL, "stderr": ""}),
+    ]
+    runner = make_runner(plan)
+    calls = []
+    buf = io.StringIO()
+    tmp = tempfile.mkdtemp()
+    saved = (janitor.attestation_prefilter, janitor.post_change_log)
+
+    def prefilter(n, b, http_get=None):
+        calls.append(n)
+        return False if n == 601 else None  # 601 truly empty; 600 unknown
+
+    janitor.attestation_prefilter = prefilter
+    janitor.post_change_log = lambda t, b: True
+    try:
+        rc = janitor.run_cycle(apply=False, cap=3, author="engineer-account",
+                               base_url="http://localhost:3101",
+                               state_path=Path(tmp) / "state.json",
+                               runner=runner, out=buf)
+    finally:
+        janitor.attestation_prefilter, janitor.post_change_log = saved
+    out = buf.getvalue()
+    assert rc == 0
+    assert any("merge_pr.py 600" in c for c in runner.calls), "PR 600 (unknown prefilter) must reach the gate"
+    assert not any("merge_pr.py 601" in c for c in runner.calls), "PR 601 (definitive empty) must be skipped"
+    assert "no attestation rows and no tester mentions" in out
+    assert "gate refuses" in out and "ATT_SHAPE_UNSEEN" in out
 
 
 # ── check-only vs apply ─────────────────────────────────────────────────────
