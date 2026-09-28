@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   guards:
-    name: bin/tests guards (stdlib + pyyaml)
+    name: bin/tests guards (pytest + pyyaml)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -29,8 +29,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - name: Install PyYAML
-        run: pip install --quiet pyyaml
+      # pytest is REQUIRED, not optional. run_bin_tests.py executes every guard
+      # as `sys.executable -m pytest <guard>`; the runner inherits whatever
+      # interpreter invoked it. actions/setup-python selects an isolated
+      # toolcache Python that does NOT carry the runner image's system pytest,
+      # so omitting it makes every guard exit rc=1 with 0 tests:
+      #   /opt/hostedtoolcache/Python/3.13.15/x64/bin/python3: No module named pytest
+      # which surfaces only as "ran 72 guards / 0 tests in 0.7s; 72 failed".
+      #
+      # This job was named "(stdlib + pyyaml)" because the original runner
+      # invoked each guard as a bare script and genuinely needed only stdlib.
+      # That name outlived the change and made this expensive to diagnose.
+      - name: Install test dependencies
+        run: pip install --quiet pyyaml pytest
       # A guard that cannot run bare is declared in the manifest, not skipped
       # here. Exit 2 means the manifest itself is invalid (stale exclusion),
       # which is a real failure and must not be confused with a red guard.
