@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nebula-mcp-client"
+version = "1.0.0"
+description = "Canonical dependency-free MCP Streamable-HTTP JSON-RPC client for Nexus MCP servers"
+readme = "README.md"
+requires-python = ">=3.11"
+# Intentionally empty: the client is dependency-free by design (to-do 8e09a57f, Gap 4).
+# Do not add runtime dependencies without reopening that decision.
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+nebula-mcp-client = "nebula_mcp_client:_main"
+
+# This directory name contains hyphens, so it can never be imported as a package.
+# The distribution therefore ships the single module as a top-level py-module,
+# which is what makes `from nebula_mcp_client import McpClient` and
+# `python3 -m nebula_mcp_client ...` (both documented in README.md and relied on
+# by AGENTS.md R17) work from an installed environment.
+[tool.setuptools]
+py-modules = ["nebula_mcp_client"]
