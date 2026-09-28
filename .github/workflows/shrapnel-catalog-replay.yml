@@ -56,7 +56,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install psql client if absent
+      - name: Ensure a psql client exists
         run: |
           if ! command -v psql >/dev/null 2>&1; then
             sudo apt-get update -qq
@@ -64,18 +64,12 @@ jobs:
           fi
           psql --version
 
-      # postgres:17 is REQUIRED, not 16: the shrapnel schema uses
-      # transaction_timeout, which does not exist before PG17. The gate
-      # asserts this rather than discovering it as an opaque apply failure.
-      - name: Assert PG17 client
-        run: |
-          ver="$(psql --version | awk '{print $3}')"
-          major="$(echo "$ver" | cut -d. -f1)"
-          if [ "$major" -lt 17 ]; then
-            echo "::error::psql major version $major — shrapnel needs PG17+ (transaction_timeout)"
-            exit 1
-          fi
-          echo "psql $ver is new enough"
+      # No client-version gate here. The version that matters is the SERVER's,
+      # and the gate script asserts that itself, immediately after connecting —
+      # which is both the correct target and impossible to get wrong the way a
+      # CI-side client check was. An earlier version of this workflow asserted
+      # psql 17+ here and failed every run, because ubuntu-latest ships psql 16
+      # preinstalled so the install step never fired.
 
       - name: Node
         uses: actions/setup-node@v4
@@ -119,14 +113,13 @@ jobs:
       - name: Explain a failure
         if: failure()
         run: |
-          echo "::error::The compiled catalog is NOT replay-idempotent."
+          echo "::error::The compiled-catalog replay gate did not pass."
           echo ""
-          echo "  Re-applying a generated catalog must mint no revisions."
-          echo "  A failure here means one of:"
-          echo "    - the emitter is not honouring the 'reconcile' option"
-          echo "      (check tspconfig-reconcile.yaml and the option plumbing);"
-          echo "    - stereotype_reconcile's no-op branch is wrong; or"
-          echo "    - migration 0008 is missing from the chain."
-          echo ""
-          echo "  The gate also fails if the FIRST application produced zero"
-          echo "  revisions, since that would make the replay assertion vacuous."
+          echo "  Possible causes:"
+          echo "    - the catalog is genuinely NOT replay-idempotent (the gate's"
+          echo "      whole purpose: a second apply minted revisions);"
+          echo "    - the emitter is not honouring the 'reconcile' option;"
+          echo "    - stereotype_reconcile's no-op branch is wrong;"
+          echo "    - the first application produced zero revisions, which would"
+          echo "      make the replay assertion vacuous; or"
+          echo "    - infrastructure (postgres did not start, or is pre-17)."

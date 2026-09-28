@@ -115,6 +115,25 @@ if [ "$READY" -ne 1 ]; then
   fail "postgres did not become reachable on :$PORT (state dumped above)"
 fi
 
+# Assert the SERVER is PG17. This is the real version constraint, and it is
+# asserted here rather than in CI because the image is what decides it.
+#
+# I previously wrote a CI step asserting the psql CLIENT was 17+, on the belief
+# that the chain needs transaction_timeout. Both halves of that were wrong:
+# transaction_timeout is not referenced anywhere in the shrapnel migrations (the
+# ci-bootstrap schema is what needs it, a different chain), and a client version
+# cannot gate a server GUC anyway. It also failed in practice, because
+# ubuntu-latest ships psql 16 preinstalled so an "install if absent" step never
+# fired. Asserting the thing that is actually load-bearing is simpler AND works.
+SERVER_NUM="$(psql "$DSN" -tAc 'SHOW server_version_num' 2>/dev/null | tr -d '[:space:]')"
+if [ -z "$SERVER_NUM" ]; then
+  fail "could not read the server version from :$PORT"
+fi
+if [ "${SERVER_NUM%%00}" -lt 17 ] 2>/dev/null || [ "$SERVER_NUM" -lt 170000 ]; then
+  fail "server is PostgreSQL ${SERVER_NUM} (pre-17) — this gate requires a PG17+ server"
+fi
+echo "  server: PostgreSQL ${SERVER_NUM}"
+
 # ── 2. Schema + migrations ───────────────────────────────────────────────
 step "applying shrapnel migrations"
 psql "$DSN" -q -v ON_ERROR_STOP=1 \
