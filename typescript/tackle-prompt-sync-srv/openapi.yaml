@@ -196,7 +196,10 @@ components:
     JsonBody:
       type: object
       additionalProperties: true
-      description: Generic JSON body (fields are service-specific).
+      description: 'UNSHAPED. This is a placeholder, not a schema: it pins no property names, no types, and no field casing.
+        It exists because the generator reads route registrations only and never inspects a handler return type. Do not generate
+        a client from this property -- use the contract of record (see x-contract-of-record), or the service source. Counting
+        this as a modelled response shape is the error Gestalt pressure source #5 exists to catch.'
     Error:
       type: object
       properties:
@@ -208,3 +211,5 @@ components:
           description: Human-readable error detail.
       additionalProperties: true
 x-generated-by: nexus/tools/api-docs/gen_openapi.py
+x-response-bodies: untyped
+x-contract-of-record: null
