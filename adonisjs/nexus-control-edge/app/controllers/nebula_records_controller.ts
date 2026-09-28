@@ -225,7 +225,17 @@ export default class NebulaRecordsController {
         vals
       )
 
-      response.json({ records: rows, count: parseInt(count), limit: maxLimit, offset })
+      response.json({
+        // Normalized to match nebula-srv GET/POST agent-records shape:
+        // camelCase rows under `items`, `total` count (count kept as a
+        // deprecated mirror for one transition window). The old raw
+        // snake_case `records` key is removed.
+        items: rows.map(camelCaseRow),
+        total: parseInt(count),
+        count: parseInt(count),
+        limit: maxLimit,
+        offset,
+      })
     } catch (e: any) {
       const { status, body } = err(e)
       response.status(status).json(body)
