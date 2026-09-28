@@ -19,15 +19,35 @@
 --   "This ruling authorizes schema design for A2a only. It does not authorize
 --    any migration to be applied."
 --
--- ## Numbering is the DBA's to assign, and here is why that matters
+-- ## Numbering is the DBA's to assign
 --
--- There is already a DUPLICATE 055 in this directory:
---   055-agent-records-tags-gin.sql
---   055-allow-supervisor-role.sql
--- Tracked in Assembly thread 6bba5dd3. I did not pick a number partly to
--- avoid widening that collision with a third claimant. Highest numbers
--- currently present are 058 and 067.
+-- CORRECTION to my first draft of this header: I previously wrote that this
+-- directory still carries a DUPLICATE 055 (055-agent-records-tags-gin.sql and
+-- 055-allow-supervisor-role.sql, thread 6bba5dd3). On the current base that is
+-- no longer true — 055-allow-supervisor-role.sql was renumbered to
+-- 058-allow-supervisor-role.sql, and only 055-agent-records-tags-gin.sql
+-- remains at 055. The duplicate is resolved. I had read that directory on an
+-- older commit and carried a stale claim into a DBA request.
 --
+-- Current numbered sequence: 001-058, then a jump to 067. The 059-066 range is
+-- absent and I do not know why — worth the DBA confirming before 068 is used,
+-- in case those numbers are reserved or were renumbered elsewhere.
+--
+-- The proposed number in this filename is 068, which is "next" only in the sense
+-- that 067 is the highest present. That is a proposal, not an assignment.
+--
+-- ## The strongest reason this file stays unnumbered (SEV3, 2026-09-28)
+--
+-- Record 9a70c8c5: an engineer booted a worktree nebula-srv on a scratch port
+-- with env pointed at the LIVE nexus database. The startup migration runner
+-- applied pending migrations 056 and 057 to production. Self-reported, SEV3, open
+-- with the DBA.
+--
+-- That is the same runner that would pick up a numbered file here, and the
+-- hazard is not theoretical: booting a worktree service against the live
+-- database has already applied unreviewed schema to it once today. A numbered
+-- migration sitting in a worktree branch is one careless boot from production.
+-- Unnumbered is the cheap mitigation available to me.
 -- ## The store is an OPEN QUESTION for the DBA, not a settled decision
 --
 -- 6629b009 says "Execution record (new)" without naming a store. `nebula` is
