@@ -411,8 +411,7 @@ export class PipelineWatcher {
             plan_id: plan.plan_number,
             type: "PLAN_CREATE",
             agent_role: "planner",
-            session_id: "",
-            ticket_id: ticketId,
+            session_id: null, // no interactive session context: null, not ""
             artifact_path: null,
             summary: `Auto-bootstrapped: ${plan.title}`,
             metadata_json: JSON.stringify({

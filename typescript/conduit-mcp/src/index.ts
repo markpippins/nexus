@@ -933,7 +933,7 @@ app.post("/vision/receipts", async (req, res) => {
     }
     await api.insertReceipt({
       id, plan_id, type, agent_role,
-      session_id: session_id || '',
+      session_id: session_id ?? null,
       ticket_id: req.body.ticket_id || null,
       artifact_path: artifact_path || null,
       summary: summary || '',
