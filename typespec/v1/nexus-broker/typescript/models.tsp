@@ -334,6 +334,38 @@ namespace org.nexus.nexusbroker {
     sets: KeychainDoctrineSetGroup[];
   }
 
+  /** Per-doctrine-card census observation counts (CDLC A2b). */
+  model KeychainCensusCardIndex {
+    asset_id: string;
+    report_count: int32;
+    finding_count: int32;
+    category_counts: Record<unknown>;
+    anticipated_finding_count: int32;
+  }
+
+  /** A census row that failed its own contract on read; reported, never silently counted. */
+  model KeychainCensusRejection {
+    id: string;
+    errors: string[];
+  }
+
+  /** GET /api/keychain-snapshot/agent-records/census response. */
+  model KeychainCensusResult {
+    generated_at: string;
+    read_only: boolean;
+    basis: string;
+    limitation: string;
+    report_count: int32;
+    report_ids_with_no_findings: int32;
+    doctrine_snapshot_count: int32;
+    trigger_counts: Record<unknown>;
+    category_counts: Record<unknown>;
+    cards: KeychainCensusCardIndex[];
+    truncated: boolean;
+    rejected_report_count: int32;
+    rejected_reports: KeychainCensusRejection[];
+  }
+
   /** GET/POST /api/keychain-snapshot/agent-records/doctrine-reconstruction report. */
   model KeychainDoctrineReconstructionResult {
     generated_at: string;
