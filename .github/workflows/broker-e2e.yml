@@ -494,14 +494,16 @@ jobs:
   # real Express app through supertest, so — unlike the broker job above — this
   # needs no mongo, no postgres, and no 15-minute budget.
   #
-  # KNOWN LIMITATION (follow-on, do not read this gate as hermetic): none of
-  # the five commits a package-lock.json, so `npm ci` cannot be used — npm
-  # rejects it outright without one. `npm install` is what runs, and it resolves
-  # floating versions on every run, so a dependency bump upstream can redden
-  # this job with no change to the code under test. wf_lint's `npm-ci` rule is
-  # silent here by design ("silent where no lock applies"), which is a policy
-  # choice rather than an endorsement. The fix is to generate and commit the
-  # five lockfiles, after which this step becomes `npm ci`.
+  # REPRODUCIBLE: each twin now commits a package-lock.json (force-added past
+  # .gitignore:35's blanket rule, the same way moleculer/nexus-broker and nine
+  # other packages already are), so `npm ci` installs a pinned tree. This job
+  # previously ran `npm install`, which resolved floating versions every run and
+  # could redden with no change to the code under test.
+  #
+  # Note the lockfiles pin whatever npm resolved when they were generated. That
+  # is reproducibility, not curation — they have not been audited for known
+  # CVEs or staleness. Regenerating them is now a visible, reviewable diff
+  # rather than something that happens silently on a schedule.
   moleculer-twins:
     name: moleculer twin (${{ matrix.service }})
     runs-on: ubuntu-latest
@@ -520,9 +522,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install
+      - name: Install (pinned)
         working-directory: moleculer/${{ matrix.service }}
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - name: Test (${{ matrix.service }})
         working-directory: moleculer/${{ matrix.service }}
         run: npm test
