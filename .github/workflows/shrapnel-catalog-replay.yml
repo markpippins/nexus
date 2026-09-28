@@ -1,0 +1,125 @@
+# shrapnel-catalog-replay
+#
+# The compiled-catalog replay gate.
+#
+# Runs typescript/shrapnel/test/catalog_replay_gate.sh, which compiles the
+# TypeSpec sample in RECONCILE mode, applies the generated catalog to a
+# disposable postgres, and then applies THE SAME FILE AGAIN — failing if that
+# second application mints even one revision.
+#
+# WHY THIS IS ITS OWN GATE
+# The 0008 checks (reconcile_0008_stereotype_reconcile.sql) exercise
+# shrapnel.stereotype_reconcile with hand-written arguments. This gate exercises
+# the ACTUAL COMPILED ARTIFACT. Those are different failure surfaces: the emitter
+# could emit a wrong argument order, a wrong parent subselect, non-topological
+# order, or the wrong verb entirely, and every function-level unit test would
+# still pass. #591's own known limit — "re-running the migration creates v2
+# revisions" — lived in exactly that gap.
+#
+# The assertion is on the OUTCOME (row counts), not on which function the
+# emitter chose, so the gate stays honest if the verb changes and fails loudly
+# if the emitter stops emitting reconcile.
+#
+# Stacked on PR #623 (migration 0008). Requires shrapnel.stereotype_reconcile;
+# the gate fails with an explicit message if 0008 is not applied.
+
+name: Shrapnel Catalog Replay
+
+on:
+  push:
+    branches: [ main, master, feature/*, dev ]
+    paths:
+      - 'typescript/tsp-eav-emitter/**'
+      - 'typescript/shrapnel/**'
+      - '.github/workflows/shrapnel-catalog-replay.yml'
+  pull_request:
+    branches: [ main, master, dev, feature/* ]
+    paths:
+      - 'typescript/tsp-eav-emitter/**'
+      - 'typescript/shrapnel/**'
+      - '.github/workflows/shrapnel-catalog-replay.yml'
+  workflow_dispatch:
+  schedule:
+    # Weekly — this gate is the standing evidence that the compiled catalog is
+    # replay-safe. A silent drift in the emitter (or in migration 0008) should
+    # not wait for the next catalog change to be discovered.
+    - cron: '25 5 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  catalog-replay:
+    name: "shrapnel: compiled catalog is replay-idempotent"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure a psql client exists
+        run: |
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq postgresql-client
+          fi
+          psql --version
+
+      # No client-version gate here. The version that matters is the SERVER's,
+      # and the gate script asserts that itself, immediately after connecting —
+      # which is both the correct target and impossible to get wrong the way a
+      # CI-side client check was. An earlier version of this workflow asserted
+      # psql 17+ here and failed every run, because ubuntu-latest ships psql 16
+      # preinstalled so the install step never fired.
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The gate is a plain script so it is runnable identically on a laptop
+      # and in CI; the workflow only supplies the environment.
+      #
+      # Until migration 0008 (#623) is on main, the gate SKIPS with a loud
+      # banner rather than failing — there is no reconcile verb to replay yet,
+      # and a red check nobody can fix in this PR would be noise. Once 0008
+      # lands the same command starts enforcing with no further change. The
+      # skip step below makes that state impossible to mistake for a pass.
+      - name: Run the replay gate
+        # `shell: bash` is load-bearing, not decoration: it adds `-o pipefail`.
+        # GitHub's DEFAULT shell for `run:` is `bash -e` with no pipefail, so
+        # piping to tee would hand back tee's exit code and turn a failing gate
+        # into a green job.
+        shell: bash
+        run: bash typescript/shrapnel/test/catalog_replay_gate.sh 2>&1 | tee /tmp/replay-gate.log
+
+      - name: Surface a skip as a warning, never as a silent pass
+        run: |
+          if grep -q 'REPLAY GATE SKIPPED' /tmp/replay-gate.log 2>/dev/null; then
+            echo "::warning::The replay gate SKIPPED — migration 0008 is not on this branch yet, so replay-idempotence is NOT being enforced. This job is not evidence of anything."
+          fi
+        continue-on-error: true
+
+      - name: Confirm the gate actually ran
+        run: |
+          if grep -q 'REPLAY GATE PASSED' /tmp/replay-gate.log 2>/dev/null; then
+            echo "replay gate enforced and passed"
+          elif grep -q 'REPLAY GATE SKIPPED' /tmp/replay-gate.log 2>/dev/null; then
+            echo "replay gate dormant (0008 absent) — see the warning above"
+          else
+            echo "::error::The replay gate produced neither a pass nor a skip — treating as failure"
+            exit 1
+          fi
+
+      - name: Explain a failure
+        if: failure()
+        run: |
+          echo "::error::The compiled-catalog replay gate did not pass."
+          echo ""
+          echo "  Possible causes:"
+          echo "    - the catalog is genuinely NOT replay-idempotent (the gate's"
+          echo "      whole purpose: a second apply minted revisions);"
+          echo "    - the emitter is not honouring the 'reconcile' option;"
+          echo "    - stereotype_reconcile's no-op branch is wrong;"
+          echo "    - the first application produced zero revisions, which would"
+          echo "      make the replay assertion vacuous; or"
+          echo "    - infrastructure (postgres did not start, or is pre-17)."

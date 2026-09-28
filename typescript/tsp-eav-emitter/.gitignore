@@ -1,1 +1,11 @@
 tsp-output/
+
+# Gate-generated catalog (reconcile mode). Regenerated on every run of
+# typescript/shrapnel/test/catalog_replay_gate.sh, so it is a build artifact,
+# not evidence.
+#
+# Note the deliberate contrast with shrapnel-catalog.sql, which IS committed:
+# that file is #591's reproducibility evidence, and compile.e2e asserts a
+# recompile is byte-identical to it. The reconcile variant has no such
+# contract — it exists only to be applied twice by the replay gate.
+shrapnel-catalog-reconcile.sql

@@ -1,0 +1,11 @@
+emit:
+  - "tsp-eav-emitter"
+options:
+  "tsp-eav-emitter":
+    output-file: "shrapnel-catalog-reconcile.sql"
+    # Emit shrapnel.stereotype_reconcile (migration 0008) instead of
+    # stereotype_create_revision, so re-applying this file unchanged is a
+    # no-op rather than minting a new revision. This is the configuration the
+    # catalog replay gate (typescript/shrapnel/test/catalog_replay_gate.sh)
+    # compiles and applies twice.
+    reconcile: true
