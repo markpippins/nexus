@@ -4,6 +4,7 @@ import importlib.util
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -1033,3 +1034,110 @@ def test_point_handler_serializes_with_camel_case_row():
         "makes gate 3's freshness check bind at epoch 0 (DBA analysis "
         "48ac13e2 — held PRs #642/#645)"
     )
+
+# ── gate 3e: a missing/unusable createdAt fails closed with its own code ──
+#
+# DBA records 48ac13e2 / 2a51e900. The evaluator used to coerce a missing
+# createdAt to 0, binding the row at epoch 0 and reporting ATT_STALE_HEAD —
+# a verdict that tells the tester to RE-ATTEST for a condition that no
+# re-attestation can fix, because the cause is a record-endpoint
+# serialization regression. That misdiagnosis is what froze the merge queue.
+# #654 repairs the timestamp inside the by-id hydration path; these tests pin
+# the second, independent half: the evaluator itself must refuse to guess.
+
+
+def test_missing_created_at_fails_closed_with_dedicated_code():
+    att = rec()
+    del att["createdAt"]
+    ok, detail, code = merge_pr.evaluate_attestation([att], 487, NOW_MS - 7200_000)
+    assert not ok
+    assert code == "ATT_TIMESTAMP_MISSING", code
+    # The whole point: never a freshness verdict built on a fabricated epoch.
+    assert code != "ATT_STALE_HEAD"
+    assert "1970" not in detail
+    assert "re-attesting will not clear it" in detail
+
+
+def test_null_created_at_is_missing_not_epoch():
+    att = rec(created_ms=None)
+    att["createdAt"] = None
+    ok, _detail, code = merge_pr.evaluate_attestation([att], 487, NOW_MS - 7200_000)
+    assert not ok
+    assert code == "ATT_TIMESTAMP_MISSING", code
+
+
+def test_unparseable_created_at_fails_closed():
+    att = rec()
+    att["createdAt"] = "not-a-timestamp"
+    ok, detail, code = merge_pr.evaluate_attestation([att], 487, NOW_MS - 7200_000)
+    assert not ok
+    assert code == "ATT_TIMESTAMP_MISSING", code
+    assert "1970" not in detail
+
+
+def test_boolean_created_at_is_type_confusion_not_epoch():
+    """True is truthy, so the old `or 0` would have compared against 1 ms
+    since the epoch. Booleans are never a timestamp."""
+    att = rec()
+    att["createdAt"] = True
+    ok, _detail, code = merge_pr.evaluate_attestation([att], 487, NOW_MS - 7200_000)
+    assert not ok
+    assert code == "ATT_TIMESTAMP_MISSING", code
+
+
+def test_iso_string_created_at_is_accepted_not_rejected():
+    """The assembly-srv :3107 proxy returns createdAt as an ISO string
+    (DBA record ca9ba66c). A real, parseable timestamp must yield a real
+    verdict — not a spurious ATT_TIMESTAMP_MISSING, and not a crash."""
+    att = rec(created_ms=NOW_MS - 7_200_000)
+    att["createdAt"] = datetime.fromtimestamp(
+        att["createdAt"] / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Genuinely older than head -> the honest verdict is STALE, not MISSING.
+    ok, detail, code = merge_pr.evaluate_attestation([att], 487, NOW_MS)
+    assert not ok
+    assert code == "ATT_STALE_HEAD", (detail, code)
+    assert "1970" not in detail
+
+
+def test_snake_case_created_at_epoch_is_accepted():
+    """The post-#652 point endpoint and the raw adonis handler can both
+    deliver snake_case. A parseable epoch must give the honest verdict."""
+    att = rec(created_ms=NOW_MS - 3600_000)
+    att["created_at"] = att.pop("createdAt")
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [att], 487, NOW_MS - 7_200_000, run_json=evidence_run_json)
+    assert code != "ATT_TIMESTAMP_MISSING", code
+    assert code != "ATT_STALE_HEAD", (detail, code)
+    assert "1970" not in detail
+
+
+def test_missing_created_at_outranks_unknown_head_date():
+    """With no attestation timestamp there is nothing to compare, so
+    HEAD_DATE_UNKNOWN would be equally uninformative. The dedicated code
+    must win — it names the actual defect."""
+    att = rec()
+    del att["createdAt"]
+    ok, _detail, code = merge_pr.evaluate_attestation([att], 487, None)
+    assert not ok
+    assert code == "ATT_TIMESTAMP_MISSING", code
+
+
+def test_newest_usable_timestamp_still_wins_over_a_missing_one():
+    """Regression guard on the selection key: rows missing a timestamp must
+    not outrank a real one (which is what sorting on 0 would do)."""
+    dated = rec(rec_id="dated01", created_ms=NOW_MS - 3600_000)
+    undated = rec(rec_id="undated1")
+    del undated["createdAt"]
+    rows = [undated, dated]
+    ok, detail, code = merge_pr.evaluate_attestation(
+        rows, 487, NOW_MS - 7200_000, run_json=evidence_run_json)
+    assert ok, (detail, code)
+    assert "dated01" in detail
+
+
+def test_timestamp_missing_code_is_registered_for_consumers():
+    gc = merge_pr.gate_codes
+    assert gc.ATT_TIMESTAMP_MISSING in gc.ALL_CODES
+    assert gc.extract_codes(
+        "[FAIL] tester attestation (ATT_TIMESTAMP_MISSING): no usable createdAt"
+    ) == ["ATT_TIMESTAMP_MISSING"]

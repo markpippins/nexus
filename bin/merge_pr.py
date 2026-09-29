@@ -513,8 +513,26 @@ def evaluate_attestation(
             )
         code = gate_codes.ATT_SHAPE_UNSEEN if mentions else gate_codes.ATT_MISSING
         return (False, detail, code)
-    newest = max(matches, key=lambda r: r.get("createdAt") or 0)
-    created_ms = newest.get("createdAt") or 0
+    newest = max(matches, key=lambda r: _created_ms_of(r) or 0)
+    created_ms = _created_ms_of(newest)
+    if created_ms is None:
+        # Fail closed with a DEDICATED code. The previous `or 0` coercion
+        # bound this row at epoch 0 and reported ATT_STALE_HEAD, which tells
+        # the tester to re-attest for a condition no re-attestation can
+        # ever fix — the misdiagnosis that froze the merge queue (DBA
+        # records 48ac13e2 / 2a51e900). A row with no usable createdAt is
+        # a SERVER serialization defect, so it must not masquerade as a
+        # freshness verdict. Note this is checked BEFORE the head-date
+        # check: with no attestation timestamp there is nothing to compare,
+        # so HEAD_DATE_UNKNOWN would be equally uninformative.
+        return (
+            False,
+            f"attestation record {str(newest.get('id'))[:8]} for PR #{pr_number} "
+            "carries no usable createdAt, so its freshness cannot be evaluated "
+            "(fail closed). This is a record-endpoint serialization defect, "
+            "not a tester action: re-attesting will not clear it.",
+            gate_codes.ATT_TIMESTAMP_MISSING,
+        )
     created_iso = datetime.fromtimestamp(
         created_ms / 1000, tz=timezone.utc
     ).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -616,6 +634,35 @@ def parse_iso_to_ms(iso: str) -> int:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return int(dt.timestamp() * 1000)
+
+
+def _created_ms_of(record: Dict[str, Any]) -> Optional[int]:
+    """The record's createdAt as epoch-ms, or None when it is absent or
+    unparseable.
+
+    Accepts the three shapes observed across the record endpoints (DBA record
+    ca9ba66c): integer epoch-ms (nebula list :3101 and, post-#652, the point
+    endpoint), an ISO-8601 string (the assembly-srv :3107 proxy, which calls
+    snakeToCamel without epoch conversion), and snake_case ``created_at`` in
+    either ISO or epoch form.
+
+    Returning None — rather than 0 — is the whole point: 0 is a falsy
+    timestamp that silently sorts to the bottom and renders as
+    1970-01-01, which is indistinguishable from a genuinely ancient record.
+    """
+    raw = record.get("createdAt")
+    if raw is None:
+        raw = record.get("created_at")
+    if isinstance(raw, bool) or raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        return int(raw)
+    if isinstance(raw, str) and raw.strip():
+        try:
+            return parse_iso_to_ms(raw.strip())
+        except Exception:
+            return None
+    return None
 
 
 # ── Full evaluation ──────────────────────────────────────────────────────
