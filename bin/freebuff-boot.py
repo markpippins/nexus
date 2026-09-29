@@ -471,8 +471,15 @@ class Boot:
             data = parse_json(text_of(result)) or {}
             items = data.get("items") or []
             pointer = data.get("pointer")
-            self.record("inbox", "ok",
-                        f"{len(items)} new record(s) since {pointer or '(no pointer)'}")
+            summary = f"{len(items)} new record(s) since {pointer or '(no pointer)'}"
+            if len(items) >= self.limit:
+                # Returned count == requested limit means the server may have
+                # hit its cap: there may be more below the fold. The old
+                # default-10 fold once buried an attestation request below a
+                # routine sweep (engineer-ii record 192a829d). Surface it.
+                summary += (f" — possible truncation at limit {self.limit}; "
+                            f"re-run with a higher --limit if the list matters")
+            self.record("inbox", "ok", summary)
             for rec in items[: self.limit]:
                 ts = rec.get("createdAt", 0)
                 try:
@@ -753,7 +760,7 @@ def main(argv: list[str]) -> int:
                     help="auto = renew ACTIVE lease or issue new; skip = leave leases alone")
     ap.add_argument("--update-pointer", action="store_true",
                     help="advance the inbox pointer to the newest record after listing")
-    ap.add_argument("--limit", type=int, default=10, help="max inbox records to list (default 10)")
+    ap.add_argument("--limit", type=int, default=50, help="max inbox records to list (default 50)")
     ap.add_argument("--dry-run", action="store_true",
                     help="pre-flight and plan only — perform NO mutations (no lease, no clock-in, no pointer write)")
     ap.add_argument("--strict", action="store_true",
