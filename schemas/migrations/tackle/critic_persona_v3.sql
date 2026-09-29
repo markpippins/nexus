@@ -1,29 +1,32 @@
 -- ─────────────────────────────────────────────────────────────────────
--- tackle.prompts(critic, opencode-persona, v2)
--- Supersedes v1 per the MAX(version) convention (no is_latest column).
+-- tackle.prompts(critic, opencode-persona, v3)
+-- Supersedes v2 per the MAX(version) convention (no is_latest column).
 -- Architect intent, this session (2026-09-29):
 --   (A) bash-denied roles could READ their inbox (nebula_get_inbox) but could
 --       not advance their R17 pointer: check-inbox.sh --update-pointer needs
 --       bash, and nebula_set_inbox_pointer was invisible to the persona (the
 --       tool block only advertised conduit save_response).
---   (B) This v2 rewrites the tool advertisement (tackle :3400 / nebula :3102 /
+--   (B) This v3 rewrites the tool advertisement (tackle :3400 / nebula :3102 /
 --       conduit :3100), advertises nebula_get_inbox + nebula_set_inbox_pointer,
 --       and adds the Inbox (R17) section: read-and-advance in one call via
 --       `nebula_get_inbox` {"role":"critic","advance":true} (the MCP-level
 --       equivalent of check-inbox.sh --update-pointer), or an explicit
 --       nebula_set_inbox_pointer for advance-without-re-read.
+--   (C) TARGETS v3 deliberately: the live DB's critic MAX(version) is 3 and the
+--       resolver serves v3. A v2 patch would edit the stale row that is never
+--       served (v1=2768 chars, v2=3222 stale, v3=4572 served).
 --
 -- Idempotent: INSERT ... ON CONFLICT (role, slug, version) DO UPDATE.
--- v1 is preserved intact. The MAX(version) resolver picks v2 going forward.
+-- v2 is preserved intact. The MAX(version) resolver picks v3 going forward.
 -- ─────────────────────────────────────────────────────────────────────
 
 INSERT INTO tackle.prompts (role, slug, version, title, body_md, parameter_schema, tags)
 VALUES (
     'critic',
     'opencode-persona',
-    2,
+    3,
     'Critic (opencode persona) — adversarial code scanner; warnings via records; inbox read-and-advance (R17)',
-    $persona_critic_v2_body$
+    $persona_critic_v3_body$
 
 
 ## Bootstrap (any harness)
@@ -141,9 +144,9 @@ prompt record, then `save_response` to attach your work.
 ## Worktree Development Doctrine (binding, R8/R8.0)
 
 Do implementation work in a **linked git worktree** rooted at the full absolute path `/home/codex/dev/nexus-worktrees/<topic>` (a sibling of `/home/codex/dev/nexus`, OUTSIDE the repo — never inside `nexus/` or a `nexus/worktrees` subfolder). Keep `main` clean; never commit directly to `main`. Upon completing work, **commit, push, and raise a pull request WITHOUT asking permission** — no confirmation gate. The two non-negotiable conditions for merging are: the code has tests, and the tests pass. If those are not met, raise the PR as a draft and say so; do not silently merge untested work. Full workflow: load the `worktree-development-workflow` procedure card.
-$persona_critic_v2_body$,
+$persona_critic_v3_body$,
     $pschema${}$pschema$::jsonb,
-    ARRAY['opencode-persona','category-1','critic','v2']::TEXT[]
+    ARRAY['opencode-persona','category-1','critic','v3']::TEXT[]
 )
 ON CONFLICT (role, slug, version) DO UPDATE
     SET title            = EXCLUDED.title,
