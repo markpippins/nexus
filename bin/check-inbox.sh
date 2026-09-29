@@ -190,7 +190,15 @@ try:
         # intersect to zero. Key must be `tag` (singular): `tags` (plural) is
         # silently stripped by the tool schema, dropping the filter (issue
         # #75).
-        arguments = {"tag": ["to:" + role], "limit": limit}
+        # The role is lowercased because the tag is matched EXACTLY, so a case
+        # variant addresses a different mailbox instead of erroring: the corpus
+        # held 694 `to:dba` records against 7 `to:DBA`, so a `--role DBA`
+        # session silently read the 7 and never saw the other 694. The canonical
+        # vocabulary is already lowercase (config/roles/roles.json, and
+        # roles_name_check enforces ^[a-z0-9_-]+$ on the authority key), so this
+        # is lossless. Mirrors normalizeRole() in nebula-mcp's tools/index.ts —
+        # the two paths must agree or the pointer never advances.
+        arguments = {"tag": ["to:" + role.strip().lower()], "limit": limit}
         if pointer:
             arguments["createdAfter"] = pointer
         result = client.call("nebula_list_agent_records", arguments)

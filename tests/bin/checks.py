@@ -336,6 +336,64 @@ def test_higher_limit_recovers_and_advances():
         srv.server_close()
 
 
+# ── inbox role case normalization (measured live 2026-09-29) ─────────────
+# The routing tag `to:<role>` is matched EXACTLY by nebula-srv (`= ANY(tags)`),
+# so a case variant does not error -- it silently addresses a different mailbox.
+# Live at the time of writing: 694 records tagged `to:dba` against 7 tagged
+# `to:DBA`, and two live Redis pointers six days apart. The canonical
+# vocabulary is already lowercase, so the query is normalized rather than the
+# stored data rewritten.
+
+
+def test_inbox_tag_is_lowercased_for_mixed_case_role():
+    srv = start_server({"stored_pointer": None, "records": [REC_NEWER]})
+    try:
+        r = run_script(srv.server_port, ["--role", "DBA", "--all"])
+        assert r.returncode == 0, r.stderr
+        assert list_args()["tag"] == ["to:dba"], (
+            f"mixed-case role must query the canonical lowercase tag, got "
+            f"{list_args()['tag']!r}"
+        )
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_inbox_tag_is_lowercased_for_mixed_case_role_with_pointer():
+    srv = start_server({"stored_pointer": None, "records": [REC_NEWER]})
+    try:
+        r = run_script(srv.server_port, ["--role", "DBA", "--pointer", "2026-07-01T00:00:00Z"])
+        assert r.returncode == 0, r.stderr
+        assert list_args()["tag"] == ["to:dba"]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_inbox_tag_still_omits_author_role_filter():
+    # Guard the fix against reintroducing an over-correction: addressing is by
+    # TAG only. Passing author `role` as well would intersect to zero.
+    srv = start_server({"stored_pointer": None, "records": [REC_NEWER]})
+    try:
+        r = run_script(srv.server_port, ["--role", "DBA", "--all"])
+        assert r.returncode == 0, r.stderr
+        assert "role" not in list_args(), "must not filter by author role"
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_lowercase_role_is_unchanged_by_normalization():
+    srv = start_server({"stored_pointer": None, "records": [REC_NEWER]})
+    try:
+        r = run_script(srv.server_port, ["--role", "dba", "--all"])
+        assert r.returncode == 0, r.stderr
+        assert list_args()["tag"] == ["to:dba"]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 # ── suite entrypoint (tests/run_all.py convention) ───────────────────────
 def run() -> tuple[int, int, int]:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
