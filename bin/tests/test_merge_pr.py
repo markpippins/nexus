@@ -908,3 +908,128 @@ def test_new_code_in_all_codes_roundtrip():
     assert gc.extract_codes(
         "[FAIL] tester attestation (ATT_NO_CI_EVIDENCE): cites no CI run") == [
         "ATT_NO_CI_EVIDENCE"]
+
+
+# ── gate 3d: point-endpoint contract — the timestamp must survive ────────
+#
+# The two nebula read paths have different projections:
+#   GET /api/attestations?pr=<N>   camelCase rows, NO content (indexed)
+#   GET /api/agent-records/:id      full record; camelCase + epoch-ms
+#                                  timestamps via camelCaseRow (routes.ts)
+# gate 3 hydrates the content-less indexed rows by record id, REPLACING them
+# with the point response. A point response that omits `createdAt` therefore
+# silently re-ages a fresh attestation to epoch 0, and the freshness rule
+# (created_ms >= head_date_ms) can never be satisfied again.
+#
+# That is not hypothetical: the point handler returned the raw pg row
+# (snake_case created_at, no createdAt key) until the fix in
+# typescript/nebula-srv/src/routes.ts, so every hydrated attestation bound at
+# 1970-01-01T00:00:00Z and green PRs #642/#645 were refused indefinitely with
+# ATT_STALE_HEAD. These tests pin the contract from the gate's side.
+
+
+def _split_endpoint_http(indexed, point_rows):
+    """Fake nebula with the real two-endpoint split: the indexed projection
+    carries no content, the point endpoint carries the full row."""
+    def http_get(url):
+        if "/api/attestations?pr=" in url:
+            return {"items": indexed, "total": len(indexed)}
+        if "/api/agent-records/" in url:
+            return point_rows[url.rsplit("/", 1)[-1]]
+        if "/api/agent-records" in url:
+            return {"items": []}
+        raise RuntimeError(f"unexpected url {url}")
+    return http_get
+
+
+HEAD_SHA = "a8b1dfc600000000000000000000000000000000"
+RID = "07b09151"  # the re-issued attestation held at epoch 0 in production
+
+
+def _indexed_row(att_ms):
+    """Indexed /api/attestations projection: camelCase, no content."""
+    return {
+        "id": RID, "role": "tester", "recordType": "assessment",
+        "createdAt": att_ms, "tags": ["type:approval", "status:done",
+                                      "pr:487", f"head:{HEAD_SHA[:7]}"],
+        "title": "Tester attestation: PR #487", "content": "",
+    }
+
+
+def _point_row(att_ms):
+    """GET /api/agent-records/:id as the server serializes it post-fix."""
+    return {
+        "id": RID, "role": "tester", "recordType": "assessment",
+        "createdAt": att_ms, "tags": ["type:approval", "status:done",
+                                      "pr:487", f"head:{HEAD_SHA[:7]}"],
+        "title": EVIDENCE_TITLE, "content": EVIDENCE_CONTENT,
+    }
+
+
+def test_point_fetch_preserves_created_at_through_hydration():
+    """Regression: hydrating an indexed row by id must not cost the
+    attestation its timestamp. Attested 1h ago, head 2h ago → gate passes on
+    the real timestamp, and never reports a 1970 binding."""
+    att_ms, head_ms = NOW_MS - 3600_000, NOW_MS - 7200_000
+    ok, detail, code = merge_pr.attestation_check(
+        _split_endpoint_http([_indexed_row(att_ms)], {RID: _point_row(att_ms)}),
+        487, head_ms, head_sha=HEAD_SHA, run_json=evidence_run_json)
+    assert ok, f"gate 3 refused a valid, head-bound attestation: {detail}"
+    assert "1970" not in detail
+    assert code is None
+
+
+def test_point_response_without_created_at_repaired_from_indexed():
+    """The shipped defect, updated per this test's own instruction: the
+    pre-fix point response carried snake_case `created_at` and no `createdAt`
+    (and snake_case `record_type`). Hydration swapped that row in, freshness
+    compared 0 against the head date, and every attestation was refused at
+    1970 no matter how new it was — the anomaly that held #642/#645.
+
+    Updated when the gate hardened its own timestamp handling (DBA analysis
+    48ac13e2, fix A — merged as PR #654, df46b49e): the gate now repairs a
+    missing createdAt from the indexed row's timestamp, so the exact payload
+    that used to bind at epoch 0 now passes on the real timestamp. The
+    server-side contract fix (this PR's routes.ts half) remains the primary
+    repair; the gate-side repair is the defense-in-depth that makes a future
+    server regression non-fatal.
+    """
+    att_ms, head_ms = NOW_MS - 3600_000, NOW_MS - 7200_000
+    raw_row = _point_row(att_ms)
+    del raw_row["createdAt"]          # what the raw-row serialization produced
+    raw_row["created_at"] = "2026-09-29T03:35:12.000Z"
+    raw_row["record_type"] = raw_row.pop("recordType")
+    raw_row["tags"].append("type:attestation")  # legacy shape survives the swap
+    ok, detail, code = merge_pr.attestation_check(
+        _split_endpoint_http([_indexed_row(att_ms)], {RID: raw_row}),
+        487, head_ms, head_sha=HEAD_SHA, run_json=evidence_run_json)
+    assert ok, f"gate 3 should repair the timestamp from the indexed row: {detail}"
+    assert code is None
+    assert "1970" not in detail
+
+
+def test_point_handler_serializes_with_camel_case_row():
+    """Source-level guard for the server-side half of the contract.
+
+    The two tests above only pin the gate's behavior for a given payload —
+    no hermetic test can observe a running server, so a revert of the
+    routes.ts fix would leave the suite green while production broke again.
+    Assert instead that every registered GET /api/agent-records/:id handler
+    serializes through camelCaseRow, the serializer the list route already
+    uses (camelCase keys + epoch-ms timestamps). Both handlers are checked:
+    the second is currently unreachable, but it is registered on the same
+    path and would become live the moment the first is removed.
+    """
+    routes = (Path(__file__).resolve().parents[2]
+              / "typescript" / "nebula-srv" / "src" / "routes.ts")
+    src = routes.read_text(encoding="utf-8")
+    marker = "router.get('/agent-records/:id'"
+    chunks = src.split(marker)[1:]
+    assert chunks, "no GET /api/agent-records/:id handler found in routes.ts"
+    raw = [c for c in chunks if "camelCaseRow(" not in c.split("router.")[0]]
+    assert not raw, (
+        "GET /api/agent-records/:id must serialize via camelCaseRow (camelCase "
+        "keys + epoch-ms createdAt); a raw res.json() row drops createdAt and "
+        "makes gate 3's freshness check bind at epoch 0 (DBA analysis "
+        "48ac13e2 — held PRs #642/#645)"
+    )
