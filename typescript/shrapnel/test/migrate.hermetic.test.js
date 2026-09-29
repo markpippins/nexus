@@ -661,11 +661,16 @@ describe('runMigrations guardrails', { skip: canCreateDb ? false : 'cannot creat
 
       const res = run({ SHRAPNEL_MIGRATE_DUMP_DIR: blocker });
       assert.equal(res.status, 1, `expected the dump rail to refuse: ${res.stdout}`);
+      // F2 (rehearsal 3f5fed68): dump-dir setup failures must surface through
+      // the SAME canonical refusal as a failed pg_dump — one greppable
+      // message, with the fs cause appended for actionability — never a raw
+      // 'EEXIST ... mkdir'.
       assert.match(
         `${res.stderr}${res.stdout}`,
-        /pre-apply pg_dump failed|EEXIST/,
-        'the operator sees a refusal, not a silent apply'
+        /pre-apply pg_dump failed — refusing to apply \(override with --no-dump\): could not create dump dir/,
+        'the operator sees the canonical refusal, not a raw EEXIST'
       );
+      assert.match(`${res.stderr}${res.stdout}`, /EEXIST/, 'the fs cause is preserved for actionability');
 
       const c = connect(dsn);
       const { rows } = await c.query('SELECT count(*)::int AS n FROM shrapnel._migration_ledger');
