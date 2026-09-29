@@ -377,6 +377,15 @@ export interface CensusCardIndexEntry {
   anticipated_finding_count: number;
 }
 
+export interface CensusDailyCount {
+  /** UTC calendar day, `YYYY-MM-DD`. */
+  day: string;
+  report_count: number;
+  finding_count: number;
+  /** Reports for that day that carried no finding — a complete record of nothing observed. */
+  report_count_no_findings: number;
+}
+
 export interface CensusReportIndex {
   generated_at: string;
   read_only: true;
@@ -389,6 +398,18 @@ export interface CensusReportIndex {
   category_counts: Partial<Record<CensusCategory, number>>;
   cards: CensusCardIndexEntry[];
   truncated: boolean;
+  /**
+   * Q6 retention instrumentation. The Architect accepted unbounded growth "for now, with
+   * measurement required from day one", on the reasoning that rows/day extrapolates
+   * directly and is better sized against a measurement than a guess. This is that
+   * measurement — it is why `limit`-bounded reads are still useful for planning.
+   *
+   * Bounded by the rows the caller read, so it is a floor on true daily volume, not a
+   * census of it. `truncated` tells you when that floor is not the whole truth.
+   */
+  daily_counts: CensusDailyCount[];
+  /** Days observed in `daily_counts`. Extrapolating rows/day needs this as the denominator. */
+  observed_day_count: number;
 }
 
 /**
@@ -457,6 +478,26 @@ export function buildCensusReportIndex(
     (left, right) => right.finding_count - left.finding_count || left.asset_id.localeCompare(right.asset_id),
   );
 
+  // Q6 retention instrumentation: rows per UTC calendar day, so A6 can size retention
+  // against a measurement instead of a guess.
+  const dailyBuckets = new Map<string, CensusDailyCount>();
+  for (const report of reports) {
+    const day = String(report.created_at || "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+    const bucket = dailyBuckets.get(day) || {
+      day,
+      report_count: 0,
+      finding_count: 0,
+      report_count_no_findings: 0,
+    };
+    bucket.report_count += 1;
+    const findings = report.metadata?.findings || [];
+    bucket.finding_count += findings.length;
+    if (findings.length === 0) bucket.report_count_no_findings += 1;
+    dailyBuckets.set(day, bucket);
+  }
+  const dailyCounts = [...dailyBuckets.values()].sort((left, right) => left.day.localeCompare(right.day));
+
   return {
     generated_at: new Date().toISOString(),
     read_only: true,
@@ -466,7 +507,9 @@ export function buildCensusReportIndex(
     limitation:
       "No governance threshold is applied here; threshold policy is A5. A card absent from this " +
       "index was not reported in a finding — which is not the same as being correctly present, " +
-      "because a sampled execution with zero findings is a complete record of nothing observed.",
+      "because a sampled execution with zero findings is a complete record of nothing observed. " +
+      "daily_counts is bounded by the rows this call read, so it is a floor on true daily volume " +
+      "whenever truncated is true.",
     report_count: reports.length,
     report_ids_with_no_findings: emptyReports,
     doctrine_snapshot_count: doctrineSnapshots.size,
@@ -474,5 +517,7 @@ export function buildCensusReportIndex(
     category_counts: categoryCounts,
     cards: orderedCards,
     truncated: Boolean(options.truncated),
+    daily_counts: dailyCounts,
+    observed_day_count: dailyCounts.length,
   };
 }

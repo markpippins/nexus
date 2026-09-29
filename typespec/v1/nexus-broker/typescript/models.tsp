@@ -362,8 +362,79 @@ namespace org.nexus.nexusbroker {
     category_counts: Record<unknown>;
     cards: KeychainCensusCardIndex[];
     truncated: boolean;
+    /** Q6 retention instrumentation: rows per UTC calendar day, so A6 sizes against a measurement. */
+    daily_counts: KeychainCensusDailyCount[];
+    observed_day_count: int32;
     rejected_report_count: int32;
     rejected_reports: KeychainCensusRejection[];
+  }
+
+  /** Census rows per UTC calendar day. Bounded by the rows the call read, hence a floor. */
+  model KeychainCensusDailyCount {
+    day: string;
+    report_count: int32;
+    finding_count: int32;
+    report_count_no_findings: int32;
+  }
+
+  /**
+   * CDLC A2a — Tier-2 census marker. A strict tri-state; ABSENCE IS ILLEGAL, because A5
+   * measures "30% sampled-missing" and a missing marker must never be confusable with a
+   * disabled census. Never a durable record-store row. (DBA ruling dffa404e, 6629b009.)
+   */
+  model ExecutionCensusMarker {
+    enabled: boolean;
+    sampled: boolean;
+    /** Effective base rate as N/M; null means master-switch-only, which is 1/1. */
+    rate: string | null;
+  }
+
+  /**
+   * CDLC A2a — Tier-1 execution identity. session_id is an opaque text REFERENCE, not a
+   * parent: many executions per session, no FK, no join. A uuid-shaped session_id is
+   * refused because that is the vision.sessions concept colliding with the reference
+   * family (DBA condition 3). There is deliberately no calendar_session_ref column and no
+   * FK to vision.sessions, which is empty with its one FK 0/15253 populated (condition 4).
+   */
+  model ExecutionIdentity {
+    schema_version: int32;
+    /** Independently minted uuid. Never derived from or normalized against session_id. */
+    execution_id: string;
+    /** Named session reference (e.g. reviewer-20260703-112402-831cbac9), or null un-shimmed. */
+    session_id: string | null;
+    /** Non-null exactly when sampled; the join key to the single Tier-3 census report. */
+    census_id: string | null;
+  }
+
+  model ExecutionSubject {
+    /**
+     * What ran, e.g. "conduit", "wind". Named source_namespace rather than `namespace`,
+     * which is a reserved TypeSpec keyword, and which matches the existing house convention
+     * in the doctrine transition records and the census read endpoint's query param.
+     */
+    source_namespace: string;
+    ticket_id?: string | null;
+    work_item_id?: string | null;
+  }
+
+  model ExecutionFrame {
+    /** B1/B3 provenance: the doctrine in force, content-addressed. */
+    doctrine_snapshot_id: string;
+    procedure_card_set_hash?: string;
+  }
+
+  model ExecutionOutcome {
+    /** Free text; no outcome vocabulary has been ratified, so none is imposed. */
+    status: string;
+    detail?: string | null;
+  }
+
+  model ExecutionEnvelope {
+    execution: ExecutionIdentity;
+    census: ExecutionCensusMarker;
+    subject: ExecutionSubject;
+    frame: ExecutionFrame;
+    outcome: ExecutionOutcome;
   }
 
   /** GET/POST /api/keychain-snapshot/agent-records/doctrine-reconstruction report. */
