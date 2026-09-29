@@ -28,6 +28,51 @@ export interface ExpressionCompilerHost {
   getProposition(propositionId: string): { value?: boolean; disposition?: unknown } | undefined;
   getFunction(name: string): (FunctionBinding & { fn?: (...args: unknown[]) => unknown }) | undefined;
   entities(): Iterable<Entity>;
+  /** Whether a tag-membership source is bound (has_tag fail-closed gate). */
+  hasTagSource(): boolean;
+  /** Tag-membership lookup through the bound source. */
+  lookupTag(entityId: string, tag: string): boolean;
+}
+
+// ── Tag-membership predicate (Decision 19 continuation) ─────────────
+
+// Predicate lands via the function_call path (engineer 599efe20 item 2);
+// no new ExpressionKind, TAG_REF deferred until quantification is needed.
+export const TAG_MEMBERSHIP_FUNCTION = "has_tag";
+
+/** Tag-membership lookup port over first-class tag bindings (DBA 4350eedc). */
+export type TagLookup = (entityId: string, tag: string) => boolean;
+
+/** Subject entity id from an eval context (entity object or entity_id). */
+export function ctxEntityId(ctx: EvalContext): string | null {
+  const entity = ctx["entity"];
+  if (entity && typeof entity === "object" && "id" in entity) {
+    const id = (entity as { id?: unknown }).id;
+    if (typeof id === "string") return id;
+  }
+  const entityId = ctx["entity_id"];
+  if (typeof entityId === "string") return entityId;
+  return null;
+}
+
+/** Evaluate ``has_tag`` over resolved args. Fail-closed on ambiguity.
+ *
+ * Forms: ``has_tag(tag)`` (subject = ctx entity) and
+ * ``has_tag(entityId, tag)``. Membership is an inherently directed
+ * subject→object edge (ontologist 6004231c); the single symmetric
+ * vocabulary type (contradicts) needs no read-time treatment here.
+ */
+export function hasTagFromArgs(args: unknown[], ctx: EvalContext, lookup: TagLookup): boolean {
+  if (args.length === 0) return false;
+  const entityId = args.length === 1 ? ctxEntityId(ctx) : args[0];
+  const tag = args[args.length - 1];
+  if (typeof entityId !== "string" || entityId === "") return false;
+  if (typeof tag !== "string" || tag === "") return false;
+  try {
+    return lookup(entityId, tag) === true;
+  } catch {
+    return false;
+  }
 }
 
 export class ExpressionCompiler {
@@ -45,6 +90,11 @@ export class ExpressionCompiler {
     const compiled = this.compileNode(expr);
     this.compiledCache.set(cacheKey, compiled);
     return compiled;
+  }
+
+  /** Drop cached compilations (e.g. after a tag-source rebind). */
+  clearCompiledCache(): void {
+    this.compiledCache.clear();
   }
 
   // ── Node compiler ────────────────────────────────────────────
@@ -83,8 +133,17 @@ export class ExpressionCompiler {
       case ExpressionKind.Operator:
         return this.compileOperator(expr);
       case ExpressionKind.FunctionCall: {
-        const func = this.host.getFunction(expr.functionName ?? "");
         const argFns = expr.operands.map((op) => this.compileNode(op));
+        if ((expr.functionName ?? "") === TAG_MEMBERSHIP_FUNCTION) {
+          // ctx-aware dispatch: the subject form needs the eval context.
+          if (this.host.hasTagSource()) {
+            const lookup: TagLookup = (entityId, tag) => this.host.lookupTag(entityId, tag);
+            return (ctx) => hasTagFromArgs(argFns.map((fn) => fn(ctx)), ctx, lookup);
+          }
+          // Fail-closed: no tag source bound (engineer 599efe20 item 2).
+          return () => false;
+        }
+        const func = this.host.getFunction(expr.functionName ?? "");
         if (!func || !func.fn) throw new Error(`Unknown function: ${expr.functionName}`);
         const pf = func.fn;
         return (ctx) => pf(...argFns.map((fn) => fn(ctx)));
