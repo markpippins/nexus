@@ -102,9 +102,11 @@ CREATE TABLE IF NOT EXISTS nebula.executions (
     -- DBA condition 3: a calendar session would need its OWN separately named
     -- column with its own FK. There is deliberately NO calendar_session_ref
     -- here. A uuid-shaped value in session_id is the vision.sessions concept
-    -- colliding with this reference family, so the application validator
-    -- (lib/execution-identity.ts) refuses one; this CHECK additionally forbids
-    -- the empty string, so a uuid cannot be smuggled in as text.
+    -- colliding with this reference family. Enforced in TWO places on purpose:
+    -- the application validator (lib/execution-identity.ts) refuses one, and
+    -- executions_session_id_not_a_uuid refuses one at the database. Both matter —
+    -- an earlier draft claimed the `''` check below also covered this, which it
+    -- did not, and a direct SQL write bypassed the ruling entirely.
     session_id         text,
 
     -- ── Tier-2 census marker ──────────────────────────────────────────────
@@ -171,6 +173,19 @@ CREATE TABLE IF NOT EXISTS nebula.executions (
     -- new surface from re-opening the split.
     CONSTRAINT executions_session_id_not_empty
         CHECK (session_id IS NULL OR session_id <> ''),
+
+    -- Defect 2 of Decision 21's two-defect amend (e990408d), found by executing
+    -- the migration against PostgreSQL 17.11 (engineer-iii b27465eac) and
+    -- verified independently by the architect. The first draft reasoned that
+    -- forbidding '' also forbade a uuid — they are different classes of bad
+    -- value, and the database accepted a uuid-shaped session_id that the
+    -- application validator refuses. Condition 3 of ruling dffa404e was therefore
+    -- enforced in the app only, and any direct SQL write bypassed it. Guarding at
+    -- both layers is what makes the condition hold against a caller that skips
+    -- the validator. Same NULL-safe shape as the census guards: NULL
+    -- (un-shimmed) passes, everything else must not look like a uuid.
+    CONSTRAINT executions_session_id_not_a_uuid
+        CHECK (session_id IS NULL OR session_id !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'),
 
     -- Tri-state, part 1: sampled implies enabled.
     CONSTRAINT executions_census_sampled_implies_enabled
