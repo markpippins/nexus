@@ -979,16 +979,20 @@ def test_point_fetch_preserves_created_at_through_hydration():
     assert code is None
 
 
-def test_point_response_without_created_at_binds_epoch_zero():
-    """The shipped defect, pinned so the failure stays recognizable: the
+def test_point_response_without_created_at_repaired_from_indexed():
+    """The shipped defect, updated per this test's own instruction: the
     pre-fix point response carried snake_case `created_at` and no `createdAt`
     (and snake_case `record_type`). Hydration swapped that row in, freshness
     compared 0 against the head date, and every attestation was refused at
     1970 no matter how new it was — the anomaly that held #642/#645.
 
-    Update this test when the gate hardens its own timestamp handling
-    (DBA analysis 48ac13e2, fix A); the server-side contract fix alone cannot
-    make the gate resilient to a server that regresses again.
+    Updated when the gate hardened its own timestamp handling (DBA analysis
+    48ac13e2, fix A — merged as PR #654, df46b49e): the gate now repairs a
+    missing createdAt from the indexed row's timestamp, so the exact payload
+    that used to bind at epoch 0 now passes on the real timestamp. The
+    server-side contract fix (this PR's routes.ts half) remains the primary
+    repair; the gate-side repair is the defense-in-depth that makes a future
+    server regression non-fatal.
     """
     att_ms, head_ms = NOW_MS - 3600_000, NOW_MS - 7200_000
     raw_row = _point_row(att_ms)
@@ -999,10 +1003,9 @@ def test_point_response_without_created_at_binds_epoch_zero():
     ok, detail, code = merge_pr.attestation_check(
         _split_endpoint_http([_indexed_row(att_ms)], {RID: raw_row}),
         487, head_ms, head_sha=HEAD_SHA, run_json=evidence_run_json)
-    assert not ok
-    assert code == merge_pr.gate_codes.ATT_STALE_HEAD
-    assert "1970-01-01T00:00:00Z" in detail
-    assert "predates head commit" in detail
+    assert ok, f"gate 3 should repair the timestamp from the indexed row: {detail}"
+    assert code is None
+    assert "1970" not in detail
 
 
 def test_point_handler_serializes_with_camel_case_row():
