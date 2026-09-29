@@ -5,9 +5,14 @@
 # raw REST. This is the MCP front door over it. No file: deps — plain tsc.
 FROM node:20-bookworm AS build
 WORKDIR /app/nebula-mcp
-COPY nebula-mcp/package.json ./
-# --no-package-lock: match sibling Dockerfiles; resolve fresh in-image.
-RUN npm install --no-package-lock
+COPY nebula-mcp/package.json ./package.json
+# The lock is committed (bin/wf_lint.py `npm-ci` rule, opt-in per service since
+# #518). Once it exists, `npm install` in this build context is a lint violation
+# and, more importantly, unpinned: the image would resolve whatever the
+# registry served at build time, so a rebuild is not reproducible. `npm ci`
+# installs exactly the tree the lockfile pins.
+COPY nebula-mcp/package-lock.json ./package-lock.json
+RUN npm ci
 COPY nebula-mcp/tsconfig.json ./
 COPY nebula-mcp/src ./src
 RUN npm run build && npm prune --omit=dev

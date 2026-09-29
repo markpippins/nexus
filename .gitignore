@@ -35,6 +35,14 @@ bun.lock
 package-lock.json
 yarn.lock
 
+# ...except where a committed lock is load-bearing. `bin/wf_lint.py`'s `npm-ci`
+# rule treats a committed package-lock.json as the opt-in, enforced signal
+# (lockfile adoption is opt-in per service since #518): once one exists in a
+# build context, `npm install` there is a lint violation and the install is
+# unpinned. nebula-mcp adopts it, so its image build must be reproducible.
+# Additions belong here one package at a time, deliberately.
+!typescript/nebula-mcp/package-lock.json
+
 # Framework-specific
 .angular/
 .next/
