@@ -26,6 +26,17 @@ Subcommands:
       verdict (local: pass on the DONE path, fail in die()/ERR trap;
       CI: job.status mapped to pass/fail) — the helper never guesses.
 
+  mint-head --pr N [--repo OWNER/REPO]
+      Decision 10 head-minting helper: resolves the PR's CURRENT head via
+      `git ls-remote` (never a local checkout, never hand-typed) and prints
+      the tag string `head:<sha7>` for use in an attestation agent record's
+      tags. The merge gate (merge_pr.py gate 3) compares this tag against
+      the PR's headRefOid at merge time, which subsumes the old timestamp
+      predicate: any push after the attestation changes headRefOid and fails
+      the binding. Copying a tag from another PR — the 2026-09-28
+      evidence_provenance_error incident — is defeated because the tag is
+      minted from the live remote, not from a prior record.
+
 Artifact covers RUNS, not misuse: usage/preflight errors emit nothing.
 """
 import argparse
@@ -160,6 +171,34 @@ def main():
             sys.exit("usage: pgie-evidence.py guard LOG FLOOR LABEL RESULTS_TSV")
         cmd_guard(argparse.Namespace(
             log=rest[0], floor=int(rest[1]), label=rest[2], results_tsv=rest[3]))
+        return
+    if len(sys.argv) > 1 and sys.argv[1] == "mint-head":
+        p = argparse.ArgumentParser(prog="pgie-evidence.py mint-head")
+        p.add_argument("--pr", type=int, required=True)
+        p.add_argument("--repo", default=None,
+                       help="OWNER/REPO (default: resolve from origin remote)")
+        a = p.parse_args(sys.argv[2:])
+        repo = a.repo
+        if not repo:
+            origin = _git("remote", "get-url", "origin")
+            m = re.search(r"[:/]([^/:]+/[^/:]+?)(?:\.git)?$/", origin or "")
+            if not origin or not m:
+                print("::error::could not resolve OWNER/REPO from origin; pass --repo", file=sys.stderr)
+                sys.exit(2)
+            repo = m.group(1)
+        try:
+            out = subprocess.run(
+                ("git", "ls-remote", f"https://github.com/{repo}.git",
+                 f"refs/pull/{a.pr}/head"),
+                capture_output=True, text=True, timeout=20, check=True).stdout
+        except Exception as exc:
+            print(f"::error::ls-remote failed for {repo}#{a.pr}: {exc}", file=sys.stderr)
+            sys.exit(2)
+        sha = out.split()[0] if out.strip() else ""
+        if not re.fullmatch(r"[0-9a-f]{40}", sha or ""):
+            print(f"::error::no valid head sha for {repo}#{a.pr}", file=sys.stderr)
+            sys.exit(2)
+        print(f"head:{sha[:7]}")
         return
     if len(sys.argv) > 1 and sys.argv[1] == "emit":
         p = argparse.ArgumentParser()

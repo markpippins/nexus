@@ -159,6 +159,97 @@ def fetch_agent_records(
     return data if isinstance(data, list) else []
 
 
+# CI run reference extraction. The tester attestation must cite real CI runs
+# ("CI run 12345678901: shrapnel gate OK") rather than an engine's stated test
+# counts ("engine reports 54/54") — a stated count is self-attestation by
+# proxy and this gate exists to replace it (PRs #615/#630 family; tester
+# review ecfe5977 GAP 3). Head-SHA tokens are also captured so the gate can
+# detect an attestation for a superseded head.
+_CI_RUN_RE = re.compile(r"\bCI runs?\s+((?:#?\d{6,}[^,;.)\n]*(?:,\s*)?)+)", re.IGNORECASE)
+_RUN_ID_RE = re.compile(r"\d{8,}")
+_SHA_RE = re.compile(r"\bhead(?:\s+SHA)?\s+([0-9a-f]{7,40})\b", re.IGNORECASE)
+
+
+def extract_ci_run_ids(text: str) -> List[str]:
+    """CI run IDs cited in an attestation, de-duplicated, order preserved.
+
+    Accepts 'CI run 36463962966', 'CI runs 36463962966, 36459972178' and
+    'run #36463962966'. IDs are 8+ digits (GitHub run IDs are 10-11 digits
+    today; 8 keeps headroom for older/shorter IDs without matching PR
+    numbers or timestamps)."""
+    ids: List[str] = []
+    for m in _CI_RUN_RE.finditer(text or ""):
+        for raw in _RUN_ID_RE.findall(m.group(1)):
+            if raw not in ids:
+                ids.append(raw)
+    return ids
+
+
+def extract_head_shas(text: str) -> List[str]:
+    """Head-SHA tokens cited in an attestation ('head SHA 09f1f6cd' or
+    'head 09f1f6cd'), lowercase, de-duplicated, order preserved."""
+    shas: List[str] = []
+    for m in _SHA_RE.finditer(text or ""):
+        s = m.group(1).lower()
+        if s not in shas:
+            shas.append(s)
+    return shas
+
+
+def verify_ci_runs(
+    run_ids: List[str],
+    head_sha: Optional[str],
+    run_json: Callable[..., Any] = _gh_json,
+) -> Tuple[bool, str]:
+    """Every cited CI run must exist, be SUCCESS, and — when the run exposes
+    a head SHA — belong to the PR's current head.
+
+    Verification, not trust: the run ID proves a build happened, the API
+    conclusion proves it passed, and the SHA binding proves it tested THIS
+    code.
+
+    Fail-closed on weakened conclusions (Decision 10 tightening, work order
+    a49acfc9): a path-filtered *skipped* run carries the PR head_sha and
+    would pass with zero test execution, and NEUTRAL likewise proves no run
+    — both are rejected with a self-explaining detail. Runs that omit
+    head_sha are also rejected: GitHub workflow-run objects always carry
+    head_sha, so its absence is a data anomaly we refuse to pass on
+    conclusion alone — every pass must bind to the code it tested.
+    """
+    if not run_ids:
+        return False, "no CI run references"
+    ok_shas: List[str] = []
+    for rid in run_ids:
+        try:
+            run = run_json("api", f"repos/{{owner}}/{{repo}}/actions/runs/{rid}",
+                           "--jq", "{c: .conclusion, s: .head_sha}")
+        except Exception as exc:
+            return False, f"CI run {rid} lookup failed: {_exc_brief(exc)} (fail closed)"
+        conclusion = str((run or {}).get("c") or "").strip().lower()
+        if conclusion != "success":
+            return False, (
+                f"CI run {rid} conclusion is '{conclusion or 'unknown'}' "
+                "(not success; success-only per Decision 10 — skipped/neutral "
+                "runs execute no tests and prove nothing)"
+            )
+        run_sha = str((run or {}).get("s") or "").strip().lower()
+        if not run_sha:
+            return False, (
+                f"CI run {rid} omits head_sha — no code binding possible; "
+                "every accepted run must bind to the PR head (fail closed)"
+            )
+        if head_sha:
+            if not head_sha.lower().startswith(run_sha[:7]) and not run_sha.startswith(head_sha.lower()[:7]):
+                return False, (
+                    f"CI run {rid} tested head {run_sha[:8]}, not this PR's head "
+                    f"{str(head_sha)[:8]} — attested evidence is for superseded code"
+                )
+            ok_shas.append(run_sha[:7])
+    sha_note = f"; head SHA verified ({', '.join(ok_shas)})" if ok_shas else ""
+    return True, f"{len(run_ids)} CI run(s) verified success{sha_note}"
+    return True, f"{len(run_ids)} CI run(s) verified success{sha_note}"
+
+
 def fetch_attestations(
     http_get: Callable[[str], Any],
     pr_number: int,
@@ -202,16 +293,34 @@ def attestation_check(
     http_get: Callable[[str], Any],
     pr_number: int,
     head_date_ms: Optional[int],
+    head_sha: Optional[str] = None,
+    run_json: Callable[..., Any] = _gh_json,
 ) -> Tuple[bool, str, Optional[str]]:
     """Gate 3 lookup, exact by preference: the indexed /api/attestations
     endpoint when available (server-side shape filter + GIN tags index),
     bounded-scan fallback otherwise. Both paths share the client-side
-    shape + freshness rules in evaluate_attestation().
+    shape + freshness + CI-evidence rules in evaluate_attestation().
 
     Returns (ok, detail, code) like evaluate_attestation()."""
     rows = fetch_attestations(http_get, pr_number)
     if rows is not None:
-        ok, detail, code = evaluate_attestation(rows, pr_number, head_date_ms)
+        # The indexed endpoint returns a projection WITHOUT record content,
+        # but the CI-evidence rule reads the attestation body (cited run IDs).
+        # Content-less rows are hydrated from the bounded scan before
+        # evaluation; if the scan cannot find them either, evaluation runs on
+        # the content-less rows and fails the evidence rule with a
+        # self-explaining detail rather than guessing.
+        if rows and all(not (r or {}).get("content") for r in rows):
+            try:
+                full = fetch_agent_records(http_get)
+                by_id = {str(r.get("id")): r for r in full}
+                rows = [by_id.get(str(r.get("id")), r) for r in rows]
+            except Exception:
+                pass  # evaluate on projection rows; evidence rule fails closed
+        ok, detail, code = evaluate_attestation(
+            rows, pr_number, head_date_ms,
+            head_sha=head_sha, run_json=run_json,
+        )
         if not rows:
             detail = (
                 f"no attestation-shaped tester record for PR #{pr_number} "
@@ -232,7 +341,10 @@ def attestation_check(
             detail += " (indexed lookup)"
         return ok, detail, code
     records = fetch_agent_records(http_get)
-    ok, detail, code = evaluate_attestation(records, pr_number, head_date_ms)
+    ok, detail, code = evaluate_attestation(
+        records, pr_number, head_date_ms,
+        head_sha=head_sha, run_json=run_json,
+    )
     return ok, detail + " (scan fallback: /api/attestations unavailable)", code
 
 
@@ -277,15 +389,20 @@ def evaluate_attestation(
     records: List[Dict[str, Any]],
     pr_number: int,
     head_date_ms: Optional[int],
+    head_sha: Optional[str] = None,
+    run_json: Callable[..., Any] = _gh_json,
 ) -> Tuple[bool, str, Optional[str]]:
     """Gate 3: an explicit tester attestation for this PR must postdate the
-    head commit (a push after attestation means the attested code is gone).
-    Records must satisfy :func:`is_attestation_record` — a tester record that
-    merely mentions the PR (e.g. an intent row) does not count.
+    head commit (a push after attestation means the attested code is gone)
+    and cite CI run IDs that verify against GitHub (conclusion success + head
+    SHA binding). Stated test counts ("engine reports 54/54") are the
+    engine's self-attestation and never satisfy the evidence rule. Records
+    must satisfy :func:`is_attestation_record` — a tester record that merely
+    mentions the PR (e.g. an intent row) does not count.
 
     Returns (ok, detail, code) — code is a gate_codes value on failure
-    (ATT_MISSING / ATT_SHAPE_UNSEEN / HEAD_DATE_UNKNOWN / ATT_STALE_HEAD),
-    None on pass."""
+    (ATT_MISSING / ATT_SHAPE_UNSEEN / HEAD_DATE_UNKNOWN / ATT_STALE_HEAD /
+    ATT_NO_CI_EVIDENCE), None on pass."""
     mentions = [
         r
         for r in records
@@ -312,10 +429,37 @@ def evaluate_attestation(
     created_iso = datetime.fromtimestamp(
         created_ms / 1000, tz=timezone.utc
     ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    tags_newest = {
+        str(t).split(":", 1)[0].lower(): str(t).split(":", 1)[1]
+        for t in (newest.get("tags") or [])
+        if ":" in str(t or "")
+    }
     if head_date_ms is None:
         return (False,
                 f"attestation exists ({created_iso}) but head commit date is unknown (fail closed)",
                 gate_codes.HEAD_DATE_UNKNOWN)
+    # Decision 10: the head BINDING is a `head:<sha>` tag compared against
+    # headRefOid (minted only by the pgie-evidence.py head-minting helper via
+    # ls-remote at attestation time — never hand-typed). The timestamp
+    # predicate (created_ms >= head_date_ms) is SUBSUMED by the binding —
+    # a rebase/force-push changes headRefOid, so a stale attestation fails
+    # equality regardless of when it was posted. Prefix comparison either
+    # direction (the minted tag may carry 7-40 hex chars). Evaluated only
+    # when both sides exist; absent tags fall through to the content-based
+    # checks so the binding rule stays additive (legacy rows keep semantics).
+    if "head" in tags_newest and head_sha:
+        bound = tags_newest["head"].lower()
+        h = head_sha.lower()
+        if not (h.startswith(bound) or bound.startswith(h[:7])):
+            return (
+                False,
+                f"attestation head binding {bound[:8]} != PR head {h[:8]} "
+                "(Decision 10: binding is by SHA; re-issue the attestation via "
+                "the head-minting helper after the push)",
+                gate_codes.ATT_STALE_HEAD,
+            )
+    # Timestamp predicate kept unconditionally (belt-and-braces beneath the
+    # binding; the binding short-circuits above when a head: tag exists).
     if created_ms < head_date_ms:
         head_iso = datetime.fromtimestamp(
             head_date_ms / 1000, tz=timezone.utc
@@ -326,10 +470,37 @@ def evaluate_attestation(
             "(a push after attestation invalidates it)",
             gate_codes.ATT_STALE_HEAD,
         )
+
+    # CI-evidence rule: the attestation body must cite CI run IDs, and every
+    # cited run must verify against GitHub (conclusion + head SHA binding).
+    # Stated test counts ("engine reports 54/54", "all tests pass") are the
+    # engine's self-attestation and are not verification.
+    att_text = f"{newest.get('title') or ''}\n{newest.get('content') or ''}"
+    run_ids = extract_ci_run_ids(att_text)
+    if not run_ids:
+        return (
+            False,
+            f"tester attestation {created_iso} (record {str(newest.get('id'))[:8]}) "
+            "cites no CI run references — stated test counts are the engine's "
+            "self-attestation, not verification; cite 'CI run <id>' lines whose "
+            "conclusion + head SHA the gate can check against GitHub",
+            gate_codes.ATT_NO_CI_EVIDENCE,
+        )
+    cited_shas = extract_head_shas(att_text)
+    runs_ok, runs_detail = verify_ci_runs(run_ids, head_sha, run_json)
+    if not runs_ok:
+        detail = (f"tester attestation {created_iso} (record {str(newest.get('id'))[:8]}) "
+                  f"cites run(s) {', '.join(run_ids)}: {runs_detail}")
+        if cited_shas and head_sha and not any(
+            head_sha.lower().startswith(s) for s in cited_shas
+        ):
+            detail += (f" — attestation cites head {cited_shas[0][:8]}, "
+                       f"PR head is {str(head_sha)[:8]}")
+        return (False, detail, gate_codes.ATT_NO_CI_EVIDENCE)
     return (
         True,
         f"tester attestation {created_iso} (record {str(newest.get('id'))[:8]}) "
-        "postdates head commit",
+        f"postdates head commit; {runs_detail}",
         None,
     )
 
@@ -394,7 +565,10 @@ def evaluate(
     att_ok, att_detail, att_code = False, "", None
     try:
         head_ms = fetch_head_commit_date_ms(pr_number, run_json)
-        att_ok, att_detail, att_code = attestation_check(http_get, pr_number, head_ms)
+        att_ok, att_detail, att_code = attestation_check(
+            http_get, pr_number, head_ms,
+            head_sha=pr.get("headRefOid"), run_json=run_json,
+        )
     except Exception as exc:  # fail closed on any lookup failure
         att_detail = f"attestation lookup failed: {exc!r} (fail closed)"
         att_code = gate_codes.ATT_LOOKUP_FAILED
