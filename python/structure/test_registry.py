@@ -304,6 +304,126 @@ def test_lookup_by_snapshot_hash() -> None:
     assert reg.lookup_by_snapshot_hash("0" * 64) is None
 
 
+# ---------------------------------------------------------------------------
+# Work order 8ecbc2ca (Structure S3 fail-closed hardening): F1 allowlist,
+# F2 status domain, F3 governed id required, F4 findings in scope.
+
+
+def _tamper_obs(snap, field, value):
+    tampered = copy.deepcopy(snap)
+    tampered["run"]["observations"][0][field] = value
+    return tampered
+
+
+def test_unknown_governed_field_is_rejected() -> None:
+    """F1 acceptance: a governed-identity field NOT in the old 6-tuple is
+    rejected — the vocabulary is not the invariant."""
+    reg = rg.RunRegistry()
+    snap = _snapshot()
+    for field in ("domain_uuid", "relation_id", "keychain_id"):
+        try:
+            reg.register_run(_tamper_obs(snap, field, "some-uuid"))
+        except rg.IdentityEscalation:
+            continue
+        raise AssertionError(f"governed field {field!r} must be rejected")
+
+
+def test_non_contract_top_level_field_is_rejected() -> None:
+    """F1: the allowlist rejects ANY non-contract top-level field on an
+    observation, governed or not — the invariant is structural."""
+    reg = rg.RunRegistry()
+    snap = _snapshot()
+    try:
+        reg.register_run(_tamper_obs(snap, "totally_new_field", "x"))
+    except rg.IdentityEscalation:
+        return
+    raise AssertionError("non-contract observation field must be rejected")
+
+
+def test_governed_field_in_payload_is_rejected() -> None:
+    """F1: payload is schema-open by contract, so the governed vocabulary is
+    enforced there by denylist — including the extended names."""
+    reg = rg.RunRegistry()
+    snap = _snapshot()
+    tampered = copy.deepcopy(snap)
+    tampered["run"]["observations"][0]["payload"]["domain_uuid"] = "u1"
+    try:
+        reg.register_run(tampered)
+    except rg.IdentityEscalation:
+        return
+    raise AssertionError("governed field smuggled into payload must be rejected")
+
+
+def test_mapping_status_outside_domain_is_rejected() -> None:
+    """F2: status outside {unmapped, mapped} — or absent — must fail closed.
+    The old code only fired on == 'mapped', so these passed silently."""
+    reg = rg.RunRegistry()
+    snap = _snapshot()
+    for bad in ({"status": "inferred"}, {"status": "unknown"}, {}):
+        try:
+            reg.register_run(_tamper_obs(snap, "relation_mapping", bad))
+        except rg.IdentityEscalation:
+            continue
+        raise AssertionError(f"mapping {bad!r} must be rejected (fail closed)")
+
+
+def test_mapped_without_governed_id_is_rejected() -> None:
+    """F3: {status: mapped, evidence_refs: [...]} with no governed id is
+    accepted by the old code; the documented mapped shape carries both."""
+    reg = rg.RunRegistry()
+    snap = _snapshot()
+    try:
+        reg.register_run(_tamper_obs(
+            snap, "relation_mapping",
+            {"status": "mapped", "evidence_refs": ["V182 row 7"]}))
+    except rg.IdentityEscalation:
+        return
+    raise AssertionError("mapped without governed_relation_id must be rejected")
+
+
+def test_finding_with_governed_field_is_rejected() -> None:
+    """F4: findings are in scope — a governed-identity field on a finding is
+    rejected directly, not left to the replay tamper checks."""
+    reg = rg.RunRegistry()
+    snap = _snapshot()
+    tampered = copy.deepcopy(snap)
+    tampered["run"]["findings"].append({
+        "finding_id": "f1", "code": "parser_drift", "message": "m",
+        "governed_relation_id": "r-uuid",
+    })
+    try:
+        reg.register_run(tampered)
+    except rg.IdentityEscalation:
+        return
+    raise AssertionError("governed field on a finding must be rejected")
+
+
+def test_finding_with_non_contract_field_is_rejected() -> None:
+    """F4: the finding allowlist mirrors the closed StructureFinding shape."""
+    reg = rg.RunRegistry()
+    snap = _snapshot()
+    tampered = copy.deepcopy(snap)
+    tampered["run"]["findings"].append({
+        "finding_id": "f2", "code": "parser_drift", "message": "m",
+        "extra": True,
+    })
+    try:
+        reg.register_run(tampered)
+    except rg.IdentityEscalation:
+        return
+    raise AssertionError("non-contract finding field must be rejected")
+
+
+def test_legitimate_s1_observations_still_pass() -> None:
+    """Acceptance 4: the hardening must not reject legitimate S1-contract
+    observations (all fact kinds, optional diagnostics/candidate_status
+    absent, unmapped relation_mapping)."""
+    reg = rg.RunRegistry()
+    snap = _snapshot()
+    entry = reg.register_run(snap, verify_replay=False)
+    assert entry.observation_count == len(snap["run"]["observations"])
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
