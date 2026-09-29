@@ -1033,11 +1033,11 @@ export function registerTools(server: McpServer) {
 
   server.tool(
     "nebula_get_inbox",
-    "Get a role's inbox in one call: the stored pointer plus agent records addressed to that role (tags ['to:<role>']) created at or after the pointer. Replaces the manual pointer + list + filter dance (R17) with a single MCP call. Pass advance: true to ALSO advance the role's pointer to the newest returned record's createdAt (the deliberate, opt-in R17 end-of-turn pointer advance — the MCP equivalent of check-inbox.sh --update-pointer; no-op when no records are returned).",
+    "Get a role's inbox in one call: the stored pointer plus agent records addressed to that role (tags ['to:<role>']) created at or after the pointer. Replaces the manual pointer + list + filter dance (R17) with a single MCP call. Pass advance: true to ALSO advance the role's pointer to the newest returned record's createdAt (the deliberate, opt-in R17 end-of-turn pointer advance — the MCP equivalent of check-inbox.sh --update-pointer; no-op when no records are returned). Advancing is REFUSED (advanceError) when the returned window looks truncated (more matches than records returned, or returned == limit) — same guard as check-inbox.sh --update-pointer (#638) — and when no record carries a numeric createdAt (reported, never coerced — #657 shape).",
     {
       role: z.string().describe("Role name (e.g., architect, engineer, planner)"),
       limit: z.number().optional().describe("Max records to return (default 20, max 100)"),
-      advance: z.boolean().optional().describe("After listing, advance the role's inbox pointer to the newest returned record's createdAt (opt-in; no-op with no records)"),
+      advance: z.boolean().optional().describe("After listing, advance the role's inbox pointer to the newest returned record's createdAt (opt-in; no-op with no records; REFUSED on a truncated window or when no record has a numeric createdAt)"),
     },
     async (args) => {
       const role = args.role;
@@ -1058,28 +1058,65 @@ export function registerTools(server: McpServer) {
         limit,
       });
       // REST list responses are wrapped as { items, total, page, pageSize }.
+      // `total` is the true match count — used to detect window truncation
+      // (mirrors check-inbox.sh `_truncation_note`, #638).
+      const total =
+        (items as { total?: number } | null)?.total ??
+        (Array.isArray(items) ? items.length : undefined);
       const records = Array.isArray(items)
         ? items
         : ((items as { items?: unknown[] })?.items ?? []);
+      // A returned window equal to (or, with total, short of) the match set
+      // means there may be records below the fold. Advancing to the newest
+      // returned createdAt would mark those unseen records as seen — the
+      // exact failure #638 fixed in check-inbox.sh (exit 3 refusal).
+      const truncated =
+        total !== undefined
+          ? total > records.length
+          : records.length >= limit;
 
       // ── opt-in pointer advance ─────────────────────────────────────────
       // Mirrors check-inbox.sh --update-pointer: newest-first is assumed, so
       // max(createdAt) over the (possibly limited) window is the true newest
       // (an unsorted list would only under-advance → duplicate delivery next
       // turn, never lost records). createdAt is epoch ms; the pointer is ISO.
+      //
+      // Missing createdAt is REPORTED, never coerced (the `?? 0` shape #657
+      // removed from the merge gate): a record without a timestamp has no
+      // place in the newest computation, and an all-missing window is a
+      // no-op rather than a bad write. `missingCreatedAt` in the response
+      // makes the anomaly visible to the caller instead of silent.
       let advancedTo: string | null = null;
       let advanceError: string | null = null;
       if (advance && records.length > 0) {
-        const newest = Math.max(
-          ...records.map((r) => Number((r as { createdAt?: unknown })?.createdAt ?? 0))
-        );
-        if (newest > 0) {
-          const iso = new Date(newest).toISOString();
-          try {
-            await NebulaClient.setInboxPointer(role, iso);
-            advancedTo = iso;
-          } catch (e) {
-            advanceError = e instanceof Error ? e.message : String(e);
+        if (truncated) {
+          // Advancing now would mark below-fold records seen without ever
+          // showing them — the exact failure mode #638 guarded in
+          // check-inbox.sh. Withhold the write; the caller must re-run with
+          // a higher limit before advancing.
+          advanceError =
+            "refused: inbox window looks truncated (" + records.length +
+            " of " + (total ?? ">=limit") + " records returned) — advancing " +
+            "would mark below-fold records seen without showing them. Re-run " +
+            "with a higher limit before advancing.";
+        } else {
+          const withTs = records.filter(
+            (r) => typeof (r as { createdAt?: unknown })?.createdAt === "number"
+          ) as { createdAt: number }[];
+          if (withTs.length > 0) {
+            const newest = Math.max(...withTs.map((r) => r.createdAt));
+            const iso = new Date(newest).toISOString();
+            try {
+              await NebulaClient.setInboxPointer(role, iso);
+              advancedTo = iso;
+            } catch (e) {
+              advanceError = e instanceof Error ? e.message : String(e);
+            }
+          } else {
+            advanceError =
+              "refused: no returned record has a numeric createdAt — cannot " +
+              "determine the newest record to advance to. Records without " +
+              "timestamps are reported, not coerced (#657 shape).";
           }
         }
       }
@@ -1088,7 +1125,19 @@ export function registerTools(server: McpServer) {
         content: [{
           type: "text" as const,
           text: JSON.stringify(
-            { role, pointer, items: records, count: records.length, advancedTo, advanceError },
+            {
+              role,
+              pointer,
+              items: records,
+              count: records.length,
+              total,
+              truncated,
+              missingCreatedAt: records.filter(
+                (r) => typeof (r as { createdAt?: unknown })?.createdAt !== "number"
+              ).length,
+              advancedTo,
+              advanceError,
+            },
             null,
             2
           ),
