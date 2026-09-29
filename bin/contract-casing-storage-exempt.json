@@ -1,0 +1,109 @@
+{
+  "_comment": [
+    "Storage-shaped exemption registry for bin/check_contract_casing.py — Architect Decision 18.",
+    "",
+    "The ratchet counts snake_case occurrences in typespec contracts. Most are drift. Some are",
+    "NOT: a field whose wire name is *required* to equal a database column name, because the",
+    "database is canonical and the contract is describing the stored shape rather than a",
+    "consumer-facing surface. Those are exempt — but ONLY when declared here, with the column",
+    "they mirror and the PR that introduced them. An undeclared snake_case field is a violation",
+    "whether or not it sits in the CDLC family.",
+    "",
+    "Every entry must name a real `table.column`. That requirement is the point: it forces the",
+    "justification to be checkable rather than asserted, and it is what stops this file from",
+    "becoming a suppression list. If a field has no underlying column — because it is a derived",
+    "aggregate, or mirrors a document key rather than a column — it does not belong here and",
+    "must be renamed or argued separately.",
+    "",
+    "Governed by Decision 13 condition 2: cite the PR and the column. No silent growth — adding",
+    "an entry lowers the effective floor by one, so growth here is as visible as a floor bump.",
+    "",
+    "`contract` scopes the exemption to one file. Omit it only when a field genuinely appears",
+    "storage-shaped in several contracts; scope it wherever you can, because an unscoped entry",
+    "would exempt an unrelated same-named field elsewhere."
+  ],
+  "entries": [
+    {
+      "field": "execution_id",
+      "column": "nebula.executions.execution_id",
+      "contract": "typespec/v1/nexus-broker/typescript/models.tsp",
+      "introduced_by": "#639",
+      "rationale": "DBA ruling dffa404e condition 1: distinct independently-minted identity, and the contract must name the column it mirrors or it misdescribes the stored shape. Column created by DRAFT-068."
+    },
+    {
+      "field": "session_id",
+      "column": "nebula.executions.session_id",
+      "contract": "typespec/v1/nexus-broker/typescript/models.tsp",
+      "introduced_by": "#639",
+      "rationale": "DBA ruling dffa404e condition 2: a text REFERENCE, not a parent. The wire name is the column name because the whole point of the ruling is that it is a reference to the existing named-session convention, not a renamed consumer concept. Scoped to this contract: session_id elsewhere is not automatically storage-shaped."
+    },
+    {
+      "field": "census_id",
+      "column": "nebula.executions.census_id",
+      "contract": "typespec/v1/nexus-broker/typescript/models.tsp",
+      "introduced_by": "#639",
+      "rationale": "DBA ruling dffa404e and 66289b009: the join key from the Tier-2 marker to the single Tier-3 census report. Non-null exactly when sampled."
+    },
+    {
+      "field": "source_namespace",
+      "column": "nebula.executions.source_namespace",
+      "contract": "typespec/v1/nexus-broker/typescript/models.tsp",
+      "introduced_by": "#639",
+      "rationale": "Column created by DRAFT-068. Named source_namespace rather than `namespace` because the latter is a reserved TypeSpec keyword, and because it is the existing house convention in the doctrine transition records."
+    },
+    {
+      "field": "ticket_id",
+      "column": "nebula.executions.ticket_id",
+      "contract": "typespec/v1/nexus-broker/typescript/models.tsp",
+      "introduced_by": "#639",
+      "rationale": "Column created by DRAFT-068; carries the Conduit ticket an execution ran against."
+    },
+    {
+      "field": "work_item_id",
+      "column": "nebula.executions.work_item_id",
+      "contract": "typespec/v1/nexus-broker/typescript/models.tsp",
+      "introduced_by": "#639",
+      "rationale": "Column created by DRAFT-068; the generic work-item identity where no ticket applies."
+    },
+    {
+      "field": "doctrine_snapshot_id",
+      "column": "nebula.executions.doctrine_snapshot_id",
+      "contract": "typespec/v1/nexus-broker/typescript/models.tsp",
+      "introduced_by": "#639",
+      "rationale": "B1/B3 provenance: the content-addressed doctrine snapshot in force. Column created by DRAFT-068. Scoped to this contract — this name also appears in the pre-existing keychain contracts, which this entry does not excuse."
+    },
+    {
+      "field": "procedure_card_set_hash",
+      "column": "nebula.executions.procedure_card_set_hash",
+      "contract": "typespec/v1/nexus-broker/typescript/models.tsp",
+      "introduced_by": "#639",
+      "rationale": "Column created by DRAFT-068. The seven census categories are all relative to the card set in force, so a finding cannot be re-evaluated without it."
+    }
+  ],
+  "_deliberately_not_registered": [
+    {
+      "fields": [
+        "report_count",
+        "report_count_no_findings",
+        "report_ids_with_no_findings",
+        "category_counts",
+        "finding_count",
+        "anticipated_finding_count",
+        "trigger_counts",
+        "rejected_report_count",
+        "rejected_reports",
+        "daily_counts",
+        "observed_day_count"
+      ],
+      "why": "No underlying column. These are DERIVED values computed by buildCensusReportIndex at read time — the A2b read model is not a projection of a table, it is a computation over canonical rows. There is no `table.column` to cite, so the registry's own entry schema refuses them, and they stay counted as violations. Renaming them is a wire-shape decision (the endpoint serialises the index object directly, so the contract and the response must agree) and is NOT taken unilaterally here. Raised to the Architect as a category the ruling did not anticipate."
+    },
+    {
+      "field": "asset_id",
+      "why": "No PG column. Mirrors keychain InstanceManifest.asset_id, which is a MongoDB document field, not a column in the nexus database. Decision 18's registry is scoped to `table.column` storage shape; a Mongo document key is a different justification and should be ruled on rather than assumed."
+    },
+    {
+      "field": "schema_version",
+      "why": "Names a TABLE (nebula.schema_version), not a column. The census envelope's schema_version is a document-format marker with no stored counterpart. Not registered."
+    }
+  ]
+}

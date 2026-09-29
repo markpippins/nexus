@@ -1,6 +1,6 @@
 {
-  "_comment": "Ratchet floor for bin/check_contract_casing.py. Lower these as contracts are corrected. Failing above means a NEW violation was added, not that an old one was fixed. 'leaks' counts snake_case occurrences, not files: a file-count ratchet is blind to more column names being piled onto an already-leaking contract, which is the most likely regression. See agent record 19d6f725-a5dd-41a9-aee2-7f9464c3dfef.",
+  "_comment": "Ratchet floor for bin/check_contract_casing.py. Lower these as contracts are corrected. Failing above means a NEW violation was added, not that an old one was fixed. 'leaks' counts snake_case occurrences, not files: a file-count ratchet is blind to more column names being piled onto an already-leaking contract, which is the most likely regression. See agent record 19d6f725-a5dd-41a9-aee2-7f9464c3dfef. Since Decision 18 'leaks' is the UNEXEMPT count: snake_case fields declared in bin/contract-casing-storage-exempt.json with a real table.column are subtracted, per Architect Decision 18 item 2. Recalculated 616 -> 599 (17 declared storage-shaped occurrences). The raw total is 616 and is reported separately so the exemption is visible rather than silent.",
   "mixed": 12,
   "snake": 5,
-  "leaks": 616
+  "leaks": 599
 }
