@@ -350,8 +350,32 @@ def attestation_check(
         # self-explaining detail rather than guessing.
         if rows and all(not (r or {}).get("content") for r in rows):
             try:
-                full = fetch_agent_records(http_get)
-                by_id = {str(r.get("id")): r for r in full}
+                # [E] Decision 15: hydrate by record id FIRST — targeted
+                # fetches do not depend on the record falling inside the
+                # bounded scan's newest-N window (older attestations used to
+                # fail closed with spurious re-attest nudges once they slid
+                # past it). The bounded scan remains the fallback for
+                # servers/routers where the per-id fetch is unavailable.
+                by_id: Dict[str, Dict[str, Any]] = {}
+                missing: List[str] = []
+                for r in rows:
+                    rid = str(r.get("id") or "")
+                    if not rid:
+                        continue
+                    try:
+                        one = http_get(f"{NEBULA_BASE}/api/agent-records/{rid}")
+                    except Exception:
+                        one = None
+                    if isinstance(one, dict) and one.get("id"):
+                        by_id[rid] = one
+                    else:
+                        missing.append(rid)
+                if missing:
+                    full = fetch_agent_records(http_get)
+                    scan_by_id = {str(r.get("id")): r for r in full}
+                    for rid in missing:
+                        if rid in scan_by_id:
+                            by_id[rid] = scan_by_id[rid]
                 rows = [by_id.get(str(r.get("id")), r) for r in rows]
             except Exception:
                 pass  # evaluate on projection rows; evidence rule fails closed
@@ -488,6 +512,21 @@ def evaluate_attestation(
     if "head" in tags_newest and head_sha:
         bound = tags_newest["head"].lower()
         h = head_sha.lower()
+        # [C] Decision 15: a PRESENT but malformed head: tag fails on SHAPE
+        # (ATT_SHAPE_UNSEEN -> tester/analyst adjudication) and never
+        # silently prefix-binds — a 4-hex tag would bind at ~1/65536. An
+        # ABSENT tag keeps the legacy fallthrough to the content-based
+        # checks below (documented additive divergence from the binding
+        # rule). Shape: 7-40 lowercase hex, same grammar extract_head_shas
+        # and the minting tool emit.
+        if not re.fullmatch(r"[0-9a-f]{7,40}", bound or ""):
+            return (
+                False,
+                f"attestation head binding tag is malformed: '{str(bound)[:40]}' "
+                "(expected 7-40 hex chars; Decision 15 item C — re-mint via "
+                f"pgie-evidence.py mint-head --pr {pr_number})",
+                gate_codes.ATT_SHAPE_UNSEEN,
+            )
         if not (h.startswith(bound) or bound.startswith(h[:7])):
             return (
                 False,

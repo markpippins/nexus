@@ -179,6 +179,11 @@ def main():
                        help="OWNER/REPO (default: resolve from origin remote)")
         a = p.parse_args(sys.argv[2:])
         repo = a.repo
+        # Host constraint (Decision 15 item F): the ls-remote URL below
+        # hardcodes https://github.com/ — correct for this deployment
+        # (github.com is the only git host the attestation gate binds
+        # against); a GitLab/forge deployment would need this line changed
+        # AND the gate's head-binding semantics re-reviewed.
         if not repo:
             origin = _git("remote", "get-url", "origin")
             m = re.search(r"[:/]([^/:]+/[^/:]+?)(?:\.git)?$/", origin or "")
