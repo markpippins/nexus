@@ -100,21 +100,58 @@ class ReplayFailure(RegistryError):
 def check_domain_identity(run: dict[str, Any]) -> None:
     """Reject governed/domain identity smuggling in a run record.
 
-    Observations may carry the S1 ``relation_mapping`` slot only in its
-    contract shape: ``{"status": "unmapped"}`` or ``{"status": "mapped",
-    "governed_relation_id": ..., "evidence_refs": [...]}`` where the mapped
-    form was produced by the S4 boundary owner (Resolution/Aspects) — never
-    by Structure itself. The registry enforces the structural part: a
-    mapping whose evidence refs are empty, or whose governed id appears
-    without evidence, is treated as a silent mapping attempt and rejected.
-    Observations must never carry any other governed-identity field.
+    Fail-closed by construction: an observation may carry ONLY the fields of
+    the S1 ``StructuralObservation`` contract (top-level allowlist) plus the
+    S4-produced ``relation_mapping`` slot in its governed shape — any other
+    top-level field, governed-identity or not, is rejected. The payload is
+    schema-open by contract (``Record<unknown>``), so the governed-identity
+    vocabulary is enforced there by denylist; the denylist is a tripwire for
+    the known vocabulary, not a completeness proof — a NEW governed field
+    must be added to the vocabulary below, and the vocabulary is small and
+    reviewed.
+
+    The ``relation_mapping`` slot is only valid as ``{"status": "unmapped"}``
+    or ``{"status": "mapped", "governed_relation_id": ..., "evidence_refs":
+    [...]}`` where the mapped form was produced by the S4 boundary owner
+    (Resolution/Aspects) — never by Structure itself. A mapping whose status
+    is missing or outside the governed domain, or a ``mapped`` mapping whose
+    governed id or evidence refs are absent, is treated as a silent mapping
+    attempt and rejected.
+
+    Scope (F4 answer): BOTH ``observations`` and ``findings`` are guarded.
+    Findings have a closed S1 shape (``StructureFinding``) and are
+    content-hash-covered, so governed identity in a finding would also be
+    caught by replay tamper checks — but the guard does not rely on that:
+    fail-closure is enforced here directly, so S4 can depend on this boundary
+    without first auditing the replay path.
     """
-    forbidden_fields = (
+    # The S1 StructuralObservation top-level shape (typespec/v1/structure).
+    # Anything else at the top level of an observation is rejected — the
+    # allowlist makes the invariant structural instead of dependent on
+    # someone remembering to extend a denylist.
+    allowed_obs_fields = frozenset({
+        "observation_id", "source_fact_id", "source", "parser", "anchor",
+        "fact_kind", "payload", "parse_status", "diagnostics",
+        "read_set_fingerprint", "authority_status", "candidate_status",
+        "relation_mapping",
+    })
+    # Governed-identity vocabulary, enforced against top level AND payload
+    # (payload is schema-open by contract). Extended beyond the original
+    # 6-tuple with the S4/S1 governed names; additions are reviewed.
+    governed_identity_fields = (
         "governed_tag_id", "governed_id", "resolution_uuid", "asset_id",
-        "concept_id", "proposition_id",
+        "concept_id", "proposition_id", "domain_uuid", "relation_id",
+        "keychain_id", "governed_relation_id",
     )
     for obs in run.get("observations", []):
-        for field_name in forbidden_fields:
+        unknown = set(obs) - allowed_obs_fields
+        if unknown:
+            raise IdentityEscalation(
+                run.get("run_id", "?"),
+                f"observation carries non-contract field(s) {sorted(unknown)!r} "
+                "— S1 allowlist violation",
+            )
+        for field_name in governed_identity_fields:
             if field_name in obs or field_name in (obs.get("payload") or {}):
                 raise IdentityEscalation(
                     run.get("run_id", "?"),
@@ -123,13 +160,44 @@ def check_domain_identity(run: dict[str, Any]) -> None:
         mapping = obs.get("relation_mapping")
         if mapping is not None:
             status = mapping.get("status")
+            if status not in sc.RELATION_MAPPING_STATUSES:
+                raise IdentityEscalation(
+                    run.get("run_id", "?"),
+                    f"relation_mapping status {status!r} is outside the "
+                    f"governed domain {sc.RELATION_MAPPING_STATUSES!r} — "
+                    "unrecognised input must fail closed, not pass",
+                )
             if status == "mapped":
+                if not mapping.get("governed_relation_id"):
+                    raise IdentityEscalation(
+                        run.get("run_id", "?"),
+                        "'mapped' relation_mapping without governed_relation_id "
+                        "is an unverifiable mapping",
+                    )
                 if not mapping.get("evidence_refs"):
                     raise IdentityEscalation(
                         run.get("run_id", "?"),
                         "'mapped' relation_mapping without evidence_refs is a "
                         "silent name→UUID mapping",
                     )
+    # F4: findings are in scope. StructureFinding is a closed contract shape,
+    # but the guard enforces it directly rather than relying on the replay
+    # tamper checks to notice governed identity smuggled into a finding.
+    allowed_finding_fields = frozenset({"finding_id", "code", "message", "anchor"})
+    for finding in run.get("findings", []):
+        unknown = set(finding) - allowed_finding_fields
+        if unknown:
+            raise IdentityEscalation(
+                run.get("run_id", "?"),
+                f"finding carries non-contract field(s) {sorted(unknown)!r} "
+                "— S1 allowlist violation",
+            )
+        for field_name in governed_identity_fields:
+            if field_name in finding:
+                raise IdentityEscalation(
+                    run.get("run_id", "?"),
+                    f"finding carries governed identity field {field_name!r}",
+                )
 
 
 # ---------------------------------------------------------------------------
