@@ -192,9 +192,19 @@ CREATE TABLE IF NOT EXISTS nebula.executions (
     CONSTRAINT executions_census_rate_shape
         CHECK (census_rate IS NULL OR census_rate ~ '^[0-9]+/[0-9]+$'),
 
+    -- The census-disabled case is inert: bounds do not apply, so short-circuit
+    -- to true before the shape test. Without this arm a census-disabled row
+    -- (rate NULL by executions_census_disabled_is_inert) falls to ELSE false and
+    -- is rejected, which makes the ratified tri-state unrepresentable: neither
+    -- the NULL-rate route nor a 0/1 rate can be written.
+    --
+    -- The guard is census_enabled, NOT `census_rate IS NULL`. Keying on
+    -- census_rate would also admit a census-enabled row with a NULL rate, which
+    -- is a genuine shape violation and must keep being rejected.
     CONSTRAINT executions_census_rate_bounds
         CHECK (
             CASE
+                WHEN census_enabled IS NOT TRUE THEN true
                 WHEN census_rate ~ '^[0-9]+/[0-9]+$' THEN
                     split_part(census_rate, '/', 2)::int >= 1
                     AND split_part(census_rate, '/', 1)::int <= split_part(census_rate, '/', 2)::int
