@@ -26,7 +26,10 @@ Consumer routing (attestation_janitor.py, per spec table):
     ATT_MISSING        silent skip (state file only)
     ATT_STALE_HEAD     queue tester re-attestation; 1 post per dedup key
     ATT_NO_CI_EVIDENCE queue tester re-attestation (attestation lacks CI run
-                       references); 1 post per dedup key
+                       references, or a cited run is genuinely absent — gh
+                       404); 1 post per dedup key
+    ATT_CI_LOOKUP_FAILED transient lookup failure (gh 429/5xx/network);
+                       retry next cycle, no posts (Decision 15 item D)
     ATT_SHAPE_UNSEEN   route to tester/analyst adjudication; 1 post per key
     MERGE_CONFLICT     NOT an anomaly (author action); 1 post per key
     MERGE_UNKNOWN      transient, retry next cycle, no posts
@@ -74,17 +77,26 @@ ATT_BYPASSED = "ATT_BYPASSED"
 # references (spec: agent record d7989f31 follow-up family).
 ATT_NO_CI_EVIDENCE = "ATT_NO_CI_EVIDENCE"
 
+# A cited CI run could not be LOOKED UP transiently (gh 429/5xx/network/
+# timeout; anything unparseable short of a definitive 404). The attestation
+# itself is fine - re-running the gate next cycle likely verifies it, so
+# nagging the tester to re-attest would be noise (Decision 15 item D, work
+# order a49acfc9 review finding). Routed TRANSIENT: silent retry, no posts.
+# Genuinely-absent references (gh 404) still route ATT_NO_CI_EVIDENCE.
+ATT_CI_LOOKUP_FAILED = "ATT_CI_LOOKUP_FAILED"
+
 ALL_CODES = frozenset({
     GH_LOOKUP_FAILED, HEAD_DATE_UNKNOWN,
     PR_NOT_OPEN, PR_DRAFT, MERGE_CONFLICT, MERGE_UNKNOWN,
     CI_NO_CHECKS, CI_PENDING, CI_FAIL,
     ATT_MISSING, ATT_SHAPE_UNSEEN, ATT_STALE_HEAD,
     ATT_LOOKUP_FAILED, ATT_BYPASSED, ATT_NO_CI_EVIDENCE,
+    ATT_CI_LOOKUP_FAILED,
 })
 
 # Codes whose condition may clear on the next cycle without anyone acting:
 # consumers retry silently and post nothing.
-TRANSIENT_CODES = frozenset({MERGE_UNKNOWN, CI_PENDING})
+TRANSIENT_CODES = frozenset({MERGE_UNKNOWN, CI_PENDING, ATT_CI_LOOKUP_FAILED})
 
 # Codes that are routine (no forum-visible surface): a PR without an
 # attestation yet is normal, not news.
