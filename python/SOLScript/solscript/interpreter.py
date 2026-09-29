@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .events import KeychainEvent, build_transition_event
-from .expression_compiler import ExpressionCompiler
+from .expression_compiler import ExpressionCompiler, TagLookup
 from .models import (
     Concept,
     ConceptAttribute,
@@ -75,6 +75,11 @@ class ResolutionInterpreter:
         # Components
         self.expression_compiler = ExpressionCompiler(self)
 
+        # Tag-membership source (Decision 19 continuation, engineer 599efe20):
+        # injectable lookup port over first-class tag bindings. The has_tag
+        # predicate is fail-closed while no source is bound.
+        self.has_tag_source: Optional[TagLookup] = None
+
         # Register built-in functions
         self._register_builtin_functions()
 
@@ -111,6 +116,16 @@ class ResolutionInterpreter:
             ),
             "is_null": lambda v: v is None,
             "is_not_null": lambda v: v is not None,
+            # has_tag: registered for introspection; compilation dispatches
+            # ctx-aware via TAG_MEMBERSHIP_FUNCTION (subject form needs ctx).
+            # Direct python_func call = explicit (entity_id, tag) form.
+            "has_tag": lambda entity_id, tag: (
+                isinstance(entity_id, str)
+                and isinstance(tag, str)
+                and bool(entity_id)
+                and bool(tag)
+                and self.lookup_tag(entity_id, tag)
+            ),
         }
         for name, func in builtins.items():
             self.functions[name] = FunctionBinding(
@@ -181,6 +196,28 @@ class ResolutionInterpreter:
     ) -> Any:
         compiled = self.expression_compiler.compile_expression(expression)
         return compiled(context)
+
+    # ── Tag-membership predicate (function_call path) ────────────
+
+    def set_tag_source(self, source: Optional[TagLookup]) -> None:
+        """Bind (or clear) the tag-membership lookup port.
+
+        ``source`` is ``callable(entity_id, tag) -> bool`` backed by the
+        first-class tag-bindings store (DBA staging model 4350eedc). Clearing
+        it (None) re-arms the fail-closed default.
+        """
+        self.has_tag_source = source
+        # Compiled has_tag closures capture the bound lookup; drop stale
+        # compilations so a rebind takes effect deterministically.
+        self.expression_compiler.compiled_cache.clear()
+        self.evaluation_cache.clear()
+
+    def lookup_tag(self, entity_id: str, tag: str) -> bool:
+        """Resolve tag membership through the bound source; False if unset."""
+        source = self.has_tag_source
+        if source is None:
+            return False
+        return source(entity_id, tag) is True
 
     # ── Rule evaluation ──────────────────────────────────────────
 
