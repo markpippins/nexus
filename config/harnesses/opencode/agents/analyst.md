@@ -15,6 +15,8 @@ description: |
   Data persistence: nebula_create_agent_record
   Inbox: nebula_get_inbox {"role":"analyst"} (or nexus/bin/check-inbox.sh
   --role analyst) — records tagged ["to:analyst"] since the stored pointer;
+  pass "advance":true to also move the pointer to the newest record (or call
+  nebula_set_inbox_pointer explicitly);
   REST fallback on :3101 (not :3102 — JSON-RPC only).
   Knowledge graph: knowledge-mcp (knowledge_list_entities, knowledge_list_edges,
   knowledge_list_cross_references, knowledge_semantic_search) — read-only

@@ -1033,14 +1033,16 @@ export function registerTools(server: McpServer) {
 
   server.tool(
     "nebula_get_inbox",
-    "Get a role's inbox in one call: the stored pointer plus agent records addressed to that role (tags ['to:<role>']) created at or after the pointer. Replaces the manual pointer + list + filter dance (R17) with a single MCP call.",
+    "Get a role's inbox in one call: the stored pointer plus agent records addressed to that role (tags ['to:<role>']) created at or after the pointer. Replaces the manual pointer + list + filter dance (R17) with a single MCP call. Pass advance: true to ALSO advance the role's pointer to the newest returned record's createdAt (the deliberate, opt-in R17 end-of-turn pointer advance — the MCP equivalent of check-inbox.sh --update-pointer; no-op when no records are returned).",
     {
       role: z.string().describe("Role name (e.g., architect, engineer, planner)"),
       limit: z.number().optional().describe("Max records to return (default 20, max 100)"),
+      advance: z.boolean().optional().describe("After listing, advance the role's inbox pointer to the newest returned record's createdAt (opt-in; no-op with no records)"),
     },
     async (args) => {
       const role = args.role;
       const limit = Math.min(args.limit ?? 20, 100);
+      const advance = args.advance === true;
       // REST returns { role, pointer } — extract the ISO timestamp string.
       const pointerResult = (await NebulaClient.getInboxPointer(role)) as
         | { role?: string; pointer?: string | null }
@@ -1059,10 +1061,37 @@ export function registerTools(server: McpServer) {
       const records = Array.isArray(items)
         ? items
         : ((items as { items?: unknown[] })?.items ?? []);
+
+      // ── opt-in pointer advance ─────────────────────────────────────────
+      // Mirrors check-inbox.sh --update-pointer: newest-first is assumed, so
+      // max(createdAt) over the (possibly limited) window is the true newest
+      // (an unsorted list would only under-advance → duplicate delivery next
+      // turn, never lost records). createdAt is epoch ms; the pointer is ISO.
+      let advancedTo: string | null = null;
+      let advanceError: string | null = null;
+      if (advance && records.length > 0) {
+        const newest = Math.max(
+          ...records.map((r) => Number((r as { createdAt?: unknown })?.createdAt ?? 0))
+        );
+        if (newest > 0) {
+          const iso = new Date(newest).toISOString();
+          try {
+            await NebulaClient.setInboxPointer(role, iso);
+            advancedTo = iso;
+          } catch (e) {
+            advanceError = e instanceof Error ? e.message : String(e);
+          }
+        }
+      }
+
       return {
         content: [{
           type: "text" as const,
-          text: JSON.stringify({ role, pointer, items: records, count: records.length }, null, 2),
+          text: JSON.stringify(
+            { role, pointer, items: records, count: records.length, advancedTo, advanceError },
+            null,
+            2
+          ),
         }],
       };
     }
