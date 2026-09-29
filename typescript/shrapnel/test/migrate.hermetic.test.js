@@ -25,7 +25,17 @@
 
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -521,6 +531,89 @@ describe('runMigrations guardrails', { skip: canCreateDb ? false : 'cannot creat
       assert.match(res.stderr, /0000_extra\.sql/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('exits 0 on an in-sync no-op apply — the exit code must not contradict the ledger', async () => {
+    // Regression: main() called an undefined `log` in the applied.length === 0
+    // branch, so a fully successful no-op apply exited 1 AFTER doing its (zero)
+    // work — caught live in the 2026-09-29 throwaway-DB rehearsal (record
+    // 3f5fed68). The suite missed it because every prior CLI-path test applies
+    // something; this one drives the real binary through the no-op branch.
+    const dsn = await freshDb();
+    const run = () =>
+      spawnSync('node', [join(SERVICE_ROOT, 'src', 'scripts', 'migrate.js')], {
+        encoding: 'utf8',
+        env: { ...process.env, SHRAPNEL_PG_DSN: dsn },
+      });
+
+    const first = run();
+    assert.equal(first.status, 0, `first apply failed: ${first.stderr || first.stdout}`);
+
+    const second = run();
+    assert.equal(
+      second.status,
+      0,
+      `no-op apply exited ${second.status}: ${second.stderr || second.stdout}`
+    );
+    assert.match(second.stdout, /nothing to do/);
+    assert.ok(
+      !/log is not defined/.test(`${second.stderr}${second.stdout}`),
+      'the ReferenceError must be gone from the CLI path'
+    );
+
+    const c = connect(dsn);
+    const { rows } = await c.query('SELECT count(*)::int AS n FROM shrapnel._migration_ledger');
+    assert.equal(rows[0].n, REAL_CHAIN.length, 'the no-op run changed nothing');
+    await c.end();
+  });
+
+  it('applies end-to-end through the CLI with the dump rail active: exit 0, dump on disk, ledger complete', async () => {
+    // The dump rail lives in main(), which the unit tests never reach, and it
+    // only fires on an EXISTING database with pending work. The CLI always
+    // plans against the migrations dir next to migrate.js itself, so the rail
+    // is exercised through a copied service root: seed the DB minus the last
+    // migration, restore the file, then apply and assert the dump exists.
+    const dsn = await freshDb();
+    const root = mkdtempSync(join(tmpdir(), 'shrapnel-migrate-cli-root-'));
+    const dumpDir = mkdtempSync(join(tmpdir(), 'shrapnel-migrate-dumps-'));
+    mkdirSync(join(root, 'src', 'scripts'), { recursive: true });
+    cpSync(MIGRATIONS_DIR, join(root, 'migrations'), { recursive: true });
+    cpSync(join(SERVICE_ROOT, 'src', 'scripts', 'migrate.js'), join(root, 'src', 'scripts', 'migrate.js'));
+    symlinkSync(join(SERVICE_ROOT, 'node_modules'), join(root, 'node_modules'), 'dir');
+    const last = REAL_CHAIN[REAL_CHAIN.length - 1];
+    const run = (extraEnv = {}) =>
+      spawnSync('node', [join(root, 'src', 'scripts', 'migrate.js')], {
+        encoding: 'utf8',
+        cwd: root,
+        env: { ...process.env, SHRAPNEL_PG_DSN: dsn, SHRAPNEL_MIGRATE_DUMP_DIR: dumpDir, ...extraEnv },
+      });
+    try {
+      // Seed: fresh database, chain minus the last file -> no dump (fresh).
+      rmSync(join(root, 'migrations', last));
+      const seeded = run();
+      assert.equal(seeded.status, 0, `seed apply failed: ${seeded.stderr || seeded.stdout}`);
+      assert.ok(!/pre-apply dump/.test(seeded.stdout), 'a fresh database gets no dump');
+      assert.equal(readdirSync(dumpDir).length, 0, 'no dump artifacts after the fresh apply');
+
+      // Restore the last file: one real pending migration on an existing DB.
+      cpSync(join(MIGRATIONS_DIR, last), join(root, 'migrations', last));
+      const res = run();
+      assert.equal(res.status, 0, `dump-rail apply failed: ${res.stderr || res.stdout}`);
+      assert.match(res.stdout, /pre-apply dump: /, 'the rail announces the archive');
+      assert.match(res.stdout, new RegExp(`applied ${last.replace(/\./g, '\\.')}`));
+
+      const dumps = readdirSync(dumpDir).filter((f) => f.endsWith('.dump'));
+      assert.equal(dumps.length, 1, 'exactly one pre-apply dump was written');
+      assert.ok(statSync(join(dumpDir, dumps[0])).size > 0, 'the archive is non-empty');
+
+      const c = connect(dsn);
+      const { rows } = await c.query('SELECT count(*)::int AS n FROM shrapnel._migration_ledger');
+      assert.equal(rows[0].n, REAL_CHAIN.length, 'the whole chain is ledgered');
+      await c.end();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(dumpDir, { recursive: true, force: true });
     }
   });
 });
