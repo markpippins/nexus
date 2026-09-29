@@ -4925,6 +4925,13 @@ export function createRoutes(pool: Pool): Router {
   // Fixes finding 6d731551: REST had no content-bearing read (list omits
   // content; ?id= was fuzzy search), so REST-only consumers misread
   // persisted records as empty.
+  // Contract normalized (DBA record 48ac13e2): the row is projected through
+  // camelCaseRow so the point response carries the SAME camelCase epoch-ms
+  // shape as the list endpoint (createdAt etc.) — the snake_case keys are
+  // preserved alongside, so existing snake_case readers keep working
+  // (superset). Without this, a consumer hydrating by id (merge gate's
+  // attestation_check) swaps a good list timestamp for a missing one and
+  // the record binds at epoch 0.
   router.get('/agent-records/:id', async (req: Request, res: Response) => {
     try {
       const { rows } = await pool.query(
@@ -4935,7 +4942,7 @@ export function createRoutes(pool: Pool): Router {
         [req.params.id]
       );
       if (!rows.length) return res.status(404).json({ error: 'Agent record not found' });
-      res.json(rows[0]);
+      res.json({ ...rows[0], ...camelCaseRow(rows[0]) });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -5052,6 +5059,9 @@ export function createRoutes(pool: Pool): Router {
   });
 
   // GET /api/agent-records/:id — full record with content
+  // Same contract normalization as the earlier :id handler above (DBA record
+  // 48ac13e2): camelCaseRow projects createdAt to epoch-ms so point responses
+  // match the list contract; snake_case keys preserved (superset).
   router.get('/agent-records/:id', async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
@@ -5059,7 +5069,7 @@ export function createRoutes(pool: Pool): Router {
         'SELECT * FROM nebula.agent_records WHERE id = $1', [id]
       );
       if (!row) return res.status(404).json({ error: 'Agent record not found' });
-      res.json(row);
+      res.json({ ...row, ...camelCaseRow(row) });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

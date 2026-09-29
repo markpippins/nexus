@@ -376,7 +376,34 @@ def attestation_check(
                     for rid in missing:
                         if rid in scan_by_id:
                             by_id[rid] = scan_by_id[rid]
+                # DBA record 48ac13e2: the point endpoint historically did
+                # not carry createdAt in the list contract's shape (camelCase
+                # epoch-ms), so a naive swap replaces a good timestamp with
+                # none and evaluate_attestation's `or 0` binds the row at
+                # epoch 0 -> permanent ATT_STALE_HEAD. After the swap, repair
+                # the timestamp: prefer the hydrated row's own createdAt
+                # (post-48ac13e2 servers send it), then the indexed row's
+                # createdAt, then coerce a snake_case created_at (ISO or
+                # epoch) from the hydrated row. Content always comes from the
+                # hydrated row; the timestamp never regresses to 0.
+                indexed_by_id = {str((r or {}).get("id") or ""): r for r in rows}
                 rows = [by_id.get(str(r.get("id")), r) for r in rows]
+                for i, r in enumerate(rows):
+                    if not isinstance(r, dict) or r.get("createdAt"):
+                        continue
+                    rid = str(r.get("id") or "")
+                    idx_row = indexed_by_id.get(rid) or {}
+                    if idx_row.get("createdAt"):
+                        rows[i] = {**r, "createdAt": idx_row["createdAt"]}
+                        continue
+                    raw = r.get("created_at")
+                    if isinstance(raw, str):
+                        try:
+                            rows[i] = {**r, "createdAt": parse_iso_to_ms(raw)}
+                        except Exception:
+                            pass
+                    elif isinstance(raw, (int, float)):
+                        rows[i] = {**r, "createdAt": int(raw)}
             except Exception:
                 pass  # evaluate on projection rows; evidence rule fails closed
         ok, detail, code = evaluate_attestation(
