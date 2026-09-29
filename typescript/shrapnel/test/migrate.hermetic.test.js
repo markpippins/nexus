@@ -620,7 +620,7 @@ describe('runMigrations guardrails', { skip: canCreateDb ? false : 'cannot creat
       cpSync(join(MIGRATIONS_DIR, last), join(root, 'migrations', last));
       const res = run({}, ['--no-dump']);
       assert.equal(res.status, 0, `no-dump apply failed: ${res.stderr || res.stdout}`);
-      assert.match(res.stdout, new RegExp(`applied ${last.replace(/\./g, '\\.')}`));
+      assert.ok(res.stdout.includes(`applied ${last}`), `expected applied ${last} in output`);
       assert.ok(!/pre-apply dump/.test(res.stdout), '--no-dump writes no archive');
 
       const c = connect(dsn);
@@ -726,8 +726,11 @@ describe('runMigrations guardrails', { skip: canCreateDb ? false : 'cannot creat
 
         if (dumpRailSkipReason) {
           // Incompatible client: the rail must fail CLOSED — refuse the apply,
-          // write no archive, change no ledger row. (CI's pg_dump 16 vs the
-          // throwaway server 17 lands here, and that is a real assertion.)
+          // produce no USABLE archive, change no ledger row. (CI's pg_dump 16
+          // vs the throwaway server 17 lands here, and that is a real
+          // assertion.) Note pg_dump creates its -f output file before the
+          // version check aborts, so a zero-byte artifact may remain; the
+          // invariant is that nothing non-empty is produced.
           assert.equal(res.status, 1, `expected the dump rail to refuse: ${res.stdout}`);
           assert.match(
             `${res.stderr}${res.stdout}`,
@@ -735,13 +738,15 @@ describe('runMigrations guardrails', { skip: canCreateDb ? false : 'cannot creat
             'the operator sees the wrapped refusal, not a silent apply'
           );
           assert.match(`${res.stderr}${res.stdout}`, /pg_dump/);
-          assert.equal(dumps.length, 0, 'no archive is written by a failed dump');
+          for (const f of dumps) {
+            assert.equal(statSync(join(dumpDir, f)).size, 0, 'a failed dump must not leave a usable archive');
+          }
           assert.equal(await ledgered(), REAL_CHAIN.length - 1, 'the refused run changed nothing');
         } else {
           // Compatible client: the archive is written, then the apply commits.
           assert.equal(res.status, 0, `dump-rail apply failed: ${res.stderr || res.stdout}`);
           assert.match(res.stdout, /pre-apply dump: /, 'the rail announces the archive');
-          assert.match(res.stdout, new RegExp(`applied ${last.replace(/\./g, '\\.')}`));
+          assert.ok(res.stdout.includes(`applied ${last}`), `expected applied ${last} in output`);
           assert.equal(dumps.length, 1, 'exactly one pre-apply dump was written');
           assert.ok(statSync(join(dumpDir, dumps[0])).size > 0, 'the archive is non-empty');
           assert.equal(await ledgered(), REAL_CHAIN.length, 'the whole chain is ledgered');
