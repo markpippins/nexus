@@ -201,14 +201,40 @@ psql "$DSN" -q -v ON_ERROR_STOP=1 -f "$PROPOSAL" >/dev/null \
 # ── 3. Compile the TypeSpec sample in reconcile mode ──────────────────────
 step "compiling the TypeSpec sample (reconcile mode)"
 cd "$EMITTER_DIR"
-npm ci --silent >/dev/null 2>&1 || npm install --silent >/dev/null 2>&1 \
-  || fail "emitter npm install failed"
-npm run build --silent >/dev/null 2>&1 || fail "emitter build failed"
+
+# Install dependencies WITHOUT swallowing the error. The first enforced run of
+# this gate (run 36486568456, 2026-09-28) failed as "emitter npm install failed"
+# with the real cause discarded by >/dev/null: npm 10 (node 22, the CI runner's
+# toolchain) dies with `Cannot read properties of null (reading 'edgesOut')` —
+# an arborist bug tripped by @typespec/compiler being declared BOTH a dependency
+# and a peerDependency. The committed lockfile makes `npm ci` the deterministic
+# primary path; --legacy-peer-deps is the fallback for lockfile-less checkouts.
+NPM_LOG=/tmp/replay-npm.log
+# NB: deliberately NO --silent here. npm's --silent suppresses npm's OWN error
+# reporting, so a failed install writes an EMPTY log (verified) and the real
+# cause dies with the runner — precisely how run 36486568456 hid its edgesOut
+# crash. On success the log is discarded; on failure we show it.
+if ! { npm ci --no-fund --no-audit || npm install --legacy-peer-deps --no-fund --no-audit; } >"$NPM_LOG" 2>&1; then
+  tail -n 25 "$NPM_LOG"
+  fail "emitter npm install failed (full npm output above)"
+fi
+rm -f "$NPM_LOG"
+
+BUILD_LOG=/tmp/replay-build.log
+if ! npm run build --silent >"$BUILD_LOG" 2>&1; then
+  tail -n 25 "$BUILD_LOG"
+  fail "emitter build failed"
+fi
+rm -f "$BUILD_LOG"
 
 COMPILED="$EMITTER_DIR/shrapnel-catalog-reconcile.sql"
 rm -f "$COMPILED"
-npx tsp compile sample/main.tsp --config sample/tspconfig-reconcile.yaml >/dev/null 2>&1 \
-  || fail "tsp compile failed"
+TSP_LOG=/tmp/replay-tsp.log
+if ! npx tsp compile sample/main.tsp --config sample/tspconfig-reconcile.yaml >"$TSP_LOG" 2>&1; then
+  tail -n 25 "$TSP_LOG"
+  fail "tsp compile failed"
+fi
+rm -f "$TSP_LOG"
 [ -s "$COMPILED" ] || fail "emitter produced no output at $COMPILED"
 
 EMITTED_VERB="$(grep -c 'stereotype_reconcile(' "$COMPILED" || true)"
