@@ -18,6 +18,57 @@ if TYPE_CHECKING:
     from .interpreter import ResolutionInterpreter
 
 
+# ── Tag-membership predicate (Decision 19 continuation) ──────────────
+
+# Predicate lands via the function_call path (engineer 599efe20 item 2);
+# no new ExpressionKind, TAG_REF deferred until quantification is needed.
+TAG_MEMBERSHIP_FUNCTION = "has_tag"
+
+# Tag-membership lookup port: callable(entity_id, tag) -> bool backed by
+# first-class tag bindings (DBA staging model 4350eedc).
+TagLookup = Callable[[str, str], bool]
+
+
+def ctx_entity_id(ctx: Dict[str, Any]) -> Optional[str]:
+    """Subject entity id from an eval context (entity object or entity_id)."""
+    entity = ctx.get("entity")
+    if entity is not None and hasattr(entity, "id"):
+        entity_id = entity.id
+        if isinstance(entity_id, str):
+            return entity_id
+    entity_id = ctx.get("entity_id")
+    if isinstance(entity_id, str):
+        return entity_id
+    return None
+
+
+def has_tag_from_args(
+    args: List[Any], ctx: Dict[str, Any], lookup: TagLookup
+) -> bool:
+    """Evaluate ``has_tag`` over resolved args. Fail-closed on ambiguity.
+
+    Forms: ``has_tag(tag)`` (subject = ctx entity) and
+    ``has_tag(entity_id, tag)``. Membership is an inherently directed
+    subject→object edge (ontologist 6004231c); the single symmetric
+    vocabulary type (contradicts) needs no read-time treatment here.
+    """
+    if not args:
+        return False
+    if len(args) == 1:
+        entity_id = ctx_entity_id(ctx)
+    else:
+        entity_id = args[0]
+    tag = args[-1]
+    if not isinstance(entity_id, str) or not entity_id:
+        return False
+    if not isinstance(tag, str) or not tag:
+        return False
+    try:
+        return lookup(entity_id, tag) is True
+    except Exception:
+        return False
+
+
 class ExpressionCompiler:
     """Compiles expression trees into executable Python callables."""
 
@@ -86,8 +137,17 @@ class ExpressionCompiler:
             return self._compile_operator(expr)
 
         if expr.kind == ExpressionKind.FUNCTION_CALL:
-            func = self.interpreter.get_function(expr.function_name or "")
             arg_fns = [self._compile_node(op) for op in expr.operands]
+            if (expr.function_name or "") == TAG_MEMBERSHIP_FUNCTION:
+                # ctx-aware dispatch: the subject form needs the eval context.
+                if self.interpreter.has_tag_source:
+                    lookup: TagLookup = self.interpreter.lookup_tag
+                    return lambda ctx, _fns=arg_fns, _lk=lookup: has_tag_from_args(
+                        [fn(ctx) for fn in _fns], ctx, _lk
+                    )
+                # Fail-closed: no tag source bound (engineer 599efe20 item 2).
+                return lambda _ctx: False
+            func = self.interpreter.get_function(expr.function_name or "")
             if func is None or func.python_func is None:
                 raise ValueError(f"Unknown function: {expr.function_name}")
             pf = func.python_func

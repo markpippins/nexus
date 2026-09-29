@@ -142,6 +142,81 @@ test("soft rules pass on error, hard rules fail (severity semantics)", () => {
   assert.equal(interp.checkRule(soft, ent)[0], true);
 });
 
+// ── Tag-membership predicate (Decision 19 continuation) ─────────────
+
+test("has_tag: fail-closed without source; subject + explicit forms; rebind", () => {
+  const interp = new ResolutionInterpreter();
+  const tagLit = (v: unknown): Expression => litExpr(`tl-${String(v)}`, v, "text");
+  const fnExpr = (name: string, ...operands: Expression[]): Expression => ({
+    id: `fn-${name}-${operands.length}-${String(operands[0]?.literalValue ?? "")}`,
+    kind: ExpressionKind.FunctionCall, returnType: "boolean",
+    functionName: name, operands,
+  });
+
+  // Fail-closed: no tag source bound -> false, never an error, never true.
+  assert.equal(interp.evaluate(fnExpr("has_tag", tagLit("reviewed")), { entity_id: "e1" }), false);
+
+  // Subject form: subject = ctx entity (or entity object).
+  const seen: Array<[string, string]> = [];
+  interp.setTagSource((entityId, tag) => {
+    seen.push([entityId, tag]);
+    return entityId === "e1" && tag === "reviewed";
+  });
+  assert.equal(interp.evaluate(fnExpr("has_tag", tagLit("reviewed")), { entity_id: "e1" }), true);
+  assert.equal(interp.evaluate(fnExpr("has_tag", tagLit("reviewed")), { entity_id: "e2" }), false);
+  assert.deepEqual(seen, [["e1", "reviewed"], ["e2", "reviewed"]]);
+
+  // Entity-object subject (childContext shape) also resolves.
+  const ent = makeEntity("e1", {});
+  assert.equal(interp.evaluate(fnExpr("has_tag", tagLit("reviewed")), { entity: ent }), true);
+
+  // No subject in ctx -> fail-closed false.
+  assert.equal(interp.evaluate(fnExpr("has_tag", tagLit("reviewed")), {}), false);
+
+  // Explicit (entityId, tag) form; takes precedence over ctx subject.
+  assert.equal(interp.evaluate(fnExpr("has_tag", tagLit("e9"), tagLit("reviewed")), { entity_id: "ignored" }), false);
+  assert.deepEqual(seen, [["e1", "reviewed"], ["e2", "reviewed"], ["e1", "reviewed"], ["e9", "reviewed"]]);
+
+  // Non-string / empty / zero args -> fail-closed false.
+  assert.equal(interp.evaluate(fnExpr("has_tag", tagLit(5)), { entity_id: "e1" }), false);
+  assert.equal(interp.evaluate(fnExpr("has_tag", tagLit("")), { entity_id: "e1" }), false);
+  assert.equal(interp.evaluate(fnExpr("has_tag"), { entity_id: "e1" }), false);
+
+  // Lookup exception -> fail-closed false.
+  interp.setTagSource(() => {
+    throw new Error("bindings store unavailable");
+  });
+  assert.equal(interp.evaluate(fnExpr("has_tag", tagLit("t")), { entity_id: "e1" }), false);
+
+  // Rebind to null re-arms fail-closed on the SAME compiled expression.
+  interp.setTagSource(() => true);
+  const compiledExpr = fnExpr("has_tag", tagLit("t"));
+  assert.equal(interp.evaluate(compiledExpr, { entity_id: "e1" }), true);
+  interp.setTagSource(null);
+  assert.equal(interp.evaluate(compiledExpr, { entity_id: "e1" }), false);
+
+  // Introspection: registered builtin (explicit form) resolves via the port.
+  interp.setTagSource((entityId, tag) => entityId === "e1" && tag === "t");
+  const bound = interp.functions.get("has_tag");
+  assert.ok(bound && bound.fn);
+  assert.equal(bound.fn!("e1", "t"), true);
+  assert.equal(bound.fn!("e2", "t"), false);
+});
+
+test("has_tag composes with AND operator", () => {
+  const interp = new ResolutionInterpreter();
+  interp.setTagSource((_entityId, tag) => tag === "urgent");
+  const fn = (tag: string): Expression => ({
+    id: `fn-${tag}`, kind: ExpressionKind.FunctionCall, returnType: "boolean",
+    functionName: "has_tag", operands: [litExpr(`l-${tag}`, tag, "text")],
+  });
+  const ruleExpr: Expression = opExpr("and", SolOperator.And, [fn("urgent"), fn("reviewed")]);
+  const ctx = { entity_id: "e1" };
+  assert.equal(interp.evaluate(ruleExpr, ctx), false); // urgent only
+  interp.setTagSource((_entityId, tag) => tag === "urgent" || tag === "reviewed");
+  assert.equal(interp.evaluate(ruleExpr, ctx), true); // both bound
+});
+
 // ── Transition listener contract ─────────────────────────────────────
 
 test("transition listener fires on committed only; event listener on every attempt", () => {

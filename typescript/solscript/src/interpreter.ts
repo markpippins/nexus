@@ -33,6 +33,7 @@ import {
   EvalContext,
   ExpressionCompiler,
   FunctionRegistry,
+  TagLookup,
 } from "./expression-compiler.js";
 import {
   KeychainEvent,
@@ -96,6 +97,11 @@ export class ResolutionInterpreter {
   transitionEventListeners: TransitionEventListener[] = [];
   lastTransitionEvent: KeychainEvent | null = null;
 
+  /** Tag-membership source (Decision 19 continuation, engineer 599efe20):
+   *  injectable lookup port over first-class tag bindings. The has_tag
+   *  predicate is fail-closed while no source is bound. */
+  private tagSource: TagLookup | null = null;
+
   private readonly compiler: ExpressionCompiler;
 
   constructor() {
@@ -121,6 +127,12 @@ export class ResolutionInterpreter {
       },
       entities(): Iterable<Entity> {
         return self.entities.values();
+      },
+      hasTagSource(): boolean {
+        return self.tagSource !== null;
+      },
+      lookupTag(entityId: string, tag: string): boolean {
+        return self.lookupTag(entityId, tag);
       },
     };
   }
@@ -152,6 +164,14 @@ export class ResolutionInterpreter {
       ends_with: (s, suffix) => (s === null || s === undefined ? false : String(s).endsWith(String(suffix))),
       is_null: (v) => v === null || v === undefined,
       is_not_null: (v) => v !== null && v !== undefined,
+      // has_tag: registered for introspection; compilation dispatches
+      // ctx-aware via TAG_MEMBERSHIP_FUNCTION (subject form needs ctx).
+      // Direct fn call = explicit (entityId, tag) form.
+      has_tag: (entityId, tag) => {
+        if (typeof entityId !== "string" || entityId === "") return false;
+        if (typeof tag !== "string" || tag === "") return false;
+        return this.lookupTag(entityId, tag);
+      },
     };
     for (const [name, fn] of Object.entries(builtins)) {
       this.functions.set(name, {
@@ -239,6 +259,29 @@ export class ResolutionInterpreter {
   evaluate(expression: Expression, context: EvalContext): unknown {
     const compiled = this.compiler.compileExpression(expression);
     return compiled(context);
+  }
+
+  // ── Tag-membership predicate (function_call path) ─────────────
+
+  /** Bind (or clear) the tag-membership lookup port.
+   *
+   *  ``source`` is ``lookup(entityId, tag) => boolean`` backed by the
+   *  first-class tag-bindings store (DBA staging model 4350eedc). Clearing
+   *  it (null) re-arms the fail-closed default.
+   */
+  setTagSource(source: TagLookup | null): void {
+    this.tagSource = source;
+    // Compiled has_tag closures capture the bound lookup; drop stale
+    // compilations so a rebind takes effect deterministically.
+    this.compiler.clearCompiledCache();
+    this.evaluationCache.clear();
+  }
+
+  /** Resolve tag membership through the bound source; false if unset. */
+  lookupTag(entityId: string, tag: string): boolean {
+    const source = this.tagSource;
+    if (source === null) return false;
+    return source(entityId, tag) === true;
   }
 
   // ── Rule evaluation ──────────────────────────────────────────
