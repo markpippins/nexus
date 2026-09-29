@@ -140,7 +140,7 @@ $function$
 --
 
 
--- Dumped from database version 17.10 (Debian 17.10-1.pgdg12+1)
+-- Dumped from database version 17.11 (Debian 17.11-1.pgdg12+2)
 -- Dumped by pg_dump version 17.11 (Debian 17.11-0+deb13u1)
 
 SET statement_timeout = 0;
@@ -6397,22 +6397,17 @@ BEGIN
         RAISE EXCEPTION 'opcode_template must be a JSON array, got %', jsonb_typeof(NEW.opcode_template);
     END IF;
 
-    -- Iterate over each entry in the template
-    FOR v_entry IN SELECT * FROM jsonb_array_elements(NEW.opcode_template)
-    LOOP
+    FOR v_entry IN SELECT * FROM jsonb_array_elements(NEW.opcode_template) LOOP
         v_op := v_entry->>'op';
         IF v_op IS NULL THEN
-            RAISE EXCEPTION 'Each template entry must have an "op" field';
+            RAISE EXCEPTION 'Template entry is missing an "op" field';
         END IF;
 
-        -- Check opcode is in the valid ISA set
         IF NOT (v_op = ANY(v_valid_ops)) THEN
-            RAISE EXCEPTION 'Invalid opcode "%" in template entry. Must be one of: %',
-                v_op, array_to_string(v_valid_ops, ', ');
+            RAISE EXCEPTION 'Invalid opcode: %', v_op;
         END IF;
 
-        -- Check that target is present
-        IF (v_entry->>'target') IS NULL OR (v_entry->>'target') = '' THEN
+        IF v_entry->>'target' IS NULL THEN
             RAISE EXCEPTION 'Template entry for opcode "%" is missing a "target" field', v_op;
         END IF;
     END LOOP;
@@ -10088,14 +10083,17 @@ DECLARE
   v_revision_id bigint;
 BEGIN
   v_revision_id := COALESCE(OLD.stereotype_revision_id, NEW.stereotype_revision_id);
-  IF EXISTS (
-    SELECT 1 FROM shrapnel.stereotype_revision r
-    WHERE r.id = v_revision_id
-      AND r.xmin::text::bigint <> (txid_current() % 4294967296)::bigint
-  ) THEN
+
+  -- Reject unless the revision is provably still under construction by us.
+  -- Note that stereotype_field.stereotype_revision_id is a NOT NULL REFERENCES
+  -- to stereotype_revision(id), so a field row can never exist without its
+  -- revision: the "revision not found" case is unreachable, and the
+  -- fail-closed reading of an unknown state costs nothing.
+  IF NOT shrapnel.stereotype_revision_under_construction(v_revision_id) THEN
     RAISE EXCEPTION 'stereotype_field rows for revision % are frozen (append-only contract); % rejected',
       v_revision_id, TG_OP USING ERRCODE = '23514';
   END IF;
+
   -- BEFORE ROW triggers MUST return the row to keep the operation alive:
   -- returning NULL would silently cancel the INSERT/UPDATE/DELETE.
   IF TG_OP = 'DELETE' THEN
@@ -10104,6 +10102,13 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: FUNCTION forbid_stereotype_field_mutation(); Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON FUNCTION shrapnel.forbid_stereotype_field_mutation() IS 'Freezes stereotype_field rows of any revision whose inserting transaction has committed. 0005 used xid arithmetic, which falsely froze revisions created inside a plpgsql subtransaction (see 0009 header); the rule is now stated semantically via stereotype_revision_under_construction().';
 
 
 --
@@ -10358,10 +10363,7 @@ DECLARE
   v_parent_depth         integer;
   v_version              integer;
   v_revision             bigint;
-  v_fields               jsonb := '[]'::jsonb;
-  v_fid                  bigint;
-  v_seen                 text[] := ARRAY[]::text[];
-  t                      record;
+  v_fields               jsonb;
 BEGIN
   IF p_name IS NULL OR btrim(p_name) = '' THEN
     RAISE EXCEPTION 'stereotype_create_revision: name is required';
@@ -10387,37 +10389,15 @@ BEGIN
     END IF;
   END IF;
 
+  -- Fields: get-or-create by property_name, then build the full v2 fields
+  -- document. Same shared helper the reconcile verdict is computed from.
+  v_fields := shrapnel.stereotype_fields_document_for(
+    p_required_fields, p_optional_fields, 'stereotype_create_revision');
+
   -- Next version (uq_sterev_identity_version arbitrates concurrent races).
   SELECT coalesce(max(version), 0) + 1 INTO v_version
   FROM shrapnel.stereotype_revision
   WHERE stereotype_id = v_stereotype_id;
-
-  -- Fields: get-or-create by property_name (default String, code 2), then
-  -- build the full fields document [{id, required}] for the v2 fingerprint.
-  -- A field may not be declared twice in one call (required and optional
-  -- are mutually exclusive per field).
-  -- On nexus the field INSERT fires trg_sync_field_metadata_to_resolution
-  -- (present live); on sol no such trigger exists — both paths are correct.
-  FOR t IN
-    SELECT pn, true AS req FROM unnest(coalesce(p_required_fields, ARRAY[]::text[])) pn
-    UNION ALL
-    SELECT pn, false FROM unnest(coalesce(p_optional_fields, ARRAY[]::text[])) pn
-  LOOP
-    IF t.pn = ANY (v_seen) THEN
-      RAISE EXCEPTION 'stereotype_create_revision: field % declared more than once', t.pn;
-    END IF;
-    v_seen := v_seen || t.pn;
-
-    SELECT id INTO v_fid FROM shrapnel.field WHERE property_name = t.pn;
-    IF v_fid IS NULL THEN
-      INSERT INTO shrapnel.field
-        (is_calculated, field_index, label, name, property_name, field_type_code)
-      VALUES
-        (false, 0, t.pn, t.pn, t.pn, 2)
-      RETURNING id INTO v_fid;
-    END IF;
-    v_fields := v_fields || jsonb_build_object('id', v_fid, 'required', t.req);
-  END LOOP;
 
   -- Revision row with the server-computed v2 fingerprint over the FULL field
   -- document. The immediate acyclicity trigger recomputes depth; the deferred
@@ -10532,6 +10512,133 @@ $$;
 
 
 --
+-- Name: stereotype_fields_document_for(text[], text[], text); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_fields_document_for(p_required_fields text[], p_optional_fields text[], p_error_prefix text DEFAULT 'stereotype_create_revision'::text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_fields jsonb := '[]'::jsonb;
+  v_fid    bigint;
+  v_seen   text[] := ARRAY[]::text[];
+  t        record;
+BEGIN
+  FOR t IN
+    SELECT pn, true AS req FROM unnest(coalesce(p_required_fields, ARRAY[]::text[])) pn
+    UNION ALL
+    SELECT pn, false FROM unnest(coalesce(p_optional_fields, ARRAY[]::text[])) pn
+  LOOP
+    IF t.pn = ANY (v_seen) THEN
+      RAISE EXCEPTION '%: field % declared more than once', p_error_prefix, t.pn;
+    END IF;
+    v_seen := v_seen || t.pn;
+
+    SELECT id INTO v_fid FROM shrapnel.field WHERE property_name = t.pn;
+    IF v_fid IS NULL THEN
+      INSERT INTO shrapnel.field
+        (is_calculated, field_index, label, name, property_name, field_type_code)
+      VALUES
+        (false, 0, t.pn, t.pn, t.pn, 2)
+      RETURNING id INTO v_fid;
+    END IF;
+    v_fields := v_fields || jsonb_build_object('id', v_fid, 'required', t.req);
+  END LOOP;
+
+  RETURN v_fields;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION stereotype_fields_document_for(p_required_fields text[], p_optional_fields text[], p_error_prefix text); Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON FUNCTION shrapnel.stereotype_fields_document_for(p_required_fields text[], p_optional_fields text[], p_error_prefix text) IS 'Build the v2 fingerprint field document [{"id","required"}] from property names, get-or-creating unknown fields. Shared by create_revision and reconcile so the no-op verdict and the write read identical inputs.';
+
+
+--
+-- Name: stereotype_reconcile(text, bigint, text, text[], text[]); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_reconcile(p_name text, p_extends_revision bigint, p_rationale text, p_required_fields text[], p_optional_fields text[] DEFAULT NULL::text[]) RETURNS TABLE(revision_id bigint, created boolean)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_stereotype_id        bigint;
+  v_parent_stereotype_id bigint;
+  v_parent_depth         integer;
+  v_fields               jsonb;
+  v_candidate            text;
+  v_head                 bigint;
+  v_head_fingerprint     text;
+BEGIN
+  IF p_name IS NULL OR btrim(p_name) = '' THEN
+    RAISE EXCEPTION 'stereotype_reconcile: name is required';
+  END IF;
+
+  SELECT id INTO v_stereotype_id FROM shrapnel.stereotype WHERE name = p_name;
+
+  -- C1 guard, applied before any write decision so a malformed call cannot
+  -- reach the fingerprint comparison.
+  IF p_extends_revision IS NOT NULL THEN
+    IF p_rationale IS NULL OR btrim(p_rationale) = '' THEN
+      RAISE EXCEPTION 'stereotype_reconcile: extends requires a rationale (C1 shallow-hierarchy doctrine)';
+    END IF;
+    SELECT stereotype_id, depth INTO v_parent_stereotype_id, v_parent_depth
+    FROM shrapnel.stereotype_revision
+    WHERE id = p_extends_revision;
+    IF v_parent_stereotype_id IS NULL THEN
+      RAISE EXCEPTION 'stereotype_reconcile: parent revision % not found', p_extends_revision;
+    END IF;
+  END IF;
+
+  -- Build the field document through the shared helper. This get-or-creates
+  -- any unknown field, exactly as create_revision would. For a genuine re-apply
+  -- every field already exists, so a no-op run inserts zero field rows — an
+  -- invariant the 0008 checks assert directly.
+  v_fields := shrapnel.stereotype_fields_document_for(
+    p_required_fields, p_optional_fields, 'stereotype_reconcile');
+
+  -- The decision. Only meaningful for a stereotype that already exists.
+  IF v_stereotype_id IS NOT NULL THEN
+    SELECT r.head_revision_id INTO v_head
+    FROM shrapnel.stereotype_resolve(p_name) r;
+
+    IF v_head IS NOT NULL THEN
+      v_candidate := shrapnel.stereotype_canonical_contract(
+        v_stereotype_id, p_extends_revision, p_rationale, v_fields);
+
+      SELECT contract_fingerprint INTO v_head_fingerprint
+      FROM shrapnel.stereotype_revision WHERE id = v_head;
+
+      IF v_head_fingerprint = v_candidate THEN
+        RETURN QUERY SELECT v_head, false;
+        RETURN;
+      END IF;
+    END IF;
+  END IF;
+
+  -- Divergence, or a first apply. Hand the write to create_revision so the
+  -- minting path is literally the same function, unchanged, including its
+  -- version allocation and server-computed fingerprint.
+  RETURN QUERY
+    SELECT shrapnel.stereotype_create_revision(
+             p_name, p_extends_revision, p_rationale,
+             p_required_fields, p_optional_fields),
+           true;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION stereotype_reconcile(p_name text, p_extends_revision bigint, p_rationale text, p_required_fields text[], p_optional_fields text[]); Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON FUNCTION shrapnel.stereotype_reconcile(p_name text, p_extends_revision bigint, p_rationale text, p_required_fields text[], p_optional_fields text[]) IS 'Idempotent catalog reconciliation. Returns (revision_id, created): created is false when the declared state already matches the head revision and nothing was written. Never removes a stereotype; there is no retire verb.';
+
+
+--
 -- Name: stereotype_resolve(text); Type: FUNCTION; Schema: shrapnel; Owner: -
 --
 
@@ -10545,6 +10652,32 @@ CREATE FUNCTION shrapnel.stereotype_resolve(p_name text) RETURNS TABLE(stereotyp
   ORDER BY r.version DESC
   LIMIT 1
 $$;
+
+
+--
+-- Name: stereotype_revision_under_construction(bigint); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_revision_under_construction(p_revision_id bigint) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+  -- Fail-closed: TRUE only on an explicit 'in progress'. A missing revision,
+  -- a NULL status (xid outside the wraparound horizon), or any unrecognised
+  -- value all answer FALSE, i.e. "treat it as frozen".
+  SELECT EXISTS (
+    SELECT 1
+    FROM shrapnel.stereotype_revision r
+    WHERE r.id = p_revision_id
+      AND pg_xact_status(r.xmin::text::xid8) = 'in progress'
+  );
+$$;
+
+
+--
+-- Name: FUNCTION stereotype_revision_under_construction(p_revision_id bigint); Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON FUNCTION shrapnel.stereotype_revision_under_construction(p_revision_id bigint) IS 'TRUE only while p_revision_id''s inserting transaction is still in progress (top-level or subtransaction). FALSE for any committed revision, for a vacuum-frozen row, and for any unrecognised xid state (fail-closed).';
 
 
 --
@@ -28535,6 +28668,13 @@ CREATE INDEX idx_post_supporting_post ON assembly.post_supporting_refs USING btr
 
 
 --
+-- Name: idx_posts_forum_uuid; Type: INDEX; Schema: assembly; Owner: -
+--
+
+CREATE INDEX idx_posts_forum_uuid ON assembly.posts USING btree (forum_uuid);
+
+
+--
 -- Name: idx_posts_forum_uuid_current; Type: INDEX; Schema: assembly; Owner: -
 --
 
@@ -29851,6 +29991,13 @@ CREATE INDEX idx_prompts_slug ON tackle.prompts USING btree (slug);
 
 
 --
+-- Name: idx_role_leases_active_per_role; Type: INDEX; Schema: tackle; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_role_leases_active_per_role ON tackle.role_leases USING btree (role) WHERE (status = 'ACTIVE'::text);
+
+
+--
 -- Name: idx_role_leases_active_per_role_channel; Type: INDEX; Schema: tackle; Owner: -
 --
 
@@ -30765,6 +30912,13 @@ CREATE TRIGGER trg_session_context_snapshots_audit_upd AFTER UPDATE ON nebula.se
 --
 
 CREATE TRIGGER trg_session_context_snapshots_no_truncate BEFORE TRUNCATE ON nebula.session_context_snapshots FOR EACH STATEMENT EXECUTE FUNCTION nebula.trg_session_context_snapshot_no_truncate();
+
+
+--
+-- Name: op_registry_history trg_validate_opcode_template; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_validate_opcode_template BEFORE INSERT OR UPDATE OF opcode_template ON nebula.op_registry_history FOR EACH ROW EXECUTE FUNCTION nebula.validate_opcode_template();
 
 
 --
