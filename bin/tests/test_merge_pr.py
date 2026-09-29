@@ -717,16 +717,23 @@ def test_run_at_matching_head_passes_with_sha_note():
     assert "head SHA verified" in detail
 
 
-def _dispatching_http_projection(attestations, mentions, scan):
+def _dispatching_http_projection(attestations, mentions, scan, deep=True):
     """Fake nebula where /api/attestations returns the PROJECTION shape
     (id/recordType/role/tags/createdAt — no content), as the real endpoint's
-    SELECT list does."""
+    SELECT list does. deep=False also refuses the per-id fetches so the
+    bounded-scan fallback path is exercised."""
     def http_get(url):
         if "/api/attestations?" in url:
             proj = [{k: v for k, v in a.items() if k != "content"} for a in attestations]
             return {"items": proj, "total": len(proj)}
         if "role=tester" in url and "tag=pr:" in url:
             return {"items": mentions}
+        if deep and url.startswith("http://localhost:3101/api/agent-records/") and url.count("/") == 4:
+            rid = url.rsplit("/", 1)[1]
+            for a in attestations + scan:
+                if str(a.get("id")) == rid:
+                    return a
+            raise RuntimeError(f"no record {rid}")
         if "/api/agent-records" in url:
             return {"items": scan}
         raise RuntimeError(f"unexpected url {url}")
@@ -734,8 +741,8 @@ def _dispatching_http_projection(attestations, mentions, scan):
 
 
 def test_projection_rows_hydrated_from_scan_for_evidence():
-    """Indexed rows lack content; the gate hydrates from the bounded scan so
-    the CI-evidence rule can read the cited run IDs."""
+    """Indexed rows lack content; the gate hydrates them so the CI-evidence
+    rule can read the cited run IDs (per-id fetch, scan fallback)."""
     canonical = rec(created_ms=NOW_MS - 3600_000)
     run_json, _ = make_fakes()
     gates, _ = merge_pr.evaluate(
@@ -744,6 +751,76 @@ def test_projection_rows_hydrated_from_scan_for_evidence():
     gate3 = gates[2]
     assert gate3.passed
     assert "CI run(s) verified" in gate3.detail
+
+
+def test_projection_hydration_by_id_does_not_need_scan_window():
+    """[E] Decision 15: an attestation OUTSIDE the bounded scan's newest-N
+    window (scan returns an unrelated page) still hydrates via the targeted
+    per-id fetch and passes — previously it failed closed with a spurious
+    re-attest nudge once it slid past the window."""
+    old_attestation = rec(rec_id="old0aaaa", created_ms=NOW_MS - 86400_000 * 3)
+    unrelated_page = [rec(rec_id=f"fill{i:04d}", role="builder",
+                          created_ms=NOW_MS - i * 1000) for i in range(5)]
+    run_json, _ = make_fakes()
+    gates, _ = merge_pr.evaluate(
+        487, run_json=run_json,
+        http_get=_dispatching_http_projection(
+            [old_attestation], [], unrelated_page, deep=True), env={})
+    gate3 = gates[2]
+    assert gate3.passed, gate3.detail
+    assert "CI run(s) verified" in gate3.detail
+
+
+def test_projection_hydration_falls_back_to_scan_when_id_fetch_unavailable():
+    """[E] Routers/servers without the per-id route keep working: the gate
+    falls back to the bounded scan for any record the targeted fetch could
+    not retrieve."""
+    canonical = rec(created_ms=NOW_MS - 3600_000)
+    run_json, _ = make_fakes()
+    gates, _ = merge_pr.evaluate(
+        487, run_json=run_json,
+        http_get=_dispatching_http_projection(
+            [canonical], [], [canonical], deep=False), env={})
+    gate3 = gates[2]
+    assert gate3.passed
+    assert "CI run(s) verified" in gate3.detail
+
+
+def test_malformed_head_tag_fails_on_shape_not_prefix_bind():
+    """[C] Decision 15: a present-but-malformed head: tag must fail on SHAPE
+    (ATT_SHAPE_UNSEEN -> adjudication), never silently prefix-bind — a 4-hex
+    tag would bind at ~1/65536."""
+    att = rec(tags=["type:approval", "status:done", "pr:487", "head:ab12"])
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [att], 487, NOW_MS - 7200_000,
+        head_sha="ab12ef6000000000000000000000000000000000",
+        run_json=evidence_run_json)
+    assert not ok and code == "ATT_SHAPE_UNSEEN"
+    assert "malformed" in detail and "mint-head" in detail
+
+
+def test_head_tag_40hex_and_7hex_shapes_still_bind():
+    """[C] boundary: the legal 7-40 hex range keeps binding; 6 hex is now
+    malformed (previously it prefix-bound)."""
+    ok, _, _ = merge_pr.evaluate_attestation(
+        [rec(tags=["type:approval", "status:done", "pr:487",
+                   "head:a8b1dfc600000000000000000000000000000000"])],
+        487, NOW_MS - 7200_000,
+        head_sha="a8b1dfc600000000000000000000000000000000",
+        run_json=evidence_run_json)
+    assert ok
+    ok, _, _ = merge_pr.evaluate_attestation(
+        [rec(tags=["type:approval", "status:done", "pr:487", "head:a8b1dfc"])],
+        487, NOW_MS - 7200_000,
+        head_sha="a8b1dfc600000000000000000000000000000000",
+        run_json=evidence_run_json)
+    assert ok
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [rec(tags=["type:approval", "status:done", "pr:487", "head:a8b1df"])],
+        487, NOW_MS - 7200_000,
+        head_sha="a8b1dfc600000000000000000000000000000000",
+        run_json=evidence_run_json)
+    assert not ok and code == "ATT_SHAPE_UNSEEN"
 
 
 def test_projection_without_hydration_fails_closed_not_open():
