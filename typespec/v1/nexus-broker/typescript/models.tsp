@@ -369,6 +369,36 @@ namespace org.nexus.nexusbroker {
     rejected_reports: KeychainCensusRejection[];
   }
 
+  /**
+   * CDLC A2b — Decision 22 (2026-09-29). The deciding fact in the post-action path is not the
+   * wording of a question but WHO IS ASKING, so the evidence class is a required discriminator
+   * and interviewer identity is carried, not inferred. `declined` is a first-class outcome: a
+   * refusal is an exercise of the executing agent's agency, weighed rather than treated as
+   * self-refuting. The v1 scope (context-only vs reasoning) is parked with the architect and is
+   * deliberately absent here.
+   */
+  model CensusInterviewer {
+    role: string;
+    /** Renamed from `model`, which is a reserved TypeSpec keyword. */
+    model_id?: string | null;
+    /**
+     * Stated, never inferred. Decision 22's no-self-review rule: an independent interrogation
+     * cannot be conducted by the agent whose run it examines, and this field is what makes that
+     * assertable rather than assumed.
+     */
+    independent_of_executor: boolean;
+  }
+
+  model CensusInterview {
+    status: string;
+    /** Required when conducted: self_report | independent_interrogation. */
+    evidence_class?: string;
+    /** Required when conducted. */
+    interviewer?: CensusInterviewer;
+    /** Required when declined; never interpreted. */
+    decline_reason?: string;
+  }
+
   /** Census rows per UTC calendar day. Bounded by the rows the call read, hence a floor. */
   model KeychainCensusDailyCount {
     day: string;

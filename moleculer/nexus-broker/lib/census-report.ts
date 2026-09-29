@@ -17,9 +17,13 @@
  *     components that each apply precedence will eventually disagree about UNUSED.
  *     `CENSUS_CATEGORY_PRECEDENCE` is exported so A4 has one source of order, not a
  *     second implementation.
- *  2. **No interview outcome shape.** The interview protocol is with the roundtable
- *     (`d4cd0cb0`). `interview` accepts only `{ status }`; an outcome is a follow-on
- *     record referencing `census_id`, never retrofitted into this row.
+ *  2. **Interview outcome shape — Architect Decision 22 (2026-09-29).** The roundtable
+ *     ruled: interviewer is NOT adjudicator, and no one adjudicates their own
+ *     participation. That makes two things structural rather than advisory, and both are
+ *     enforced below: the record must distinguish `self_report` from
+ *     `independent_interrogation`, and it must carry interviewer identity. The v1 *scope*
+ *     (context-only vs reasoning) is parked with the Architect and is deliberately NOT
+ *     encoded here — this module validates shape, it does not settle policy.
  */
 
 export const CENSUS_SCHEMA_VERSION = 1;
@@ -65,6 +69,13 @@ export type CensusTrigger = (typeof CENSUS_TRIGGERS)[number];
  * an open set would let A4 invent vocabulary and destroy the property that the categories
  * are tight enough to classify against.
  */
+/** Decision 22 vocabularies, exported so A4 and the read path share one source. */
+export const CENSUS_INTERVIEW_EVIDENCE_CLASSES = [
+  "self_report",
+  "independent_interrogation",
+] as const;
+export const CENSUS_INTERVIEW_STATUSES = ["pending", "conducted", "declined"] as const;
+
 export const CENSUS_EVIDENCE_KINDS = [
   "card_absent",
   "card_present_unconsumed",
@@ -151,16 +162,47 @@ export interface CensusFrame {
   procedure_card_set_hash?: string;
 }
 
-export interface CensusInterviewPending {
-  status: string;
+/**
+ * Decision 22: the deciding fact in the post-action path is not the wording of a
+ * question but WHO IS ASKING. So the evidence class is a required discriminator, not a
+ * note.
+ *
+ *   self_report               the executing agent describing its own run
+ *   independent_interrogation a third party, who therefore cannot be the executing agent
+ */
+export type CensusInterviewEvidenceClass = (typeof CENSUS_INTERVIEW_EVIDENCE_CLASSES)[number];
+
+/**
+ * `declined` is a first-class outcome, not a failure. Decision 22: a refusal is an
+ * exercise of the executing agent's agency, and is neither grounds to reject a census
+ * report nor grounds to validate it. It goes into the record and gets weighed.
+ */
+export type CensusInterviewStatus = (typeof CENSUS_INTERVIEW_STATUSES)[number];
+
+export interface CensusInterviewer {
+  role: string;
+  /** Named `model_id` because `model` is a reserved TypeSpec keyword. */
+  model_id?: string | null;
+  /** True when the interviewer is not the executing agent. Never inferred; always stated. */
+  independent_of_executor: boolean;
+}
+
+export interface CensusInterview {
+  status: CensusInterviewStatus;
+  /** Required when conducted; absent otherwise. */
+  evidence_class?: CensusInterviewEvidenceClass;
+  /** Required when conducted; absent otherwise. */
+  interviewer?: CensusInterviewer;
+  /** Free-text account of a decline. Never interpreted by this module. */
+  decline_reason?: string;
 }
 
 export interface CensusReportMetadata {
   census: CensusEnvelope;
   frame: CensusFrame;
   findings: CensusFinding[];
-  /** `{ status }` only until the roundtable rules (`d4cd0cb0`). */
-  interview: CensusInterviewPending;
+  /** Shape per Architect Decision 22. */
+  interview: CensusInterview;
   recommended_updates: CensusRecommendedUpdate[];
 }
 
@@ -326,15 +368,86 @@ export function validateCensusReportMetadata(metadata: unknown): CensusValidatio
   if (!isPlainObject(interview)) {
     errors.push("metadata.interview is required and must be an object");
   } else {
+    const allowedKeys = ["status", "evidence_class", "interviewer", "decline_reason"];
     for (const key of Object.keys(interview)) {
-      if (key !== "status") {
+      if (!allowedKeys.includes(key)) {
         errors.push(
-          `metadata.interview.${key} is refused: the interview protocol is with the roundtable; ` +
-            "the outcome lands as a follow-on record referencing census_id",
+          `metadata.interview.${key} is not part of the Decision 22 shape ` +
+            `(${allowedKeys.join(", ")}); the outcome lands as a follow-on record ` +
+            "referencing census_id",
         );
       }
     }
-    if (!isNonEmptyString(interview.status)) errors.push("metadata.interview.status is required");
+    if (!(CENSUS_INTERVIEW_STATUSES as readonly string[]).includes(String(interview.status))) {
+      errors.push(
+        `metadata.interview.status must be one of ${CENSUS_INTERVIEW_STATUSES.join(" | ")}`,
+      );
+    }
+
+    const conducted = interview.status === "conducted";
+    if (conducted) {
+      if (!(CENSUS_INTERVIEW_EVIDENCE_CLASSES as readonly string[]).includes(String(interview.evidence_class))) {
+        errors.push(
+          "metadata.interview.evidence_class is required when status is conducted, and must be " +
+            `${CENSUS_INTERVIEW_EVIDENCE_CLASSES.join(" | ")} — Decision 22: the deciding fact is who is ` +
+            "asking, so the evidence class cannot be omitted",
+        );
+      }
+      const who = interview.interviewer;
+      if (!isPlainObject(who)) {
+        errors.push("metadata.interview.interviewer is required when status is conducted");
+      } else {
+        if (!isNonEmptyString(who.role)) errors.push("metadata.interview.interviewer.role is required");
+        if (typeof who.independent_of_executor !== "boolean") {
+          errors.push(
+            "metadata.interview.interviewer.independent_of_executor must be a boolean; it is " +
+              "never inferred, because Decision 22's no-self-review rule must be assertable",
+          );
+        }
+        // Decision 22's load-bearing rule, made checkable: an independent interrogation
+        // cannot be conducted by the agent whose run it examines. This is the one place a
+        // schema can enforce "no self-review" without adjudicating anything.
+        if (
+          isNonEmptyString(who.role)
+          && who.independent_of_executor === true
+          && isPlainObject(metadata.census)
+          && isNonEmptyString(metadata.census.executed_by_role)
+          && String(who.role) === String(metadata.census.executed_by_role)
+        ) {
+          errors.push(
+            `metadata.interview.interviewer.role "${who.role}" is the executing agent's own role ` +
+              "(census.executed_by_role), so it cannot be marked independent_of_executor — " +
+              "Decision 22 forbids adjudicating your own participation in the interview",
+          );
+        }
+        if (
+          isNonEmptyString(who.role)
+          && interview.evidence_class === "self_report"
+          && isPlainObject(metadata.census)
+          && isNonEmptyString(metadata.census.executed_by_role)
+          && String(who.role) !== String(metadata.census.executed_by_role)
+        ) {
+          errors.push(
+            "metadata.interview.evidence_class is self_report but the interviewer role does not " +
+              `match census.executed_by_role ("${metadata.census.executed_by_role}"); a ` +
+              "self-report must be the executing agent",
+          );
+        }
+      }
+    } else {
+      if (interview.evidence_class !== undefined) {
+        errors.push("metadata.interview.evidence_class is only meaningful when status is conducted");
+      }
+      if (interview.interviewer !== undefined) {
+        errors.push("metadata.interview.interviewer is only meaningful when status is conducted");
+      }
+      if (interview.status === "declined" && !isNonEmptyString(interview.decline_reason)) {
+        errors.push(
+          "metadata.interview.decline_reason is required when declined: Decision 22 treats a " +
+            "refusal as an exercise of agency that is weighed, so it must be recorded, not inferred",
+        );
+      }
+    }
   }
 
   const recommended = metadata.recommended_updates;

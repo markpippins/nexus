@@ -39,7 +39,7 @@ const report = (overrides = {}) => ({
   },
   frame: { doctrine_snapshot_id: 'sha256:' + 'a'.repeat(64) },
   findings: [],
-  interview: { status: 'pending-ratification' },
+  interview: { status: 'pending' },
   recommended_updates: [],
   ...overrides,
 })
@@ -170,12 +170,14 @@ test('A2b requires anticipated to be boolean — it is the orthogonal provenance
   assert.ok(result.errors.some((e) => e.includes('anticipated must be a boolean')))
 })
 
-test('A2b refuses an interview outcome until the roundtable rules', () => {
+test('A2b interview outcome keys are refused until the roundtable rules (superseded by D22)', () => {
+  // Retained as a shape-closure check: the D22 vocabulary is closed, so a free-form
+  // 'answers' blob is still refused even now that an outcome shape exists.
   const result = validateCensusReportMetadata(report({
-    interview: { status: 'pending-ratification', answers: ['a'] },
+    interview: { status: 'pending', answers: ['a'] },
   }))
   assert.equal(result.ok, false)
-  assert.ok(result.errors.some((e) => e.includes('roundtable')))
+  assert.ok(result.errors.some((e) => e.includes('not part of the Decision 22 shape')))
 })
 
 test('A2b enforces the delta naming guard at every depth', () => {
@@ -296,4 +298,118 @@ test('A2b Q6: an unparseable created_at is skipped rather than bucketed as garba
   ])
   assert.equal(index.observed_day_count, 1)
   assert.equal(index.report_count, 2)
+})
+
+// ── Decision 22: interview shape ────────────────────────────────────────────
+
+// A self-report is the executing agent describing its own run, so it is by definition NOT
+// independent of the executor. Marking it independent is the contradiction Decision 22 exists
+// to prevent, so the fixture states it the coherent way.
+const conducted = (overrides = {}) => ({
+  status: 'conducted',
+  evidence_class: 'self_report',
+  interviewer: {
+    role: 'engineer-iii',
+    model_id: 'opencode/space-bunny-free',
+    independent_of_executor: false,
+  },
+  ...overrides,
+})
+
+test('D22: a conducted self-report by the executing agent is valid', () => {
+  const result = validateCensusReportMetadata(report({ interview: conducted() }))
+  assert.equal(result.ok, true, result.errors.join('; '))
+})
+
+test('D22: evidence_class is REQUIRED when conducted — who is asking is the deciding fact', () => {
+  const result = validateCensusReportMetadata(report({
+    interview: { status: 'conducted', interviewer: conducted().interviewer },
+  }))
+  assert.equal(result.ok, false)
+  assert.ok(result.errors.some((e) => e.includes('evidence_class is required')))
+})
+
+test('D22: interviewer identity is required when conducted', () => {
+  const result = validateCensusReportMetadata(report({
+    interview: { status: 'conducted', evidence_class: 'self_report' },
+  }))
+  assert.equal(result.ok, false)
+  assert.ok(result.errors.some((e) => e.includes('interviewer is required')))
+})
+
+test('D22: independent_of_executor must be stated, never inferred', () => {
+  const result = validateCensusReportMetadata(report({
+    interview: conducted({ interviewer: { role: 'engineer-iii' } }),
+  }))
+  assert.equal(result.ok, false)
+  assert.ok(result.errors.some((e) => e.includes('independent_of_executor must be a boolean')))
+})
+
+test('D22: no self-review is enforced — the executing agent cannot be the independent interviewer', () => {
+  const result = validateCensusReportMetadata(report({
+    interview: conducted({
+      evidence_class: 'independent_interrogation',
+      interviewer: { role: 'engineer-iii', independent_of_executor: true },
+    }),
+  }))
+  assert.equal(result.ok, false)
+  const error = result.errors.find((e) => e.includes("executing agent's own role"))
+  assert.ok(error, result.errors.join('; '))
+  assert.ok(error.includes('forbids adjudicating your own participation'))
+})
+
+test('D22: a self-report must actually be the executing agent', () => {
+  const result = validateCensusReportMetadata(report({
+    interview: conducted({
+      interviewer: { role: 'somebody-else', independent_of_executor: true },
+    }),
+  }))
+  assert.equal(result.ok, false)
+  assert.ok(result.errors.some((e) => e.includes('a self-report must be the executing agent')))
+})
+
+test('D22: a genuine independent interrogation by another role is valid', () => {
+  const result = validateCensusReportMetadata(report({
+    interview: conducted({
+      evidence_class: 'independent_interrogation',
+      interviewer: { role: 'reviewer', independent_of_executor: true },
+    }),
+  }))
+  assert.equal(result.ok, true, result.errors.join('; '))
+})
+
+test('D22: declined is a first-class outcome and requires a recorded reason', () => {
+  const bare = validateCensusReportMetadata(report({ interview: { status: 'declined' } }))
+  assert.equal(bare.ok, false)
+  assert.ok(bare.errors.some((e) => e.includes('decline_reason is required')))
+
+  const stated = validateCensusReportMetadata(report({
+    interview: { status: 'declined', decline_reason: 'out of scope for this run' },
+  }))
+  assert.equal(stated.ok, true, stated.errors.join('; '))
+})
+
+test('D22: pending carries no evidence class or interviewer', () => {
+  assert.equal(validateCensusReportMetadata(report({ interview: { status: 'pending' } })).ok, true)
+
+  const withExtras = validateCensusReportMetadata(report({
+    interview: { status: 'pending', evidence_class: 'self_report' },
+  }))
+  assert.equal(withExtras.ok, false)
+  assert.ok(withExtras.errors.some((e) => e.includes('only meaningful when status is conducted')))
+})
+
+test('D22: an unknown key is still refused — the shape is closed', () => {
+  const result = validateCensusReportMetadata(report({
+    interview: { status: 'pending', outcome: 'looks fine to me' },
+  }))
+  assert.equal(result.ok, false)
+  assert.ok(result.errors.some((e) => e.includes('not part of the Decision 22 shape')))
+})
+
+test('D22: an unknown status or evidence class is rejected', () => {
+  assert.equal(validateCensusReportMetadata(report({ interview: { status: 'sorta' } })).ok, false)
+  assert.equal(validateCensusReportMetadata(report({
+    interview: { status: 'conducted', evidence_class: 'vibes', interviewer: conducted().interviewer },
+  })).ok, false)
 })
