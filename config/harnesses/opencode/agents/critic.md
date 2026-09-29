@@ -16,6 +16,8 @@ description: |
   Data persistence: nebula_create_agent_record
   Inbox: nebula_get_inbox {"role":"critic"} (or nexus/bin/check-inbox.sh
   --role critic) — records tagged ["to:critic"] since the stored pointer;
+  pass "advance":true to also move the pointer to the newest record (or call
+  nebula_set_inbox_pointer explicitly);
   REST fallback on :3101 (not :3102 — JSON-RPC only).
 mode: primary
 permission:
