@@ -8,6 +8,9 @@ normalized to OpenAPI `{param}` form).
 Exit codes:
     0  — all specs current
     1  — drift detected (or a spec is unparseable / missing for an expected service)
+    2  — registry integrity failure: a registry key points at a directory that
+         does not exist (fail-closed; the gate would otherwise silently shrink
+         its coverage — see registry_problems below)
 
 Excluded services:
     - semantics-srv  — its openapi.yaml is derived from the TABLES registry by
@@ -25,6 +28,7 @@ Usage:
     python tools/api-docs/check_drift.py --update       # regenerate ONLY drifted specs
     python tools/api-docs/check_drift.py --quiet        # only print problems
     python tools/api-docs/check_drift.py --json         # machine-readable report
+    python tools/api-docs/check_drift.py --check-registry-only   # registry integrity only
 """
 import argparse
 import json
@@ -116,6 +120,45 @@ def find_services():
     return services
 
 
+def registry_problems(registries=None):
+    """Registry keys whose target directory does not exist under ROOT.
+
+    find_services() skips such keys silently: a deleted/renamed twin dir or a
+    typo'd registry value shrinks the gate's coverage while every remaining
+    check stays green. The incident that motivated this guard (operator merge
+    fa15c433) dropped the whole moleculer/peb/ twin — 35 files — and the drift
+    check stayed green because the registry entry vanished with it.
+
+    Returns a list of (registry_name, key, repo_relative_path) triples so the
+    failure names exactly which registry dangles. Tested from bin/tests/
+    (test_check_drift_registry.py); the live tree must return [] (exit 0).
+    """
+    if registries is None:
+        registries = (
+            ("MOLECULER_MIRRORS", MOLECULER_MIRRORS),
+            ("extract_routes.MOLECULER_SERVICES", er.MOLECULER_SERVICES),
+            ("extract_routes.JVM_SERVICES", er.JVM_SERVICES),
+        )
+    problems = []
+    for reg_name, reg in registries:
+        for key, rel in reg.items():
+            full = os.path.join(ROOT, rel)
+            if not os.path.isdir(full):
+                problems.append((reg_name, key, rel))
+    return problems
+
+
+def report_registry_problems(problems):
+    """Print registry integrity failures; True if any were reported."""
+    if not problems:
+        return False
+    print("Registry integrity failure — gate would silently lose coverage:")
+    for reg_name, key, rel in sorted(problems):
+        print(f"FAIL [{reg_name}] {key}: directory does not exist: {rel}")
+    print("\nFix the registry entry (or restore the directory) before trusting drift results.")
+    return True
+
+
 def extract_surface(key, svc_dir):
     """Route inventory for a service — Express/FastAPI, Moleculer, or Spring."""
     if key in er.MOLECULER_SERVICES:
@@ -181,7 +224,26 @@ def main():
     ap.add_argument("--update", action="store_true", help="regenerate drifted specs instead of failing")
     ap.add_argument("--quiet", action="store_true", help="only print problems")
     ap.add_argument("--json", action="store_true", help="emit a JSON report")
+    ap.add_argument("--check-registry-only", action="store_true",
+                    help="verify registry keys resolve to existing directories, then exit")
     args = ap.parse_args()
+
+    # Registry integrity first: a dangling key means find_services() silently
+    # skips that service, so every later verdict would be green over a
+    # shrinking gate. This is not drift — it is not --update-fixable — so the
+    # run refuses to gate (exit 2) instead of reporting a per-service status.
+    # With --update regeneration of the remaining drifted specs is still
+    # attempted (it is useful work), but the exit code stays 2 unless the
+    # registry is repaired: a dangling key must never look like success.
+    reg_problems = registry_problems()
+    registry_failed = report_registry_problems(reg_problems)
+    if registry_failed and (args.check_registry_only or not args.update):
+        return 2
+    if args.check_registry_only:
+        if not args.quiet:
+            total = len(MOLECULER_MIRRORS) + len(er.MOLECULER_SERVICES) + len(er.JVM_SERVICES)
+            print(f"Registry OK: all {total} registry entries resolve to existing directories.")
+        return 0
 
     services = find_services()
     report = verify_all(services)
@@ -239,6 +301,11 @@ def main():
                 for m in v["extra"]:
                     print(f"       in spec, not in source: {m[0]} {m[1]}")
 
+    if registry_failed:
+        # A dangling registry entry means part of the gate never ran — even if
+        # regeneration above succeeded for the ordinary services, the run is
+        # not a clean pass (exit 2 dominates the drift exit 1).
+        return 2
     if problems:
         print("\nDrift detected. Regenerate with: python tools/api-docs/check_drift.py --update")
         return 1
