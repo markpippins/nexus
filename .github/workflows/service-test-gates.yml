@@ -452,6 +452,7 @@ jobs:
         run: |
           PG_HOST=localhost PG_PORT=5432 PG_USER=pguser PG_PASSWORD=pgpass PG_DB_NAME=nebula_gate_ci \
             PORT=3101 REDIS_URL=redis://localhost:6399 \
+            NEBULA_MIGRATE_TARGET=localhost:5432:nebula_gate_ci \
             nohup npx tsx src/index.ts > /tmp/nebula-srv.log 2>&1 &
           for i in $(seq 1 45); do
             if curl -s --max-time 2 http://localhost:3101/health | grep -q '"db":true'; then
