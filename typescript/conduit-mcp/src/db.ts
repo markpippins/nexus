@@ -3279,7 +3279,12 @@ export async function insertReceipt(r: ReceiptRow): Promise<void> {
     }
     const execMeta = {
       ...baseMeta,
-      session_id: r.session_id ?? "",
+      // Preserve absence: a null session_id must not be coerced to "" here.
+      // This is the residual producer site from defect f9201c18 (PR #640
+      // fixed the top-level sites; this metadata-blob site became live when
+      // ReceiptRow.session_id was widened to string | null). Backfill of
+      // historical '' rows is DBA-owned per withdrawn backfill 67b9a918.
+      session_id: r.session_id ?? null,
       artifact_path: r.artifact_path ?? null,
       ticket_id: r.ticket_id ?? null,
       tokens_used: r.tokens_used ?? 0,

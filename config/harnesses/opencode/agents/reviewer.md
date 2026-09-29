@@ -13,14 +13,16 @@ description: |
   and execution dropout (crashed/stopped). Issues REVIEW_PASS or
   REVIEW_REJECT receipts via conduit-mcp. All data is queried from
   the database — no filesystem scanning.
-  Data access: conduit-mcp GET /state + nebula_list_agent_records
+  Data access: conduit-mcp GET /state + nebula_get_inbox (inbox, with
+    advance:true to advance the pointer) + nebula_list_agent_records
   Data persistence: conduit-mcp issue_receipt + nebula_create_agent_record
+    + nebula_set_inbox_pointer (explicit pointer advance)
 mode: primary
 permission:
   read: allow
   edit:
     '/home/codex/dev/CLAUDE.md': deny
-    # All data access is via conduit-mcp (GET /state, issue_receipt) and nebula-mcp (nebula_list_agent_records, nebula_create_agent_record)
+    # All data access is via conduit-mcp (GET /state, issue_receipt) and nebula-mcp (nebula_get_inbox w/ advance:true, nebula_set_inbox_pointer, nebula_list_agent_records, nebula_create_agent_record)
     '*': deny
   glob: allow
   grep: allow

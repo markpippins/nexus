@@ -196,11 +196,31 @@ def extract_head_shas(text: str) -> List[str]:
     return shas
 
 
+def _is_definitive_absent(exc: Exception) -> bool:
+    """True when a gh lookup failed DEFINITIVELY (run reference does not
+    exist), as opposed to transiently (429/5xx/network/timeout).
+
+    Classification direction is fail-safe (Decision 15 item D): treating a
+    transient failure as 'absent evidence' makes the janitor nag the tester
+    to re-attest on every GitHub blip (the bug); treating a genuinely absent
+    reference as 'transient' only delays the refusal by a cycle. So anything
+    that is not a definitive not-found classifies transient.
+
+    gh surfaces a missing object as an HTTP 404 on stderr (subprocess
+    CalledProcessError carries .stderr); no network path to GitHub carries
+    neither marker. We require BOTH '404' and 'not found' so a rate-limit
+    body that merely mentions a URL path never reads as absence.
+    """
+    stderr = str(getattr(exc, "stderr", "") or "")
+    combined = f"{type(exc).__name__} {exc} {stderr}".lower()
+    return "404" in combined and "not found" in combined
+
+
 def verify_ci_runs(
     run_ids: List[str],
     head_sha: Optional[str],
     run_json: Callable[..., Any] = _gh_json,
-) -> Tuple[bool, str]:
+) -> Tuple[bool, str, bool]:
     """Every cited CI run must exist, be SUCCESS, and — when the run exposes
     a head SHA — belong to the PR's current head.
 
@@ -215,39 +235,57 @@ def verify_ci_runs(
     head_sha are also rejected: GitHub workflow-run objects always carry
     head_sha, so its absence is a data anomaly we refuse to pass on
     conclusion alone — every pass must bind to the code it tested.
+
+    Transient-vs-absent split (Decision 15 item D): a gh lookup that fails
+    transiently (429/5xx/network/timeout) is NOT 'no evidence' — the third
+    return element is True and the caller routes the failure to the
+    retryable channel (gate_codes.ATT_CI_LOOKUP_FAILED) so the janitor
+    retries silently instead of nagging the tester. A definitive 404 (run
+    genuinely absent) returns False there and routes ATT_NO_CI_EVIDENCE as
+    before. See _is_definitive_absent.
     """
     if not run_ids:
-        return False, "no CI run references"
+        return False, "no CI run references", False
     ok_shas: List[str] = []
     for rid in run_ids:
         try:
             run = run_json("api", f"repos/{{owner}}/{{repo}}/actions/runs/{rid}",
                            "--jq", "{c: .conclusion, s: .head_sha}")
         except Exception as exc:
-            return False, f"CI run {rid} lookup failed: {_exc_brief(exc)} (fail closed)"
+            if _is_definitive_absent(exc):
+                return False, f"CI run {rid} lookup failed: {_exc_brief(exc)} (fail closed)", False
+            return False, (
+                f"CI run {rid} lookup failed: {_exc_brief(exc)} "
+                "(transient — gate cannot reach GitHub; retry next cycle)"
+            ), True
         conclusion = str((run or {}).get("c") or "").strip().lower()
         if conclusion != "success":
-            return False, (
+            return (
+                False,
                 f"CI run {rid} conclusion is '{conclusion or 'unknown'}' "
                 "(not success; success-only per Decision 10 — skipped/neutral "
-                "runs execute no tests and prove nothing)"
+                "runs execute no tests and prove nothing)",
+                False,
             )
         run_sha = str((run or {}).get("s") or "").strip().lower()
         if not run_sha:
-            return False, (
+            return (
+                False,
                 f"CI run {rid} omits head_sha — no code binding possible; "
-                "every accepted run must bind to the PR head (fail closed)"
+                "every accepted run must bind to the PR head (fail closed)",
+                False,
             )
         if head_sha:
             if not head_sha.lower().startswith(run_sha[:7]) and not run_sha.startswith(head_sha.lower()[:7]):
-                return False, (
+                return (
+                    False,
                     f"CI run {rid} tested head {run_sha[:8]}, not this PR's head "
-                    f"{str(head_sha)[:8]} — attested evidence is for superseded code"
+                    f"{str(head_sha)[:8]} — attested evidence is for superseded code",
+                    False,
                 )
             ok_shas.append(run_sha[:7])
     sha_note = f"; head SHA verified ({', '.join(ok_shas)})" if ok_shas else ""
-    return True, f"{len(run_ids)} CI run(s) verified success{sha_note}"
-    return True, f"{len(run_ids)} CI run(s) verified success{sha_note}"
+    return True, f"{len(run_ids)} CI run(s) verified success{sha_note}", False
 
 
 def fetch_attestations(
@@ -312,9 +350,60 @@ def attestation_check(
         # self-explaining detail rather than guessing.
         if rows and all(not (r or {}).get("content") for r in rows):
             try:
-                full = fetch_agent_records(http_get)
-                by_id = {str(r.get("id")): r for r in full}
+                # [E] Decision 15: hydrate by record id FIRST — targeted
+                # fetches do not depend on the record falling inside the
+                # bounded scan's newest-N window (older attestations used to
+                # fail closed with spurious re-attest nudges once they slid
+                # past it). The bounded scan remains the fallback for
+                # servers/routers where the per-id fetch is unavailable.
+                by_id: Dict[str, Dict[str, Any]] = {}
+                missing: List[str] = []
+                for r in rows:
+                    rid = str(r.get("id") or "")
+                    if not rid:
+                        continue
+                    try:
+                        one = http_get(f"{NEBULA_BASE}/api/agent-records/{rid}")
+                    except Exception:
+                        one = None
+                    if isinstance(one, dict) and one.get("id"):
+                        by_id[rid] = one
+                    else:
+                        missing.append(rid)
+                if missing:
+                    full = fetch_agent_records(http_get)
+                    scan_by_id = {str(r.get("id")): r for r in full}
+                    for rid in missing:
+                        if rid in scan_by_id:
+                            by_id[rid] = scan_by_id[rid]
+                # DBA record 48ac13e2: the point endpoint historically did
+                # not carry createdAt in the list contract's shape (camelCase
+                # epoch-ms), so a naive swap replaces a good timestamp with
+                # none and evaluate_attestation's `or 0` binds the row at
+                # epoch 0 -> permanent ATT_STALE_HEAD. After the swap, repair
+                # the timestamp: prefer the hydrated row's own createdAt
+                # (post-48ac13e2 servers send it), then the indexed row's
+                # createdAt, then coerce a snake_case created_at (ISO or
+                # epoch) from the hydrated row. Content always comes from the
+                # hydrated row; the timestamp never regresses to 0.
+                indexed_by_id = {str((r or {}).get("id") or ""): r for r in rows}
                 rows = [by_id.get(str(r.get("id")), r) for r in rows]
+                for i, r in enumerate(rows):
+                    if not isinstance(r, dict) or r.get("createdAt"):
+                        continue
+                    rid = str(r.get("id") or "")
+                    idx_row = indexed_by_id.get(rid) or {}
+                    if idx_row.get("createdAt"):
+                        rows[i] = {**r, "createdAt": idx_row["createdAt"]}
+                        continue
+                    raw = r.get("created_at")
+                    if isinstance(raw, str):
+                        try:
+                            rows[i] = {**r, "createdAt": parse_iso_to_ms(raw)}
+                        except Exception:
+                            pass
+                    elif isinstance(raw, (int, float)):
+                        rows[i] = {**r, "createdAt": int(raw)}
             except Exception:
                 pass  # evaluate on projection rows; evidence rule fails closed
         ok, detail, code = evaluate_attestation(
@@ -402,7 +491,7 @@ def evaluate_attestation(
 
     Returns (ok, detail, code) — code is a gate_codes value on failure
     (ATT_MISSING / ATT_SHAPE_UNSEEN / HEAD_DATE_UNKNOWN / ATT_STALE_HEAD /
-    ATT_NO_CI_EVIDENCE), None on pass."""
+    ATT_NO_CI_EVIDENCE / ATT_CI_LOOKUP_FAILED), None on pass."""
     mentions = [
         r
         for r in records
@@ -424,8 +513,26 @@ def evaluate_attestation(
             )
         code = gate_codes.ATT_SHAPE_UNSEEN if mentions else gate_codes.ATT_MISSING
         return (False, detail, code)
-    newest = max(matches, key=lambda r: r.get("createdAt") or 0)
-    created_ms = newest.get("createdAt") or 0
+    newest = max(matches, key=lambda r: _created_ms_of(r) or 0)
+    created_ms = _created_ms_of(newest)
+    if created_ms is None:
+        # Fail closed with a DEDICATED code. The previous `or 0` coercion
+        # bound this row at epoch 0 and reported ATT_STALE_HEAD, which tells
+        # the tester to re-attest for a condition no re-attestation can
+        # ever fix — the misdiagnosis that froze the merge queue (DBA
+        # records 48ac13e2 / 2a51e900). A row with no usable createdAt is
+        # a SERVER serialization defect, so it must not masquerade as a
+        # freshness verdict. Note this is checked BEFORE the head-date
+        # check: with no attestation timestamp there is nothing to compare,
+        # so HEAD_DATE_UNKNOWN would be equally uninformative.
+        return (
+            False,
+            f"attestation record {str(newest.get('id'))[:8]} for PR #{pr_number} "
+            "carries no usable createdAt, so its freshness cannot be evaluated "
+            "(fail closed). This is a record-endpoint serialization defect, "
+            "not a tester action: re-attesting will not clear it.",
+            gate_codes.ATT_TIMESTAMP_MISSING,
+        )
     created_iso = datetime.fromtimestamp(
         created_ms / 1000, tz=timezone.utc
     ).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -450,6 +557,21 @@ def evaluate_attestation(
     if "head" in tags_newest and head_sha:
         bound = tags_newest["head"].lower()
         h = head_sha.lower()
+        # [C] Decision 15: a PRESENT but malformed head: tag fails on SHAPE
+        # (ATT_SHAPE_UNSEEN -> tester/analyst adjudication) and never
+        # silently prefix-binds — a 4-hex tag would bind at ~1/65536. An
+        # ABSENT tag keeps the legacy fallthrough to the content-based
+        # checks below (documented additive divergence from the binding
+        # rule). Shape: 7-40 lowercase hex, same grammar extract_head_shas
+        # and the minting tool emit.
+        if not re.fullmatch(r"[0-9a-f]{7,40}", bound or ""):
+            return (
+                False,
+                f"attestation head binding tag is malformed: '{str(bound)[:40]}' "
+                "(expected 7-40 hex chars; Decision 15 item C — re-mint via "
+                f"pgie-evidence.py mint-head --pr {pr_number})",
+                gate_codes.ATT_SHAPE_UNSEEN,
+            )
         if not (h.startswith(bound) or bound.startswith(h[:7])):
             return (
                 False,
@@ -487,7 +609,7 @@ def evaluate_attestation(
             gate_codes.ATT_NO_CI_EVIDENCE,
         )
     cited_shas = extract_head_shas(att_text)
-    runs_ok, runs_detail = verify_ci_runs(run_ids, head_sha, run_json)
+    runs_ok, runs_detail, runs_transient = verify_ci_runs(run_ids, head_sha, run_json)
     if not runs_ok:
         detail = (f"tester attestation {created_iso} (record {str(newest.get('id'))[:8]}) "
                   f"cites run(s) {', '.join(run_ids)}: {runs_detail}")
@@ -496,7 +618,9 @@ def evaluate_attestation(
         ):
             detail += (f" — attestation cites head {cited_shas[0][:8]}, "
                        f"PR head is {str(head_sha)[:8]}")
-        return (False, detail, gate_codes.ATT_NO_CI_EVIDENCE)
+        return (False, detail,
+                gate_codes.ATT_CI_LOOKUP_FAILED if runs_transient
+                else gate_codes.ATT_NO_CI_EVIDENCE)
     return (
         True,
         f"tester attestation {created_iso} (record {str(newest.get('id'))[:8]}) "
@@ -510,6 +634,35 @@ def parse_iso_to_ms(iso: str) -> int:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return int(dt.timestamp() * 1000)
+
+
+def _created_ms_of(record: Dict[str, Any]) -> Optional[int]:
+    """The record's createdAt as epoch-ms, or None when it is absent or
+    unparseable.
+
+    Accepts the three shapes observed across the record endpoints (DBA record
+    ca9ba66c): integer epoch-ms (nebula list :3101 and, post-#652, the point
+    endpoint), an ISO-8601 string (the assembly-srv :3107 proxy, which calls
+    snakeToCamel without epoch conversion), and snake_case ``created_at`` in
+    either ISO or epoch form.
+
+    Returning None — rather than 0 — is the whole point: 0 is a falsy
+    timestamp that silently sorts to the bottom and renders as
+    1970-01-01, which is indistinguishable from a genuinely ancient record.
+    """
+    raw = record.get("createdAt")
+    if raw is None:
+        raw = record.get("created_at")
+    if isinstance(raw, bool) or raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        return int(raw)
+    if isinstance(raw, str) and raw.strip():
+        try:
+            return parse_iso_to_ms(raw.strip())
+        except Exception:
+            return None
+    return None
 
 
 # ── Full evaluation ──────────────────────────────────────────────────────

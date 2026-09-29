@@ -4,6 +4,7 @@ import importlib.util
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -576,9 +577,53 @@ def test_extract_head_shas():
 
 
 def test_evidence_run_lookup_failure_fails_closed():
-    ok, detail = merge_pr.verify_ci_runs(
+    # The fixture raises RuntimeError (no 404/not-found markers) -> transient
+    # channel: gate still fails, but the failure is RETRYABLE, not "no
+    # evidence" (Decision 15 item D).
+    ok, detail, transient = merge_pr.verify_ci_runs(
         ["36000000999"], "a8b1dfc6", run_json=evidence_run_json)
-    assert not ok and "fail closed" in detail
+    assert not ok and transient and "transient" in detail
+
+
+def test_evidence_run_404_is_genuinely_absent():
+    """A definitive 404 (run reference does not exist) is NOT transient:
+    it routes to ATT_NO_CI_EVIDENCE so the tester re-attests with a real
+    run reference. Requires BOTH '404' and 'not found' markers (gh stderr
+    shape) so a rate-limit body mentioning a URL never reads as absence."""
+    def not_found_run(*args):
+        raise RuntimeError("gh: HTTP 404: Not Found")
+
+    ok, detail, transient = merge_pr.verify_ci_runs(
+        ["36000000999"], "a8b1dfc6", run_json=not_found_run)
+    assert not ok and not transient
+
+    att = rec(title="Tester attestation: PR #487 — CI run 36000000999 success")
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [att], 487, NOW_MS - 7200_000,
+        head_sha="a8b1dfc600000000000000000000000000000000",
+        run_json=not_found_run)
+    assert not ok and code == "ATT_NO_CI_EVIDENCE"
+    assert "fail closed" in detail
+
+
+def test_evidence_run_transient_lookup_routes_no_post():
+    """[D] A transient gh failure (429/network) must NOT surface as
+    ATT_NO_CI_EVIDENCE (janitor would nag the tester to re-attest on every
+    GitHub blip); it routes ATT_CI_LOOKUP_FAILED — retryable, no posts."""
+    def rate_limited_run(*args):
+        raise RuntimeError("gh: API rate limit exceeded (HTTP 429)")
+
+    ok, detail, transient = merge_pr.verify_ci_runs(
+        ["36000000001"], "a8b1dfc6", run_json=rate_limited_run)
+    assert not ok and transient
+
+    att = rec()
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [att], 487, NOW_MS - 7200_000,
+        head_sha="a8b1dfc600000000000000000000000000000000",
+        run_json=rate_limited_run)
+    assert not ok and code == "ATT_CI_LOOKUP_FAILED"
+    assert "transient" in detail
 
 
 def test_stated_counts_only_fail_att_no_ci_evidence():
@@ -673,16 +718,23 @@ def test_run_at_matching_head_passes_with_sha_note():
     assert "head SHA verified" in detail
 
 
-def _dispatching_http_projection(attestations, mentions, scan):
+def _dispatching_http_projection(attestations, mentions, scan, deep=True):
     """Fake nebula where /api/attestations returns the PROJECTION shape
     (id/recordType/role/tags/createdAt — no content), as the real endpoint's
-    SELECT list does."""
+    SELECT list does. deep=False also refuses the per-id fetches so the
+    bounded-scan fallback path is exercised."""
     def http_get(url):
         if "/api/attestations?" in url:
             proj = [{k: v for k, v in a.items() if k != "content"} for a in attestations]
             return {"items": proj, "total": len(proj)}
         if "role=tester" in url and "tag=pr:" in url:
             return {"items": mentions}
+        if deep and url.startswith("http://localhost:3101/api/agent-records/") and url.count("/") == 4:
+            rid = url.rsplit("/", 1)[1]
+            for a in attestations + scan:
+                if str(a.get("id")) == rid:
+                    return a
+            raise RuntimeError(f"no record {rid}")
         if "/api/agent-records" in url:
             return {"items": scan}
         raise RuntimeError(f"unexpected url {url}")
@@ -690,8 +742,8 @@ def _dispatching_http_projection(attestations, mentions, scan):
 
 
 def test_projection_rows_hydrated_from_scan_for_evidence():
-    """Indexed rows lack content; the gate hydrates from the bounded scan so
-    the CI-evidence rule can read the cited run IDs."""
+    """Indexed rows lack content; the gate hydrates them so the CI-evidence
+    rule can read the cited run IDs (per-id fetch, scan fallback)."""
     canonical = rec(created_ms=NOW_MS - 3600_000)
     run_json, _ = make_fakes()
     gates, _ = merge_pr.evaluate(
@@ -700,6 +752,130 @@ def test_projection_rows_hydrated_from_scan_for_evidence():
     gate3 = gates[2]
     assert gate3.passed
     assert "CI run(s) verified" in gate3.detail
+
+
+def test_projection_hydration_by_id_does_not_need_scan_window():
+    """[E] Decision 15: an attestation OUTSIDE the bounded scan's newest-N
+    window (scan returns an unrelated page) still hydrates via the targeted
+    per-id fetch and passes — previously it failed closed with a spurious
+    re-attest nudge once it slid past the window."""
+    old_attestation = rec(rec_id="old0aaaa", created_ms=NOW_MS - 86400_000 * 3)
+    unrelated_page = [rec(rec_id=f"fill{i:04d}", role="builder",
+                          created_ms=NOW_MS - i * 1000) for i in range(5)]
+    run_json, _ = make_fakes()
+    gates, _ = merge_pr.evaluate(
+        487, run_json=run_json,
+        http_get=_dispatching_http_projection(
+            [old_attestation], [], unrelated_page, deep=True), env={})
+    gate3 = gates[2]
+    assert gate3.passed, gate3.detail
+    assert "CI run(s) verified" in gate3.detail
+
+
+def test_projection_hydration_falls_back_to_scan_when_id_fetch_unavailable():
+    """[E] Routers/servers without the per-id route keep working: the gate
+    falls back to the bounded scan for any record the targeted fetch could
+    not retrieve."""
+    canonical = rec(created_ms=NOW_MS - 3600_000)
+    run_json, _ = make_fakes()
+    gates, _ = merge_pr.evaluate(
+        487, run_json=run_json,
+        http_get=_dispatching_http_projection(
+            [canonical], [], [canonical], deep=False), env={})
+    gate3 = gates[2]
+    assert gate3.passed
+    assert "CI run(s) verified" in gate3.detail
+
+
+def test_malformed_head_tag_fails_on_shape_not_prefix_bind():
+    """[C] Decision 15: a present-but-malformed head: tag must fail on SHAPE
+    (ATT_SHAPE_UNSEEN -> adjudication), never silently prefix-bind — a 4-hex
+    tag would bind at ~1/65536."""
+    att = rec(tags=["type:approval", "status:done", "pr:487", "head:ab12"])
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [att], 487, NOW_MS - 7200_000,
+        head_sha="ab12ef6000000000000000000000000000000000",
+        run_json=evidence_run_json)
+    assert not ok and code == "ATT_SHAPE_UNSEEN"
+    assert "malformed" in detail and "mint-head" in detail
+
+
+def test_head_tag_40hex_and_7hex_shapes_still_bind():
+    """[C] boundary: the legal 7-40 hex range keeps binding; 6 hex is now
+    malformed (previously it prefix-bound)."""
+    ok, _, _ = merge_pr.evaluate_attestation(
+        [rec(tags=["type:approval", "status:done", "pr:487",
+                   "head:a8b1dfc600000000000000000000000000000000"])],
+        487, NOW_MS - 7200_000,
+        head_sha="a8b1dfc600000000000000000000000000000000",
+        run_json=evidence_run_json)
+    assert ok
+    ok, _, _ = merge_pr.evaluate_attestation(
+        [rec(tags=["type:approval", "status:done", "pr:487", "head:a8b1dfc"])],
+        487, NOW_MS - 7200_000,
+        head_sha="a8b1dfc600000000000000000000000000000000",
+        run_json=evidence_run_json)
+    assert ok
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [rec(tags=["type:approval", "status:done", "pr:487", "head:a8b1df"])],
+        487, NOW_MS - 7200_000,
+        head_sha="a8b1dfc600000000000000000000000000000000",
+        run_json=evidence_run_json)
+    assert not ok and code == "ATT_SHAPE_UNSEEN"
+
+
+def test_hydration_preserves_indexed_created_at_when_point_drops_it():
+    """DBA 48ac13e2 regression: the point endpoint historically returned no
+    camelCase createdAt, so #648's by-id hydration swapped a good timestamp
+    for none and evaluate_attestation's `or 0` bound the row at epoch 0 ->
+    permanent ATT_STALE_HEAD. The gate must re-attach the indexed row's
+    createdAt after hydration."""
+    att = rec(created_ms=NOW_MS - 3600_000)
+    projection = {k: v for k, v in att.items() if k != "content"}
+    point = {k: v for k, v in att.items() if k != "createdAt"}  # content, no createdAt
+
+    def http_get(url):
+        if "/api/attestations?" in url:
+            return {"items": [projection], "total": 1}
+        if url.startswith("http://localhost:3101/api/agent-records/") and url.count("/") == 4:
+            return point
+        raise RuntimeError(f"unexpected url {url}")
+
+    run_json, _ = make_fakes()
+    ok, detail, code = merge_pr.attestation_check(
+        http_get, 487, NOW_MS - 7200_000,
+        head_sha="a8b1dfc600000000000000000000000000000000",
+        run_json=run_json)
+    assert ok and code is None, (detail, code)
+    assert "1970" not in detail
+
+
+def test_hydration_coerces_iso_created_at_from_point_payload():
+    """If the point endpoint returns a snake_case created_at (ISO), the gate
+    coerces it into the epoch-ms createdAt the freshness predicate reads —
+    no epoch-0 binding either way."""
+    from datetime import datetime, timezone as _tz
+    att = rec(created_ms=NOW_MS - 3600_000)
+    projection = {k: v for k, v in att.items() if k != "content"}
+    iso = datetime.fromtimestamp(att["createdAt"] / 1000, tz=_tz.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ")
+    point = {k: v for k, v in att.items() if k not in ("createdAt", "content")}
+    point["created_at"] = iso
+
+    def http_get(url):
+        if "/api/attestations?" in url:
+            return {"items": [projection], "total": 1}
+        if url.startswith("http://localhost:3101/api/agent-records/") and url.count("/") == 4:
+            return point
+        raise RuntimeError(f"unexpected url {url}")
+
+    run_json, _ = make_fakes()
+    ok, detail, code = merge_pr.attestation_check(
+        http_get, 487, NOW_MS - 7200_000,
+        head_sha="a8b1dfc600000000000000000000000000000000",
+        run_json=run_json)
+    assert ok and code is None, (detail, code)
+    assert "1970" not in detail
 
 
 def test_projection_without_hydration_fails_closed_not_open():
@@ -733,3 +909,235 @@ def test_new_code_in_all_codes_roundtrip():
     assert gc.extract_codes(
         "[FAIL] tester attestation (ATT_NO_CI_EVIDENCE): cites no CI run") == [
         "ATT_NO_CI_EVIDENCE"]
+
+
+# ── gate 3d: point-endpoint contract — the timestamp must survive ────────
+#
+# The two nebula read paths have different projections:
+#   GET /api/attestations?pr=<N>   camelCase rows, NO content (indexed)
+#   GET /api/agent-records/:id      full record; camelCase + epoch-ms
+#                                  timestamps via camelCaseRow (routes.ts)
+# gate 3 hydrates the content-less indexed rows by record id, REPLACING them
+# with the point response. A point response that omits `createdAt` therefore
+# silently re-ages a fresh attestation to epoch 0, and the freshness rule
+# (created_ms >= head_date_ms) can never be satisfied again.
+#
+# That is not hypothetical: the point handler returned the raw pg row
+# (snake_case created_at, no createdAt key) until the fix in
+# typescript/nebula-srv/src/routes.ts, so every hydrated attestation bound at
+# 1970-01-01T00:00:00Z and green PRs #642/#645 were refused indefinitely with
+# ATT_STALE_HEAD. These tests pin the contract from the gate's side.
+
+
+def _split_endpoint_http(indexed, point_rows):
+    """Fake nebula with the real two-endpoint split: the indexed projection
+    carries no content, the point endpoint carries the full row."""
+    def http_get(url):
+        if "/api/attestations?pr=" in url:
+            return {"items": indexed, "total": len(indexed)}
+        if "/api/agent-records/" in url:
+            return point_rows[url.rsplit("/", 1)[-1]]
+        if "/api/agent-records" in url:
+            return {"items": []}
+        raise RuntimeError(f"unexpected url {url}")
+    return http_get
+
+
+HEAD_SHA = "a8b1dfc600000000000000000000000000000000"
+RID = "07b09151"  # the re-issued attestation held at epoch 0 in production
+
+
+def _indexed_row(att_ms):
+    """Indexed /api/attestations projection: camelCase, no content."""
+    return {
+        "id": RID, "role": "tester", "recordType": "assessment",
+        "createdAt": att_ms, "tags": ["type:approval", "status:done",
+                                      "pr:487", f"head:{HEAD_SHA[:7]}"],
+        "title": "Tester attestation: PR #487", "content": "",
+    }
+
+
+def _point_row(att_ms):
+    """GET /api/agent-records/:id as the server serializes it post-fix."""
+    return {
+        "id": RID, "role": "tester", "recordType": "assessment",
+        "createdAt": att_ms, "tags": ["type:approval", "status:done",
+                                      "pr:487", f"head:{HEAD_SHA[:7]}"],
+        "title": EVIDENCE_TITLE, "content": EVIDENCE_CONTENT,
+    }
+
+
+def test_point_fetch_preserves_created_at_through_hydration():
+    """Regression: hydrating an indexed row by id must not cost the
+    attestation its timestamp. Attested 1h ago, head 2h ago → gate passes on
+    the real timestamp, and never reports a 1970 binding."""
+    att_ms, head_ms = NOW_MS - 3600_000, NOW_MS - 7200_000
+    ok, detail, code = merge_pr.attestation_check(
+        _split_endpoint_http([_indexed_row(att_ms)], {RID: _point_row(att_ms)}),
+        487, head_ms, head_sha=HEAD_SHA, run_json=evidence_run_json)
+    assert ok, f"gate 3 refused a valid, head-bound attestation: {detail}"
+    assert "1970" not in detail
+    assert code is None
+
+
+def test_point_response_without_created_at_repaired_from_indexed():
+    """The shipped defect, updated per this test's own instruction: the
+    pre-fix point response carried snake_case `created_at` and no `createdAt`
+    (and snake_case `record_type`). Hydration swapped that row in, freshness
+    compared 0 against the head date, and every attestation was refused at
+    1970 no matter how new it was — the anomaly that held #642/#645.
+
+    Updated when the gate hardened its own timestamp handling (DBA analysis
+    48ac13e2, fix A — merged as PR #654, df46b49e): the gate now repairs a
+    missing createdAt from the indexed row's timestamp, so the exact payload
+    that used to bind at epoch 0 now passes on the real timestamp. The
+    server-side contract fix (this PR's routes.ts half) remains the primary
+    repair; the gate-side repair is the defense-in-depth that makes a future
+    server regression non-fatal.
+    """
+    att_ms, head_ms = NOW_MS - 3600_000, NOW_MS - 7200_000
+    raw_row = _point_row(att_ms)
+    del raw_row["createdAt"]          # what the raw-row serialization produced
+    raw_row["created_at"] = "2026-09-29T03:35:12.000Z"
+    raw_row["record_type"] = raw_row.pop("recordType")
+    raw_row["tags"].append("type:attestation")  # legacy shape survives the swap
+    ok, detail, code = merge_pr.attestation_check(
+        _split_endpoint_http([_indexed_row(att_ms)], {RID: raw_row}),
+        487, head_ms, head_sha=HEAD_SHA, run_json=evidence_run_json)
+    assert ok, f"gate 3 should repair the timestamp from the indexed row: {detail}"
+    assert code is None
+    assert "1970" not in detail
+
+
+def test_point_handler_serializes_with_camel_case_row():
+    """Source-level guard for the server-side half of the contract.
+
+    The two tests above only pin the gate's behavior for a given payload —
+    no hermetic test can observe a running server, so a revert of the
+    routes.ts fix would leave the suite green while production broke again.
+    Assert instead that every registered GET /api/agent-records/:id handler
+    serializes through camelCaseRow, the serializer the list route already
+    uses (camelCase keys + epoch-ms timestamps). Both handlers are checked:
+    the second is currently unreachable, but it is registered on the same
+    path and would become live the moment the first is removed.
+    """
+    routes = (Path(__file__).resolve().parents[2]
+              / "typescript" / "nebula-srv" / "src" / "routes.ts")
+    src = routes.read_text(encoding="utf-8")
+    marker = "router.get('/agent-records/:id'"
+    chunks = src.split(marker)[1:]
+    assert chunks, "no GET /api/agent-records/:id handler found in routes.ts"
+    raw = [c for c in chunks if "camelCaseRow(" not in c.split("router.")[0]]
+    assert not raw, (
+        "GET /api/agent-records/:id must serialize via camelCaseRow (camelCase "
+        "keys + epoch-ms createdAt); a raw res.json() row drops createdAt and "
+        "makes gate 3's freshness check bind at epoch 0 (DBA analysis "
+        "48ac13e2 — held PRs #642/#645)"
+    )
+
+# ── gate 3e: a missing/unusable createdAt fails closed with its own code ──
+#
+# DBA records 48ac13e2 / 2a51e900. The evaluator used to coerce a missing
+# createdAt to 0, binding the row at epoch 0 and reporting ATT_STALE_HEAD —
+# a verdict that tells the tester to RE-ATTEST for a condition that no
+# re-attestation can fix, because the cause is a record-endpoint
+# serialization regression. That misdiagnosis is what froze the merge queue.
+# #654 repairs the timestamp inside the by-id hydration path; these tests pin
+# the second, independent half: the evaluator itself must refuse to guess.
+
+
+def test_missing_created_at_fails_closed_with_dedicated_code():
+    att = rec()
+    del att["createdAt"]
+    ok, detail, code = merge_pr.evaluate_attestation([att], 487, NOW_MS - 7200_000)
+    assert not ok
+    assert code == "ATT_TIMESTAMP_MISSING", code
+    # The whole point: never a freshness verdict built on a fabricated epoch.
+    assert code != "ATT_STALE_HEAD"
+    assert "1970" not in detail
+    assert "re-attesting will not clear it" in detail
+
+
+def test_null_created_at_is_missing_not_epoch():
+    att = rec(created_ms=None)
+    att["createdAt"] = None
+    ok, _detail, code = merge_pr.evaluate_attestation([att], 487, NOW_MS - 7200_000)
+    assert not ok
+    assert code == "ATT_TIMESTAMP_MISSING", code
+
+
+def test_unparseable_created_at_fails_closed():
+    att = rec()
+    att["createdAt"] = "not-a-timestamp"
+    ok, detail, code = merge_pr.evaluate_attestation([att], 487, NOW_MS - 7200_000)
+    assert not ok
+    assert code == "ATT_TIMESTAMP_MISSING", code
+    assert "1970" not in detail
+
+
+def test_boolean_created_at_is_type_confusion_not_epoch():
+    """True is truthy, so the old `or 0` would have compared against 1 ms
+    since the epoch. Booleans are never a timestamp."""
+    att = rec()
+    att["createdAt"] = True
+    ok, _detail, code = merge_pr.evaluate_attestation([att], 487, NOW_MS - 7200_000)
+    assert not ok
+    assert code == "ATT_TIMESTAMP_MISSING", code
+
+
+def test_iso_string_created_at_is_accepted_not_rejected():
+    """The assembly-srv :3107 proxy returns createdAt as an ISO string
+    (DBA record ca9ba66c). A real, parseable timestamp must yield a real
+    verdict — not a spurious ATT_TIMESTAMP_MISSING, and not a crash."""
+    att = rec(created_ms=NOW_MS - 7_200_000)
+    att["createdAt"] = datetime.fromtimestamp(
+        att["createdAt"] / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Genuinely older than head -> the honest verdict is STALE, not MISSING.
+    ok, detail, code = merge_pr.evaluate_attestation([att], 487, NOW_MS)
+    assert not ok
+    assert code == "ATT_STALE_HEAD", (detail, code)
+    assert "1970" not in detail
+
+
+def test_snake_case_created_at_epoch_is_accepted():
+    """The post-#652 point endpoint and the raw adonis handler can both
+    deliver snake_case. A parseable epoch must give the honest verdict."""
+    att = rec(created_ms=NOW_MS - 3600_000)
+    att["created_at"] = att.pop("createdAt")
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [att], 487, NOW_MS - 7_200_000, run_json=evidence_run_json)
+    assert code != "ATT_TIMESTAMP_MISSING", code
+    assert code != "ATT_STALE_HEAD", (detail, code)
+    assert "1970" not in detail
+
+
+def test_missing_created_at_outranks_unknown_head_date():
+    """With no attestation timestamp there is nothing to compare, so
+    HEAD_DATE_UNKNOWN would be equally uninformative. The dedicated code
+    must win — it names the actual defect."""
+    att = rec()
+    del att["createdAt"]
+    ok, _detail, code = merge_pr.evaluate_attestation([att], 487, None)
+    assert not ok
+    assert code == "ATT_TIMESTAMP_MISSING", code
+
+
+def test_newest_usable_timestamp_still_wins_over_a_missing_one():
+    """Regression guard on the selection key: rows missing a timestamp must
+    not outrank a real one (which is what sorting on 0 would do)."""
+    dated = rec(rec_id="dated01", created_ms=NOW_MS - 3600_000)
+    undated = rec(rec_id="undated1")
+    del undated["createdAt"]
+    rows = [undated, dated]
+    ok, detail, code = merge_pr.evaluate_attestation(
+        rows, 487, NOW_MS - 7200_000, run_json=evidence_run_json)
+    assert ok, (detail, code)
+    assert "dated01" in detail
+
+
+def test_timestamp_missing_code_is_registered_for_consumers():
+    gc = merge_pr.gate_codes
+    assert gc.ATT_TIMESTAMP_MISSING in gc.ALL_CODES
+    assert gc.extract_codes(
+        "[FAIL] tester attestation (ATT_TIMESTAMP_MISSING): no usable createdAt"
+    ) == ["ATT_TIMESTAMP_MISSING"]

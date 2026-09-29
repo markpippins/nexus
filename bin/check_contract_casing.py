@@ -24,10 +24,12 @@ import json
 import pathlib
 import re
 import sys
+from datetime import datetime, timezone
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 TYPESPEC = ROOT / "typespec" / "v1"
 BASELINE = ROOT / "bin" / "contract-casing-baseline.json"
+EXEMPTIONS = ROOT / "bin" / "contract-casing-exemptions.json"
 
 # Identifiers that are not wire field names.
 NON_FIELD = {
@@ -36,6 +38,16 @@ NON_FIELD = {
 }
 CAMEL = re.compile(r"^[a-z][a-zA-Z0-9]*$")
 SNAKE = re.compile(r"^[a-z][a-z0-9]*(_[a-z0-9]+)+$")
+
+# Decision 20 (record 25f5fa36): entry kinds for the exemption registry.
+#   column/jsonb/table/external — the wire field mirrors a canonical name
+#     (DB column, jsonb key, table-scoped envelope key, or an external
+#     store's document field); 'storage' carries the location.
+#   computed — a derived read-model aggregate with no storage spelling;
+#     'computation' names the producing code and 'target' is the dated
+#     camelCase remediation milestone (remediation pairing).
+VALID_KINDS = {"column", "jsonb", "computed", "external", "table"}
+STORAGE_KINDS = {"column", "jsonb", "external", "table"}
 
 
 def fields(path: pathlib.Path) -> list[str]:
@@ -75,20 +87,98 @@ def snake_fields(path: pathlib.Path) -> list[str]:
     return [n for n in fields(path) if SNAKE.match(n)]
 
 
-def scan() -> dict:
+def load_exemptions() -> dict[str, list[dict]]:
+    """Storage-shaped field exemption registry (Decision 18, record c53289ef;
+    kind schema unified by Decision 20, record 25f5fa36).
+
+    A snake_case field is exempt ONLY if declared here with kind-appropriate
+    evidence: storage kinds (column/jsonb/external/table) cite the canonical
+    location whose name the wire field mirrors — the database is canonical per
+    Tier-1 doctrine, so storage-shaped wire names are an architectural
+    property, not authoring drift; computed entries cite the producing
+    computation AND a dated camelCase remediation target (remediation
+    pairing). Anything undeclared — inside or outside the CDLC family —
+    remains a violation. Additions are governed by Decision 13 condition 2:
+    cite the PR; no silent growth. Missing registry file = no exemptions
+    (fail closed); malformed registry = hard failure, never a silent widen.
+    """
+    if not EXEMPTIONS.exists():
+        return {}
+    data = json.loads(EXEMPTIONS.read_text(encoding="utf-8"))
+    fields = data.get("fields")
+    if not isinstance(fields, dict):
+        raise ValueError(f"{EXEMPTIONS}: expected a top-level 'fields' object")
+    for name, entries in fields.items():
+        if not isinstance(entries, list) or not entries:
+            raise ValueError(f"{EXEMPTIONS}: {name}: entries must be a non-empty list")
+        for entry in entries:
+            if not isinstance(entry, dict):
+                raise ValueError(f"{EXEMPTIONS}: {name}: each entry must be an object")
+            kind = entry.get("kind")
+            if kind not in VALID_KINDS:
+                raise ValueError(
+                    f"{EXEMPTIONS}: {name}: entry lacks a valid 'kind' "
+                    f"(one of {sorted(VALID_KINDS)}; Decision 20)")
+            if not entry.get("pr"):
+                raise ValueError(
+                    f"{EXEMPTIONS}: {name}: entry lacks 'pr' (Decision 13 condition 2)")
+            if kind in STORAGE_KINDS and not entry.get("storage"):
+                raise ValueError(
+                    f"{EXEMPTIONS}: {name}: {kind} entry lacks 'storage' "
+                    "(the canonical location being mirrored)")
+            if kind == "computed":
+                if not entry.get("computation"):
+                    raise ValueError(
+                        f"{EXEMPTIONS}: {name}: computed entry lacks 'computation' "
+                        "(the code that derives the aggregate)")
+                if not entry.get("target"):
+                    raise ValueError(
+                        f"{EXEMPTIONS}: {name}: computed entry lacks a dated "
+                        "remediation 'target' (Decision 20 remediation pairing)")
+    return fields
+
+
+def expired_computed(fields: dict[str, list[dict]], now: str) -> dict[str, list[str]]:
+    """Computed exemptions past their dated remediation target (Decision 20:
+    'unremediated past milestone = violation'). Returns field -> targets that
+    have lapsed; empty dict means every computed entry is within its window."""
+    expired: dict[str, list[str]] = {}
+    for name, entries in fields.items():
+        for entry in entries:
+            if entry.get("kind") != "computed":
+                continue
+            target = str(entry.get("target") or "")
+            if target and now > target:
+                expired.setdefault(name, []).append(target)
+    return expired
+
+
+def scan(exemptions: dict[str, list[dict]] | None = None) -> dict:
+    if exemptions is None:
+        exemptions = load_exemptions()
     result = {"mixed": [], "snake": [], "camel": [], "empty": []}
     leaks: dict[str, list[str]] = {}
+    exempt: dict[str, list[str]] = {}
     total = 0
+    exempt_total = 0
     for f in sorted(TYPESPEC.rglob("models.tsp")):
         shape = classify(f)
         result[shape].append(str(f.relative_to(ROOT)))
         if shape in ("mixed", "snake"):
             found = snake_fields(f)
             if found:
-                leaks[str(f.relative_to(ROOT))] = found
-                total += len(found)
+                kept = [n for n in found if n not in exemptions]
+                exc = [n for n in found if n in exemptions]
+                if kept:
+                    leaks[str(f.relative_to(ROOT))] = kept
+                    total += len(kept)
+                if exc:
+                    exempt[str(f.relative_to(ROOT))] = exc
+                    exempt_total += len(exc)
     result["leaks"] = leaks
     result["leak_total"] = total
+    result["exempt"] = exempt
+    result["exempt_total"] = exempt_total
     return result
 
 
@@ -105,6 +195,11 @@ def main() -> int:
             else {"mixed": 0, "snake": 0, "leaks": 0})
     base_leaks = base.get("leaks", 0)
 
+    # Decision 20 remediation pairing: computed exemptions past their dated
+    # camelCase target are violations regardless of the leak ratchet.
+    exemptions = load_exemptions()
+    expired = expired_computed(exemptions, datetime.now(timezone.utc).date().isoformat())
+
     # The ratchet verdict, computed before any output path so both the JSON
     # early-return and the default-mode verdict below can use it.
     grew = (len(data["mixed"]) > base["mixed"]) or (len(data["snake"]) > base["snake"]) \
@@ -117,11 +212,13 @@ def main() -> int:
         # code still carries the ratchet verdict for shell callers.
         print(json.dumps({"counts": {k: len(v) for k, v in data.items() if isinstance(v, list)},
                           "leak_total": data["leak_total"],
+                          "exempt_total": data.get("exempt_total", 0),
+                          "computed_expired": expired,
                           "violations": violations}), file=sys.stdout)
         print(f"{len(violations)} violation file(s), leaks {data['leak_total']} "
               f"(ratchet baseline: mixed {base['mixed']}, snake {base['snake']}, leaks {base_leaks})",
               file=sys.stderr)
-        return 1 if grew else 0
+        return 1 if (grew or expired) else 0
     else:
         print("contract casing (Ruling 19d6f725: consumer-visible surface is camelCase)")
         for shape in ("camel", "mixed", "snake", "empty"):
@@ -134,6 +231,15 @@ def main() -> int:
             print("\n  snake - needs converging to camelCase:")
             for f in data["snake"]:
                 print(f"    {f}")
+        if data.get("exempt_total"):
+            print(f"\n  storage-shaped exemptions (Decision 18 registry, declared in "
+                  f"{EXEMPTIONS.name}): {data['exempt_total']} occurrence(s) across "
+                  f"{len(data['exempt'])} file(s) — not counted as leaks")
+        if expired:
+            print(f"\n  computed exemptions PAST their remediation target "
+                  f"(Decision 20 pairing): {sum(len(v) for v in expired.values())}")
+            for name, targets in sorted(expired.items()):
+                print(f"    {name}: target(s) {', '.join(targets)} lapsed")
         print(f"\n  leaked storage names (occurrence count, the ratchet metric): "
               f"{data['leak_total']}")
 
@@ -144,8 +250,12 @@ def main() -> int:
         print("\nOK: no violations")
         return 0
 
-    grew = (len(data["mixed"]) > base["mixed"]) or (len(data["snake"]) > base["snake"]) \
-        or (data["leak_total"] > base_leaks)
+    if expired:
+        print(f"\nFAIL: {sum(len(v) for v in expired.values())} computed exemption(s) "
+              f"past their dated remediation target (Decision 20) — camelize them "
+              f"or re-target with justification", file=sys.stderr)
+        return 1
+
     if grew:
         print(f"\nFAIL: violations increased above baseline "
               f"(mixed {len(data['mixed'])}/{base['mixed']}, "

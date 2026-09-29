@@ -1,6 +1,6 @@
 {
-  "_comment": "Ratchet floor for bin/check_contract_casing.py. Lower these as contracts are corrected. Failing above means a NEW violation was added, not that an old one was fixed. 'leaks' counts snake_case occurrences, not files: a file-count ratchet is blind to more column names being piled onto an already-leaking contract, which is the most likely regression. See agent record 19d6f725-a5dd-41a9-aee2-7f9464c3dfef.",
+  "_comment": "Ratchet floor for bin/check_contract_casing.py. Lower these as contracts are corrected. Failing above means a NEW violation was added, not that an old one was fixed. 'leaks' counts snake_case occurrences, not files: a file-count ratchet is blind to more column names being piled onto an already-leaking contract, which is the most likely regression. See agent record 19d6f725-a5dd-41a9-aee2-7f9464c3dfef. DECISION 18 (c53289ef): 'leaks' is now the NON-EXEMPT count — storage-shaped fields declared in contract-casing-exemptions.json are not leaks. Floor recalculated 616 -> 590 at the registry landing (26 exempt occurrences, CDLC A-series). DECISION 20 (25f5fa36): registry unified to kinds column|jsonb|computed|external|table; the 11 buildCensusReportIndex read-model aggregates entered as computed with dated remediation targets (2026-11-30); asset_id moved to external:, schema_version to table: — same names, truthful kinds. Floor recalculated 590 -> 575 (41 exempt occurrences: 26 storage-shaped + 15 computed). Any undeclared snake_case field anywhere is still a violation; computed entries past their target date are violations regardless of the floor. The floor is the non-exempt leak count, not 616.",
   "mixed": 12,
   "snake": 5,
-  "leaks": 616
+  "leaks": 575
 }
