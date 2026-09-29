@@ -3,6 +3,31 @@ import { z } from "zod";
 import { NebulaClient } from "../api/nebulaClient.js";
 
 /**
+ * Normalize a role name for inbox addressing.
+ *
+ * The routing tag `to:<role>` and the pointer key `inbox:pointer:<role>` are
+ * both compared EXACTLY (nebula-srv filters with `= ANY(tags)`, and the
+ * pointer is a raw Redis key), so a case variant silently addresses a different,
+ * usually empty, mailbox instead of erroring.
+ *
+ * That is not hypothetical: the corpus carried 694 records tagged `to:dba`
+ * against 7 tagged `to:DBA`, and Redis held two live pointer keys
+ * (`inbox:pointer:dba` and `inbox:pointer:DBA`) six days apart. A session
+ * booted as `--role DBA` read the 7-record mailbox and never saw the 694.
+ *
+ * Lowercasing at this boundary is lossless for every role: the canonical
+ * vocabulary is already lowercase (`config/roles/roles.json`, the
+ * `roles_history` name key, and `roles_name_check` which enforces
+ * `^[a-z0-9_-]+$`). Uppercase survives in display surfaces only
+ * (`display_name`, Assembly `alias`).
+ *
+ * This normalizes the QUERY, not the stored data — no record is rewritten.
+ */
+function normalizeRole(role: string): string {
+  return role.trim().toLowerCase();
+}
+
+/**
  * Registers all Nebula RMS MCP Tools.
  */
 export function registerTools(server: McpServer) {
@@ -1013,7 +1038,7 @@ export function registerTools(server: McpServer) {
       role: z.string().describe("Role name (e.g., architect, engineer, planner)"),
     },
     async (args) => {
-      const result = await NebulaClient.getInboxPointer(args.role);
+      const result = await NebulaClient.getInboxPointer(normalizeRole(args.role));
       return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
     }
   );
@@ -1026,7 +1051,7 @@ export function registerTools(server: McpServer) {
       timestamp: z.string().describe("ISO timestamp of the last-seen record"),
     },
     async (args) => {
-      const result = await NebulaClient.setInboxPointer(args.role, args.timestamp);
+      const result = await NebulaClient.setInboxPointer(normalizeRole(args.role), args.timestamp);
       return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
     }
   );
@@ -1040,9 +1065,10 @@ export function registerTools(server: McpServer) {
     },
     async (args) => {
       const role = args.role;
+      const roleKey = normalizeRole(role);
       const limit = Math.min(args.limit ?? 20, 100);
       // REST returns { role, pointer } — extract the ISO timestamp string.
-      const pointerResult = (await NebulaClient.getInboxPointer(role)) as
+      const pointerResult = (await NebulaClient.getInboxPointer(roleKey)) as
         | { role?: string; pointer?: string | null }
         | string
         | null;
@@ -1051,7 +1077,7 @@ export function registerTools(server: McpServer) {
           ? pointerResult.pointer ?? null
           : pointerResult;
       const items = await NebulaClient.listAgentRecords({
-        tag: [`to:${role}`],
+        tag: [`to:${roleKey}`],
         createdAfter: typeof pointer === "string" ? pointer : undefined,
         limit,
       });
