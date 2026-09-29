@@ -19,51 +19,57 @@
 --   "This ruling authorizes schema design for A2a only. It does not authorize
 --    any migration to be applied."
 --
--- ## Numbering is the DBA's to assign
+-- ## All DBA questions are now ANSWERED (records d15c197f, 3aa390da, 57420389)
 --
--- CORRECTION to my first draft of this header: I previously wrote that this
--- directory still carries a DUPLICATE 055 (055-agent-records-tags-gin.sql and
--- 055-allow-supervisor-role.sql, thread 6bba5dd3). On the current base that is
--- no longer true — 055-allow-supervisor-role.sql was renumbered to
--- 058-allow-supervisor-role.sql, and only 055-agent-records-tags-gin.sql
--- remains at 055. The duplicate is resolved. I had read that directory on an
--- older commit and carried a stale claim into a DBA request.
+-- This header used to carry open questions. They are ruled. Refreshed per the DBA's
+-- F3 so the file stops asking things that have been settled.
 --
--- Current numbered sequence: 001-058, then a jump to 067. The 059-066 range is
--- absent and I do not know why — worth the DBA confirming before 068 is used,
--- in case those numbers are reserved or were renumbered elsewhere.
+-- Q1 store      -> **nebula, YES**, binding on store placement. Stronger ground than
+--                  "nebula is canonical": the singular `execution` SCHEMA is the
+--                  receipt-stream family (`execution.attempts/.leases/.receipts/
+--                  .requests`) -- a transport/claims layer of append-only streams.
+--                  A durable execution ENTITY is a different concept and belongs in
+--                  nebula, not there, or it would conflate stream with subject.
+-- Q2 free name  -> **YES**, verified: zero tables or views in `nebula` matching
+--                  %execution%. CAUTION kept below: the `execution` schema is
+--                  singular and this table is `nebula.executions` plural.
+-- Q3 number     -> **068**. Duplicate 055 resolved. 059-066 are DEAD: the runner is
+--                  forward-only from MAX(ledger version) and the live ledger is 67, so
+--                  a 059-066 file would be silently skipped forever while the runner
+--                  reported healthy. The DBA ceded its own claim and renumbered its
+--                  forensic draft 068 -> 069, so no second claimant remains.
+-- Q4 immutability -> **YES, append-only**, hard trigger. Added below.
+-- Design decisions 1-3 -> **all three accepted** (`''`-forbidding CHECK, CASE over
+--                  AND for rate bounds, NOT NULL preservation noted as load-bearing).
 --
--- The proposed number in this filename is 068, which is "next" only in the sense
--- that 067 is the highest present. That is a proposal, not an assignment.
+-- ## Still unnumbered on purpose, and the gate that changes that
 --
--- ## The strongest reason this file stays unnumbered (SEV3, 2026-09-28)
+-- Record 5ab78e30: the DBA's target-identity gate for the startup runner, prompted by
+-- SEV3 9a70c8c5 (a worktree nebula-srv booted against the LIVE database and the runner
+-- applied migrations 056/057 to production) and endorsed in 3aa390da. Root cause is
+-- worse than a mistake: `index.ts` builds the Pool with defaults localhost:5432/nexus,
+-- and on this host **the default IS production**. The scratch PORT in the incident was
+-- the HTTP port and had no bearing on the PG target. There is no target-identity
+-- awareness at all.
 --
--- Record 9a70c8c5: an engineer booted a worktree nebula-srv on a scratch port
--- with env pointed at the LIVE nexus database. The startup migration runner
--- applied pending migrations 056 and 057 to production. Self-reported, SEV3, open
--- with the DBA.
+-- Per 57420389, land the gate first or in the same PR as numbering. Numbering this
+-- file before the gate exists re-creates the hazard the gate is meant to close.
 --
--- That is the same runner that would pick up a numbered file here, and the
--- hazard is not theoretical: booting a worktree service against the live
--- database has already applied unreviewed schema to it once today. A numbered
--- migration sitting in a worktree branch is one careless boot from production.
--- Unnumbered is the cheap mitigation available to me.
--- ## The store is an OPEN QUESTION for the DBA, not a settled decision
+-- ## Verification status — read this before applying
 --
--- 6629b009 says "Execution record (new)" without naming a store. `nebula` is
--- the canonical agent/harvest/plan schema per dba-schema-migration-path, and
--- Tier 3 already lands in nebula.agent_records, so nebula.executions is the
--- consistent candidate — but that is my inference, not a ruling. **If the
--- execution record belongs elsewhere, this DDL is in the wrong schema and
--- should be redirected rather than adapted.**
+-- I could NOT parse or execute this DDL locally: no PostgreSQL socket and no
+-- credentials in the worktree. My first merged version carried a trailing comma after
+-- the last table constraint, which made it **unexecutable** -- the DBA caught it by
+-- applying the merged file to a throwaway PostgreSQL 17.11 database, and confirmed
+-- "not parsed by any PostgreSQL" was the correct caveat. The F1 fix is that one
+-- character. Everything below is what the DBA verified in their scratch DB, not me.
 --
--- Please also confirm `nebula.executions` is a free name. I could not verify
--- against live PG (no credentials in this worktree), and
--- dba-schema-migration-path warns that some nebula list targets are VIEWS
--- over base tables — worth ruling out before creating anything.
+-- Re-verification is needed after the F1/F2/F3 changes in this revision.
 --
--- R9: operator answered YES — replicate to vanadium. See the accompanying
--- record. Applies only after the DBA authors the file and it is applied.
+-- ## R9
+-- Operator answered YES -- replicate to vanadium. Held, not actioned: per the
+-- dba-schema-migration-path, R9 follows application, not the authoring of this file.
+--
 -- =============================================================================
 
 BEGIN;
@@ -183,7 +189,7 @@ CREATE TABLE IF NOT EXISTS nebula.executions (
                     AND split_part(census_rate, '/', 1)::int <= split_part(census_rate, '/', 2)::int
                 ELSE false
             END
-        ),
+        )
 
     -- ── Deliberately absent ───────────────────────────────────────────────
     -- No FK to vision.sessions (DBA condition 4). That table is empty and its
@@ -192,8 +198,8 @@ CREATE TABLE IF NOT EXISTS nebula.executions (
     -- calendar_session_ref column (condition 3) — no ratified shape for it, and
     -- no exercised surface to bind to.
     -- No 1:1 session uniqueness, for the same reason as condition 2.
-    -- No immutability trigger: the Architect did not rule one in, and adding
-    -- one would be inventing policy. Raised as an open question instead.
+    -- Immutability is NOT absent -- it is REQUIRED and created below, per the
+    -- DBA's Q4 answer (append-only, hard trigger).
 );
 
 -- NOTE ON A REAL FRAGILITY, for whoever edits this later:
@@ -224,7 +230,30 @@ COMMENT ON COLUMN nebula.executions.session_id IS
   'a uuid here is the vision.sessions concept colliding with the reference family '
   '(DBA ruling dffa404e condition 3).';
 
--- ── Indexes ────────────────────────────────────────────────────────────────
+-- ── Append-only (DBA answers d15c197f Q4: YES, hard trigger) ─────────────────
+-- Execution records are audit-class. Mutating one would silently rewrite the very
+-- identity A2a exists to establish, so UPDATE and DELETE are refused outright
+-- rather than guarded by convention or a soft column. There is no retirement
+-- path today; when one is needed it becomes an explicit later migration.
+--
+-- Combined with the NOT NULL census columns above, this also keeps the tri-state
+-- CHECKs sound for good: an appended row cannot later be edited into a state the
+-- constraints would have rejected at insert time.
+
+CREATE OR REPLACE FUNCTION nebula.fn_executions_append_only() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'nebula.executions is append-only (DBA answers d15c197f Q4); % is refused', TG_OP
+        USING ERRCODE = 'restrict_violation';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_executions_append_only ON nebula.executions;
+CREATE TRIGGER trg_executions_append_only
+    BEFORE UPDATE OR DELETE ON nebula.executions
+    FOR EACH ROW EXECUTE FUNCTION nebula.fn_executions_append_only();
+
+-- ── Indexes ─────────────────────────────────────────────────────────────────
 
 -- Many-per-session lookup. This mirrors the partial-index shape already used on
 -- nebula.agent_connections, and is only safe because executions_session_id_not_empty
