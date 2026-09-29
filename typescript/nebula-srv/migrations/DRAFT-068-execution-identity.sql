@@ -91,9 +91,11 @@ CREATE TABLE IF NOT EXISTS nebula.executions (
     -- DBA condition 3: a calendar session would need its OWN separately named
     -- column with its own FK. There is deliberately NO calendar_session_ref
     -- here. A uuid-shaped value in session_id is the vision.sessions concept
-    -- colliding with this reference family, so the application validator
-    -- (lib/execution-identity.ts) refuses one; this CHECK additionally forbids
-    -- the empty string, so a uuid cannot be smuggled in as text.
+    -- colliding with this reference family. Enforced in TWO places on purpose:
+    -- the application validator (lib/execution-identity.ts) refuses one, and
+    -- executions_session_id_not_a_uuid refuses one at the database. Both matter —
+    -- an earlier draft relied on the `''` check to cover this too, which it did
+    -- not, and a direct SQL write bypassed the ruling.
     session_id         text,
 
     -- ── Tier-2 census marker ──────────────────────────────────────────────
@@ -161,6 +163,16 @@ CREATE TABLE IF NOT EXISTS nebula.executions (
     CONSTRAINT executions_session_id_not_empty
         CHECK (session_id IS NULL OR session_id <> ''),
 
+    -- FIXED after execution against PostgreSQL 17.11: the first version relied on
+    -- the `''` check above to ALSO stop a uuid, reasoning they were the same class
+    -- of bad value. They are not — a uuid is not '' — so the database accepted a
+    -- uuid-shaped session_id that the application validator refuses. Condition 3
+    -- was therefore enforced only in the app, and any direct SQL write bypassed
+    -- the ruling. The guard now exists at both layers, so the DBA's condition
+    -- holds even if a caller skips the validator.
+    CONSTRAINT executions_session_id_not_a_uuid
+        CHECK (session_id IS NULL OR session_id !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'),
+
     -- Tri-state, part 1: sampled implies enabled.
     CONSTRAINT executions_census_sampled_implies_enabled
         CHECK (NOT census_sampled OR census_enabled),
@@ -181,9 +193,20 @@ CREATE TABLE IF NOT EXISTS nebula.executions (
     CONSTRAINT executions_census_rate_shape
         CHECK (census_rate IS NULL OR census_rate ~ '^[0-9]+/[0-9]+$'),
 
+    -- FIXED after execution against PostgreSQL 17.11: the first version was
+    -- `CHECK (CASE WHEN census_rate ~ ... THEN <bounds> ELSE false END)`.
+    -- `NULL ~ regex` evaluates to NULL, not false, so the CASE took the ELSE
+    -- branch and returned false — rejecting EVERY row with a NULL rate. That
+    -- silently removed two of the three tri-state values: "census disabled", and
+    -- "master-switch-only" (--census alone, which the Architect ruled valid and
+    -- which means 1/1). Unit tests could not catch it: they exercise the
+    -- application validator, which already accepted a null rate, so the DDL was
+    -- the only thing disagreeing with the ratified contract. Guard the CASE
+    -- explicitly, matching the shape-check above.
     CONSTRAINT executions_census_rate_bounds
         CHECK (
-            CASE
+            census_rate IS NULL
+            OR CASE
                 WHEN census_rate ~ '^[0-9]+/[0-9]+$' THEN
                     split_part(census_rate, '/', 2)::int >= 1
                     AND split_part(census_rate, '/', 1)::int <= split_part(census_rate, '/', 2)::int
