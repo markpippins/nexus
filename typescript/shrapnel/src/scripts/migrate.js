@@ -384,7 +384,12 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   const applied = await runMigrations({});
-  if (applied.length === 0) log('[shrapnel migrate] nothing to do');
+  // console.log, not a bare `log`: main() has no logger in scope. A
+  // ReferenceError here exited 1 AFTER a fully successful no-op apply — the
+  // operator-facing exit code contradicted the ledger (caught live in the
+  // 2026-09-29 throwaway-DB rehearsal, record 3f5fed68; hermetic tests never
+  // saw it because they call runMigrations() directly, bypassing main()).
+  if (applied.length === 0) console.log('[shrapnel migrate] nothing to do');
 }
 
 // Only run when invoked as the CLI. Importing this module (the tests do) must

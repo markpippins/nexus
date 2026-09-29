@@ -25,7 +25,17 @@
 
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -102,6 +112,31 @@ async function freshDb() {
   await admin.end();
   databases.push(dbname);
   return dsnFor(dbname);
+}
+
+// Can this host's pg_dump talk to the test PostgreSQL? pg_dump refuses to dump
+// a NEWER server, and CI runners may carry an older client than the throwaway
+// server (pg_dump 16 vs PostgreSQL 17 was hit live on 2026-09-29). That is a
+// property of the environment, not of the runner, so the dump test branches on
+// it instead of skipping: compatible client -> assert the archive is written;
+// incompatible client -> assert the fail-closed refusal. Both legs pin real
+// guardrail behavior; neither is allowed to silently skip.
+let dumpRailSkipReason = null;
+{
+  try {
+    const dumpOut = spawnSync('pg_dump', ['--version'], { encoding: 'utf8' }).stdout || '';
+    const dumpMajor = parseInt(dumpOut.match(/\d+/)?.[0] ?? '0', 10);
+    const probe = new pg.Client({ connectionString: ADMIN_DSN });
+    await probe.connect();
+    const { rows } = await probe.query('SHOW server_version');
+    await probe.end().catch(() => {});
+    const serverMajor = parseInt(String(rows[0].server_version).split('.')[0], 10);
+    if (dumpMajor < serverMajor) {
+      dumpRailSkipReason = `pg_dump ${dumpMajor} cannot dump server ${serverMajor} (client older than the test server)`;
+    }
+  } catch (err) {
+    dumpRailSkipReason = `pg_dump compatibility probe failed: ${err.message}`;
+  }
 }
 
 after(async () => {
@@ -523,4 +558,204 @@ describe('runMigrations guardrails', { skip: canCreateDb ? false : 'cannot creat
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('exits 0 on an in-sync no-op apply — the exit code must not contradict the ledger', async () => {
+    // Regression: main() called an undefined `log` in the applied.length === 0
+    // branch, so a fully successful no-op apply exited 1 AFTER doing its (zero)
+    // work — caught live in the 2026-09-29 throwaway-DB rehearsal (record
+    // 3f5fed68). The suite missed it because every prior CLI-path test applies
+    // something; this one drives the real binary through the no-op branch.
+    const dsn = await freshDb();
+    const run = () =>
+      spawnSync('node', [join(SERVICE_ROOT, 'src', 'scripts', 'migrate.js')], {
+        encoding: 'utf8',
+        env: { ...process.env, SHRAPNEL_PG_DSN: dsn },
+      });
+
+    const first = run();
+    assert.equal(first.status, 0, `first apply failed: ${first.stderr || first.stdout}`);
+
+    const second = run();
+    assert.equal(
+      second.status,
+      0,
+      `no-op apply exited ${second.status}: ${second.stderr || second.stdout}`
+    );
+    assert.match(second.stdout, /nothing to do/);
+    assert.ok(
+      !/log is not defined/.test(`${second.stderr}${second.stdout}`),
+      'the ReferenceError must be gone from the CLI path'
+    );
+
+    const c = connect(dsn);
+    const { rows } = await c.query('SELECT count(*)::int AS n FROM shrapnel._migration_ledger');
+    assert.equal(rows[0].n, REAL_CHAIN.length, 'the no-op run changed nothing');
+    await c.end();
+  });
+
+  it('applies to an existing database through the CLI with --no-dump: exit 0, ledger complete', async () => {
+    // The dump rail's success leg is exercised below, gated on client/server
+    // compatibility; this pins the existing-database apply path end to end
+    // without depending on the runner's pg_dump build.
+    const dsn = await freshDb();
+    const root = mkdtempSync(join(tmpdir(), 'shrapnel-migrate-cli-root-'));
+    mkdirSync(join(root, 'src', 'scripts'), { recursive: true });
+    cpSync(MIGRATIONS_DIR, join(root, 'migrations'), { recursive: true });
+    cpSync(join(SERVICE_ROOT, 'src', 'scripts', 'migrate.js'), join(root, 'src', 'scripts', 'migrate.js'));
+    symlinkSync(join(SERVICE_ROOT, 'node_modules'), join(root, 'node_modules'), 'dir');
+    const last = REAL_CHAIN[REAL_CHAIN.length - 1];
+    const run = (extraEnv = {}, extraArgs = []) =>
+      spawnSync('node', [join(root, 'src', 'scripts', 'migrate.js'), ...extraArgs], {
+        encoding: 'utf8',
+        cwd: root,
+        env: { ...process.env, SHRAPNEL_PG_DSN: dsn, ...extraEnv },
+      });
+    try {
+      // Seed: fresh database, chain minus the last file.
+      rmSync(join(root, 'migrations', last));
+      const seeded = run();
+      assert.equal(seeded.status, 0, `seed apply failed: ${seeded.stderr || seeded.stdout}`);
+
+      // Restore the last file: one real pending migration on an existing DB.
+      cpSync(join(MIGRATIONS_DIR, last), join(root, 'migrations', last));
+      const res = run({}, ['--no-dump']);
+      assert.equal(res.status, 0, `no-dump apply failed: ${res.stderr || res.stdout}`);
+      assert.ok(res.stdout.includes(`applied ${last}`), `expected applied ${last} in output`);
+      assert.ok(!/pre-apply dump/.test(res.stdout), '--no-dump writes no archive');
+
+      const c = connect(dsn);
+      const { rows } = await c.query('SELECT count(*)::int AS n FROM shrapnel._migration_ledger');
+      assert.equal(rows[0].n, REAL_CHAIN.length, 'the whole chain is ledgered');
+      await c.end();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to apply when the pre-apply dump cannot be written (fail-closed, end to end)', async () => {
+    // Deterministic in every environment: the dump directory is occupied by a
+    // regular file, so the rail fails before pg_dump is even considered -- and
+    // the apply must refuse with the ledger untouched.
+    const dsn = await freshDb();
+    const root = mkdtempSync(join(tmpdir(), 'shrapnel-migrate-cli-root-'));
+    mkdirSync(join(root, 'src', 'scripts'), { recursive: true });
+    cpSync(MIGRATIONS_DIR, join(root, 'migrations'), { recursive: true });
+    cpSync(join(SERVICE_ROOT, 'src', 'scripts', 'migrate.js'), join(root, 'src', 'scripts', 'migrate.js'));
+    symlinkSync(join(SERVICE_ROOT, 'node_modules'), join(root, 'node_modules'), 'dir');
+    const blocker = join(tmpdir(), `shrapnel-dump-blocker-${randomUUID().slice(0, 8)}`);
+    const pending = '9999_rehearsal_pending.sql';
+    writeFileSync(blocker, 'not a directory');
+    const run = (extraEnv = {}) =>
+      spawnSync('node', [join(root, 'src', 'scripts', 'migrate.js')], {
+        encoding: 'utf8',
+        cwd: root,
+        env: { ...process.env, SHRAPNEL_PG_DSN: dsn, ...extraEnv },
+      });
+    try {
+      // Seed the full real chain on a fresh database (no dump on fresh).
+      const seeded = run();
+      assert.equal(seeded.status, 0, `seed apply failed: ${seeded.stderr || seeded.stdout}`);
+
+      // Only NOW introduce pending work, so the seed really is the real chain.
+      writeFileSync(join(root, 'migrations', pending), 'SELECT 1;\n');
+
+      const res = run({ SHRAPNEL_MIGRATE_DUMP_DIR: blocker });
+      assert.equal(res.status, 1, `expected the dump rail to refuse: ${res.stdout}`);
+      assert.match(
+        `${res.stderr}${res.stdout}`,
+        /pre-apply pg_dump failed|EEXIST/,
+        'the operator sees a refusal, not a silent apply'
+      );
+
+      const c = connect(dsn);
+      const { rows } = await c.query('SELECT count(*)::int AS n FROM shrapnel._migration_ledger');
+      assert.equal(rows[0].n, REAL_CHAIN.length, 'the refused run changed nothing');
+      const pend = await c.query('SELECT count(*)::int AS n FROM shrapnel._migration_ledger WHERE filename = $1', [pending]);
+      assert.equal(pend.rows[0].n, 0, 'the pending migration was not applied behind the refusal');
+      await c.end();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(blocker, { force: true });
+    }
+  });
+
+  it(
+    'dump rail on an existing DB with pending work: dumps when the client can, refuses when it cannot',
+    async () => {
+      // The dump rail lives in main(), which the unit tests never reach, and
+      // it only fires on an EXISTING database with pending work. The CLI always
+      // plans against the migrations dir next to migrate.js itself, so the test
+      // runs a copied service root: seed the DB minus the last migration,
+      // restore the file, then apply. Where the host's pg_dump can read the
+      // test server, the archive must be written and the apply commits; where
+      // it cannot (CI: pg_dump 16 vs server 17), the rail must refuse the apply
+      // outright — the fail-closed property itself. No branch is allowed to
+      // skip: both pin guardrail behavior and both end at the same ledger
+      // invariant (the refused run changed nothing; the successful one ledgered
+      // the whole chain).
+      const dsn = await freshDb();
+      const root = mkdtempSync(join(tmpdir(), 'shrapnel-migrate-cli-root-'));
+      const dumpDir = mkdtempSync(join(tmpdir(), 'shrapnel-migrate-dumps-'));
+      mkdirSync(join(root, 'src', 'scripts'), { recursive: true });
+      cpSync(MIGRATIONS_DIR, join(root, 'migrations'), { recursive: true });
+      cpSync(join(SERVICE_ROOT, 'src', 'scripts', 'migrate.js'), join(root, 'src', 'scripts', 'migrate.js'));
+      symlinkSync(join(SERVICE_ROOT, 'node_modules'), join(root, 'node_modules'), 'dir');
+      const last = REAL_CHAIN[REAL_CHAIN.length - 1];
+      const run = (extraEnv = {}) =>
+        spawnSync('node', [join(root, 'src', 'scripts', 'migrate.js')], {
+          encoding: 'utf8',
+          cwd: root,
+          env: { ...process.env, SHRAPNEL_PG_DSN: dsn, SHRAPNEL_MIGRATE_DUMP_DIR: dumpDir, ...extraEnv },
+        });
+      try {
+        // Seed: fresh database, chain minus the last file -> no dump (fresh).
+        rmSync(join(root, 'migrations', last));
+        const seeded = run();
+        assert.equal(seeded.status, 0, `seed apply failed: ${seeded.stderr || seeded.stdout}`);
+        assert.ok(!/pre-apply dump/.test(seeded.stdout), 'a fresh database gets no dump');
+        assert.equal(readdirSync(dumpDir).length, 0, 'no dump artifacts after the fresh apply');
+
+        // Restore the last file: one real pending migration on an existing DB.
+        cpSync(join(MIGRATIONS_DIR, last), join(root, 'migrations', last));
+        const res = run();
+        const dumps = readdirSync(dumpDir).filter((f) => f.endsWith('.dump'));
+
+        const c = connect(dsn);
+        const ledgered = async () =>
+          (await c.query('SELECT count(*)::int AS n FROM shrapnel._migration_ledger')).rows[0].n;
+
+        if (dumpRailSkipReason) {
+          // Incompatible client: the rail must fail CLOSED — refuse the apply,
+          // produce no USABLE archive, change no ledger row. (CI's pg_dump 16
+          // vs the throwaway server 17 lands here, and that is a real
+          // assertion.) Note pg_dump creates its -f output file before the
+          // version check aborts, so a zero-byte artifact may remain; the
+          // invariant is that nothing non-empty is produced.
+          assert.equal(res.status, 1, `expected the dump rail to refuse: ${res.stdout}`);
+          assert.match(
+            `${res.stderr}${res.stdout}`,
+            /pre-apply pg_dump failed[\s\S]*override with --no-dump/,
+            'the operator sees the wrapped refusal, not a silent apply'
+          );
+          assert.match(`${res.stderr}${res.stdout}`, /pg_dump/);
+          for (const f of dumps) {
+            assert.equal(statSync(join(dumpDir, f)).size, 0, 'a failed dump must not leave a usable archive');
+          }
+          assert.equal(await ledgered(), REAL_CHAIN.length - 1, 'the refused run changed nothing');
+        } else {
+          // Compatible client: the archive is written, then the apply commits.
+          assert.equal(res.status, 0, `dump-rail apply failed: ${res.stderr || res.stdout}`);
+          assert.match(res.stdout, /pre-apply dump: /, 'the rail announces the archive');
+          assert.ok(res.stdout.includes(`applied ${last}`), `expected applied ${last} in output`);
+          assert.equal(dumps.length, 1, 'exactly one pre-apply dump was written');
+          assert.ok(statSync(join(dumpDir, dumps[0])).size > 0, 'the archive is non-empty');
+          assert.equal(await ledgered(), REAL_CHAIN.length, 'the whole chain is ledgered');
+        }
+        await c.end();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+        rmSync(dumpDir, { recursive: true, force: true });
+      }
+    }
+  );
 });
