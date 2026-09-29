@@ -263,3 +263,37 @@ test('A2b index is empty-safe and sorts deterministically', () => {
   assert.deepEqual(forward, reverse)
   assert.deepEqual(forward, ['card-a', 'card-z'])
 })
+
+test('A2b Q6: daily_counts gives A6 a measurement to size retention against', () => {
+  const reports = [
+    { id: 'r1', created_at: '2026-09-27T01:00:00Z', metadata: report({ findings: [finding('card-a', 'MISSING')] }) },
+    { id: 'r2', created_at: '2026-09-27T23:59:00Z', metadata: report({ findings: [] }) },
+    { id: 'r3', created_at: '2026-09-28T00:00:00Z', metadata: report({ findings: [finding('card-b', 'UNUSED')] }) },
+  ]
+  const index = buildCensusReportIndex(reports)
+  assert.equal(index.observed_day_count, 2)
+  assert.deepEqual(index.daily_counts, [
+    { day: '2026-09-27', report_count: 2, finding_count: 1, report_count_no_findings: 1 },
+    { day: '2026-09-28', report_count: 1, finding_count: 1, report_count_no_findings: 0 },
+  ])
+})
+
+test('A2b Q6: a truncated read reports a floor, and the limitation says so', () => {
+  const reports = [{ id: 'r1', created_at: '2026-09-27T00:00:00Z', metadata: report({}) }]
+  const truncated = buildCensusReportIndex(reports, { truncated: true })
+  assert.equal(truncated.truncated, true)
+  // The floor caveat is a static, always-true statement — not a claim that this call was
+  // truncated — so a reader cannot mistake a bounded read for a complete one.
+  assert.ok(truncated.limitation.includes('floor on true daily volume'))
+  assert.equal(buildCensusReportIndex(reports, { truncated: false }).truncated, false)
+  assert.equal(buildCensusReportIndex(reports).truncated, false)
+})
+
+test('A2b Q6: an unparseable created_at is skipped rather than bucketed as garbage', () => {
+  const index = buildCensusReportIndex([
+    { id: 'r1', created_at: 'not-a-date', metadata: report({}) },
+    { id: 'r2', created_at: '2026-09-27T00:00:00Z', metadata: report({}) },
+  ])
+  assert.equal(index.observed_day_count, 1)
+  assert.equal(index.report_count, 2)
+})
