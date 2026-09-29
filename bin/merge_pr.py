@@ -201,13 +201,20 @@ def verify_ci_runs(
     head_sha: Optional[str],
     run_json: Callable[..., Any] = _gh_json,
 ) -> Tuple[bool, str]:
-    """Every cited CI run must exist, be SUCCESS (or NEUTRAL/SKIPPED), and —
-    when the run exposes a head SHA — belong to the PR's current head.
+    """Every cited CI run must exist, be SUCCESS, and — when the run exposes
+    a head SHA — belong to the PR's current head.
 
     Verification, not trust: the run ID proves a build happened, the API
     conclusion proves it passed, and the SHA binding proves it tested THIS
-    code. Runs that omit headSha (some events) are accepted on conclusion
-    alone and said so in the detail.
+    code.
+
+    Fail-closed on weakened conclusions (Decision 10 tightening, work order
+    a49acfc9): a path-filtered *skipped* run carries the PR head_sha and
+    would pass with zero test execution, and NEUTRAL likewise proves no run
+    — both are rejected with a self-explaining detail. Runs that omit
+    head_sha are also rejected: GitHub workflow-run objects always carry
+    head_sha, so its absence is a data anomaly we refuse to pass on
+    conclusion alone — every pass must bind to the code it tested.
     """
     if not run_ids:
         return False, "no CI run references"
@@ -219,17 +226,27 @@ def verify_ci_runs(
         except Exception as exc:
             return False, f"CI run {rid} lookup failed: {_exc_brief(exc)} (fail closed)"
         conclusion = str((run or {}).get("c") or "").strip().lower()
-        if conclusion not in ("success", "neutral", "skipped"):
-            return False, f"CI run {rid} conclusion is '{conclusion or 'unknown'}' (not success)"
+        if conclusion != "success":
+            return False, (
+                f"CI run {rid} conclusion is '{conclusion or 'unknown'}' "
+                "(not success; success-only per Decision 10 — skipped/neutral "
+                "runs execute no tests and prove nothing)"
+            )
         run_sha = str((run or {}).get("s") or "").strip().lower()
-        if run_sha and head_sha:
+        if not run_sha:
+            return False, (
+                f"CI run {rid} omits head_sha — no code binding possible; "
+                "every accepted run must bind to the PR head (fail closed)"
+            )
+        if head_sha:
             if not head_sha.lower().startswith(run_sha[:7]) and not run_sha.startswith(head_sha.lower()[:7]):
                 return False, (
                     f"CI run {rid} tested head {run_sha[:8]}, not this PR's head "
                     f"{str(head_sha)[:8]} — attested evidence is for superseded code"
                 )
             ok_shas.append(run_sha[:7])
-    sha_note = f"; head SHA verified ({', '.join(ok_shas)})" if ok_shas else "; run head SHA not exposed by API (conclusion verified only)"
+    sha_note = f"; head SHA verified ({', '.join(ok_shas)})" if ok_shas else ""
+    return True, f"{len(run_ids)} CI run(s) verified success{sha_note}"
     return True, f"{len(run_ids)} CI run(s) verified success{sha_note}"
 
 

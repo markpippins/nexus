@@ -606,6 +606,50 @@ def test_run_conclusion_failure_rejects_attestation():
     assert "not success" in detail
 
 
+def test_run_conclusion_skipped_rejects_attestation():
+    """[A] Path-filtered SKIPPED runs carry the PR head_sha and execute no
+    tests — accepting them would half-reopen the stated-counts gap."""
+    def skipped_run(*args):
+        return {"c": "skipped", "s": "a8b1dfc600000000000000000000000000000000"}
+
+    att = rec(title="Tester attestation: PR #487 — CI run 36000000001 skipped")
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [att], 487, NOW_MS - 7200_000,
+        head_sha="a8b1dfc600000000000000000000000000000000",
+        run_json=skipped_run)
+    assert not ok and code == "ATT_NO_CI_EVIDENCE"
+    assert "success-only" in detail
+
+
+def test_run_conclusion_neutral_rejects_attestation():
+    """[A] NEUTRAL proves no run — fail closed like any non-success."""
+    def neutral_run(*args):
+        return {"c": "neutral", "s": "a8b1dfc600000000000000000000000000000000"}
+
+    att = rec(title="Tester attestation: PR #487 — CI run 36000000001 neutral")
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [att], 487, NOW_MS - 7200_000,
+        head_sha="a8b1dfc600000000000000000000000000000000",
+        run_json=neutral_run)
+    assert not ok and code == "ATT_NO_CI_EVIDENCE"
+    assert "success-only" in detail
+
+
+def test_run_without_head_sha_rejected():
+    """[B] A run that omits head_sha has no code binding; accepting it on
+    conclusion alone is exactly the pass path the tightening removes."""
+    def shaless_run(*args):
+        return {"c": "success", "s": ""}
+
+    att = rec(title="Tester attestation: PR #487 — CI run 36000000001 success")
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [att], 487, NOW_MS - 7200_000,
+        head_sha="a8b1dfc600000000000000000000000000000000",
+        run_json=shaless_run)
+    assert not ok and code == "ATT_NO_CI_EVIDENCE"
+    assert "head_sha" in detail and "fail closed" in detail
+
+
 def test_run_at_wrong_head_rejected():
     def other_head_run(*args):
         return {"c": "success", "s": "deadbeef00000000000000000000000000000000"}
