@@ -32,6 +32,9 @@ jobs:
           python-version: "3.11"
       - name: Install PyYAML
         run: pip install --quiet pyyaml
+      - name: Port registry byte-identical (moleculer/ports.yaml)
+        run: python3 tools/api-docs/gen_port_registry.py --check
+        shell: bash
       - name: Drift check (route surface)
         run: make apidocs-validate
         shell: bash

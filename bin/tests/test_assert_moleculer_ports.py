@@ -145,11 +145,40 @@ class TestExceptionWindow:
         assert r.returncode == 1
 
 
+def _registry_ports():
+    """Port list parsed straight from moleculer/ports.yaml (the single source)."""
+    import re
+    root = Path(__file__).resolve().parents[2]
+    text = (root / "moleculer" / "ports.yaml").read_text()
+    return re.findall(r"^\s*-\s*port:\s*(\d+)", text, re.M)
+
+
 class TestJson:
     def test_json_report_wellformed(self, world):
+        # The gate must report exactly what the registry declares — the old
+        # expectation here pinned a hand-list that had silently missed every
+        # canary port after 4170 (the drift ruling 7c97ea63 §2 targets).
         r = world.run("--json")
         import json
         data = json.loads(r.stdout)
         assert data["failures"] == []
-        assert data["ports"] == [
-            "4050", "4060", "4080", "4100", "4106", "4109", "4114", "4170"]
+        assert data["ports"] == _registry_ports()
+
+    def test_ports_yaml_override(self, world, tmp_path):
+        import json
+        p = tmp_path / "ports.yaml"
+        p.write_text("infra:\n  - port: 9999\n  - port: 8888\ncanary: []\n")
+        world.env["NEXUS_PORTS_YAML"] = str(p)
+        r = world.run("--json")
+        data = json.loads(r.stdout)
+        assert data["ports"] == ["9999", "8888"]
+
+    def test_missing_registry_falls_back_to_full_list(self, world):
+        # Fallback list must EQUAL the registry content — pinning their
+        # equality so the inline list can never silently drift again.
+        import json
+        world.env["NEXUS_PORTS_YAML"] = "/nonexistent/ports.yaml"
+        r = world.run("--json")
+        data = json.loads(r.stdout)
+        assert data["ports"] == _registry_ports()
+        assert "NOTICE" in r.stderr
