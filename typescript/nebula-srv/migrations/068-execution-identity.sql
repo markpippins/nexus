@@ -64,6 +64,23 @@
 --
 -- R9: operator answered YES — replicate to vanadium. See the accompanying
 -- record. Applies only after the DBA authors the file and it is applied.
+-- ## DBA ANSWERS — no longer open questions (answers record d15c197f, 2026-09-29)
+--
+-- Q1 store: CONFIRMED nebula. The execution SCHEMA is the receipt-stream family
+--   (execution.attempts/leases/receipts/requests), a transport layer, not an
+--   entity home. nebula.executions is the correct home. Do not redirect.
+-- Q2 name: CONFIRMED free/non-view (verified against information_schema).
+--   Caution: singular `execution` schema vs plural `nebula.executions` will
+--   confuse someone — keep the distinction explicit in docs.
+-- Q3 number: 068, per answers d15c197f. Duplicate 055 resolved (b52c1ab0);
+--   059-066 are DEAD numbers (forward-only runner, live ledger 67 — 3aa390da).
+--   DBA's own forensics draft ceded 068 and renumbered to 069.
+-- Q4 immutability: YES — append-only. Enforced below (added by review 57420389).
+-- Design decisions 1-3: all three accepted as written (CHECK at creation,
+--   CASE over AND for bounds, NOT NULL census columns load-bearing).
+-- Numbering remains gated: become 068-*.sql only when the target-identity gate
+--   (5ab78e30) is ratified/landed, so the applying boot is the commissioned one.
+--
 -- =============================================================================
 
 BEGIN;
@@ -183,7 +200,7 @@ CREATE TABLE IF NOT EXISTS nebula.executions (
                     AND split_part(census_rate, '/', 1)::int <= split_part(census_rate, '/', 2)::int
                 ELSE false
             END
-        ),
+        )
 
     -- ── Deliberately absent ───────────────────────────────────────────────
     -- No FK to vision.sessions (DBA condition 4). That table is empty and its
@@ -249,6 +266,32 @@ CREATE INDEX IF NOT EXISTS idx_executions_census_day
     ON nebula.executions (created_at DESC) WHERE census_sampled;
 
 COMMIT;
+
+-- ════════════════════════════════════════════════════════════════════════════
+-- APPEND-ONLY ENFORCEMENT (added by DBA review 57420389 per answers d15c197f Q4)
+-- Execution records are audit-class: the identity A2a exists to establish is
+-- rewritten silently by any UPDATE. The draft's open question is answered YES.
+-- Retirement, if ever needed, becomes an explicit later migration.
+-- ════════════════════════════════════════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION nebula.fn_executions_append_only()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE EXCEPTION 'nebula.executions is append-only (DBA answers d15c197f Q4): % on execution_id % forbidden',
+    TG_OP, OLD.execution_id;
+END;
+$$;
+
+COMMENT ON FUNCTION nebula.fn_executions_append_only() IS
+  'DBA review 57420389 / answers d15c197f Q4: nebula.executions is append-only. UPDATE and DELETE raise. Supersession, if ever required, is an explicit later migration.';
+
+DROP TRIGGER IF EXISTS trg_executions_append_only ON nebula.executions;
+CREATE TRIGGER trg_executions_append_only
+  BEFORE UPDATE OR DELETE ON nebula.executions
+  FOR EACH ROW
+  EXECUTE FUNCTION nebula.fn_executions_append_only();
 
 -- =============================================================================
 -- Post-apply checklist for whoever runs this
