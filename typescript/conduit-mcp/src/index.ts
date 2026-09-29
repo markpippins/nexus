@@ -4,6 +4,10 @@ import path from "node:path";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import { spawn } from "node:child_process";
+import {
+  ChildHandle,
+  probeChildLiveness,
+} from "./liveness-probe";
 import { PipelineWatcher } from "./watcher";
 import { KILLABLE_ROLES } from "./role-vocabulary";
 import { registerToolHandlers, toolDefinitions } from "./tools";
@@ -700,6 +704,14 @@ app.post("/conduit/resume", async (_req, res) => {
 });
 
 // Restart builder for a specific plan (v074 — user-triggered, bypasses cursor/pause)
+// WO-1 task 4 (d6398876 / R1 d6cc6c42): the response is only a success signal
+// when the spawned child is still alive after a bounded liveness probe — a
+// child that exits before writing (e.g. the runtime-emit-mode gated no-op)
+// is surfaced as status="gated-no-op"/"exited" with restarted=false.
+const LIVENESS_PROBE_SETTLE_MS = Number(
+  process.env.CONDUIT_LIVENESS_SETTLE_MS || 1500,
+);
+
 app.post("/plans/:planId/restart-builder", async (req, res) => {
   const { planId } = req.params;
   const force = req.query.force === "true";
@@ -750,20 +762,80 @@ app.post("/plans/:planId/restart-builder", async (req, res) => {
     // REST endpoint instead of the scheduler.
     const pythonPath = process.env.PYTHONPATH ||
       path.resolve(conduitDir, "..");
+    // stdio piped (was "ignore") so child output can disambiguate an early
+    // exit — specifically main.py's gated no-op marker (WO-1 task 4). The
+    // child stays detached; pipes trade a small fd cost for triage evidence.
     const proc = spawn(pyBin, ["main.py", "--plan", planId, ...(force ? ["--force"] : [])], {
       cwd: conduitDir,
       detached: true,
-      stdio: "ignore",
+      stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, PYTHONPATH: pythonPath },
     });
     proc.unref();
 
+    const stdoutChunks: string[] = [];
+    const stderrChunks: string[] = [];
+    proc.stdout?.setEncoding("utf8");
+    proc.stdout?.on("data", (chunk: string) => stdoutChunks.push(chunk));
+    proc.stderr?.setEncoding("utf8");
+    proc.stderr?.on("data", (chunk: string) => stderrChunks.push(chunk));
+
+    const child: ChildHandle = {
+      pid: proc.pid,
+      onceExit: new Promise((resolve) => {
+        proc.once("exit", (code, signal) => resolve({ code, signal }));
+      }),
+      isAlive: () => {
+        if (proc.pid === undefined) return false;
+        try {
+          process.kill(proc.pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      stdout: () => stdoutChunks.join(""),
+      stderr: () => stderrChunks.join(""),
+    };
+
     console.log(
-      `[${now}] RESTART builder plan=${planId} → main.py PID ${proc.pid} spawned`,
+      `[${now}] RESTART builder plan=${planId} → main.py PID ${proc.pid} spawned (liveness probe settle=${LIVENESS_PROBE_SETTLE_MS}ms)`,
     );
 
+    // Post-spawn liveness probe: classify before answering so the Planner
+    // can distinguish "recovered" vs "failed again" vs "gated no-op".
+    const liveness = await probeChildLiveness(child, {
+      settleMs: LIVENESS_PROBE_SETTLE_MS,
+    });
+
+    console.log(
+      `[${now}] RESTART builder plan=${planId} → liveness=${liveness.status}` +
+        (liveness.exitCode !== undefined && liveness.exitCode !== null
+          ? ` exitCode=${liveness.exitCode}`
+          : liveness.exitSignal
+            ? ` signal=${liveness.exitSignal}`
+            : "") +
+        (liveness.stderrTail ? ` stderr=${liveness.stderrTail}` : ""),
+    );
+
+    const restarted = liveness.status === "running";
+    const note =
+      liveness.status === "running"
+        ? "builder child alive at liveness probe end"
+        : liveness.status === "gated-no-op"
+          ? "child exited immediately: legacy WR file-emission is gated (CONDUIT_WR_EMIT_MODE != 'file') — dispatch was a no-op, plan left for runtime dispatch"
+          : liveness.status === "exited"
+            ? "child exited before the probe ended — restart did not take"
+            : "liveness probe failed — treat as not restarted";
+
     res.json({
-      restarted: true,
+      restarted,
+      status: liveness.status,
+      exitCode: liveness.exitCode,
+      exitSignal: liveness.exitSignal,
+      stdoutTail: liveness.stdoutTail,
+      stderrTail: liveness.stderrTail,
+      note,
       planId,
       force,
       pid: proc.pid,

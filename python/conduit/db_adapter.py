@@ -5,7 +5,7 @@ import re
 import uuid
 from contextlib import contextmanager
 from typing import List, Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 _log = logging.getLogger("conduit.db_adapter")
 
@@ -216,6 +216,27 @@ class _ConnectionProxy:
 
 # ── v079: Ticket lifecycle constants ─────────────────────────────
 DEFAULT_TICKET_TTL_HOURS = 24  # tickets expire after 24h of inactivity
+
+
+def parse_rfc3339_utc(value: str) -> datetime:
+    """Parse an RFC3339 timestamp into a timezone-aware UTC datetime.
+
+    Single format owner for parse-then-re-emit paths (WO-1 task 3,
+    record d6cc6c42): the ``+00:00`` and trailing-``Z`` spellings are
+    both accepted, so an aware-datetime input can never leak through as
+    a bare ``fromisoformat`` re-emit and reproduce the malformed
+    ``+00:00Z`` form.  Naive datetimes are rejected — callers pass
+    RFC3339 strings with an explicit UTC designator.
+    """
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"invalid RFC3339 timestamp: {value!r}")
+    text = value.strip()
+    if text.endswith("Z") or text.endswith("z"):
+        text = text[:-1] + "+00:00"
+    parsed = datetime.fromisoformat(text)
+    if parsed.tzinfo is None:
+        raise ValueError(f"naive timestamp not allowed (need explicit UTC designator): {value!r}")
+    return parsed.astimezone(timezone.utc)
 DEFAULT_STALE_SECONDS = 3600 * 6  # claimed tickets become stale after 6h idle
 
 
@@ -398,7 +419,9 @@ class DBAdapter:
         """
         ticket_id = f"ticket-{plan_id}-{role}-{created_by_receipt}"
         _log.debug("create_ticket_if_missing: plan=%s role=%s deterministic_id=%s", plan_id, role, ticket_id)
-        expires_at = (datetime.fromisoformat(created_at.replace("Z", "")) + timedelta(hours=DEFAULT_TICKET_TTL_HOURS)).isoformat() + "Z"
+        expires_at = (
+            parse_rfc3339_utc(created_at) + timedelta(hours=DEFAULT_TICKET_TTL_HOURS)
+        ).isoformat().replace("+00:00", "Z")
         with self._get_connection() as conn:
             cursor = conn.execute(
                 """
