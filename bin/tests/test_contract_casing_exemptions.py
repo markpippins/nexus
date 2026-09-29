@@ -82,6 +82,17 @@ class TestRegistryShape(unittest.TestCase):
                           f"exemption declares a field absent from typespec/v1: {field}")
 
 
+# The pre-registry raw total, pinned so the registry can be proven to RECLASSIFY
+# occurrences rather than hide them. 616 was the original value; it moves to 618 when a
+# contract legitimately adds storage-shaped fields. The structural guards below
+# (exempt + non-exempt == this total, and registry-off == this total) are the real
+# invariants; the number is a snapshot.
+#
+# NOTE for the carrier: pinning a raw count means ANY legitimate new storage-shaped contract
+# breaks this test, so it is brittle by construction. Deriving the number instead of pinning it
+# would be the durable fix; flagged rather than done here, since it is the carrier's guard.
+PRE_REGISTRY_TOTAL = 618
+
 class TestExemptionSemantics(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -102,9 +113,9 @@ class TestExemptionSemantics(unittest.TestCase):
         self.assertEqual(base["leaks"], self.data["leak_total"],
                          "baseline floor must be recalculated to the "
                          "non-exempt leak count after registry changes")
-        self.assertEqual(base["leaks"] + self.data["exempt_total"], 616,
+        self.assertEqual(base["leaks"] + self.data["exempt_total"], PRE_REGISTRY_TOTAL,
                          "exempt + non-exempt must reconcile to the "
-                         "pre-registry total (616)")
+                         f"pre-registry total ({PRE_REGISTRY_TOTAL})")
 
     def test_ratchet_passes_with_registry(self):
         rc = ccc.main.__wrapped__() if hasattr(ccc.main, "__wrapped__") else None
@@ -125,8 +136,8 @@ class TestExemptionSemantics(unittest.TestCase):
         scan = ccc.scan(exemptions={})
         # without the registry every snake field leaks (pre-Decision-18 view)
         total_no_registry = scan["leak_total"]
-        self.assertEqual(total_no_registry, 616,
-                         "registry-off scan must reproduce the 616 baseline")
+        self.assertEqual(total_no_registry, PRE_REGISTRY_TOTAL,
+                         f"registry-off scan must reproduce the {PRE_REGISTRY_TOTAL} baseline")
         # a field deliberately NOT registered but present in the same family
         undeclared = "generated_at"
         self.assertNotIn(undeclared, ccc.load_exemptions(),
@@ -149,8 +160,8 @@ class TestExemptionSemantics(unittest.TestCase):
                 ccc.EXEMPTIONS = gone
                 self.assertEqual(ccc.load_exemptions(), {})
                 scan = ccc.scan()
-                self.assertEqual(scan["leak_total"], 616,
-                                 "no registry -> full 616 leak view (fail closed)")
+                self.assertEqual(scan["leak_total"], PRE_REGISTRY_TOTAL,
+                                 f"no registry -> full {PRE_REGISTRY_TOTAL} leak view (fail closed)")
             finally:
                 ccc.EXEMPTIONS = orig
 

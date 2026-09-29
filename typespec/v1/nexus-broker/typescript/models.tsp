@@ -369,6 +369,44 @@ namespace org.nexus.nexusbroker {
     rejected_reports: KeychainCensusRejection[];
   }
 
+  /**
+   * CDLC A2b — census post-action interview OUTCOME, a follow-on record (Architect
+   * Decision 22, with c3d1c0a8 Q4).
+   *
+   * Deliberately NOT a widened census-report field. That record is written once at
+   * sampled-execution time and is never edited, so an interview conducted later cannot
+   * alter what the census originally reported — "do not retrofit the outcome into the
+   * existing report shape".
+   *
+   * camelCase because this is a consumer-visible record read by a reviewer or architect
+   * and it names no database column. The census report's snake_case fields are exempt
+   * because they mirror a column or a named computation; these mirror neither.
+   */
+  model CensusInterviewer {
+    role: string;
+    /** Renamed from `model`, a reserved TypeSpec keyword. */
+    modelId?: string | null;
+    /** Stated, never inferred: Decision 22's no-self-review rule is only assertable if carried. */
+    independentOfExecutor: boolean;
+  }
+
+  model CensusInterviewOutcome {
+    /** camelCase: mirrors no column. The census report's own schema_version is a stored key
+     *  and stays snake_case under its table/computed exemption; this one is not. */
+    schemaVersion: int32;
+    /** The census this outcome attaches to. The join key. */
+    census_id: string;
+    execution_id: string;
+    /** pending | conducted | declined. */
+    status: string;
+    /** Required when conducted: self_report | independent_interrogation. */
+    evidenceClass?: string;
+    /** Required when conducted. */
+    interviewer?: CensusInterviewer;
+    /** Required when declined; never interpreted. */
+    declineReason?: string;
+  }
+
   /** Census rows per UTC calendar day. Bounded by the rows the call read, hence a floor. */
   model KeychainCensusDailyCount {
     day: string;
