@@ -196,11 +196,31 @@ def extract_head_shas(text: str) -> List[str]:
     return shas
 
 
+def _is_definitive_absent(exc: Exception) -> bool:
+    """True when a gh lookup failed DEFINITIVELY (run reference does not
+    exist), as opposed to transiently (429/5xx/network/timeout).
+
+    Classification direction is fail-safe (Decision 15 item D): treating a
+    transient failure as 'absent evidence' makes the janitor nag the tester
+    to re-attest on every GitHub blip (the bug); treating a genuinely absent
+    reference as 'transient' only delays the refusal by a cycle. So anything
+    that is not a definitive not-found classifies transient.
+
+    gh surfaces a missing object as an HTTP 404 on stderr (subprocess
+    CalledProcessError carries .stderr); no network path to GitHub carries
+    neither marker. We require BOTH '404' and 'not found' so a rate-limit
+    body that merely mentions a URL path never reads as absence.
+    """
+    stderr = str(getattr(exc, "stderr", "") or "")
+    combined = f"{type(exc).__name__} {exc} {stderr}".lower()
+    return "404" in combined and "not found" in combined
+
+
 def verify_ci_runs(
     run_ids: List[str],
     head_sha: Optional[str],
     run_json: Callable[..., Any] = _gh_json,
-) -> Tuple[bool, str]:
+) -> Tuple[bool, str, bool]:
     """Every cited CI run must exist, be SUCCESS, and — when the run exposes
     a head SHA — belong to the PR's current head.
 
@@ -215,39 +235,57 @@ def verify_ci_runs(
     head_sha are also rejected: GitHub workflow-run objects always carry
     head_sha, so its absence is a data anomaly we refuse to pass on
     conclusion alone — every pass must bind to the code it tested.
+
+    Transient-vs-absent split (Decision 15 item D): a gh lookup that fails
+    transiently (429/5xx/network/timeout) is NOT 'no evidence' — the third
+    return element is True and the caller routes the failure to the
+    retryable channel (gate_codes.ATT_CI_LOOKUP_FAILED) so the janitor
+    retries silently instead of nagging the tester. A definitive 404 (run
+    genuinely absent) returns False there and routes ATT_NO_CI_EVIDENCE as
+    before. See _is_definitive_absent.
     """
     if not run_ids:
-        return False, "no CI run references"
+        return False, "no CI run references", False
     ok_shas: List[str] = []
     for rid in run_ids:
         try:
             run = run_json("api", f"repos/{{owner}}/{{repo}}/actions/runs/{rid}",
                            "--jq", "{c: .conclusion, s: .head_sha}")
         except Exception as exc:
-            return False, f"CI run {rid} lookup failed: {_exc_brief(exc)} (fail closed)"
+            if _is_definitive_absent(exc):
+                return False, f"CI run {rid} lookup failed: {_exc_brief(exc)} (fail closed)", False
+            return False, (
+                f"CI run {rid} lookup failed: {_exc_brief(exc)} "
+                "(transient — gate cannot reach GitHub; retry next cycle)"
+            ), True
         conclusion = str((run or {}).get("c") or "").strip().lower()
         if conclusion != "success":
-            return False, (
+            return (
+                False,
                 f"CI run {rid} conclusion is '{conclusion or 'unknown'}' "
                 "(not success; success-only per Decision 10 — skipped/neutral "
-                "runs execute no tests and prove nothing)"
+                "runs execute no tests and prove nothing)",
+                False,
             )
         run_sha = str((run or {}).get("s") or "").strip().lower()
         if not run_sha:
-            return False, (
+            return (
+                False,
                 f"CI run {rid} omits head_sha — no code binding possible; "
-                "every accepted run must bind to the PR head (fail closed)"
+                "every accepted run must bind to the PR head (fail closed)",
+                False,
             )
         if head_sha:
             if not head_sha.lower().startswith(run_sha[:7]) and not run_sha.startswith(head_sha.lower()[:7]):
-                return False, (
+                return (
+                    False,
                     f"CI run {rid} tested head {run_sha[:8]}, not this PR's head "
-                    f"{str(head_sha)[:8]} — attested evidence is for superseded code"
+                    f"{str(head_sha)[:8]} — attested evidence is for superseded code",
+                    False,
                 )
             ok_shas.append(run_sha[:7])
     sha_note = f"; head SHA verified ({', '.join(ok_shas)})" if ok_shas else ""
-    return True, f"{len(run_ids)} CI run(s) verified success{sha_note}"
-    return True, f"{len(run_ids)} CI run(s) verified success{sha_note}"
+    return True, f"{len(run_ids)} CI run(s) verified success{sha_note}", False
 
 
 def fetch_attestations(
@@ -402,7 +440,7 @@ def evaluate_attestation(
 
     Returns (ok, detail, code) — code is a gate_codes value on failure
     (ATT_MISSING / ATT_SHAPE_UNSEEN / HEAD_DATE_UNKNOWN / ATT_STALE_HEAD /
-    ATT_NO_CI_EVIDENCE), None on pass."""
+    ATT_NO_CI_EVIDENCE / ATT_CI_LOOKUP_FAILED), None on pass."""
     mentions = [
         r
         for r in records
@@ -487,7 +525,7 @@ def evaluate_attestation(
             gate_codes.ATT_NO_CI_EVIDENCE,
         )
     cited_shas = extract_head_shas(att_text)
-    runs_ok, runs_detail = verify_ci_runs(run_ids, head_sha, run_json)
+    runs_ok, runs_detail, runs_transient = verify_ci_runs(run_ids, head_sha, run_json)
     if not runs_ok:
         detail = (f"tester attestation {created_iso} (record {str(newest.get('id'))[:8]}) "
                   f"cites run(s) {', '.join(run_ids)}: {runs_detail}")
@@ -496,7 +534,9 @@ def evaluate_attestation(
         ):
             detail += (f" — attestation cites head {cited_shas[0][:8]}, "
                        f"PR head is {str(head_sha)[:8]}")
-        return (False, detail, gate_codes.ATT_NO_CI_EVIDENCE)
+        return (False, detail,
+                gate_codes.ATT_CI_LOOKUP_FAILED if runs_transient
+                else gate_codes.ATT_NO_CI_EVIDENCE)
     return (
         True,
         f"tester attestation {created_iso} (record {str(newest.get('id'))[:8]}) "

@@ -784,6 +784,22 @@ def test_transient_refusal_posts_nothing():
     assert "transient refusal" in out
 
 
+def test_ci_lookup_failed_transient_posts_nothing():
+    """Decision 15 item D: a transient CI-run lookup failure surfaces as
+    ATT_CI_LOOKUP_FAILED, which is TRANSIENT — the janitor retries silently
+    and never nags the tester to re-attest on a GitHub blip."""
+    lookup_fail = gate_report(
+        passes=["pr open & ready: state=OPEN draft=False mergeable=MERGEABLE head=abc",
+                "ci green: all checks completed successfully"],
+        fails=["tester attestation (ATT_CI_LOOKUP_FAILED): newest attestation cites run(s) "
+               "36000000001: CI run 36000000001 lookup failed: gh: HTTP 429 "
+               "(transient — gate cannot reach GitHub; retry next cycle)"],
+    )
+    rc, out, state, logs = _refusal_cycle(lookup_fail, Path(tempfile.mkdtemp()) / "s.json")
+    assert logs == [], "ATT_CI_LOOKUP_FAILED is transient: retry silently, no posts"
+    assert "transient refusal" in out
+
+
 def test_shape_unseen_routes_to_adjudication():
     rc, out, state, logs = _refusal_cycle(
         gate_report(

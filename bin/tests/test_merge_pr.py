@@ -576,9 +576,53 @@ def test_extract_head_shas():
 
 
 def test_evidence_run_lookup_failure_fails_closed():
-    ok, detail = merge_pr.verify_ci_runs(
+    # The fixture raises RuntimeError (no 404/not-found markers) -> transient
+    # channel: gate still fails, but the failure is RETRYABLE, not "no
+    # evidence" (Decision 15 item D).
+    ok, detail, transient = merge_pr.verify_ci_runs(
         ["36000000999"], "a8b1dfc6", run_json=evidence_run_json)
-    assert not ok and "fail closed" in detail
+    assert not ok and transient and "transient" in detail
+
+
+def test_evidence_run_404_is_genuinely_absent():
+    """A definitive 404 (run reference does not exist) is NOT transient:
+    it routes to ATT_NO_CI_EVIDENCE so the tester re-attests with a real
+    run reference. Requires BOTH '404' and 'not found' markers (gh stderr
+    shape) so a rate-limit body mentioning a URL never reads as absence."""
+    def not_found_run(*args):
+        raise RuntimeError("gh: HTTP 404: Not Found")
+
+    ok, detail, transient = merge_pr.verify_ci_runs(
+        ["36000000999"], "a8b1dfc6", run_json=not_found_run)
+    assert not ok and not transient
+
+    att = rec(title="Tester attestation: PR #487 — CI run 36000000999 success")
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [att], 487, NOW_MS - 7200_000,
+        head_sha="a8b1dfc600000000000000000000000000000000",
+        run_json=not_found_run)
+    assert not ok and code == "ATT_NO_CI_EVIDENCE"
+    assert "fail closed" in detail
+
+
+def test_evidence_run_transient_lookup_routes_no_post():
+    """[D] A transient gh failure (429/network) must NOT surface as
+    ATT_NO_CI_EVIDENCE (janitor would nag the tester to re-attest on every
+    GitHub blip); it routes ATT_CI_LOOKUP_FAILED — retryable, no posts."""
+    def rate_limited_run(*args):
+        raise RuntimeError("gh: API rate limit exceeded (HTTP 429)")
+
+    ok, detail, transient = merge_pr.verify_ci_runs(
+        ["36000000001"], "a8b1dfc6", run_json=rate_limited_run)
+    assert not ok and transient
+
+    att = rec()
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [att], 487, NOW_MS - 7200_000,
+        head_sha="a8b1dfc600000000000000000000000000000000",
+        run_json=rate_limited_run)
+    assert not ok and code == "ATT_CI_LOOKUP_FAILED"
+    assert "transient" in detail
 
 
 def test_stated_counts_only_fail_att_no_ci_evidence():
