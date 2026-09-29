@@ -823,6 +823,60 @@ def test_head_tag_40hex_and_7hex_shapes_still_bind():
     assert not ok and code == "ATT_SHAPE_UNSEEN"
 
 
+def test_hydration_preserves_indexed_created_at_when_point_drops_it():
+    """DBA 48ac13e2 regression: the point endpoint historically returned no
+    camelCase createdAt, so #648's by-id hydration swapped a good timestamp
+    for none and evaluate_attestation's `or 0` bound the row at epoch 0 ->
+    permanent ATT_STALE_HEAD. The gate must re-attach the indexed row's
+    createdAt after hydration."""
+    att = rec(created_ms=NOW_MS - 3600_000)
+    projection = {k: v for k, v in att.items() if k != "content"}
+    point = {k: v for k, v in att.items() if k != "createdAt"}  # content, no createdAt
+
+    def http_get(url):
+        if "/api/attestations?" in url:
+            return {"items": [projection], "total": 1}
+        if url.startswith("http://localhost:3101/api/agent-records/") and url.count("/") == 4:
+            return point
+        raise RuntimeError(f"unexpected url {url}")
+
+    run_json, _ = make_fakes()
+    ok, detail, code = merge_pr.attestation_check(
+        http_get, 487, NOW_MS - 7200_000,
+        head_sha="a8b1dfc600000000000000000000000000000000",
+        run_json=run_json)
+    assert ok and code is None, (detail, code)
+    assert "1970" not in detail
+
+
+def test_hydration_coerces_iso_created_at_from_point_payload():
+    """If the point endpoint returns a snake_case created_at (ISO), the gate
+    coerces it into the epoch-ms createdAt the freshness predicate reads —
+    no epoch-0 binding either way."""
+    from datetime import datetime, timezone as _tz
+    att = rec(created_ms=NOW_MS - 3600_000)
+    projection = {k: v for k, v in att.items() if k != "content"}
+    iso = datetime.fromtimestamp(att["createdAt"] / 1000, tz=_tz.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ")
+    point = {k: v for k, v in att.items() if k not in ("createdAt", "content")}
+    point["created_at"] = iso
+
+    def http_get(url):
+        if "/api/attestations?" in url:
+            return {"items": [projection], "total": 1}
+        if url.startswith("http://localhost:3101/api/agent-records/") and url.count("/") == 4:
+            return point
+        raise RuntimeError(f"unexpected url {url}")
+
+    run_json, _ = make_fakes()
+    ok, detail, code = merge_pr.attestation_check(
+        http_get, 487, NOW_MS - 7200_000,
+        head_sha="a8b1dfc600000000000000000000000000000000",
+        run_json=run_json)
+    assert ok and code is None, (detail, code)
+    assert "1970" not in detail
+
+
 def test_projection_without_hydration_fails_closed_not_open():
     """If the scan cannot provide content either, the evidence rule fails
     closed with a self-explaining detail — never a silent pass. The
