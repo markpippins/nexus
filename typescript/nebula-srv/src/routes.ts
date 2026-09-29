@@ -4935,7 +4935,14 @@ export function createRoutes(pool: Pool): Router {
         [req.params.id]
       );
       if (!rows.length) return res.status(404).json({ error: 'Agent record not found' });
-      res.json(rows[0]);
+      // Serialize exactly like the list route (camelCase keys + epoch-ms
+      // timestamps). A raw pg row exposes `created_at` and no `createdAt`, so
+      // any consumer reading `createdAt` sees undefined and binds the record
+      // at epoch 0 — which made the merge gate's freshness check
+      // (bin/merge_pr.py evaluate_attestation) unfalsifiable: it reported
+      // "newest attestation 1970-01-01T00:00:00Z predates head commit" for
+      // every attestation, holding green PRs #642/#645 indefinitely.
+      res.json(camelCaseRow(rows[0]));
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -5051,7 +5058,11 @@ export function createRoutes(pool: Pool): Router {
     }
   });
 
-  // GET /api/agent-records/:id — full record with content
+  // GET /api/agent-records/:id — full record with content.
+  // NOTE: unreachable — the handler above is registered first for the same
+  // path and Express stops at the first match. Kept in sync deliberately: if
+  // the first handler is ever removed, this one must not silently resume
+  // serving raw snake_case rows (see camelCaseRow contract above).
   router.get('/agent-records/:id', async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
@@ -5059,7 +5070,7 @@ export function createRoutes(pool: Pool): Router {
         'SELECT * FROM nebula.agent_records WHERE id = $1', [id]
       );
       if (!row) return res.status(404).json({ error: 'Agent record not found' });
-      res.json(row);
+      res.json(camelCaseRow(row));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
