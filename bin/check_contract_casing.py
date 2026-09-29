@@ -28,6 +28,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 TYPESPEC = ROOT / "typespec" / "v1"
 BASELINE = ROOT / "bin" / "contract-casing-baseline.json"
+EXEMPTIONS = ROOT / "bin" / "contract-casing-exemptions.json"
 
 # Identifiers that are not wire field names.
 NON_FIELD = {
@@ -75,20 +76,52 @@ def snake_fields(path: pathlib.Path) -> list[str]:
     return [n for n in fields(path) if SNAKE.match(n)]
 
 
-def scan() -> dict:
+def load_exemptions() -> dict[str, list[dict]]:
+    """Storage-shaped field exemption registry (Decision 18, record c53289ef).
+
+    A snake_case field is exempt ONLY if declared here with the storage location
+    (DB column or jsonb key) whose name the wire field is required to mirror —
+    the database is canonical per Tier-1 doctrine, so storage-shaped wire names
+    are an architectural property, not authoring drift. Anything undeclared —
+    inside or outside the CDLC family — remains a violation. Additions are
+    governed by Decision 13 condition 2: cite the PR + storage location; no
+    silent growth. Missing registry file = no exemptions (fail closed).
+    """
+    if not EXEMPTIONS.exists():
+        return {}
+    data = json.loads(EXEMPTIONS.read_text(encoding="utf-8"))
+    fields = data.get("fields")
+    if not isinstance(fields, dict):
+        raise ValueError(f"{EXEMPTIONS}: expected a top-level 'fields' object")
+    return fields
+
+
+def scan(exemptions: dict[str, list[dict]] | None = None) -> dict:
+    if exemptions is None:
+        exemptions = load_exemptions()
     result = {"mixed": [], "snake": [], "camel": [], "empty": []}
     leaks: dict[str, list[str]] = {}
+    exempt: dict[str, list[str]] = {}
     total = 0
+    exempt_total = 0
     for f in sorted(TYPESPEC.rglob("models.tsp")):
         shape = classify(f)
         result[shape].append(str(f.relative_to(ROOT)))
         if shape in ("mixed", "snake"):
             found = snake_fields(f)
             if found:
-                leaks[str(f.relative_to(ROOT))] = found
-                total += len(found)
+                kept = [n for n in found if n not in exemptions]
+                exc = [n for n in found if n in exemptions]
+                if kept:
+                    leaks[str(f.relative_to(ROOT))] = kept
+                    total += len(kept)
+                if exc:
+                    exempt[str(f.relative_to(ROOT))] = exc
+                    exempt_total += len(exc)
     result["leaks"] = leaks
     result["leak_total"] = total
+    result["exempt"] = exempt
+    result["exempt_total"] = exempt_total
     return result
 
 
@@ -117,6 +150,7 @@ def main() -> int:
         # code still carries the ratchet verdict for shell callers.
         print(json.dumps({"counts": {k: len(v) for k, v in data.items() if isinstance(v, list)},
                           "leak_total": data["leak_total"],
+                          "exempt_total": data.get("exempt_total", 0),
                           "violations": violations}), file=sys.stdout)
         print(f"{len(violations)} violation file(s), leaks {data['leak_total']} "
               f"(ratchet baseline: mixed {base['mixed']}, snake {base['snake']}, leaks {base_leaks})",
@@ -134,6 +168,10 @@ def main() -> int:
             print("\n  snake - needs converging to camelCase:")
             for f in data["snake"]:
                 print(f"    {f}")
+        if data.get("exempt_total"):
+            print(f"\n  storage-shaped exemptions (Decision 18 registry, declared in "
+                  f"{EXEMPTIONS.name}): {data['exempt_total']} occurrence(s) across "
+                  f"{len(data['exempt'])} file(s) — not counted as leaks")
         print(f"\n  leaked storage names (occurrence count, the ratchet metric): "
               f"{data['leak_total']}")
 
@@ -144,8 +182,6 @@ def main() -> int:
         print("\nOK: no violations")
         return 0
 
-    grew = (len(data["mixed"]) > base["mixed"]) or (len(data["snake"]) > base["snake"]) \
-        or (data["leak_total"] > base_leaks)
     if grew:
         print(f"\nFAIL: violations increased above baseline "
               f"(mixed {len(data['mixed'])}/{base['mixed']}, "

@@ -1,6 +1,6 @@
 {
-  "_comment": "Ratchet floor for bin/check_contract_casing.py. Lower these as contracts are corrected. Failing above means a NEW violation was added, not that an old one was fixed. 'leaks' counts snake_case occurrences, not files: a file-count ratchet is blind to more column names being piled onto an already-leaking contract, which is the most likely regression. See agent record 19d6f725-a5dd-41a9-aee2-7f9464c3dfef.",
+  "_comment": "Ratchet floor for bin/check_contract_casing.py. Lower these as contracts are corrected. Failing above means a NEW violation was added, not that an old one was fixed. 'leaks' counts snake_case occurrences, not files: a file-count ratchet is blind to more column names being piled onto an already-leaking contract, which is the most likely regression. See agent record 19d6f725-a5dd-41a9-aee2-7f9464c3dfef. DECISION 18 (c53289ef): 'leaks' is now the NON-EXEMPT count — storage-shaped fields declared in contract-casing-exemptions.json (field + table.column/jsonb key + introducing PR) are not leaks. Floor recalculated 616 -> 590 when the registry landed (26 exempt occurrences, all in the CDLC A-series: nebula.executions DDL columns + census metadata jsonb keys). Any undeclared snake_case field anywhere is still a violation. The floor is the non-exempt leak count, not 616.",
   "mixed": 12,
   "snake": 5,
-  "leaks": 616
+  "leaks": 590
 }
