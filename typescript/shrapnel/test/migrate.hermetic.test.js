@@ -117,8 +117,10 @@ async function freshDb() {
 // Can this host's pg_dump talk to the test PostgreSQL? pg_dump refuses to dump
 // a NEWER server, and CI runners may carry an older client than the throwaway
 // server (pg_dump 16 vs PostgreSQL 17 was hit live on 2026-09-29). That is a
-// property of the environment, not of the runner, so the dump-SUCCESS test
-// skips with a reason there; the dump-REFUSAL tests stay deterministic everywhere.
+// property of the environment, not of the runner, so the dump test branches on
+// it instead of skipping: compatible client -> assert the archive is written;
+// incompatible client -> assert the fail-closed refusal. Both legs pin real
+// guardrail behavior; neither is allowed to silently skip.
 let dumpRailSkipReason = null;
 {
   try {
@@ -678,14 +680,19 @@ describe('runMigrations guardrails', { skip: canCreateDb ? false : 'cannot creat
   });
 
   it(
-    'writes exactly one non-empty pre-apply dump when pending work exists on an existing DB',
-    { skip: dumpRailSkipReason ?? false },
+    'dump rail on an existing DB with pending work: dumps when the client can, refuses when it cannot',
     async () => {
       // The dump rail lives in main(), which the unit tests never reach, and
       // it only fires on an EXISTING database with pending work. The CLI always
-      // plans against the migrations dir next to migrate.js itself, so the rail
-      // is exercised through a copied service root: seed the DB minus the last
-      // migration, restore the file, then apply and assert the dump exists.
+      // plans against the migrations dir next to migrate.js itself, so the test
+      // runs a copied service root: seed the DB minus the last migration,
+      // restore the file, then apply. Where the host's pg_dump can read the
+      // test server, the archive must be written and the apply commits; where
+      // it cannot (CI: pg_dump 16 vs server 17), the rail must refuse the apply
+      // outright — the fail-closed property itself. No branch is allowed to
+      // skip: both pin guardrail behavior and both end at the same ledger
+      // invariant (the refused run changed nothing; the successful one ledgered
+      // the whole chain).
       const dsn = await freshDb();
       const root = mkdtempSync(join(tmpdir(), 'shrapnel-migrate-cli-root-'));
       const dumpDir = mkdtempSync(join(tmpdir(), 'shrapnel-migrate-dumps-'));
@@ -711,17 +718,34 @@ describe('runMigrations guardrails', { skip: canCreateDb ? false : 'cannot creat
         // Restore the last file: one real pending migration on an existing DB.
         cpSync(join(MIGRATIONS_DIR, last), join(root, 'migrations', last));
         const res = run();
-        assert.equal(res.status, 0, `dump-rail apply failed: ${res.stderr || res.stdout}`);
-        assert.match(res.stdout, /pre-apply dump: /, 'the rail announces the archive');
-        assert.match(res.stdout, new RegExp(`applied ${last.replace(/\./g, '\\.')}`));
-
         const dumps = readdirSync(dumpDir).filter((f) => f.endsWith('.dump'));
-        assert.equal(dumps.length, 1, 'exactly one pre-apply dump was written');
-        assert.ok(statSync(join(dumpDir, dumps[0])).size > 0, 'the archive is non-empty');
 
         const c = connect(dsn);
-        const { rows } = await c.query('SELECT count(*)::int AS n FROM shrapnel._migration_ledger');
-        assert.equal(rows[0].n, REAL_CHAIN.length, 'the whole chain is ledgered');
+        const ledgered = async () =>
+          (await c.query('SELECT count(*)::int AS n FROM shrapnel._migration_ledger')).rows[0].n;
+
+        if (dumpRailSkipReason) {
+          // Incompatible client: the rail must fail CLOSED — refuse the apply,
+          // write no archive, change no ledger row. (CI's pg_dump 16 vs the
+          // throwaway server 17 lands here, and that is a real assertion.)
+          assert.equal(res.status, 1, `expected the dump rail to refuse: ${res.stdout}`);
+          assert.match(
+            `${res.stderr}${res.stdout}`,
+            /pre-apply pg_dump failed[\s\S]*override with --no-dump/,
+            'the operator sees the wrapped refusal, not a silent apply'
+          );
+          assert.match(`${res.stderr}${res.stdout}`, /pg_dump/);
+          assert.equal(dumps.length, 0, 'no archive is written by a failed dump');
+          assert.equal(await ledgered(), REAL_CHAIN.length - 1, 'the refused run changed nothing');
+        } else {
+          // Compatible client: the archive is written, then the apply commits.
+          assert.equal(res.status, 0, `dump-rail apply failed: ${res.stderr || res.stdout}`);
+          assert.match(res.stdout, /pre-apply dump: /, 'the rail announces the archive');
+          assert.match(res.stdout, new RegExp(`applied ${last.replace(/\./g, '\\.')}`));
+          assert.equal(dumps.length, 1, 'exactly one pre-apply dump was written');
+          assert.ok(statSync(join(dumpDir, dumps[0])).size > 0, 'the archive is non-empty');
+          assert.equal(await ledgered(), REAL_CHAIN.length, 'the whole chain is ledgered');
+        }
         await c.end();
       } finally {
         rmSync(root, { recursive: true, force: true });
