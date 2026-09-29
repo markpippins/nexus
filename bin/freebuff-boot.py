@@ -309,8 +309,11 @@ class Boot:
         try:
             r = subprocess.run(
                 [sys.executable, os.path.join(SCRIPT_DIR, "calendar-consolidate-run.py")],
-                capture_output=True, text=True, timeout=150,
+                capture_output=True, text=True, timeout=60,
             )
+            # timeout=60 must stay BELOW the wrapper's own 120s bound: the shim
+            # is the outermost layer of this chain, and an outer timeout larger
+            # than the inner one turns every inner stall into a long hang here.
             detail = (r.stdout.strip().splitlines() or
                       (r.stderr.strip().splitlines() or ["no output"]))[-1][:160]
             if r.returncode == 0:

@@ -168,15 +168,32 @@ def _parse_ts(value: str):
 # ── DB seam ──────────────────────────────────────────────────────────────
 
 def default_exec_factory():
-    """Default seam: psycopg2 against CONDUIT_PG_DSN. Built lazily."""
+    """Default seam: psycopg2 against CONDUIT_PG_DSN. Built lazily.
+
+    One shared autocommit connection instead of a fresh connection per call:
+    the observe fold issues >=2 statements per event, so per-call connects
+    made a real fold take minutes-to-hours, and psycopg2's default (no
+    connect_timeout) let an unroutable DSN hang the boot shim's consolidation
+    step indefinitely — the 2026-09-29 freebuff-boot_checks.py hang. Autocommit
+    preserves the old granularity exactly (the previous `with connect(...)`
+    committed each call; each event's INSERT still commits on its own), while
+    connect_timeout bounds TCP-level stalls.
+    """
+    conn = None
+
     def exec_fn(sql: str, params: tuple = ()) -> list[tuple]:
-        import psycopg2
-        dsn = os.environ.get("CONDUIT_PG_DSN",
-                             "postgresql://pguser:pgpass@localhost:5432/nexus")
-        with psycopg2.connect(dsn) as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, params)
-                return cur.fetchall() if cur.description else []
+        nonlocal conn
+        if conn is None or conn.closed:
+            import psycopg2
+            dsn = os.environ.get("CONDUIT_PG_DSN",
+                                 "postgresql://pguser:pgpass@localhost:5432/nexus")
+            kwargs = {} if "connect_timeout" in dsn else {"connect_timeout": 10}
+            conn = psycopg2.connect(dsn, **kwargs)
+            conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return cur.fetchall() if cur.description else []
+
     return exec_fn
 
 

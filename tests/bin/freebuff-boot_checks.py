@@ -26,15 +26,30 @@ Usage:
 Exit code: 0 if all pass, 1 otherwise.
 """
 
+import atexit
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 NEXUS_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SCRIPT = os.path.join(NEXUS_ROOT, "bin", "freebuff-boot.py")
+
+# Hermeticity sandbox (the 2026-09-29 hang, root-caused): the shim spawns
+# calendar-emit.py / calendar-consolidate-run.py, which default to the REAL
+# ~/.local/state/nexus-calendar JSONL and the REAL CONDUIT_PG_DSN. On a machine
+# where V184 (vision.calendar_events) is live, the "hermetic" suite walked the
+# boot into a genuine multi-minute fold — every non-dry-run test burned its
+# full timeout and the killed shim's orphaned grandchild held the pipes. Both
+# seams are now pinned per-run: calendar state to a throwaway dir, the DB DSN
+# to TCP port 1 (instant connection-refused, never the real instance).
+SANDBOX_STATE_DIR = tempfile.mkdtemp(prefix="freebuff-boot-checks-")
+SANDBOX_DSN = "postgresql://pguser:pgpass@127.0.0.1:1/nexus"
+atexit.register(lambda: shutil.rmtree(SANDBOX_STATE_DIR, ignore_errors=True))
 
 T2 = 1_752_000_360_000  # newest record createdAt (epoch ms)
 REC = {"createdAt": T2, "recordType": "report", "title": "fresh record"}
@@ -180,6 +195,8 @@ def run_shim(mcp_port, rest_port, args, extra_env=None):
     env["TACKLE_MCP_BASE"] = f"http://127.0.0.1:{mcp_port}"
     env["ASSEMBLY_API"] = f"http://127.0.0.1:{rest_port}/api"
     env["NEXUS_TIMECLOCK_URL"] = f"http://127.0.0.1:{rest_port}"
+    env["CALENDAR_STATE_DIR"] = SANDBOX_STATE_DIR
+    env["CONDUIT_PG_DSN"] = SANDBOX_DSN
     env.update(extra_env or {})
     return subprocess.run([sys.executable, SCRIPT] + args,
                           capture_output=True, text=True, env=env, timeout=60)
