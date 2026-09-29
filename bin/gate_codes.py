@@ -25,6 +25,8 @@ there. Routing treats it as a lookup-failure class either way.
 Consumer routing (attestation_janitor.py, per spec table):
     ATT_MISSING        silent skip (state file only)
     ATT_STALE_HEAD     queue tester re-attestation; 1 post per dedup key
+    ATT_NO_CI_EVIDENCE queue tester re-attestation (attestation lacks CI run
+                       references); 1 post per dedup key
     ATT_SHAPE_UNSEEN   route to tester/analyst adjudication; 1 post per key
     MERGE_CONFLICT     NOT an anomaly (author action); 1 post per key
     MERGE_UNKNOWN      transient, retry next cycle, no posts
@@ -64,13 +66,20 @@ ATT_SHAPE_UNSEEN = "ATT_SHAPE_UNSEEN"
 ATT_STALE_HEAD = "ATT_STALE_HEAD"
 ATT_LOOKUP_FAILED = "ATT_LOOKUP_FAILED"
 ATT_BYPASSED = "ATT_BYPASSED"
+# Attestation content carries no machine-verifiable CI evidence (no
+# "CI run <id>" reference). Stated test counts ("54/54 pass") are the
+# engine's self-attestation, not the tester's verification; verification
+# references CI run IDs whose conclusion + head SHA the gate checks against
+# GitHub. Routed like ATT_STALE_HEAD: the tester re-attests with real run
+# references (spec: agent record d7989f31 follow-up family).
+ATT_NO_CI_EVIDENCE = "ATT_NO_CI_EVIDENCE"
 
 ALL_CODES = frozenset({
     GH_LOOKUP_FAILED, HEAD_DATE_UNKNOWN,
     PR_NOT_OPEN, PR_DRAFT, MERGE_CONFLICT, MERGE_UNKNOWN,
     CI_NO_CHECKS, CI_PENDING, CI_FAIL,
     ATT_MISSING, ATT_SHAPE_UNSEEN, ATT_STALE_HEAD,
-    ATT_LOOKUP_FAILED, ATT_BYPASSED,
+    ATT_LOOKUP_FAILED, ATT_BYPASSED, ATT_NO_CI_EVIDENCE,
 })
 
 # Codes whose condition may clear on the next cycle without anyone acting:

@@ -23,21 +23,45 @@ def check(name, status="COMPLETED", conclusion="SUCCESS"):
 
 NOW_MS = int(time.time() * 1000)
 
+# The default attestation body cites CI runs whose run_json fake (make_fakes
+# and evidence_run_json below) reports SUCCESS at the PR head — the contract
+# under test since the CI-evidence rule: stated test counts alone are the
+# engine's self-attestation and fail the gate.
+EVIDENCE_TITLE = "Tester attestation: PR #487 — CI run 36000000001 success"
+EVIDENCE_CONTENT = (
+    "Verified via service-test-gates. CI runs 36000000001, 36000000002: "
+    "gate jobs success at head a8b1dfc6.\n"
+    "Engine-reported counts (54/54) were NOT relied on."
+)
+
 
 def rec(rec_id="aaaa1111", role="tester", created_ms=None, tags=None,
-        title="Tester attestation: PR #487 (30 passed)", content="",
+        title=None, content=None,
         recordType="assessment"):
     """Default shape = the tester's canonical attestation row (assessment +
-    type:approval + status:done), matching real records like b47510d6."""
+    type:approval + status:done), matching real records like b47510d6, and
+    citing verifiable CI run references (the post-d7989f31 contract)."""
     return {
         "id": rec_id,
         "role": role,
         "createdAt": NOW_MS - 3600_000 if created_ms is None else created_ms,
         "tags": tags if tags is not None else ["type:approval", "status:done", "pr:487"],
-        "title": title,
-        "content": content,
+        "title": title if title is not None else EVIDENCE_TITLE,
+        "content": content if content is not None else EVIDENCE_CONTENT,
         "recordType": recordType,
     }
+
+
+def evidence_run_json(*args):
+    """Fake `gh api repos/{owner}/{repo}/actions/runs/<id>` for the two
+    fixture run IDs: both SUCCESS at head a8b1dfc6…."""
+    args = tuple(a for a in args if not str(a).startswith("--jq"))
+    q = " ".join(str(a) for a in args)
+    if "36000000001" in q:
+        return {"c": "success", "s": "a8b1dfc600000000000000000000000000000000"}
+    if "36000000002" in q:
+        return {"c": "success", "s": "a8b1dfc600000000000000000000000000000000"}
+    raise RuntimeError(f"gh api lookup failed: {q}")
 
 
 # ── gate 2: checks_report ────────────────────────────────────────────────
@@ -149,9 +173,11 @@ def test_canonical_attestation_shape_passes():
         recordType="assessment",
         tags=["to:engineer", "type:approval", "status:done", "attestations", "pr:491"],
     )
-    ok, detail, code = merge_pr.evaluate_attestation([att], 491, head_ms)
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [att], 491, head_ms, run_json=evidence_run_json)
     assert ok
     assert "postdates" in detail
+    assert "CI run(s) verified" in detail
 
 
 def test_legacy_type_attestation_tag_passes():
@@ -162,7 +188,8 @@ def test_legacy_type_attestation_tag_passes():
         recordType="report",
         tags=["to:dba", "type:attestation", "attestations", "pr:487"],
     )
-    ok, detail, code = merge_pr.evaluate_attestation([legacy], 487, NOW_MS - 7200_000)
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [legacy], 487, NOW_MS - 7200_000, run_json=evidence_run_json)
     assert ok
     assert "postdates" in detail
 
@@ -186,7 +213,8 @@ def test_is_attestation_record_rejects_missing_recordtype():
 def test_fresh_attestation_passes():
     head_ms = NOW_MS - 7200_000  # head committed 2h ago
     records = [rec(created_ms=NOW_MS - 3600_000)]  # attested 1h ago
-    ok, detail, code = merge_pr.evaluate_attestation(records, 487, head_ms)
+    ok, detail, code = merge_pr.evaluate_attestation(
+        records, 487, head_ms, run_json=evidence_run_json)
     assert ok
     assert "postdates" in detail
 
@@ -212,7 +240,8 @@ def test_newest_of_multiple_is_used():
         rec(rec_id="old1", created_ms=NOW_MS - 86_400_000),   # old attestation
         rec(rec_id="new1", created_ms=NOW_MS - 3600_000),     # fresh attestation
     ]
-    ok, detail, code = merge_pr.evaluate_attestation(records, 487, head_ms)
+    ok, detail, code = merge_pr.evaluate_attestation(
+        records, 487, head_ms, run_json=evidence_run_json)
     assert ok
     assert "new1" in detail
 
@@ -269,8 +298,11 @@ def make_fakes(pr_overrides=None, rollup=None, records=None, head_date="2026-09-
     commits = {"commits": [{"committedDate": head_date, "oid": "abc"}]}
 
     def run_json(*args):
+        args = tuple(str(a) for a in args)
         if "commits" in args:
             return commits
+        if any("actions/runs/" in a for a in args):
+            return evidence_run_json(*args)
         return pr
 
     def http_get(url):
@@ -474,7 +506,8 @@ def test_attestation_codes_freshness():
     stale = rec(created_ms=NOW_MS - 7200_000)
     assert merge_pr.evaluate_attestation([stale], 487, NOW_MS)[2] == "ATT_STALE_HEAD"
     assert merge_pr.evaluate_attestation([rec()], 487, None)[2] == "HEAD_DATE_UNKNOWN"
-    assert merge_pr.evaluate_attestation([rec()], 487, NOW_MS - 7200_000)[2] is None
+    assert merge_pr.evaluate_attestation(
+        [rec()], 487, NOW_MS - 7200_000, run_json=evidence_run_json)[2] is None
 
 
 def test_pr_ready_codes_deterministic_order():
@@ -518,3 +551,185 @@ def test_extract_codes_ordered_unique_and_strict():
     # every emitted vocabulary member round-trips
     for c in gc.ALL_CODES:
         assert gc.extract_codes(f"[FAIL] x ({c}): y") == [c]
+
+
+# ── gate 3d: CI-evidence rule (run IDs + conclusions, not stated counts) ──
+
+def test_extract_ci_run_ids_forms():
+    text = ("CI run 36000000001: gate job OK. CI runs 36000000002, 36000000003 "
+            "also green.")
+    assert merge_pr.extract_ci_run_ids(text) == [
+        "36000000001", "36000000002", "36000000003",
+    ]
+    # Strict grammar: a bare "run #N" (no CI prefix) is not an attested run
+    # reference — avoids false positives like "rerun #123".
+    assert merge_pr.extract_ci_run_ids("also green; run #36000000004 too.") == []
+    assert merge_pr.extract_ci_run_ids("engine reports 54/54 tests pass") == []
+    assert merge_pr.extract_ci_run_ids("") == []
+
+
+def test_extract_head_shas():
+    assert merge_pr.extract_head_shas("at head 09f1f6cd and head SHA 1a2b3c4d5e6f") == [
+        "09f1f6cd", "1a2b3c4d5e6f",
+    ]
+    assert merge_pr.extract_head_shas("no sha here") == []
+
+
+def test_evidence_run_lookup_failure_fails_closed():
+    ok, detail = merge_pr.verify_ci_runs(
+        ["36000000999"], "a8b1dfc6", run_json=evidence_run_json)
+    assert not ok and "fail closed" in detail
+
+
+def test_stated_counts_only_fail_att_no_ci_evidence():
+    """The exact regression this rule exists for: a well-formed tester row
+    that only restates the engine's counts must NOT satisfy gate 3."""
+    counts_only = rec(
+        rec_id="counts1",
+        title="Tester attestation: PR #487 — 54/54 tests pass, 0 failed, 0 skipped",
+        content="Engine (opencode/big-pickle) reports 54/54. Attested.",
+    )
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [counts_only], 487, NOW_MS - 7200_000, run_json=evidence_run_json)
+    assert not ok and code == "ATT_NO_CI_EVIDENCE"
+    assert "self-attestation" in detail
+
+
+def test_run_conclusion_failure_rejects_attestation():
+    def failing_run(*args):
+        return {"c": "failure", "s": "a8b1dfc600000000000000000000000000000000"}
+
+    att = rec()
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [att], 487, NOW_MS - 7200_000, run_json=failing_run)
+    assert not ok and code == "ATT_NO_CI_EVIDENCE"
+    assert "not success" in detail
+
+
+def test_run_conclusion_skipped_rejects_attestation():
+    """[A] Path-filtered SKIPPED runs carry the PR head_sha and execute no
+    tests — accepting them would half-reopen the stated-counts gap."""
+    def skipped_run(*args):
+        return {"c": "skipped", "s": "a8b1dfc600000000000000000000000000000000"}
+
+    att = rec(title="Tester attestation: PR #487 — CI run 36000000001 skipped")
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [att], 487, NOW_MS - 7200_000,
+        head_sha="a8b1dfc600000000000000000000000000000000",
+        run_json=skipped_run)
+    assert not ok and code == "ATT_NO_CI_EVIDENCE"
+    assert "success-only" in detail
+
+
+def test_run_conclusion_neutral_rejects_attestation():
+    """[A] NEUTRAL proves no run — fail closed like any non-success."""
+    def neutral_run(*args):
+        return {"c": "neutral", "s": "a8b1dfc600000000000000000000000000000000"}
+
+    att = rec(title="Tester attestation: PR #487 — CI run 36000000001 neutral")
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [att], 487, NOW_MS - 7200_000,
+        head_sha="a8b1dfc600000000000000000000000000000000",
+        run_json=neutral_run)
+    assert not ok and code == "ATT_NO_CI_EVIDENCE"
+    assert "success-only" in detail
+
+
+def test_run_without_head_sha_rejected():
+    """[B] A run that omits head_sha has no code binding; accepting it on
+    conclusion alone is exactly the pass path the tightening removes."""
+    def shaless_run(*args):
+        return {"c": "success", "s": ""}
+
+    att = rec(title="Tester attestation: PR #487 — CI run 36000000001 success")
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [att], 487, NOW_MS - 7200_000,
+        head_sha="a8b1dfc600000000000000000000000000000000",
+        run_json=shaless_run)
+    assert not ok and code == "ATT_NO_CI_EVIDENCE"
+    assert "head_sha" in detail and "fail closed" in detail
+
+
+def test_run_at_wrong_head_rejected():
+    def other_head_run(*args):
+        return {"c": "success", "s": "deadbeef00000000000000000000000000000000"}
+
+    att = rec(title="Tester attestation: PR #487 — CI run 36000000001 success")
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [att], 487, NOW_MS - 7200_000,
+        head_sha="a8b1dfc600000000000000000000000000000000",
+        run_json=other_head_run)
+    assert not ok and code == "ATT_NO_CI_EVIDENCE"
+    assert "not this PR's head" in detail
+
+
+def test_run_at_matching_head_passes_with_sha_note():
+    att = rec()
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [att], 487, NOW_MS - 7200_000,
+        head_sha="a8b1dfc600000000000000000000000000000000",
+        run_json=evidence_run_json)
+    assert ok and code is None
+    assert "head SHA verified" in detail
+
+
+def _dispatching_http_projection(attestations, mentions, scan):
+    """Fake nebula where /api/attestations returns the PROJECTION shape
+    (id/recordType/role/tags/createdAt — no content), as the real endpoint's
+    SELECT list does."""
+    def http_get(url):
+        if "/api/attestations?" in url:
+            proj = [{k: v for k, v in a.items() if k != "content"} for a in attestations]
+            return {"items": proj, "total": len(proj)}
+        if "role=tester" in url and "tag=pr:" in url:
+            return {"items": mentions}
+        if "/api/agent-records" in url:
+            return {"items": scan}
+        raise RuntimeError(f"unexpected url {url}")
+    return http_get
+
+
+def test_projection_rows_hydrated_from_scan_for_evidence():
+    """Indexed rows lack content; the gate hydrates from the bounded scan so
+    the CI-evidence rule can read the cited run IDs."""
+    canonical = rec(created_ms=NOW_MS - 3600_000)
+    run_json, _ = make_fakes()
+    gates, _ = merge_pr.evaluate(
+        487, run_json=run_json,
+        http_get=_dispatching_http_projection([canonical], [], [canonical]), env={})
+    gate3 = gates[2]
+    assert gate3.passed
+    assert "CI run(s) verified" in gate3.detail
+
+
+def test_projection_without_hydration_fails_closed_not_open():
+    """If the scan cannot provide content either, the evidence rule fails
+    closed with a self-explaining detail — never a silent pass. The
+    projection here strips BOTH content and the evidencing title (title and
+    body are both scanned for run references by design)."""
+    canonical = rec(created_ms=NOW_MS - 3600_000)
+
+    def no_content_anywhere(url):
+        if "/api/attestations?" in url:
+            proj = {k: v for k, v in canonical.items() if k not in ("content", "title")}
+            proj["title"] = "Tester attestation: PR #487"
+            return {"items": [proj], "total": 1}
+        if "/api/agent-records" in url:
+            raise RuntimeError("nebula scan unavailable")
+        raise RuntimeError(f"unexpected url {url}")
+
+    run_json, _ = make_fakes()
+    gates, _ = merge_pr.evaluate(
+        487, run_json=run_json, http_get=no_content_anywhere, env={})
+    gate3 = gates[2]
+    assert not gate3.passed
+    assert gate3.code == "ATT_NO_CI_EVIDENCE"
+    assert "cites no CI run references" in gate3.detail
+
+
+def test_new_code_in_all_codes_roundtrip():
+    gc = merge_pr.gate_codes
+    assert gc.ATT_NO_CI_EVIDENCE in gc.ALL_CODES
+    assert gc.extract_codes(
+        "[FAIL] tester attestation (ATT_NO_CI_EVIDENCE): cites no CI run") == [
+        "ATT_NO_CI_EVIDENCE"]
