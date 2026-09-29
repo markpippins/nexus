@@ -50,6 +50,9 @@ const payload = async (tool: { handler: Handler }, args: Record<string, unknown>
     pointer: string | null;
     items: unknown[];
     count: number;
+    total?: number;
+    truncated: boolean;
+    missingCreatedAt: number;
     advancedTo: string | null;
     advanceError: string | null;
   };
@@ -138,5 +141,41 @@ describe("nebula_get_inbox advance flag", () => {
     expect(out.count).toBe(1);
     expect(out.advancedTo).toBeNull();
     expect(out.advanceError).toBe("peer reset");
+  });
+
+  it("refuses advance when the window is truncated (total > count) — matches check-inbox.sh guard (#638)", async () => {
+    const tool = captureTools().get("nebula_get_inbox")!;
+    // 3 matches total but only 2 returned (truncated). With advance=true,
+    // advancing to newest-in-window would mark the 3rd as seen unseen.
+    vi.mocked(NebulaClient.listAgentRecords).mockResolvedValueOnce({
+      items: [record("a", 1787270400000), record("b", 1787356800000)],
+      total: 3,
+      count: 2,
+    });
+
+    const out = await payload(tool, { role: "reviewer", advance: true });
+
+    expect(NebulaClient.setInboxPointer).not.toHaveBeenCalled();
+    expect(out.advancedTo).toBeNull();
+    expect(out.truncated).toBe(true);
+    expect(out.advanceError).toMatch(/truncated/i);
+  });
+
+  it("refuses advance when no record has a numeric createdAt (never coerces to epoch 0; #657 shape)", async () => {
+    const tool = captureTools().get("nebula_get_inbox")!;
+    vi.mocked(NebulaClient.listAgentRecords).mockResolvedValueOnce({
+      items: [
+        { id: "x", title: "no-ts", tags: ["to:reviewer"] },
+        { id: "y", title: "also-none", tags: ["to:reviewer"] },
+      ],
+      count: 2,
+    });
+
+    const out = await payload(tool, { role: "reviewer", advance: true });
+
+    expect(NebulaClient.setInboxPointer).not.toHaveBeenCalled();
+    expect(out.advancedTo).toBeNull();
+    expect(out.missingCreatedAt).toBe(2);
+    expect(out.advanceError).toMatch(/no returned record has a numeric createdAt/i);
   });
 });
