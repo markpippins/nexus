@@ -36,6 +36,8 @@ import pg from 'pg';
 import {
   applyMigrationFile,
   buildApplyScript,
+  buildDumpCommand,
+  planMigrations,
   runMigrations,
   stripOuterTransactionControl,
 } from '../src/scripts/migrate.js';
@@ -404,5 +406,121 @@ describe('migration runner (hermetic)', { skip: canCreateDb ? false : 'cannot cr
     assert.equal(res.status, 0, `migrate.js exited ${res.status}: ${res.stderr || res.stdout}`);
     assert.match(res.stdout, /applied 0007_work_request_stereotypes\.sql/);
     assert.match(res.stdout, /\[shrapnel migrate] done/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Guardrails: plan mode, ahead-of-checkout refusal, advisory lock, dump shape.
+// These exist because the first LIVE use of the runner was the 2026-09-29
+// hand-driven titanium apply, whose safety rails lived only in the operator's
+// head. Each test pins one of those rails so they outlive the operator.
+// ---------------------------------------------------------------------------
+
+describe('buildDumpCommand', () => {
+  it('dumps only the shrapnel schema, custom format, to a deterministic path', () => {
+    const { file, args } = buildDumpCommand({
+      dsn: 'postgresql://u:p@h:5432/db',
+      dumpDir: '/spool',
+      timestamp: '2026-09-29T00-00-00',
+    });
+    assert.equal(file, '/spool/shrapnel-pre-migrate_2026-09-29T00-00-00.dump');
+    assert.equal(args[0], 'postgresql://u:p@h:5432/db');
+    assert.ok(args.includes('--format=custom'), 'custom format so pg_restore can list/verify it');
+    assert.ok(args.includes('--schema=shrapnel'), 'the dump is scoped to the schema being migrated');
+    assert.ok(args.includes(`--file=${file}`));
+  });
+});
+
+describe('planMigrations', { skip: canCreateDb ? false : 'cannot create a database' }, () => {
+  it('reports a fresh database read-only — and creates nothing', async () => {
+    const dsn = await freshDb();
+    const plan = await planMigrations({ dsn, migrationsDir: MIGRATIONS_DIR, log: quiet });
+    assert.equal(plan.fresh, true);
+    assert.deepEqual(plan.pending, REAL_CHAIN);
+    assert.deepEqual(plan.ahead, []);
+
+    const c = connect(dsn);
+    const reg = await c.query("SELECT to_regclass('shrapnel._migration_ledger') AS reg");
+    assert.equal(reg.rows[0].reg, null, 'a plan must not bootstrap the ledger it is planning');
+    await c.end();
+  });
+
+  it('goes from full-pending to in-sync around a real apply', async () => {
+    const dsn = await freshDb();
+    const before = await planMigrations({ dsn, migrationsDir: MIGRATIONS_DIR, log: quiet });
+    assert.equal(before.pending.length, REAL_CHAIN.length);
+    await runMigrations({ dsn, migrationsDir: MIGRATIONS_DIR, log: quiet });
+    const after = await planMigrations({ dsn, migrationsDir: MIGRATIONS_DIR, log: quiet });
+    assert.deepEqual(after.pending, []);
+    assert.deepEqual(after.ahead, []);
+  });
+});
+
+describe('runMigrations guardrails', { skip: canCreateDb ? false : 'cannot create a database' }, () => {
+  it('dry-run writes nothing: no ledger, no schema, no locks held afterwards', async () => {
+    const dsn = await freshDb();
+    const pending = await runMigrations({ dsn, migrationsDir: MIGRATIONS_DIR, log: quiet, dryRun: true });
+    assert.deepEqual(pending, REAL_CHAIN, 'the plan names every file');
+
+    const c = connect(dsn);
+    const reg = await c.query("SELECT to_regclass('shrapnel._migration_ledger') AS reg");
+    assert.equal(reg.rows[0].reg, null, 'dry-run must not create the ledger');
+    await c.end();
+  });
+
+  it('refuses to apply when the ledger knows migrations this checkout has never heard of', async () => {
+    // Apply a ONE-file chain, then take that file away: the database is now
+    // ahead of the checkout, which is exactly the state that resurrected the
+    // 0005 freeze defect when an older chain was replayed under a newer DB.
+    const dsn = await freshDb();
+    const dir = mkdtempSync(join(tmpdir(), 'shrapnel-migrate-ahead-'));
+    cpSync(join(MIGRATIONS_DIR, '0001_init.sql'), join(dir, '0001_init.sql'));
+    try {
+      await runMigrations({ dsn, migrationsDir: dir, log: quiet });
+      rmSync(join(dir, '0001_init.sql'));
+      await assert.rejects(
+        runMigrations({ dsn, migrationsDir: dir, log: quiet }),
+        /AHEAD of this checkout.*0001_init\.sql/s
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to apply while another session holds the per-database advisory lock', async () => {
+    const dsn = await freshDb();
+    const blocker = connect(dsn);
+    await blocker.query("SELECT pg_try_advisory_lock(hashtext(current_database() || ':shrapnel-migrate')) AS ok");
+    try {
+      await assert.rejects(
+        runMigrations({ dsn, migrationsDir: MIGRATIONS_DIR, log: quiet }),
+        /advisory lock/
+      );
+    } finally {
+      await blocker.query("SELECT pg_advisory_unlock(hashtext(current_database() || ':shrapnel-migrate'))");
+      await blocker.end();
+    }
+  });
+
+  it('surfaces the ahead-refusal through the CLI, exit 1, before any psql runs', async () => {
+    const dsn = await freshDb();
+    // Ledger the whole chain PLUS a file the repo dir has never had: the CLI
+    // always plans against the repo migrations dir, so only a file that is
+    // genuinely absent from it can trigger the ahead-refusal end to end.
+    const dir = mkdtempSync(join(tmpdir(), 'shrapnel-migrate-cli-'));
+    cpSync(MIGRATIONS_DIR, dir, { recursive: true });
+    writeFileSync(join(dir, '0000_extra.sql'), 'SELECT 1;\n');
+    try {
+      await runMigrations({ dsn, migrationsDir: dir, log: quiet });
+      const res = spawnSync('node', [join(SERVICE_ROOT, 'src', 'scripts', 'migrate.js'), '--dry-run'], {
+        encoding: 'utf8',
+        env: { ...process.env, SHRAPNEL_PG_DSN: dsn },
+      });
+      assert.equal(res.status, 1, `expected exit 1: ${res.stderr || res.stdout}`);
+      assert.match(res.stderr, /AHEAD of this checkout/);
+      assert.match(res.stderr, /0000_extra\.sql/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
