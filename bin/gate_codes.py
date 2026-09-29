@@ -24,6 +24,11 @@ there. Routing treats it as a lookup-failure class either way.
 
 Consumer routing (attestation_janitor.py, per spec table):
     ATT_MISSING        silent skip (state file only)
+    ATT_TIMESTAMP_MISSING
+                       operator action: a serialization regression on the
+                       record endpoint, not a tester action. Retry next
+                       cycle; the janitor does NOT queue a re-attestation
+                       (that is the misdiagnosis this code replaces).
     ATT_STALE_HEAD     queue tester re-attestation; 1 post per dedup key
     ATT_NO_CI_EVIDENCE queue tester re-attestation (attestation lacks CI run
                        references, or a cited run is genuinely absent — gh
@@ -69,6 +74,16 @@ ATT_SHAPE_UNSEEN = "ATT_SHAPE_UNSEEN"
 ATT_STALE_HEAD = "ATT_STALE_HEAD"
 ATT_LOOKUP_FAILED = "ATT_LOOKUP_FAILED"
 ATT_BYPASSED = "ATT_BYPASSED"
+
+# A matching attestation row exists but carries no usable createdAt, so the
+# freshness predicate cannot be evaluated at all. This is a SERVER-side
+# serialization defect, NOT a tester action: before this code the evaluator
+# coerced the missing timestamp to 0, the row bound at epoch 0, and the gate
+# reported ATT_STALE_HEAD — telling the tester to re-attest for a condition
+# that no re-attestation can ever fix. That misdiagnosis is what froze the
+# merge queue (DBA records 48ac13e2 / 2a51e900). Distinct from
+# HEAD_DATE_UNKNOWN, which is the HEAD commit's date being unavailable.
+ATT_TIMESTAMP_MISSING = "ATT_TIMESTAMP_MISSING"
 # Attestation content carries no machine-verifiable CI evidence (no
 # "CI run <id>" reference). Stated test counts ("54/54 pass") are the
 # engine's self-attestation, not the tester's verification; verification
@@ -91,7 +106,7 @@ ALL_CODES = frozenset({
     CI_NO_CHECKS, CI_PENDING, CI_FAIL,
     ATT_MISSING, ATT_SHAPE_UNSEEN, ATT_STALE_HEAD,
     ATT_LOOKUP_FAILED, ATT_BYPASSED, ATT_NO_CI_EVIDENCE,
-    ATT_CI_LOOKUP_FAILED,
+    ATT_CI_LOOKUP_FAILED, ATT_TIMESTAMP_MISSING,
 })
 
 # Codes whose condition may clear on the next cycle without anyone acting:
