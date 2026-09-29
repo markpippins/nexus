@@ -371,7 +371,20 @@ export async function main(argv = process.argv.slice(2)) {
     if (plan.pending.length > 0 && !plan.fresh) {
       const dumpDir =
         process.env.SHRAPNEL_MIGRATE_DUMP_DIR || join(tmpdir(), 'shrapnel-migrate-dumps');
-      mkdirSync(dumpDir, { recursive: true });
+      try {
+        mkdirSync(dumpDir, { recursive: true });
+      } catch (err) {
+        // Same refusal contract as a failed pg_dump below — one canonical,
+        // greppable pre-apply refusal — with the fs cause appended so the
+        // operator can act on it. (F2, rehearsal record 3f5fed68: a dump dir
+        // occupied by a regular file used to surface as a raw 'EEXIST ... mkdir'
+        // instead of this message. Behavior was already fail-closed; the
+        // operator-facing text was not.)
+        throw new Error(
+          `pre-apply pg_dump failed — refusing to apply (override with --no-dump): could not create dump dir ${dumpDir}: ${err.message}`,
+          { cause: err }
+        );
+      }
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const { file, args } = buildDumpCommand({ dsn: DEFAULT_DSN, dumpDir, timestamp });
       const res = spawnSync('pg_dump', args, { encoding: 'utf8' });
