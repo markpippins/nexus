@@ -1,0 +1,56 @@
+# tests/bin suites — the unit tests for bin/ scripts.
+#
+# Before 2026-09-29 NO workflow ran tests/bin, so a pre-existing indefinite
+# hang in tests/bin/freebuff-boot_checks.py (boot shim consolidation walking
+# into the live calendar fold; root cause fixed alongside this workflow) sat
+# undetected. This gate makes the suites a merge blocker and carries a
+# non-vacuous-pass canary: a suite that reports 0 tests is a failure, not a
+# green skip — the same lesson bin-tests.yml learned when the toolcache
+# Python silently ran "72 guards / 0 tests".
+#
+# Same command locally and in CI: python3 tests/run_all.py bin
+name: tests/bin suites
+
+on:
+  push:
+    branches: [main, master, dev, feature/*]
+  pull_request:
+    branches: [main, master, dev, feature/*]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  suites:
+    name: tests/bin (stdlib; hermetic mocks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # Both suites are stdlib-only by design (mock HTTP servers + subprocess
+      # of the scripts under test); no pip install on purpose.
+      - name: Run tests/bin suites with a non-vacuous-pass canary
+        shell: bash
+        run: |
+          set -o pipefail
+          out=$(python3 tests/run_all.py bin 2>&1) || { echo "$out"; exit 1; }
+          echo "$out"
+          counts=$(echo "$out" | sed -n 's/^  TOTAL: \([0-9]*\) passed, \([0-9]*\) failed.*/\1 \2/p')
+          if [ -z "$counts" ]; then
+            echo "::error::No TOTAL line in suite output — tests/run_all.py bin did not run any suite. Failing rather than passing vacuously."
+            exit 1
+          fi
+          passed=${counts%% *}
+          failed=${counts##* }
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::$failed test(s) failed."; exit 1
+          fi
+          if [ "$passed" -lt 22 ]; then
+            echo "::error::Only $passed tests ran (expected >=22: 11 checks.py + 11 freebuff-boot_checks.py). Discovery is likely broken — failing instead of passing an empty suite."
+            exit 1
+          fi
+          echo "tests/bin canary ok: $passed passed, 0 failed"
