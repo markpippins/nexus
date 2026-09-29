@@ -5,7 +5,8 @@
 # 2026-09-22: the candidate-tier lane runs containerized — cand-broker on
 # host :14080 — and a future three-distribution comparison runs on barium
 # when it returns). This script is the ENFORCEMENT of that posture: it fails
-# loudly if any ratifier port from moleculer/PORT-MAP.md is bound on this
+# loudly if any port declared in moleculer/ports.yaml (the single-source
+# registry; PORT-MAP.md is generated from it) is bound on this
 # host, so an accidental local moleculer start fails here instead of
 # silently polluting M1 traffic-canary evidence (the M1 zero-window and the
 # lead-engineer's lane-split evidence both depend on "moleculer doesn't run
@@ -35,10 +36,25 @@ set -u
 JSON=0
 [ "${1:-}" = "--json" ] && JSON=1
 
-# The ratified moleculer port map (moleculer/PORT-MAP.md; mirrored in
-# jvm/ARCHITECTURE.md Port Allocation). Update BOTH docs and this list
-# together per the freeze discipline.
-MAPPED_PORTS="4050 4060 4080 4100 4106 4109 4114 4170"
+# The ratified moleculer port map — SINGLE SOURCE: moleculer/ports.yaml
+# (commissioned by ruling 7c97ea63 / decision 91540185 §2). PORT-MAP.md,
+# README.md and jvm/ARCHITECTURE.md are GENERATED from that registry by
+# tools/api-docs/gen_port_registry.py; this gate reads the registry too, so a
+# new port is one append (the old hand-list here had silently missed every
+# canary port after 4170).
+# NEXUS_PORTS_YAML overrides the registry path (tests); the inline fallback
+# keeps the gate functional if the registry file is missing.
+PORTS_YAML="${NEXUS_PORTS_YAML-$(git rev-parse --show-toplevel 2>/dev/null)/moleculer/ports.yaml}"
+if [ -r "$PORTS_YAML" ]; then
+    MAPPED_PORTS="$(grep -E '^[[:space:]]*-[[:space:]]*port:' "$PORTS_YAML" \
+        | sed -E 's/^[[:space:]]*-[[:space:]]*port:[[:space:]]*//; s/[[:space:]]+([#].*)?$//' | tr '\n' ' ' | sed 's/ $//')"
+    if [ -z "$MAPPED_PORTS" ]; then
+        echo "FATAL: $PORTS_YAML parsed to an empty port list" >&2; exit 2
+    fi
+else
+    echo "NOTICE: registry $PORTS_YAML not readable; using inline fallback port list" >&2
+    MAPPED_PORTS="4050 4060 4080 4100 4104 4106 4109 4110 4111 4114 4116 4150 4160 4170 4410 4420 4501"
+fi
 
 SS_BIN="${SS_BIN-$(command -v ss || true)}"   # dash-form: empty override = simulate absence (tests)
 failures=()

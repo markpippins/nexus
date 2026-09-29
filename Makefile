@@ -383,6 +383,8 @@ bintests:
 	@python3 bin/run_bin_tests.py
 
 apidocs-validate:
+	@echo "[apidocs] port registry byte-identical..."
+	@python3 tools/api-docs/gen_port_registry.py --check
 	@$(MAKE) apidocs-extract
 	@echo "[apidocs] drift check..."
 	@python3 tools/api-docs/check_drift.py
