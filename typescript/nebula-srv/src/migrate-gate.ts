@@ -69,14 +69,17 @@ export type MigrationGateDecision =
 /**
  * Resolve the dialed target from the pool's effective config.
  *
- * Defaults mirror `src/index.ts` exactly. If the Pool is ever given a different
- * default, this must be updated in step — a divergence here would mean the gate
- * checks a target the service is not actually using.
+ * Defaults mirror `src/index.ts` exactly (PG_DB_NAME || 'nexus'): host
+ * 'localhost', port 5432, database 'nexus'. If index.ts ever changes a
+ * default, this must be updated in step — a divergence here would mean the
+ * gate checks a target the service is not actually using. (The `''`
+ * database fallback only fires for a Pool constructed without a database;
+ * the index.ts wiring always sets one — Decision 16 condition 2 nit.)
  */
 export function resolveMigrateTarget(config: PoolTargetConfig): string {
   const host = config.host ?? 'localhost';
   const port = config.port ?? 5432;
-  const database = config.database ?? '';
+  const database = config.database ?? 'nexus';
   return `${host}:${port}:${database}`;
 }
 

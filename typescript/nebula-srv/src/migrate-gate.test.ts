@@ -26,8 +26,11 @@ describe('resolveMigrateTarget', () => {
   it('mirrors the index.ts defaults when config is sparse', () => {
     // If index.ts defaults ever change, this must change with them — a
     // divergence means the gate checks a target the service is not dialling.
-    expect(resolveMigrateTarget({})).toBe('localhost:5432:');
-    expect(resolveMigrateTarget({ database: 'nexus' })).toBe('localhost:5432:nexus');
+    // Decision 16 condition 2: the database fallback is 'nexus' (matching
+    // index.ts's PG_DB_NAME || 'nexus'), not ''. A Pool without a database
+    // resolves to the same target index.ts would have dialed.
+    expect(resolveMigrateTarget({})).toBe('localhost:5432:nexus');
+    expect(resolveMigrateTarget({ database: 'nebula_gate_ci' })).toBe('localhost:5432:nebula_gate_ci');
   });
 });
 
