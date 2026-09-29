@@ -22,7 +22,7 @@
 #   --since <SPEC>      relative lookback, e.g. 7d / 12h / 30m / 45s — convenience
 #                       sugar for --pointer "$(date ...)" (non-destructive)
 #   --all               ignore the stored pointer; list most recent records
-#   --limit N           max records to return (default: 10)
+#   --limit N           max records to return (default: 50; server caps at 100)
 #   --update-pointer    after listing, PUT the pointer to the newest record's
 #                       createdAt (converted to ISO) so the next check is clean
 #   --raw               print the raw MCP result JSON instead of summaries
@@ -32,7 +32,9 @@
 # http://localhost:3102) — used by tests/bin/checks.py to point at a mock.
 #
 # Exit: 0 = ok (even with zero new records), 1 = transport/tool error,
-# 2 = usage error.
+# 2 = usage error, 3 = pointer advance REFUSED because the returned window
+# looks truncated (raising the default limit and re-checking first prevents
+# below-fold records from being marked seen without ever being shown).
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -59,9 +61,10 @@ Options:
   --pointer <ISO>     explicit createdAfter timestamp (overrides stored ptr)
   --since <SPEC>      relative lookback: 7d / 12h / 30m / 45s (non-destructive)
   --all               ignore the stored pointer; list most recent records
-  --limit N           max records to return (default: 10)
+  --limit N           max records to return (default: 50; server caps at 100)
   --update-pointer    after listing, PUT the pointer to the newest record's
-                      createdAt (converted to ISO)
+                      createdAt (converted to ISO) — REFUSED at exit 3 if the
+                      returned window looks truncated
   --raw               print the raw MCP result JSON instead of summaries
   -h, --help          show this help"""
 
@@ -70,7 +73,7 @@ role = "engineer"
 pointer = None
 since = None
 all_records = False
-limit = 10
+limit = 50
 update_pointer = False
 raw = False
 i = 0
@@ -216,11 +219,44 @@ else:
             iso = str(ts)
         print("- %s | %s | %s" % (iso, rec.get("recordType", "?"), rec.get("title", "")[:80]))
 
+# --- truncation detection --------------------------------------------------
+# The default (nebula_get_inbox) response only reports the RETURNED count, so
+# "returned == limit" is a heuristic: the server may have hit its cap. The
+# explicit-pointer/--all path (nebula_list_agent_records) returns a full
+# `total`, so there the comparison is exact. A 10-record default fold once
+# buried an attestation request below a routine sweep (record 192a829d);
+# silence about truncation is what made that invisible.
+def _truncation_note(records, extra, limit):
+    """Return a truncation warning string, or None if the window looks complete."""
+    if len(records) < limit:
+        return None
+    if isinstance(extra, dict) and isinstance(extra.get("total"), int):
+        if extra["total"] > len(records):
+            return ("WARN: inbox truncated: showing %d of %d matching records. "
+                    "Re-run with a higher --limit before advancing the pointer."
+                    % (len(records), extra["total"]))
+        return None
+    return ("WARN: inbox returned %d records == limit %d — there may be more "
+            "below the fold. Re-run with a higher --limit before advancing "
+            "the pointer." % (len(records), limit))
+
+truncated = _truncation_note(records, extra, limit)
+if truncated:
+    print(truncated)
+
 # --- optional pointer advance ----------------------------------------------
 # NOTE: relies on records being newest-first, so max(createdAt) over the
 # (possibly limited) window is the true newest — an unsorted list would only
 # under-advance (duplicate delivery next turn), never lose records.
 if update_pointer and records:
+    if truncated:
+        # Advancing now would mark below-fold records seen without ever
+        # showing them — the exact failure mode that buried a request under
+        # the old 10-record default. Withhold the write instead.
+        print("REFUSING to update pointer: returned window looks truncated "
+              "(see warning above). Re-run with a higher --limit, then "
+              "advance with --update-pointer.", file=sys.stderr)
+        sys.exit(3)
     newest = max((r.get("createdAt") or 0) for r in records)
     if newest:
         iso = datetime.fromtimestamp(newest / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

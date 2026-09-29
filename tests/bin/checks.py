@@ -13,6 +13,10 @@ AGENTS.md R17 and the inbox-query-procedure memory card:
   (catch-up through the reviewed window, not a rewind to the override).
 - The default path uses the single-call `nebula_get_inbox` tool; the
   explicit paths use `nebula_list_agent_records` with createdAfter.
+- The default limit is 50 (raised from 10 after a request was buried below
+  the old fold), and a truncated window is surfaced: WARN on stdout, and a
+  REFUSAL (exit 3) to advance the pointer, since advancing would mark
+  below-fold records seen without ever showing them.
 
 Usage:
     python3 tests/bin/checks.py          # run this suite
@@ -101,11 +105,18 @@ class MockMcp(BaseHTTPRequestHandler):
     @classmethod
     def _handle_tool(cls, name: str, args: dict) -> dict:
         cfg = cls.config
+        limit = args.get("limit") or 20  # mirror nebula_get_inbox server default
         if name == "nebula_get_inbox":
+            items = cfg["records"][:limit]
             return {"role": args.get("role"), "pointer": cfg["stored_pointer"],
-                    "items": cfg["records"], "count": len(cfg["records"])}
+                    "items": items, "count": len(items)}
         if name == "nebula_list_agent_records":
-            return {"items": cfg["records"], "total": len(cfg["records"])}
+            # Mirror the real REST wrapper: items is the limited page, total
+            # is the full match count (this is what makes truncation exact
+            # on the explicit-pointer/--all path).
+            items = cfg["records"][:limit]
+            return {"items": items, "total": len(cfg["records"]),
+                    "page": 1, "pageSize": limit}
         if name == "nebula_set_inbox_pointer":
             return {"ok": True}
         return {"items": [], "total": 0}
@@ -244,6 +255,82 @@ def test_usage_errors_exit_2():
             r = run_script(srv.server_port, ["--role", "engineer"] + extra)
             assert r.returncode == 2, (extra, r.returncode, r.stderr)
             assert r.stderr.strip().startswith("ERROR:"), (extra, r.stderr)
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+# ── fold / truncation semantics ───────────────────────────────────────────
+
+def _seed_overflow(n: int) -> list[dict]:
+    """n records spaced 1 min apart, oldest first (server returns as stored)."""
+    base = 1_752_000_000_000
+    out = []
+    for i in range(n):
+        out.append({"createdAt": base + i * 60_000,
+                    "recordType": "report", "title": f"overflow record {i}"})
+    return out
+
+
+def test_default_limit_is_50():
+    srv = start_server({"stored_pointer": STORE_POINTER, "records": [REC_NEWER, REC_OLDER]})
+    try:
+        r = run_script(srv.server_port, ["--role", "engineer"])
+        assert r.returncode == 0, r.stderr
+        calls = tool_calls("nebula_get_inbox")
+        assert calls, "default path must use nebula_get_inbox"
+        assert calls[0][1].get("arguments", {}).get("limit") == 50, \
+            "default limit must be 50 (was 10 — that fold buried requests)"
+        assert "WARN" not in r.stdout, "a 2-record window must not warn"
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_truncation_warns_and_refuses_pointer_advance_default_path():
+    # 55 records vs default 50: the default path only reports the returned
+    # count, so the warning is the (count == limit) heuristic — and the
+    # pointer advance must REFUSE rather than mark the bottom 5 seen unseen.
+    newest_iso = iso_of(1_752_000_000_000 + 54 * 60_000)
+    srv = start_server({"stored_pointer": STORE_POINTER, "records": _seed_overflow(55)})
+    try:
+        r = run_script(srv.server_port, ["--role", "engineer", "--update-pointer"])
+        assert r.returncode == 3, (r.returncode, r.stdout, r.stderr)
+        assert "WARN" in r.stdout and "below the fold" in r.stdout
+        assert set_pointer_args_list() == [], "truncated window must not advance the pointer"
+        assert "REFUSING" in r.stderr
+        assert newest_iso not in r.stdout, "newest record was below the fold and must not print"
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_truncation_is_exact_on_list_path_and_refuses_advance():
+    # --pointer path uses nebula_list_agent_records, whose wrapper carries a
+    # full `total`: the warning can state exact numbers instead of a heuristic.
+    srv = start_server({"stored_pointer": STORE_POINTER, "records": _seed_overflow(55)})
+    try:
+        r = run_script(srv.server_port, ["--role", "engineer", "--pointer", STORE_POINTER,
+                                         "--limit", "50", "--update-pointer"])
+        assert r.returncode == 3, (r.returncode, r.stdout, r.stderr)
+        assert "showing 50 of 55" in r.stdout, r.stdout
+        assert set_pointer_args_list() == []
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_higher_limit_recovers_and_advances():
+    # The recovery path the warning prescribes must actually work.
+    newest_iso = iso_of(1_752_000_000_000 + 54 * 60_000)
+    srv = start_server({"stored_pointer": STORE_POINTER, "records": _seed_overflow(55)})
+    try:
+        r = run_script(srv.server_port, ["--role", "engineer", "--limit", "60", "--update-pointer"])
+        assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
+        assert "WARN" not in r.stdout
+        args = set_pointer_args_list()
+        assert len(args) == 1 and args[0]["timestamp"] == newest_iso, \
+            "untruncated window must advance to the true newest"
     finally:
         srv.shutdown()
         srv.server_close()
