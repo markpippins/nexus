@@ -1,10 +1,17 @@
-"""Decision 18: the storage-shaped field exemption registry for the casing ratchet.
+"""Decision 18 + Decision 20: the storage-shaped field exemption registry for
+the casing ratchet.
 
-Ruling (record c53289ef): option (a) adopted as a FIELD-LEVEL registry — a
+Decision 18 (record c53289ef): option (a) adopted as a FIELD-LEVEL registry — a
 snake_case field in typespec/v1 is exempt ONLY if declared in
 bin/contract-casing-exemptions.json with the storage location whose name the
 wire field is required to mirror; anything undeclared — inside or outside the
 CDLC family — is a ratchet violation. The floor is the non-exempt leak count.
+
+Decision 20 (record 25f5fa36): unified entry kinds — column|jsonb (canonical
+storage spelling), external (non-nexus store, e.g. MongoDB keychain), table
+(table-scoped envelope key), computed (derived read-model aggregate with a
+dated camelCase remediation target; unremediated past target = violation).
+Malformed registries hard-fail (ValueError), never silently widen.
 
 Both directions are tested, per the ruling's consequence for the tester:
 exempt-declared fields pass; undeclared snake_case fails, including a
@@ -34,22 +41,34 @@ class TestRegistryShape(unittest.TestCase):
         self.assertIsInstance(data.get("fields"), dict,
                               "registry must have a top-level 'fields' object")
 
-    def test_every_entry_cites_storage_and_pr(self):
-        """Decision 13 condition 2 via Decision 18: no silent growth — each
-        exemption must cite the storage location and the introducing PR."""
+    def test_every_entry_cites_pr_and_kind_appropriate_evidence(self):
+        """Decision 13 condition 2 via Decision 18/20: no silent growth — each
+        exemption cites the introducing PR plus kind-appropriate evidence:
+        storage kinds cite the canonical location; computed cites the
+        producing computation AND a dated remediation target."""
         data = json.loads(REGISTRY.read_text(encoding="utf-8"))
         for field, entries in data["fields"].items():
             self.assertTrue(ccc.SNAKE.match(field),
                             f"registry field not snake_case: {field}")
             self.assertGreater(len(entries), 0, f"{field}: no entries")
             for entry in entries:
-                self.assertTrue(entry.get("storage"),
-                                f"{field}: entry lacks 'storage' (table.column/jsonb key)")
                 self.assertTrue(entry.get("pr"),
                                 f"{field}: entry lacks 'pr' (Decision 13 condition 2)")
-                self.assertRegex(str(entry["storage"]),
-                                 r"[a-z_]+\.[a-z_]+(\.[a-z_]+)*",
-                                 f"{field}: storage must name a column or jsonb path")
+                kind = entry.get("kind")
+                self.assertIn(kind, ccc.VALID_KINDS,
+                              f"{field}: invalid kind {kind!r} (Decision 20 schema)")
+                if kind in ccc.STORAGE_KINDS:
+                    self.assertTrue(entry.get("storage"),
+                                    f"{field}: {kind} entry lacks 'storage'")
+                    self.assertRegex(str(entry["storage"]),
+                                     r"[a-z_:][a-zA-Z0-9_.\[\]]*",
+                                     f"{field}: storage must name a location")
+                if kind == "computed":
+                    self.assertTrue(entry.get("computation"),
+                                    f"{field}: computed entry lacks 'computation'")
+                    self.assertRegex(str(entry.get("target") or ""),
+                                     r"^\d{4}-\d{2}-\d{2}$",
+                                     f"{field}: computed target must be a YYYY-MM-DD date")
 
     def test_exempt_fields_actually_exist_in_the_tree(self):
         """An exemption for a field that occurs nowhere is dead weight and
@@ -77,7 +96,8 @@ class TestExemptionSemantics(unittest.TestCase):
 
     def test_floor_is_the_non_exempt_count(self):
         """Decision 18: 'leaks' is the NON-EXEMPT count. The baseline floor
-        must equal the current non-exempt total (590 at registry landing)."""
+        must equal the current non-exempt total (575 after the Decision 20
+        computed entries; 590 at the Decision 18 registry landing)."""
         base = json.loads(BASELINE.read_text(encoding="utf-8"))
         self.assertEqual(base["leaks"], self.data["leak_total"],
                          "baseline floor must be recalculated to the "
@@ -146,6 +166,117 @@ class TestExemptionSemantics(unittest.TestCase):
                     ccc.load_exemptions()
             finally:
                 ccc.EXEMPTIONS = orig
+
+
+class TestDecision20Kinds(unittest.TestCase):
+    """Decision 20 (record 25f5fa36): computed/external/table kinds, remediation
+    pairing, hard-fail validation — the anti-phantom discipline extended."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.reg = json.loads(REGISTRY.read_text(encoding="utf-8"))["fields"]
+
+    def test_unified_registry_carries_all_kinds(self):
+        kinds = {e.get("kind") for entries in self.reg.values() for e in entries}
+        self.assertIn("column", kinds)
+        self.assertIn("jsonb", kinds)
+        self.assertIn("computed", kinds)
+        self.assertIn("external", kinds)
+        self.assertIn("table", kinds)
+
+    def test_eleven_computed_census_aggregates_declared(self):
+        """Decision 20 option (1): the 11 buildCensusReportIndex aggregates
+        enter as computed with the same evidence discipline."""
+        expected = {
+            "report_count", "category_counts", "finding_count", "daily_counts",
+            "observed_day_count", "trigger_counts", "rejected_report_count",
+            "rejected_reports", "report_ids_with_no_findings",
+            "report_count_no_findings", "anticipated_finding_count",
+        }
+        self.assertTrue(expected.issubset(self.reg),
+                        f"missing computed entries: {sorted(expected - set(self.reg))}")
+        for field in expected:
+            for entry in self.reg[field]:
+                self.assertEqual(entry.get("kind"), "computed")
+                self.assertIn("buildCensusReportIndex", entry.get("computation", ""))
+                self.assertTrue(entry.get("target"), f"{field}: no remediation target")
+
+    def test_computed_entries_without_target_hard_fail(self):
+        """A computed entry with no dated target cannot exist: remediation
+        pairing is what stops computed from becoming a permanent waiver."""
+        import tempfile
+        broken = {
+            "fields": {
+                "some_count": [{"kind": "computed", "computation": "x", "pr": "#1"}],
+            }
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = pathlib.Path(tmp) / "contract-casing-exemptions.json"
+            bad.write_text(json.dumps(broken), encoding="utf-8")
+            orig = ccc.EXEMPTIONS
+            try:
+                ccc.EXEMPTIONS = bad
+                with self.assertRaises(ValueError):
+                    ccc.load_exemptions()
+            finally:
+                ccc.EXEMPTIONS = orig
+
+    def test_computed_without_computation_hard_fails(self):
+        import tempfile
+        broken = {
+            "fields": {
+                "some_count": [{"kind": "computed", "target": "2026-12-31", "pr": "#1"}],
+            }
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = pathlib.Path(tmp) / "contract-casing-exemptions.json"
+            bad.write_text(json.dumps(broken), encoding="utf-8")
+            orig = ccc.EXEMPTIONS
+            try:
+                ccc.EXEMPTIONS = bad
+                with self.assertRaises(ValueError):
+                    ccc.load_exemptions()
+            finally:
+                ccc.EXEMPTIONS = orig
+
+    def test_storage_kind_without_storage_hard_fails(self):
+        import tempfile
+        broken = {
+            "fields": {
+                "some_id": [{"kind": "column", "pr": "#1"}],
+            }
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = pathlib.Path(tmp) / "contract-casing-exemptions.json"
+            bad.write_text(json.dumps(broken), encoding="utf-8")
+            orig = ccc.EXEMPTIONS
+            try:
+                ccc.EXEMPTIONS = bad
+                with self.assertRaises(ValueError):
+                    ccc.load_exemptions()
+            finally:
+                ccc.EXEMPTIONS = orig
+
+    def test_expired_computed_target_is_a_violation(self):
+        """Decision 20: unremediated past milestone = violation — the expiry
+        predicate must flag computed entries whose target has lapsed, and
+        only those."""
+        fields = {
+            "past_field": [{"kind": "computed", "target": "2026-01-01"}],
+            "future_field": [{"kind": "computed", "target": "2099-01-01"}],
+            "storage_field": [{"kind": "column", "target": "2020-01-01"}],
+        }
+        expired = ccc.expired_computed(fields, "2026-09-29")
+        self.assertEqual(set(expired), {"past_field"})
+        self.assertEqual(expired["past_field"], ["2026-01-01"])
+
+    def test_live_computed_targets_not_expired(self):
+        """The shipped registry must not be expired today (guards against
+        landing an already-lapsed remediation target)."""
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).date().isoformat()
+        self.assertEqual(ccc.expired_computed(self.reg, today), {},
+                         "shipped registry has computed entries past their target")
 
 
 import os

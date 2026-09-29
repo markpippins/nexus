@@ -1,8 +1,9 @@
 {
-  "_comment": "Storage-shaped field-level exemption registry for bin/check_contract_casing.py (Decision 18, record c53289ef; adopts option (a) as a FIELD-LEVEL registry, explicitly NOT a blanket family exemption). A snake_case field in typespec/v1 is exempt ONLY if declared here with the storage location whose name the wire field is required to mirror (DB column or jsonb key; the database is canonical per Tier-1 doctrine). Any undeclared snake_case field \u2014 inside or outside the CDLC family \u2014 remains a ratchet violation. Additions are governed by Decision 13 condition 2: cite the PR that introduced the field and the storage location; no silent growth. Derived read-model aggregates (report_count, finding_count, generated_at, ...) are NOT exempt: they are computed on read and no storage key requires their spelling. Endgame: if a family later splits wire/adapter, its entries are removed and the field converts to camelCase (option (b)); the registry shrinking to zero is the --strict target.",
+  "_comment": "Storage-shaped field-level exemption registry for bin/check_contract_casing.py (Decision 18, record c53289ef; unified with Decision 20, record 25f5fa36: entry kinds column|jsonb|computed|external|table, one registry, PR #650 carrier). A snake_case field in typespec/v1 is exempt ONLY if declared here with kind-appropriate evidence — the database (or the named external/derived source) is canonical per Tier-1 doctrine, so the spelling is an architectural property, not authoring drift. Any undeclared snake_case field — inside or outside the CDLC family — remains a ratchet violation. Malformed registries hard-fail (ValueError), never silently widen. COMPUTED entries carry a dated camelCase remediation target (Decision 20 remediation pairing): unremediated past the target date is a violation. Endgame: the registry shrinking to zero is the --strict target.",
   "fields": {
     "execution_id": [
       {
+        "kind": "column",
         "storage": "nebula.executions.execution_id",
         "pr": "#639",
         "note": "CDLC A2a execution identity; wire mirrors the DDL column (also the A2b census jsonb key metadata.census.execution_id read by exact key in keychain-snapshot.service.ts)"
@@ -10,6 +11,7 @@
     ],
     "session_id": [
       {
+        "kind": "column",
         "storage": "nebula.executions.session_id",
         "pr": "#639",
         "note": "Named text reference (DBA condition 2/3), not the vision.sessions uuid concept; wire mirrors the column"
@@ -17,6 +19,7 @@
     ],
     "census_id": [
       {
+        "kind": "column",
         "storage": "nebula.executions.census_id",
         "pr": "#639",
         "note": "Tier-1/Tier-2 join key; also the A2b jsonb key metadata.census.census_id (exact-key read)"
@@ -24,6 +27,7 @@
     ],
     "source_namespace": [
       {
+        "kind": "column",
         "storage": "nebula.executions.source_namespace",
         "pr": "#639",
         "note": "Named source_namespace rather than `namespace` (reserved TypeSpec keyword); matches the doctrine transition record convention"
@@ -31,6 +35,7 @@
     ],
     "ticket_id": [
       {
+        "kind": "column",
         "storage": "nebula.executions.ticket_id",
         "pr": "#639",
         "note": "What-ran subject column"
@@ -38,6 +43,7 @@
     ],
     "work_item_id": [
       {
+        "kind": "column",
         "storage": "nebula.executions.work_item_id",
         "pr": "#639",
         "note": "What-ran subject column"
@@ -45,6 +51,7 @@
     ],
     "doctrine_snapshot_id": [
       {
+        "kind": "column",
         "storage": "nebula.executions.doctrine_snapshot_id",
         "pr": "#639",
         "note": "B1/B3 provenance column; also the A2b jsonb key metadata.frame.doctrine_snapshot_id (exact-key read)"
@@ -52,6 +59,7 @@
     ],
     "procedure_card_set_hash": [
       {
+        "kind": "column",
         "storage": "nebula.executions.procedure_card_set_hash",
         "pr": "#639",
         "note": "B1/B3 provenance column"
@@ -59,20 +67,23 @@
     ],
     "schema_version": [
       {
-        "storage": "nebula.agent_records.metadata.census.schema_version",
+        "kind": "table",
+        "storage": "table:nebula.agent_records.metadata",
         "pr": "#634",
-        "note": "CDLC A2b census envelope jsonb key (CENSUS_SCHEMA_VERSION pinned at write, validated on read)"
+        "note": "Decision 20 table: source form — schema_version names the census envelope schema (CENSUS_SCHEMA_VERSION pinned at write, validated on read), not a column; envelope lives in the agent_records.metadata jsonb"
       }
     ],
     "asset_id": [
       {
-        "storage": "nebula.agent_records.metadata.census.findings[].card.asset_id",
+        "kind": "external",
+        "storage": "external:keychain.InstanceManifest.asset_id",
         "pr": "#634",
-        "note": "A2b finding-card jsonb key"
+        "note": "Decision 20 external: form — MongoDB document field on keychain InstanceManifest, not a nexus column or jsonb key"
       }
     ],
     "instance_id": [
       {
+        "kind": "jsonb",
         "storage": "nebula.agent_records.metadata.census.findings[].card.instance_id",
         "pr": "#634",
         "note": "A2b finding-card jsonb key"
@@ -80,6 +91,7 @@
     ],
     "record_id": [
       {
+        "kind": "jsonb",
         "storage": "nebula.agent_records.metadata.census.findings[].card.record_id",
         "pr": "#634",
         "note": "A2b finding-card jsonb key"
@@ -87,9 +99,109 @@
     ],
     "procedure_card_hash": [
       {
+        "kind": "jsonb",
         "storage": "nebula.agent_records.metadata.census.findings[].card.procedure_card_hash",
         "pr": "#634",
         "note": "A2b finding-card jsonb key (content-addressed card identity)"
+      }
+    ],
+    "report_count": [
+      {
+        "kind": "computed",
+        "computation": "buildCensusReportIndex (moleculer/nexus-broker lib/census-report.ts)",
+        "pr": "#634",
+        "target": "2026-11-30",
+        "note": "Decision 20 computed kind — A2b census read-model aggregate over canonical rows; camelCase remediation target: camelize in the CDLC read-model revision PR or by 2026-11-30, whichever first"
+      }
+    ],
+    "category_counts": [
+      {
+        "kind": "computed",
+        "computation": "buildCensusReportIndex (moleculer/nexus-broker lib/census-report.ts)",
+        "pr": "#634",
+        "target": "2026-11-30",
+        "note": "Decision 20 computed kind — A2b census read-model aggregate"
+      }
+    ],
+    "finding_count": [
+      {
+        "kind": "computed",
+        "computation": "buildCensusReportIndex (moleculer/nexus-broker lib/census-report.ts)",
+        "pr": "#634",
+        "target": "2026-11-30",
+        "note": "Decision 20 computed kind — A2b census read-model aggregate"
+      }
+    ],
+    "daily_counts": [
+      {
+        "kind": "computed",
+        "computation": "buildCensusReportIndex (moleculer/nexus-broker lib/census-report.ts)",
+        "pr": "#634",
+        "target": "2026-11-30",
+        "note": "Decision 20 computed kind — A2b census read-model aggregate"
+      }
+    ],
+    "observed_day_count": [
+      {
+        "kind": "computed",
+        "computation": "buildCensusReportIndex (moleculer/nexus-broker lib/census-report.ts)",
+        "pr": "#634",
+        "target": "2026-11-30",
+        "note": "Decision 20 computed kind — A2b census read-model aggregate"
+      }
+    ],
+    "trigger_counts": [
+      {
+        "kind": "computed",
+        "computation": "buildCensusReportIndex (moleculer/nexus-broker lib/census-report.ts)",
+        "pr": "#634",
+        "target": "2026-11-30",
+        "note": "Decision 20 computed kind — A2b census read-model aggregate"
+      }
+    ],
+    "rejected_report_count": [
+      {
+        "kind": "computed",
+        "computation": "buildCensusReportIndex (moleculer/nexus-broker lib/census-report.ts)",
+        "pr": "#634",
+        "target": "2026-11-30",
+        "note": "Decision 20 computed kind — A2b census read-model aggregate"
+      }
+    ],
+    "rejected_reports": [
+      {
+        "kind": "computed",
+        "computation": "buildCensusReportIndex (moleculer/nexus-broker lib/census-report.ts)",
+        "pr": "#634",
+        "target": "2026-11-30",
+        "note": "Decision 20 computed kind — A2b census read-model aggregate"
+      }
+    ],
+    "report_ids_with_no_findings": [
+      {
+        "kind": "computed",
+        "computation": "buildCensusReportIndex (moleculer/nexus-broker lib/census-report.ts)",
+        "pr": "#634",
+        "target": "2026-11-30",
+        "note": "Decision 20 computed kind — A2b census read-model aggregate"
+      }
+    ],
+    "report_count_no_findings": [
+      {
+        "kind": "computed",
+        "computation": "buildCensusReportIndex (moleculer/nexus-broker lib/census-report.ts)",
+        "pr": "#634",
+        "target": "2026-11-30",
+        "note": "Decision 20 computed kind — A2b census read-model aggregate"
+      }
+    ],
+    "anticipated_finding_count": [
+      {
+        "kind": "computed",
+        "computation": "buildCensusReportIndex (moleculer/nexus-broker lib/census-report.ts)",
+        "pr": "#634",
+        "target": "2026-11-30",
+        "note": "Decision 20 computed kind — A2b census read-model aggregate"
       }
     ]
   }
