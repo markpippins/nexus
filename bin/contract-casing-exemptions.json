@@ -1,0 +1,96 @@
+{
+  "_comment": "Storage-shaped field-level exemption registry for bin/check_contract_casing.py (Decision 18, record c53289ef; adopts option (a) as a FIELD-LEVEL registry, explicitly NOT a blanket family exemption). A snake_case field in typespec/v1 is exempt ONLY if declared here with the storage location whose name the wire field is required to mirror (DB column or jsonb key; the database is canonical per Tier-1 doctrine). Any undeclared snake_case field \u2014 inside or outside the CDLC family \u2014 remains a ratchet violation. Additions are governed by Decision 13 condition 2: cite the PR that introduced the field and the storage location; no silent growth. Derived read-model aggregates (report_count, finding_count, generated_at, ...) are NOT exempt: they are computed on read and no storage key requires their spelling. Endgame: if a family later splits wire/adapter, its entries are removed and the field converts to camelCase (option (b)); the registry shrinking to zero is the --strict target.",
+  "fields": {
+    "execution_id": [
+      {
+        "storage": "nebula.executions.execution_id",
+        "pr": "#639",
+        "note": "CDLC A2a execution identity; wire mirrors the DDL column (also the A2b census jsonb key metadata.census.execution_id read by exact key in keychain-snapshot.service.ts)"
+      }
+    ],
+    "session_id": [
+      {
+        "storage": "nebula.executions.session_id",
+        "pr": "#639",
+        "note": "Named text reference (DBA condition 2/3), not the vision.sessions uuid concept; wire mirrors the column"
+      }
+    ],
+    "census_id": [
+      {
+        "storage": "nebula.executions.census_id",
+        "pr": "#639",
+        "note": "Tier-1/Tier-2 join key; also the A2b jsonb key metadata.census.census_id (exact-key read)"
+      }
+    ],
+    "source_namespace": [
+      {
+        "storage": "nebula.executions.source_namespace",
+        "pr": "#639",
+        "note": "Named source_namespace rather than `namespace` (reserved TypeSpec keyword); matches the doctrine transition record convention"
+      }
+    ],
+    "ticket_id": [
+      {
+        "storage": "nebula.executions.ticket_id",
+        "pr": "#639",
+        "note": "What-ran subject column"
+      }
+    ],
+    "work_item_id": [
+      {
+        "storage": "nebula.executions.work_item_id",
+        "pr": "#639",
+        "note": "What-ran subject column"
+      }
+    ],
+    "doctrine_snapshot_id": [
+      {
+        "storage": "nebula.executions.doctrine_snapshot_id",
+        "pr": "#639",
+        "note": "B1/B3 provenance column; also the A2b jsonb key metadata.frame.doctrine_snapshot_id (exact-key read)"
+      }
+    ],
+    "procedure_card_set_hash": [
+      {
+        "storage": "nebula.executions.procedure_card_set_hash",
+        "pr": "#639",
+        "note": "B1/B3 provenance column"
+      }
+    ],
+    "schema_version": [
+      {
+        "storage": "nebula.agent_records.metadata.census.schema_version",
+        "pr": "#634",
+        "note": "CDLC A2b census envelope jsonb key (CENSUS_SCHEMA_VERSION pinned at write, validated on read)"
+      }
+    ],
+    "asset_id": [
+      {
+        "storage": "nebula.agent_records.metadata.census.findings[].card.asset_id",
+        "pr": "#634",
+        "note": "A2b finding-card jsonb key"
+      }
+    ],
+    "instance_id": [
+      {
+        "storage": "nebula.agent_records.metadata.census.findings[].card.instance_id",
+        "pr": "#634",
+        "note": "A2b finding-card jsonb key"
+      }
+    ],
+    "record_id": [
+      {
+        "storage": "nebula.agent_records.metadata.census.findings[].card.record_id",
+        "pr": "#634",
+        "note": "A2b finding-card jsonb key"
+      }
+    ],
+    "procedure_card_hash": [
+      {
+        "storage": "nebula.agent_records.metadata.census.findings[].card.procedure_card_hash",
+        "pr": "#634",
+        "note": "A2b finding-card jsonb key (content-addressed card identity)"
+      }
+    ]
+  }
+}
