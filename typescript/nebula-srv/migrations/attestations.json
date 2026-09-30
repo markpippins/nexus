@@ -55,5 +55,6 @@
   "057-backfill-harvest-references.sql": "5280ddffda7e24f9bc1500bccac967ae910d385d7e3d1c6b8904fe7c4227dcbc",
   "058-allow-supervisor-role.sql": "c110532ce4980299dd258e668569131f16b5cf4cf8fe111823cc31ce6181047f",
   "067-restore-op-registry-isa-validator.sql": "a4e56d168f484e315b18ac85599d7d9ad6cc3b1f0dd9f913c155ab37066bf3d3",
-  "068-execution-identity.sql": "21fdc663eac6a2f018abcb3ebbd5b11c92d18cce4a3b699c4ccb7c4d28a0be68"
+  "068-execution-identity.sql": "21fdc663eac6a2f018abcb3ebbd5b11c92d18cce4a3b699c4ccb7c4d28a0be68",
+  "069-add-ledger-content-hash.sql": "70acdacdfe5461008d6d9112de14e6e7be4198cd00d12b869291a0efb86c8d25"
 }

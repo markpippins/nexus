@@ -30,6 +30,23 @@
  * deliberately not offered. It re-creates the exact shape this system keeps
  * hitting: a check that reports healthy while the guarded thing is broken.
  *
+ * ## Content binding (Decision 23, ruling `7f2b377a`)
+ *
+ * The target-identity gate guards WHICH DATABASE; the stale-tree incident of
+ * 2026-09-29 (an applied 068 was missing the uuid guard because the runner read
+ * `MIGRATIONS_DIR` from a 4-commits-behind working tree) showed a second
+ * dimension: WHICH REVISION OF THE FILE. Decision 23: **the gate binds migration
+ * CONTENT, not git revision** — before applying, each pending file's hash must
+ * match the hash recorded for it in the committed attestation manifest
+ * (`migrations/attestations.json`); a pending file with NO recorded hash is the
+ * "unknown" state that produced the incident and therefore blocks.
+ *
+ * The content check sits BEFORE the target-allowlist check on purpose: content
+ * binds *what*, the allowlist binds *where*. An allowlisted deploy of the wrong
+ * bytes must still block. `NEBULA_MIGRATE_UNSAFE=1` remains the single
+ * documented escape and still overrides this check — but the runner is required
+ * to log the override loudly (see `migrate.ts`).
+ *
  * ## Identity resolution
  *
  * Resolved from the **pool's effective configuration**, never from raw
@@ -39,16 +56,23 @@
  *
  * ## Status
  *
- * DRAFT, pending Architect ratification — the DBA marked `5ab78e30`
- * "architect ratification pending". The engineer's own migration (DRAFT-068,
- * PR #639) is the thing this gate protects, which is a conflict of interest
- * declared in record `23bd49f9` rather than resolved quietly.
+ * Target-identity portion ratified (Decision 16). Content binding added under
+ * Decision 23 (DBA sketch `7c5fe000`, items B/C of the DBA input).
  */
 
 export interface PoolTargetConfig {
   host?: string;
   port?: number;
   database?: string;
+}
+
+export interface ContentBinding {
+  /** Migration filename as the runner will apply it (`NNN-*.sql`). */
+  file: string;
+  /** sha256 hex from the attestation manifest; absent = unknown = blocks. */
+  expected?: string;
+  /** sha256 hex of the bytes actually read from this tree. */
+  found: string;
 }
 
 export interface MigrationGateInput {
@@ -59,11 +83,19 @@ export interface MigrationGateInput {
   dryRun?: string | undefined;
   unsafe?: string | undefined;
   allowlist?: string | undefined;
+  /**
+   * One binding per pending file. When omitted entirely (older callers /
+   * fixtures) every pending file is treated as unknown and the content check
+   * blocks — Decision 23 property 3, fail-closed on unknown.
+   */
+  content?: ContentBinding[];
+  /** Display name of the manifest, for error messages. */
+  manifestPath?: string;
 }
 
 export type MigrationGateDecision =
-  | { action: 'proceed' }
-  | { action: 'dry-run'; pending: string[] }
+  | { action: 'proceed'; /** Set when unsafe=1 overrode a failed content check. */ contentOverridden?: boolean }
+  | { action: 'dry-run'; pending: string[]; contentProblems: string[] }
   | { action: 'block'; message: string };
 
 /**
@@ -83,8 +115,29 @@ export function resolveMigrateTarget(config: PoolTargetConfig): string {
   return `${host}:${port}:${database}`;
 }
 
+export const DEFAULT_MANIFEST_PATH = 'migrations/attestations.json';
+
 /**
- * Pure gate decision. Extracted so the DBA's four acceptance cases are
+ * Content problems across the pending set: files whose manifest hash is
+ * missing (unknown) or disagrees with the bytes read from this tree.
+ */
+export function contentProblems(
+  content: ContentBinding[] | undefined,
+  manifestPath: string = DEFAULT_MANIFEST_PATH
+): { unknown: string[]; mismatched: { file: string; expected: string; found: string }[] } {
+  const unknown: string[] = [];
+  const mismatched: { file: string; expected: string; found: string }[] = [];
+  for (const binding of content ?? []) {
+    if (!binding.expected) unknown.push(binding.file);
+    else if (binding.expected !== binding.found) {
+      mismatched.push({ file: binding.file, expected: binding.expected, found: binding.found });
+    }
+  }
+  return { unknown, mismatched };
+}
+
+/**
+ * Pure gate decision. Extracted so the DBA's acceptance cases are
  * testable with no database at all.
  */
 export function decideMigrationGate(input: MigrationGateInput): MigrationGateDecision {
@@ -94,9 +147,73 @@ export function decideMigrationGate(input: MigrationGateInput): MigrationGateDec
   // the easiest thing to break, so it is checked first and unconditionally.
   if (pending.length === 0) return { action: 'proceed' };
 
-  if (input.dryRun === '1') return { action: 'dry-run', pending };
+  // Decision 23 property 3, enforced HERE rather than delegated to the caller:
+  // a pending migration with no binding at all is "unknown" and unknown fails
+  // closed. If the caller passed no bindings (a missing manifest upstream, an
+  // older caller, a future runner edit that forgets), every pending file is
+  // treated as having no attested hash. The runner normally passes one binding
+  // per pending file, so this synthesis only fires when something upstream is
+  // already wrong — which is exactly when the gate must not quietly pass.
+  const bindings: ContentBinding[] =
+    input.content ?? pending.map((file) => ({ file, expected: undefined, found: '' }));
 
-  if (input.unsafe === '1') return { action: 'proceed' };
+  if (input.dryRun === '1') {
+    // Dry run applies nothing, so it never blocks — but it must REPORT content
+    // problems, otherwise the cheapest tool for diagnosing a stale tree lies
+    // by omission.
+    const { unknown, mismatched } = contentProblems(bindings, input.manifestPath);
+    const problems = [
+      ...unknown.map((f) => `${f}: no attested hash recorded (${input.manifestPath ?? DEFAULT_MANIFEST_PATH})`),
+      ...mismatched.map(
+        (m) => `${m.file}: attested ${m.expected} != found ${m.found}`
+      ),
+    ];
+    return { action: 'dry-run', pending, contentProblems: problems };
+  }
+
+  if (input.unsafe === '1') {
+    const { unknown, mismatched } = contentProblems(bindings, input.manifestPath);
+    // Single documented escape; the RUNNER logs the override loudly. The
+    // decision carries the fact so the runner does not have to recompute it.
+    if (unknown.length > 0 || mismatched.length > 0) {
+      return { action: 'proceed', contentOverridden: true };
+    }
+    return { action: 'proceed' };
+  }
+
+  // ── Content binding (Decision 23) — BEFORE the target allowlist ─────────
+  // Content binds WHAT, the allowlist binds WHERE. An allowlisted deploy of
+  // the wrong bytes must still block.
+  const { unknown, mismatched } = contentProblems(bindings, input.manifestPath);
+  const manifest = input.manifestPath ?? DEFAULT_MANIFEST_PATH;
+
+  if (unknown.length > 0) {
+    return {
+      action: 'block',
+      message:
+        `[nebula-migrations] REFUSING to apply ${unknown.length} pending migration(s) with ` +
+        `no attested content hash (unknown provenance — this is the state that produced the ` +
+        `2026-09-29 stale-tree 068 apply): ${unknown.join(', ')}. ` +
+        `The attestation manifest is ${manifest}; every pending NNN-*.sql must have an entry. ` +
+        `Add the entries in the PR that introduces the migrations, or use ` +
+        `NEBULA_MIGRATE_UNSAFE=1 for a scratch target only.`,
+    };
+  }
+
+  if (mismatched.length > 0) {
+    const first = mismatched[0];
+    return {
+      action: 'block',
+      message:
+        `[nebula-migrations] REFUSING to apply ${mismatched.length} pending migration(s) whose ` +
+        `bytes do not match their attested hash: ` +
+        `${mismatched.map((m) => m.file).join(', ')}. ` +
+        `First offender: ${first.file} — expected ${first.expected}, found ${first.found}. ` +
+        `The file on disk changed after its hash was recorded; regenerate the manifest entry ` +
+        `in the same PR that changes the migration, or use NEBULA_MIGRATE_UNSAFE=1 ` +
+        `for a scratch target only.`,
+    };
+  }
 
   if (input.allowlist === input.identity) return { action: 'proceed' };
 

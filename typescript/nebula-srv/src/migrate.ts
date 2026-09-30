@@ -1,10 +1,13 @@
-import { readdirSync, readFileSync } from 'fs';
+import { readdirSync, readFileSync, existsSync } from 'fs';
+import { createHash } from 'crypto';
 import path from 'path';
 import { Pool } from 'pg';
 import {
+  contentProblems,
   decideMigrationGate,
   migrationVersion,
   resolveMigrateTarget,
+  type ContentBinding,
 } from './migrate-gate';
 
 /**
@@ -34,19 +37,34 @@ import {
  * boot). When migrations are pending, the resolved `host:port:database` must
  * match `NEBULA_MIGRATE_TARGET` or startup aborts.
  *
+ * ## Content binding (Decision 23, ruling `7f2b377a`)
+ *
+ * The stale-tree incident of 2026-09-29 applied an 068 that was missing the
+ * uuid guard, because `MIGRATIONS_DIR` resolves from `__dirname` — the local
+ * working tree, whatever revision it happens to be on. Decision 23: bind the
+ * CONTENT of each pending file to the committed attestation manifest
+ * (`migrations/attestations.json`, sha256 per file). A pending file with no
+ * recorded hash (unknown) or with bytes that disagree with the manifest
+ * (stale/mutated tree) fails closed at boot.
+ *
+ * The bytes are read ONCE during pending detection, hashed there, and the same
+ * bytes are what the apply loop executes. The runner previously re-read each
+ * file inside the apply loop — a TOCTOU window between gate decision and
+ * apply that this rewrite closes.
+ *
+ * `NEBULA_MIGRATE_UNSAFE=1` remains the single documented escape; when it
+ * overrides a failed content binding, the override is logged LOUDLY with the
+ * offending files named, so an unsafe apply can never pass silently.
+ *
  * The gate engages ONLY when something is pending. On a current ledger the boot
  * is byte-for-byte the pre-gate behaviour with no new environment variable —
  * that zero-friction property is what makes the guard adoptable, and it is the
  * property most easily broken by a later edit.
- *
- * Two ordering choices differ from the reference sketch in `5ab78e30`, both
- * deliberate and both flagged in the gate module: the ledger is read without
- * being created first, so `NEBULA_MIGRATE_DRY_RUN=1` writes nothing at all; and
- * the pending set is computed once and used for both the gate decision and the
- * apply loop, so the two can never disagree.
  */
 
 const MIGRATIONS_DIR = path.resolve(__dirname, '..', 'migrations');
+/** Display path used in gate messages; resolved against MIGRATIONS_DIR. */
+const MANIFEST_DISPLAY = 'migrations/attestations.json';
 
 // Advisory lock key — distinct from tackle-srv (873492874) so the two
 // services never contend on the same lock.
@@ -59,6 +77,13 @@ function descriptionFromFilename(filename: string): string {
     .replace(/^\d{3}-/, '')
     .replace(/\.sql$/, '')
     .replace(/-/g, ' ');
+}
+
+interface PendingRead {
+  filename: string;
+  version: number;
+  bytes: Buffer;
+  sha256: string;
 }
 
 export async function runMigrations(pool: Pool): Promise<void> {
@@ -90,12 +115,40 @@ export async function runMigrations(pool: Pool): Promise<void> {
         .filter((f) => FILE_RE.test(f))
         .sort();
 
-      const pending = files.filter((f) => {
-        const version = migrationVersion(f);
-        return version !== null && version > currentVersion;
-      });
+      // ── Single read: bytes + hash captured together, before any decision ──
+      // The gate judges THESE bytes and the apply loop executes THESE bytes;
+      // there is no second read for a mutation to slip into.
+      const reads: PendingRead[] = files
+        .map((f) => {
+          const version = migrationVersion(f);
+          if (version === null || version <= currentVersion) return null;
+          const bytes = readFileSync(path.join(MIGRATIONS_DIR, f));
+          return {
+            filename: f,
+            version,
+            bytes,
+            sha256: createHash('sha256').update(bytes).digest('hex'),
+          } as PendingRead;
+        })
+        .filter((r): r is PendingRead => r !== null);
 
-      // ── Target-identity gate (DBA 5ab78e30) ──────────────────────────
+      const pending = reads.map((r) => r.filename);
+
+      // Attested hashes. A MISSING manifest file is not fatal here — the gate
+      // treats every binding as unknown and blocks with a message naming the
+      // manifest path, which is the Decision 23 property-3 behaviour.
+      const manifestPath = path.join(MIGRATIONS_DIR, 'attestations.json');
+      const manifest: Record<string, string> = existsSync(manifestPath)
+        ? JSON.parse(readFileSync(manifestPath, 'utf8'))
+        : {};
+
+      const content: ContentBinding[] = reads.map((r) => ({
+        file: r.filename,
+        expected: manifest[r.filename],
+        found: r.sha256,
+      }));
+
+      // ── Gates (target-identity + content binding, Decision 16 + 23) ─────
       // Resolved from the pool's effective config, not process.env, so no
       // env-rewrite path can desynchronise the check from the target actually
       // being dialed. Engages only when migrations are pending.
@@ -106,12 +159,14 @@ export async function runMigrations(pool: Pool): Promise<void> {
         dryRun: process.env.NEBULA_MIGRATE_DRY_RUN,
         unsafe: process.env.NEBULA_MIGRATE_UNSAFE,
         allowlist: process.env.NEBULA_MIGRATE_TARGET,
+        content,
+        manifestPath: MANIFEST_DISPLAY,
       });
 
       if (decision.action === 'block') {
         // The call site in index.ts already fails closed on throw, so this
         // aborts startup rather than starting against a target this build was
-        // not commissioned for.
+        // not commissioned for, or applying bytes that were never attested.
         throw new Error(decision.message);
       }
       if (decision.action === 'dry-run') {
@@ -120,7 +175,23 @@ export async function runMigrations(pool: Pool): Promise<void> {
             `Would apply ${decision.pending.length} file(s), applying nothing: ` +
             `${decision.pending.join(', ')}`
         );
+        if (decision.contentProblems.length > 0) {
+          console.log(
+            `[nebula-migrations] DRY RUN content problems (would BLOCK a real apply):\n  ` +
+              decision.contentProblems.join('\n  ')
+          );
+        }
         return;
+      }
+
+      if (decision.contentOverridden) {
+        const { unknown, mismatched } = contentProblems(content, MANIFEST_DISPLAY);
+        const names = [...unknown, ...mismatched.map((m) => m.file)];
+        console.log(
+          `[nebula-migrations] WARNING: NEBULA_MIGRATE_UNSAFE=1 overrode the ` +
+            `attested-content binding for: ${names.join(', ')}. The bytes about to be ` +
+            `applied are NOT the attested bytes. This override is for scratch targets only.`
+        );
       }
 
       // Ensure the ledger exists even if baseline 41 was never applied. Only
@@ -134,22 +205,37 @@ export async function runMigrations(pool: Pool): Promise<void> {
       `);
 
       let applied = 0;
-      for (const file of files) {
-        const version = migrationVersion(file);
-        if (version === null || version <= currentVersion) continue;
-
-        const sql = readFileSync(path.join(MIGRATIONS_DIR, file), 'utf8');
-        const description = descriptionFromFilename(file);
-        console.log(`[nebula-migrations] applying v${version}: ${description}`);
-        await client.query(sql);
+      for (const read of reads) {
+        const description = descriptionFromFilename(read.filename);
+        console.log(`[nebula-migrations] applying v${read.version}: ${description}`);
+        // The exact bytes the gate hashed — no re-read. The Buffer is decoded
+        // as UTF-8 for the simple query protocol (migration files are UTF-8
+        // SQL text); the hash binds the raw bytes, this sends those bytes.
+        await client.query(read.bytes.toString('utf8'));
         await client.query(
           `INSERT INTO nebula.schema_version (version, description)
            VALUES ($1, $2)
            ON CONFLICT (version) DO NOTHING`,
-          [version, description]
+          [read.version, description]
+        );
+        // Record the applied content hash (Decision 23 property 2). The EXISTS
+        // guard makes this correct in both worlds: before migration 069 adds
+        // the column the update is a no-op, and from 069 onward every stamp
+        // carries its hash. Rows stamped before the column exists (001-068 on
+        // a fresh DB) stay NULL and are covered by the documented backfill.
+        await client.query(
+          `UPDATE nebula.schema_version SET content_hash = $1
+           WHERE version = $2
+             AND EXISTS (
+               SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'nebula'
+                  AND table_name = 'schema_version'
+                  AND column_name = 'content_hash'
+             )`,
+          [read.sha256, read.version]
         );
         applied++;
-        console.log(`[nebula-migrations] v${version} applied`);
+        console.log(`[nebula-migrations] v${read.version} applied`);
       }
 
       if (applied === 0) {
