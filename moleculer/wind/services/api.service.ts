@@ -35,7 +35,24 @@ export default class ApiService extends Service {
           {
             path: "/",
             whitelist: ["wind.**"],
-            bodyParsers: { json: true },
+            // Incumbent's parser limit (typescript/wind-srv/src/index.js:
+            // express.json({ limit: '1mb' })) — the gateway parser must
+            // match or oversized writes 413 here before the verbatim stack
+            // ever sees them.
+            bodyParsers: { json: { limit: "1mb" } },
+            // moleculer-web 0.10.x does NOT put $req/$res into action meta on
+            // its own (only passReqResToParams aliases get them, via params).
+            // Dispatch-through-Express needs the REAL req/res objects inside
+            // the action handler, so inject them here — this hook runs on the
+            // gateway context BEFORE broker.call, and gateway context meta
+            // propagates to the action context. (Discovered LIVE on the
+            // resolution twin: without this, every aliased call 500s
+            // DISPATCH_NO_REQRES; jest suites hit the Express app directly
+            // and never see it.)
+            onBeforeCall: (ctx: any, _route: any, req: any, res: any) => {
+              ctx.meta.$req = req;
+              ctx.meta.$res = res;
+            },
             aliases: {
               "GET /api/edges": "wind.dispatch",
               "POST /api/edges": "wind.dispatch",
@@ -156,7 +173,13 @@ export default class ApiService extends Service {
               "PUT /api/workflows/:id": "wind.dispatch",
               "DELETE /api/workflows/:id": "wind.dispatch",
 
-              "GET /health": "wind.dispatch"
+              "GET /health": "wind.dispatch",
+              // Registered LAST: catch-alls into the verbatim Express app for
+              // everything the literals don't name (unmatched paths anywhere,
+              // GET-only routes hit with other methods). `(.*)` =
+              // path-to-regexp 3.x catch-all; bare `/` is a separate alias.
+              "* /": "wind.dispatch",
+              "* /(.*)": "wind.dispatch",
             },
           },
         ],
