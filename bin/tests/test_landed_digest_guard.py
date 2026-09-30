@@ -323,20 +323,22 @@ def test_cli_unresolvable_rev_is_tool_error():
 # ── repo registry sanity (the real one must stay parseable + pinned) ─────
 
 def test_repo_registry_wellformed_and_pinned_digests_stable():
+    """The four pins advanced 2026-09-30 when #673/#675 landed (parity
+    verified: digest protocol + squash-of-head). Guard reads ALL_MATCH."""
     reg = HERE.parent / "landed-tool-pins.json"
     data = json.loads(reg.read_text())
     assert data["version"] == 1 and len(data["pins"]) >= 4
     by_path = {p["path"]: p for p in data["pins"]}
-    assert by_path["bin/supersede-record.sh"]["queued_prs"][0]["digest"] == (
+    assert by_path["bin/supersede-record.sh"]["digest"] == (
         "bd39b5e646c37f819c6ba00ae2aac893ad23124682413a65631435ada97156fb")
     assert by_path["bin/attestation_janitor.py"]["digest"] == (
-        "dfa0850a462ea201d42cd8490313665a2cc597e57ca271e1377b0f9eb9cfa14d")
+        "a3c9d3d3b6c2f09a3160f48f6cc0f54aba3e3ce7a2b6b68d9f78ec49ba13c7d3")
     assert by_path["bin/merge_pr.py"]["digest"] == (
         "bcb4d638b3b1dff6796caf7bd55a438cb0aad5020bef83df08b052285f76d3ca")
     assert by_path["bin/gate_codes.py"]["digest"] == (
-        "af99dad78818318dc0778821908339b6f71abba33d1298765e91a2bce43d744b")
-    assert by_path["bin/gate_codes.py"]["queued_prs"][0]["digest"] == (
         "d4f60f411c45ec1f776d90ed25b2782f285347d003c64daad14c82825b6cbc6f")
+    for p in data["pins"]:
+        assert p.get("queued_prs") == [], "all queued PRs landed; queue must be empty"
 
 
 # ── dual-runnable runner (keep at EOF) ───────────────────────────────────
