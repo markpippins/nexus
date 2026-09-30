@@ -1141,3 +1141,148 @@ def test_timestamp_missing_code_is_registered_for_consumers():
     assert gc.extract_codes(
         "[FAIL] tester attestation (ATT_TIMESTAMP_MISSING): no usable createdAt"
     ) == ["ATT_TIMESTAMP_MISSING"]
+
+
+# ── gate 3z: the 990e1d07 incident rows, verbatim ─────────────────────────
+#
+# The residual of the 2026-09-29 merge-queue freeze (reviewer record
+# 990e1d07, cause established in engineer-ii b33c6d9a): PR #642's re-issued
+# attestation 07b09151 was refused with
+#   "newest attestation 1970-01-01T00:00:00Z predates head commit
+#    2026-09-29T01:37:41Z"
+# on every janitor cycle from 05:00:25Z until #654 landed (07:40:30Z).
+# These tests run the EXACT payload of that incident through the CURRENT
+# gate so the epoch-0 binding cannot return silently: if the timestamp
+# repair (#654) or the fail-closed evaluator (#657) ever regresses, the
+# assertions below fail instead of the merge queue.
+#
+# Fixture values are historical, not synthetic: attestation 07b09151
+# (createdAt 1790650512126 epoch-ms = 2026-09-29T02:55:12.126Z), PR #642
+# head 83cea633…, head commit 2026-09-29T01:37:41Z — the same values the
+# janitor journal logged, reproduced two-sided at the #648 boundary in the
+# 990e1d07 investigation (hermetic A/B: pre-#648 -> ATT_NO_CI_EVIDENCE,
+# at-#648 -> the 1970 ATT_STALE_HEAD).
+
+INCIDENT_RID = "07b09151-0000-0000-0000-000000000000"
+INCIDENT_ATT_MS = 1790650512126                    # 2026-09-29T02:55:12.126Z
+INCIDENT_ATT_ISO = "2026-09-29T02:55:12.126Z"
+INCIDENT_HEAD = "83cea63300000000000000000000000000000000"
+INCIDENT_HEAD_MS = int(
+    datetime(2026, 9, 29, 1, 37, 41, tzinfo=timezone.utc).timestamp() * 1000
+)
+INCIDENT_RUNS = ("36014200001", "36014200002")
+INCIDENT_TITLE = "ATTESTATION PR #642 @83cea633 - 26/26 hermetic verified, 62/62 CI"
+INCIDENT_CITATIONS = (
+    "Verified via service-test-gates. CI run 36014200001 and CI run "
+    "36014200002: success at head 83cea633.\n"
+    "Engine-reported counts not relied on."
+)
+
+
+def _incident_run_json(*args):
+    """gh api fake for the two run IDs the incident attestation cites."""
+    args = tuple(a for a in args if not str(a).startswith("--jq"))
+    q = " ".join(str(a) for a in args)
+    if "36014200001" in q or "36014200002" in q:
+        return {"c": "success", "s": INCIDENT_HEAD}
+    raise RuntimeError(f"gh api lookup failed: {q}")
+
+
+def _incident_indexed_row(**overrides):
+    """GET /api/attestations?pr=642 projection on 2026-09-29 ~05:00Z:
+    real epoch-ms createdAt, content truncated to empty."""
+    row = {
+        "id": INCIDENT_RID, "role": "tester", "recordType": "assessment",
+        "createdAt": INCIDENT_ATT_MS,
+        "tags": ["type:approval", "status:done", "pr:642",
+                 "head:83cea633"],
+        "title": INCIDENT_TITLE, "content": "",
+    }
+    row.update(overrides)
+    return row
+
+
+def _incident_point_row(**overrides):
+    """GET /api/agent-records/:id as the incident-era server serialized it
+    (DBA 48ac13e2 A/B, reviewer 042d3742's 'absent, not null' correction,
+    tester 492b6c88's contract split): recordType camelCase, the createdAt
+    key ABSENT, the timestamp parked under snake_case created_at ISO, and
+    the full content with the CI citations visible. This is the exact shape
+    whose hydration bound the row at epoch 0 in production."""
+    row = {
+        "id": INCIDENT_RID, "role": "tester",
+        "recordType": "assessment",
+        "created_at": INCIDENT_ATT_ISO,
+        "tags": ["type:approval", "status:done", "pr:642",
+                 "head:83cea633"],
+        "title": INCIDENT_TITLE, "content": INCIDENT_CITATIONS,
+    }
+    row.update(overrides)
+    return row
+
+
+def _incident_http(indexed_row, point_row):
+    def http_get(url):
+        if "/api/attestations?pr=" in url:
+            return {"items": [indexed_row],
+                    "total": 1}
+        if "/api/agent-records/" in url:
+            return point_row
+        if "/api/agent-records" in url:
+            return {"items": []}
+        raise RuntimeError(f"unexpected url {url}")
+    return http_get
+
+
+def test_incident_rows_now_pass_on_the_real_timestamp():
+    """The 990e1d07 payload, run through the current gate: the #654 repair
+    must re-attach the real timestamp (from the point payload's snake ISO,
+    falling back to the indexed row) and the gate must PASS — the exact
+    refusal of the incident ('1970 predates head') must be unreachable for
+    these rows."""
+    ok, detail, code = merge_pr.attestation_check(
+        _incident_http(_incident_indexed_row(), _incident_point_row()),
+        642, INCIDENT_HEAD_MS, head_sha=INCIDENT_HEAD,
+        run_json=_incident_run_json)
+    assert ok, f"epoch-0 regression: incident rows refused again: {detail}"
+    assert code is None
+    assert "2026-09-29T02:55:12Z" in detail, detail   # the REAL timestamp
+    assert "1970" not in detail, detail
+    assert "predates head commit" not in detail, detail
+
+
+def test_incident_rows_without_repair_source_fail_timestamp_missing():
+    """#657's half, pinned on the incident payload: with every repair
+    source stripped (no indexed timestamp, no snake fallback), the gate
+    must fail closed with ATT_TIMESTAMP_MISSING — never re-coerce to 0 and
+    report the ATT_STALE_HEAD/1970 verdict that told the tester to
+    re-attest a condition no re-attestation could fix."""
+    bare = _incident_point_row()
+    del bare["created_at"]                 # no snake fallback either
+    indexed = _incident_indexed_row()
+    del indexed["createdAt"]               # no indexed repair source either
+    ok, detail, code = merge_pr.attestation_check(
+        _incident_http(indexed, bare),
+        642, INCIDENT_HEAD_MS, head_sha=INCIDENT_HEAD,
+        run_json=_incident_run_json)
+    assert not ok
+    assert code == merge_pr.gate_codes.ATT_TIMESTAMP_MISSING, (detail, code)
+    assert "1970" not in detail, detail
+    assert "re-attesting will not clear it" in detail, detail
+
+
+def test_incident_rows_still_reject_a_genuinely_wrong_head_binding():
+    """No overcorrection: the fixes must not have blurred the real signal.
+    The incident rows attested head 83cea633; pointing the PR at a
+    different head must still yield the specific binding-variant
+    ATT_STALE_HEAD verdict ('attestation head binding ... != PR head ...')
+    that the janitor routes as a queue-tester action."""
+    other_head = "deadbeef" + "0" * 32
+    ok, detail, code = merge_pr.attestation_check(
+        _incident_http(_incident_indexed_row(), _incident_point_row()),
+        642, INCIDENT_HEAD_MS, head_sha=other_head,
+        run_json=_incident_run_json)
+    assert not ok
+    assert code == merge_pr.gate_codes.ATT_STALE_HEAD, (detail, code)
+    assert "attestation head binding" in detail, detail
+    assert "1970" not in detail, detail

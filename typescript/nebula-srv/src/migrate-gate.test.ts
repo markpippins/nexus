@@ -1,21 +1,39 @@
 import { describe, expect, it } from 'vitest';
 import {
+  contentProblems,
   decideMigrationGate,
   migrationVersion,
   resolveMigrateTarget,
+  type ContentBinding,
 } from './migrate-gate';
 
 /**
- * The DBA's four acceptance cases from 5ab78e30, plus the ordering property
- * that makes this adoptable. No database: the decision logic is pure.
+ * The DBA's four acceptance cases from 5ab78e30, plus the Decision 23
+ * content-binding cases from 7f2b377a / DBA sketch 7c5fe000, plus the
+ * ordering properties that make this adoptable. No database: the decision
+ * logic is pure.
  *
  * The commissioned production identity on this host is `localhost:5432:nexus` —
  * which is also `src/index.ts`'s default, and the reason the gate exists.
  */
 const PROD = 'localhost:5432:nexus';
 
+const H_A = 'a'.repeat(64);
+const H_B = 'b'.repeat(64);
+
+const binding = (file: string, expected: string | undefined, found: string): ContentBinding => ({
+  file,
+  expected,
+  found,
+});
+
 const gate = (over: Partial<Parameters<typeof decideMigrationGate>[0]> = {}) =>
-  decideMigrationGate({ identity: PROD, pending: ['068-execution-identity.sql'], ...over });
+  decideMigrationGate({
+    identity: PROD,
+    pending: ['068-execution-identity.sql'],
+    content: [binding('068-execution-identity.sql', H_A, H_A)],
+    ...over,
+  });
 
 describe('resolveMigrateTarget', () => {
   it('resolves host:port:database from the pool config', () => {
@@ -79,6 +97,7 @@ describe('acceptance 2: legitimate production deploy succeeds', () => {
     const vd = decideMigrationGate({
       identity: 'vanadium.internal:5432:nexus',
       pending: ['068-x.sql'],
+      content: [binding('068-x.sql', H_A, H_A)],
       allowlist: 'vanadium.internal:5432:nexus',
     });
     expect(vd.action).toBe('proceed');
@@ -91,11 +110,12 @@ describe('acceptance 3: a current ledger needs no new environment (zero friction
     expect(decision.action).toBe('proceed');
   });
 
-  it('is unaffected by a missing allowlist, an unsafe flag, or a dry run', () => {
-    // The gate must not nag when it has nothing to guard.
-    expect(gate({ pending: [], allowlist: undefined }).action).toBe('proceed');
-    expect(gate({ pending: [], dryRun: '1' }).action).toBe('proceed');
-    expect(gate({ pending: [], unsafe: '1' }).action).toBe('proceed');
+  it('is unaffected by a missing allowlist, an unsafe flag, a dry run, or absent bindings', () => {
+    // The gate must not nag when it has nothing to guard — even with no
+    // content bindings at all, since none are needed when nothing is pending.
+    expect(gate({ pending: [], allowlist: undefined, content: undefined }).action).toBe('proceed');
+    expect(gate({ pending: [], dryRun: '1', content: undefined }).action).toBe('proceed');
+    expect(gate({ pending: [], unsafe: '1', content: undefined }).action).toBe('proceed');
   });
 });
 
@@ -111,6 +131,7 @@ describe('acceptance 4: dry run lists pending and applies nothing', () => {
     const decision = decideMigrationGate({
       identity: 'somewhere.else:5432:scratch',
       pending: ['069-a.sql', '070-b.sql'],
+      content: [binding('069-a.sql', H_A, H_A), binding('070-b.sql', H_B, H_B)],
       dryRun: '1',
     });
     expect(decision.action).toBe('dry-run');
@@ -148,6 +169,119 @@ describe('ordering guarantees', () => {
 
   it('an empty pending list and a missing one behave identically', () => {
     expect(decideMigrationGate({ identity: PROD, pending: [] }).action).toBe('proceed');
+  });
+});
+
+describe('Decision 23: content binding (ruling 7f2b377a, sketch 7c5fe000)', () => {
+  it('property 3: a pending file with NO attested hash blocks (unknown fails closed)', () => {
+    const decision = gate({
+      content: [binding('068-execution-identity.sql', undefined, H_A)],
+    });
+    expect(decision.action).toBe('block');
+    if (decision.action !== 'block') return;
+    expect(decision.message).toContain('no attested content hash');
+    expect(decision.message).toContain('068-execution-identity.sql');
+    expect(decision.message).toContain('attestations.json');
+  });
+
+  it('property 1: a byte mismatch blocks, naming the file and BOTH hashes', () => {
+    const decision = gate({
+      content: [binding('068-execution-identity.sql', H_A, H_B)],
+    });
+    expect(decision.action).toBe('block');
+    if (decision.action !== 'block') return;
+    expect(decision.message).toContain('068-execution-identity.sql');
+    expect(decision.message).toContain(H_A);
+    expect(decision.message).toContain(H_B);
+  });
+
+  it('an entirely missing manifest blocks (every binding unknown)', () => {
+    const decision = gate({
+      content: undefined,
+      allowlist: PROD, // even the correct target must not bypass the content check
+    });
+    expect(decision.action).toBe('block');
+    if (decision.action !== 'block') return;
+    expect(decision.message).toContain('no attested content hash');
+  });
+
+  it('property ordering: content binding blocks BEFORE the target allowlist', () => {
+    // An allowlisted deploy of the wrong bytes must still block — content
+    // binds WHAT, the allowlist binds WHERE, neither alone suffices.
+    const mismatched = gate({
+      allowlist: PROD,
+      content: [binding('068-execution-identity.sql', H_A, H_B)],
+    });
+    expect(mismatched.action).toBe('block');
+    if (mismatched.action !== 'block') return;
+    expect(mismatched.message).toContain('do not match their attested hash');
+
+    const unknown = gate({
+      allowlist: PROD,
+      content: [binding('068-execution-identity.sql', undefined, H_A)],
+    });
+    expect(unknown.action).toBe('block');
+  });
+
+  it('dry run REPORTS content problems without blocking, both kinds', () => {
+    const decision = gate({
+      dryRun: '1',
+      pending: ['068-execution-identity.sql', '069-x.sql'],
+      content: [
+        binding('068-execution-identity.sql', undefined, H_A),
+        binding('069-x.sql', H_B, H_A),
+      ],
+    });
+    expect(decision.action).toBe('dry-run');
+    if (decision.action !== 'dry-run') return;
+    expect(decision.contentProblems).toHaveLength(2);
+    expect(decision.contentProblems[0]).toContain('no attested hash recorded');
+    expect(decision.contentProblems[1]).toContain('attested bbbb');
+  });
+
+  it('unsafe=1 proceeds past a failed binding but flags the override', () => {
+    const decision = gate({
+      unsafe: '1',
+      content: [binding('068-execution-identity.sql', H_A, H_B)],
+    });
+    expect(decision.action).toBe('proceed');
+    if (decision.action !== 'proceed') return;
+    expect(decision.contentOverridden).toBe(true);
+  });
+
+  it('unsafe=1 with a clean binding does not claim an override', () => {
+    const decision = gate({ unsafe: '1' });
+    expect(decision.action).toBe('proceed');
+    if (decision.action !== 'proceed') return;
+    expect(decision.contentOverridden).toBeFalsy();
+  });
+
+  it('mixed unknown + mismatched files block with all names present', () => {
+    const decision = gate({
+      pending: ['068-a.sql', '069-b.sql'],
+      content: [binding('068-a.sql', undefined, H_A), binding('069-b.sql', H_B, H_A)],
+    });
+    expect(decision.action).toBe('block');
+    if (decision.action !== 'block') return;
+    // Unknown is reported first (it is the more severe provenance hole).
+    expect(decision.message).toContain('068-a.sql');
+  });
+});
+
+describe('contentProblems helper', () => {
+  it('classifies unknown and mismatched bindings and ignores clean ones', () => {
+    const { unknown, mismatched } = contentProblems([
+      binding('a.sql', H_A, H_A),
+      binding('b.sql', undefined, H_B),
+      binding('c.sql', H_A, H_B),
+    ]);
+    expect(unknown).toEqual(['b.sql']);
+    expect(mismatched).toEqual([{ file: 'c.sql', expected: H_A, found: H_B }]);
+  });
+
+  it('treats an absent binding list as all-unknown when pending exist', () => {
+    const { unknown } = contentProblems(undefined);
+    expect(unknown).toEqual([]);
   });
 });
 

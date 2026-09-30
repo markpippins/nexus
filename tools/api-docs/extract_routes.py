@@ -83,6 +83,7 @@ MOLECULER_SERVICES = {
     "moleculer/semantics": "moleculer/semantics",
     "moleculer/tackle": "moleculer/tackle",
     "moleculer/wind": "moleculer/wind",
+    "moleculer/substance": "moleculer/substance",
     "moleculer/prompt-sync": "moleculer/prompt-sync",
     "moleculer/execution": "moleculer/execution",
     "moleculer/conduit": "moleculer/conduit",

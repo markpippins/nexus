@@ -690,29 +690,6 @@ def test_dispatch_fallback_never_fires_before_exhaustion():
     assert "cooldown" in out
 
 
-# ── dual-runnable runner ─────────────────────────────────────────────────
-
-def _main() -> int:
-    tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
-    failed = 0
-    for name, fn in tests:
-        try:
-            fn()
-            print(f"  PASS {name}")
-        except AssertionError as exc:
-            failed += 1
-            print(f"  FAIL {name}: {exc}")
-        except Exception as exc:  # noqa: BLE001
-            failed += 1
-            print(f"  ERROR {name}: {type(exc).__name__}: {exc}")
-    print(f"{len(tests) - failed}/{len(tests)} passed")
-    return 1 if failed else 0
-
-
-if __name__ == "__main__":
-    sys.exit(_main())
-
-
 # ── structured codes + (kind, PR, codes, head) dedup (spec 86017db0) ─────
 
 CONFLICT_FAIL = gate_report(
@@ -736,6 +713,9 @@ DISCOVERY_600 = {"returncode": 0, "stdout": json.dumps([
 DISCOVERY_600_NEWHEAD = {"returncode": 0, "stdout": json.dumps([
     {"number": 600, "isDraft": False, "headRefOid": "c" * 40, "title": "A"},
 ]), "stderr": ""}
+DISCOVERY_601 = {"returncode": 0, "stdout": json.dumps([
+    {"number": 601, "isDraft": False, "headRefOid": "d" * 40, "title": "B"},
+]), "stderr": ""}
 
 
 def _refusal_cycle(report, state_path, discovery=DISCOVERY_600, rc=1):
@@ -743,6 +723,19 @@ def _refusal_cycle(report, state_path, discovery=DISCOVERY_600, rc=1):
     rc_, out, state, _calls, _pre, logs = _cycle_with_runner(
         [("pr list", discovery),
          ("merge_pr.py 600", {"returncode": rc, "stdout": report, "stderr": ""})],
+        state_path=state_path)
+    return rc_, out, state, logs
+
+
+def _refusal_cycle_pr(report, state_path, num=601, rc=1):
+    """Like _refusal_cycle but for an arbitrary PR number (its own discovery
+    row + head), for tests that must exercise cross-PR behavior."""
+    discovery = {"returncode": 0, "stdout": json.dumps([
+        {"number": num, "isDraft": False, "headRefOid": "e" * 40, "title": f"PR{num}"},
+    ]), "stderr": ""}
+    rc_, out, state, _calls, _pre, logs = _cycle_with_runner(
+        [("pr list", discovery),
+         (f"merge_pr.py {num}", {"returncode": rc, "stdout": report, "stderr": ""})],
         state_path=state_path)
     return rc_, out, state, logs
 
@@ -831,3 +824,127 @@ def test_dedup_state_prunes_after_14_days():
     state = json.loads(state_path.read_text())
     entries = state.get("anomaly_dedup", {})
     assert all(v.get("count") == 1 for v in entries.values()), "stale key pruned => re-alert"
+
+
+# ── ATT_TIMESTAMP_MISSING: cross-PR server-defect routing ────────────────
+# One record-endpoint serialization regression (the epoch-0 family) blocks
+# many PRs at once. The finding must (a) route as SERVER DEFECT with
+# operator-action wording — NOT the re-attestation wording the staleness
+# codes get, NOT the generic ANOMALY — and (b) dedup ACROSS PRs and heads,
+# keyed on the code set alone, so one episode posts once. Staleness
+# (ATT_STALE_HEAD / ATT_NO_CI_EVIDENCE) keeps its own per-(PR, codes, head)
+# routing: each of those needs ITS PR's tester to act.
+
+TS_MISSING_SOLE = gate_report(
+    passes=["pr open & ready: state=OPEN draft=False mergeable=MERGEABLE head=abc",
+            "ci green: all checks completed successfully"],
+    fails=["tester attestation (ATT_TIMESTAMP_MISSING): newest attestation row "
+           "has no usable createdAt; cannot evaluate freshness"],
+)
+TS_MISSING_MIXED = gate_report(
+    passes=["pr open & ready: state=OPEN draft=False mergeable=MERGEABLE head=abc"],
+    fails=["ci green (CI_PENDING): 1 check(s) not completed: ['CIR-5']",
+           "tester attestation (ATT_TIMESTAMP_MISSING): newest attestation row "
+           "has no usable createdAt"],
+)
+STALE_OTHER = STALE_FAIL
+NO_CI_EVIDENCE_FAIL = gate_report(
+    passes=["pr open & ready: state=OPEN draft=False mergeable=MERGEABLE head=abc",
+            "ci green: all checks completed successfully"],
+    fails=["tester attestation (ATT_NO_CI_EVIDENCE): newest attestation cites no CI run references"],
+)
+
+
+def test_server_defect_routes_with_operator_action_wording():
+    rc, out, state, logs = _refusal_cycle(TS_MISSING_SOLE, Path(tempfile.mkdtemp()) / "s.json")
+    assert len(logs) == 1
+    assert "SERVER DEFECT" in logs[0] and "ATT_TIMESTAMP_MISSING" in logs[0]
+    assert "ANOMALY" not in logs[0], "server defect is not the generic anomaly"
+    assert "RE-ATTESTATION REQUESTED" not in logs[0], "must not nag the tester"
+
+
+def test_server_defect_body_pins_re_attest_will_not_clear():
+    rc, out, state, logs = _refusal_cycle(TS_MISSING_SOLE, Path(tempfile.mkdtemp()) / "s.json")
+    assert len(logs) == 1
+    # The finding must reach the OPERATOR (DBA), not the tester. The body is
+    # not passed through the harness shim, so assert on the module directly.
+    title, body = janitor._refusal_post_text(
+        600, "a" * 40, ["ATT_TIMESTAMP_MISSING"], "refusal detail")
+    assert "operator action" in body and "re-attesting will not clear it" in body
+    assert "SERVER side" in body
+
+
+def test_server_defect_mixed_codes_still_route_as_server_defect():
+    """ATT_TIMESTAMP_MISSING present alongside a transient code (CI_PENDING)
+    still routes as the cross-PR server defect, not as a silent transient."""
+    rc, out, state, logs = _refusal_cycle(TS_MISSING_MIXED, Path(tempfile.mkdtemp()) / "s.json")
+    assert len(logs) == 1
+    assert "SERVER DEFECT" in logs[0] and "CI_PENDING+ATT_TIMESTAMP_MISSING" in logs[0]
+
+
+def test_server_defect_dedup_is_cross_pr_and_cross_head():
+    """Refusals sharing the server-defect code set — same PR at a new head, or
+    a DIFFERENT PR entirely — all fold into ONE episode = ONE change-log post."""
+    state_path = Path(tempfile.mkdtemp()) / "s.json"
+    rc1, out1, state1, logs1 = _refusal_cycle(TS_MISSING_SOLE, state_path)  # PR 600 @ head b
+    rc2, out2, state2, logs2 = _refusal_cycle(
+        TS_MISSING_SOLE, state_path, discovery=DISCOVERY_600_NEWHEAD)       # PR 600 @ head c
+    assert len(logs1) == 1 and logs2 == [], "same PR at a new head folds into the episode"
+    assert "same refusal as" in out2, "head change does not fork a server-defect episode"
+    key = "SERVER-DEFECT:::ATT_TIMESTAMP_MISSING"
+    assert state2["anomaly_dedup"][key]["count"] == 2
+    assert state2["anomaly_dedup"][key]["prs"] == [600]
+    # a DIFFERENT PR with the same defect folds in with the cross-PR message
+    rc3, out3, state3, logs3 = _refusal_cycle_pr(TS_MISSING_SOLE, state_path, num=601)
+    assert logs3 == []
+    assert "folded into the existing finding" in out3
+    assert state3["anomaly_dedup"][key]["count"] == 3
+    assert state3["anomaly_dedup"][key]["prs"] == [600, 601]
+    assert sum("SERVER DEFECT" in t for t in logs1 + logs2 + logs3) == 1, "one post per episode"
+
+
+def test_server_defect_does_not_shadow_staleness_routing():
+    """The re-attest-required staleness codes keep their own routing: a
+    different PR refusing with ATT_STALE_HEAD / ATT_NO_CI_EVIDENCE during the
+    same episode still posts ITS OWN per-(PR, codes, head) finding."""
+    state_path = Path(tempfile.mkdtemp()) / "s.json"
+    rc1, out1, state1, logs1 = _refusal_cycle(TS_MISSING_SOLE, state_path)
+    rc2, out2, state2, logs2 = _refusal_cycle(STALE_OTHER, state_path)
+    rc3, out3, state3, logs3 = _refusal_cycle(NO_CI_EVIDENCE_FAIL, state_path)
+    assert len(logs1) == 1 and "SERVER DEFECT" in logs1[0]
+    assert len(logs2) == 1 and "RE-ATTESTATION REQUESTED" in logs2[0] and "ATT_STALE_HEAD" in logs2[0]
+    assert len(logs3) == 1 and "RE-ATTESTATION REQUESTED" in logs3[0] and "ATT_NO_CI_EVIDENCE" in logs3[0]
+    keys = set(state3["anomaly_dedup"].keys())
+    assert any(k.startswith("SERVER-DEFECT::") for k in keys), "server-defect key present"
+    assert any(":600:" in k and k.startswith("REFUSAL") for k in keys), "per-PR REFUSAL keys untouched"
+
+
+def test_server_defect_key_helper():
+    assert janitor._server_defect_key(["ATT_TIMESTAMP_MISSING"]) == "SERVER-DEFECT:::ATT_TIMESTAMP_MISSING"
+    assert janitor._server_defect_key(
+        ["CI_PENDING", "ATT_TIMESTAMP_MISSING"]) == "SERVER-DEFECT:::ATT_TIMESTAMP_MISSING+CI_PENDING"
+    assert janitor._server_defect_key(["ATT_STALE_HEAD"]) is None
+    assert janitor._server_defect_key([]) is None
+
+
+# ── dual-runnable runner (keep at EOF: collects every test_ defined above) ──
+
+def _main() -> int:
+    tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
+    failed = 0
+    for name, fn in tests:
+        try:
+            fn()
+            print(f"  PASS {name}")
+        except AssertionError as exc:
+            failed += 1
+            print(f"  FAIL {name}: {exc}")
+        except Exception as exc:  # noqa: BLE001
+            failed += 1
+            print(f"  ERROR {name}: {type(exc).__name__}: {exc}")
+    print(f"{len(tests) - failed}/{len(tests)} passed")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(_main())

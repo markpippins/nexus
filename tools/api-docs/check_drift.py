@@ -61,6 +61,7 @@ MOLECULER_MIRRORS = {
     "moleculer/semantics": "typescript/semantics-srv",
     "moleculer/tackle": "typescript/tackle-srv",
     "moleculer/wind": "typescript/wind-srv",
+    "moleculer/substance": "typescript/substance-srv",
     "moleculer/prompt-sync": "typescript/tackle-prompt-sync-srv",
     "moleculer/execution": "typescript/execution-srv",
     "moleculer/conduit": "typescript/conduit-srv",
