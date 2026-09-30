@@ -21,7 +21,12 @@
 # read-only over git and its only writes are its own audit artifacts.
 #
 # Runs in the PRIMARY checkout /home/codex/dev/nexus. The fetch in
-# ExecStartPre only advances the local origin/main ref.
+# ExecStartPre only advances the local origin/main ref. ExecCondition makes
+# deploy-early safe: if the primary checkout predates the PR that ships the
+# guard (or has not been ff-updated since the PR landed), the unit SKIPS
+# cleanly (result=skipped, unit NOT failed) instead of 203/EXEC noise — the
+# same skip-until-present discipline as the record-hygiene-sweep dedicated
+# checkout, adapted to the primary-checkout doctrine.
 #
 # Failure model (exit-code oracle; aggregate = highest-priority verdict):
 #   exit 0 ALL_MATCH     — every landed digest equals its pin; unit succeeds
@@ -55,6 +60,7 @@ After=network-online.target
 Type=oneshot
 WorkingDirectory=/home/codex/dev/nexus
 ExecStartPre=/usr/bin/git -C /home/codex/dev/nexus fetch --quiet origin main
+ExecCondition=/usr/bin/test -x /home/codex/dev/nexus/bin/digest_drift_report.py
 ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/digest_drift_report.py --repo /home/codex/dev/nexus --rev origin/main
 TimeoutStartSec=300
 SyslogIdentifier=landed-digest-guard
