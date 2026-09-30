@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
-"""Canary diff for aegis-srv :3116 vs moleculer twin :4116.
+"""Canary diff for substance-srv :3115 vs moleculer twin :4115.
 
-Reads + validation negatives ONLY. The 40 write routes (registries CRUD,
-revisions, validate, model-check, wind-compilations, and the six table-CRUD
-families) are exercised exclusively with malformed/absent-id negatives that
-reject before any DB mutation — and model-check never reaches the java/TLC
-spawn on those probes. No aegis.* rows are created or mutated.
+Reads + validation negatives ONLY. No nebula.segment_sets rows are created
+or mutated: every segment-set write case is a validation negative that
+rejects before any DB work (404 on unknown segment_set_id, 422 on absent
+body / bad shapes), and the two DELETE cases target nonexistent UUIDs on
+unknown domain types (404 before lookup), verified against the incumbent's
+route modules (links.ts, segment-sets.ts).
 
-Normalization: row timestamps (registries are live DB rows shared with the
-incumbent; reads are byte-identical unless a row changes between the two
-fetches, which the registry CRUD cadence makes negligible).
+The Redis-cached resolve path (/segment-sets/:id) is included as a read;
+its cache may be stale or warm on either side independently of this run
+(the segment_expired listener is incumbent-owned), so the scrub drops
+volatile fields and the churn-window note applies.
+
+Envelope note: substance is the FastAPI-shaped twin ({detail} errors, 422
+validation) — a JSON 404 catch-all EXISTS here (unlike nebula), so the
+unknown-path cases compare substance's real {detail: "Not Found"}.
 """
 import json
 import os
@@ -17,64 +23,50 @@ import sys
 import urllib.error
 import urllib.request
 
-A = os.environ.get("CANARY_BASE", "http://localhost:3116").rstrip("/")
-B = os.environ.get("TWIN_BASE", "http://localhost:4116").rstrip("/")
+A = os.environ.get("CANARY_BASE", "http://localhost:3115").rstrip("/")
+B = os.environ.get("TWIN_BASE", "http://localhost:4115").rstrip("/")
 
 UUID = "11111111-1111-1111-1111-111111111111"
 
 CASES = [
-    ("GET", "/health", None),
-    ("GET", "/api/registries", None),
-    ("GET", "/api/registries/name/__no_such_registry__", None),
-    ("GET", f"/api/registries/{UUID}", None),
-    ("GET", "/api/registries/not-a-uuid", None),
-    # Child family reads (registry existence gate → 404, byte-identical):
-    ("GET", f"/api/registries/{UUID}/revisions", None),
-    ("GET", f"/api/registries/{UUID}/constants", None),
-    ("GET", f"/api/registries/{UUID}/variables", None),
-    ("GET", f"/api/registries/{UUID}/states", None),
-    ("GET", f"/api/registries/{UUID}/transitions", None),
-    ("GET", f"/api/registries/{UUID}/invariants", None),
-    ("GET", f"/api/registries/{UUID}/properties", None),
-    ("GET", f"/api/registries/{UUID}/temporal-properties", None),
-    ("GET", f"/api/registries/{UUID}/attribute-mappings", None),
-    ("GET", f"/api/registries/{UUID}/concept-mappings", None),
-    ("GET", f"/api/registries/{UUID}/relationship-mappings", None),
-    ("GET", f"/api/registries/{UUID}/execution-log", None),
-    ("GET", f"/api/registries/{UUID}/validation-results", None),
-    ("GET", f"/api/registries/{UUID}/model-check-results", None),
-    ("GET", f"/api/registries/{UUID}/wind-compilations", None),
-    # Child detail id negatives:
-    ("GET", f"/api/registries/{UUID}/constants/not-a-uuid", None),
-    ("GET", f"/api/registries/{UUID}/transitions/not-a-uuid", None),
-    # Write-route negatives (no DB work):
-    ("POST", "/api/registries", {}),
-    ("POST", f"/api/registries/{UUID}/revisions", {}),
-    ("POST", f"/api/registries/{UUID}/validate", {}),
-    ("POST", f"/api/registries/{UUID}/model-check", {}),
-    ("POST", f"/api/registries/{UUID}/wind-compilations", {}),
-    ("POST", "/api/registries/not-a-uuid/constants", {}),
-    ("PATCH", f"/api/registries/{UUID}/properties/not-a-uuid", {}),
-    ("DELETE", f"/api/registries/{UUID}/transitions/not-a-uuid", None),
-    ("DELETE", f"/api/registries/{UUID}", None),
-    # 404 catch-all (JSON {error:"not found"}):
-    ("GET", "/api/definitely/not/a/route", None),
+    ("GET", "/healthz", None),
+    # Segment-set reads (churn-stable needles; the Redis-resolve case may
+    # 404 on both sides identically if the id is unknown to substance):
+    ("GET", "/segment-sets?limit=1", None),
+    ("GET", f"/segment-sets/{UUID}", None),
+    ("GET", "/segment-sets/not-a-uuid", None),
+    # Domain-links reads (unknown domain ids → 404 both sides):
+    ("GET", f"/candidates/{UUID}/segment-sets", None),
+    ("GET", f"/requirements/{UUID}/segment-sets", None),
+    # Write-route negatives (reject BEFORE any DB work — verified against
+    # the incumbent's validation order; unknown ids → 404, absent bodies
+    # → 422, both without touching nebula.segment_sets):
+    ("POST", "/segment-sets/from-segments", {}),
+    ("POST", f"/segment-sets/{UUID}/members", {}),
+    ("PATCH", f"/segment-sets/{UUID}", {}),
+    ("DELETE", f"/segment-sets/{UUID}/members/not-a-uuid", None),
+    ("POST", f"/candidates/{UUID}/segment-sets", {}),
+    ("POST", f"/requirements/{UUID}/segment-sets", {}),
+    ("DELETE", f"/candidates/{UUID}/segment-sets/{UUID}", None),
+    # 404 surface (substance HAS a JSON {detail} catch-all, unlike nebula):
     ("GET", "/definitely/not/a/route", None),
 ]
 
 TS_FIELDS = {
     "created_at", "updated_at", "verified_at", "checked_at",
-    "compiled_at", "started_at", "finished_at",
+    "started_at", "finished_at", "expires_at", "cached_at",
 }
 
 
 def fetch(base, method, path, body):
     data = None
     headers = {}
-    if body is not None:
+    if body is None:
+        req = urllib.request.Request(base + path, method=method, headers=headers)
+    else:
         data = json.dumps(body).encode()
         headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(base + path, data=data, method=method, headers=headers)
+        req = urllib.request.Request(base + path, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=25) as response:
             return response.status, dict(response.headers), response.read()
