@@ -8,6 +8,7 @@ import { promisify } from "util";
 import { writeFile, readFile, unlink, mkdir } from "fs/promises";
 import { existsSync } from "fs";
 import { join } from "path";
+import { emitExecutionTelemetry, loadGoverningText } from "../lib/execution-telemetry.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -564,6 +565,10 @@ export default class HarnessWorker extends Service {
     return {
       role: row.role,
       prompt: resolvedPrompt,
+      // Decision 28: the doctrine frame hashes the procedure cards *in force for this walk*.
+      // They are already loaded above, so exposing them costs nothing and avoids a second
+      // Redis read that could observe a different card set than the prompt was built from.
+      procedureIndex,
       task: {
         wind_task_id: row.wind_task_id,
         wind_task_name: row.wind_task_name,
@@ -1098,6 +1103,9 @@ export default class HarnessWorker extends Service {
 
   private async run(ctx: Context<any>): Promise<any> {
     const jobId = uuidv4();
+    // Minted once, at walk start: the census sampling decision is keyed on it (so a re-run
+    // reaches the same verdict) and the append-only row can be written at most once.
+    const executionId = uuidv4();
     const startTime = Date.now();
     const {
       wind_task_id,
@@ -1311,6 +1319,36 @@ export default class HarnessWorker extends Service {
         });
       }
 
+      // A3: the single append-only row for this walk, emitted with the outcome already known.
+      // Wrapped because loadGoverningText() legitimately throws when the artifact is absent,
+      // and that must never turn a SUCCESSFUL walk into a failure. Losing the row is a gap
+      // in the record; failing the harness is a lost execution.
+      try {
+        await emitExecutionTelemetry(
+          {
+            params: ctx.params,
+            systemPrompt: resolved.prompt,
+            procedureIndex: resolved.procedureIndex ?? [],
+            bootstrap: loadGoverningText(process.env.NEXUS_GOVERNING_TEXT_PATH),
+            sourceNamespace: "wind",
+            executorId: effectiveAgent,
+            executedByRole: resolved.role,
+            executedByModel: effectiveModel ?? "(harness default)",
+            ticketId: resolved.task?.wind_task_id ?? null,
+            workItemId: resolved.task?.tackle_task_id ?? null,
+            outcomeStatus: exitCode === 0 ? "SUCCEEDED" : "FAILED",
+            outcomeDetail: stderr ? String(stderr).slice(0, 2000) : null,
+            executionId,
+          },
+          (text, values) => pool.query(text, values as any[]),
+          process.env,
+          [],
+          (m) => this.logger.warn(m),
+        );
+      } catch (m: any) {
+        this.logger.warn(`execution telemetry skipped: ${m?.message ?? m}`);
+      }
+
       return {
         job_id: jobId,
         role: resolved.role,
@@ -1337,6 +1375,35 @@ export default class HarnessWorker extends Service {
           : undefined,
       };
     } catch (error: any) {
+      // A3/Decision 28: a thrown walk MUST still leave a row. Without this the runs that
+      // fail hardest are the ones with no telemetry at all, and A5's "sampled-missing"
+      // threshold would read that absence as a finding rather than as a failed execution.
+      // Guarded so a telemetry problem can never mask the original error.
+      try {
+        const pool = await this.getPool();
+        await emitExecutionTelemetry(
+          {
+            params: ctx.params,
+            systemPrompt: "",
+            procedureIndex: [],
+            bootstrap: loadGoverningText(process.env.NEXUS_GOVERNING_TEXT_PATH),
+            sourceNamespace: "wind",
+            executorId: "harness",
+            executedByRole: "unknown",
+            executedByModel: "unknown",
+            outcomeStatus: "FAILED",
+            outcomeDetail: String(error?.message ?? error).slice(0, 2000),
+            executionId,
+          },
+          (text, values) => pool.query(text, values as any[]),
+          process.env,
+          [],
+          (m) => this.logger.warn(m),
+        );
+      } catch {
+        /* telemetry is best-effort; never mask the original failure */
+      }
+
       await this.emitEvent({
         event_type: "harness.error",
         source: "worker.harness.run",
