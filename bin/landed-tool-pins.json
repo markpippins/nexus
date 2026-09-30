@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "comment": "Landed-tool parity pin registry. The landed_digest_guard.py hourly tripwire compares the blob digest of each pinned path on origin/main against 'digest'. digest: sha256 hex of the file content, or null when the tool has not landed yet (then queued_prs carries the expected digest(s)). queued_prs: open PRs that introduce or modify the path; head digest verified live on every tick so a force-push after capture flips QUEUED to DRIFT. Re-pinning after an intended change requires a PR with its own tester attestation; the guard itself never mutates anything.",
+  "pins": [
+    {
+      "path": "bin/supersede-record.sh",
+      "digest": null,
+      "provenance": "PR #673 pre-merge capture (head 7f43c6e6d), agent record fd2796e4; Decision 24 supersession tool",
+      "queued_prs": [
+        {
+          "pr": 673,
+          "head": "7f43c6e6d",
+          "digest": "bd39b5e646c37f819c6ba00ae2aac893ad23124682413a65631435ada97156fb",
+          "provenance": "byte-verified against worktree before push; R1 fd2796e4"
+        }
+      ]
+    },
+    {
+      "path": "bin/attestation_janitor.py",
+      "digest": "dfa0850a462ea201d42cd8490313665a2cc597e57ca271e1377b0f9eb9cfa14d",
+      "provenance": "epoch-0 landed capture @ origin/main 78fd07e4d (2026-09-30)",
+      "queued_prs": [
+        {
+          "pr": 675,
+          "head": "1c81a30e",
+          "digest": "a3c9d3d3b6c2f09a3160f48f6cc0f54aba3e3ce7a2b6b68d9f78ec49ba13c7d3",
+          "provenance": "janitor-server-defect-routing variant; captured at #675 head"
+        }
+      ]
+    },
+    {
+      "path": "bin/merge_pr.py",
+      "digest": "bcb4d638b3b1dff6796caf7bd55a438cb0aad5020bef83df08b052285f76d3ca",
+      "provenance": "epoch-0 landed capture @ origin/main 78fd07e4d (2026-09-30)",
+      "queued_prs": []
+    },
+    {
+      "path": "bin/gate_codes.py",
+      "digest": "af99dad78818318dc0778821908339b6f71abba33d1298765e91a2bce43d744b",
+      "provenance": "landed since PR #657; epoch-0 capture re-verified byte-stable across 78fd07e4d..163d3844a (initial capture mislabeled it unlanded — caught by this guard's own first live run)",
+      "queued_prs": [
+        {
+          "pr": 675,
+          "head": "1c81a30e",
+          "digest": "d4f60f411c45ec1f776d90ed25b2782f285347d003c64daad14c82825b6cbc6f",
+          "provenance": "janitor-server-defect-routing variant; captured at #675 head 1c81a30e"
+        }
+      ]
+    }
+  ]
+}
