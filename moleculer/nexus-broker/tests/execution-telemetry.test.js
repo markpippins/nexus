@@ -177,3 +177,25 @@ test('A3: the FAILED path emits a real row, not a silent gap', async () => {
   assert.ok(SHA256_RE.test(seen.values[9]), 'a FAILED row still needs a real frame')
   assert.equal(seen.values[2], true, 'marker still present on a failed run')
 })
+
+// ── Decision 29: the ratified frame is docs/governing-frame.md ─────────────
+
+test('Decision 29: an unset NEXUS_GOVERNING_TEXT_PATH defaults to the ratified frame', () => {
+  const root = join(__dirname, '../../..')
+  const text = loadGoverningText(undefined, root)
+  assert.ok(text.length > 0)
+  assert.ok(/governing frame/i.test(text), 'must load the frame document')
+  assert.ok(/Generated file/.test(text), 'must be the GENERATED frame, not a hand-written one')
+})
+
+test('Decision 29: the default is a CONVENTION, not a fallback — absent frame still throws', () => {
+  assert.throws(() => loadGoverningText(undefined, '/nonexistent-repo-root'),
+    /ENOENT|no such file/i, 'a missing frame must skip loudly, never fabricate')
+})
+
+test('Decision 29: an explicit path still wins over the default', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gov-'))
+  const p = join(dir, 'other.md')
+  writeFileSync(p, 'an explicit governing text\n')
+  assert.equal(loadGoverningText(p, '/nonexistent-repo-root').trim(), 'an explicit governing text')
+})
