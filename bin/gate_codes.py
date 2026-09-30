@@ -26,9 +26,15 @@ Consumer routing (attestation_janitor.py, per spec table):
     ATT_MISSING        silent skip (state file only)
     ATT_TIMESTAMP_MISSING
                        operator action: a serialization regression on the
-                       record endpoint, not a tester action. Retry next
-                       cycle; the janitor does NOT queue a re-attestation
-                       (that is the misdiagnosis this code replaces).
+                       record endpoint, not a tester action. Routed as a
+                       cross-PR SERVER DEFECT finding (one post per episode,
+                       deduped on the code set alone — one defect blocks many
+                       PRs), with wording stating that re-attesting will not
+                       clear it. Retry next cycle; the janitor does NOT queue
+                       a re-attestation (that is the misdiagnosis this code
+                       replaces). Distinct from ATT_STALE_HEAD /
+                       ATT_NO_CI_EVIDENCE, which stay per-(PR, codes, head)
+                       because each needs that PR's tester to re-attest.
     ATT_STALE_HEAD     queue tester re-attestation; 1 post per dedup key
     ATT_NO_CI_EVIDENCE queue tester re-attestation (attestation lacks CI run
                        references, or a cited run is genuinely absent — gh
