@@ -1,0 +1,18 @@
+# Source of truth for ~/.config/systemd/user/record-hygiene-sweep.timer
+#
+# Weekly (Mon 04:20 UTC) with Persistent=true catch-up. Record hygiene is a
+# garden-not-graveyard cadence: stale status:open records are proposed for
+# closure once (state-file dedup), and an owning role decides — this timer is
+# the slow lane for lifecycle drift, complementing the attestation-janitor's
+# 15-minute merge lane.
+
+[Unit]
+Description=Run the record hygiene sweep weekly
+
+[Timer]
+OnCalendar=Mon *-*-* 04:20:00 UTC
+Persistent=true
+Unit=record-hygiene-sweep.service
+
+[Install]
+WantedBy=timers.target
