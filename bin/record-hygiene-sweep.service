@@ -1,0 +1,46 @@
+# Source of truth for ~/.config/systemd/user/record-hygiene-sweep.service
+#
+# Deploy (operator action, per attestation-janitor.service doctrine):
+#   cp bin/record-hygiene-sweep.service ~/.config/systemd/user/
+#   cp bin/record-hygiene-sweep.timer   ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now record-hygiene-sweep.timer
+#
+# Why a dedicated checkout: the attestation-janitor incident proved that a
+# mutable scratch checkout as a deploy target silently runs stale code
+# (bin/attestation-janitor.service header — 329 duplicate forum posts). Same
+# discipline here: the sweep runs from a dedicated clone that ExecStartPre
+# resets to origin/main, and REFUSES to run at all if it cannot prove it is
+# current main. This sweep never mutates agent records (proposals only), but
+# its evidence posts and dedup state are still audit artifacts — stale logic
+# would poison them the same way.
+#
+# Failure model: exit 0 = sweep ran (classification printed to the journal;
+# under --apply, candidates are dry-run-validated and ONE evidence post is
+# made per new-candidate batch); exit 1 = some validations errored;
+# exit 2 = scan hard error (unit shows failed — a missing weekly evidence
+# post in the change-log is itself the alert, per the todo-lifecycle
+# failure model).
+#
+# NOTE: the timer runs WITH --apply deliberately. The sweep's only writes are
+# its own evidence post and state file — it NEVER mutates agent records.
+# Record mutations are executed by an owning role via bin/supersede-record.sh.
+
+[Unit]
+Description=Record hygiene sweep — stale status:open records -> retire/supersede proposals (read-only over records)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/codex/dev/nexus-sweep
+# Self-heal to origin/main before every tick; fail loudly rather than run stale.
+ExecStartPre=/usr/bin/git -C /home/codex/dev/nexus-sweep fetch --quiet origin main
+ExecStartPre=/usr/bin/git -C /home/codex/dev/nexus-sweep reset --hard --quiet origin/main
+# Skip cleanly (result=skipped, unit NOT failed) if the sweep predates the clone.
+ExecCondition=/usr/bin/test -f /home/codex/dev/nexus-sweep/bin/record_hygiene_sweep.py
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus-sweep/bin/record_hygiene_sweep.py --apply
+TimeoutStartSec=900
+SyslogIdentifier=record-hygiene-sweep
+
+[Install]
+WantedBy=default.target
