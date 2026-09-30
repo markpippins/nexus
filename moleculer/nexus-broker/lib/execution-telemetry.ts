@@ -25,6 +25,7 @@
  */
 
 import { readFileSync } from "fs";
+import { join } from "path";
 import { prepareExecutionEmission, censusArgvFromEnv } from "./census-emit.ts";
 import { resolveSessionId } from "./execution-identity.ts";
 import { buildDoctrineSnapshot, type DoctrineSnapshot } from "./doctrine-snapshot.ts";
@@ -71,17 +72,23 @@ export type PgQuery = (text: string, values?: unknown[]) => Promise<unknown>;
  * explicitly not the mutable latest. Read from a named artifact so the frame is stable
  * across runs; a walk's frame identity must not move because an unrelated file was edited.
  */
-export function loadGoverningText(path: string | undefined): string {
-  if (!path) {
+export function loadGoverningText(path: string | undefined, repoRoot?: string): string {
+  // Decision 29: the ratified frame is `docs/governing-frame.md` at the repo root, so an
+  // unset NEXUS_GOVERNING_TEXT_PATH defaults to that rather than disabling emission. The
+  // default is a CONVENTION, not a fallback: if the file is absent the load still throws,
+  // because a missing frame must skip loudly rather than fabricate an address.
+  const resolved = path || (repoRoot ? join(repoRoot, "docs", "governing-frame.md") : undefined);
+  if (!resolved) {
     throw new Error(
-      "governing text path is not configured (NEXUS_GOVERNING_TEXT_PATH). Decision 28 " +
-        "Ruling 3 requires bootstrap to be the ratified, frozen governing text, not the " +
-        "mutable latest, so it must be a named artifact. Refusing to invent one.",
+      "governing text path is not configured (NEXUS_GOVERNING_TEXT_PATH) and no repo root " +
+        "was supplied. Decision 28 Ruling 3 requires bootstrap to be the ratified, frozen " +
+        "governing text, not the mutable latest, so it must be a named artifact. Refusing " +
+        "to invent one.",
     );
   }
-  const text = readFileSync(path, "utf8");
+  const text = readFileSync(resolved, "utf8");
   if (text.trim().length === 0) {
-    throw new Error(`governing text at ${path} is empty; an empty frame would be a fabrication`);
+    throw new Error(`governing text at ${resolved} is empty; an empty frame would be a fabrication`);
   }
   return text;
 }

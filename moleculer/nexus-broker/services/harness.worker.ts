@@ -13,6 +13,15 @@ import { emitExecutionTelemetry, loadGoverningText } from "../lib/execution-tele
 const execFileAsync = promisify(execFile);
 
 /**
+ * Repo root, used to resolve the default governing frame (Decision 29:
+ * `docs/governing-frame.md`). Defaults to the package's grandparent, which is the nexus
+ * repo root when the broker runs from its normal location. Overridable for unusual layouts
+ * and for tests; never used to *invent* a frame -- only to find the ratified one.
+ */
+const NEXUS_REPO_ROOT =
+  process.env.NEXUS_REPO_ROOT || join(__dirname, "..", "..", "..");
+
+/**
  * worker.harness — process-spawning harness worker (Wave 4.1).
  *
  * Ports harness-srv's core flow (resolve context → admission gate →
@@ -1329,7 +1338,7 @@ export default class HarnessWorker extends Service {
             params: ctx.params,
             systemPrompt: resolved.prompt,
             procedureIndex: resolved.procedureIndex ?? [],
-            bootstrap: loadGoverningText(process.env.NEXUS_GOVERNING_TEXT_PATH),
+            bootstrap: loadGoverningText(process.env.NEXUS_GOVERNING_TEXT_PATH, NEXUS_REPO_ROOT),
             sourceNamespace: "wind",
             executorId: effectiveAgent,
             executedByRole: resolved.role,
@@ -1386,7 +1395,7 @@ export default class HarnessWorker extends Service {
             params: ctx.params,
             systemPrompt: "",
             procedureIndex: [],
-            bootstrap: loadGoverningText(process.env.NEXUS_GOVERNING_TEXT_PATH),
+            bootstrap: loadGoverningText(process.env.NEXUS_GOVERNING_TEXT_PATH, NEXUS_REPO_ROOT),
             sourceNamespace: "wind",
             executorId: "harness",
             executedByRole: "unknown",
