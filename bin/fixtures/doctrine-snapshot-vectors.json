@@ -1,0 +1,167 @@
+{
+  "_comment": "Cross-language doctrine-snapshot vectors. Decision 28: consumed by BOTH the python test_doctrine.py (peb-kernel) and the TS suite. Generated from the CANONICAL python implementation - do not hand-edit expected values; regenerate from python and update both suites together.",
+  "canonical_recipe": "python/peb-kernel/src/peb_kernel/doctrine.py",
+  "snapshot_schema_version": 1,
+  "address_scheme": "sha256:<64 lowercase hex>; serialization is json.dumps(sort_keys=True, separators=(',',':'), ensure_ascii=False) - ALPHABETICAL key order",
+  "vectors": [
+    {
+      "name": "minimal",
+      "description": "Single prompt, single card, no bootstrap content beyond a token.",
+      "input": {
+        "system_prompt": "You are the Engineer.",
+        "bootstrap": "boot-v1",
+        "active_procedure_cards": [
+          {
+            "slug": "inbox-query-procedure",
+            "summary": "How to query your inbox"
+          }
+        ]
+      },
+      "expected": {
+        "schema_version": 1,
+        "snapshot_id": "sha256:57aa90aab633fab58d5daf5608ac0f68917f12d5ca1c22ee993f1fa6ce231178",
+        "system_prompt_hash": "sha256:c685864cb93cef78cc184617817ad966069293a161ffa4d48ccc77d758e3ea8f",
+        "bootstrap_hash": "sha256:5410f06159a48a84616892c376f2ea85f8ed482a7e08f377cf4bbad62f62fca9",
+        "active_procedure_cards": [
+          "sha256:6000357d7059ce7c85339866026b42acca0a9d24a99e84c38c2c59fb9b8848d6"
+        ]
+      }
+    },
+    {
+      "name": "three-cards",
+      "description": "Three distinct cards, exercising sort+dedupe of object and string cards.",
+      "input": {
+        "system_prompt": "You are the Engineer.",
+        "bootstrap": "boot-v1",
+        "active_procedure_cards": [
+          {
+            "slug": "inbox-query-procedure",
+            "summary": "How to query your inbox"
+          },
+          {
+            "slug": "tag-routing-reference",
+            "summary": "Full tag catalog"
+          },
+          "inline card content, a plain string"
+        ]
+      },
+      "expected": {
+        "schema_version": 1,
+        "snapshot_id": "sha256:0b7c62dc0aba8f21eff14bfe55a7c7722863a6a42b118d2c5814f6ee6ceec7c0",
+        "system_prompt_hash": "sha256:c685864cb93cef78cc184617817ad966069293a161ffa4d48ccc77d758e3ea8f",
+        "bootstrap_hash": "sha256:5410f06159a48a84616892c376f2ea85f8ed482a7e08f377cf4bbad62f62fca9",
+        "active_procedure_cards": [
+          "sha256:1212c2bb44fc2b7cbbc0be7a4cd9b1f096a7a454273ca3b1b5dc91a493e69501",
+          "sha256:57299d97e69d6fb4cc7004942f17cbb471b7e41995f6bba7fcf15f6394d85d08",
+          "sha256:6000357d7059ce7c85339866026b42acca0a9d24a99e84c38c2c59fb9b8848d6"
+        ]
+      }
+    },
+    {
+      "name": "card-reorder",
+      "description": "SAME cards as three-cards but in a DIFFERENT input order. The snapshot_id MUST be identical to three-cards: this is the order-independence pin (Decision 28 Ruling 2.3).",
+      "input": {
+        "system_prompt": "You are the Engineer.",
+        "bootstrap": "boot-v1",
+        "active_procedure_cards": [
+          "inline card content, a plain string",
+          {
+            "slug": "inbox-query-procedure",
+            "summary": "How to query your inbox"
+          },
+          {
+            "slug": "tag-routing-reference",
+            "summary": "Full tag catalog"
+          }
+        ]
+      },
+      "expected": {
+        "schema_version": 1,
+        "snapshot_id": "sha256:0b7c62dc0aba8f21eff14bfe55a7c7722863a6a42b118d2c5814f6ee6ceec7c0",
+        "system_prompt_hash": "sha256:c685864cb93cef78cc184617817ad966069293a161ffa4d48ccc77d758e3ea8f",
+        "bootstrap_hash": "sha256:5410f06159a48a84616892c376f2ea85f8ed482a7e08f377cf4bbad62f62fca9",
+        "active_procedure_cards": [
+          "sha256:1212c2bb44fc2b7cbbc0be7a4cd9b1f096a7a454273ca3b1b5dc91a493e69501",
+          "sha256:57299d97e69d6fb4cc7004942f17cbb471b7e41995f6bba7fcf15f6394d85d08",
+          "sha256:6000357d7059ce7c85339866026b42acca0a9d24a99e84c38c2c59fb9b8848d6"
+        ]
+      },
+      "note": "snapshot_id must equal the three-cards vector"
+    },
+    {
+      "name": "duplicate-cards",
+      "description": "Duplicate + repeated cards: dedupe must make this identical to three-cards.",
+      "input": {
+        "system_prompt": "You are the Engineer.",
+        "bootstrap": "boot-v1",
+        "active_procedure_cards": [
+          {
+            "slug": "inbox-query-procedure",
+            "summary": "How to query your inbox"
+          },
+          {
+            "slug": "tag-routing-reference",
+            "summary": "Full tag catalog"
+          },
+          "inline card content, a plain string",
+          {
+            "slug": "inbox-query-procedure",
+            "summary": "How to query your inbox"
+          },
+          "inline card content, a plain string"
+        ]
+      },
+      "expected": {
+        "schema_version": 1,
+        "snapshot_id": "sha256:0b7c62dc0aba8f21eff14bfe55a7c7722863a6a42b118d2c5814f6ee6ceec7c0",
+        "system_prompt_hash": "sha256:c685864cb93cef78cc184617817ad966069293a161ffa4d48ccc77d758e3ea8f",
+        "bootstrap_hash": "sha256:5410f06159a48a84616892c376f2ea85f8ed482a7e08f377cf4bbad62f62fca9",
+        "active_procedure_cards": [
+          "sha256:1212c2bb44fc2b7cbbc0be7a4cd9b1f096a7a454273ca3b1b5dc91a493e69501",
+          "sha256:57299d97e69d6fb4cc7004942f17cbb471b7e41995f6bba7fcf15f6394d85d08",
+          "sha256:6000357d7059ce7c85339866026b42acca0a9d24a99e84c38c2c59fb9b8848d6"
+        ]
+      },
+      "note": "snapshot_id must equal the three-cards vector"
+    },
+    {
+      "name": "empty-cards",
+      "description": "No procedure cards at all - the empty-set edge, where a missing index must not crash the walk.",
+      "input": {
+        "system_prompt": "You are the Engineer.",
+        "bootstrap": "boot-v1",
+        "active_procedure_cards": []
+      },
+      "expected": {
+        "schema_version": 1,
+        "snapshot_id": "sha256:e7c2a5fe9bd2d950d91c1858a652636bed9953744cb885237a1af3c644b16e4d",
+        "system_prompt_hash": "sha256:c685864cb93cef78cc184617817ad966069293a161ffa4d48ccc77d758e3ea8f",
+        "bootstrap_hash": "sha256:5410f06159a48a84616892c376f2ea85f8ed482a7e08f377cf4bbad62f62fca9",
+        "active_procedure_cards": []
+      }
+    },
+    {
+      "name": "non-ascii",
+      "description": "Non-ASCII content, pinning ensure_ascii=False (the UTF-8 bytes hashed must match python).",
+      "input": {
+        "system_prompt": "You are the Architect — 建築",
+        "bootstrap": "règles governing text ✓",
+        "active_procedure_cards": [
+          {
+            "slug": "inbox-query-procedure",
+            "summary": "How to query your inbox"
+          }
+        ]
+      },
+      "expected": {
+        "schema_version": 1,
+        "snapshot_id": "sha256:14c43d4617b5000dccb18ee5379865f6266a069f7ac8e13627ebf6d50d34b067",
+        "system_prompt_hash": "sha256:2894effb98e2a18f4effe619916c73ba91f70081694dc1b0b564babcd1952231",
+        "bootstrap_hash": "sha256:30e619d70c6b8b61722e2793e1eaa5d872fdf745911ed1fc93f4d73e4372bb3e",
+        "active_procedure_cards": [
+          "sha256:6000357d7059ce7c85339866026b42acca0a9d24a99e84c38c2c59fb9b8848d6"
+        ]
+      }
+    }
+  ]
+}
