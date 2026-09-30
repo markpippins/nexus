@@ -1,9 +1,9 @@
 /**
- * STANDALONE broker config for side-by-side canary runs against aegis-srv.
- * Run from moleculer/aegis after `npm run build` (fleet convention: this
+ * STANDALONE broker config for side-by-side canary runs against substance-srv.
+ * Run from moleculer/substance after `npm run build` (fleet convention: this
  * file stays at the twin root, uncompiled):
- *   SERVICE_PORT=4116 npx moleculer-runner --config moleculer.config.standalone.js \
- *     dist/services/api.service.js dist/services/aegis.service.js
+ *   SERVICE_PORT=4115 npx moleculer-runner --config moleculer.config.standalone.js \
+ *     dist/services/api.service.js dist/services/substance.service.js
  */
 module.exports = {
   namespace: "substance",
