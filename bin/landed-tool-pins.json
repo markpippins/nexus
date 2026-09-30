@@ -4,29 +4,14 @@
   "pins": [
     {
       "path": "bin/supersede-record.sh",
-      "digest": null,
-      "provenance": "PR #673 pre-merge capture (head 7f43c6e6d), agent record fd2796e4; Decision 24 supersession tool",
-      "queued_prs": [
-        {
-          "pr": 673,
-          "head": "7f43c6e6d",
-          "digest": "bd39b5e646c37f819c6ba00ae2aac893ad23124682413a65631435ada97156fb",
-          "provenance": "byte-verified against worktree before push; R1 fd2796e4"
-        }
-      ]
+      "digest": "bd39b5e646c37f819c6ba00ae2aac893ad23124682413a65631435ada97156fb",
+      "provenance": "PIN ADVANCE 2026-09-30: PR #673 landed (squash e7f482c88) at byte-exact parity — digest bd39b5e6…56fb verified via pre-staged protocol (20/20 suite from main; probe battery A/B diff empty); pre-merge capture provenance fd2796e4",
+      "queued_prs": []
     },
     {
       "path": "bin/attestation_janitor.py",
-      "digest": "dfa0850a462ea201d42cd8490313665a2cc597e57ca271e1377b0f9eb9cfa14d",
-      "provenance": "epoch-0 landed capture @ origin/main 78fd07e4d (2026-09-30)",
-      "queued_prs": [
-        {
-          "pr": 675,
-          "head": "1c81a30e",
-          "digest": "a3c9d3d3b6c2f09a3160f48f6cc0f54aba3e3ce7a2b6b68d9f78ec49ba13c7d3",
-          "provenance": "janitor-server-defect-routing variant; captured at #675 head"
-        }
-      ]
+      "digest": "a3c9d3d3b6c2f09a3160f48f6cc0f54aba3e3ce7a2b6b68d9f78ec49ba13c7d3",      "provenance": "PIN ADVANCE 2026-09-30: PR #675 landed (squash 587c770e9) at its queued digest — parity confirmed by squash-of-head; epoch-0 pre-#675 digest dfa0850a…",
+      "queued_prs": []
     },
     {
       "path": "bin/merge_pr.py",
@@ -36,16 +21,9 @@
     },
     {
       "path": "bin/gate_codes.py",
-      "digest": "af99dad78818318dc0778821908339b6f71abba33d1298765e91a2bce43d744b",
-      "provenance": "landed since PR #657; epoch-0 capture re-verified byte-stable across 78fd07e4d..163d3844a (initial capture mislabeled it unlanded — caught by this guard's own first live run)",
-      "queued_prs": [
-        {
-          "pr": 675,
-          "head": "1c81a30e",
-          "digest": "d4f60f411c45ec1f776d90ed25b2782f285347d003c64daad14c82825b6cbc6f",
-          "provenance": "janitor-server-defect-routing variant; captured at #675 head 1c81a30e"
-        }
-      ]
+      "digest": "d4f60f411c45ec1f776d90ed25b2782f285347d003c64daad14c82825b6cbc6f",
+      "provenance": "PIN ADVANCE 2026-09-30: PR #675 landed (squash 587c770e9) at its queued digest; pre-#675 landed digest af99dad7… (landed since #657; initial capture mislabel caught by this guard's own first live run)",
+      "queued_prs": []
     }
   ]
 }

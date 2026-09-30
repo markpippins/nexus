@@ -12,39 +12,50 @@
 # No CI job checks the POST-squash state; this guard closes that window
 # automatically, hourly, for all pins at once.
 #
-# Runs in the PRIMARY checkout /home/codex/dev/nexus. The fetch in
-# ExecStartPre only advances the local origin/main ref — the guard itself is
-# read-only (git cat-file / git show), writes nothing, touches no records,
-# no APIs, no forums.
+# ExecStart is the drift-to-forum BRIDGE (bin/digest_drift_report.py): it runs
+# the guard's verdict logic in-process (same module, so journal and forum can
+# never disagree) and, on DRIFT/MISSING, posts ONE incident agent record and
+# ONE change-log entry per distinct drift EPISODE (evidence-digest deduped in
+# ~/.cache/landed-digest-guard-incidents.json — a persisting drift does not
+# spam the forum hourly; changed bytes start a new episode). The bridge is
+# read-only over git and its only writes are its own audit artifacts.
 #
-# Failure model (exit-code oracle of bin/landed_digest_guard.py; aggregate =
-# highest-priority verdict over all pins):
+# Runs in the PRIMARY checkout /home/codex/dev/nexus. The fetch in
+# ExecStartPre only advances the local origin/main ref.
+#
+# Failure model (exit-code oracle; aggregate = highest-priority verdict):
 #   exit 0 ALL_MATCH     — every landed digest equals its pin; unit succeeds
 #   exit 1 TOOL_ERROR    — git/registry failure; unit failed = guard broken
+#                          (deliberately NO forum post: broken tooling is not
+#                          a data incident)
 #   exit 2 MISSING       — a pinned tool is absent from origin/main and
-#                          nothing queued it — registry/landing mismatch
+#                          nothing queued it — incident posted (first time)
 #   exit 3 PARITY_DRIFT  — ALERT: a landed digest differs from its pin (or a
-#                          queued head was force-pushed); investigate the
-#                          squash merge before trusting the affected tool
+#                          queued head was force-pushed) — incident posted
+#                          (first time); investigate the squash merge before
+#                          trusting the affected tool's audit trail
 #   exit 4 QUEUED_PENDING— informational: tools queued on open PRs and/or
 #                          landed at a queued digest awaiting pin advance.
-#                          The unit fails by design so the pending state
-#                          stays visible until every pin matches.
+#                          Unit fails by design so pending state stays
+#                          visible until every pin matches; no posts.
 #
 # Journal signatures:
 #   journalctl --user -u landed-digest-guard.service -n 30
-#   drift:   "[DRIFT ] <path>: landed sha256=... != pin ..."
-#   waiting: "[QUEUED] <path>: absent from origin/main ... but expected digest queued"
+#   drift+post:  "digest-drift-report: posted incident <id> + change-log entry"
+#   dedup:       "digest-drift-report: episode already posted (Nx seen)"
+#   drift line:  "[DRIFT ] <path>: landed sha256=... != pin ..."
+#   waiting:     "[QUEUED] <path>: absent from origin/main ... but expected digest queued"
+# Drill (zero posts): /home/codex/dev/nexus/bin/digest_drift_report.py --dry-run --expect <path>=<wrong-digest>
 
 [Unit]
-Description=landed-tool parity pin guard — registry of post-squash blob digests (read-only, hourly)
+Description=landed-tool parity pin guard — registry of post-squash blob digests, drift posted to Assembly (read-only)
 After=network-online.target
 
 [Service]
 Type=oneshot
 WorkingDirectory=/home/codex/dev/nexus
 ExecStartPre=/usr/bin/git -C /home/codex/dev/nexus fetch --quiet origin main
-ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/landed_digest_guard.py --repo /home/codex/dev/nexus --rev origin/main
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/digest_drift_report.py --repo /home/codex/dev/nexus --rev origin/main
 TimeoutStartSec=300
 SyslogIdentifier=landed-digest-guard
 

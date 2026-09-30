@@ -142,6 +142,24 @@ def check_pin(pin: dict, *, repo: Path, rev: str, commit: str,
                    f"investigate the squash merge before trusting this tool's audit trail")
 
 
+def collect_pins(*, repo: Path, pins: List[dict], rev: str, commit: str,
+                 expect: Dict[str, str], out=sys.stdout) -> List[Tuple[dict, int, str]]:
+    """Run check_pin over every pin; return [(pin, verdict, evidence-line)].
+
+    The single source of verdict truth: both run_guard() (CLI, prints) and
+    digest_drift_report.py (drift-to-forum bridge, imports this module)
+    evaluate pins through here so the journal and any auto-posted incident
+    can never disagree about what the guard found.
+    """
+    results: List[Tuple[dict, int, str]] = []
+    for pin in pins:
+        v, line = check_pin(pin, repo=repo, rev=rev, commit=commit,
+                            expect_digest=expect.get(pin["path"]), out=out)
+        results.append((pin, v, line))
+        print(f"  [{LABELS[v]:<7}] {line}", file=out)
+    return results
+
+
 def run_guard(*, repo: Path, registry_path: Path, rev: str,
               only: List[str], expect: Dict[str, str], out=sys.stdout) -> int:
     pins, err = load_registry(registry_path)
@@ -167,13 +185,9 @@ def run_guard(*, repo: Path, registry_path: Path, rev: str,
         return 1
     commit = proc.stdout.strip()
 
-    verdicts: List[int] = []
-    for pin in pins:
-        v, line = check_pin(pin, repo=repo, rev=rev, commit=commit,
-                            expect_digest=expect.get(pin["path"]), out=out)
-        verdicts.append(v)
-        print(f"  [{LABELS[v]:<7}] {line}", file=out)
-
+    results = collect_pins(repo=repo, pins=pins, rev=rev, commit=commit,
+                           expect=expect, out=out)
+    verdicts = [v for _, v, _ in results]
     aggregate = next((v for v in PRIORITY if v in verdicts), MATCH)
     label = LABELS[aggregate]
     if aggregate == MATCH:
