@@ -82,6 +82,7 @@ MOLECULER_SERVICES = {
     "moleculer/role-memory": "moleculer/role-memory",
     "moleculer/semantics": "moleculer/semantics",
     "moleculer/tackle": "moleculer/tackle",
+    "moleculer/wind": "moleculer/wind",
     "moleculer/prompt-sync": "moleculer/prompt-sync",
     "moleculer/execution": "moleculer/execution",
     "moleculer/conduit": "moleculer/conduit",

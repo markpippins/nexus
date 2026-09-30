@@ -141,6 +141,16 @@ canary:
     map_registry_status: "CANARY — PR #479, canary-diffed byte-identical, **not cut over / not deployed**"
     ratified: 2026-09-23
     ratification: "RATIFIED 2026-09-23 (architect decision on the port-band)"
+  - port: 4300
+    name: "wind"
+    namespace: "wind"
+    incumbent: "typescript/wind-srv"
+    incumbent_port: 3300
+    description: "scheduling/DAG orchestration: workflows, nodes + requirements resolver, edges, instances (advance/execute/pause/resume/run/stop), execution-requests + attempts + dispatch + receipts, events + event-types, tickets, offices, titles, v-roles, provider-contracts, tasks, outcomes, validate; contract pinned to incumbent `openapi.yaml`; twin ships a day-one global rate limiter (incumbent rate-limits only 3 write surfaces) and deliberately excludes the incumbent's background subsystems (rover scheduler, events processor, NATS/pg-notify listeners) so a canary cannot double-publish harvest.created or double-poll wind.events"
+    readme_status: "port complete, dispatch-through-Express (verbatim plain-JS route stack under allowJs); canary is reads + validation negatives only — instance lifecycle and dispatch routes drive execution state; not cut over (rover scheduler / events processor / listeners stay incumbent-owned)"
+    map_registry_status: "CANARY — submitted with this row (PR for the port), dispatch-through-Express, reads + validation negatives canary ONLY, **not cut over / not deployed**"
+    ratified: null
+    ratification: "follows the pattern (+1000 band, submitted with the wind port PR)"
   - port: 4410
     name: "tackle"
     namespace: "tackle"
