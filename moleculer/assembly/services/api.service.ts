@@ -34,7 +34,24 @@ export default class ApiService extends Service {
           {
             path: "/",
             whitelist: ["assembly.**"],
-            bodyParsers: { json: true },
+            // Incumbent raises the json body limit (typescript/assembly-srv/
+            // src/index.js: express.json({ limit: '5mb' }) for transcript
+            // ingest comments) — the gateway parser must match or large
+            // writes 413 here before the verbatim stack ever sees them.
+            bodyParsers: { json: { limit: "5mb" } },
+            // moleculer-web 0.10.x does NOT put $req/$res into action meta on
+            // its own (only passReqResToParams aliases get them, via params).
+            // Dispatch-through-Express needs the REAL req/res objects inside
+            // the action handler, so inject them here — this hook runs on the
+            // gateway context BEFORE broker.call, and gateway context meta
+            // propagates to the action context. (Discovered LIVE on the
+            // resolution twin: without this, every aliased call 500s
+            // DISPATCH_NO_REQRES; jest suites hit the Express app directly
+            // and never see it.)
+            onBeforeCall: (ctx: any, _route: any, req: any, res: any) => {
+              ctx.meta.$req = req;
+              ctx.meta.$res = res;
+            },
             aliases: {
               "GET /api/agendas": "assembly.dispatch",
               "GET /api/agendas/:id": "assembly.dispatch",
@@ -124,6 +141,12 @@ export default class ApiService extends Service {
               "GET /api/work-requests": "assembly.dispatch",
               "GET /api/work-requests/:id": "assembly.dispatch",
               "GET /health": "assembly.dispatch",
+              // Registered LAST: catch-alls into the verbatim Express app for
+              // everything the literals don't name (unmatched paths anywhere,
+              // GET-only routes hit with other methods). `(.*)` =
+              // path-to-regexp 3.x catch-all; bare `/` is a separate alias.
+              "* /": "assembly.dispatch",
+              "* /(.*)": "assembly.dispatch",
             },
           },
         ],
