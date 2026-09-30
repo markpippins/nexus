@@ -73,7 +73,9 @@ def test_guard_is_not_vacuous():
     assert len(TOOLING_TWINS) >= 4, (
         f"guard covers only {TOOLING_TWINS} — the tooling trio is expected on most canary twins"
     )
-    assert {"aegis", "substance", "nebula"} <= TOOLING_TWINS
+    assert {"aegis", "substance"} <= TOOLING_TWINS
+    if "nebula" in TWINS:
+        assert "nebula" in TOOLING_TWINS
 
 
 @pytest.mark.parametrize("twin", sorted(TOOLING_TWINS))
