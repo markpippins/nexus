@@ -33,6 +33,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import sys
 
 import yaml
@@ -68,6 +69,10 @@ MOLECULER_MIRRORS = {
     "moleculer/peb": "typescript/peb-srv",
     "moleculer/harness": "typescript/harness-srv",
     "moleculer/aegis": "typescript/aegis-srv",
+    # Decision 32: union contract (compiled TypeSpec + tables.ts enumeration);
+    # the mirror VALUE is unused by verify_all (resolution has its own branch)
+    # but keeps registry integrity checks uniform.
+    "moleculer/resolution": "typescript/resolution-srv",
 }
 
 
@@ -183,11 +188,93 @@ def contract_dir(key, svc_dir):
     return svc_dir
 
 
+# ── resolution-srv: TypeSpec-anchored union contract (Decision 32, Option 3) ──
+# resolution-srv's surface is registry-driven (GET /api/{table} +
+# GET /api/{table}/{id} for every table in src/tables.ts), so NEITHER side of
+# the twin-vs-contract equality exists in extractable openapi form. Per
+# Decision 32 (4c9afc09), its contract of record is the UNION of:
+#   (1) the COMPILED TypeSpec contract
+#       (typespec/v1/resolution-srv/generated/schema/openapi.yaml — fixed
+#       routes + envelope models, committed and sdk-drift-guarded), and
+#   (2) the tables.ts enumeration rendered concrete (GET /api/{t} and
+#       GET /api/{t}/{id} for every table literal).
+# The moleculer twin's gateway carries the same union as LITERAL aliases
+# generated from its verbatim tables.ts copy, so the standard extraction
+# path reads the twin side directly and only the contract side needs this
+# renderer.
+
+RESOLUTION_SPEC = "typescript/resolution-srv"
+RESOLUTION_TSCONTRACT = "typespec/v1/resolution-srv/generated/schema/openapi.yaml"
+RESOLUTION_TABLES = "typescript/resolution-srv/src/tables.ts"
+
+
+def resolution_tables(ts_path):
+    """Table literals from a tables.ts file (the twin's copy must be
+    byte-identical to the incumbent's — enforced by the fleet guard).
+    Deliberately a narrow, line-shaped regex: tables.ts is a formatted,
+    stable file; the closure test cross-checks counts so a format drift
+    that silenced this regex would surface as a count mismatch."""
+    return sorted(set(re.findall(r'table:\s*"([a-z0-9_]+)"', open(ts_path).read())))
+
+
+def resolution_contract_surface():
+    """{(METHOD, /path)} for the resolution contract of record:
+    fixed routes from the compiled TypeSpec openapi PLUS the tables.ts
+    enumeration rendered concrete. Param routes in the compiled contract
+    (/api/{table}, /api/{table}/{id}) are dropped — they are the TEMPLATE
+    of the enumeration, not additional surface; keeping them would make a
+    dropped table invisible (any table satisfies the param)."""
+    spec = yaml.safe_load(open(os.path.join(ROOT, RESOLUTION_TSCONTRACT)))
+    fixed = set()
+    for path, ops in (spec.get("paths") or {}).items():
+        for method, op in ops.items():
+            if method in ("get", "post", "put", "patch", "delete"):
+                if "{" not in path:
+                    fixed.add((method.upper(), path))
+    tables = resolution_tables(os.path.join(ROOT, RESOLUTION_TABLES))
+    surface = set(fixed)
+    for t in tables:
+        surface.add(("GET", f"/api/{t}"))
+        surface.add(("GET", f"/api/{t}/{{id}}"))
+    return surface
+
+
 def verify_all(services):
     """Compute the per-service drift report: {key: {status, ...}}."""
     report = {}
     for key, svc_dir in sorted(services.items()):
         contract = MOLECULER_MIRRORS.get(key)
+        if key == "moleculer/resolution":
+            # Decision 32 part (a): union contract (compiled TypeSpec fixed
+            # routes ∪ tables.ts enumeration). No committed incumbent
+            # openapi.yaml exists for resolution-srv, by design.
+            try:
+                contract_surface = resolution_contract_surface()
+            except Exception as e:
+                report[key] = {
+                    "status": "unparseable",
+                    "detail": f"resolution union contract unavailable: {e}",
+                    "contract": RESOLUTION_TSCONTRACT,
+                }
+                continue
+            endpoints = extract_surface(key, svc_dir)
+            twin_surface = {(e["method"], to_openapi_form(e["path"])) for e in endpoints}
+            missing = sorted(twin_surface - contract_surface)
+            extra = sorted(contract_surface - twin_surface)
+            if missing or extra:
+                report[key] = {
+                    "status": "drift",
+                    "missing": missing,
+                    "extra": extra,
+                    "contract": RESOLUTION_TSCONTRACT,
+                }
+            else:
+                report[key] = {
+                    "status": "ok",
+                    "endpoints": len(twin_surface),
+                    "contract": RESOLUTION_TSCONTRACT,
+                }
+            continue
         spec_path = os.path.join(contract_dir(key, svc_dir), "openapi.yaml")
         if not os.path.exists(spec_path):
             report[key] = {
