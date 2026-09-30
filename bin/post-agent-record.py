@@ -5,13 +5,17 @@ Writes an agent record via the nebula REST API.
 Usage:
   post-agent-record.py --role engineer --title "Summary" --content "markdown"
   post-agent-record.py -r architect -t "Decision" -c "Details" --tags to:engineer,status:open
+  post-agent-record.py -r DBA -t "Finding" -c "Body" --tags to:architect --tags type:report
   echo "body content" | post-agent-record.py -r engineer -t "Log entry"
 
 Options:
   --role, -r         Role name (required: architect|engineer|planner|reviewer|analyst|inspector|critic)
   --title, -t        Record title (required)
   --content, -c      Record body in markdown (or read from stdin if not provided)
-  --tags             Comma-separated tags (e.g. "to:architect,type:status-update")
+  --tags             Tags. REPEATABLE and/or comma-separated:
+                     --tags a --tags b,c   or   --tags "a,b,c".
+                     Repeated flags ACCUMULATE (they no longer truncate).
+                     A single whole-string JSON array is also accepted.
   --record-type      Record type (default: engineering_log)
                      One of: report, analysis, assessment, inspection, prompt,
                              response, engineering_log, architecture_note, decision
@@ -58,6 +62,44 @@ def _writable_roles():
     return set(roles)
 
 
+def parse_tags(values):
+    """Parse one or more --tags occurrences into a clean tag list.
+
+    Accepts REPEATED --tags occurrences (argparse action="append" feeds a
+    list); each occurrence may be comma-separated, or a single whole-string
+    JSON array (back-compat). Strips whitespace, drops empty segments,
+    dedupes preserving first-seen order. Raises ValueError on JSON-ish
+    fragments that are not a whole JSON array.
+    """
+    if not values:
+        return []
+    out, seen = [], set()
+    for raw in values:
+        s = (raw or "").strip()
+        if not s:
+            continue
+        if s.startswith("["):
+            try:
+                parsed = json.loads(s)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"--tags looks like JSON but does not parse: {exc}") from exc
+            if not isinstance(parsed, list) or not all(isinstance(t, str) for t in parsed):
+                raise ValueError("--tags JSON array must contain only strings")
+            items = parsed
+        else:
+            if '"' in s:
+                raise ValueError(
+                    "--tags contains a quote but is not a JSON array — "
+                    "use a JSON array string or comma-separated tags")
+            items = s.split(",")
+        for t in items:
+            t = (t or "").strip()
+            if t and t not in seen:
+                seen.add(t)
+                out.append(t)
+    return out
+
+
 def parse_args():
     p = argparse.ArgumentParser(add_help=False)
     p.add_argument("--role", "-r", required=True)
@@ -67,7 +109,10 @@ def parse_args():
                    help="Read record body from FILE (robust against shell quoting; preferred for long bodies)")
     p.add_argument("--force-content", action="store_true",
                    help="Allow --content that names an existing file path (deliberate path-as-body)")
-    p.add_argument("--tags", default="")
+    p.add_argument("--tags", action="append", default=None,
+                   help="Tags. Repeatable and/or comma-separated "
+                        "(--tags a --tags b,c or --tags 'a,b'); "
+                        "a single whole-string JSON array is also accepted.")
     p.add_argument("--record-type", default="engineering_log")
     p.add_argument("--level", type=int, default=3)
     p.add_argument("--visibility", default="architect")
@@ -126,29 +171,19 @@ def main():
             )
             sys.exit(2)
 
-    # Parse tags. Accepts BOTH house forms: comma-separated
-    # (--tags to:architect,type:status-update) and a JSON array string
-    # (--tags '["to:architect","type:status-update"]'). Previously the JSON
-    # form was silently comma-split into mangled elements (quotes and bracket
-    # fragments stored in nebula.agent_records.tags), which broke tag routing
-    # and inbox filters — 185 records affected, repaired 2026-09-22 with backup
-    # in nebula.agent_records_tags_repair_20260922. This guard makes the JSON
-    # form parse correctly and rejects any element that still carries JSON
-    # punctuation instead of silently storing it.
-    raw_tags = (args.tags or "").strip()
-    tag_list: list[str] = []
-    if raw_tags:
-        if raw_tags.startswith("["):
-            try:
-                parsed = json.loads(raw_tags)
-                if not isinstance(parsed, list) or not all(isinstance(t, str) for t in parsed):
-                    raise ValueError("JSON tags must be an array of strings")
-                tag_list = [t.strip() for t in parsed if t.strip()]
-            except (json.JSONDecodeError, ValueError) as exc:
-                print(f"ERROR: --tags looks like JSON but does not parse as a string array: {exc}", file=sys.stderr)
-                sys.exit(2)
-        else:
-            tag_list = [t.strip() for t in raw_tags.split(",") if t.strip()]
+    # Parse tags. Accepts REPEATED --tags occurrences (each may itself be
+    # comma-separated) as well as a single whole-string JSON array.
+    # Incident 2026-09-29 (DBA record 524564df): --tags was a plain option, so
+    # repeated flags silently kept only the LAST value — 9/9 records filed
+    # that day lost their to:* and type:* routing and vanished from
+    # tag-routed inbox queries. action="append" plus parse_tags() makes
+    # repeated flags accumulate. parse_tags() is now the primary validator;
+    # the `bad` scan below remains as defense-in-depth.
+    try:
+        tag_list = parse_tags(args.tags)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(2)
     bad = [t for t in tag_list if '"' in t or t.startswith("[") or t.endswith("]")]
     if bad:
         print(f"ERROR: refusing to store malformed tags {bad} — use comma-separated or JSON array form", file=sys.stderr)
