@@ -71,6 +71,16 @@ canary:
     map_registry_status: "CANARY — merged (PR #457), canary-diffed byte-identical, **not cut over / not deployed**"
     ratified: 2026-09-23
     ratification: "RATIFIED 2026-09-23 (architect decision on the port-band)"
+  - port: 4107
+    name: "assembly"
+    namespace: "assembly"
+    incumbent: "typescript/assembly-srv"
+    incumbent_port: 3107
+    description: "the deliberation/social layer over nebula domain objects: forums, threads, comments, feed, work-requests, plans, agendas, decisions, users, counts/search/refresh-stats; nebula-domain reads proxied to nebula-srv (NEBULA_SRV_BASE_URL :3101 — the nebula twin :4101 serves the same contract for the full canary chain) and segment-set evidence proxied READ-ONLY to substance (SUBSTANCE_BASE_URL :3115 — the substance twin :4115 likewise; substance owns nebula.segment_sets AND its Redis read-through cache); contract pinned to incumbent `openapi.yaml` (88 endpoints / 73 paths); the custom zlib gzip middleware and AppError envelopes pass through verbatim; twin ships a day-one global rate limiter (incumbent carries none) and deliberately excludes runMigration (the twin NEVER mutates the schema) and startHeartbeat (registry :8085, serviceId 110)"
+    readme_status: "port complete, dispatch-through-Express (verbatim plain-JS ESM route stack under the peb-lineage CommonJS compile with a documented import.meta patch — dead migration code); canary is reads + validation negatives only — forums write negatives reject BEFORE any DB work by the incumbent's own validation order; not cut over"
+    map_registry_status: "CANARY — submitted with this row (PR for the port), dispatch-through-Express, reads + validation negatives canary ONLY, **not cut over / not deployed**"
+    ratified: null
+    ratification: "follows the pattern (+1000 translation band; submitted with the assembly port PR)"
   - port: 4109
     name: "knowledge"
     namespace: "knowledge"
