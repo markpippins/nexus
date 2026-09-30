@@ -73,6 +73,7 @@ MOLECULER_MIRRORS = {
     # the mirror VALUE is unused by verify_all (resolution has its own branch)
     # but keeps registry integrity checks uniform.
     "moleculer/resolution": "typescript/resolution-srv",
+    "moleculer/nebula": "typescript/nebula-srv",
 }
 
 

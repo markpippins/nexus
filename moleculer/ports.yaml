@@ -41,6 +41,16 @@ canary:
     map_registry_status: "CANARY — merged (PR #463), canary-diffed byte-identical, **not cut over / not deployed**"
     ratified: 2026-09-23
     ratification: "RATIFIED 2026-09-23 (architect decision on the port-band)"
+  - port: 4101
+    name: "nebula"
+    namespace: "nebula"
+    incumbent: "typescript/nebula-srv"
+    incumbent_port: 3101
+    description: "the agent-record backbone: agent_records, harvests, plans, agendas, systems, attestations, role-leases; Redis inbox-pointer + block-segmentation cache tier; segment-set evidence reads proxied READ-ONLY to substance (SUBSTANCE_BASE_URL — point at the substance twin :4115 for the full canary chain or at incumbent :3115); contract pinned to incumbent `openapi.yaml` (231 endpoints / 182 paths), Paged envelopes pass through verbatim; twin ships a day-one global rate limiter (incumbent carries only the narrow attestations limiter) and deliberately excludes runMigrations (the twin NEVER mutates the schema — fail-closed migrate gate stays incumbent-owned) and the 10-min sweepRoleLeases self-call (state mutation; incumbent enforces lease expiry regardless of which process serves reads)"
+    readme_status: "port complete, dispatch-through-Express (verbatim 9.5k-line routes.ts under CommonJS, as the incumbent compiles); canary is churn-stable reads + proven-safe validation negatives only — the POST negatives reject BEFORE any DB work by the incumbent's own validation order; not cut over (migrate gate + lease sweep stay incumbent-owned)"
+    map_registry_status: "CANARY — submitted with this row (PR for the port), dispatch-through-Express, churn-stable reads + proven-safe validation negatives canary ONLY, **not cut over / not deployed**"
+    ratified: null
+    ratification: "follows the pattern (+1000 translation band; submitted with the nebula port PR)"
   - port: 4104
     name: "conduit"
     namespace: "conduit"
