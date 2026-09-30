@@ -101,6 +101,16 @@ canary:
     map_registry_status: "CANARY — merged (PR #453), canary-diffed byte-identical, **not cut over / not deployed**"
     ratified: 2026-09-22
     ratification: "originally ratified exception (decision 8ae4761b / port-map ping 422bc879)"
+  - port: 4115
+    name: "substance"
+    namespace: "substance"
+    incumbent: "typescript/substance-srv"
+    incumbent_port: 3115
+    description: "segment-set resolution over nebula.segment_sets (TS port of the Python FastAPI service): CRUD, members add/remove, domain links (candidates | requirements), from-segments strict-atomic transcript ingest, Redis-cached resolve with TTL-bound staleness; contract pinned to incumbent `openapi.yaml`; FastAPI-shaped envelopes ({detail}, 422 validation) pass through verbatim; twin ships a day-one global rate limiter (incumbent carries none) and deliberately excludes the registry heartbeat (:8085, id 117) and the segment_expired pg-notify cache invalidation listener — process subsystems, not HTTP contract; the Redis TTL remains the staleness safety net"
+    readme_status: "port complete, dispatch-through-Express (verbatim TS route stack); canary is reads + validation negatives only — writes mutate nebula.segment_sets and invalidate Redis cache entries; not cut over (heartbeat + pg-notify listener stay incumbent-owned)"
+    map_registry_status: "CANARY — submitted with this row (PR for the port), dispatch-through-Express, reads + validation negatives canary ONLY, **not cut over / not deployed**"
+    ratified: null
+    ratification: "follows the pattern (4115 fills the free slot in the ratified 41xx band between 4114 and 4116; submitted with the substance port PR)"
   - port: 4116
     name: "aegis"
     namespace: "aegis"
