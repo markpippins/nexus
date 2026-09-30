@@ -1,3 +1,5 @@
+import { randomBytes } from "crypto";
+
 /**
  * Execution identity and the Tier-2 census marker — CDLC A2a.
  *
@@ -98,6 +100,50 @@ export interface ExecutionIdentity {
   session_id: string | null;
   /** Non-null exactly when sampled; the join key to the single Tier-3 census report. */
   census_id: string | null;
+}
+
+export interface SessionMintInput {
+  /**
+   * A caller-supplied session reference. Preferred when one exists: the session identity
+   * already lives upstream, and minting a fresh one here would invent a second identity.
+   * Passed through opaquely — if it is uuid-shaped the validator rejects it, because a uuid
+   * in this field is the `vision.sessions` concept (DBA condition 3).
+   */
+  supplied?: string | null;
+  /** Source namespace, e.g. `wind`, `conduit`. Shapes the minted name. */
+  source: string;
+  /** Optional executor identity, e.g. the harness or worker name. */
+  executorId?: string | null;
+  at?: Date;
+}
+
+/**
+ * Resolve the `session_id` for an execution: a caller-supplied reference, or a minted name.
+ *
+ * ## Why a name and not a uuid
+ *
+ * DBA condition 3 rejects a uuid-shaped `session_id`, and the harness's own `job_id` is
+ * `uuidv4()` — so a job id cannot be reused here. That is deliberate, not an inconvenience:
+ * a uuid in this column would be the `vision.sessions` concept silently occupying the
+ * reference family, which is the exact two-concept collision the column exists to prevent.
+ *
+ * The minted shape follows the established convention
+ * (`<source>-<executor>-<yyyymmdd-hhmmss>-<hex>`, cf. `python/conduit/execution_worker.py:393`):
+ * human-readable in a log, greppable by source, and not uuid-shaped by construction.
+ *
+ * `execution_id` is never derived from the session — DBA condition 1 — so two executions in
+ * one session remain independently identifiable.
+ */
+export function resolveSessionId(input: SessionMintInput): string {
+  if (typeof input.supplied === "string" && input.supplied.length > 0) {
+    return input.supplied;
+  }
+  const at = input.at ?? new Date();
+  const stamp =
+    at.toISOString().slice(0, 19).replace(/[-:]/g, "").replace("T", "-"); // yyyymmdd-hhmmss
+  const suffix = randomBytes(4).toString("hex");
+  const executor = input.executorId ? String(input.executorId) : "anon";
+  return `${input.source}-${executor}-${stamp}-${suffix}`;
 }
 
 export interface ExecutionSubject {
