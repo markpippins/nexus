@@ -57,6 +57,11 @@ forum via bin/post-change-log.sh, individually:
                 Classified by structured gate-failure codes (bin/gate_codes.py,
                 spec 86017db0) and deduplicated on (kind, PR, codes, head): a
                 repeat refusal at the same head posts ONCE, not once per tick.
+                A refusal carrying ATT_TIMESTAMP_MISSING routes as a SERVER
+                DEFECT finding deduplicated ACROSS PRs and heads (one post per
+                episode): one record-endpoint serialization regression blocks
+                many PRs at once, and the action required is operator-side,
+                not the tester-side re-attestation the staleness codes route to.
   - bypass    : gate report contained BYPASS; merge refused
   - cap-hold  : attested+gated PR deferred by the per-cycle cap
 Routine "not attested yet" skips are NOT change-logged (a 15-minute timer
@@ -436,6 +441,23 @@ def _dedup_key(kind: str, num: int, codes: List[str], head: str) -> str:
     return f"{kind}:{num}:{'+'.join(sorted(codes)) if codes else 'GENERIC'}:{head}"
 
 
+def _server_defect_key(codes: List[str]) -> Optional[str]:
+    """Cross-PR dedup key for server-defect code sets (None = not one).
+
+    A refusal whose code set contains ATT_TIMESTAMP_MISSING is a record-
+    endpoint serialization regression: one defect blocks MANY PRs at once
+    and the responsible party is the operator, not any PR's tester. Keyed on
+    the code set ONLY (no PR, no head) so the first affected PR posts the
+    finding and every other PR/head during the same episode is folded into
+    it — distinct from the re-attest-required staleness codes
+    (ATT_STALE_HEAD / ATT_NO_CI_EVIDENCE), which stay per-(PR, codes, head)
+    because each of those needs ITS PR's tester to act.
+    """
+    if gate_codes.ATT_TIMESTAMP_MISSING not in codes:
+        return None
+    return "SERVER-DEFECT:::" + "+".join(sorted(codes))
+
+
 def _post_deduped(
     anomalies: Dict[str, Any], key: str, num: int, title: str, body: str,
     out: Any = sys.stdout,
@@ -446,20 +468,32 @@ def _post_deduped(
     seen = anomalies.get(key)
     now_iso = _now_iso()
     if seen:
+        prs = seen.setdefault("prs", [])
+        cross_pr = num not in prs
+        if cross_pr:
+            prs.append(num)
         seen["count"] = _parse_int(seen.get("count"), 1) + 1
         seen["last"] = now_iso
         seen["last_s"] = time.time()
-        print(
-            f"  #{num}: same refusal as {seen.get('first')} "
-            f"({seen['count']}x) — change-log post suppressed (dedup)",
-            file=out,
-        )
+        if cross_pr:
+            print(
+                f"  #{num}: same refusal folded into the existing finding "
+                f"first posted {seen.get('first')} (cross-PR dedup) — "
+                "change-log post suppressed (dedup)",
+                file=out,
+            )
+        else:
+            print(
+                f"  #{num}: same refusal as {seen.get('first')} "
+                f"({seen['count']}x) — change-log post suppressed (dedup)",
+                file=out,
+            )
         return True
     if not post_change_log(title, body):
         return False
     anomalies[key] = {
         "first": now_iso, "last": now_iso,
-        "last_s": time.time(), "count": 1, "title": title,
+        "last_s": time.time(), "count": 1, "title": title, "prs": [num],
     }
     return True
 
@@ -469,7 +503,16 @@ def _refusal_post_text(num: int, head: str, codes: List[str], fails: str):
     86017db0 routing table). Unknown/absent codes keep the historical
     ANOMALY wording."""
     code_str = "+".join(codes) if codes else "GENERIC"
-    if codes == [gate_codes.MERGE_CONFLICT]:
+    if gate_codes.ATT_TIMESTAMP_MISSING in codes:
+        title = (f"attestation-janitor: SERVER DEFECT — PR #{num} refused "
+                 f"({code_str})")
+        lead = ("The attestation row carries no usable createdAt — a record-endpoint "
+                "serialization regression on the SERVER side (the epoch-0 family). "
+                "This is operator action (DBA/endpoint fix), NOT a tester action and "
+                "not head drift: re-attesting will not clear it. The gate retries "
+                "every cycle; the finding is deduplicated ACROSS PRs so one defect "
+                "episode posts once, not once per blocked PR.")
+    elif codes == [gate_codes.MERGE_CONFLICT]:
         title = (f"attestation-janitor: BLOCKED (not an anomaly) — PR #{num} has a "
                  f"merge conflict ({gate_codes.MERGE_CONFLICT})")
         lead = ("The gate refused at 'pr open & ready' because the branch is CONFLICTING — "
@@ -479,6 +522,15 @@ def _refusal_post_text(num: int, head: str, codes: List[str], fails: str):
         lead = ("The newest attestation predates the head commit (a push after attestation "
                 "invalidated it) — a fresh tester attestation against the current head "
                 "unblocks the gate (or carry-forward, per the f7a09d5a ruling once it lands).")
+    elif gate_codes.ATT_NO_CI_EVIDENCE in codes:
+        # Routing-table alignment (gate_codes spec d7989f31 family): this code
+        # is documented as queue-a-re-attestation but previously fell through
+        # to the generic ANOMALY wording. Distinct from ATT_TIMESTAMP_MISSING:
+        # here a fresh tester attestation DOES fix it.
+        title = f"attestation-janitor: RE-ATTESTATION REQUESTED — PR #{num} (ATT_NO_CI_EVIDENCE)"
+        lead = ("The attestation carries no machine-verifiable CI run reference (or a cited "
+                "run is genuinely absent) — the tester re-attests with real CI run IDs; the "
+                "gate verifies each run's conclusion and head SHA against GitHub.")
     elif codes == [gate_codes.ATT_SHAPE_UNSEEN]:
         title = f"attestation-janitor: ADJUDICATION REQUESTED — PR #{num} (ATT_SHAPE_UNSEEN)"
         lead = ("Tester records mentioning this PR exist but none matches the recognized "
@@ -613,11 +665,15 @@ def run_cycle(
                 if codes and all(c in gate_codes.TRANSIENT_CODES for c in codes):
                     print(f"  #{num}: transient refusal ({','.join(codes)}) — retry next cycle, no post", file=out)
                 else:
+                    # SERVER DEFECT (ATT_TIMESTAMP_MISSING) folds across PRs
+                    # and heads: one record-endpoint regression blocks many
+                    # PRs at once, so the episode is keyed on the code set
+                    # alone. Everything else dedups per (REFUSAL, PR, codes,
+                    # head) — each of those needs ITS PR's tester to act.
+                    skey = _server_defect_key(codes)
                     title, body = _refusal_post_text(num, head, codes, fails)
-                    if not _post_deduped(
-                        anomalies, _dedup_key("REFUSAL", num, codes, head),
-                        num, title, body, out,
-                    ):
+                    key = skey if skey is not None else _dedup_key("REFUSAL", num, codes, head)
+                    if not _post_deduped(anomalies, key, num, title, body, out):
                         tool_error = True
             held.append(num)
             continue
