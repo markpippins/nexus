@@ -218,22 +218,28 @@ export async function runMigrations(pool: Pool): Promise<void> {
            ON CONFLICT (version) DO NOTHING`,
           [read.version, description]
         );
-        // Record the applied content hash (Decision 23 property 2). The EXISTS
-        // guard makes this correct in both worlds: before migration 069 adds
-        // the column the update is a no-op, and from 069 onward every stamp
-        // carries its hash. Rows stamped before the column exists (001-068 on
-        // a fresh DB) stay NULL and are covered by the documented backfill.
-        await client.query(
-          `UPDATE nebula.schema_version SET content_hash = $1
-           WHERE version = $2
-             AND EXISTS (
-               SELECT 1 FROM information_schema.columns
-                WHERE table_schema = 'nebula'
-                  AND table_name = 'schema_version'
-                  AND column_name = 'content_hash'
-             )`,
-          [read.sha256, read.version]
-        );
+        // Record the applied content hash (Decision 23 property 2).
+        //
+        // CAUTION: the column-existence guard CANNOT live in the SQL — PG
+        // resolves the SET target at parse time, so `SET content_hash` fails
+        // with 42703 even when a WHERE clause would filter it out. (Found by
+        // CI: seeding at ledger 67 makes 068 AND 069 pending; after applying
+        // 068 the stamp crashed and 069 — the migration that CREATES the
+        // column — could never be reached.) So: try the stamp, tolerate
+        // 42703 as "column not there yet" (069 pending or pre-069 chain),
+        // and let the documented backfill cover those rows.
+        try {
+          await client.query(
+            `UPDATE nebula.schema_version SET content_hash = $1 WHERE version = $2`,
+            [read.sha256, read.version]
+          );
+        } catch (err: any) {
+          if (err?.code !== '42703') throw err;
+          console.log(
+            `[nebula-migrations] content_hash column not present yet — ` +
+              `v${read.version} hash not stamped (backfill covers pre-069 rows)`
+          );
+        }
         applied++;
         console.log(`[nebula-migrations] v${read.version} applied`);
       }
