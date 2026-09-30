@@ -1,0 +1,18 @@
+# Source of truth for ~/.config/systemd/user/landed-digest-guard.timer
+#
+# Hourly with Persistent=true catch-up. Parity drift on any critical landed
+# tool is a standing tripwire, not a one-off check: every pin in
+# bin/landed-tool-pins.json must hold for the life of the tool on main, so
+# the check runs on the same cadence as the attestation-janitor's merge lane
+# (hourly catches any squash-time mutation between landings without noise).
+
+[Unit]
+Description=Run the landed-tool parity pin guard hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+Unit=landed-digest-guard.service
+
+[Install]
+WantedBy=timers.target
