@@ -162,6 +162,17 @@ canary:
     map_registry_status: "CANARY — submitted with this row (PR for the port), dispatch-through-Express, reads + validation negatives canary ONLY, **not cut over / not deployed**; re-banded 4300→4118 pre-merge (port collision with nebula-operations-ui on :4300, deviation in port_derivation)"
     ratified: null
     ratification: "follows the reserved twin band (4100–4199); initial +1000 derivation (3300+1000=4300) deviated pre-merge — :4300 is occupied by nebula-operations-ui, deviation recorded in port_derivation; submitted with the wind port PR"
+  - port: 4171
+    name: "resolution"
+    namespace: "resolution"
+    incumbent: "typescript/resolution-srv"
+    incumbent_port: 3171
+    description: "READ-ONLY registry-driven surface over the canonical resolution.* schema: /api/meta, GET /api/{table} + GET /api/{table}/{id} for all 48 tables registered in src/tables.ts, uniform 405 read_only guard on every non-GET (per-table write exposure requires an authorization decision, To Do 6b3ca700); contract of record is the UNION of the compiled TypeSpec contract (typespec/v1/resolution-srv/generated/schema/openapi.yaml — sdk-drift-guarded) and the tables.ts enumeration, per Decision 32 Option 3; the twin generates one LITERAL alias per table (no :table param route — surface stays enumerable, no shadowing) and carries a verbatim tables.ts copy pinned by the registry-closure test; governance-canonical rows are never mutated — the canary write family is the 405 boundary itself (Decision 32 Ruling 3)"
+    readme_status: "port complete, dispatch-through-Express (verbatim TS route stack incl. the incumbent's own global limiter); canary is reads + unknown-table/unknown-id negatives + POST-must-405 probes only; not cut over (env-gated heartbeat stays incumbent-owned)"
+    map_registry_status: "CANARY — submitted with this row (PR for the port), dispatch-through-Express, reads + boundary negatives canary ONLY, **not cut over / not deployed**"
+    ratified: null
+    ratification: "PENDING — ratified with this port PR per Decision 32 Ruling 5 (Ruling-4 clause convention; 4171 confirmed by Decision 32 Ruling 2)"
+
   - port: 4410
     name: "tackle"
     namespace: "tackle"

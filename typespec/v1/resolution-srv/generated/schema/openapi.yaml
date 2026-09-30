@@ -1,0 +1,260 @@
+openapi: 3.1.0
+info:
+  title: Nexus Resolution SRV
+  description: |-
+    resolution-srv contract — REST over the canonical resolution.* schema.
+
+    v1 is READ-ONLY by design: writes to resolution.* go through
+    producer-authorized paths (SOLScript evaluation, receipts, admission)
+    with their own idempotency contracts. Any non-GET method under /api
+    returns 405 `read_only`. Per-table write exposure requires an
+    authorization decision (To Do 6b3ca700).
+
+    The table surface is registry-driven: every table registered in
+    src/tables.ts gets GET /api/{table} and GET /api/{table}/{id}. This
+    contract models the envelope shapes and the fixed routes; the concrete
+    table list is data, not contract.
+  version: 0.0.0
+tags: []
+paths:
+  /api/meta:
+    get:
+      operationId: meta
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetaResponse'
+  /api/{table}:
+    get:
+      operationId: listRows
+      description: |-
+        List active rows of a registry table. `table` must be a registry table;
+        unknown tables return 404 unknown_table.
+      parameters:
+        - name: table
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          explode: false
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: '#/components/schemas/TableItems'
+                  - $ref: '#/components/schemas/ErrorResponse'
+  /api/{table}/{id}:
+    get:
+      operationId: getRow
+      description: Fetch one row by primary key (uuid as text).
+      parameters:
+        - name: table
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: '#/components/schemas/Row'
+                  - $ref: '#/components/schemas/ErrorResponse'
+  /health:
+    get:
+      operationId: health
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+components:
+  schemas:
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        table:
+          type: string
+        id:
+          type: string
+        method:
+          type: string
+    HealthResponse:
+      type: object
+      required:
+        - service
+        - status
+        - database
+      properties:
+        service:
+          type: string
+          enum:
+            - resolution-srv
+        status:
+          type: string
+          enum:
+            - ok
+            - degraded
+            - error
+          description: '"ok" when DB reachable and all required tables present; "degraded" otherwise.'
+        database:
+          type: string
+          enum:
+            - connected
+            - unreachable
+        missingTables:
+          type: array
+          items:
+            type: string
+          description: Tables from the health-check set that failed the presence probe.
+        time:
+          type: string
+          format: date-time
+        message:
+          type: string
+    MetaResponse:
+      type: object
+      required:
+        - service
+        - schema
+        - readOnly
+        - tables
+      properties:
+        service:
+          type: string
+          enum:
+            - resolution-srv
+        schema:
+          type: string
+          enum:
+            - resolution
+        readOnly:
+          type: boolean
+          enum:
+            - true
+        tables:
+          type: array
+          items:
+            $ref: '#/components/schemas/TableInfo'
+    ReadOnlyPolicy:
+      type: object
+      required:
+        - error
+        - message
+        - table
+        - method
+      properties:
+        error:
+          type: string
+          enum:
+            - read_only
+          description: Always "read_only" — v1 exposes no mutation surface.
+        message:
+          type: string
+        table:
+          type: string
+        method:
+          type: string
+      description: |-
+        Non-GET methods under /api are refused with 405 `read_only` — the write
+        policy is a contract property of this service, not an omission.
+    Row:
+      type: object
+      unevaluatedProperties: {}
+      description: |-
+        The item payload is the raw row (column names as stored in resolution.*).
+        Modeled as an open record because the registry drives the concrete set.
+    TableGroup:
+      type: string
+      enum:
+        - registry
+        - entity_proposition
+        - reasoning
+        - outcome
+        - lineage
+    TableInfo:
+      type: object
+      required:
+        - table
+        - label
+        - group
+      properties:
+        table:
+          type: string
+        label:
+          type: string
+        group:
+          $ref: '#/components/schemas/TableGroup'
+        active:
+          type: integer
+          format: int32
+          description: Active (non-expired) row count where the table has an expiry column.
+        total:
+          type: integer
+          format: int32
+        error:
+          type: string
+          description: Present when the per-table count query failed (table missing/migrating).
+    TableItems:
+      type: object
+      required:
+        - table
+        - count
+        - limit
+        - offset
+        - items
+      properties:
+        table:
+          type: string
+        count:
+          type: integer
+          format: int32
+        limit:
+          type: integer
+          format: int32
+        offset:
+          type: integer
+          format: int32
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Row'
+servers:
+  - url: http://localhost:3171
+    variables: {}

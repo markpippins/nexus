@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Canary runner for the substance twin: boots the standalone broker on :4115,
+# Canary runner for the SUBSTANCE twin: boots the standalone broker on :4115,
 # waits for health, runs tools/canary-diff.py against the live incumbent
 # on :3115, then tears the twin down.
 #
