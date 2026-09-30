@@ -1,0 +1,15 @@
+# Parity pin — bin/supersede-record.sh
+#
+# Provenance: sha256 of bin/supersede-record.sh captured at PR #673 head
+# 7f43c6e6d (supersede-record-tooling) BEFORE landing, byte-verified against
+# the dogfood worktree /home/codex/dev/nexus-worktrees/supersede-record-tooling
+# (agent record fd2796e4, R1 for the pre-staged parity protocol).
+#
+# Purpose: bin/supersede_digest_guard.py compares the digest of the blob at
+# bin/supersede-record.sh on origin/main against this pin on every tick
+# (systemd user timer supersede-digest-guard.timer, hourly). Parity drift —
+# i.e. the squash merge landing a mutated copy of the tool — exits 3 and the
+# unit fails loudly.
+#
+# The pinned digest: single 64-hex sha256 on the first non-comment line.
+bd39b5e646c37f819c6ba00ae2aac893ad23124682413a65631435ada97156fb

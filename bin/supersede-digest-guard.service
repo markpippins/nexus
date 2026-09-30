@@ -1,0 +1,50 @@
+# Source of truth for ~/.config/systemd/user/supersede-digest-guard.service
+#
+# Deploy (operator action, per attestation-janitor.service doctrine):
+#   cp bin/supersede-digest-guard.service ~/.config/systemd/user/
+#   cp bin/supersede-digest-guard.timer   ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now supersede-digest-guard.timer
+#
+# Why: the post-merge parity protocol (agent record fd2796e4) pins the blob
+# digest of bin/supersede-record.sh BEFORE PR #673 lands, so the squash merge
+# can be proven byte-faithful afterwards. No CI job checks the POST-squash
+# state; this guard closes that window automatically, hourly.
+#
+# Runs in the PRIMARY checkout /home/codex/dev/nexus. The fetch in
+# ExecStartPre only advances the local origin/main ref — the guard itself is
+# read-only (git cat-file / git show), writes nothing, touches no records,
+# no APIs, no forums. Unlike the record-hygiene-sweep doctrine there is no
+# dedicated checkout and no reset --hard: the primary checkout's working tree
+# is never mutated, so there is nothing to self-heal.
+#
+# Failure model (exit-code oracle of bin/supersede_digest_guard.py):
+#   exit 0 PIN_MATCH   — landed digest equals the pin; unit succeeds
+#   exit 1 TOOL_ERROR  — git/pin failure; unit failed = guard itself broken
+#   exit 2 PIN_PENDING — file not on origin/main yet (#673 unlanded);
+#                        unit FAILS by design so pending state stays visible
+#                        until landing (Self Healing via OnFailure handled by
+#                        the timer being informational; absence of PIN_MATCH
+#                        in the journal is the pre-landing signature)
+#   exit 3 PIN_DRIFT   — ALERT: landed blob digest != pin; unit failed;
+#                        investigate the squash merge before trusting
+#                        Decision 24 round-trip digests
+#
+# Reading the journal:
+#   journalctl --user -u supersede-digest-guard.service -n 20
+# Drift signature: "PIN_DRIFT ... sha256=<landed> != pin <pinned>".
+
+[Unit]
+Description=supersede-record.sh parity pin guard — landed blob digest vs pre-merge pin (read-only)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/codex/dev/nexus
+ExecStartPre=/usr/bin/git -C /home/codex/dev/nexus fetch --quiet origin main
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/supersede_digest_guard.py --repo /home/codex/dev/nexus --rev origin/main
+TimeoutStartSec=120
+SyslogIdentifier=supersede-digest-guard
+
+[Install]
+WantedBy=default.target
