@@ -78,6 +78,13 @@
       "owner": "engineer",
       "tracked": "architect Decision 4 fb11ad19",
       "clears_when": "write-canary is provisioned by the harness that runs this guard"
+    },
+    "test_harvests_triggers_present.py": {
+      "kind": "infrastructure",
+      "reason": "Needs a reachable PostgreSQL with the nebula schema: asserts the exact trigger set on nebula.harvests (relkind-conditional: view INSTEAD-OF trio vs 023-lineage table pair). Not runnable on a bare runner.",
+      "owner": "dba",
+      "tracked": "defect thread e0a40d6d (harvests trigger loss); Decision 26 00d339f9 routing; migration 070 restores + records via nebula.trigger_restore_log",
+      "clears_when": "folded into the pg-integration harness job, which already provides a throwaway postgres:17 stack"
     }
   }
 }

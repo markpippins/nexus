@@ -68,9 +68,12 @@ ASSUMES_RE = re.compile(r"^assumes_role:\s*([A-Za-z0-9_\-]+)\s*$", re.MULTILINE)
 # (filename, declared role, requested role) triples known to differ in case.
 # See P3 in the module docstring. Keep this list short and justified: every
 # entry is drift someone has decided not to fix yet, not a tolerance.
-KNOWN_CASE_DRIFT = {
-    ("dba.md", "dba", "DBA"),
-}
+# Empty since the DBA charter (PR #580) landed the `dba` persona with the
+# lowercase `assumes_role` matching the registry row (architect Decision 26
+# sequence; D1 canonicalisation item closed at the persona layer). The
+# ratchet holds the line: any NEW case drift between persona files and
+# registry rows must add a justified entry here.
+KNOWN_CASE_DRIFT: set[tuple[str, str, str]] = set()
 
 
 def agent_files() -> list[str]:
