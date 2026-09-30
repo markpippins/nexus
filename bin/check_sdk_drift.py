@@ -91,6 +91,7 @@ STAMP_ONLY = [
     "service-broker-quarkus",
     "core-jvm-shared",
     "terrain-spring",
+    "resolution-srv",
 ]
 
 STAMP_ONLY_PRESETS: dict[str, dict] = {
@@ -101,6 +102,14 @@ STAMP_ONLY_PRESETS: dict[str, dict] = {
     "service-broker-quarkus": {"spec": "typespec/v1/service-broker/quarkus"},
     "core-jvm-shared": {"spec": "typespec/v1/core"},
     "terrain-spring": {"spec": "typespec/v1/terrain/spring"},
+    # Decision 32 (4c9afc09, Option 3) contract of record for the resolution
+    # twin: the COMPILED TypeSpec spec (typespec/v1/resolution-srv/generated/
+    # schema/openapi.yaml, committed) guards the fixed-route half; the
+    # tables.ts enumeration is pinned by the registry-closure tests and
+    # check_drift.py's union branch. Stamp mode here keeps the contract
+    # source loud on every CI run; byte-identity of the COMMITTED compiled
+    # spec is check_drift.py's job (RESOLUTION_TSCONTRACT).
+    "resolution-srv": {"spec": "typespec/v1/resolution-srv"},
 }
 
 DEFAULT_STAMP_DIR = "bin/sdk-type-stamps"

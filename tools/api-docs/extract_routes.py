@@ -89,6 +89,7 @@ MOLECULER_SERVICES = {
     "moleculer/peb": "moleculer/peb",
     "moleculer/harness": "moleculer/harness",
     "moleculer/aegis": "moleculer/aegis",
+    "moleculer/resolution": "moleculer/resolution",
 }
 
 # moleculer-web alias entries: "GET /path": "svc.action" (single-quoted forms
