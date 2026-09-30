@@ -30,7 +30,11 @@ export default class ApiService extends Service {
           {
             path: "/",
             whitelist: ["aegis.**"],
-            bodyParsers: { json: true },
+            // Incumbent's parser limit (typescript/aegis-srv/src/index.ts:
+            // express.json({ limit: '5mb' })) — the gateway parser must
+            // match or oversized writes 413 here before the verbatim stack
+            // ever sees them.
+            bodyParsers: { json: { limit: "5mb" } },
             aliases: {
               "GET /health": "aegis.dispatch",
 
