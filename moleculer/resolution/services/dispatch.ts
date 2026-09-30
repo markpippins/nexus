@@ -39,10 +39,14 @@ export function dispatch(app: Express, req: Request, res: Response): Promise<voi
       }
       if (!res.headersSent) {
         // Stack exhausted without an answer: the incumbent's http-server
-        // embedding would now run finalhandler (default 404). Do the same,
-        // then resolve directly — finalhandler ends the response.
+        // embedding would now run finalhandler (default 404). Do the same.
+        // Do NOT resolve here — finalhandler owns the response now (it may
+        // write synchronously, or defer until the request stream finishes);
+        // resolving early lets the gateway's sendResponse res.end() race the
+        // deferred write and crash the process (ERR_HTTP_HEADERS_SENT inside
+        // finalhandler's removeHeader — observed LIVE). onFinish/onClose
+        // below resolve once the response actually ends.
         finalhandler(req, res)();
-        resolve();
         return;
       }
       setImmediate(resolve);
