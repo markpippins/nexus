@@ -19,6 +19,16 @@ import ApiGateway from "moleculer-web";
  * /api prefix (unlike substance), matching the incumbent's app.use("/api",
  * createRoutes(pool)) mount; /health and /api/health are declared in the
  * contract and aliased here.
+ *
+ * CATCH-ALL (dispatch parity): the incumbent is ONE Express app — unmatched
+ * paths anywhere (root or /api) get Express's default finalhandler 404
+ * ("Cannot GET …" HTML). A literal-alias-only gateway would answer those
+ * from moleculer-web instead (JSON NotFoundError envelope — NOT
+ * byte-identical). The method-wildcard catch-alls below, registered LAST so
+ * every literal keeps precedence, forward all remaining traffic into the
+ * same verbatim Express app. NOTE on syntax: moleculer-web 0.10.x pins
+ * path-to-regexp ^3.1.0, where a bare `*` in a PATH is a LITERAL — the
+ * catch-all form is `(.*)`, and bare `/` needs its own alias.
  */
 export default class ApiService extends Service {
   constructor(broker: ServiceBroker) {
@@ -33,7 +43,24 @@ export default class ApiService extends Service {
           {
             path: "/",
             whitelist: ["nebula.**"],
-            bodyParsers: { json: true },
+            // Incumbent raises the json body limit for transcript docklang
+            // payloads (typescript/nebula-srv/src/index.ts: express.json
+            // { limit: '5mb' }) — the gateway parser must match or large
+            // writes 413 here before the verbatim stack ever sees them.
+            bodyParsers: { json: { limit: "5mb" } },
+            // moleculer-web 0.10.x does NOT put $req/$res into action meta on
+            // its own (only passReqResToParams aliases get them, via params).
+            // Dispatch-through-Express needs the REAL req/res objects inside
+            // the action handler, so inject them here — this hook runs on the
+            // gateway context BEFORE broker.call, and gateway context meta
+            // propagates to the action context. (Discovered LIVE on the
+            // resolution twin: without this, every aliased call 500s
+            // DISPATCH_NO_REQRES; jest suites hit the Express app directly
+            // and never see it.)
+            onBeforeCall: (ctx: any, _route: any, req: any, res: any) => {
+              ctx.meta.$req = req;
+              ctx.meta.$res = res;
+            },
             aliases: {
               "GET /api/agendas": "nebula.dispatch",
               "POST /api/agendas": "nebula.dispatch",
@@ -266,6 +293,13 @@ export default class ApiService extends Service {
               "POST /api/workspaces": "nebula.dispatch",
               "DELETE /api/workspaces/:id": "nebula.dispatch",
               "GET /health": "nebula.dispatch",
+              // Registered LAST: catch-alls into the verbatim Express app for
+              // everything the literals don't name (unmatched paths anywhere,
+              // GET-only routes hit with other methods). `(.*)` =
+              // path-to-regexp 3.x catch-all; bare `/` is a separate alias.
+              // See the CATCH-ALL note above.
+              "* /": "nebula.dispatch",
+              "* /(.*)": "nebula.dispatch",
             },
           },
         ],
