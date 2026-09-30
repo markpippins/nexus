@@ -92,6 +92,7 @@ MOLECULER_SERVICES = {
     "moleculer/aegis": "moleculer/aegis",
     "moleculer/resolution": "moleculer/resolution",
     "moleculer/nebula": "moleculer/nebula",
+    "moleculer/assembly": "moleculer/assembly",
 }
 
 # moleculer-web alias entries: "GET /path": "svc.action" (single-quoted forms

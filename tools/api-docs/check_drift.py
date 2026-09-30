@@ -74,6 +74,7 @@ MOLECULER_MIRRORS = {
     # but keeps registry integrity checks uniform.
     "moleculer/resolution": "typescript/resolution-srv",
     "moleculer/nebula": "typescript/nebula-srv",
+    "moleculer/assembly": "typescript/assembly-srv",
 }
 
 
