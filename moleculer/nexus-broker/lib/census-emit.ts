@@ -64,6 +64,81 @@ export interface CensusFlags {
   onReview: boolean;
 }
 
+/**
+ * Census environment variables, and the only recognised ones.
+ *
+ * A typo'd variable is the same class of defect as a typo'd flag: the census silently does
+ * not run. `censusArgvFromEnv` therefore reports unrecognised `CENSUS_*` keys as errors
+ * instead of ignoring them, so `CENSUS_RATTE=1/20` cannot masquerade as configuration.
+ */
+export const CENSUS_ENV_KEYS = [
+  "CENSUS_ENABLED",
+  "CENSUS_RATE",
+  "CENSUS_ON_REVIEW",
+] as const;
+
+export interface CensusEnvResult {
+  ok: boolean;
+  argv: string[];
+  errors: string[];
+}
+
+const TRUTHY = new Set(["1", "true", "yes", "on"]);
+
+/**
+ * Synthesise the census argv from environment variables.
+ *
+ * ## Why synthesise argv rather than read the values directly
+ *
+ * `parseCensusFlags` deliberately takes **raw argv** so it can detect a flag that was dropped
+ * on the way in — the silently-inert case the ruling targets. If the env path bypassed it and
+ * read `CENSUS_RATE` itself, the fail-loud rule ("rate without the master switch is an error")
+ * would have two implementations that could disagree. There is one parser; the environment
+ * only decides which tokens to hand it.
+ *
+ * Fail-loud stays intact: `CENSUS_RATE` set without `CENSUS_ENABLED` produces argv that
+ * `parseCensusFlags` rejects, rather than a rate that quietly never takes effect.
+ */
+export function censusArgvFromEnv(env: Record<string, string | undefined>): CensusEnvResult {
+  const argv: string[] = [];
+  const errors: string[] = [];
+
+  for (const [key, value] of Object.entries(env)) {
+    if (!key.startsWith("CENSUS_") || !value) continue;
+    if (!(CENSUS_ENV_KEYS as readonly string[]).includes(key)) {
+      errors.push(
+        `unrecognised census environment variable ${key}. It would be silently ignored, so ` +
+          "the census would not run the way it was configured -- fail instead.",
+      );
+    }
+  }
+
+  const enabled = env.CENSUS_ENABLED;
+  if (enabled !== undefined && enabled !== "") {
+    if (TRUTHY.has(String(enabled).toLowerCase())) argv.push("--census");
+    else if (!["0", "false", "no", "off"].includes(String(enabled).toLowerCase())) {
+      errors.push(
+        `CENSUS_ENABLED must be a boolean-ish value (1/0, true/false, yes/no, on/off); got "${enabled}"`,
+      );
+    }
+  }
+
+  const rate = env.CENSUS_RATE;
+  if (rate !== undefined && rate !== "") argv.push("--census-rate", String(rate));
+
+  const onReview = env.CENSUS_ON_REVIEW;
+  if (onReview !== undefined && onReview !== "") {
+    if (TRUTHY.has(String(onReview).toLowerCase())) argv.push("--census-on-review");
+    else if (!["0", "false", "no", "off"].includes(String(onReview).toLowerCase())) {
+      errors.push(
+        `CENSUS_ON_REVIEW must be a boolean-ish value (1/0, true/false, yes/no, on/off); got "${onReview}"`,
+      );
+    }
+  }
+
+  return { ok: errors.length === 0, argv, errors };
+}
+
 export interface FlagParseResult {
   ok: boolean;
   flags: CensusFlags;
