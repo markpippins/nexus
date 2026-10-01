@@ -207,6 +207,54 @@ describe("domain links surface", () => {
   });
 });
 
+describe("cors", () => {
+  it("echoes a request origin (default posture; function form clears js/cors-permissive-configuration)", async () => {
+    const res = await request(app)
+      .options("/healthz")
+      .set("Origin", "http://localhost:4200")
+      .set("Access-Control-Request-Method", "GET");
+    expect(res.headers["access-control-allow-origin"]).toBe(
+      "http://localhost:4200",
+    );
+    // credentials flag dropped: wildcard+credentials was already
+    // non-functional for credentialed requests
+    expect(res.headers["access-control-allow-credentials"]).toBeUndefined();
+  });
+
+  it("passes a no-Origin request through (curl/same-origin)", async () => {
+    const res = await request(app).get("/healthz");
+    expect(res.status).toBe(200);
+  });
+
+  it("silently denies a non-allowlisted origin when SUBSTANCE_CORS_ORIGINS pins a list", async () => {
+    const prev = process.env.SUBSTANCE_CORS_ORIGINS;
+    process.env.SUBSTANCE_CORS_ORIGINS = "http://good.local";
+    try {
+      // the origin list is read at module load — build a fresh app under
+      // the pinned env (require, not await import: ts-jest isolatedModules)
+      jest.resetModules();
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const freshApp = require("../services/express-app.js").default;
+      const denied = await request(freshApp)
+        .options("/healthz")
+        .set("Origin", "http://evil.local")
+        .set("Access-Control-Request-Method", "GET");
+      expect(denied.headers["access-control-allow-origin"]).toBeUndefined();
+      const allowed = await request(freshApp)
+        .options("/healthz")
+        .set("Origin", "http://good.local")
+        .set("Access-Control-Request-Method", "GET");
+      expect(allowed.headers["access-control-allow-origin"]).toBe(
+        "http://good.local",
+      );
+    } finally {
+      if (prev === undefined) delete process.env.SUBSTANCE_CORS_ORIGINS;
+      else process.env.SUBSTANCE_CORS_ORIGINS = prev;
+      jest.resetModules();
+    }
+  });
+});
+
 describe("alias-map sanity", () => {
   it("spot-checks every surface family through the gateway app", async () => {
     const probes: Array<[string, string, number[]]> = [
