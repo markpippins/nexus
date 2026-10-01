@@ -1,0 +1,96 @@
+name: Twin CodeQL Gate
+
+# Architect consolidated queue item 4 (record 5f099036, ruling 1/4):
+# for each CodeQL alert on a twin path, resolve twin -> incumbent via the
+# port registry and classify:
+#   copied       -> requires a time-boxed tools/security/backfill-ledger.yaml
+#                   entry (dedup key service, rule_id, incumbent_path);
+#                   copied WITHOUT an entry hard-fails
+#   novel        -> blocks the PR
+#   unclassified -> fails (silence is not classification)
+#
+# The alert source is the PR's merge ref (refs/pull/N/merge). CodeQL
+# default-setup applies a NEW-alerts-only filter to PR analyses, so the PR
+# payload never contains an incumbent-path alert; classification therefore
+# runs against a SECOND source: main's open alerts (--incumbent-alerts),
+# which is exactly the dated baseline's input (queue item 6 feeding queue
+# item 4). A missing or failed fetch of EITHER source is a HARD failure,
+# never a skip (ruling 5 doctrine: a gate that cannot see must not pass).
+#
+# The committed dated baseline (tools/security/codeql-baseline.json) is a
+# diff input, NOT a suppression: this workflow never excludes alerts and
+# never bumps thresholds (ruling 6). The baseline step below only asserts
+# the snapshot is well-formed and current-looking.
+
+on:
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+  security-events: read
+
+jobs:
+  classify-twin-alerts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install PyYAML
+        run: python3 -m pip install --quiet pyyaml
+
+      - name: Fetch open CodeQL alerts (PR merge ref + main baseline input)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          REF="refs/pull/${{ github.event.pull_request.number }}/merge"
+          # Hard-fail on any API error: a gate that cannot see must not pass.
+          gh api --paginate \
+            "repos/${{ github.repository }}/code-scanning/alerts?state=open&ref=${REF}&per_page=100" \
+            > /tmp/pr-alerts.json
+          gh api --paginate \
+            "repos/${{ github.repository }}/code-scanning/alerts?state=open&ref=refs/heads/main&per_page=100" \
+            > /tmp/main-alerts.json
+          python3 - <<'PY'
+          import json
+          pr = len(json.load(open("/tmp/pr-alerts.json")))
+          main = len(json.load(open("/tmp/main-alerts.json")))
+          print(f"fetched {pr} PR alert(s), {main} main alert(s)")
+          PY
+
+      - name: Classify twin alerts (copied / novel / unclassified)
+        run: |
+          set -euo pipefail
+          python3 tools/security/classify_twin_alerts.py \
+            --alerts /tmp/pr-alerts.json \
+            --incumbent-alerts /tmp/main-alerts.json \
+            --ledger \
+            --fail-on novel \
+            --fail-on unclassified
+
+      - name: Baseline snapshot is well-formed (dated diff input, not a suppression)
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import re
+
+          with open("tools/security/codeql-baseline.json") as fh:
+              d = json.load(fh)
+          assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", d["captured"]), d["captured"]
+          assert re.fullmatch(r"[0-9a-f]{40}", d["commit"]), d["commit"]
+          assert d["ref"] == "refs/heads/main", d["ref"]
+          assert isinstance(d["alert_count"], int) and d["alert_count"] >= 0
+          assert d["alert_count"] >= len(d["fingerprints"]) >= 0
+          assert all(isinstance(f, str) and "|" in f for f in d["fingerprints"])
+          print(
+              f"baseline OK: {d['alert_count']} alerts, "
+              f"{len(d['fingerprints'])} fingerprints @ {d['commit'][:12]} ({d['captured']})"
+          )
+          PY
