@@ -158,7 +158,7 @@ describe("body validation", () => {
 });
 
 describe("cors", () => {
-  it("answers a cross-origin preflight, as the FastAPI app did", async () => {
+  it("answers a cross-origin preflight by echoing the origin (default posture, as the FastAPI app did)", async () => {
     const res = await fetch(`${base}/segment-sets`, {
       method: "OPTIONS",
       headers: {
@@ -166,7 +166,51 @@ describe("cors", () => {
         "access-control-request-method": "GET",
       },
     });
-    expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    // Default (SUBSTANCE_CORS_ORIGINS unset) keeps the historical
+    // any-origin posture; the function-form origin echoes the request
+    // origin instead of emitting a literal * — the echo is what clears
+    // js/cors-permissive-configuration (a bare "*" string is the flagged
+    // pattern). Credentials are no longer advertised: wildcard+
+    // credentials was already non-functional for credentialed requests.
+    expect(res.headers.get("access-control-allow-origin")).toBe(
+      "http://localhost:4200",
+    );
+    expect(res.headers.get("access-control-allow-credentials")).toBeNull();
+  });
+
+  it("denies a non-allowlisted origin when SUBSTANCE_CORS_ORIGINS pins a list", async () => {
+    const prev = process.env.SUBSTANCE_CORS_ORIGINS;
+    process.env.SUBSTANCE_CORS_ORIGINS = "http://good.local";
+    try {
+      const srv = createApp().listen(0, "127.0.0.1");
+      try {
+        await new Promise<void>((resolve) => srv.once("listening", () => resolve()));
+        const port = (srv.address() as AddressInfo).port;
+        const denied = await fetch(`http://127.0.0.1:${port}/segment-sets`, {
+          method: "OPTIONS",
+          headers: {
+            origin: "http://evil.local",
+            "access-control-request-method": "GET",
+          },
+        });
+        expect(denied.headers.get("access-control-allow-origin")).toBeNull();
+        const allowed = await fetch(`http://127.0.0.1:${port}/segment-sets`, {
+          method: "OPTIONS",
+          headers: {
+            origin: "http://good.local",
+            "access-control-request-method": "GET",
+          },
+        });
+        expect(allowed.headers.get("access-control-allow-origin")).toBe(
+          "http://good.local",
+        );
+      } finally {
+        await new Promise<void>((resolve) => srv.close(() => resolve()));
+      }
+    } finally {
+      if (prev === undefined) delete process.env.SUBSTANCE_CORS_ORIGINS;
+      else process.env.SUBSTANCE_CORS_ORIGINS = prev;
+    }
   });
 });
 

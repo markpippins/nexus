@@ -16,7 +16,11 @@ dotenv.config({ path: ".env" });
  * index.ts so the moleculer gateway can dispatch into it.
  *
  * Mirrors the incumbent's createApp() (index.ts) exactly:
- *   - cors({ origin: "*", credentials: true }), express.json 10mb
+ *   - cors allowlist (SUBSTANCE_CORS_ORIGINS, default "*" → any-origin
+ *     echo; function form clears js/cors-permissive-configuration),
+ *     express.json 10mb — kept in verbatim parity with the incumbent's
+ *     createApp() (backfill-ledger entry 1: the backfill reached the twin
+ *     in the same change as the incumbent)
  *   - /healthz liveness — NO DB probe (incumbent /healthz is static
  *     {status:"ok"}; the DB preflight lived in start(), which the broker
  *     replaces). Parity keeps the static envelope.
@@ -38,7 +42,22 @@ dotenv.config({ path: ".env" });
  */
 const app: Express = express();
 
-app.use(cors({ origin: "*", credentials: true }));
+// CORS allowlist — identical form to the incumbent's createApp()
+// (SUBSTANCE_CORS_ORIGINS, default "*" → historical any-origin posture;
+// function form echoes the request origin, silently denies unlisted
+// origins, and drops the incoherent wildcard+credentials combination).
+const CORS_ORIGINS = (process.env.SUBSTANCE_CORS_ORIGINS ?? "*")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      if (!origin || CORS_ORIGINS.includes("*") || CORS_ORIGINS.includes(origin)) return cb(null, true);
+      return cb(null, false); // no-Origin (curl/same-origin) and allowlisted pass; others silent-deny
+    },
+  }),
+);
 app.use(express.json({ limit: "10mb" }));
 
 app.use(
