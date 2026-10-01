@@ -85,7 +85,9 @@ def one(sql):
 
 
 def fetch(base, path, timeout="20", method=None):
-    cmd = ["curl", "-s", "-w", "\n%{http_code}", "--max-time", timeout]
+    # --path-as-is so raw metacharacters in the adversarial 404 probes reach the
+    # server unmangled (curl otherwise normalises the request target).
+    cmd = ["curl", "-s", "-w", "\n%{http_code}", "--max-time", timeout, "--path-as-is"]
     if method:
         cmd += ["-X", method]
     cmd.append(base + path)
@@ -190,6 +192,16 @@ def build_requests():
         "/definitely/not/a/route",
         "/?x=1",                      # query excluded: finalhandler prints parseurl pathname
         "/api/stats?x=1",             # query on a MATCHED route stays JSON
+        # Adversarial pathnames — the 404 page's OWN escaping must match, not
+        # just its shell. finalhandler runs encodeUrl (percent-encode non-URL
+        # code points) then escapeHtml; a twin that interpolates the raw
+        # pathname reflects live HTML here (PR #690 tester review). None of
+        # these may diverge.
+        "/api/<script>alert(document.domain)</script>",  # encodeUrl → %3C <script> must not survive
+        '/api/a"onload="x',                              # encodeUrl → %22
+        "/api/a&b",                                      # escapeHtml → &amp;
+        "/api/'q'",                                      # escapeHtml → &#39;
+        "/api/%3Cscript%3E",                             # already-encoded: no double-encode
     ]
     return reqs
 

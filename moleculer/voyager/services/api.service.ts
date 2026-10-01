@@ -36,15 +36,103 @@ import ApiGateway from "moleculer-web";
  * surfaces its JSON NotFoundError envelope ({name:"NotFoundError",...}), so
  * the routes' onError reproduces the HTML page byte-for-byte.
  *
+ * finalhandler 1.3.2 does NOT interpolate the pathname raw — it runs a
+ * three-stage pipeline (finalhandler/index.js:44,115):
+ *
+ *   msg  = 'Cannot ' + req.method + ' ' + encodeUrl(getResourceName(req))
+ *   body = escapeHtml(msg)
+ *            .replace(/\n/g, '<br>')
+ *            .replace(/\x20{2}/g, ' &nbsp;')
+ *
+ * encodeUrl percent-encodes non-URL code points (so a raw `<` in the request
+ * target is reflected as `%3C`, never a live tag) and escapeHtml neutralises
+ * the HTML metacharacters encodeUrl leaves alone (`&`, `'`, `<`, `>`, `"`).
+ * Omitting either is a reflected-XSS regression, not just a fidelity gap.
+ *
+ * Both transforms are vendored verbatim from encodeurl@1.0.2 and
+ * escape-html@1.0.3 — the exact packages finalhandler depends on — so the
+ * canary twin stays dependency-free while reproducing the incumbent's bytes
+ * exactly (proven in test/api.service.test.ts).
+ *
  * Express prints the PATHNAME of req.originalUrl (finalhandler →
- * parseurl.original().pathname — query and hash excluded, raw encoding kept;
- * encodeUrl passthrough is identical for valid request targets). Use the
+ * parseurl.original().pathname — query and hash excluded). Use the
  * originalUrl, NOT route.path + req.url: that rewrite synthesizes a trailing
  * slash and would mis-print a bare `GET /api` as `GET /api/`.
  */
-function expressNotFoundHtml(req: any): string {
-  const pathname = /^[^?#]*/.exec(String(req?.originalUrl ?? req?.url ?? "/"))![0];
-  return `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>Error</title>\n</head>\n<body>\n<pre>Cannot ${req.method} ${pathname}</pre>\n</body>\n</html>\n`;
+
+// ── encodeurl@1.0.2 (verbatim) ──────────────────────────────────────
+const ENCODE_CHARS_REGEXP =
+  /(?:[^\x21\x23-\x3B\x3D\x3F-\x5F\x61-\x7A\x7C\x7E]|%(?:[^0-9A-Fa-f]|[0-9A-Fa-f][^0-9A-Fa-f]|$))+/g;
+const UNMATCHED_SURROGATE_PAIR_REGEXP =
+  /(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]|[\uD800-\uDBFF]([^\uDC00-\uDFFF]|$)/g;
+const UNMATCHED_SURROGATE_PAIR_REPLACE = "$1\uFFFD$2";
+
+function encodeUrl(url: unknown): string {
+  return String(url)
+    .replace(UNMATCHED_SURROGATE_PAIR_REGEXP, UNMATCHED_SURROGATE_PAIR_REPLACE)
+    .replace(ENCODE_CHARS_REGEXP, encodeURI);
+}
+
+// ── escape-html@1.0.3 (verbatim) ────────────────────────────────────
+function escapeHtml(input: unknown): string {
+  const str = "" + input;
+  const match = /["'&<>]/.exec(str);
+  if (!match) return str;
+
+  let escape: string;
+  let html = "";
+  let index = 0;
+  let lastIndex = 0;
+
+  for (index = match.index; index < str.length; index++) {
+    switch (str.charCodeAt(index)) {
+      case 34: escape = "&quot;"; break;
+      case 38: escape = "&amp;"; break;
+      case 39: escape = "&#39;"; break;
+      case 60: escape = "&lt;"; break;
+      case 62: escape = "&gt;"; break;
+      default: continue;
+    }
+    if (lastIndex !== index) html += str.substring(lastIndex, index);
+    lastIndex = index + 1;
+    html += escape;
+  }
+
+  return lastIndex !== index ? html + str.substring(lastIndex, index) : html;
+}
+
+const NEWLINE_REGEXP = /\n/g;
+const DOUBLE_SPACE_REGEXP = /\x20{2}/g;
+
+/**
+ * finalhandler's getResourceName: parseurl.original(req).pathname, falling
+ * back to the literal "resource" when the request target cannot be parsed.
+ */
+function expressResourceName(req: any): string {
+  try {
+    return /^[^?#]*/.exec(String(req?.originalUrl ?? req?.url ?? "/"))![0];
+  } catch {
+    return "resource";
+  }
+}
+
+export function expressNotFoundHtml(req: any): string {
+  const msg = `Cannot ${req?.method} ${encodeUrl(expressResourceName(req))}`;
+  const body = escapeHtml(msg)
+    .replace(NEWLINE_REGEXP, "<br>")
+    .replace(DOUBLE_SPACE_REGEXP, " &nbsp;");
+  return (
+    "<!DOCTYPE html>\n" +
+    '<html lang="en">\n' +
+    "<head>\n" +
+    '<meta charset="utf-8">\n' +
+    "<title>Error</title>\n" +
+    "</head>\n" +
+    "<body>\n" +
+    "<pre>" + body + "</pre>\n" +
+    "</body>\n" +
+    "</html>\n"
+  );
 }
 
 export default class ApiService extends Service {
