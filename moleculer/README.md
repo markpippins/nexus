@@ -55,6 +55,20 @@ to repeat:
    `onBeforeCall` gives the gateway the real req/res; local callers pass
    meta by reference. See `tackle/services/express-app.ts`.
 
+## CodeQL alerts on twins: copied vs novel (Ruling 1/4)
+
+Twin and incumbent are **one service for security purposes**: an alert on a
+twin whose rule is also open at the incumbent is *copied* debt — it does not
+block the port PR, but it must be recorded in
+[`codeql-backfill-ledger.yaml`](codeql-backfill-ledger.yaml) keyed
+`(service, rule_id, incumbent_path)` with an owner and a timebox. A *novel*
+alert (rule not open at the incumbent) blocks the PR: fix in the twin and
+backfill to the incumbent in the same change. The classification runs in CI
+(`codeql-twin-classification.yml`, after the default-setup CodeQL analysis)
+via `bin/classify_codeql_alerts.py` — silence is not classification. Copied
+criticals block that service's cutover until Priority-1 entries are
+backfilled.
+
 ## Commands
 
 ```bash
