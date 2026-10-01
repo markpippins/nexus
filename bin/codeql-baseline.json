@@ -1,0 +1,3487 @@
+{
+ "alert_count": 434,
+ "alerts": [
+  {
+   "line": 94,
+   "message_head": "This replaces '.' with itself.",
+   "number": 618,
+   "path": "adonisjs/nexus-control-edge/app/controllers/wind_event_controller.ts",
+   "rule_id": "js/identity-replacement",
+   "severity": "medium"
+  },
+  {
+   "line": 381,
+   "message_head": "This route handler performs a file system access, but is not rate-limited.",
+   "number": 655,
+   "path": "angular/barbie/server.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 78,
+   "message_head": "This path depends on a user-provided value.\nThis path depends on a user-provided value.",
+   "number": 464,
+   "path": "angular/conduit-ui-legacy/server.js",
+   "rule_id": "js/path-injection",
+   "severity": "high"
+  },
+  {
+   "line": 129,
+   "message_head": "Format string depends on a user-provided value.",
+   "number": 470,
+   "path": "angular/conduit-ui-legacy/server.js",
+   "rule_id": "js/tainted-format-string",
+   "severity": "high"
+  },
+  {
+   "line": 1202,
+   "message_head": "This route handler performs a file system access, but is not rate-limited.",
+   "number": 351,
+   "path": "angular/conduit-ui/server.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 65,
+   "message_head": "The URL of this request depends on a user-provided value.",
+   "number": 488,
+   "path": "angular/conduit-ui/server.ts",
+   "rule_id": "js/request-forgery",
+   "severity": "critical"
+  },
+  {
+   "line": 169,
+   "message_head": "This route handler performs a file system access, but is not rate-limited.",
+   "number": 352,
+   "path": "angular/execution-ui/server.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 347,
+   "message_head": "This uses a cryptographically insecure random number generated at Math.random() in a security contex",
+   "number": 348,
+   "path": "angular/nexus-console/src/components/terminal/terminal.component.ts",
+   "rule_id": "js/insecure-randomness",
+   "severity": "high"
+  },
+  {
+   "line": 1242,
+   "message_head": "This route handler performs a file system access, but is not rate-limited.",
+   "number": 497,
+   "path": "angular/tackle-ui/server.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 267,
+   "message_head": "The URL of this request depends on a user-provided value.",
+   "number": 489,
+   "path": "angular/tackle-ui/server.ts",
+   "rule_id": "js/request-forgery",
+   "severity": "critical"
+  },
+  {
+   "line": 287,
+   "message_head": "The URL of this request depends on a user-provided value.",
+   "number": 490,
+   "path": "angular/tackle-ui/server.ts",
+   "rule_id": "js/request-forgery",
+   "severity": "critical"
+  },
+  {
+   "line": 557,
+   "message_head": "This system prompt depends on a user-provided value.",
+   "number": 487,
+   "path": "angular/tackle-ui/server.ts",
+   "rule_id": "js/system-prompt-injection",
+   "severity": "high"
+  },
+  {
+   "line": 153,
+   "message_head": "This regular expression does not match script end tags like </script >.",
+   "number": 577,
+   "path": "bin/embed_semantic_layers.py",
+   "rule_id": "py/bad-tag-filter",
+   "severity": "high"
+  },
+  {
+   "line": 85,
+   "message_head": "Potential server-side request forgery due to a user-provided value.\nPotential server-side request fo",
+   "number": 39,
+   "path": "jvm/spring/service-broker/broker-gateway/src/main/java/com/aibizarchitect/nexus/v1/spring/broker/gateway/service/ExternalServiceInvokerImpl.java",
+   "rule_id": "java/ssrf",
+   "severity": "critical"
+  },
+  {
+   "line": 53,
+   "message_head": "Cross-site scripting vulnerability due to a user-provided value.",
+   "number": 240,
+   "path": "jvm/spring/service-broker/export-service/src/main/java/com/angrysurfer/shrapnel/ExportsController.java",
+   "rule_id": "java/xss",
+   "severity": "high"
+  },
+  {
+   "line": 57,
+   "message_head": "This path depends on a user-provided value.",
+   "number": 40,
+   "path": "jvm/spring/service-broker/upload-service/src/main/java/com/aibizarchitect/nexus/v1/spring/upload/UploadService.java",
+   "rule_id": "java/path-injection",
+   "severity": "high"
+  },
+  {
+   "line": 64,
+   "message_head": "This path depends on a user-provided value.",
+   "number": 41,
+   "path": "jvm/spring/service-broker/upload-service/src/main/java/com/aibizarchitect/nexus/v1/spring/upload/UploadService.java",
+   "rule_id": "java/path-injection",
+   "severity": "high"
+  },
+  {
+   "line": 64,
+   "message_head": "This path depends on a user-provided value.",
+   "number": 42,
+   "path": "jvm/spring/service-broker/upload-service/src/main/java/com/aibizarchitect/nexus/v1/spring/upload/UploadService.java",
+   "rule_id": "java/path-injection",
+   "severity": "high"
+  },
+  {
+   "line": 66,
+   "message_head": "This path depends on a user-provided value.",
+   "number": 43,
+   "path": "jvm/spring/service-broker/upload-service/src/main/java/com/aibizarchitect/nexus/v1/spring/upload/UploadService.java",
+   "rule_id": "java/path-injection",
+   "severity": "high"
+  },
+  {
+   "line": 87,
+   "message_head": "This path depends on a user-provided value.",
+   "number": 44,
+   "path": "jvm/spring/service-broker/upload-service/src/main/java/com/aibizarchitect/nexus/v1/spring/upload/UploadService.java",
+   "rule_id": "java/path-injection",
+   "severity": "high"
+  },
+  {
+   "line": 87,
+   "message_head": "This path depends on a user-provided value.",
+   "number": 45,
+   "path": "jvm/spring/service-broker/upload-service/src/main/java/com/aibizarchitect/nexus/v1/spring/upload/UploadService.java",
+   "rule_id": "java/path-injection",
+   "severity": "high"
+  },
+  {
+   "line": 41,
+   "message_head": "CORS Origin allows broad access due to permissive or user controlled value.",
+   "number": 780,
+   "path": "moleculer/substance/services/express-app.ts",
+   "rule_id": "js/cors-permissive-configuration",
+   "severity": "medium"
+  },
+  {
+   "line": 91,
+   "message_head": "This regular expression does not match script end tags like </script >.",
+   "number": 576,
+   "path": "python/auditor/db.py",
+   "rule_id": "py/bad-tag-filter",
+   "severity": "high"
+  },
+  {
+   "line": 33,
+   "message_head": "Call to deprecated function tempfile.mktemp may be insecure.",
+   "number": 651,
+   "path": "python/cascade/test_peb_admission.py",
+   "rule_id": "py/insecure-temporary-file",
+   "severity": "high"
+  },
+  {
+   "line": 39,
+   "message_head": "Call to deprecated function tempfile.mktemp may be insecure.",
+   "number": 652,
+   "path": "python/cascade/test_peb_admission.py",
+   "rule_id": "py/insecure-temporary-file",
+   "severity": "high"
+  },
+  {
+   "line": 103,
+   "message_head": "Call to deprecated function tempfile.mktemp may be insecure.",
+   "number": 653,
+   "path": "python/cascade/test_peb_admission.py",
+   "rule_id": "py/insecure-temporary-file",
+   "severity": "high"
+  },
+  {
+   "line": 110,
+   "message_head": "Call to deprecated function tempfile.mktemp may be insecure.",
+   "number": 654,
+   "path": "python/cascade/test_peb_admission.py",
+   "rule_id": "py/insecure-temporary-file",
+   "severity": "high"
+  },
+  {
+   "line": 208,
+   "message_head": "Stack trace information flows to this location and may be exposed to an external user.",
+   "number": 350,
+   "path": "python/conduit/app/api/routes_sessions.py",
+   "rule_id": "py/stack-trace-exposure",
+   "severity": "medium"
+  },
+  {
+   "line": 220,
+   "message_head": "This expression logs sensitive data (password) as clear text.\nThis expression logs sensitive data (p",
+   "number": 50,
+   "path": "python/conduit/setup_test_db.py",
+   "rule_id": "py/clear-text-logging-sensitive-data",
+   "severity": "high"
+  },
+  {
+   "line": 202,
+   "message_head": "This expression stores sensitive data (password) as clear text.\nThis expression stores sensitive dat",
+   "number": 49,
+   "path": "python/conduit/setup_test_db.py",
+   "rule_id": "py/clear-text-storage-sensitive-data",
+   "severity": "high"
+  },
+  {
+   "line": 146,
+   "message_head": "This regular expression does not match script end tags like </script >.",
+   "number": 555,
+   "path": "python/epistemologist/db.py",
+   "rule_id": "py/bad-tag-filter",
+   "severity": "high"
+  },
+  {
+   "line": 158,
+   "message_head": "Stack trace information flows to this location and may be exposed to an external user.",
+   "number": 347,
+   "path": "python/fs/fs-crawler/app/main.py",
+   "rule_id": "py/stack-trace-exposure",
+   "severity": "medium"
+  },
+  {
+   "line": 172,
+   "message_head": "Stack trace information flows to this location and may be exposed to an external user.",
+   "number": 18,
+   "path": "python/fs/fs-crawler/app/main.py",
+   "rule_id": "py/stack-trace-exposure",
+   "severity": "medium"
+  },
+  {
+   "line": 280,
+   "message_head": "Stack trace information flows to this location and may be exposed to an external user.",
+   "number": 619,
+   "path": "python/peb-kernel/src/peb_kernel/api.py",
+   "rule_id": "py/stack-trace-exposure",
+   "severity": "medium"
+  },
+  {
+   "line": 51,
+   "message_head": "This information exposed to the user depends on stack trace information.",
+   "number": 52,
+   "path": "typescript/address-tts-mcp/src/index.ts",
+   "rule_id": "js/stack-trace-exposure",
+   "severity": "medium"
+  },
+  {
+   "line": 162,
+   "message_head": "Format string depends on a user-provided value.",
+   "number": 54,
+   "path": "typescript/address-tts-mcp/src/tools.ts",
+   "rule_id": "js/tainted-format-string",
+   "severity": "high"
+  },
+  {
+   "line": 13,
+   "message_head": "The URL of this request depends on a user-provided value.",
+   "number": 460,
+   "path": "typescript/assembly-mcp/src/assembly-client.ts",
+   "rule_id": "js/request-forgery",
+   "severity": "critical"
+  },
+  {
+   "line": 22,
+   "message_head": "The URL of this request depends on a user-provided value.",
+   "number": 461,
+   "path": "typescript/assembly-mcp/src/assembly-client.ts",
+   "rule_id": "js/request-forgery",
+   "severity": "critical"
+  },
+  {
+   "line": 35,
+   "message_head": "The URL of this request depends on a user-provided value.",
+   "number": 622,
+   "path": "typescript/assembly-mcp/src/assembly-client.ts",
+   "rule_id": "js/request-forgery",
+   "severity": "critical"
+  },
+  {
+   "line": 45,
+   "message_head": "The URL of this request depends on a user-provided value.",
+   "number": 462,
+   "path": "typescript/assembly-mcp/src/assembly-client.ts",
+   "rule_id": "js/request-forgery",
+   "severity": "critical"
+  },
+  {
+   "line": 43,
+   "message_head": "The URL of this request depends on a user-provided value.",
+   "number": 459,
+   "path": "typescript/assembly-mcp/src/nebula-proxy.ts",
+   "rule_id": "js/request-forgery",
+   "severity": "critical"
+  },
+  {
+   "line": 792,
+   "message_head": "Format string depends on a user-provided value.",
+   "number": 55,
+   "path": "typescript/assembly-mcp/src/tools.ts",
+   "rule_id": "js/tainted-format-string",
+   "severity": "high"
+  },
+  {
+   "line": 9,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 353,
+   "path": "typescript/assembly-srv/src/routes/bridges.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 21,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 354,
+   "path": "typescript/assembly-srv/src/routes/bridges.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 30,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 355,
+   "path": "typescript/assembly-srv/src/routes/bridges.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 44,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 356,
+   "path": "typescript/assembly-srv/src/routes/bridges.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 56,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 357,
+   "path": "typescript/assembly-srv/src/routes/bridges.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 68,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 358,
+   "path": "typescript/assembly-srv/src/routes/bridges.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 77,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 359,
+   "path": "typescript/assembly-srv/src/routes/bridges.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 92,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 360,
+   "path": "typescript/assembly-srv/src/routes/bridges.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 104,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 361,
+   "path": "typescript/assembly-srv/src/routes/bridges.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 124,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 362,
+   "path": "typescript/assembly-srv/src/routes/bridges.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 134,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 363,
+   "path": "typescript/assembly-srv/src/routes/bridges.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 366,
+   "path": "typescript/assembly-srv/src/routes/counts.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 57,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 656,
+   "path": "typescript/assembly-srv/src/routes/decisions.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 130,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 657,
+   "path": "typescript/assembly-srv/src/routes/decisions.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 38,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 604,
+   "path": "typescript/assembly-srv/src/routes/duality.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 147,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 628,
+   "path": "typescript/assembly-srv/src/routes/duality.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 191,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 629,
+   "path": "typescript/assembly-srv/src/routes/duality.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 221,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 630,
+   "path": "typescript/assembly-srv/src/routes/duality.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 258,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 631,
+   "path": "typescript/assembly-srv/src/routes/duality.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 294,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 632,
+   "path": "typescript/assembly-srv/src/routes/duality.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 394,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 633,
+   "path": "typescript/assembly-srv/src/routes/duality.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 467,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 634,
+   "path": "typescript/assembly-srv/src/routes/duality.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 498,
+   "path": "typescript/assembly-srv/src/routes/feed.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 33,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 256,
+   "path": "typescript/assembly-srv/src/routes/feed.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 53,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 257,
+   "path": "typescript/assembly-srv/src/routes/feed.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 63,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 499,
+   "path": "typescript/assembly-srv/src/routes/forums.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 97,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 635,
+   "path": "typescript/assembly-srv/src/routes/forums.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 213,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 367,
+   "path": "typescript/assembly-srv/src/routes/forums.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 239,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 368,
+   "path": "typescript/assembly-srv/src/routes/forums.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 262,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 683,
+   "path": "typescript/assembly-srv/src/routes/forums.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 294,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 263,
+   "path": "typescript/assembly-srv/src/routes/forums.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 392,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 267,
+   "path": "typescript/assembly-srv/src/routes/forums.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 428,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 676,
+   "path": "typescript/assembly-srv/src/routes/forums.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 467,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 370,
+   "path": "typescript/assembly-srv/src/routes/forums.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 478,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 371,
+   "path": "typescript/assembly-srv/src/routes/forums.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 489,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 372,
+   "path": "typescript/assembly-srv/src/routes/forums.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 502,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 373,
+   "path": "typescript/assembly-srv/src/routes/forums.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 526,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 374,
+   "path": "typescript/assembly-srv/src/routes/forums.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 539,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 503,
+   "path": "typescript/assembly-srv/src/routes/forums.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 556,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 375,
+   "path": "typescript/assembly-srv/src/routes/forums.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 570,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 504,
+   "path": "typescript/assembly-srv/src/routes/forums.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 587,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 377,
+   "path": "typescript/assembly-srv/src/routes/forums.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 599,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 378,
+   "path": "typescript/assembly-srv/src/routes/forums.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 613,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 379,
+   "path": "typescript/assembly-srv/src/routes/forums.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 626,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 636,
+   "path": "typescript/assembly-srv/src/routes/forums.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 650,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 684,
+   "path": "typescript/assembly-srv/src/routes/forums.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 668,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 637,
+   "path": "typescript/assembly-srv/src/routes/forums.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 58,
+   "message_head": "The URL of this request depends on a user-provided value.",
+   "number": 463,
+   "path": "typescript/assembly-srv/src/routes/open-questions.js",
+   "rule_id": "js/request-forgery",
+   "severity": "critical"
+  },
+  {
+   "line": 10,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 272,
+   "path": "typescript/assembly-srv/src/routes/refresh-stats.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 286,
+   "path": "typescript/assembly-srv/src/routes/search.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 501,
+   "path": "typescript/assembly-srv/src/routes/users.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 25,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 502,
+   "path": "typescript/assembly-srv/src/routes/users.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 51,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 382,
+   "path": "typescript/assembly-srv/src/routes/users.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 62,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 383,
+   "path": "typescript/assembly-srv/src/routes/users.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 169,
+   "message_head": "This does not escape backslash characters in the input.",
+   "number": 61,
+   "path": "typescript/conduit-mcp/migrations/verify-receipt-integrity.js",
+   "rule_id": "js/incomplete-sanitization",
+   "severity": "high"
+  },
+  {
+   "line": 715,
+   "message_head": "This route handler performs a system command, but is not rate-limited.",
+   "number": 63,
+   "path": "typescript/conduit-mcp/src/index.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 316,
+   "message_head": "This information exposed to the user depends on stack trace information.",
+   "number": 53,
+   "path": "typescript/conduit-mcp/src/index.ts",
+   "rule_id": "js/stack-trace-exposure",
+   "severity": "medium"
+  },
+  {
+   "line": 155,
+   "message_head": "Format string depends on a user-provided value.",
+   "number": 56,
+   "path": "typescript/conduit-mcp/src/index.ts",
+   "rule_id": "js/tainted-format-string",
+   "severity": "high"
+  },
+  {
+   "line": 406,
+   "message_head": "This query string depends on a user-provided value.",
+   "number": 621,
+   "path": "typescript/draft-srv/src/drivers/postgres.ts",
+   "rule_id": "js/sql-injection",
+   "severity": "high"
+  },
+  {
+   "line": 80,
+   "message_head": "This regular expression that depends on library input may run slow on strings with many repetitions ",
+   "number": 473,
+   "path": "typescript/heartbeat-client/index.ts",
+   "rule_id": "js/polynomial-redos",
+   "severity": "high"
+  },
+  {
+   "line": 84,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 292,
+   "path": "typescript/kernel-srv/src/index.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 85,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 293,
+   "path": "typescript/kernel-srv/src/index.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 41,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 304,
+   "path": "typescript/kernel-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 86,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 305,
+   "path": "typescript/kernel-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 103,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 306,
+   "path": "typescript/kernel-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 135,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 307,
+   "path": "typescript/kernel-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 173,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 308,
+   "path": "typescript/kernel-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 198,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 309,
+   "path": "typescript/kernel-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 224,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 310,
+   "path": "typescript/kernel-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 247,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 311,
+   "path": "typescript/kernel-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 258,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 312,
+   "path": "typescript/kernel-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 277,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 313,
+   "path": "typescript/kernel-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 295,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 314,
+   "path": "typescript/kernel-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 57,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 391,
+   "path": "typescript/knowledge-srv/src/index.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 43,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 66,
+   "path": "typescript/nebula-srv/src/index.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 45,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 67,
+   "path": "typescript/nebula-srv/src/index.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 347,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 556,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 420,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 74,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 435,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 75,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 461,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 76,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 475,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 404,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 539,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 77,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 560,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 78,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 586,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 79,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 599,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 405,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 626,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 80,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 641,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 81,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 666,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 82,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 679,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 406,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 698,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 83,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 770,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 407,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 811,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 84,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 851,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 85,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 903,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 86,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 951,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 87,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 973,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 88,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1007,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 89,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1024,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 90,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1085,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 91,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1101,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 92,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1162,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 93,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1412,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 94,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1428,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 95,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1447,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 557,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1473,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 97,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1494,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 98,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1524,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 99,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1552,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 100,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1579,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 101,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1634,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 102,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1650,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 558,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1684,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 104,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1704,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 105,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1740,
+   "message_head": "This route handler performs a file system access, but is not rate-limited.\nThis route handler perfor",
+   "number": 106,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1761,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 108,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1789,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 109,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1828,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 559,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1873,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 111,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1896,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 412,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1976,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 112,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1988,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 113,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 2037,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 114,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 2086,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 115,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 2221,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 560,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 2252,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 117,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 2288,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 118,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 2331,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 122,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 2369,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 124,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 2384,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 127,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 2408,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 130,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 2427,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 561,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 2455,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 133,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 2497,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 134,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 2542,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 135,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 2650,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 136,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 2701,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 137,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 2853,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 138,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 2914,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 139,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 2928,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 140,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3026,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 141,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3059,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 143,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3118,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 144,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3146,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 145,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3192,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 146,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3231,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 147,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3270,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 148,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3315,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 658,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3335,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 563,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3365,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 155,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3391,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 417,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3443,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 157,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3494,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 158,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3548,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 159,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3565,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 160,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3580,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 161,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3604,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 564,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3637,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 163,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3666,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 164,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3711,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 165,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3756,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 166,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3807,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 565,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3828,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 168,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3845,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 169,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3880,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 170,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3915,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 171,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 3953,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 172,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 4013,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 173,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 4179,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 527,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 4232,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 528,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 4247,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 174,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 4350,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 639,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 4454,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 176,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 4511,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 177,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 4590,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 566,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 4634,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 484,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 4685,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 178,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 4928,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 640,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 4951,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 179,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 5066,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 180,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 5127,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 181,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 5256,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 182,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 5291,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 183,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 5326,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 184,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 5383,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 567,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 5407,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 186,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 5425,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 187,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 5481,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 188,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 5497,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 189,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 5535,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 190,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 5584,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 191,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 5603,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 192,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 5623,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 193,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 5692,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 194,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 5737,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 195,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 5751,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 196,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 5765,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 197,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 5794,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 421,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 5819,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 568,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 5890,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 423,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 5927,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 424,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6016,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 198,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6060,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 199,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6127,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 200,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6170,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 201,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6185,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 202,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6242,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 203,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6294,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 204,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6335,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 425,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6382,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 206,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6397,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 207,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6418,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 208,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6439,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 209,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6460,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 210,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6524,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 211,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6550,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 212,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6575,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 213,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6625,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 569,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6684,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 215,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6749,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 216,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6781,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 217,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6829,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 218,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6843,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 570,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6871,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 220,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6914,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 428,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6948,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 222,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6972,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 223,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7021,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 224,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7071,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 225,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7114,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 226,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7152,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 609,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7211,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 610,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7255,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 611,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7309,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 641,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7335,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 613,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7362,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 614,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7382,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 642,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7433,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 643,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7479,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 644,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7567,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 227,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7619,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 228,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7655,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 429,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7690,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 230,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7723,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 342,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7769,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 343,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7789,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 344,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7820,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 430,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7885,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 345,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7926,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 346,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 7960,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 572,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 8010,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 645,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 8097,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 432,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 8163,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 646,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 8209,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 647,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 8265,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 648,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 8299,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 574,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 8337,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 436,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 8370,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 575,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 8403,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 438,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 8431,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 439,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 8484,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 440,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 8541,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 441,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 8567,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 442,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 8595,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 443,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 8624,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 444,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 8759,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 445,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 8807,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 446,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 8842,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 447,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 8857,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 448,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 8873,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 449,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 8892,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 450,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 8930,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 451,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 8945,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 452,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 8967,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 453,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 8988,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 454,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 9025,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 455,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 9099,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 456,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 9132,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 457,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 9169,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 458,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 9216,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 541,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 9326,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 582,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 9408,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 546,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 9469,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 583,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1065,
+   "message_head": "The URL of this request depends on a user-provided value.",
+   "number": 51,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/request-forgery",
+   "severity": "critical"
+  },
+  {
+   "line": 2718,
+   "message_head": "Potential type confusion as this HTTP request parameter may be either an array or a string.",
+   "number": 626,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/type-confusion-through-parameter-tampering",
+   "severity": "critical"
+  },
+  {
+   "line": 5457,
+   "message_head": "The escape sequence '\\}}' is equivalent to just '}}', so the sequence may still represent a meta-cha",
+   "number": 492,
+   "path": "typescript/nebula-srv/src/routes.ts",
+   "rule_id": "js/useless-regexp-character-escape",
+   "severity": "high"
+  },
+  {
+   "line": 15,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 675,
+   "path": "typescript/peb-srv/src/routes/binding-decisions.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 43,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 672,
+   "path": "typescript/peb-srv/src/routes/binding-decisions.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 10,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 392,
+   "path": "typescript/peb-srv/src/routes/decisions.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 51,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 393,
+   "path": "typescript/peb-srv/src/routes/decisions.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 67,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 394,
+   "path": "typescript/peb-srv/src/routes/decisions.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 83,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 395,
+   "path": "typescript/peb-srv/src/routes/decisions.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 142,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 396,
+   "path": "typescript/peb-srv/src/routes/decisions.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 197,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 397,
+   "path": "typescript/peb-srv/src/routes/decisions.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 262,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 315,
+   "path": "typescript/peb-srv/src/routes/decisions.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 27,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 316,
+   "path": "typescript/peb-srv/src/routes/entities.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 118,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 317,
+   "path": "typescript/peb-srv/src/routes/entities.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 10,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 318,
+   "path": "typescript/peb-srv/src/routes/events.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 57,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 319,
+   "path": "typescript/peb-srv/src/routes/events.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 81,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 320,
+   "path": "typescript/peb-srv/src/routes/events.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 10,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 321,
+   "path": "typescript/peb-srv/src/routes/fleet-health.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 33,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 322,
+   "path": "typescript/peb-srv/src/routes/fleet-health.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 61,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 323,
+   "path": "typescript/peb-srv/src/routes/fleet-health.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 6,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 324,
+   "path": "typescript/peb-srv/src/routes/health.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 31,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 326,
+   "path": "typescript/peb-srv/src/routes/state.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 100,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 327,
+   "path": "typescript/peb-srv/src/routes/state.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 18,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 325,
+   "path": "typescript/peb-srv/src/routes/stream.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 17,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 328,
+   "path": "typescript/peb-srv/src/routes/traces.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 9,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 329,
+   "path": "typescript/peb-srv/src/routes/transactions.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 47,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 330,
+   "path": "typescript/peb-srv/src/routes/transactions.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 75,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 331,
+   "path": "typescript/peb-srv/src/routes/transactions.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 129,
+   "message_head": "This assignment may alter Object.prototype if a malicious '__proto__' string is injected from librar",
+   "number": 690,
+   "path": "typescript/projection-core/src/runtime/replayVerifier.ts",
+   "rule_id": "js/prototype-polluting-assignment",
+   "severity": "medium"
+  },
+  {
+   "line": 130,
+   "message_head": "This assignment may alter Object.prototype if a malicious '__proto__' string is injected from librar",
+   "number": 691,
+   "path": "typescript/projection-core/src/runtime/replayVerifier.ts",
+   "rule_id": "js/prototype-polluting-assignment",
+   "severity": "medium"
+  },
+  {
+   "line": 32,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 638,
+   "path": "typescript/role-memory-srv/src/index.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 75,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 69,
+   "path": "typescript/role-memory-srv/src/index.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 89,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 70,
+   "path": "typescript/role-memory-srv/src/index.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 213,
+   "message_head": "Format string depends on a user-provided value.",
+   "number": 491,
+   "path": "typescript/semantics-mcp/src/tools.ts",
+   "rule_id": "js/tainted-format-string",
+   "severity": "high"
+  },
+  {
+   "line": 119,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 506,
+   "path": "typescript/semantics-srv/src/routes/semantics.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 158,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 507,
+   "path": "typescript/semantics-srv/src/routes/semantics.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 316,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 508,
+   "path": "typescript/semantics-srv/src/routes/semantics.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 364,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 580,
+   "path": "typescript/semantics-srv/src/routes/semantics.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 425,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 581,
+   "path": "typescript/semantics-srv/src/routes/semantics.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 487,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 509,
+   "path": "typescript/semantics-srv/src/routes/semantics.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 507,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 510,
+   "path": "typescript/semantics-srv/src/routes/semantics.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 529,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 511,
+   "path": "typescript/semantics-srv/src/routes/semantics.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 548,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 512,
+   "path": "typescript/semantics-srv/src/routes/semantics.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 568,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 677,
+   "path": "typescript/semantics-srv/src/routes/semantics.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 603,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 516,
+   "path": "typescript/semantics-srv/src/routes/semantics.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 667,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 517,
+   "path": "typescript/semantics-srv/src/routes/semantics.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 713,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 518,
+   "path": "typescript/semantics-srv/src/routes/semantics.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 763,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 519,
+   "path": "typescript/semantics-srv/src/routes/semantics.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 819,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 520,
+   "path": "typescript/semantics-srv/src/routes/semantics.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 856,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 521,
+   "path": "typescript/semantics-srv/src/routes/semantics.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 895,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 522,
+   "path": "typescript/semantics-srv/src/routes/semantics.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 952,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 523,
+   "path": "typescript/semantics-srv/src/routes/semantics.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1014,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 524,
+   "path": "typescript/semantics-srv/src/routes/semantics.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1077,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 525,
+   "path": "typescript/semantics-srv/src/routes/semantics.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 1113,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 526,
+   "path": "typescript/semantics-srv/src/routes/semantics.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 56,
+   "message_head": "Iteration over a user-controlled object with a potentially unbounded .length property from a user-pr",
+   "number": 578,
+   "path": "typescript/slash-command-mcp/src/parser.ts",
+   "rule_id": "js/loop-bound-injection",
+   "severity": "high"
+  },
+  {
+   "line": 34,
+   "message_head": "This regular expression that depends on a user-provided value may run slow on strings with many repe",
+   "number": 579,
+   "path": "typescript/slash-command-mcp/src/registry.ts",
+   "rule_id": "js/polynomial-redos",
+   "severity": "high"
+  },
+  {
+   "line": 89,
+   "message_head": "CORS Origin allows broad access due to permissive or user controlled value.",
+   "number": 774,
+   "path": "typescript/substance-srv/src/index.ts",
+   "rule_id": "js/cors-permissive-configuration",
+   "severity": "medium"
+  },
+  {
+   "line": 903,
+   "message_head": "Format string depends on a user-provided value.\nFormat string depends on a user-provided value.",
+   "number": 57,
+   "path": "typescript/tackle-mcp/src/db.ts",
+   "rule_id": "js/tainted-format-string",
+   "severity": "high"
+  },
+  {
+   "line": 379,
+   "message_head": "This route handler performs a file system access, but is not rate-limited.\nThis route handler perfor",
+   "number": 71,
+   "path": "typescript/tackle-mcp/src/index.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 901,
+   "message_head": "This route handler performs a file system access, but is not rate-limited.",
+   "number": 72,
+   "path": "typescript/tackle-mcp/src/index.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 429,
+   "message_head": "This path depends on a user-provided value.",
+   "number": 591,
+   "path": "typescript/tackle-mcp/src/index.ts",
+   "rule_id": "js/path-injection",
+   "severity": "high"
+  },
+  {
+   "line": 925,
+   "message_head": "This path depends on a user-provided value.",
+   "number": 236,
+   "path": "typescript/tackle-mcp/src/index.ts",
+   "rule_id": "js/path-injection",
+   "severity": "high"
+  },
+  {
+   "line": 926,
+   "message_head": "This path depends on a user-provided value.",
+   "number": 237,
+   "path": "typescript/tackle-mcp/src/index.ts",
+   "rule_id": "js/path-injection",
+   "severity": "high"
+  },
+  {
+   "line": 929,
+   "message_head": "This path depends on a user-provided value.",
+   "number": 238,
+   "path": "typescript/tackle-mcp/src/index.ts",
+   "rule_id": "js/path-injection",
+   "severity": "high"
+  },
+  {
+   "line": 949,
+   "message_head": "This path depends on a user-provided value.",
+   "number": 239,
+   "path": "typescript/tackle-mcp/src/index.ts",
+   "rule_id": "js/path-injection",
+   "severity": "high"
+  },
+  {
+   "line": 124,
+   "message_head": "Format string depends on a user-provided value.",
+   "number": 624,
+   "path": "typescript/tackle-mcp/src/index.ts",
+   "rule_id": "js/tainted-format-string",
+   "severity": "high"
+  },
+  {
+   "line": 35,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 398,
+   "path": "typescript/tackle-prompt-sync-srv/src/index.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 58,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 399,
+   "path": "typescript/tackle-prompt-sync-srv/src/index.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 75,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 400,
+   "path": "typescript/tackle-prompt-sync-srv/src/index.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 91,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 401,
+   "path": "typescript/tackle-prompt-sync-srv/src/index.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 518,
+   "message_head": "This path depends on a user-provided value.",
+   "number": 596,
+   "path": "typescript/tackle-srv/src/routes/ai-config.ts",
+   "rule_id": "js/path-injection",
+   "severity": "high"
+  },
+  {
+   "line": 677,
+   "message_head": "This path depends on a user-provided value.",
+   "number": 597,
+   "path": "typescript/tackle-srv/src/routes/ai-config.ts",
+   "rule_id": "js/path-injection",
+   "severity": "high"
+  },
+  {
+   "line": 703,
+   "message_head": "This path depends on a user-provided value.",
+   "number": 598,
+   "path": "typescript/tackle-srv/src/routes/ai-config.ts",
+   "rule_id": "js/path-injection",
+   "severity": "high"
+  },
+  {
+   "line": 725,
+   "message_head": "Format string depends on a user-provided value.",
+   "number": 586,
+   "path": "typescript/tackle-srv/src/routes/ai-config.ts",
+   "rule_id": "js/tainted-format-string",
+   "severity": "high"
+  },
+  {
+   "line": 731,
+   "message_head": "Format string depends on a user-provided value.",
+   "number": 587,
+   "path": "typescript/tackle-srv/src/routes/ai-config.ts",
+   "rule_id": "js/tainted-format-string",
+   "severity": "high"
+  },
+  {
+   "line": 57,
+   "message_head": "Iteration over a user-controlled object with a potentially unbounded .length property from a user-pr",
+   "number": 623,
+   "path": "typescript/tools-aggregator/src/command-parser.ts",
+   "rule_id": "js/loop-bound-injection",
+   "severity": "high"
+  },
+  {
+   "line": 46,
+   "message_head": "This regular expression that depends on a user-provided value may run slow on strings with many repe",
+   "number": 620,
+   "path": "typescript/tools-aggregator/src/command-registry.ts",
+   "rule_id": "js/polynomial-redos",
+   "severity": "high"
+  },
+  {
+   "line": 89,
+   "message_head": "Format string depends on a user-provided value.",
+   "number": 59,
+   "path": "typescript/tools-aggregator/src/index.ts",
+   "rule_id": "js/tainted-format-string",
+   "severity": "high"
+  },
+  {
+   "line": 269,
+   "message_head": "Format string depends on a user-provided value.\nFormat string depends on a user-provided value.",
+   "number": 625,
+   "path": "typescript/tools-aggregator/src/index.ts",
+   "rule_id": "js/tainted-format-string",
+   "severity": "high"
+  },
+  {
+   "line": 293,
+   "message_head": "Format string depends on a user-provided value.\nFormat string depends on a user-provided value.",
+   "number": 60,
+   "path": "typescript/tools-aggregator/src/index.ts",
+   "rule_id": "js/tainted-format-string",
+   "severity": "high"
+  },
+  {
+   "line": 46,
+   "message_head": "This information exposed to the user depends on stack trace information.",
+   "number": 486,
+   "path": "typescript/ui-tools-mcp/src/index.ts",
+   "rule_id": "js/stack-trace-exposure",
+   "severity": "medium"
+  },
+  {
+   "line": 241,
+   "message_head": "Format string depends on a user-provided value.",
+   "number": 485,
+   "path": "typescript/ui-tools-mcp/src/tools.ts",
+   "rule_id": "js/tainted-format-string",
+   "severity": "high"
+  },
+  {
+   "line": 30,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 476,
+   "path": "typescript/ui-tools/src/index.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 21,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 477,
+   "path": "typescript/ui-tools/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 44,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 478,
+   "path": "typescript/ui-tools/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 77,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 479,
+   "path": "typescript/ui-tools/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 112,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 480,
+   "path": "typescript/ui-tools/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 159,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 481,
+   "path": "typescript/ui-tools/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 29,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 529,
+   "path": "typescript/voyager-srv/src/index.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 30,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 530,
+   "path": "typescript/voyager-srv/src/index.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 35,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 531,
+   "path": "typescript/voyager-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 49,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 532,
+   "path": "typescript/voyager-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 75,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 533,
+   "path": "typescript/voyager-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 91,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 534,
+   "path": "typescript/voyager-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 128,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 535,
+   "path": "typescript/voyager-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 143,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 536,
+   "path": "typescript/voyager-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 159,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 537,
+   "path": "typescript/voyager-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 197,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 538,
+   "path": "typescript/voyager-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 231,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 539,
+   "path": "typescript/voyager-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 247,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 540,
+   "path": "typescript/voyager-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 290,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 543,
+   "path": "typescript/voyager-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 325,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 544,
+   "path": "typescript/voyager-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 346,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 545,
+   "path": "typescript/voyager-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 371,
+   "message_head": "This route handler performs a database access, but is not rate-limited.\nThis route handler performs ",
+   "number": 547,
+   "path": "typescript/voyager-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 411,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 549,
+   "path": "typescript/voyager-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 434,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 553,
+   "path": "typescript/voyager-srv/src/routes.ts",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 18,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 408,
+   "path": "typescript/wind-srv/src/index.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  },
+  {
+   "line": 60,
+   "message_head": "This replaces '.' with itself.",
+   "number": 475,
+   "path": "typescript/wind-srv/src/routes/events.js",
+   "rule_id": "js/identity-replacement",
+   "severity": "medium"
+  },
+  {
+   "line": 78,
+   "message_head": "This route handler performs a database access, but is not rate-limited.",
+   "number": 482,
+   "path": "typescript/wind-srv/src/routes/events.js",
+   "rule_id": "js/missing-rate-limiting",
+   "severity": "high"
+  }
+ ],
+ "by_severity": {
+  "critical": 12,
+  "high": 409,
+  "medium": 13
+ },
+ "captured_at": "2026-10-01T17:07:02Z",
+ "commit_sha": "ead7ff59a4eb4ffa802aa7dcaa165449f88eb6ba",
+ "content_sha256": "03c1ee5324b40f0740df1ea4d85a97ac063ee38b9d9b3c8a44269ac7924a355e",
+ "ref": "main",
+ "schema": "codeql-baseline/1"
+}
