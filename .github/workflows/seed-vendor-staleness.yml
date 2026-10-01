@@ -1,0 +1,59 @@
+name: Seed Vendor Staleness Guard
+
+# Ruling 2/4 (architect record 4f30f05c), item (b): a staleness guard must
+# fail the SOURCE-change job when a vendoring twin is stale — not only the
+# twin's own suite. This converts a diffuse cross-PR red (tackle twin red on
+# every unrelated PR, the #673 incident) into a precise same-PR failure at
+# the causal commit.
+#
+# What it checks: every moleculer twin that vendors tackle-seeds (discovered
+# as moleculer/*/vendor/tackle-seeds/) must be byte-identical to
+# typescript/tackle-seeds/ for every file present in both. DB-free, no
+# services: bin/regenerate_memory_seed.py --check-vendors compares bytes and
+# exits 0/1.
+#
+# Why the paths filter: this guard is about the SOURCE changing without the
+# vendor following (or a vendor edit diverging from its source). Restricting
+# triggers to those paths keeps the failure precisely attached to commits
+# that can cause staleness, without adding noise to unrelated PRs. The
+# moleculer twin matrix's own byte-identity test remains as the second,
+# independent detection layer (Ruling 2/4: "the byte-identity guard in the
+# twin stays as-is").
+#
+# Remediation if this fails: re-run bin/regenerate_memory_seed.py (propagates
+# to every vendoring twin in the same invocation, Ruling 2/4 (a)) — or copy
+# the files named in the failure.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'typescript/tackle-seeds/**'
+      - 'moleculer/*/vendor/tackle-seeds/**'
+      - 'bin/regenerate_memory_seed.py'
+      - '.github/workflows/seed-vendor-staleness.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'typescript/tackle-seeds/**'
+      - 'moleculer/*/vendor/tackle-seeds/**'
+      - 'bin/regenerate_memory_seed.py'
+      - '.github/workflows/seed-vendor-staleness.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  vendor-staleness:
+    name: vendored tackle-seeds byte-identical to source
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Vendor staleness audit (DB-free)
+        run: python3 bin/regenerate_memory_seed.py --check-vendors
+        shell: bash
