@@ -116,6 +116,27 @@ jobs:
           python3 bin/classify_codeql_alerts.py --ref "$REF" --json > /tmp/classification.json
           echo "REF=$REF" >> "$GITHUB_ENV"
 
+      # ── RULING-6: report-only baseline diff ─────────────────────────────
+      # The committed baseline (bin/codeql-baseline.json) is a DATED DIFF
+      # INPUT, not a suppression: no exclusions, no thresholds, nothing is
+      # waived. The diff annotates the delta loudly (new alerts are named
+      # in the report and as a ::warning::) but NEVER blocks — blocking
+      # classification is the classify step's (Ruling 1/4) job. The exit
+      # code here only fails on a broken diff input (missing/tampered
+      # baseline, gh failure, unanalyzed ref) — exit 2, never exit 1.
+      - name: Baseline diff (RULING-6: report-only)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ env.REF }}
+        run: |
+          set -euo pipefail
+          BASELINE_REF="${REF:-main}"
+          echo "baseline diff ref: $BASELINE_REF"
+          python3 bin/codeql_baseline.py diff \
+            --baseline bin/codeql-baseline.json \
+            --ref "$BASELINE_REF" | tee /tmp/baseline-diff.txt
+
       - name: Job summary (always)
         if: always()
         env:
@@ -125,5 +146,9 @@ jobs:
             echo "### CodeQL twin classification — ref ${REF:-unknown}"
             echo '```json'
             cat /tmp/classification.json 2>/dev/null || echo "(no classification output — the classification step failed before writing it)"
+            echo '```'
+            echo "### CodeQL baseline diff vs bin/codeql-baseline.json (report-only)"
+            echo '```'
+            cat /tmp/baseline-diff.txt 2>/dev/null || echo "(no baseline diff output)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
