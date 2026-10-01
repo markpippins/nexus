@@ -308,6 +308,51 @@ class SupersedeRecordTests(unittest.TestCase):
                          old["metadata"]["retired"]["note"])
         self.assertIn("Decision 24", old["metadata"]["retired"]["convention"])
 
+    # ── terminal lifecycle statuses (DBA 2026-09-30) ──────────────────
+    # Regression: LIFECYCLE_TAGS listed only NON-terminal statuses, so a
+    # record tagged status:done kept it through retire and ended up
+    # simultaneously status:done AND status:retired — still returned as live
+    # by any tag query. The pre-existing guard only ever passed status:open,
+    # which is why this shipped.
+
+    def test_retire_drops_terminal_status_tag(self):
+        # The exact shape that made the 8 retracted attestations read as live.
+        self.srv.records[self.old_id] = rec(self.old_id, tags=[
+            "pr:679", "type:attestation", "status:done", "area:testing",
+        ])
+        r = self.run_script("retire", "--old", self.old_id,
+                            "--note", "retracted by 5d086aad")
+        self.assertEqual(0, r.returncode, r.stderr)
+        tags = self.srv.records[self.old_id]["tags"]
+        self.assertNotIn("status:done", tags)
+        self.assertIn("status:retired", tags)
+        # exactly one status survives
+        self.assertEqual(["status:retired"],
+                         [t for t in tags if t.startswith("status:")])
+
+    def test_retire_keeps_non_status_tags_on_terminal_record(self):
+        self.srv.records[self.old_id] = rec(self.old_id, tags=[
+            "to:tester", "pr:679", "type:attestation", "status:done",
+            "area:testing",
+        ])
+        r = self.run_script("retire", "--old", self.old_id, "--note", "x")
+        self.assertEqual(0, r.returncode, r.stderr)
+        tags = self.srv.records[self.old_id]["tags"]
+        for kept in ("to:tester", "pr:679", "type:attestation", "area:testing"):
+            self.assertIn(kept, tags)
+
+    def test_supersede_drops_terminal_status_tag(self):
+        self.srv.records[self.old_id] = rec(self.old_id, tags=[
+            "to:tester", "type:attestation", "status:attested-complete",
+        ])
+        r = self.run_script("supersede", "--old", self.old_id,
+                            "--new", self.new_id, "--reason", "replaced")
+        self.assertEqual(0, r.returncode, r.stderr)
+        tags = self.srv.records[self.old_id]["tags"]
+        self.assertNotIn("status:attested-complete", tags)
+        self.assertIn("status:superseded", tags)
+        self.assertIn("to:tester", tags)   # breadcrumb kept
+
     def test_retire_dry_run_no_writes(self):
         r = self.run_script("retire", "--old", self.old_id,
                             "--note", "x", "--dry-run")
