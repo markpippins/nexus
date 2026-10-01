@@ -1,8 +1,22 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { pool } from '../db.js';
 import { BadRequestError } from '../errors.js';
 
 export const bridgesRouter = Router();
+
+// CodeQL js/missing-rate-limiting: bridges are write-adjacent link/unlink
+// endpoints; cap request storms at the router level. limiter is registered
+// FIRST so it wraps every route below regardless of later additions.
+// 120/min per IP — far above interactive usage, far below abuse territory.
+const bridgesLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 120,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  skip: (req) => req.path === '/health' || req.path === '/healthz',
+});
+bridgesRouter.use(bridgesLimiter);
 
 // ── Forum ↔ Agenda ──────────────────────────────────────────────────
 
