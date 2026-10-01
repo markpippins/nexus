@@ -277,6 +277,22 @@ function roleLeaseRecordTags(
   return [...domain, 'to:wr-conf-observer'];
 }
 
+/**
+ * URL for the Backlog→ToDo auto-compile trigger (Plan 1062).
+ *
+ * CodeQL js/request-forgery: the requirement id is request-derived, so it is
+ * URI-encoded before interpolation. `encodeURIComponent` is the sanitizer
+ * CodeQL recognises for this query — it escapes path separators ("/" →
+ * "%2F"), so a crafted id can neither traverse the path nor retarget the
+ * request off the hardcoded host. A regex guard alone is NOT a sanitizer for
+ * this query (verified against RequestForgeryCustomizations.qll's
+ * UriEncodingSanitizer), which is why the numeric-shape check alone did not
+ * clear the alert.
+ */
+export function requirementCompileUrl(id: string | number): string {
+  return `http://localhost:3101/api/requirements/${encodeURIComponent(String(id))}/compile`;
+}
+
 export function createRoutes(pool: Pool): Router {
   const router = Router();
 
@@ -1061,8 +1077,15 @@ export function createRoutes(pool: Pool): Router {
       // two-stage compiler to generate WorkRequest IR. D2 (CP-2): compile
       // is now pre-row — it no longer implies a conduit plan row. Plan
       // creation is a separate release-time step (CP-9 release gate).
-      if (status !== undefined && reqt.status === 'ToDo') {
-        fetch(`http://localhost:3101/api/requirements/${id}/compile`, {
+      // CodeQL SSRF hardening lives in requirementCompileUrl (encodeURIComponent
+      // is the recognised sanitizer); the numeric-shape check is kept as an
+      // additional narrowing — requirements ids are numeric, so the trigger
+      // only fires for the shape the table actually uses.
+      // Under express 5 typings a repeated path key surfaces as string[];
+      // normalize to the first occurrence before use (same discipline as
+      // the sort-param coercion in the harvests route).
+      if (status !== undefined && reqt.status === 'ToDo' && /^\d+$/.test(String(id))) {
+        fetch(requirementCompileUrl(Array.isArray(id) ? id[0] : id), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ createPlan: false }),
@@ -2713,9 +2736,14 @@ export function createRoutes(pool: Pool): Router {
       // Sort direction: a trailing `_asc` suffix selects ascending order
       // (the nebula-ui harvests view has offered 'created_at_asc'/'Oldest'
       // since fc07c18); everything else defaults to DESC like before.
-      const rawSort = (req.query.sort as string) || 'created_at';
-      const sortAsc = rawSort.endsWith('_asc');
-      const sort = sortAsc ? rawSort.slice(0, -'_asc'.length) : rawSort;
+      const rawSort = (req.query.sort as string | string[]) || 'created_at';
+      // CodeQL type-confusion hardening: a repeated query key
+      // (?sort=a&sort=b) makes express surface the value as string[] —
+      // coerce to a single string before any string operation
+      // (first occurrence wins).
+      const sortParam = (Array.isArray(rawSort) ? rawSort[0] : rawSort) || 'created_at';
+      const sortAsc = sortParam.endsWith('_asc');
+      const sort = sortAsc ? sortParam.slice(0, -'_asc'.length) : sortParam;
       const sortDir = sortAsc ? 'ASC' : 'DESC';
       const { offset, limit, page, pageSize } = parsePagination(req.query);
 
@@ -5433,28 +5461,25 @@ export function createRoutes(pool: Pool): Router {
         const { rows: data } = await pool.query(proj.source_query);
         const rendered: { path: string; content: string }[] = [];
 
+        // Literal placeholder substitution via split/join — no regex involved:
+        // there are no metacharacters to escape (CodeQL flagged the previous
+        // new RegExp form for a useless `\}}` escape), keys can carry no
+        // special meaning, and replacement values are inserted as literals so
+        // $-sequence escaping ($&, $`, …) is unnecessary by construction.
+        const substitutePlaceholder = (template: string, key: string, value: string): string =>
+          template.split(`{{${key}}}`).join(value);
+
         for (const row of data) {
           let content = proj.template;
           // Replace all {{key}} placeholders with values from the row
           for (const [key, value] of Object.entries(row)) {
-            const val = value === null ? '' : String(value);
-            // SECURITY: escape regex metacharacters in the key to prevent
-            // regex injection via user-controlled source_query column names.
-            const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            // SECURITY: escape $ in the replacement value to prevent
-            // replacement-string injection ($&, $`, $', $n patterns in
-            // String.replace() are interpreted specially).
-            const safeVal = val.replace(/\$/g, '$$$$');
-            content = content.replace(new RegExp(`\\{\\{${escapedKey}\\}\\}`, 'g'), safeVal);
+            content = substitutePlaceholder(content, key, value === null ? '' : String(value));
           }
           // Substitute every {{key}} in the target path (id, name, slug, …) —
-          // same escaping discipline as the content template.
+          // same literal substitution as the content template.
           let targetPath = proj.target_path;
           for (const [key, value] of Object.entries(row)) {
-            const val = value === null ? '' : String(value);
-            const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const safeVal = val.replace(/\$/g, '$$$$');
-            targetPath = targetPath.replace(new RegExp(`\\{\\{${escapedKey}\\}\}`, 'g'), safeVal);
+            targetPath = substitutePlaceholder(targetPath, key, value === null ? '' : String(value));
           }
 
           const absPath = path.resolve(AUDIT_ROOT, targetPath);
