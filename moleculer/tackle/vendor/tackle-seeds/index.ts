@@ -457,7 +457,22 @@ BEGIN
         '\n'
         '### Where these tags are used (verified)\n'
         '- **R17 inbox query:** the nebula REST endpoint (\`3101\`) applies \`role\` + \`createdAfter\` but IGNORES \`tags\`/\`limit\`; for exact tag-routed queries use \`nexus/bin/check-inbox.sh\` (MCP HTTP+SSE on 3102).\n'
-        '- **R13 session-start forum check:** the Assembly \`issues-and-open-questions\` check now uses the Assembly REST API on 3107 (\`GET /api/forums/issues-and-open-questions/threads\`) — there is no \`3102/tools/call\` route on nebula-mcp.',
+        '- **R13 session-start forum check:** the Assembly \`issues-and-open-questions\` check now uses the Assembly REST API on 3107 (\`GET /api/forums/issues-and-open-questions/threads\`) — there is no \`3102/tools/call\` route on nebula-mcp.\n'
+        '\n'
+        '### Supersession & Retirement Tags (Decision 24, architect record cfcc9d65)\n'
+        '\n'
+        'Registered for the ratified supersession convention (proposal 42066ad6; wrapper \`nexus/bin/supersede-record.sh\`). Applies to mutable-layer records only (report, analysis, assessment, inspection, engineering_log, architecture_note, decision); \`recordType: prompt\`/\`response\` and \`type:history\` are exempt (invariant I4 — append-only by definition).\n'
+        '\n'
+        '| Tag | Purpose |\n'
+        '|-----|---------|\n'
+        '| \`supersedes:<short-id>\` | On the SUCCESSOR record: names the stale record it replaces (pair with \`status:active\`). |\n'
+        '| \`superseded-by:<short-id>\` | On the OLD record''s pointer tombstone: names the successor (pair with \`status:superseded\`). |\n'
+        '| \`status:superseded\` | OLD record whose content was replaced — strictly "successor exists". Title prefixed \`[SUPERSEDED → <id>]\`; exactly one pointer mutation, preceded by a \`type:archive\` verbatim capture (sha256 round-trip verified). |\n'
+        '| \`status:retired\` | OLD record retired WITHOUT a successor (Decision 24 Amendment 1): short closure note stating what completed it and when; NO \`superseded-by:\`, NO archive, NO placeholder successor. |\n'
+        '| \`type:archive\` | Append-only verbatim capture of a record body taken BEFORE any mutation; header states what/when/sha256 of the original body. |\n'
+        '\n'
+        'Sequence invariant (ratified): archive-first-then-pointer; if the archive creation or its sha256 round-trip fails, the pointer mutation must not run.\n'
+        '',
         ARRAY['messaging', 'reference', 'tags', 'routing'],
         ARRAY['tag routing', 'message format', 'tag convention', 'what tags'],
         '{}'
