@@ -117,3 +117,73 @@ describe("harness twin Express parity", () => {
     expect(response.text).toContain("<pre>Cannot GET /definitely/not/a/route</pre>");
   });
 });
+
+
+// ══════════════════════════════════════════════════════════════════════════
+// LIVE-GATEWAY HARNESS (hermetic) — the CI gap that let the fleet-wide
+// $req/$res defect class hide (PR #688/#690 wave, 2026-09-30).
+//
+// The suites above drive the verbatim Express app through supertest — they
+// never touch the moleculer-web gateway, so a gateway regression
+// (onBeforeCall $req/$res stash dropped, catch-all aliases lost, onError 404
+// emulation removed) cannot redden CI. This block boots the REAL broker +
+// ApiService + twin service in-process (transporter null; PG/Redis still
+// mocked by the jest.mock at the top of this file) on an EPHEMERAL port
+// (SERVICE_PORT="0" set above, before api.service is dynamically imported —
+// the gateway captures settings.port at construction) and asserts:
+//   1. matched route 200 — transitively proves the onBeforeCall $req/$res
+//      stash: without it, every alias-dispatch call 500s (DISPATCH_NO_REQRES);
+//   2. unmatched multi-segment path 404 with the twin's exact 404 body;
+//   3. wrong-method request 404 — GET-only aliases must never 405/500.
+// No live incumbents, no PG, no Redis, no fixed ports — CI-hermetic by design.
+// ══════════════════════════════════════════════════════════════════════════
+process.env.SERVICE_PORT = "0"; // must precede the dynamic imports below
+
+describe("live gateway (real broker + moleculer-web on ephemeral port)", () => {
+  const UNMATCHED = "/definitely/not/a/gateway/route";
+  let base = "";
+  let stop = async () => {};
+
+  beforeAll(async () => {
+    // CommonJS require on purpose: under ts-jest isolatedModules (conduit,
+    // harness, peb, execution, aegis) a dynamic import() stays untransformed
+    // and throws "A dynamic import callback was invoked without
+    // --experimental-vm-modules". require() works under both ts-jest modes.
+    const { ServiceBroker } = require("moleculer");
+    const ApiService = require("../services/api.service").default;
+    const TwinService = require("../services/harness.service").default;
+    const broker = new ServiceBroker({ transporter: null, logger: false, metrics: false });
+    broker.createService(ApiService);
+    broker.createService(TwinService);
+    await broker.start();
+    const gw = broker.getLocalService("api") as any;
+    base = `http://127.0.0.1:${gw.server.address().port}`;
+    stop = async () => {
+      await broker.stop();
+    };
+  }, 30000);
+
+  afterAll(() => stop());
+
+  it("matched route 200 — proves the onBeforeCall $req/$res stash (dispatch 500s without it)", async () => {
+const { pool, redis } = require("../services/db");
+    (pool.query as jest.Mock).mockResolvedValueOnce({ rows: [] });
+    (redis.ping as jest.Mock).mockResolvedValueOnce("PONG");
+    const res = await fetch(`${base}/health`);
+    expect(res.status).toBe(200);
+  });
+
+  it("unmatched path 404 — finalhandler HTML page, byte-for-byte", async () => {
+    const res = await fetch(`${base}${UNMATCHED}`);
+    expect(res.status).toBe(404);
+    expect(res.headers.get("content-type")).toMatch(/^text\/html/);
+    expect((await res.text()).trim()).toBe(
+      `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>Error</title>\n</head>\n<body>\n<pre>Cannot GET /definitely/not/a/gateway/route</pre>\n</body>\n</html>`
+    );
+  });
+
+  it("wrong-method request 404 — GET-only aliases never 405/500", async () => {
+    const res = await fetch(`${base}/health`, { method: "POST" });
+    expect(res.status).toBe(404);
+  });
+});
