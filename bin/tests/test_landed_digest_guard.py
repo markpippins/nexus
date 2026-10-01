@@ -323,11 +323,14 @@ def test_cli_unresolvable_rev_is_tool_error():
 # ── repo registry sanity (the real one must stay parseable + pinned) ─────
 
 def test_repo_registry_wellformed_and_pinned_digests_stable():
-    """The four pins advanced 2026-09-30 when #673/#675 landed (parity
-    verified: digest protocol + squash-of-head). Guard reads ALL_MATCH."""
+    """Tier-1 pins advanced 2026-09-30 when #673/#675 landed (parity
+    verified: digest protocol + squash-of-head). Tier-2 pins captured
+    2026-10-01 @ origin/main ead7ff59a (existence positively verified).
+    PR #695 (CIR-5 janitor rung) is queued against the janitor pin.
+    Guard reads ALL_MATCH (landed side at pins; queued entry live-verified)."""
     reg = HERE.parent / "landed-tool-pins.json"
     data = json.loads(reg.read_text())
-    assert data["version"] == 1 and len(data["pins"]) >= 4
+    assert data["version"] == 1 and len(data["pins"]) >= 8
     by_path = {p["path"]: p for p in data["pins"]}
     assert by_path["bin/supersede-record.sh"]["digest"] == (
         "bd39b5e646c37f819c6ba00ae2aac893ad23124682413a65631435ada97156fb")
@@ -337,8 +340,55 @@ def test_repo_registry_wellformed_and_pinned_digests_stable():
         "bcb4d638b3b1dff6796caf7bd55a438cb0aad5020bef83df08b052285f76d3ca")
     assert by_path["bin/gate_codes.py"]["digest"] == (
         "d4f60f411c45ec1f776d90ed25b2782f285347d003c64daad14c82825b6cbc6f")
+    # Tier-2 (2026-10-01 capture @ ead7ff59a)
+    assert by_path["bin/record_hygiene_sweep.py"]["digest"] == (
+        "e32e04b79bc833bb65499a0ff290269a46da65dc0d84adb4753ecc8f3b3438cc")
+    assert by_path["bin/post-agent-record.py"]["digest"] == (
+        "13ba888f195f4a607c389cca0a6df617f965afc6fc408a6ea782f644a4891fb3")
+    assert by_path["bin/post-change-log.sh"]["digest"] == (
+        "336f8e1898f4dc21adfa96aef096466788d295a3ea5915fced507541920335f6")
+    assert by_path["bin/pgie-evidence.py"]["digest"] == (
+        "8713a16a86de08161de6c8fa86b6809caccc64f177d3bd33952f504e18d2a4dc")
+    # Every pin carries provenance; the only open queue entry is #695.
     for p in data["pins"]:
-        assert p.get("queued_prs") == [], "all queued PRs landed; queue must be empty"
+        assert (p.get("provenance") or "").strip(), "every pin documents its capture"
+    queued = [(p["path"], q) for p in data["pins"] for q in p.get("queued_prs") or []]
+    assert len(queued) == 1, "exactly one queued pin-advance expected (#695)"
+    qpath, q = queued[0]
+    assert qpath == "bin/attestation_janitor.py"
+    assert q["pr"] == 695
+    assert q["head"] == "856ccd474a7e50928813fc1c521be8201c910e81"
+    assert q["digest"] == "15295414a18a03e21c2f266a6da9697a1a5d32516db36bf156c9cfb3e8c6489f"
+    assert (q.get("provenance") or "").strip(), "queue entry documents its capture"
+
+
+def test_repo_registry_tier2_paths_exist_on_main():
+    """Positive existence check for every pinned path at origin/main —
+    the epoch-0 lesson (an inverted existence check mislabeled a landed
+    tool). Runs git; skips cleanly outside a nexus checkout."""
+    import subprocess as sp
+    reg = HERE.parent / "landed-tool-pins.json"
+    data = json.loads(reg.read_text())
+    nexus = HERE.parent.parent
+    git = sp.run(["git", "-C", str(nexus), "rev-parse", "--verify", "origin/main"],
+                 capture_output=True, text=True)
+    if git.returncode != 0:
+        import pytest
+        pytest.skip("origin/main unavailable outside nexus checkout")
+    for p in data["pins"]:
+        e = sp.run(["git", "-C", str(nexus), "cat-file", "-e", f"origin/main:{p['path']}"],
+                   capture_output=True, text=True)
+        assert e.returncode == 0, f"{p['path']} absent from origin/main"
+
+
+def test_pin_advance_template_present():
+    """The pre-staged pin-advance template ships beside the registry and
+    documents the digest-capture command and the epoch-0 existence check."""
+    tpl = HERE.parent / "PIN_ADVANCE_TEMPLATE.md"
+    text = tpl.read_text()
+    assert "git show" in text and "sha256sum" in text, "digest capture command"
+    assert "cat-file -e" in text, "mandatory existence check"
+    assert "queued_prs" in text, "queue registration requirement"
 
 
 # ── dual-runnable runner (keep at EOF) ───────────────────────────────────
