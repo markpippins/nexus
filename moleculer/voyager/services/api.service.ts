@@ -23,9 +23,30 @@ import ApiGateway from "moleculer-web";
  *   503 → {status:"error", message}   (health only, DB down)
  *   404 → {error:"<Thing> not found"}
  *   500 → {error:"<db message>"}
+ * Unmatched routes: the incumbent is Express — finalhandler HTML error page
+ * (see expressNotFoundHtml below).
  * moleculer-web's default error body ({name,message,code,type}) is NOT that,
  * hence the explicit onError below.
  */
+
+/**
+ * Unmatched routes: the incumbent is Express — for paths without a matching
+ * alias (or a GET-only route hit with another method) its finalhandler emits
+ * the default HTML error page (kernel-port finding). moleculer-web instead
+ * surfaces its JSON NotFoundError envelope ({name:"NotFoundError",...}), so
+ * the routes' onError reproduces the HTML page byte-for-byte.
+ *
+ * Express prints the PATHNAME of req.originalUrl (finalhandler →
+ * parseurl.original().pathname — query and hash excluded, raw encoding kept;
+ * encodeUrl passthrough is identical for valid request targets). Use the
+ * originalUrl, NOT route.path + req.url: that rewrite synthesizes a trailing
+ * slash and would mis-print a bare `GET /api` as `GET /api/`.
+ */
+function expressNotFoundHtml(req: any): string {
+  const pathname = /^[^?#]*/.exec(String(req?.originalUrl ?? req?.url ?? "/"))![0];
+  return `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>Error</title>\n</head>\n<body>\n<pre>Cannot ${req.method} ${pathname}</pre>\n</body>\n</html>\n`;
+}
+
 export default class ApiService extends Service {
   constructor(broker: ServiceBroker) {
     super(broker);
@@ -81,6 +102,20 @@ export default class ApiService extends Service {
               const code = (err as any)?.code;
               const status = Number.isInteger(code) && code >= 400 && code < 600 ? code : 500;
               const message = (err as any)?.message ?? String(err);
+              // The gateway's own routing miss (no alias matched) surfaces
+              // here as moleculer-web's NotFoundError via send404 → sendError
+              // (req.$route is set before alias resolution, so this route's
+              // onError runs). The incumbent is Express, whose finalhandler
+              // emits the default HTML error page for unmatched routes —
+              // reproduce it byte-for-byte. Action-level 404s (NOT_FOUND) are
+              // MoleculerError instances and keep the {error} JSON envelope
+              // below.
+              if (status === 404 && (err as any)?.name === "NotFoundError") {
+                res.setHeader("Content-Type", "text/html; charset=utf-8");
+                res.statusCode = 404;
+                res.end(expressNotFoundHtml(req));
+                return;
+              }
               res.setHeader("Content-Type", "application/json; charset=utf-8");
               res.statusCode = status;
               // 503 keeps the incumbent's health-specific envelope; everything
@@ -101,6 +136,14 @@ export default class ApiService extends Service {
             onError(req: any, res: any, err: any) {
               const code = (err as any)?.code;
               const status = Number.isInteger(code) && code >= 400 && code < 600 ? code : 500;
+              // Same finalhandler HTML parity as the /api route — this mount
+              // is the prefix-of-last-resort for every top-level path.
+              if (status === 404 && (err as any)?.name === "NotFoundError") {
+                res.setHeader("Content-Type", "text/html; charset=utf-8");
+                res.statusCode = 404;
+                res.end(expressNotFoundHtml(req));
+                return;
+              }
               res.setHeader("Content-Type", "application/json; charset=utf-8");
               res.statusCode = status;
               res.end(JSON.stringify({ error: (err as any)?.message ?? String(err) }));

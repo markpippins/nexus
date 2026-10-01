@@ -17,9 +17,44 @@ mostly test error paths). Override the connection with PGHOST/PGUSER/PGDATABASE
 / PGPASSWORD.
 """
 import argparse
+import json
 import os
 import subprocess
 import sys
+
+# Commit-cited normalization — documented drift, not hidden drift.
+# The LIVE incumbent at :3114 still emits these four zero-count keys in
+# /api/stats: its dist predates 135e5565b (2026-08-08, "prune
+# identity/entity/requirement routes — T04 physical observer only"), which
+# removed them from routes.ts on main. The twin mirrors main's source, so it
+# omits them. Normalized away (key dropped from both sides when present) so
+# the stale-build artifact cannot mask real regressions; everything else in
+# the body is compared strictly.
+STATS_PRUNED_KEYS = [
+    "identity_candidates",
+    "entities",
+    "entity_drifts",
+    "requirement_candidates",
+]
+
+
+METHOD_PROBES = [
+    ("POST", "/api/scan-epochs"),
+    ("POST", "/health"),
+]
+
+
+def normalize_stats(body: str):
+    """Drop the pre-prune zero-count keys; None when not a stats object."""
+    try:
+        d = json.loads(body)
+    except Exception:
+        return None
+    if not isinstance(d, dict):
+        return None
+    for k in STATS_PRUNED_KEYS:
+        d.pop(k, None)
+    return json.dumps(d, sort_keys=True)
 
 PSQL = [
     "psql",
@@ -49,9 +84,13 @@ def one(sql):
     return p.stdout.strip().splitlines()[0].strip() if p.stdout.strip() else None
 
 
-def fetch(base, path, timeout="20"):
+def fetch(base, path, timeout="20", method=None):
+    cmd = ["curl", "-s", "-w", "\n%{http_code}", "--max-time", timeout]
+    if method:
+        cmd += ["-X", method]
+    cmd.append(base + path)
     p = subprocess.run(
-        ["curl", "-s", "-w", "\n%{http_code}", "--max-time", timeout, base + path],
+        cmd,
         capture_output=True,
         text=True,
     )
@@ -137,6 +176,21 @@ def build_requests():
         reqs.append(f"/api/spans/{span_id}")
 
     reqs.append("/api/stats")
+
+    # Unmatched routes — the incumbent is Express, whose finalhandler prints
+    # the default HTML error page (Cannot <method> <originalUrl>). Both mounts
+    # plus the root prefix-of-last-resort, exact-bytes compared below. The
+    # bare mount (/api) matters: that path used to render as /api/ when the
+    # twin reconstructed it from route.path + req.url.
+    reqs += [
+        "/api/definitely/not/a/route",
+        "/api",
+        "/api/",
+        "/topology/signals",          # real route shape, missing /api prefix
+        "/definitely/not/a/route",
+        "/?x=1",                      # query excluded: finalhandler prints parseurl pathname
+        "/api/stats?x=1",             # query on a MATCHED route stays JSON
+    ]
     return reqs
 
 
@@ -150,23 +204,51 @@ def main():
     print(f"\ncomparing {len(reqs)} requests: {args.incumbent} (incumbent) vs {args.port} (port)\n")
 
     ok, diffs = 0, []
-    for path in reqs:
-        c1, b1 = fetch(args.incumbent, path)
-        c2, b2 = fetch(args.port, path)
+    total = len(reqs) + len(METHOD_PROBES)
+
+    def probe(method, path):
+        """A/B one request with one re-check; returns (ok, detail)."""
+        c1, b1 = fetch(args.incumbent, path, method=method)
+        c2, b2 = fetch(args.port, path, method=method)
         if c1 == c2 and b1 == b2:
+            return True, (c1, c2, b1, b2)
+        c1b, b1b = fetch(args.incumbent, path, method=method)   # re-check: a write may have landed mid-probe
+        c2b, b2b = fetch(args.port, path, method=method)
+        if c1b == c2b and b1b == b2b:
+            return True, (c1b, c2b, b1b, b2b)
+        return False, (c1b, c2b, b1b, b2b)
+
+    for path in reqs:
+        good, (c1, c2, b1, b2) = probe(None, path)
+        # /api/stats carries the one commit-cited normalization (stale
+        # incumbent dist still emits the pre-135e5565b zero-count keys).
+        if path.startswith("/api/stats") and normalize_stats(b1) is not None \
+                and normalize_stats(b1) == normalize_stats(b2):
+            ok += 1
+            print(f"  MATCH  {c1} {path} (normalized: pre-prune zero-count keys)")
+            continue
+        if good:
             ok += 1
             print(f"  MATCH  {c1} {path}")
             continue
-        c1b, b1b = fetch(args.incumbent, path)   # re-check: a write may have landed mid-probe
-        c2b, b2b = fetch(args.port, path)
-        if c1b == c2b and b1b == b2b:
-            ok += 1
-            print(f"  MATCH  {c1b} {path} (stable on recheck)")
-        else:
-            diffs.append((path, c1b, c2b, b1b, b2b))
-            print(f"  DIFF   {path}: incumbent={c1b} port={c2b}")
+        diffs.append((path, c1, c2, b1, b2))
+        print(f"  DIFF   {path}: incumbent={c1} port={c2}")
 
-    print(f"\n{ok}/{len(reqs)} identical")
+    # Wrong-method probes: the incumbent surface is GET-only, so a POST to
+    # any path falls through to Express finalhandler (HTML 404) — never a
+    # 405. The twin's aliases are GET-only too, so moleculer-web must take
+    # the same path (NotFoundError → onError HTML emulation).
+    for method, path in METHOD_PROBES:
+        label = f"[{method}] {path}"
+        good, (c1, c2, b1, b2) = probe(method, path)
+        if good and c1 == "404" and b1.lstrip().startswith("<!DOCTYPE html>") and f"Cannot {method}" in b1:
+            ok += 1
+            print(f"  MATCH  {c1} {label} (finalhandler HTML)")
+            continue
+        diffs.append((label, c1, c2, b1, b2))
+        print(f"  DIFF   {label}: incumbent={c1} port={c2}")
+
+    print(f"\n{ok}/{total} probes identical")
     if diffs:
         print("\n=== DIFFERENCES ===")
         for path, c1, c2, b1, b2 in diffs:
