@@ -1,5 +1,6 @@
 import request from "supertest";
 import { Pool } from "pg";
+import { requirementCompileUrl } from "../src/routes.js";
 
 /**
  * Hermetic contract tests for the nebula twin (:4101).
@@ -211,5 +212,30 @@ describe("body-parser negative (canary-safe write probe)", () => {
       .send('{"broken":');
     expect(res.status).toBe(400);
     expect(poolMock.query).not.toHaveBeenCalled();
+  });
+});
+
+// ── CodeQL SSRF: requirement compile trigger URL ───────────────────────
+// The Backlog→ToDo trigger interpolates a request-derived requirement id
+// into an outgoing URL. encodeURIComponent is the sanitizer CodeQL
+// recognises for js/request-forgery: it escapes path separators so a
+// crafted id cannot traverse the path or reach another host.
+describe("requirementCompileUrl (CodeQL js/request-forgery fix)", () => {
+  it("URI-encodes the id; benign ids are unchanged", () => {
+    expect(requirementCompileUrl(42)).toBe(
+      "http://localhost:3101/api/requirements/42/compile",
+    );
+    expect(requirementCompileUrl("2717")).toBe(
+      "http://localhost:3101/api/requirements/2717/compile",
+    );
+  });
+
+  it("escapes path separators so a crafted id cannot retarget the request", () => {
+    expect(requirementCompileUrl("../../evil")).toBe(
+      "http://localhost:3101/api/requirements/..%2F..%2Fevil/compile",
+    );
+    expect(requirementCompileUrl("a/b")).toBe(
+      "http://localhost:3101/api/requirements/a%2Fb/compile",
+    );
   });
 });

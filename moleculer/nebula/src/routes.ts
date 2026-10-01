@@ -277,6 +277,22 @@ function roleLeaseRecordTags(
   return [...domain, 'to:wr-conf-observer'];
 }
 
+/**
+ * URL for the Backlog→ToDo auto-compile trigger (Plan 1062).
+ *
+ * CodeQL js/request-forgery: the requirement id is request-derived, so it is
+ * URI-encoded before interpolation. `encodeURIComponent` is the sanitizer
+ * CodeQL recognises for this query — it escapes path separators ("/" →
+ * "%2F"), so a crafted id can neither traverse the path nor retarget the
+ * request off the hardcoded host. A regex guard alone is NOT a sanitizer for
+ * this query (verified against RequestForgeryCustomizations.qll's
+ * UriEncodingSanitizer), which is why the numeric-shape check alone did not
+ * clear the alert.
+ */
+export function requirementCompileUrl(id: string | number): string {
+  return `http://localhost:3101/api/requirements/${encodeURIComponent(String(id))}/compile`;
+}
+
 export function createRoutes(pool: Pool): Router {
   const router = Router();
 
@@ -1061,12 +1077,12 @@ export function createRoutes(pool: Pool): Router {
       // two-stage compiler to generate WorkRequest IR. D2 (CP-2): compile
       // is now pre-row — it no longer implies a conduit plan row. Plan
       // creation is a separate release-time step (CP-9 release gate).
-      // CodeQL SSRF hardening: the URL interpolates a request-derived id,
-      // so the trigger only fires for the numeric id shape the requirements
-      // table uses (any other shape could not have produced the UPDATE
-      // row above, and now also cannot reach the URL).
+      // CodeQL SSRF hardening lives in requirementCompileUrl (encodeURIComponent
+      // is the recognised sanitizer); the numeric-shape check is kept as an
+      // additional narrowing — requirements ids are numeric, so the trigger
+      // only fires for the shape the table actually uses.
       if (status !== undefined && reqt.status === 'ToDo' && /^\d+$/.test(String(id))) {
-        fetch(`http://localhost:3101/api/requirements/${id}/compile`, {
+        fetch(requirementCompileUrl(id), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ createPlan: false }),
