@@ -181,7 +181,13 @@ try:
             extra = result if isinstance(result, dict) else {}
         if isinstance(extra, dict) and isinstance(extra.get("pointer"), str):
             pointer = extra["pointer"]
-        header = "# inbox for %s since %s (limit %d)" % (role, pointer or "(none)", limit)
+        # Say WHERE the value came from. The default path reports the STORED watermark; the
+        # override path reports the CALLER'S OWN lookback anchor. Those are different things,
+        # and printing both as "since <T>" made a self-supplied lookback look like a store
+        # value -- which is how a "phantom" pointer got reported against raw Redis that never
+        # held it (DBA inbox-pointer correction, 2026-10-01). A lookback anchor is computed from
+        # the clock, so it corresponds to NO record by construction: that is the tell.
+        header = "# inbox for %s since STORED_POINTER=%s (limit %d)" % (role, pointer or "(none)", limit)
     else:
         # Explicit-pointer / --all path: nebula_list_agent_records with tag filter.
         # Match the default nebula_get_inbox path: filter by the routing tag
@@ -203,7 +209,7 @@ try:
             arguments["createdAfter"] = pointer
         result = client.call("nebula_list_agent_records", arguments)
         records, extra = _records_from(result)
-        header = ("# inbox for %s since %s (limit %d)" % (role, pointer, limit)
+        header = ("# inbox for %s since CALLER_OVERRIDE=%s (limit %d)" % (role, pointer, limit)
                   if pointer else "# inbox for %s — most recent %d records" % (role, limit))
 except Exception as e:
     print("ERROR: %s" % e, file=sys.stderr)
