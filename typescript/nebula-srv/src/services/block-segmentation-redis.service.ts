@@ -106,20 +106,131 @@ export async function closeRedis(): Promise<void> {
 // ── Inbox Pointer (per-role watermark for unread messages) ────────
 
 /**
- * Key pattern for inbox pointers.
- * Stores the ISO timestamp of the last-seen record per role.
- * All state is RECOMPUTABLE — on Redis loss, agents re-read from the beginning.
+ * Key pattern for inbox pointers. CACHE ONLY — see the durability note below.
  */
 const KEY_INBOX_POINTER = (role: string) => `inbox:pointer:${role}`;
 
 /**
+ * Durable inbox-pointer table. Delivery watermarks are coordination state over records that
+ * live in Postgres, so they must live in a durable store.
+ *
+ * The previous assumption here was "All state is RECOMPUTABLE — on Redis loss, agents
+ * re-read from the beginning." That was wrong, and it cost real delivery completeness:
+ * architect record `db3992b2` documents all ten role pointers lost to a Redis restart
+ * (2026-10-01T08:16:37Z), because pointers were plain SETs with no TTL against a Redis
+ * running `appendonly no`. Re-reading from the beginning is NOT harmless — it silently
+ * re-delivers a role's entire history and truncates at the limit cap, so the tail becomes
+ * invisible. That is precisely the "silent truncation read as certainty" failure ruled
+ * against in `26560466`.
+ *
+ * This mirrors the leases/claims precedent (`tackle.role_leases`): coordination state in
+ * Postgres, cache in front.
+ */
+const POINTER_TABLE = 'nebula.role_inbox_pointers';
+
+/** Lazily-created pool, mirroring the module's lazy `redis`. Env-overridable like index.ts. */
+let pointerPool: Pool | null = null;
+let pointerTableMissingLogged = false;
+
+function getPointerPool(): Pool {
+  if (!pointerPool) {
+    pointerPool = new Pool({
+      host: process.env.PG_HOST || 'localhost',
+      port: parseInt(process.env.PG_PORT || '5432', 10),
+      user: process.env.PG_USER || 'pguser',
+      password: process.env.PG_PASSWORD || process.env.PG_PASS || 'pgpass',
+      database: process.env.PG_DB_NAME || 'nexus',
+      max: 2,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 5000,
+    });
+    pointerPool.on('error', () => { /* never crash the process on an idle client error */ });
+  }
+  return pointerPool;
+}
+
+/**
+ * Close the pointer pool (called from index.ts alongside closeRedis).
+ */
+export async function closePointerPool(): Promise<void> {
+  if (pointerPool) {
+    await pointerPool.end().catch(() => {});
+    pointerPool = null;
+  }
+}
+
+/**
+ * Read the durable pointer. Returns null when Postgres is unreachable OR the table has not
+ * been applied yet — the caller cannot tell the difference, so the fallback logs loudly.
+ */
+async function readDurablePointer(role: string): Promise<string | null> {
+  try {
+    const { rows } = await getPointerPool().query(
+      `SELECT to_char(pointer AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS pointer
+         FROM ${POINTER_TABLE} WHERE role = $1`,
+      [role],
+    );
+    return rows[0]?.pointer ?? null;
+  } catch (err: any) {
+    if (/does not exist|relation/.test(String(err?.message ?? err))) {
+      if (!pointerTableMissingLogged) {
+        pointerTableMissingLogged = true;
+        console.warn(
+          `[inbox-pointer] ${POINTER_TABLE} is not applied — pointers are being served from ` +
+            'Redis ONLY, which is NOT durable. Route migration 071 to the DBA.',
+        );
+      }
+    }
+    return null;
+  }
+}
+
+/** Persist the durable pointer. Returns false when durability could NOT be achieved. */
+async function writeDurablePointer(role: string, timestamp: string): Promise<boolean> {
+  try {
+    await getPointerPool().query(
+      `INSERT INTO ${POINTER_TABLE} (role, pointer) VALUES ($1, $2::timestamptz)
+       ON CONFLICT (role) DO UPDATE SET pointer = EXCLUDED.pointer, updated_at = now()`,
+      [role, timestamp],
+    );
+    pointerTableMissingLogged = false;
+    return true;
+  } catch (err: any) {
+    if (/does not exist|relation/.test(String(err?.message ?? err))) {
+      if (!pointerTableMissingLogged) {
+        pointerTableMissingLogged = true;
+        console.warn(
+          `[inbox-pointer] ${POINTER_TABLE} is not applied — pointer for ${role} is cached in ` +
+            'Redis ONLY and will be LOST on restart. Route migration 071 to the DBA.',
+        );
+      }
+    } else {
+      console.warn(`[inbox-pointer] durable write failed for ${role}: ${err?.message ?? err}`);
+    }
+    return false;
+  }
+}
+
+/**
  * Get the inbox pointer for a role.
- * Returns the ISO timestamp of the last-seen record, or null if no pointer exists.
+ *
+ * Postgres is canonical; Redis is a cache. A cache miss is filled from Postgres, never the
+ * reverse — reading Redis first would re-introduce exactly the silent-truncation failure.
  */
 export async function getInboxPointer(role: string): Promise<string | null> {
+  const durable = await readDurablePointer(role);
+  if (durable) {
+    if (redis) await redis.set(KEY_INBOX_POINTER(role), durable).catch(() => {});
+    return durable;
+  }
   if (!redis) return null;
   try {
-    return await redis.get(KEY_INBOX_POINTER(role));
+    const cached = await redis.get(KEY_INBOX_POINTER(role));
+    if (cached) {
+      // Backfill: a Redis-only pointer is a real prior value, not something to discard.
+      await writeDurablePointer(role, cached).catch(() => {});
+    }
+    return cached;
   } catch {
     return null;
   }
@@ -127,24 +238,56 @@ export async function getInboxPointer(role: string): Promise<string | null> {
 
 /**
  * Set the inbox pointer for a role.
+ *
+ * Durable write FIRST. If Postgres refuses, the Redis write still happens so the hot path
+ * keeps working, but the caller is told the value is not durable — a silent success here is
+ * how the original defect hid for so long.
+ *
  * @param role - The role name (e.g., "architect", "engineer")
  * @param timestamp - ISO timestamp of the last-seen record
+ * @returns true when the pointer is durable, false when it is cache-only
  */
-export async function setInboxPointer(role: string, timestamp: string): Promise<void> {
-  if (!redis) return;
-  await redis.set(KEY_INBOX_POINTER(role), timestamp);
+export async function setInboxPointer(role: string, timestamp: string): Promise<boolean> {
+  const durable = await writeDurablePointer(role, timestamp);
+  if (redis) await redis.set(KEY_INBOX_POINTER(role), timestamp).catch(() => {});
+  if (!redis && !durable) {
+    console.warn(`[inbox-pointer] ${role}: no durable store and no cache; pointer ${timestamp} not stored`);
+  }
+  return durable;
 }
 
 /**
  * Get all inbox pointers (for debugging/monitoring).
  */
 export async function getAllInboxPointers(): Promise<Record<string, string | null>> {
-  if (!redis) return {};
-  const keys = await redis.keys('inbox:pointer:*');
   const result: Record<string, string | null> = {};
-  for (const key of keys) {
-    const role = key.replace('inbox:pointer:', '');
-    result[role] = await redis.get(key);
+
+  // Postgres first: a role whose pointer is durable but not yet cached must still appear,
+  // otherwise the census looks like "never initialized" instead of "cache miss".
+  try {
+    const { rows } = await getPointerPool().query(
+      `SELECT role, to_char(pointer AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS pointer
+         FROM ${POINTER_TABLE}`,
+    );
+    for (const row of rows) result[row.role] = row.pointer;
+  } catch {
+    /* table not applied, or Postgres unreachable — fall through to the cache */
+  }
+
+  if (!redis) return result;
+  try {
+    const keys = await redis.keys('inbox:pointer:*');
+    for (const key of keys) {
+      const role = key.replace('inbox:pointer:', '');
+      // Never overwrite a durable value with a cache value.
+      if (result[role] !== undefined) {
+        await writeDurablePointer(role, await redis.get(key) ?? new Date().toISOString()).catch(() => {});
+        continue;
+      }
+      result[role] = await redis.get(key);
+    }
+  } catch {
+    /* cache unavailable */
   }
   return result;
 }

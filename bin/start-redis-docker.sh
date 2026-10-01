@@ -22,7 +22,13 @@ if [ "$(docker ps -a -q -f name=${CONTAINER_NAME})" ]; then
 fi
 
 echo "[redis] Starting Redis container..."
-if docker run --name ${CONTAINER_NAME} -p ${REDIS_PORT}:6379 -d redis:latest; then
+# `--appendonly yes`: Redis is a CACHE tier, but inbox delivery watermarks were stored there
+# and all ten were lost to a restart on 2026-10-01T08:16:37Z (architect defect db3992b2).
+# The container runs with no redis.conf, so `CONFIG SET appendonly yes` alone does NOT survive
+# a container recreate — it has to be a launch argument. `appendfsync everysec` is the Redis
+# default and is left explicit for the record.
+if docker run --name ${CONTAINER_NAME} -p ${REDIS_PORT}:6379 -d redis:latest \
+     redis-server --appendonly yes --appendfsync everysec; then
     echo "[redis] Container started."
 else
     echo "[redis] ERROR: Failed to start Redis container." >&2
