@@ -86,7 +86,27 @@ export function startHeartbeatLoop(
  */
 export function createApp(): Express {
   const app = express();
-  app.use(cors({ origin: "*", credentials: true }));
+  // CORS: allowlist via SUBSTANCE_CORS_ORIGINS (comma-separated). Default
+  // "*" preserves the historical any-origin posture (the FastAPI app sent
+  // ACAO: *); an explicit list tightens it with no code change. The
+  // function form (rather than origin: "*") makes cors echo the request
+  // origin and silently deny unlisted ones; `credentials: true` is dropped
+  // — wildcard+credentials was already non-functional for credentialed
+  // requests (browsers reject ACAO:* with credentials), and the
+  // combination is the js/cors-permissive-configuration alert
+  // (tools/security/backfill-ledger.yaml entry 1).
+  const CORS_ORIGINS = (process.env.SUBSTANCE_CORS_ORIGINS ?? "*")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  app.use(
+    cors({
+      origin: (origin, cb) => {
+        if (!origin || CORS_ORIGINS.includes("*") || CORS_ORIGINS.includes(origin)) return cb(null, true);
+        return cb(null, false); // no-Origin (curl/same-origin) and allowlisted pass; others silent-deny
+      },
+    }),
+  );
   app.use(express.json({ limit: "10mb" }));
 
   app.get("/healthz", (_req, res) => {

@@ -26,7 +26,7 @@ entries:
     rule_id: js/cors-permissive-configuration
     incumbent_path: typescript/substance-srv
     twin_path: moleculer/substance/services/express-app.ts
-    status: backfill-planned
+    status: backfilled
     opened: 2026-10-01
     owner: engineer-lane
     review_by: 2026-11-01
@@ -39,3 +39,10 @@ entries:
       copied by tools/security/classify_twin_alerts.py, rehearsal 2026-10-01.
       Time box: re-review by 2026-11-01; backfill a tightened origin policy or
       reclassify with evidence.
+      Backfilled 2026-10-01: incumbent (typescript/substance-srv/src/index.ts
+      createApp) and twin (moleculer/substance/services/express-app.ts) both
+      moved to the env-driven allowlist form (SUBSTANCE_CORS_ORIGINS, default
+      "*" = historical posture; function-form origin echo; credentials flag
+      dropped) in the CORS backfill PR — same change on both sides, so the
+      copied-vs-novel gate stays coherent; contract pins updated on both
+      suites.
