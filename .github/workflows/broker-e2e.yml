@@ -478,11 +478,12 @@ jobs:
           pkill -f 'peb-bootstrap-1.0.0-SNAPSHOT.jar' 2>/dev/null || true
           tail -20 /tmp/peb-kernel.log 2>/dev/null || true
 
-  # ── The five moleculer jest twins ───────────────────────────────────────────
+  # ── The six moleculer jest twins ────────────────────────────────────────────
   #
-  # tackle / conduit / harness / peb / aegis are five ports of one service to a
-  # new port, each shipping the same test harness: a jest.config.js, a
-  # test/<name>.test.ts, and `npm test` = `jest --forceExit --detectOpenHandles`.
+  # tackle / conduit / harness / peb / execution / aegis are six ports of one
+  # service to a new port, each shipping the same test harness: a
+  # jest.config.js, a test/<name>.test.ts, and `npm test` =
+  # `jest --forceExit --detectOpenHandles`.
   #
   # The first twin set the pattern and the next four copied the source but not
   # the CI step, because the CI step was never part of the pattern to copy. For
@@ -511,12 +512,12 @@ jobs:
     permissions:
       contents: read
     strategy:
-      # fail-fast: false — one red twin must not mask the other four. A
-      # matrix that goes all-or-nothing is how five packages stay silently
+      #      fail-fast: false — one red twin must not mask the other five. A
+      # matrix that goes all-or-nothing is how six packages stay silently
       # unverified in the first place.
       fail-fast: false
       matrix:
-        service: [tackle, conduit, harness, peb, aegis]
+        service: [tackle, conduit, harness, peb, execution, aegis]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
