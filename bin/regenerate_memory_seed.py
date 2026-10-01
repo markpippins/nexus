@@ -32,6 +32,7 @@ Escaping conventions (established by commit 4ba52cc; see agent record
 
 Usage:
     python3 bin/regenerate_memory_seed.py [--dry-run] [--verify]
+                                          [--check-vendors] [--no-vendor-propagation]
 
     --dry-run  report what would change without writing files
     --verify   after writing, render each seed with Node, shadow-seed into
@@ -39,11 +40,33 @@ Usage:
                byte-compare every card (title/summary/body/tags/triggers/
                mcp_tools + role set) against the live tackle.memory table.
                Requires `node` and a reachable local Postgres.
+    --check-vendors
+               DB-free vendor-staleness audit (Decision 23 property: the
+               guard must be checkable without the canonical DB). Exits 0
+               when every vendoring twin is byte-identical to the source,
+               1 with a per-file diff report otherwise. Mutates nothing.
+               This is what the source-change CI job runs (Ruling 2/4 (b)).
+    --no-vendor-propagation
+               regenerate the source ONLY (old behaviour). Vendoring twins
+               are otherwise propagated IN THE SAME INVOCATION (architect
+               Ruling 2/4 (a), record 4f30f05c): every moleculer twin that
+               vendors tackle-seeds is byte-copied from the fresh source
+               before this process exits, so "source regenerated, twin
+               stale" is unrepresentable rather than discouraged.
+
+Vendoring twins (discovered dynamically):
+    Any moleculer/* package with a `vendor/tackle-seeds/` directory is a
+    vendoring twin (today: moleculer/tackle). Propagation byte-copies every
+    file that exists in BOTH the source package and the twin's vendor dir
+    — the same file set the twin's byte-identity guard checks (e.g.
+    moleculer/tackle/test/tackle.test.ts). Files that exist only in the
+    vendor dir are twin-local and are never touched.
 
 Env: CONDUIT_PG_DSN  (default postgresql://pguser:pgpass@localhost:5432/nexus)
 """
 
 import argparse
+import hashlib
 import os
 import re
 import subprocess
@@ -68,6 +91,81 @@ from nexus_core.wrp.seed_manifest import (  # noqa: E402
 )
 
 MANIFEST_FILES = [MANIFEST_PATH]
+
+# ── vendoring twins (Ruling 2/4 (a)) ─────────────────────────────────────
+
+VENDOR_ROOT = os.path.join(REPO, "moleculer")
+VENDOR_SUBPATH = os.path.join("vendor", "tackle-seeds")
+
+
+def vendor_twin_dirs():
+    """Every moleculer twin that vendors tackle-seeds, discovered dynamically.
+
+    A twin is any moleculer/<name>/ with a vendor/tackle-seeds/ directory.
+    Discovery is directory-based on purpose: a new vendoring twin picked up
+    by copying the tackle pattern is covered with zero script changes — the
+    exact failure mode (a second twin silently left stale) that Ruling 2/4
+    forbids.
+    """
+    twins = []
+    if not os.path.isdir(VENDOR_ROOT):
+        return twins
+    for name in sorted(os.listdir(VENDOR_ROOT)):
+        vendor_dir = os.path.join(VENDOR_ROOT, name, VENDOR_SUBPATH)
+        if os.path.isdir(vendor_dir):
+            twins.append((name, vendor_dir))
+    return twins
+
+
+def check_vendor_staleness():
+    """DB-free audit: every vendoring twin byte-identical to the source.
+
+    Returns (problems, checked) where problems is a list of human-readable
+    strings and checked counts the compared file pairs. Only files present
+    in BOTH source and vendor are compared (the byte-identity guard's set);
+    vendor-only files are twin-local.
+    """
+    problems: list[str] = []
+    checked = 0
+    for name, vendor_dir in vendor_twin_dirs():
+        for fname in sorted(os.listdir(vendor_dir)):
+            vpath = os.path.join(vendor_dir, fname)
+            spath = os.path.join(SEED_PACKAGE_DIR, fname)
+            if not os.path.isfile(vpath) or not os.path.isfile(spath):
+                continue  # twin-local file, or source dropped it: not staleness
+            checked += 1
+            with open(spath, "rb") as f:
+                sbytes = f.read()
+            with open(vpath, "rb") as f:
+                vbytes = f.read()
+            if sbytes != vbytes:
+                problems.append(
+                    f"moleculer/{name}/vendor/tackle-seeds/{fname}: STALE "
+                    f"(source sha256 {hashlib.sha256(sbytes).hexdigest()[:12]}, "
+                    f"vendored {hashlib.sha256(vbytes).hexdigest()[:12]})")
+    return problems, checked
+
+
+def propagate_to_vendor_twins() -> None:
+    """Byte-copy the fresh source over every vendoring twin (same invocation)."""
+    twins = vendor_twin_dirs()
+    if not twins:
+        print("  [vendor] no vendoring twins discovered (nothing to propagate)")
+        return
+    for name, vendor_dir in twins:
+        copied = 0
+        for fname in sorted(os.listdir(vendor_dir)):
+            vpath = os.path.join(vendor_dir, fname)
+            spath = os.path.join(SEED_PACKAGE_DIR, fname)
+            if not os.path.isfile(vpath) or not os.path.isfile(spath):
+                continue
+            with open(spath, "rb") as f:
+                data = f.read()
+            with open(vpath, "wb") as f:
+                f.write(data)
+            copied += 1
+        print(f"  [vendor] moleculer/{name}: {copied} file(s) re-vendored "
+              f"in the same invocation")
 
 # Dollar-quote tag: card bodies may legitimately contain '$$' (e.g. the
 # V181 COMMIT lesson quotes '$$...$$' prose). A bare $$ DO-wrapper would
@@ -396,12 +494,37 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Regenerate seedMemoryProcedures() from live tackle.memory")
     ap.add_argument("--dry-run", action="store_true", help="report without writing")
     ap.add_argument("--verify", action="store_true", help="shadow-seed byte-compare after writing")
+    ap.add_argument("--check-vendors", action="store_true",
+                    help="DB-free vendor-staleness audit: exit 0 = every vendoring "
+                         "twin byte-identical to the source; exit 1 with a per-file "
+                         "report otherwise. Mutates nothing (Ruling 2/4 (b)).")
+    ap.add_argument("--no-vendor-propagation", action="store_true",
+                    help="regenerate the source only; do NOT propagate to vendoring "
+                         "twins (legacy behaviour). Default is to propagate in the "
+                         "same invocation (Ruling 2/4 (a)).")
     ap.add_argument("--exclude-slug", action="append", default=[],
                     help="drop a card slug from the regenerated seed + manifest "
                          "(repeatable). Use to keep the committed seed at a curated "
                          "subset when a live-only card is not yet seed-safe "
                          "(e.g. carries escaping that breaks dollar-quote execution).")
     args = ap.parse_args()
+
+    # DB-free vendor-staleness check (Ruling 2/4 (b)): runs before any DB
+    # contact so CI can use it with no Postgres at all.
+    if args.check_vendors:
+        problems, checked = check_vendor_staleness()
+        twins = vendor_twin_dirs()
+        if problems:
+            print(f"VENDOR STALENESS: {len(problems)} stale file(s) across "
+                  f"{len(twins)} vendoring twin(s) ({checked} pairs checked):")
+            for p in problems:
+                print(f"  - {p}")
+            print("Fix: re-run bin/regenerate_memory_seed.py (propagates in the "
+                  "same invocation) or copy the source files listed above.")
+            return 1
+        print(f"vendors OK: {checked} file pair(s) byte-identical across "
+              f"{len(twins)} vendoring twin(s)")
+        return 0
 
     import psycopg2
 
@@ -460,6 +583,15 @@ def main() -> int:
 
     if not args.dry_run:
         build_tackle_seeds()
+        # Ruling 2/4 (a): propagation happens in the SAME invocation as the
+        # regeneration, after the source + manifest are written — an operator
+        # cannot exit this script with a stale twin unless they explicitly
+        # opt out with --no-vendor-propagation.
+        if not args.no_vendor_propagation:
+            propagate_to_vendor_twins()
+    else:
+        print(f"  [vendor] dry-run: would propagate to "
+              f"{len(vendor_twin_dirs())} vendoring twin(s) on write")
 
     if args.verify:
         if args.dry_run:
