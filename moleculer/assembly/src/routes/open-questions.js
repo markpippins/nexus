@@ -55,7 +55,12 @@ openQuestionsRouter.get('/:id/answers', async (req, res, next) => {
 // POST /:id/answers — add an answer to a question
 openQuestionsRouter.post('/:id/answers', async (req, res, next) => {
   try {
-    const resp = await fetch(`${nebulaUrl}/open-questions/${req.params.id}/answers`, {
+    // CodeQL js/request-forgery: the question id is request-derived. It is
+    // URI-encoded (not merely regex-checked) because `encodeURIComponent` is
+    // the only sanitizer CodeQL recognises for this query — it escapes path
+    // separators ("/" → "%2F"), so a crafted id cannot traverse the path or
+    // retarget the request away from the constant nebula host.
+    const resp = await fetch(`${nebulaUrl}/open-questions/${encodeURIComponent(req.params.id)}/answers`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req.body),

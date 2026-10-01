@@ -241,5 +241,42 @@ describe("bridges rate limit (CodeQL js/missing-rate-limiting fix)", () => {
     }
     expect(last).toBe(429);
     expect((pool.query as jest.Mock).mock.calls.length).toBe(poolCallsBefore);
+  }, 30000);
+});
+
+// ── CodeQL SSRF: open-questions id is URI-encoded into the proxy URL ────
+// POST /:id/answers interpolates a request-derived id into the outgoing
+// nebula URL. encodeURIComponent escapes path separators ("/" → "%2F"), so
+// a crafted id cannot traverse the path or retarget the request. Runs
+// BEFORE the global-limit test below (which exhausts the shared limiter).
+describe("open-questions proxy encodes the question id (CodeQL js/request-forgery fix)", () => {
+  it("escapes path separators so a crafted id cannot retarget the request", async () => {
+    fetchMock.mockResolvedValueOnce({ status: 201, json: async () => ({ ok: true }) });
+    // Express decodes the param first (a%2F..%2Fevil → a/../evil); the twin
+    // must re-encode it before interpolating into the outgoing URL.
+    const res = await request(app)
+      .post("/api/open-questions/a%2F..%2Fevil/answers")
+      .send({ text: "x" });
+    expect(res.status).toBe(201);
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain("a%2F..%2Fevil/answers");
+    expect(url).not.toContain("/../");
   });
+});
+
+// ── CodeQL hardening: global app rate limit ─────────────────────────────
+// express-app.ts applies a global 300/min/IP limiter above the whole /api
+// surface — one limiter clears the 42 js/missing-rate-limiting findings
+// CodeQL reports across the individual routers. Proof: drive the app past
+// the ceiling; a request must eventually 429. Kept LAST: the limiter is
+// stateful for the whole file, so this runs after every other assertion.
+describe("global app rate limit (CodeQL js/missing-rate-limiting fix)", () => {
+  it("returns 429 once the 300/min ceiling is exceeded", async () => {
+    let saw429 = false;
+    for (let i = 0; i < 400 && !saw429; i++) {
+      const res = await request(app).get("/api/definitely/not/a/route");
+      if (res.status === 429) saw429 = true;
+    }
+    expect(saw429).toBe(true);
+  }, 60000);
 });

@@ -53,6 +53,24 @@ const app: Express = express();
 app.use(cors());
 app.use(express.json({ limit: "5mb" })); // raised for transcript ingest comments
 
+// ── Global rate limiter ─────────────────────────────────────────────
+// CodeQL js/missing-rate-limiting: the incumbent carries no limiter, and
+// every DB-touching route in src/routes/* is flagged individually. One
+// app-level limiter above the whole /api surface clears all of them at
+// once. Same posture as the nebula/peb twins: 300 req/min/IP keeps normal
+// operator/agent polling well clear of the ceiling while capping
+// resource-exhaustion floods. (This is the deviation the module doc
+// comment above already describes — previously declared but not wired.)
+app.use(
+  rateLimit({
+    windowMs: 60 * 1000,
+    max: 300,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    message: { error: "assembly-srv rate limit exceeded" },
+  }),
+);
+
 // ── Gzip compression (GET responses only) ───────────────────────────
 // Verbatim from the incumbent (index.js): Node's built-in zlib, no
 // `compression` dependency. See the incumbent's comment block for the
