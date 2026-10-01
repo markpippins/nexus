@@ -1061,7 +1061,11 @@ export function createRoutes(pool: Pool): Router {
       // two-stage compiler to generate WorkRequest IR. D2 (CP-2): compile
       // is now pre-row — it no longer implies a conduit plan row. Plan
       // creation is a separate release-time step (CP-9 release gate).
-      if (status !== undefined && reqt.status === 'ToDo') {
+      // CodeQL SSRF hardening: the URL interpolates a request-derived id,
+      // so the trigger only fires for the numeric id shape the requirements
+      // table uses (any other shape could not have produced the UPDATE
+      // row above, and now also cannot reach the URL).
+      if (status !== undefined && reqt.status === 'ToDo' && /^\d+$/.test(String(id))) {
         fetch(`http://localhost:3101/api/requirements/${id}/compile`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2710,12 +2714,17 @@ export function createRoutes(pool: Pool): Router {
       const systemId = req.query.systemId as string | undefined;
       const subsystemId = req.query.subsystemId as string | undefined;
       const featureId = req.query.featureId as string | undefined;
+      const rawSort = (req.query.sort as string | string[]) || 'created_at';
+      // CodeQL type-confusion hardening: a repeated query key
+      // (?sort=a&sort=b) makes express surface the value as string[] —
+      // coerce to a single string before any string operation
+      // (first occurrence wins).
+      const sortParam = (Array.isArray(rawSort) ? rawSort[0] : rawSort) || 'created_at';
       // Sort direction: a trailing `_asc` suffix selects ascending order
       // (the nebula-ui harvests view has offered 'created_at_asc'/'Oldest'
       // since fc07c18); everything else defaults to DESC like before.
-      const rawSort = (req.query.sort as string) || 'created_at';
-      const sortAsc = rawSort.endsWith('_asc');
-      const sort = sortAsc ? rawSort.slice(0, -'_asc'.length) : rawSort;
+      const sortAsc = sortParam.endsWith('_asc');
+      const sort = sortAsc ? sortParam.slice(0, -'_asc'.length) : sortParam;
       const sortDir = sortAsc ? 'ASC' : 'DESC';
       const { offset, limit, page, pageSize } = parsePagination(req.query);
 
@@ -5433,28 +5442,25 @@ export function createRoutes(pool: Pool): Router {
         const { rows: data } = await pool.query(proj.source_query);
         const rendered: { path: string; content: string }[] = [];
 
+        // Literal placeholder substitution via split/join — no regex involved:
+        // there are no metacharacters to escape (CodeQL flagged the previous
+        // new RegExp form for a useless `\}}` escape), keys can carry no
+        // special meaning, and replacement values are inserted as literals so
+        // $-sequence escaping ($&, $`, …) is unnecessary by construction.
+        const substitutePlaceholder = (template: string, key: string, value: string): string =>
+          template.split(`{{${key}}}`).join(value);
+
         for (const row of data) {
           let content = proj.template;
           // Replace all {{key}} placeholders with values from the row
           for (const [key, value] of Object.entries(row)) {
-            const val = value === null ? '' : String(value);
-            // SECURITY: escape regex metacharacters in the key to prevent
-            // regex injection via user-controlled source_query column names.
-            const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            // SECURITY: escape $ in the replacement value to prevent
-            // replacement-string injection ($&, $`, $', $n patterns in
-            // String.replace() are interpreted specially).
-            const safeVal = val.replace(/\$/g, '$$$$');
-            content = content.replace(new RegExp(`\\{\\{${escapedKey}\\}\\}`, 'g'), safeVal);
+            content = substitutePlaceholder(content, key, value === null ? '' : String(value));
           }
           // Substitute every {{key}} in the target path (id, name, slug, …) —
-          // same escaping discipline as the content template.
+          // same literal substitution as the content template.
           let targetPath = proj.target_path;
           for (const [key, value] of Object.entries(row)) {
-            const val = value === null ? '' : String(value);
-            const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const safeVal = val.replace(/\$/g, '$$$$');
-            targetPath = targetPath.replace(new RegExp(`\\{\\{${escapedKey}\\}\}`, 'g'), safeVal);
+            targetPath = substitutePlaceholder(targetPath, key, value === null ? '' : String(value));
           }
 
           const absPath = path.resolve(AUDIT_ROOT, targetPath);
