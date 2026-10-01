@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
-"""Canary diff for substance-srv :3115 vs moleculer twin :4115.
+"""Canary diff for nebula-srv :3101 vs moleculer twin :4101.
 
-Reads + validation negatives ONLY. No nebula.segment_sets rows are created
-or mutated: every segment-set write case is a validation negative that
-rejects before any DB work (404 on unknown segment_set_id, 422 on absent
-body / bad shapes), and the two DELETE cases target nonexistent UUIDs on
-unknown domain types (404 before lookup), verified against the incumbent's
-route modules (links.ts, segment-sets.ts).
+Reads + validation negatives ONLY. The two POST cases are proven DB-safe by
+the incumbent's own validation order (routes.ts POST /agent-records): an
+empty body fails the recordType check and a level violation fails the range
+check, both BEFORE the INSERT — no nebula.agent_records row is created or
+mutated by any case here.
 
-The Redis-cached resolve path (/segment-sets/:id) is included as a read;
-its cache may be stale or warm on either side independently of this run
-(the segment_expired listener is incumbent-owned), so the scrub drops
-volatile fields and the churn-window note applies.
+Churn stability: nebula.agent_records / harvests are high-cadence tables
+(unlike aegis's registries), so NO case reads live row lists. Every case is
+a needle that produces the same bytes on both sides regardless of fleet
+activity: nonexistent UUIDs, validated-empty searches, null pointers, and
+static validation errors.
 
-Envelope note: substance is the FastAPI-shaped twin ({detail} errors, 422
-validation) — a JSON 404 catch-all EXISTS here (unlike nebula), so the
-unknown-path cases compare substance's real {detail: "Not Found"}.
+Substance coupling: the segment-set cases exercise the READ-ONLY proxy
+(GET /api/segment-sets → SUBSTANCE_BASE_URL). If substance is up, both
+sides proxy the same upstream bytes; if it is down, both sides return the
+same 502 {error: "substance unreachable ..."} — identical either way.
 """
 import json
 import os
@@ -23,50 +24,45 @@ import sys
 import urllib.error
 import urllib.request
 
-A = os.environ.get("CANARY_BASE", "http://localhost:3115").rstrip("/")
-B = os.environ.get("TWIN_BASE", "http://localhost:4115").rstrip("/")
+A = os.environ.get("CANARY_BASE", "http://localhost:3101").rstrip("/")
+B = os.environ.get("TWIN_BASE", "http://localhost:4101").rstrip("/")
 
 UUID = "11111111-1111-1111-1111-111111111111"
 
 CASES = [
-    ("GET", "/healthz", None),
-    # Segment-set reads (churn-stable needles; the Redis-resolve case may
-    # 404 on both sides identically if the id is unknown to substance):
-    ("GET", "/segment-sets?limit=1", None),
-    ("GET", f"/segment-sets/{UUID}", None),
-    ("GET", "/segment-sets/not-a-uuid", None),
-    # Domain-links reads (unknown domain ids → 404 both sides):
-    ("GET", f"/candidates/{UUID}/segment-sets", None),
-    ("GET", f"/requirements/{UUID}/segment-sets", None),
-    # Write-route negatives (reject BEFORE any DB work — verified against
-    # the incumbent's validation order; unknown ids → 404, absent bodies
-    # → 422, both without touching nebula.segment_sets):
-    ("POST", "/segment-sets/from-segments", {}),
-    ("POST", f"/segment-sets/{UUID}/members", {}),
-    ("PATCH", f"/segment-sets/{UUID}", {}),
-    ("DELETE", f"/segment-sets/{UUID}/members/not-a-uuid", None),
-    ("POST", f"/candidates/{UUID}/segment-sets", {}),
-    ("POST", f"/requirements/{UUID}/segment-sets", {}),
-    ("DELETE", f"/candidates/{UUID}/segment-sets/{UUID}", None),
-    # 404 surface (substance HAS a JSON {detail} catch-all, unlike nebula):
+    ("GET", "/health", None),
+    ("GET", "/api/health", None),
+    # Agent records — nonexistent needles only (churn-stable):
+    ("GET", f"/api/agent-records/{UUID}", None),
+    ("GET", "/api/agent-records/not-a-uuid", None),
+    ("GET", "/api/agent-records?search=__no_such_record_zzz__&limit=5", None),
+    # Inbox pointer (Redis-backed; unknown role → null pointer, stable):
+    ("GET", "/api/inbox-pointer/__no_such_role_zzz__", None),
+    # Substance-coupled segment-set evidence reads (read-only proxy):
+    ("GET", "/api/segment-sets?limit=1", None),
+    ("GET", "/api/segment-sets/not-a-uuid", None),
+    # 404 surface (Express default HTML — nebula has no JSON catch-all):
+    ("GET", "/api/definitely/not/a/route", None),
     ("GET", "/definitely/not/a/route", None),
+    # Write-route validation negatives (reject BEFORE any DB work —
+    # proven by the incumbent's check order in POST /agent-records):
+    ("POST", "/api/agent-records", {}),
+    ("POST", "/api/agent-records", {"recordType": "report", "level": 9}),
 ]
 
 TS_FIELDS = {
     "created_at", "updated_at", "verified_at", "checked_at",
-    "started_at", "finished_at", "expires_at", "cached_at",
+    "recorded_on_dt", "started_at", "finished_at",
 }
 
 
 def fetch(base, method, path, body):
     data = None
     headers = {}
-    if body is None:
-        req = urllib.request.Request(base + path, method=method, headers=headers)
-    else:
+    if body is not None:
         data = json.dumps(body).encode()
         headers["Content-Type"] = "application/json"
-        req = urllib.request.Request(base + path, data=data, method=method, headers=headers)
+    req = urllib.request.Request(base + path, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=25) as response:
             return response.status, dict(response.headers), response.read()

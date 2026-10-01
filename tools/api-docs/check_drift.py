@@ -67,6 +67,7 @@ MOLECULER_MIRRORS = {
     "moleculer/peb": "typescript/peb-srv",
     "moleculer/harness": "typescript/harness-srv",
     "moleculer/aegis": "typescript/aegis-srv",
+    "moleculer/nebula": "typescript/nebula-srv",
 }
 
 
