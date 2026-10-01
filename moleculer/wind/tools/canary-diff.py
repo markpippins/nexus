@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Canary diff for wind-srv :3300 vs moleculer twin :4300.
+"""Canary diff for wind-srv :3300 vs moleculer twin :4118.
 
 Reads + validation negatives ONLY. The POST/PATCH/DELETE cases are
 validation negatives verified against the incumbent's handlers to reject
@@ -25,7 +25,7 @@ import urllib.error
 import urllib.request
 
 A = os.environ.get("CANARY_BASE", "http://localhost:3300").rstrip("/")
-B = os.environ.get("TWIN_BASE", "http://localhost:4300").rstrip("/")
+B = os.environ.get("TWIN_BASE", "http://localhost:4118").rstrip("/")
 
 UUID = "11111111-1111-1111-1111-111111111111"
 

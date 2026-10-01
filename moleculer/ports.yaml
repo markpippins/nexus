@@ -151,16 +151,17 @@ canary:
     map_registry_status: "CANARY — PR #479, canary-diffed byte-identical, **not cut over / not deployed**"
     ratified: 2026-09-23
     ratification: "RATIFIED 2026-09-23 (architect decision on the port-band)"
-  - port: 4300
+  - port: 4118
     name: "wind"
     namespace: "wind"
     incumbent: "typescript/wind-srv"
     incumbent_port: 3300
+    port_derivation: "DEVIATION from the +1000 scheme: 3300+1000 = 4300 is occupied by nebula-operations-ui (`ng serve --host 0.0.0.0:4300`, tester finding 2026-10-01) — a twin declared there cannot bind and a canary-diff would compare an ephemeral port. Re-banded to 4118, the next free port in the reserved twin band 4100–4199; deviation recorded here per architect ruling (port re-band + port_derivation deviation)."
     description: "scheduling/DAG orchestration: workflows, nodes + requirements resolver, edges, instances (advance/execute/pause/resume/run/stop), execution-requests + attempts + dispatch + receipts, events + event-types, tickets, offices, titles, v-roles, provider-contracts, tasks, outcomes, validate; contract pinned to incumbent `openapi.yaml`; twin ships a day-one global rate limiter (incumbent rate-limits only 3 write surfaces) and deliberately excludes the incumbent's background subsystems (rover scheduler, events processor, NATS/pg-notify listeners) so a canary cannot double-publish harvest.created or double-poll wind.events"
     readme_status: "port complete, dispatch-through-Express (verbatim plain-JS route stack under allowJs); canary is reads + validation negatives only — instance lifecycle and dispatch routes drive execution state; not cut over (rover scheduler / events processor / listeners stay incumbent-owned)"
-    map_registry_status: "CANARY — submitted with this row (PR for the port), dispatch-through-Express, reads + validation negatives canary ONLY, **not cut over / not deployed**"
+    map_registry_status: "CANARY — submitted with this row (PR for the port), dispatch-through-Express, reads + validation negatives canary ONLY, **not cut over / not deployed**; re-banded 4300→4118 pre-merge (port collision with nebula-operations-ui on :4300, deviation in port_derivation)"
     ratified: null
-    ratification: "follows the pattern (+1000 band, submitted with the wind port PR)"
+    ratification: "follows the reserved twin band (4100–4199); initial +1000 derivation (3300+1000=4300) deviated pre-merge — :4300 is occupied by nebula-operations-ui, deviation recorded in port_derivation; submitted with the wind port PR"
   - port: 4410
     name: "tackle"
     namespace: "tackle"
