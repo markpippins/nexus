@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Canary diff for aegis-srv :3116 vs moleculer twin :4116.
+"""Canary diff for wind-srv :3300 vs moleculer twin :4118.
 
 Reads + validation negatives ONLY. The 40 write routes (registries CRUD,
 revisions, validate, model-check, wind-compilations, and the six table-CRUD
@@ -17,8 +17,8 @@ import sys
 import urllib.error
 import urllib.request
 
-A = os.environ.get("CANARY_BASE", "http://localhost:3116").rstrip("/")
-B = os.environ.get("TWIN_BASE", "http://localhost:4116").rstrip("/")
+A = os.environ.get("CANARY_BASE", "http://localhost:3300").rstrip("/")
+B = os.environ.get("TWIN_BASE", "http://localhost:4118").rstrip("/")
 
 UUID = "11111111-1111-1111-1111-111111111111"
 

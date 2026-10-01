@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Canary runner for the aegis twin: boots the standalone broker on :4116,
+# Canary runner for the WIND twin: boots the standalone broker on :4118,
 # waits for health, runs tools/canary-diff.py against the live incumbent
 # on :3116, then tears the twin down.
 #
-# Usage: SERVICE_PORT=4116 bash tools/canary-run.sh
+# Usage: SERVICE_PORT=4118 bash tools/canary-run.sh
 # (moleculer.config.standalone.js lives at the twin root — fleet convention;
 #  point MOLECULER_RUNNER at a moleculer-runner binary when npm install
 #  hasn't run locally.)
 set -euo pipefail
 
-PORT="${SERVICE_PORT:-4116}"
+PORT="${SERVICE_PORT:-4118}"
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNNER="${MOLECULER_RUNNER:-$DIR/node_modules/.bin/moleculer-runner}"
 

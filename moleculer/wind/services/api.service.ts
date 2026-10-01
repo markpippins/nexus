@@ -29,7 +29,7 @@ export default class ApiService extends Service {
       name: "api",
       mixins: [ApiGateway],
       settings: {
-        port: process.env.SERVICE_PORT || 4300,
+        port: process.env.SERVICE_PORT || 4118,
         ip: "0.0.0.0",
         routes: [
           {

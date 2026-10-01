@@ -1,7 +1,10 @@
 # wind
 
 Moleculer twin of `typescript/wind-srv` (:3300) — scheduling/DAG orchestration
-over the `wind.*` schema, canary on **:4300** (+1000 band, `cd3b8419` scheme).
+over the `wind.*` schema, canary on **:4118** (reserved twin band 4100–4199;
+the +1000 derivation 3300+1000 = 4300 collided with nebula-operations-ui's
+`ng serve` on :4300 — re-banded pre-merge, deviation recorded as
+`port_derivation` in `moleculer/ports.yaml`).
 
 | Gate | `make apidocs-validate` | same (`check_drift.MOLECULER_MIRRORS`) |
 |------|------------------------|----------------------------------------|
