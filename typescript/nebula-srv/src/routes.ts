@@ -12,6 +12,7 @@ import { fetchSubstance, substanceToCamel } from './substance-proxy';
 import { CrossReferenceType } from './crossref-taxonomy';
 import { normalizeTags } from './tagNormalizer';
 import { attestationsLimiter } from './limiter';
+import { routingTagErrorMessage } from './routing-tags';
 import {
   camelCaseRow,
   AGENT_RECORD_LIST_COLUMNS,
@@ -5308,6 +5309,16 @@ export function createRoutes(pool: Pool): Router {
 
       if (level !== undefined && (level < 1 || level > 4)) {
         return res.status(400).json({ error: 'level must be between 1 and 4' });
+      }
+
+      // Write-side guard for undeliverable routing tags. Inbox lookup matches
+      // `to:`+role.toLowerCase() exactly, so an uppercase routing tag (to:DBA)
+      // reaches no inbox at all. Rejected here rather than normalized: a
+      // silent rewrite would hide the mistake from the writer. See
+      // src/routing-tags.ts and DBA inspection 26a6acb3.
+      const routingTagError = routingTagErrorMessage(tags);
+      if (routingTagError) {
+        return res.status(400).json({ error: routingTagError });
       }
 
       const { rows: [row] } = await pool.query(
