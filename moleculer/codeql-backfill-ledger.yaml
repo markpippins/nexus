@@ -1,0 +1,109 @@
+# CodeQL twin→incumbent backfill ledger — the single source of truth
+# =========================================================================
+#
+# Commissioned by architect Ruling 1/4 (record 1be07075, engineer R1
+# 401fed78): "copied vs novel" for CodeQL alerts on moleculer twins must be a
+# deterministic CI classification, not a human judgement call.
+#
+# HOW CLASSIFICATION WORKS (bin/classify_codeql_alerts.py, run in CI):
+#
+#   For every OPEN CodeQL alert whose path is under a twin directory
+#   (resolved from moleculer/ports.yaml canary rows, `moleculer/<name>/...`):
+#
+#     1. Resolve the twin path → incumbent path via the port registry
+#        relation (twin `moleculer/<name>/x` → incumbent
+#        `<incumbent>/x'`, via the twin's own mapping when it ships one —
+#        e.g. dispatch-through-Express twins carry an explicit
+#        incumbent-app mapping — else the registry's incumbent root).
+#     2. Evaluate the SAME rule at the incumbent location against the
+#        incumbent's open alert set.
+#          copied  → alert also present at the incumbent: does NOT block;
+#                    but the pair (service, rule_id, incumbent_path) MUST
+#                    have a ledger entry below, else CI fails.
+#          novel   → not present at the incumbent: BLOCKS the port PR.
+#                    Fix in twin and backfill to incumbent in the same change.
+#          unclassified → no classification and no ledger entry: CI fails.
+#                    Silence is not classification (Ruling 1/4).
+#
+# LEDGER SCHEMA
+#   Each entry:
+#     - service:         <twin name as it appears in moleculer/ports.yaml>
+#       rule_id:         <CodeQL rule id, e.g. js/missing-rate-limiting>
+#       incumbent_path:  <repo path of the incumbent location carrying the
+#                         same alert — the backfill target>
+#       twin_path:       <repo path of the twin alert that motivated the
+#                         entry (informational)>
+#       status:          open | backfilled | refuted
+#         open       — debt exists at the incumbent; blocks this service's
+#                      cutover while any Priority-1 entry is open (Ruling 4).
+#         backfilled — the fix reached the incumbent (PR number required).
+#         refuted    — a role with review authority (architect/tester)
+#                      determined the alert pair is NOT copied debt; the
+#                      refutation record id is required.
+#       owner:           <role owning the backfill — an empty owner is an
+#                         invalid entry and fails the schema guard>
+#       opened:          <YYYY-MM-DD the entry was created>
+#       timebox:         <deliberate-divergence review date — entries are
+#                         TIME-BOXED, never permanent (Ruling 1/4)>
+#       note:            <one line: what the debt is / where it came from>
+#
+#   DEDUP KEY: (service, rule_id, incumbent_path) — enforced unique by
+#   bin/tests/test_classify_codeql_alerts.py.
+#
+#   A ledger entry may exist for a service whose twin PR has not merged yet
+#   (forward-seeded with the approved backfill); the classifier simply never
+#   matches on it until the twin is on main.
+#
+# THIS FILE IS GOVERNED: entries are added/changed only with an accompanying
+# classification record (engineer/architect/tester) or a merged backfill PR.
+
+entries:
+  # Copied debt on main (verified 2026-10-01 against main's open alert set:
+  # twin #780 moleculer/substance/services/express-app.ts:41 ↔ incumbent
+  # #774 typescript/substance-srv/src/index.ts:89, same rule open both sides).
+  - service: substance
+    rule_id: js/cors-permissive-configuration
+    incumbent_path: typescript/substance-srv/src/index.ts
+    twin_path: moleculer/substance/services/express-app.ts
+    status: open
+    owner: engineer
+    opened: 2026-10-01
+    timebox: 2026-11-01
+    note: >
+      Twin CORS config copied verbatim from the incumbent's permissive
+      default; same rule open on both sides. Fix-on-port applies: tighten in
+      twin, then backfill to the incumbent in the same or follow-up PR.
+
+  # Approved backfill, forward-seeded (Ruling 1/4 §"Specific backfills
+  # approved now"): the assembly twin's bridges router is rate-limited
+  # (120/min/IP, express-rate-limit) while the incumbent carries the same
+  # nine js/missing-rate-limiting alerts open on main. Backfill in flight
+  # as PR #694. The twin itself lands via PR #686.
+  - service: assembly
+    rule_id: js/missing-rate-limiting
+    incumbent_path: typescript/assembly-srv/src/routes/bridges.js
+    twin_path: moleculer/assembly/src/routes/bridges.js
+    status: open
+    owner: engineer
+    opened: 2026-10-01
+    timebox: 2026-11-01
+    note: >
+      Router-level limiter exists in the twin (day-one hardening); incumbent
+      bridges router has 9 open js/missing-rate-limiting alerts. Backfill
+      approved by Ruling 1/4; in flight as PR #694.
+
+  # Priority 1 (SSRF-class pattern; Ruling 1/4): nebula twin hardening —
+  # the numeric-id gate on the auto-compile fetch URL. The twin lands via
+  # PR #685; the incumbent-side gate is the approved backfill.
+  - service: nebula
+    rule_id: js/ssrf
+    incumbent_path: typescript/nebula-srv/src/routes.ts
+    twin_path: moleculer/nebula/src/routes.ts
+    status: open
+    owner: engineer
+    opened: 2026-10-01
+    timebox: 2026-10-15
+    note: >
+      Priority 1 (SSRF-class): numeric-id gate on the auto-compile fetch URL
+      exists in the twin; incumbent carries the unguarded pattern. Timebox is
+      deliberately short per the ruling.

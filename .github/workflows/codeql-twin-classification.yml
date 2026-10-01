@@ -1,0 +1,129 @@
+# CodeQL twin classification — copied-vs-novel gate for moleculer canary twins
+#
+# ── Why this exists ────────────────────────────────────────────────────────
+#
+# Architect Ruling 1/4 (record 1be07075): for the port-wave, twin and
+# incumbent are ONE service for security purposes. "Copied vs novel" for a
+# CodeQL alert raised on a twin must be a deterministic CI classification,
+# not a human judgement:
+#
+#   copied        the same rule is open at the incumbent path. Does NOT
+#                 block the port PR — but (service, rule_id,
+#                 incumbent_path) MUST have an entry in
+#                 moleculer/codeql-backfill-ledger.yaml. Copied criticals
+#                 are tracked, not waived: they block that service's
+#                 cutover until Priority-1 entries are backfilled
+#                 (Ruling 4 interaction).
+#   novel         the rule is NOT open at the incumbent. BLOCKS the PR.
+#                 Fix in twin and backfill to the incumbent in the same
+#                 change. An open, owned, time-boxed ledger entry is the
+#                 only accepted classification for a currently-firing novel
+#                 alert — "permanent deliberate divergence" is not an
+#                 available outcome.
+#   unclassified  neither — the job FAILS. Silence is not classification.
+#
+# CodeQL itself runs as repo-level DEFAULT SETUP (check name "CodeQL",
+# languages: actions/java-kotlin/javascript-typescript/python/rust; there is
+# deliberately no codeql.yml in this repo — single analysis owner). A
+# default-setup analysis has no workflow to hook, so this job triggers on
+# `workflow_run` after the "CodeQL" check-run workflow completes, reads the
+# resulting alert set with `security-events: read` via the gh CLI, and
+# classifies. It is a required-status sibling of the scanner, not a re-scan.
+#
+# ── Ref resolution ─────────────────────────────────────────────────────────
+#
+# Default-setup analyses attach to `refs/pull/<N>/head` on PRs and to the
+# default branch on pushes. workflow_run events do NOT fire for PR-head
+# refs unless a PR is open for that head, so a push-style run means the
+# payload branch; a pull_request-style payload names the PR. Both cases
+# resolve to an actual analyzed ref — the classifier refuses to guess when
+# neither is derivable, because classifying the wrong ref is worse than
+# failing.
+#
+# ── What this job proves, and what it does not ─────────────────────────────
+#
+# PROVED:
+#   1. Every OPEN code-scanning alert under a twin directory resolved via
+#      moleculer/ports.yaml is classified: copied+ledgered, or
+#      novel-with-open-owned-time-boxed-ledger-entry.
+#   2. An unresolvable twin path fails the job (registry bug, not an excuse).
+#   3. The ledger schema is validated on every run: unique (service,
+#      rule_id, incumbent_path) keys, non-empty owner, known status,
+#      repo paths, required fields.
+#   4. The verdict is fail-closed: gh failure or an unusable payload is
+#      exit 2 — never a silent pass.
+#
+# NOT PROVED:
+#   * That CodeQL itself ran on the ref. If default-setup CodeQL is disabled
+#     repo-wide, this job fails on its first real run rather than
+#     impersonating the scanner.
+#   * That ledger entries are actually backfilled on schedule. Timebox
+#     review is a role ritual; the ledger makes the debt visible, owned,
+#     and time-boxed — which is what Ruling 1/4 asks of CI.
+name: codeql-twin-classification
+
+on:
+  workflow_run:
+    workflows: ["CodeQL"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  classify:
+    name: copied-vs-novel classification
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # Read the code-scanning alert set produced by the default-setup
+      # analysis. Nothing is written: the classifier never mutates alerts.
+      security-events: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The classifier reads the checked-out registry + ledger; alert
+          # data comes from the API at the analyzed ref. Shallow is fine.
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install classifier dependencies (pyyaml)
+        run: pip install --quiet pyyaml
+
+      - name: Classify twin alerts (fail on novel / unclassified / unledgered)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          REF=""
+          if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "null" ]; then
+            REF="pr/$PR_NUMBER"          # PR-head analyses: refs/pull/<N>/head
+          elif [ -n "$HEAD_BRANCH" ] && [ "$HEAD_BRANCH" != "null" ]; then
+            REF="$HEAD_BRANCH"           # branch-head analyses (main pushes)
+          fi
+          if [ -z "$REF" ]; then
+            echo "::error::cannot determine the analyzed ref from the workflow_run payload (no PR number and no head_branch) — refusing to guess" >&2
+            exit 2
+          fi
+          echo "classifying ref: $REF"
+          python3 bin/classify_codeql_alerts.py --ref "$REF" --json > /tmp/classification.json
+          echo "REF=$REF" >> "$GITHUB_ENV"
+
+      - name: Job summary (always)
+        if: always()
+        env:
+          REF: ${{ env.REF }}
+        run: |
+          {
+            echo "### CodeQL twin classification — ref ${REF:-unknown}"
+            echo '```json'
+            cat /tmp/classification.json 2>/dev/null || echo "(no classification output — the classification step failed before writing it)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
