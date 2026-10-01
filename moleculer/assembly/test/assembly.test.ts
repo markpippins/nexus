@@ -219,3 +219,27 @@ describe("gzip middleware (custom zlib, GET-only)", () => {
     expect(res.status).toBe(400);
   });
 });
+
+// ── CodeQL hardening: bridges router rate limit ──────────────────────────
+// The bridges router caps request storms router-level (120/min per IP).
+// Hermetic proof: drive one IP past the limit; the 121st bridge request
+// within the window must be rejected with 429 BEFORE any DB work (the
+// limiter short-circuits, so the mocked pool is never reached — asserted
+// via call count staying flat).
+describe("bridges rate limit (CodeQL js/missing-rate-limiting fix)", () => {
+  it("rejects requests past 120/min with 429 before reaching the DB", async () => {
+    // CJS require: ts-jest isolatedModules leaves import() untransformed.
+    const { pool } = require("../src/db.js");
+    const poolCallsBefore = (pool.query as jest.Mock).mock.calls.length;
+    let last = 200;
+    for (let i = 0; i < 121; i++) {
+      // validation-negative body: without the limiter these would 400 (and
+      // with a valid body 201) — only the limiter can produce 429.
+      const res = await request(app).post("/api/bridges/forum-agenda").send({});
+      last = res.status;
+      if (last === 429) break;
+    }
+    expect(last).toBe(429);
+    expect((pool.query as jest.Mock).mock.calls.length).toBe(poolCallsBefore);
+  });
+});
