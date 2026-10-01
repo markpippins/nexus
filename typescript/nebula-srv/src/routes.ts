@@ -5344,7 +5344,9 @@ export function createRoutes(pool: Pool): Router {
       const role = req.params.role as string;
       const { getInboxPointer } = await import('./services/block-segmentation-redis.service');
       const pointer = await getInboxPointer(role);
-      res.json({ role, pointer });
+      // A null pointer after the 2026-10-01 Redis restart is a real loss, not "nothing
+      // pending". Callers must not treat null as an empty inbox (ruling 1fe2049de).
+      res.json({ role, pointer, pointerMissing: pointer === null });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -5357,8 +5359,11 @@ export function createRoutes(pool: Pool): Router {
       const { timestamp } = req.body;
       if (!timestamp) return res.status(400).json({ error: 'timestamp is required' });
       const { setInboxPointer } = await import('./services/block-segmentation-redis.service');
-      await setInboxPointer(role, timestamp);
-      res.json({ ok: true, role, pointer: timestamp });
+      // `durable: false` means the pointer was cached in Redis only and WILL be lost on a
+      // Redis restart. Surfaced explicitly so this can never again be a silent success --
+      // the original defect hid precisely because the endpoint always answered ok:true.
+      const durable = await setInboxPointer(role, timestamp);
+      res.json({ ok: true, role, pointer: timestamp, durable });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
