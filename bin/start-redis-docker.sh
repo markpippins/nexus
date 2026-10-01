@@ -22,13 +22,24 @@ if [ "$(docker ps -a -q -f name=${CONTAINER_NAME})" ]; then
 fi
 
 echo "[redis] Starting Redis container..."
-# `--appendonly yes`: Redis is a CACHE tier, but inbox delivery watermarks were stored there
-# and all ten were lost to a restart on 2026-10-01T08:16:37Z (architect defect db3992b2).
-# The container runs with no redis.conf, so `CONFIG SET appendonly yes` alone does NOT survive
-# a container recreate — it has to be a launch argument. `appendfsync everysec` is the Redis
-# default and is left explicit for the record.
-if docker run --name ${CONTAINER_NAME} -p ${REDIS_PORT}:6379 -d redis:latest \
-     redis-server --appendonly yes --appendfsync everysec; then
+# AOF is deliberately NOT enabled here.
+#
+# It was added while fixing architect defect db3992b2 (inbox pointers were Redis-resident and
+# all ten were lost to a restart on 2026-10-01T08:16:37Z), on the reasoning that a restart-safe
+# cache is worth having. It is not, now that the pointers live in Postgres
+# (migration 071, nebula.role_inbox_pointers): every key in this Redis is PG-backed, rebuildable,
+# or explicitly ephemeral -- role leases, ticket claims and clock sessions are in PG; the
+# procedure-card index rebuilds from PG; sse/event-buffer costs backlog, not record delivery;
+# service heartbeats are ephemeral by design.
+#
+# Worse, it is FALSE durability. The container mounts no volume, so /data is the overlay
+# filesystem: the AOF survives a process restart and is destroyed by `docker rm`. That is the
+# worst of both -- it reads as protection that does not exist, and it costs write amplification
+# plus unbounded growth on a disk already at 95%.
+#
+# If this container ever needs a durable volume, that is an infra change to make deliberately
+# with the disk headroom in mind -- not a flag smuggled in via a launcher script.
+if docker run --name ${CONTAINER_NAME} -p ${REDIS_PORT}:6379 -d redis:latest; then
     echo "[redis] Container started."
 else
     echo "[redis] ERROR: Failed to start Redis container." >&2
