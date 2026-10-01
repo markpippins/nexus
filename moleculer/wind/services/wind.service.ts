@@ -3,7 +3,7 @@ import app from "./express-app.js";
 import { dispatch } from "./dispatch.js";
 
 /**
- * wind — moleculer port of typescript/wind-srv (:3300 → canary :4300).
+ * wind — moleculer port of typescript/wind-srv (:3300 → canary :4118).
  *
  * Scheduling / DAG orchestration over the wind.* schema: workflows, nodes +
  * requirements resolver, edges, instances (advance/execute/pause/resume/
