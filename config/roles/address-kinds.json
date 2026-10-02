@@ -1,0 +1,23 @@
+{
+  "_comment": "Non-role address-kind registry (Ruling 13, de5d538f, thread f60b8eb4). Complements config/roles/roles.json: every registered to:-address is either a key under roles.json.roles (kind=role — the only kind carrying a delivery obligation) or a key under addresses here. kind=alias: accepted at write, never rejected; expansion-at-write is R13 Phase C, pending the architect's expansion-target decisions (DBA scoping record ab18534c §3). kind=telemetry: recorded for the historical record, never delivered, no inbox pointer, never a role. Non-role addresses must NOT be added to roles.json.roles (keys there must match tackle.roles exactly).",
+  "addresses": {
+    "wr-conf-observer": {
+      "kind": "telemetry",
+      "ruling": "de5d538f (Ruling 13, decision 1)",
+      "registeredAt": "2026-10-02",
+      "description": "Work-request-conf observer stream — ARCHIVAL telemetry. Recorded, never delivered; no inbox pointer; no harness/persona surfaces; do NOT register as a role; do NOT retag historical entries (retagging would flood a NULL-pointer mailbox).",
+      "corpus": "299 records (live census 2026-10-02)",
+      "completionMarker": "stream closed at the 2026-09-21 session-protocol boundary; all entries are immutable archival history — no delivery expected in any window",
+      "delivery": "never"
+    },
+    "all": { "kind": "alias", "ruling": "de5d538f (Ruling 13, decision 2)", "expansion": "pending-architect (Phase C: fan-out target vs pointer model undecided — scoping ab18534c §3)" },
+    "all-roles": { "kind": "alias", "ruling": "de5d538f (Ruling 13, decision 2)", "expansion": "pending-architect (Phase C)" },
+    "assembly": { "kind": "alias", "ruling": "de5d538f (Ruling 13, decision 2)", "expansion": "pending-architect (Phase C: forum ingest is not an inbox)" },
+    "self": { "kind": "alias", "ruling": "de5d538f (Ruling 13, decision 2)", "expansion": "deterministic: writer's role from the record" },
+    "user": { "kind": "alias", "ruling": "de5d538f (Ruling 13, decision 2)", "expansion": "pending-architect (Phase C: operator delivery path; the 2 exclusive to:user records are the historical gap — expansion fixes it going forward only)" },
+    "admin": { "kind": "alias", "ruling": "de5d538f (Ruling 13, decision 4)", "expansion": "pending-architect (Phase C)" },
+    "leader": { "kind": "alias", "ruling": "de5d538f (Ruling 13, decision 4)", "expansion": "pending-architect (Phase C)" },
+    "designer": { "kind": "alias", "ruling": "de5d538f (Ruling 13, decision 4)", "expansion": "pending-architect (Phase C)" },
+    "watchdog": { "kind": "alias", "ruling": "de5d538f (Ruling 13, decision 4)", "expansion": "pending-architect (Phase C)" }
+  }
+}

@@ -13,6 +13,12 @@ Evidence base: DBA tag-vocabulary audit (record 331ac2f3, 2026-10-02).
 Covers Ruling 8 steps 1-2; enabling #693's reject path remains a separate,
 later step owned by the write-side PR.
 
+Ruling 13 (de5d538f) extension: every entry here carries kind=role — the
+only kind with a delivery obligation. Non-role addresses (alias/telemetry)
+belong in config/roles/address-kinds.json (guarded by
+test_address_kinds.py), never under `roles` (keys must match tackle.roles
+exactly).
+
 Run: python3 -m pytest bin/tests/test_roles_json_lowercase.py
 """
 import importlib.util
@@ -67,6 +73,23 @@ class TestRolesJsonLowercase(unittest.TestCase):
     def test_legacy_capitalized_keys_stay_retired(self):
         self.assertNotIn("DBA", self.roles, "capitalized DBA stub was retired (Ruling 8); must not return")
         self.assertNotIn("Rover", self.roles, "legacy Rover was retired (0 corpus records); must not return")
+
+    def test_kind_is_role_on_every_entry(self):
+        """Ruling 13 (de5d538f): every roles.json entry is kind=role.
+
+        Consumers default kind to 'role' when absent; the registry itself is
+        explicit. Non-role kinds (alias/telemetry) must never appear here.
+        """
+        bad = {
+            name: block.get("kind")
+            for name, block in self.roles.items()
+            if not isinstance(block, dict) or block.get("kind") != "role"
+        }
+        self.assertEqual(
+            bad,
+            {},
+            f"roles.json entries must carry kind=role (non-role addresses live in address-kinds.json): {bad}",
+        )
 
     def test_surface_values_are_boolean(self):
         for name, block in self.roles.items():

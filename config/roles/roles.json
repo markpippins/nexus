@@ -1,5 +1,5 @@
 {
-  "_comment": "Canonical role-registration expectations. Source of truth for role surface coverage (b80f0bdf). Roles = live tackle.roles; per-role keys override roleDefaults. A surface marked true must exist and verify; false = deliberately absent (do not create). governance = receipt-issuing allowlist (harness-srv KNOWN_EXECUTORS), only for roles that emit receipts. Add a new role here + emit its artifacts, then run bin/verify-roles.py.",
+  "_comment": "Canonical role-registration expectations. Source of truth for role surface coverage (b80f0bdf). Roles = live tackle.roles; per-role keys override roleDefaults. A surface marked true must exist and verify; false = deliberately absent (do not create). governance = receipt-issuing allowlist (harness-srv KNOWN_EXECUTORS), only for roles that emit receipts. kind = address class per Ruling 13 (de5d538f): every entry under roles is kind=role — the only kind carrying a delivery obligation. Non-role addresses (alias/telemetry) live in config/roles/address-kinds.json and must NOT be added here (roles keys must match tackle.roles exactly). Consumers default kind to 'role' when absent. Add a new role here + emit its artifacts, then run bin/verify-roles.py.",
   "roleDefaults": {
     "persona": true,
     "procedures": true,
@@ -8,45 +8,35 @@
     "nebulaCheck": true,
     "governance": true
   },
-  "roles": {        "analyst": {},
-        "analyst-ii": {
-            "governance": true,
-            "_note": "Wave-1 clone of analyst (V175 lineage, 8df132d0): can_verify_work_requests=false, analyst-domain clone; registered live 2026-09-23"
-        },
-        "architect": {},
-    "auditor": { "governance": false },
-    "builder": {},
-    "critic": {},
-    "design-synthesist": { "harnessFile": false, "governance": false, "_note": "doctrine roundtable role (AGENTS.md R12): runs in interactive lease sessions; harness agent file deliberately absent" },
-    "devops": {},        "engineer": {},
-        "engineer-ii": {
-            "governance": true,
-            "_note": "Wave-1 clone of engineer (V175 lineage, 8df132d0): can_verify_work_requests=true, engineer-domain clone; registered live 2026-09-23"
-        },
-        "engineer-iii": {
-            "governance": true,
-            "_note": "fresh-role grant (engineer baseline clone, 8df132d0 lineage via PR #525): can_verify_work_requests=true; persona bridge separate open defect (957ead77)"
-        },
-        "lead-engineer": {},
-    "layout-mechanic": { "harnessFile": false, "governance": false, "_note": "doctrine roundtable role (AGENTS.md R12): runs in interactive lease sessions; harness agent file deliberately absent" },
-    "epistemologist": { "governance": false },
-    "inspector": {},
-    "operator": { "governance": false },
-    "ontologist": { "harnessFile": false, "governance": false, "_note": "doctrine roundtable role (AGENTS.md R12): owns the resolution ontology (Concept/Representation freezes, e.g. V172 record 90bd3080); runs in interactive lease sessions; harness agent file deliberately absent" },
-    "planner": {},        "reviewer": {},
-        "sound-technician": {
-            "harnessFile": false,
-            "governance": false,
-            "_note": "doctrine roundtable role (AGENTS.md R12): runs in interactive lease sessions; harness agent file deliberately absent"
-        },
-        "supervisor": { "governance": false, "_note": "initial scope: role registration/configuration and doctrine + OpenCode projection regeneration; WorkRequest execution and receipt authority remain inactive until Conduit resumes" },
-    "sysadmin": { "governance": false },
-    "topologist": {},
-    "dba": { "nebulaCheck": true, "persona": true, "harnessFile": true, "procedures": false, "assemblyAlias": false, "governance": false, "_note": "DBA canonical key (Ruling 8 normalization, audit 331ac2f3): corpus (742 records), all durable inbox pointers, and harness file are already lowercase. procedures=false — 0 active dba cards live (surface deliberately absent). assemblyAlias=false — assembly user exists (1ea49b6d) but alias still capitalized 'DBA'; set true after assembly-side normalization. governance=false — no Conduit receipts. Case-variant 'to:DBA' records (24162dba, a471653b) are immutable history, deliverable via PR #711 read-side matching." },
-    "builder-fallback": { "persona": true, "harnessFile": true, "assemblyAlias": false, "nebulaCheck": false, "procedures": false, "governance": false },
-    "leased-builder": { "persona": true, "governance": true, "assemblyAlias": false, "harnessFile": false, "nebulaCheck": false, "procedures": false },
-    "big-pickle": { "persona": true, "assemblyAlias": false, "harnessFile": false, "nebulaCheck": false, "procedures": false, "governance": false, "_note": "model-name harness alias" },
-    "test": { "persona": false, "procedures": false, "assemblyAlias": false, "harnessFile": false, "nebulaCheck": false, "governance": false, "_note": "internal test-invoke role" },
-    "tester": { "_note": "walkthrough role (b80f0fdb): full-surface demonstration of the role-creation runbook" }
+  "roles": {
+    "analyst": { "kind": "role" },
+    "analyst-ii": { "kind": "role", "governance": true, "_note": "Wave-1 clone of analyst (V175 lineage, 8df132d0): can_verify_work_requests=false, analyst-domain clone; registered live 2026-09-23" },
+    "architect": { "kind": "role" },
+    "auditor": { "kind": "role", "governance": false },
+    "builder": { "kind": "role" },
+    "critic": { "kind": "role" },
+    "design-synthesist": { "kind": "role", "harnessFile": false, "governance": false, "_note": "doctrine roundtable role (AGENTS.md R12): runs in interactive lease sessions; harness agent file deliberately absent" },
+    "devops": { "kind": "role" },
+    "engineer": { "kind": "role" },
+    "engineer-ii": { "kind": "role", "governance": true, "_note": "Wave-1 clone of engineer (V175 lineage, 8df132d0): can_verify_work_requests=true, engineer-domain clone; registered live 2026-09-23" },
+    "engineer-iii": { "kind": "role", "governance": true, "_note": "fresh-role grant (engineer baseline clone, 8df132d0 lineage via PR #525): can_verify_work_requests=true; persona bridge separate open defect (957ead77)" },
+    "lead-engineer": { "kind": "role" },
+    "layout-mechanic": { "kind": "role", "harnessFile": false, "governance": false, "_note": "doctrine roundtable role (AGENTS.md R12): runs in interactive lease sessions; harness agent file deliberately absent" },
+    "epistemologist": { "kind": "role", "governance": false },
+    "inspector": { "kind": "role" },
+    "operator": { "kind": "role", "governance": false },
+    "ontologist": { "kind": "role", "harnessFile": false, "governance": false, "_note": "doctrine roundtable role (AGENTS.md R12): owns the resolution ontology (Concept/Representation freezes, e.g. V172 record 90bd3080); runs in interactive lease sessions; harness agent file deliberately absent" },
+    "planner": { "kind": "role" },
+    "reviewer": { "kind": "role" },
+    "sound-technician": { "kind": "role", "harnessFile": false, "governance": false, "_note": "doctrine roundtable role (AGENTS.md R12): runs in interactive lease sessions; harness agent file deliberately absent" },
+    "supervisor": { "kind": "role", "governance": false, "_note": "initial scope: role registration/configuration and doctrine + OpenCode projection regeneration; WorkRequest execution and receipt authority remain inactive until Conduit resumes" },
+    "sysadmin": { "kind": "role", "governance": false },
+    "topologist": { "kind": "role" },
+    "dba": { "kind": "role", "nebulaCheck": true, "persona": true, "harnessFile": true, "procedures": false, "assemblyAlias": false, "governance": false, "_note": "DBA canonical key (Ruling 8 normalization, audit 331ac2f3): corpus (742 records), all durable inbox pointers, and harness file are already lowercase. procedures=false — 0 active dba cards live (surface deliberately absent). assemblyAlias=false — assembly user exists (1ea49b6d) but alias still capitalized 'DBA'; set true after assembly-side normalization. governance=false — no Conduit receipts. Case-variant 'to:DBA' records (24162dba, a471653b) are immutable history, deliverable via PR #711 read-side matching." },
+    "builder-fallback": { "kind": "role", "persona": true, "harnessFile": true, "assemblyAlias": false, "nebulaCheck": false, "procedures": false, "governance": false },
+    "leased-builder": { "kind": "role", "persona": true, "governance": true, "assemblyAlias": false, "harnessFile": false, "nebulaCheck": false, "procedures": false },
+    "big-pickle": { "kind": "role", "persona": true, "assemblyAlias": false, "harnessFile": false, "nebulaCheck": false, "procedures": false, "governance": false, "_note": "model-name harness alias" },
+    "test": { "kind": "role", "persona": false, "procedures": false, "assemblyAlias": false, "harnessFile": false, "nebulaCheck": false, "governance": false, "_note": "internal test-invoke role" },
+    "tester": { "kind": "role", "_note": "walkthrough role (b80f0fdb): full-surface demonstration of the role-creation runbook" }
   }
 }
