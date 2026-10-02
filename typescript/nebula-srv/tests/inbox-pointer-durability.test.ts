@@ -35,7 +35,9 @@ import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
 const POINTER_TABLE = 'nebula.role_inbox_pointers';
-const DDL = resolve(__dirname, '../../../bin/drafts/071-role-inbox-pointers.sql');
+// Canonical location. Was bin/drafts/ — DBA-1 moved it into migrations/ alongside its
+// attestations.json entry, and deleting the drafts copy is what surfaced this broken path.
+const DDL = resolve(__dirname, '../migrations/071-role-inbox-pointers.sql');
 const ISO = '2026-10-01T09:30:00.000Z';
 
 const pool = new Pool({

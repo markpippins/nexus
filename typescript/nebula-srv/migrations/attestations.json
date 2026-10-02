@@ -57,5 +57,6 @@
   "067-restore-op-registry-isa-validator.sql": "a4e56d168f484e315b18ac85599d7d9ad6cc3b1f0dd9f913c155ab37066bf3d3",
   "068-execution-identity.sql": "21fdc663eac6a2f018abcb3ebbd5b11c92d18cce4a3b699c4ccb7c4d28a0be68",
   "069-add-ledger-content-hash.sql": "70acdacdfe5461008d6d9112de14e6e7be4198cd00d12b869291a0efb86c8d25",
-  "070-restore-harvests-triggers.sql": "b9e2333808670c7825469d49fea4b19927ceef77ce3b609d62324b1db2083ed6"
+  "070-restore-harvests-triggers.sql": "b9e2333808670c7825469d49fea4b19927ceef77ce3b609d62324b1db2083ed6",
+  "071-role-inbox-pointers.sql": "cf39197efec8819018eab8c2efe054da832f5a7753c2393973c71a54b0be23ba"
 }
