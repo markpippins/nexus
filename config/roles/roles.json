@@ -42,11 +42,10 @@
         "supervisor": { "governance": false, "_note": "initial scope: role registration/configuration and doctrine + OpenCode projection regeneration; WorkRequest execution and receipt authority remain inactive until Conduit resumes" },
     "sysadmin": { "governance": false },
     "topologist": {},
-    "DBA": { "nebulaCheck": true, "governance": false, "_note": "case variant: CHECK + harness file use lowercase 'dba'" },
+    "dba": { "nebulaCheck": true, "persona": true, "harnessFile": true, "procedures": false, "assemblyAlias": false, "governance": false, "_note": "DBA canonical key (Ruling 8 normalization, audit 331ac2f3): corpus (742 records), all durable inbox pointers, and harness file are already lowercase. procedures=false — 0 active dba cards live (surface deliberately absent). assemblyAlias=false — assembly user exists (1ea49b6d) but alias still capitalized 'DBA'; set true after assembly-side normalization. governance=false — no Conduit receipts. Case-variant 'to:DBA' records (24162dba, a471653b) are immutable history, deliverable via PR #711 read-side matching." },
     "builder-fallback": { "persona": true, "harnessFile": true, "assemblyAlias": false, "nebulaCheck": false, "procedures": false, "governance": false },
     "leased-builder": { "persona": true, "governance": true, "assemblyAlias": false, "harnessFile": false, "nebulaCheck": false, "procedures": false },
     "big-pickle": { "persona": true, "assemblyAlias": false, "harnessFile": false, "nebulaCheck": false, "procedures": false, "governance": false, "_note": "model-name harness alias" },
-    "Rover": { "assemblyAlias": true, "persona": false, "procedures": false, "harnessFile": false, "nebulaCheck": false, "governance": false, "_note": "legacy capitalized role" },
     "test": { "persona": false, "procedures": false, "assemblyAlias": false, "harnessFile": false, "nebulaCheck": false, "governance": false, "_note": "internal test-invoke role" },
     "tester": { "_note": "walkthrough role (b80f0fdb): full-surface demonstration of the role-creation runbook" }
   }
