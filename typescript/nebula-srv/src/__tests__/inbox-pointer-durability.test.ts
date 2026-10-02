@@ -43,8 +43,12 @@ class FakeRedis {
   async set(k: string, v: string) { this.store.set(k, v); return 'OK'; }
   async del(k: string) { return this.store.delete(k) ? 1 : 0; }
   async keys(pattern: string) {
-    const p = pattern.replace('*', '');
-    return [...this.store.keys()].filter((k) => k.startsWith(p));
+    // Strip a single TRAILING '*' to get the prefix. `replace('*', '')` was flagged by CodeQL
+    // (js/incomplete-sanitization, high) and is genuinely wrong: a string first argument
+    // replaces only the FIRST '*', so `a*b*c` became `ab*c` — a silently different prefix.
+    // Slicing the last character states the intent exactly and cannot over-strip.
+    const prefix = pattern.endsWith('*') ? pattern.slice(0, -1) : pattern;
+    return [...this.store.keys()].filter((k) => k.startsWith(prefix));
   }
   async connect() { return this; }
   async quit() {}

@@ -278,7 +278,12 @@ export async function getAllInboxPointers(): Promise<Record<string, string | nul
   try {
     const keys = await redis.keys('inbox:pointer:*');
     for (const key of keys) {
-      const role = key.replace('inbox:pointer:', '');
+      // Slice the exact known prefix rather than string-replace it: `replace('x', '')`
+      // strips only the FIRST occurrence, which happens to be right here but silently
+      // mis-handles any key embedding the prefix twice. Same class as the CodeQL
+      // js/incomplete-sanitization finding in the test fake.
+      const PREFIX = 'inbox:pointer:';
+      const role = key.startsWith(PREFIX) ? key.slice(PREFIX.length) : key;
       const cached = await redis.get(key);
       if (cached === null) continue;
       // `result` is Record<string, string | null>, so "no durable row" can surface as either
