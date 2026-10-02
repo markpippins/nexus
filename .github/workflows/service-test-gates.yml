@@ -702,10 +702,33 @@ jobs:
         if: steps.locate.outputs.present == 'true'
         run: |
           set -uo pipefail
-          RAN=$(node -e 'const r=require("/tmp/jest-substance.json");console.log(r.numTotalTests||0)')
-          SUITES=$(node -e 'const r=require("/tmp/jest-substance.json");console.log(r.numTotalTestSuites||0)')
-          FAILED=$(node -e 'const r=require("/tmp/jest-substance.json");console.log(r.numFailedTests||0)')
-          ONDISK=$(find test -name '*.test.ts' 2>/dev/null | wc -l)
+          REPORT=/tmp/jest-substance.json
+
+          if [ ! -f "$REPORT" ]; then
+            echo "::error::moleculer/substance gate FAILED: jest exited 0 but wrote no results file at $REPORT -- the suite did not run"
+            exit 1
+          fi
+
+          # One node invocation, one parse. The previous version shelled out three times and
+          # read three separate fields, so a jest version that renames or omits one produced a
+          # bare "integer expression expected" instead of a diagnosable failure.
+          COUNTS="$(node -e '
+            const r = require(process.argv[1]);
+            const n = (k) => (typeof r[k] === "number" ? r[k] : 0);
+            console.log([n("numTotalTests"), n("numTotalTestSuites"), n("numFailedTests")].join(" "));
+          ' "$REPORT" 2>/dev/null)"
+          if [ -z "$COUNTS" ]; then
+            echo "::error::moleculer/substance gate FAILED: could not parse $REPORT"
+            exit 1
+          fi
+          RAN=$(echo "$COUNTS" | cut -d' ' -f1)
+          SUITES=$(echo "$COUNTS" | cut -d' ' -f2)
+          FAILED=$(echo "$COUNTS" | cut -d' ' -f3)
+          ONDISK=$(find moleculer/substance/test -name '*.test.ts' 2>/dev/null | wc -l)
+
+          # Always print the raw numbers FIRST, so a future failure is diagnosable from the
+          # log alone rather than requiring a re-run and guesswork.
+          echo "moleculer/substance counts: tests=$RAN suites=$SUITES failed=$FAILED files_on_disk=$ONDISK"
 
           if [ "$SUITES" -eq 0 ]; then
             echo "::error::moleculer/substance gate FAILED: jest collected 0 suites but $ONDISK test file(s) exist on disk -- the testMatch is not covering them"
