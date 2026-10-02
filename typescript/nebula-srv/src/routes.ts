@@ -15,6 +15,12 @@ import { attestationsLimiter, requirementCompileLimiter } from './limiter';
 import { routingTagErrorMessage, routingCaseErrorMessage } from './routing-tags';
 import { blankRecordError, normalizeHarnessJobId } from './agent-record-write-guard';
 import {
+  enforceTagAddressPolicy,
+  addressPolicyErrorMessage,
+  loadAddressRegistry,
+  resolveAddressPolicyMode,
+} from './tagAddressPolicy';
+import {
   camelCaseRow,
   AGENT_RECORD_LIST_COLUMNS,
   AGENT_RECORD_LIST_COLUMNS_FULL,
@@ -5522,6 +5528,17 @@ export function createRoutes(pool: Pool): Router {
   }
 
   // POST /api/agent-records — create a new agent record (canonical write path)
+  // ── Tag address policy (Ruling 13 step 5, PR #693). Registries load
+  // lazily once; a missing/unreadable registry file degrades fail-open.
+  let addressRegistries: ReturnType<typeof loadAddressRegistry> | null = null;
+  const getAddressRegistries = (): ReturnType<typeof loadAddressRegistry> => {
+    if (addressRegistries === null) {
+      const repoRoot = path.resolve(fs.realpathSync(__dirname), '..', '..', '..');
+      addressRegistries = loadAddressRegistry(repoRoot);
+    }
+    return addressRegistries;
+  };
+
   router.post('/agent-records', async (req: Request, res: Response) => {
     try {
       const { recordType, role, title, content, sourcePath, metadata, tags, systemId, subsystemId, featureId, planRef, level, visibilityScope, model, harnessJobId } = req.body;
@@ -5590,6 +5607,28 @@ export function createRoutes(pool: Pool): Router {
           return res.status(400).json({ error: routingTagError });
         }
 
+      // ── Tag address policy (Ruling 13 step 5 / Ruling 11 scope): only
+      // to:-addresses absent from BOTH registries are violations; Class V
+      // and case variants never reject. WARN by default — reject arms via
+      // NEBULA_TAG_ADDRESS_POLICY=reject only after the full sequencing
+      // chain lands.
+      //
+      // Validated on `normalizedTags.tags`, not the raw input: card §6 asks
+      // for the normalizer to run upstream of this check, and that normalizer
+      // now exists in this handler (R13 §4). The structural repairs it makes
+      // are accepted deliberately — e.g. the concat `to:engineer-to:engineer-ii`
+      // is stored as two separate to:-addresses — so judging the raw form here
+      // would flag a payload main intentionally repairs.
+      const addressMode = resolveAddressPolicyMode(process.env);
+      const addressResult = enforceTagAddressPolicy(normalizedTags.tags, getAddressRegistries(), addressMode);
+      if (addressResult.violations.length > 0) {
+        const message = addressPolicyErrorMessage(addressResult)!;
+        if (addressMode === 'reject') {
+          return res.status(422).json({ error: message });
+        }
+        console.warn(`[tag-address-policy] WARN: ${message}`);
+      }
+
       const { rows: [row] } = await pool.query(
         `INSERT INTO nebula.agent_records (record_type, role, title, content, source_path, metadata, tags, system_id, subsystem_id, feature_id, plan_ref, level, visibility_scope, model, harness_job_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
@@ -5619,6 +5658,17 @@ export function createRoutes(pool: Pool): Router {
       const { title, content, metadata, tags, systemId, subsystemId, featureId, planRef, level, visibilityScope, model } = req.body;
       if (level !== undefined && (level < 1 || level > 4)) {
         return res.status(400).json({ error: 'level must be between 1 and 4' });
+      }
+      // ── Tag address policy on the tags-modifying path (same mode; PATCH
+      // must not become the bypass around POST enforcement).
+      const patchAddressMode = resolveAddressPolicyMode(process.env);
+      const patchAddressResult = enforceTagAddressPolicy(tags, getAddressRegistries(), patchAddressMode);
+      if (patchAddressResult.violations.length > 0) {
+        const patchMessage = addressPolicyErrorMessage(patchAddressResult)!;
+        if (patchAddressMode === 'reject') {
+          return res.status(422).json({ error: patchMessage });
+        }
+        console.warn(`[tag-address-policy] WARN (patch): ${patchMessage}`);
       }
       const sets: string[] = [];
       const vals: any[] = [];
