@@ -5,9 +5,13 @@
  *
  * Proves the full delivery pipeline — write-side address acceptance, tag
  * storage, query-path matching, pointer-window semantics — for each role
- * derived from config/roles/roles.json (nebulaCheck=true roles are the
- * canonical, inbox-bearing identities). New roles are auto-covered because
- * the role list is read from the registry, not hardcoded.
+ * derived from config/roles/roles.json via the kind-aware derivation in
+ * src/deliverabilityRegistry.ts (architect amendment 2abf68c7 + Ruling 13
+ * de5d538f): entries with kind=role (explicit or defaulted) whose
+ * nebulaCheck surface is expected. New roles are auto-covered because the
+ * role list is read from the registry, not hardcoded. Telemetry/alias
+ * addresses (config/roles/address-kinds.json, PR #715) are excluded from
+ * delivery assertions and get an inverse never-delivered check below.
  *
  * Runs in the service-test-gates workflow (throwaway PostgreSQL + live
  * nebula-srv). A failure here means SOME canonical role cannot receive
@@ -26,18 +30,30 @@
  *   4. cleanup:      DELETE removes every fixture; a follow-up search by the
  *                    unique namespace must return 0
  *
+ * Kind-awareness (amendment 2abf68c7) lives in the DERIVATION: telemetry/
+ * alias addresses are excluded from the assertion set by
+ * src/deliverabilityRegistry.ts and its hermetic tests — deliberately no
+ * negative service-tier probe (a tag query for a stored telemetry tag
+ * correctly still matches; "never delivered" means no delivery obligation,
+ * not a query-path change).
+ *
  * Usage: NEBULA_TEST_BASE=http://localhost:3101 npx tsx tests/deliverability.test.ts
  */
 
 import * as fs from 'fs';
 import * as http from 'http';
 import * as path from 'path';
+import {
+  canonicalDeliverabilityRoles,
+  nonDeliverableAddresses,
+} from '../src/deliverabilityRegistry';
 
 const BASE = process.env.NEBULA_TEST_BASE || 'http://localhost:3101';
 // realpath: tsx may run this file through a symlinked path (e.g. worktree
 // layouts); resolve to the physical tree so the registry is always found.
 const REPO = path.resolve(fs.realpathSync(__dirname), '..', '..', '..');
 const ROLES_JSON = path.join(REPO, 'config', 'roles', 'roles.json');
+const KINDS_JSON = path.join(REPO, 'config', 'roles', 'address-kinds.json');
 const NS = `dlv-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 
 interface Fixture {
@@ -78,20 +94,6 @@ function httpReq(method: string, reqPath: string, body?: unknown): Promise<{ sta
   });
 }
 
-function canonicalInboxRoles(): string[] {
-  const spec = JSON.parse(fs.readFileSync(ROLES_JSON, 'utf-8'));
-  const defaults = spec.roleDefaults ?? {};
-  const roles: string[] = [];
-  for (const [name, overrides] of Object.entries<any>(spec.roles ?? {})) {
-    const nebulaCheck = overrides?.nebulaCheck ?? defaults.nebulaCheck ?? false;
-    if (nebulaCheck) roles.push(name);
-  }
-  if (roles.length < 3) {
-    throw new Error(`registry derived only ${roles.length} inbox-bearing roles — refusing to run vacuously`);
-  }
-  return roles.sort();
-}
-
 async function expect(cond: boolean, label: string, detail?: unknown): Promise<void> {
   if (!cond) throw new Error(`FAIL: ${label}${detail !== undefined ? ' :: ' + JSON.stringify(detail).slice(0, 300) : ''}`);
   console.log(`  ok: ${label}`);
@@ -103,8 +105,16 @@ function itemsOf(res: { body: any }): any[] {
 
 async function main(): Promise<void> {
   console.log(`deliverability guard: ${BASE} (ns=${NS})`);
-  const roles = canonicalInboxRoles();
-  console.log(`registry-derived inbox-bearing roles (${roles.length}): ${roles.join(', ')}`);
+  const roles = canonicalDeliverabilityRoles(JSON.parse(fs.readFileSync(ROLES_JSON, 'utf-8')));
+  console.log(`registry-derived deliverable roles (${roles.length}): ${roles.join(', ')}`);
+  const nonDeliverable = nonDeliverableAddresses(KINDS_JSON);
+  if (nonDeliverable.length === 0) {
+    console.log('  note: no address-kinds.json on this branch (pre-#715) — inverse checks skipped');
+  } else {
+    console.log(
+      `registered non-deliverable addresses (${nonDeliverable.length}): ${nonDeliverable.map((e) => `to:${e.address}[${e.kind}]`).join(', ')}`,
+    );
+  }
 
   const created: Fixture[] = [];
   try {
@@ -179,7 +189,9 @@ async function main(): Promise<void> {
     );
     await expect(itemsOf(residue).length === 0, 'cleanup verified: 0 fixtures remain', itemsOf(residue).length);
 
-    console.log(`PASS: deliverability guard — ${roles.length}/${roles.length} canonical inboxes deliver, isolate, gate, and clean`);
+    console.log(
+      `PASS: deliverability guard — ${roles.length}/${roles.length} kind-derived canonical inboxes deliver, isolate, gate, and clean`,
+    );
   } catch (err) {
     // never leave fixtures behind on failure
     for (const f of created) {
