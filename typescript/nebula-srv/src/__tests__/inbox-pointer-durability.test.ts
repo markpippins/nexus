@@ -208,3 +208,50 @@ describe('3. durable:false / pointerMissing propagation', () => {
     expect(body.pointerMissing).toBe(false);
   });
 });
+describe('DBA-2: census reads are side-effect free and synthesize nothing', () => {
+  it('durable-newer-unchanged: a newer durable value is never regressed to the cache', async () => {
+    fakePool.rows.set('engineer-iii', '2026-10-01T12:00:00.000Z');   // durable, newer
+    fakeRedis.store.set(KEY('engineer-iii'), '2026-10-01T09:00:00.000Z'); // cache, older
+    const all = await svc.getAllInboxPointers();
+    expect(all['engineer-iii']).toBe('2026-10-01T12:00:00.000Z');
+    expect(fakePool.rows.get('engineer-iii')).toBe('2026-10-01T12:00:00.000Z');
+  });
+
+  it('a newer cache value is adopted for REPORTING but not written durably', async () => {
+    fakePool.rows.set('engineer-iii', '2026-10-01T09:00:00.000Z');
+    fakeRedis.store.set(KEY('engineer-iii'), '2026-10-01T12:00:00.000Z');
+    const all = await svc.getAllInboxPointers();
+    expect(all['engineer-iii']).toBe('2026-10-01T12:00:00.000Z');   // monotonic
+    expect(fakePool.rows.get('engineer-iii')).toBe('2026-10-01T09:00:00.000Z'); // untouched
+  });
+
+  it('no-path-synthesizes-timestamp: a census read NEVER writes to the durable store', async () => {
+    // The defect: the old loop wrote back `redis.get(key) ?? new Date().toISOString()`, so a
+    // read mutated durable delivery state and could durably SYNTHESIZE a "now" watermark.
+    fakeRedis.store.set(KEY('ghost-role'), '2026-10-01T09:00:00.000Z');
+    const before = new Set(fakePool.rows.keys());
+    await svc.getAllInboxPointers();
+    expect([...fakePool.rows.keys()].sort()).toEqual([...before].sort());
+  });
+
+  it('no-path-synthesizes-timestamp: nothing is ever written that was not explicitly set', async () => {
+    const t0 = Date.now();
+    fakeRedis.store.set(KEY('ghost-role'), '2026-10-01T09:00:00.000Z');
+    await svc.getAllInboxPointers();
+    await svc.getInboxPointer('ghost-role');          // backfill promotes the REAL cache value
+    for (const value of fakePool.rows.values()) {
+      expect(value).toBe('2026-10-01T09:00:00.000Z');  // never a synthesized ~now
+    }
+    expect([...fakePool.rows.values()].some((v) => Math.abs(Date.parse(v) - t0) < 60_000)).toBe(false);
+  });
+
+  it('a cache key whose value is absent does not acquire a synthesized watermark', async () => {
+    // Direct probe of the old `?? new Date().toISOString()` branch: the key exists in the
+    // keyspace listing but holds no value. It must contribute nothing and write nothing.
+    fakeRedis.store.set(KEY('emptied-role'), 'x');
+    fakeRedis.store.delete(KEY('emptied-role'));
+    const all = await svc.getAllInboxPointers();
+    expect(all['emptied-role']).toBeUndefined();
+    expect(fakePool.rows.has('emptied-role')).toBe(false);
+  });
+});

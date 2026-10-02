@@ -279,12 +279,28 @@ export async function getAllInboxPointers(): Promise<Record<string, string | nul
     const keys = await redis.keys('inbox:pointer:*');
     for (const key of keys) {
       const role = key.replace('inbox:pointer:', '');
-      // Never overwrite a durable value with a cache value.
-      if (result[role] !== undefined) {
-        await writeDurablePointer(role, await redis.get(key) ?? new Date().toISOString()).catch(() => {});
+      const cached = await redis.get(key);
+      if (cached === null) continue;
+      // `result` is Record<string, string | null>, so "no durable row" can surface as either
+      // undefined (key absent) or null (explicitly cleared). Both mean no durable value.
+      const durable = result[role];
+      if (durable === undefined || durable === null) {
+        // Cache-only role: REPORT it, but do NOT persist it. Backfill belongs to the
+        // single-role read (getInboxPointer), which a role actually uses to advance.
+        result[role] = cached;
         continue;
       }
-      result[role] = await redis.get(key);
+      // Monotonic: never regress to an older value, and never synthesize one.
+      //
+      // This loop previously wrote back with `await redis.get(key) ?? new Date().toISOString()`.
+      // Two defects in one expression, both flagged as DBA-2:
+      //   1. a census READ mutated durable delivery state. Listing pointers must be side-effect
+      //      free -- otherwise merely enumerating them can advance a role's watermark.
+      //   2. the `?? new Date().toISOString()` fallback SYNTHESIZED a "now" watermark for a
+      //      key whose value had vanished, writing it durably. That is the re-anchoring-to-now
+      //      that db3992b2 §Recovery forbids outright: it marks every record since the loss as
+      //      SEEN, converting a detected loss into a permanent one.
+      if (Date.parse(cached) > Date.parse(durable)) result[role] = cached;
     }
   } catch {
     /* cache unavailable */
