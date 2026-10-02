@@ -85,6 +85,71 @@ describe('tagNormalizer (card §4)', () => {
     });
   });
 
+  describe('§4.2d concatenated-address split-repair (Ruling 13 decision 3)', () => {
+    it('splits the corpus defect to:engineer-to:engineer-ii into two addresses', () => {
+      const r = normalizeTags(['to:engineer-to:engineer-ii']);
+      expect(r.tags).toEqual(['to:engineer', 'to:engineer-ii']);
+      expect(r.warnings).toEqual([
+        { tag: 'to:engineer-to:engineer-ii', reason: 'concatenated-address' },
+      ]);
+    });
+
+    it('splits three-way concatenations', () => {
+      const r = normalizeTags(['to:a-to:b-to:c']);
+      expect(r.tags).toEqual(['to:a', 'to:b', 'to:c']);
+      expect(r.warnings.some((w) => w.reason === 'concatenated-address')).toBe(true);
+    });
+
+    it('splits case-mixed concatenations and lowercases each segment', () => {
+      const r = normalizeTags(['TO:DBA-To:Architect']);
+      expect(r.tags).toEqual(['to:dba', 'to:architect']);
+      expect(r.warnings.some((w) => w.reason === 'concatenated-address')).toBe(true);
+    });
+
+    it('trims the joiner hyphen but preserves in-role hyphens', () => {
+      const r = normalizeTags(['to:engineer-to:engineer-ii-to:design-synthesist']);
+      expect(r.tags).toEqual(['to:engineer', 'to:engineer-ii', 'to:design-synthesist']);
+    });
+
+    it('warns and keeps evidence when a bare to: segment is unrecoverable', () => {
+      const r = normalizeTags(['to:to:dba']);
+      expect(r.tags).toEqual(['to:dba']);
+      expect(r.warnings).toEqual([{ tag: 'to:to:dba', reason: 'concatenated-address' }]);
+    });
+
+    it('does NOT split or warn a single address containing hyphens', () => {
+      const r = normalizeTags(['to:engineer-ii']);
+      expect(r.tags).toEqual(['to:engineer-ii']);
+      expect(r.warnings).toEqual([]);
+    });
+
+    it('does NOT touch Class V value tags that contain to: mid-tag', () => {
+      const r = normalizeTags(['route:to:archive']);
+      expect(r.tags).toEqual(['route:to:archive']);
+      expect(r.warnings).toEqual([]);
+    });
+
+    it('splits inside comma-joined lists', () => {
+      expect(normalizeTags(['to:dba,to:architect-to:tester']).tags).toEqual([
+        'to:dba',
+        'to:architect',
+        'to:tester',
+      ]);
+    });
+
+    it('dedupes segments that collapse to the same address', () => {
+      const r = normalizeTags(['to:dba-to:DBA']);
+      expect(r.tags).toEqual(['to:dba']);
+    });
+
+    it('split output is idempotent (second pass is a fixed point, no warnings)', () => {
+      const once = normalizeTags(['to:engineer-to:engineer-ii']).tags;
+      const twice = normalizeTags(once).tags;
+      expect(twice).toEqual(once);
+      expect(normalizeTags(twice).warnings).toEqual([]);
+    });
+  });
+
   describe('§4.3 classification: Class R lowercased, Class V preserved', () => {
     it('lowercases to: addresses (Class R)', () => {
       expect(normalizeTags(['to:DBA', 'TO:Engineer']).tags).toEqual(['to:dba', 'to:engineer']);
