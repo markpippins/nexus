@@ -6,6 +6,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { randomUUID } from 'crypto';
 import * as bs from './block-segmentation.service';
+import { singleTagClause, allTagsClause, anyTagClause } from './tagFilter';
 import * as bsRedis from './services/block-segmentation-redis.service';
 import { fetchSubstance, substanceToCamel } from './substance-proxy';
 import { CrossReferenceType } from './crossref-taxonomy';
@@ -4997,13 +4998,17 @@ export function createRoutes(pool: Pool): Router {
           }
         }
         if (tagArr.length === 1) {
-          clauses.push(`$${i} = ANY(tags)`);
-          vals.push(tagArr[0]);
+          // Ruling 8 read-side: case-insensitive match (a record tagged to:DBA
+          // must be deliverable to a to:dba query, and vice versa).
+          const c = singleTagClause(i, tagArr[0]);
+          clauses.push(c.sql);
+          vals.push(...c.params);
           i++;
         } else if (tagArr.length > 1) {
-          clauses.push(`tags @> $${i}::text[]`);
-          vals.push(tagArr);
-          i++;
+          const c = allTagsClause(i, tagArr);
+          clauses.push(c.sql);
+          vals.push(...c.params);
+          i += c.params.length;
         }
       }
       if (search) {
@@ -5149,20 +5154,23 @@ export function createRoutes(pool: Pool): Router {
         const cleanTags = tags.filter((t: any) => typeof t === 'string' && t.trim()).map((t: string) => t.trim());
         if (cleanTags.length > 0) {
           if (match === 'any') {
-            // OR semantics: any of the tags match
-            clauses.push(`tags && $${i}::text[]`);
-            vals.push(cleanTags);
-            i++;
+            // OR semantics: any of the tags match (case-insensitive, Ruling 8 read-side)
+            const c = anyTagClause(i, cleanTags);
+            clauses.push(c.sql);
+            vals.push(...c.params);
+            i += c.params.length;
           } else {
             // AND semantics (default): all tags must match (same as GET handler)
             if (cleanTags.length === 1) {
-              clauses.push(`$${i} = ANY(tags)`);
-              vals.push(cleanTags[0]);
+              const c = singleTagClause(i, cleanTags[0]);
+              clauses.push(c.sql);
+              vals.push(...c.params);
               i++;
             } else {
-              clauses.push(`tags @> $${i}::text[]`);
-              vals.push(cleanTags);
-              i++;
+              const c = allTagsClause(i, cleanTags);
+              clauses.push(c.sql);
+              vals.push(...c.params);
+              i += c.params.length;
             }
           }
         }
