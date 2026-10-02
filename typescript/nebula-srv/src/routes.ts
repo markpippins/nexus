@@ -9,6 +9,12 @@ import * as bs from './block-segmentation.service';
 import * as bsRedis from './services/block-segmentation-redis.service';
 import { fetchSubstance, substanceToCamel } from './substance-proxy';
 import { CrossReferenceType } from './crossref-taxonomy';
+import {
+  enforceTagAddressPolicy,
+  addressPolicyErrorMessage,
+  loadAddressRegistry,
+  resolveAddressPolicyMode,
+} from './tagAddressPolicy';
 import { attestationsLimiter } from './limiter';
 import {
   camelCaseRow,
@@ -5253,6 +5259,17 @@ export function createRoutes(pool: Pool): Router {
   }
 
   // POST /api/agent-records — create a new agent record (canonical write path)
+  // ── Tag address policy (Ruling 13 step 5, PR #693). Registries load
+  // lazily once; a missing/unreadable registry file degrades fail-open.
+  let addressRegistries: ReturnType<typeof loadAddressRegistry> | null = null;
+  const getAddressRegistries = (): ReturnType<typeof loadAddressRegistry> => {
+    if (addressRegistries === null) {
+      const repoRoot = path.resolve(fs.realpathSync(__dirname), '..', '..', '..');
+      addressRegistries = loadAddressRegistry(repoRoot);
+    }
+    return addressRegistries;
+  };
+
   router.post('/agent-records', async (req: Request, res: Response) => {
     try {
       const { recordType, role, title, content, sourcePath, metadata, tags, systemId, subsystemId, featureId, planRef, level, visibilityScope, model } = req.body;
@@ -5264,6 +5281,21 @@ export function createRoutes(pool: Pool): Router {
 
       if (level !== undefined && (level < 1 || level > 4)) {
         return res.status(400).json({ error: 'level must be between 1 and 4' });
+      }
+
+      // ── Tag address policy (Ruling 13 step 5 / Ruling 11 scope): only
+      // to:-addresses absent from BOTH registries are violations; Class V
+      // and case variants never reject. WARN by default — reject arms via
+      // NEBULA_TAG_ADDRESS_POLICY=reject only after the full sequencing
+      // chain lands (card §6: the normalizer runs upstream of this).
+      const addressMode = resolveAddressPolicyMode(process.env);
+      const addressResult = enforceTagAddressPolicy(tags, getAddressRegistries(), addressMode);
+      if (addressResult.violations.length > 0) {
+        const message = addressPolicyErrorMessage(addressResult)!;
+        if (addressMode === 'reject') {
+          return res.status(422).json({ error: message });
+        }
+        console.warn(`[tag-address-policy] WARN: ${message}`);
       }
 
       const { rows: [row] } = await pool.query(
@@ -5294,6 +5326,17 @@ export function createRoutes(pool: Pool): Router {
       const { title, content, metadata, tags, systemId, subsystemId, featureId, planRef, level, visibilityScope, model } = req.body;
       if (level !== undefined && (level < 1 || level > 4)) {
         return res.status(400).json({ error: 'level must be between 1 and 4' });
+      }
+      // ── Tag address policy on the tags-modifying path (same mode; PATCH
+      // must not become the bypass around POST enforcement).
+      const patchAddressMode = resolveAddressPolicyMode(process.env);
+      const patchAddressResult = enforceTagAddressPolicy(tags, getAddressRegistries(), patchAddressMode);
+      if (patchAddressResult.violations.length > 0) {
+        const patchMessage = addressPolicyErrorMessage(patchAddressResult)!;
+        if (patchAddressMode === 'reject') {
+          return res.status(422).json({ error: patchMessage });
+        }
+        console.warn(`[tag-address-policy] WARN (patch): ${patchMessage}`);
       }
       const sets: string[] = [];
       const vals: any[] = [];
