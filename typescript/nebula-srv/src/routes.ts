@@ -9,6 +9,7 @@ import * as bs from './block-segmentation.service';
 import * as bsRedis from './services/block-segmentation-redis.service';
 import { fetchSubstance, substanceToCamel } from './substance-proxy';
 import { CrossReferenceType } from './crossref-taxonomy';
+import { normalizeTags } from './tagNormalizer';
 import { attestationsLimiter } from './limiter';
 import {
   camelCaseRow,
@@ -5257,6 +5258,13 @@ export function createRoutes(pool: Pool): Router {
     try {
       const { recordType, role, title, content, sourcePath, metadata, tags, systemId, subsystemId, featureId, planRef, level, visibilityScope, model } = req.body;
 
+      // Write-side tag normalization (ratified tag-grammar card §4): repair
+      // and normalize only — no reject here (#693's scope, post-#712).
+      const normalizedTags = normalizeTags(tags);
+      for (const w of normalizedTags.warnings) {
+        console.warn(`[tag-normalizer] POST agent-record ${w.reason}: '${w.tag}' (repaired per card §4)`);
+      }
+
       const validTypes = ['report', 'analysis', 'assessment', 'inspection', 'prompt', 'response', 'engineering_log', 'architecture_note', 'decision'];
       if (!recordType || !validTypes.includes(recordType)) {
         return res.status(400).json({ error: `recordType must be one of: ${validTypes.join(', ')}` });
@@ -5271,7 +5279,7 @@ export function createRoutes(pool: Pool): Router {
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
         [
           recordType, role || '', title || '', content || '',
-          sourcePath || null, metadata || {}, tags || [],
+          sourcePath || null, metadata || {}, normalizedTags.tags,
           systemId || null, subsystemId || null, featureId || null, planRef || null,
           level ?? 1, visibilityScope || 'all', model || null,
         ]
@@ -5301,7 +5309,15 @@ export function createRoutes(pool: Pool): Router {
       if (title !== undefined) { sets.push(`title = $${i++}`); vals.push(title); }
       if (content !== undefined) { sets.push(`content = $${i++}`); vals.push(content); }
       if (metadata !== undefined) { sets.push(`metadata = $${i++}`); vals.push(metadata); }
-      if (tags !== undefined) { sets.push(`tags = $${i++}`); vals.push(tags); }
+      if (tags !== undefined) {
+        // Write-side tag normalization (card §4): repair + normalize, no reject.
+        const normalizedTags = normalizeTags(tags);
+        for (const w of normalizedTags.warnings) {
+          console.warn(`[tag-normalizer] PATCH agent-record ${w.reason}: '${w.tag}' (repaired per card §4)`);
+        }
+        sets.push(`tags = $${i++}`);
+        vals.push(normalizedTags.tags);
+      }
       if (systemId !== undefined) { sets.push(`system_id = $${i++}`); vals.push(systemId); }
       if (subsystemId !== undefined) { sets.push(`subsystem_id = $${i++}`); vals.push(subsystemId); }
       if (featureId !== undefined) { sets.push(`feature_id = $${i++}`); vals.push(featureId); }
