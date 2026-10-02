@@ -18,6 +18,10 @@
  *      `["infra"`, `"type:change"`); split comma-joined lists into multiple
  *      tags (defect: `affects:pr:613,pr:614,pr:615`); strip stray bracket /
  *      quote / brace characters (zero legitimate occurrences per census)
+ *   2d. split-repair concatenated Class R addresses (Ruling 13 decision 3:
+ *      defect `to:engineer-to:engineer-ii` = `to:engineer` + `to:engineer-ii`;
+ *      role keys contain no colons, so every later `to:` starts a new
+ *      address; joiner hyphens trimmed, bare `to:` segments unrecoverable)
  *   3. lowercase Class R addresses
  *   4. WARN (never reject) on what remains unrepaired: >80 chars, or
  *      characters outside the Class V charset contract
@@ -41,6 +45,7 @@ export interface TagWarning {
   tag: string;
   reason:
     | 'over-length'
+    | 'concatenated-address'
     | 'charset'
     | 'unknown-role-address'
     | 'nested-json'
@@ -73,6 +78,38 @@ function parseMaybeJsonArray(raw: string): { value: unknown; depth: number } | n
 }
 
 /**
+ * §4.2d (Ruling 13 decision 3): split-repair concatenated Class R addresses.
+ * A `to:` tag containing a second `to:` after position 3 is a concatenation
+ * defect (`to:engineer-to:engineer-ii` = `to:engineer` + `to:engineer-ii`).
+ * Role keys contain no colons, so every subsequent `to:` starts a new
+ * address; a hyphen left at the join is trimmed. A bare `to:` segment (no
+ * address) is unrecoverable and dropped — the caller's warning on the
+ * original tag preserves the evidence. Case is preserved; the caller
+ * lowercases each Class R segment.
+ */
+function splitConcatenatedAddresses(tag: string): { concat: boolean; segments: string[] } {
+  const lower = tag.toLowerCase();
+  const starts: number[] = [];
+  let idx = lower.indexOf('to:');
+  while (idx !== -1) {
+    starts.push(idx);
+    idx = lower.indexOf('to:', idx + 3);
+  }
+  if (starts.length < 2) return { concat: false, segments: [tag] }; // single address
+  const segments: string[] = [];
+  for (let i = 0; i < starts.length; i++) {
+    const end = i + 1 < starts.length ? starts[i + 1] : tag.length;
+    const seg = tag.slice(starts[i], end).trim().replace(/-+$/, '');
+    if (seg.length > 3) segments.push(seg); // >3 excludes bare `to:`
+  }
+  if (segments.length === 0) {
+    // Degenerate (e.g. `to:to:`) — unrecoverable; pass through, warned.
+    return { concat: true, segments: [tag] };
+  }
+  return { concat: true, segments };
+}
+
+/**
  * Normalize an incoming tags value of arbitrary shape (string, array,
  * JSON-stringified array, comma-joined string, null/undefined) into a clean
  * tag array per the ratified grammar. Pure: no I/O, no rejection.
@@ -87,6 +124,16 @@ export function normalizeTags(input: unknown): NormalizeResult {
       seen.add(tag);
       out.push(tag);
     }
+  };
+
+  /** Class R address path: lowercase, warn on case change / over-length. */
+  const pushAddress = (raw: string): void => {
+    const lowered = 'to:' + raw.slice(3).toLowerCase();
+    if (lowered !== raw) warnings.push({ tag: raw, reason: 'charset' });
+    if (lowered.length > TAG_MAX_LENGTH) {
+      warnings.push({ tag: lowered, reason: 'over-length' });
+    }
+    push(lowered);
   };
 
   // ── seed queue: accept arrays, single strings, nested JSON strings ──
@@ -155,12 +202,10 @@ export function normalizeTags(input: unknown): NormalizeResult {
 
       // §4.3: classify. Class R = to: address — lowercase. Class V = value.
       if (t.toLowerCase().startsWith('to:')) {
-        const lowered = 'to:' + t.slice(3).toLowerCase();
-        if (lowered !== t) warnings.push({ tag: t, reason: 'charset' });
-        if (lowered.length > TAG_MAX_LENGTH) {
-          warnings.push({ tag: lowered, reason: 'over-length' });
-        }
-        push(lowered);
+        // §4.2d: concatenated-address split-repair (Ruling 13 decision 3).
+        const split = splitConcatenatedAddresses(t);
+        if (split.concat) warnings.push({ tag: t, reason: 'concatenated-address' });
+        for (const seg of split.segments) pushAddress(seg);
       } else {
         // Class V: case PRESERVED. Charset/length checked, WARN only.
         if (t.length > TAG_MAX_LENGTH) {

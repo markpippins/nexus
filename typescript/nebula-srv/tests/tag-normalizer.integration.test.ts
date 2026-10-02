@@ -66,6 +66,7 @@ async function main(): Promise<void> {
         '  to:DBA  ',                                    // trim + Class R lowercase
         JSON.stringify(['area:inbox', '"type:change"']), // JSON-unwrap + strip quotes
         'affects:pr:613,pr:614,pr:615',                  // comma-split
+        'to:engineer-to:engineer-ii',                    // §4.2d concat split-repair (R13 step 2)
         'blocks:PR-580',                                 // Class V case preserved
         '',                                              // dropped
       ],
@@ -80,6 +81,8 @@ async function main(): Promise<void> {
     await expect(stored.includes('type:change'), 'quote-stripped tag stored', stored);
     await expect(stored.includes('affects:pr:613') && stored.includes('pr:614') && stored.includes('pr:615'),
       'comma-joined list stored as three tags', stored);
+    await expect(stored.includes('to:engineer') && stored.includes('to:engineer-ii'),
+      'concatenated to: address split-repaired into two addresses (R13 step 2)', stored);
     await expect(stored.includes('blocks:PR-580'), 'Class V case PRESERVED (blocks:PR-580)', stored);
     await expect(!stored.some((t: string) => t.includes(',') || /[\[\]{}"]/.test(t) || t.trim() === ''),
       'no commas/brackets/empties survive', stored);
