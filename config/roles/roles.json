@@ -35,7 +35,6 @@
     "dba": { "kind": "role", "nebulaCheck": true, "persona": true, "harnessFile": true, "procedures": false, "assemblyAlias": false, "governance": false, "_note": "DBA canonical key (Ruling 8 normalization, audit 331ac2f3): corpus (742 records), all durable inbox pointers, and harness file are already lowercase. procedures=false — 0 active dba cards live (surface deliberately absent). assemblyAlias=false — assembly user exists (1ea49b6d) but alias still capitalized 'DBA'; set true after assembly-side normalization. governance=false — no Conduit receipts. Case-variant 'to:DBA' records (24162dba, a471653b) are immutable history, deliverable via PR #711 read-side matching." },
     "builder-fallback": { "kind": "role", "persona": true, "harnessFile": true, "assemblyAlias": false, "nebulaCheck": false, "procedures": false, "governance": false },
     "leased-builder": { "kind": "role", "persona": true, "governance": true, "assemblyAlias": false, "harnessFile": false, "nebulaCheck": false, "procedures": false },
-    "big-pickle": { "kind": "role", "persona": true, "assemblyAlias": false, "harnessFile": false, "nebulaCheck": false, "procedures": false, "governance": false, "_note": "model-name harness alias" },
     "test": { "kind": "role", "persona": false, "procedures": false, "assemblyAlias": false, "harnessFile": false, "nebulaCheck": false, "governance": false, "_note": "internal test-invoke role" },
     "tester": { "kind": "role", "_note": "walkthrough role (b80f0fdb): full-surface demonstration of the role-creation runbook" }
   }
