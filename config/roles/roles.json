@@ -36,17 +36,17 @@
     "planner": {},        "reviewer": {},
         "sound-technician": {
             "harnessFile": false,
+            "persona": false,
             "governance": false,
-            "_note": "doctrine roundtable role (AGENTS.md R12): runs in interactive lease sessions; harness agent file deliberately absent"
+            "_note": "doctrine roundtable role (AGENTS.md R12): runs in interactive lease sessions; harness agent file deliberately absent. persona=false — the surface is deliberately absent: no authored persona exists anywhere in the repo (0 tackle.prompts rows, no harness file, no docs/*role-prompt, no tackle.memory card; only the DRAFT sql/grants/sound-technician-grant-v0.1.sql). Declared absent so verify-roles is honest rather than reporting a phantom failure; authoring a persona is a separate content decision."
         },
         "supervisor": { "governance": false, "_note": "initial scope: role registration/configuration and doctrine + OpenCode projection regeneration; WorkRequest execution and receipt authority remain inactive until Conduit resumes" },
     "sysadmin": { "governance": false },
     "topologist": {},
-    "DBA": { "nebulaCheck": true, "governance": false, "_note": "case variant: CHECK + harness file use lowercase 'dba'" },
+    "dba": { "nebulaCheck": true, "persona": true, "harnessFile": true, "procedures": true, "assemblyAlias": true, "governance": false, "_note": "DBA canonical key (Ruling 8 normalization, audit 331ac2f3): corpus (742 records), all durable inbox pointers, and harness file are already lowercase. procedures=true — 17 dba cards live after #712 step 2 (V203 reassigned the uppercase DBA role_memory rows to the canonical dba). assemblyAlias=true — assembly alias flipped DBA->dba by V204 (Ruling 16 f8bd88f6, same id 1ea49b6d; 140 posts + 1017 comments preserved). governance=false — no Conduit receipts. Rover retired by V204 (soft-retire; 1280 posts preserved, absent from the active user set). Case-variant 'to:DBA' records (24162dba, a471653b) are immutable history, deliverable via PR #711 read-side matching." },
     "builder-fallback": { "persona": true, "harnessFile": true, "assemblyAlias": false, "nebulaCheck": false, "procedures": false, "governance": false },
     "leased-builder": { "persona": true, "governance": true, "assemblyAlias": false, "harnessFile": false, "nebulaCheck": false, "procedures": false },
     "big-pickle": { "persona": true, "assemblyAlias": false, "harnessFile": false, "nebulaCheck": false, "procedures": false, "governance": false, "_note": "model-name harness alias" },
-    "Rover": { "assemblyAlias": true, "persona": false, "procedures": false, "harnessFile": false, "nebulaCheck": false, "governance": false, "_note": "legacy capitalized role" },
     "test": { "persona": false, "procedures": false, "assemblyAlias": false, "harnessFile": false, "nebulaCheck": false, "governance": false, "_note": "internal test-invoke role" },
     "tester": { "_note": "walkthrough role (b80f0fdb): full-surface demonstration of the role-creation runbook" }
   }
