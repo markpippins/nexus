@@ -319,12 +319,22 @@ jobs:
 
   # ═══════════════════════════════════════════════════════════════════════
   #  nebula-srv (live-server integration suite)
-  # ═════════════════════════════════ nebula-srv's 9 integration tests are
+  # ═════════════════════════════════ nebula-srv's 12 integration tests are
   #  self-contained HTTP scripts (custom assert() + process.exit(1)), not
   #  node:test/vitest — so the fail-closed guard here is the per-file exit
   #  code, not a TAP/JSON tail. The suite was ROT (7 of 9 files failing) and
   #  had never been executed by any workflow; gating it surfaced two real
   #  service bugs (see routes.ts DELETE cast + migration 067).
+  #
+  #  A note on independence: tag-normalizer.integration.test.ts aborts on its
+  #  first failing assertion, and its 2nd assertion fails on any server without
+  #  the write-side normalizer — so its R13 step-2 assertion is UNREACHABLE as a
+  #  negative control (measured against unpatched :3101, 2026-10-02). That is
+  #  why the split-repair has its OWN file
+  #  (tag-normalizer-concatenated-address.integration.test.ts), which sends only
+  #  concatenated-address defects and accumulates rather than aborting on the
+  #  first failure. This job globs tests/*.test.ts, so that file is gated here
+  #  with no registration step to forget.
   #
   #  Recipe (verified locally both directions, 2026-09-28):
   #    1. seed a throwaway DB from sql/ci-bootstrap/nexus-ci-bootstrap.sql
@@ -481,8 +491,16 @@ jobs:
           # Fail-closed: the exit code IS the guard for this suite (custom
           # assert() scripts, no TAP/JSON tail to grep). Also enforce a file
           # floor so the suite cannot be quietly emptied.
-          if [ "$FAIL" != 0 ] || [ "$PASS" -lt 9 ]; then
-            echo "::error::nebula-srv gate FAILED (pass floor 9 files, any failure fails)"
+          #
+          # Floor history: 9 through PR #714. Raised 9 -> 10 by the R13 step-2
+          # change, which adds tag-normalizer-concatenated-address.integration
+          # .test.ts (10 files -> 11), then 10 -> 11 by the §8 census guard
+          # (tag-census.integration.test.ts, 11 -> 12). The floor's job is to
+          # keep a 1-file deletion margin: at floor 9 with 11 files a PR could
+          # delete two test files and still read green. Raise it whenever the
+          # suite grows; never lower it to let a removal through.
+          if [ "$FAIL" != 0 ] || [ "$PASS" -lt 11 ]; then
+            echo "::error::nebula-srv gate FAILED (pass floor 11 files, any failure fails)"
             exit 1
           fi
 
