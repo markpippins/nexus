@@ -18,6 +18,15 @@ lowercased form is ALSO a canonical key. The real cost is on record: the
 supervisor's own ruling `24162dba`, tagged `to:DBA`, stayed undelivered for ~6.5h
 before it was found by accident.
 
+CLOSED 2026-10-03 (PR #712, Ruling 8 normalization applied live). This guard
+was authored while the drift was still live: roles.json carried capitalized
+`DBA` and `Rover` keys, and the guard PINNED them via KNOWN_NONCANONICAL rather
+than silently canonicalizing (that ruling belongs to the supervisor). PR #712
+deleted both keys, so KNOWN_NONCANONICAL is now EMPTY and this guard asserts the
+fully canonical end-state: it goes RED on any NEW non-canonical key, and also on
+a stale exemption. It must be rebased onto the normalized head before landing —
+against pre-#712 main it is red BY DESIGN (the exemptions are no longer live).
+
 What this guard enforces
 ------------------------
 1. every role key is canonical lowercase `[a-z0-9_-]+` (the routing vocabulary
@@ -53,24 +62,16 @@ ROLES_FILE = REPO / "config" / "roles" / "roles.json"
 # this shape normalizes into a different string than it was written as.
 CANONICAL_KEY = re.compile(r"^[a-z0-9_-]+$")
 
-# Known non-canonical keys, pending supervisor canonicalization (Ruling 8
-# re-file, decisions thread 2026-10-01). Each entry MUST cite why it is
-# tolerated. A non-canonical key NOT listed here fails the guard; a listed key
-# that has since become canonical also fails (delete the stale exemption).
-# NOTE: the underlying drift is real and is NOT excused — it is pinned so it
-# cannot grow, and named so it cannot be forgotten.
-KNOWN_NONCANONICAL = {
-    "DBA": (
-        "case variant of the live `dba` role — the file's own _note says "
-        "'CHECK + harness file use lowercase dba'; canonicalization pending "
-        "the supervisor ruling. Do NOT add lowercase `dba` as a second key: "
-        "that is the case-collision this guard fails on."
-    ),
-    "Rover": (
-        "legacy capitalized role (`to:Rover` normalizes to `rover`); "
-        "canonicalization pending the supervisor ruling."
-    ),
-}
+# Known non-canonical keys, pending supervisor canonicalization.
+#
+# CLOSED 2026-10-03: the two historical exemptions (`DBA`, `Rover`) are gone —
+# PR #712 applied the Ruling 8 normalization live and deleted them from
+# roles.json, so the pending set is EMPTY and the vocabulary is fully canonical.
+# Kept as an empty dict rather than deleted so the fail-closed shape survives:
+# a non-canonical key NOT listed here fails the guard, and a listed key that has
+# become canonical (or disappeared) fails as a stale exemption. Any new entry
+# MUST carry a citation naming the ruling that tolerates it.
+KNOWN_NONCANONICAL: dict[str, str] = {}
 
 # Sanity floor: a truncated or emptied roles file must not pass silently.
 MIN_ROLES = 20
