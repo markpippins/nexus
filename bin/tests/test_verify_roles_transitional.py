@@ -25,6 +25,36 @@ Closing path (owned by the merge-train owner / architect):
      to a hard equality assertion: post-closure the only allowed state is
      all-PASS with zero warnings. This guard refusing to forget is the point.
 
+STEP 1 PARTIALLY CLOSED 2026-10-02 (DBA record d5c5b28e / R1 d5c5b28e).
+The lowercase `dba` key is now fully provisioned in the database, so the
+`dba` half of the delta is CLOSED and is now asserted as a POSITIVE:
+
+  - `tackle.roles` gained `dba` (34 rows, was 33).
+  - `tackle.role_tool_access` gained the 5 wildcard MCP grants copied from
+    the uppercase `DBA` row, so the canonical key is not tool-less.
+  - `tackle.prompts` gained `database-admin` v1, copied byte-identically from
+    `DBA` (md5 4543f973ee90a9d1e8a48630851b316c on both rows).
+
+`rolesMissingFromDB` is therefore now `[]` and `dba` PASSes.
+
+WHAT IS STILL OPEN, and why this guard is not yet the final all-PASS form:
+
+  - STEP 2 is NOT done. `assembly.users` still carries `DBA` (1ea49b6d) and
+    `Rover`, so `unknownRoles` remains `['DBA','Rover']`. That is the assembly
+    owner's action (retire Rover, do not rename — Ruling f8bd88f6).
+  - The uppercase `DBA`/`Rover` ROWS remain in tackle.roles. They are heavily
+    FK-referenced (role_memory 17, role_tool_access 5, config_bundle 2, prompts 1)
+    under `NO ACTION` FKs, so neither rename nor delete is safe without an
+    explicit migration. Recorded as supervisor/architect residue.
+  - `sound-technician` still FAILs on `persona missing (tackle.prompts)` — a
+    pre-existing main-branch failure, not #712's delta.
+
+Ruling 17 (c16b625b) discipline: a criterion with no enumerable form enforces
+nothing. `CLOSED_ROLES_MUST_PASS` exists precisely so that emptying
+`DELTA_FAIL_ROLES` does NOT silently remove this guard's teeth — `dba` is now
+asserted to PASS, so deleting the provisioning makes this guard go RED.
+Negative control recorded in the R2 record for this change.
+
 Negative control (per Ruling 14 evidence discipline): re-adding a
 capitalized DBA key to roles.json must fail test_roles_json_lowercase.py
 (7 tests) — the two guards triangulate the same end-state from both sides.
@@ -43,12 +73,23 @@ VERIFY_ROLES = os.path.join(REPO, "bin", "verify-roles.py")
 
 # ── The exact transitional delta #712 introduces (measured 2026-10-02, both
 #    trees, env-corrected): everything else must stay green. ──────────────
-DELTA_FAIL_ROLES = {"dba": "not present in tackle.roles"}
+# The `dba` entry was here as {"dba": "not present in tackle.roles"}. It is
+# now CLOSED (see module docstring) and the delta is empty. It is deliberately
+# kept as an empty dict rather than deleted so the shape of the transitional
+# contract stays visible until STEP 2 lands.
+DELTA_FAIL_ROLES: dict[str, str] = {}
+# Roles whose database provisioning this change completed. These are asserted
+# to PASS. Without this, emptying DELTA_FAIL_ROLES would leave the guard with
+# no assertion at all about `dba` — it would pass whether or not `dba` exists.
+CLOSED_ROLES_MUST_PASS = ("dba",)
 # Pre-existing on main (29/30 there): not #712's delta, but a permanent
 # non-PASS would hide behind it, so it is asserted explicitly too.
 PREEXISTING_FAIL_ROLES = {"sound-technician": "persona missing (tackle.prompts)"}
+# STILL OPEN — step 2 of the closing path, assembly owner's action.
 DELTA_UNKNOWN_ROLES = ["DBA", "Rover"]
-DELTA_MISSING_FROM_DB = ["dba"]
+# CLOSED by this change: every role in config/roles/roles.json now has a
+# tackle.roles row. Hard-empty, not a set to shrink.
+DELTA_MISSING_FROM_DB: list[str] = []
 
 
 def _verify_roles_json():
@@ -117,6 +158,31 @@ class TestVerifyRolesTransitional(unittest.TestCase):
             self.assertIn(role, fails, f"pre-existing row '{role}' changed state — update PREEXISTING_* constants")
             self.assertIn(reason, fails[role])
 
+    def test_closed_roles_are_provisioned_and_pass(self):
+        """The load-bearing positive assertion.
+
+        `dba` moved from the delta list to CLOSED_ROLES_MUST_PASS. Asserting
+        only that "nothing unexpected fails" would be satisfied equally well by
+        `dba` being absent from the database, so closure is asserted directly:
+        the role must be present in results AND carry status PASS.
+        """
+        by_role = {r["role"]: r for r in self.data["results"]}
+        for role in CLOSED_ROLES_MUST_PASS:
+            self.assertIn(
+                role,
+                by_role,
+                f"'{role}' is declared closed but verify-roles does not even "
+                f"evaluate it — the registry key may have been removed",
+            )
+            self.assertEqual(
+                by_role[role]["status"],
+                "PASS",
+                f"'{role}' provisioning regressed: "
+                f"{by_role[role].get('detail')!r} — re-provision tackle.roles / "
+                f"tackle.prompts / tackle.role_tool_access, or move it back to "
+                f"DELTA_FAIL_ROLES with its reason if the closure was premature",
+            )
+
     def test_unknown_roles_are_exactly_the_capitalized_pair(self):
         self.assertEqual(
             sorted(self.data["unknownRoles"]),
@@ -128,7 +194,8 @@ class TestVerifyRolesTransitional(unittest.TestCase):
         self.assertEqual(
             sorted(self.data["rolesMissingFromDB"]),
             DELTA_MISSING_FROM_DB,
-            "unexpected file-only role — registry/DB divergence changed",
+            "registry/DB divergence changed: every role in "
+            "config/roles/roles.json must have a tackle.roles row",
         )
 
     def test_results_parse_and_carry_the_documented_shape(self):
