@@ -15,6 +15,13 @@ verifies every expected surface against the LIVE system:
 Exit 0 = all expected surfaces present; exit 1 = one or more FAIL.
 WARN = informational (unexpected presence, case-variant notes) — not fatal.
 
+`unknownRoles` = names in tackle.roles that are registered NOWHERE: neither a
+key in roles.json.roles nor a registered non-role address in
+config/roles/address-kinds.json (Ruling 13 de5d538f, Ruling 19 f054ba36). A
+model-name harness alias such as `big-pickle` may legitimately carry a
+tackle.roles row while being deliberately excluded from roles.json; it is a
+registered address, not an unknown role.
+
 Usage: bin/verify-roles.py [--json]
 """
 import argparse
@@ -30,6 +37,13 @@ PG_DSN = os.environ.get(
 ASSEMBLY_URL = os.environ.get("ASSEMBLY_URL", "http://localhost:3107")
 ROLES_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "config", "roles", "roles.json"
+)
+ADDRESS_KINDS_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "..",
+    "config",
+    "roles",
+    "address-kinds.json",
 )
 GOVERNANCE_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -74,6 +88,17 @@ def main():
         role: {**defaults, **(cfg or {})}
         for role, cfg in spec["roles"].items()
     }
+
+    # Registered NON-role addresses (Ruling 13/Ruling 19). These are known
+    # addresses deliberately kept OUT of roles.json.roles; a tackle.roles row
+    # for one of them is not "unknown role vocabulary". Mirrors the parity
+    # guard's unregistered_live_roles() (bin/tests/test_roles_registry_parity.py).
+    try:
+        registered_addresses = set(
+            json.load(open(ADDRESS_KINDS_FILE)).get("addresses", {})
+        )
+    except (OSError, json.JSONDecodeError):
+        registered_addresses = set()
 
     # ── Load live surfaces ───────────────────────────────────────────
     db_roles = set(pg_query("SELECT name FROM tackle.roles").splitlines())
@@ -121,7 +146,7 @@ def main():
     results = []
     unknown = sorted(
         r
-        for r in db_roles - set(expectations)
+        for r in db_roles - set(expectations) - registered_addresses
         if not r.startswith(CI_EPHEMERAL_PREFIXES)
     )
     unseeded = sorted(set(expectations) - db_roles)
