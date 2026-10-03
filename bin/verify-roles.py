@@ -62,6 +62,35 @@ HARNESS_DIR = os.path.join(
     "agents",
 )
 
+# CI-ephemeral roles are minted by wr-conf E2E grant suites on throwaway
+# databases and dropped with them; they must never enter the expectations file,
+# and their presence in a long-lived DB is reportable but not a coverage
+# failure.
+CI_EPHEMERAL_PREFIXES = ("wr-conf-",)
+
+
+def compute_unknown_roles(
+    db_roles,
+    expectations,
+    registered_addresses=(),
+    ephemeral_prefixes=CI_EPHEMERAL_PREFIXES,
+):
+    """Names in the live delivery table (`tackle.roles`) registered NOWHERE.
+
+    A name is "unknown" only if it is absent from BOTH the expected-role set
+    (config/roles/roles.json) and the registered non-role address set
+    (config/roles/address-kinds.json), and is not CI-ephemeral. Ruling 13
+    (de5d538f) / Ruling 19 (f054ba36): a registered alias such as `big-pickle`
+    (a model identity) is deliberately kept out of roles.json and must NOT be
+    reported as unknown role vocabulary. Extracted as a pure function so the
+    predicate is unit-testable without a database.
+    """
+    return sorted(
+        r
+        for r in set(db_roles) - set(expectations) - set(registered_addresses)
+        if not r.startswith(tuple(ephemeral_prefixes))
+    )
+
 
 def pg_query(sql):
     import subprocess
@@ -136,19 +165,9 @@ def main():
     m = re.search(r"KNOWN_EXECUTORS\s*=\s*new Set\(\[(.*?)\]\)", gov_text, re.S)
     gov_roles = set(re.findall(r'"([^"]+)"', m.group(1))) if m else set()
 
-    # CI-ephemeral roles are minted by wr-conf E2E grant suites on throwaway
-    # databases and dropped with them; they must never enter the expectations
-    # file, and their presence in a long-lived DB is reportable but not a
-    # coverage failure.
-    CI_EPHEMERAL_PREFIXES = ("wr-conf-",)
-
     # ── Verify ───────────────────────────────────────────────────────
     results = []
-    unknown = sorted(
-        r
-        for r in db_roles - set(expectations) - registered_addresses
-        if not r.startswith(CI_EPHEMERAL_PREFIXES)
-    )
+    unknown = compute_unknown_roles(db_roles, expectations, registered_addresses)
     unseeded = sorted(set(expectations) - db_roles)
 
     for role, exp in sorted(expectations.items()):

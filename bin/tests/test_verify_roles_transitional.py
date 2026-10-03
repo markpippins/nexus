@@ -238,5 +238,91 @@ class TestVerifyRolesTransitional(unittest.TestCase):
             self.assertIn("status", row)
 
 
+def _load_verify_roles_module():
+    """Import bin/verify-roles.py (hyphenated name) without running main()."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("verify_roles", VERIFY_ROLES)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class TestUnknownRolesExclusionIsPinned(unittest.TestCase):
+    """DB-FREE pin for the Ruling 19 address-kinds exclusion.
+
+    This pins the predicate itself so a future edit cannot silently
+    reintroduce a registered alias (e.g. `big-pickle`) as unknown role
+    vocabulary — the exact state that made combined #715+#712 red. It needs no
+    database and never skips, so it runs in every environment.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = _load_verify_roles_module()
+
+    def test_registered_nonrole_address_is_not_unknown(self):
+        got = self.mod.compute_unknown_roles(
+            ["architect", "big-pickle"], {"architect"}, {"big-pickle"}
+        )
+        self.assertEqual(got, [])
+
+    def test_unregistered_name_is_still_unknown(self):
+        # The exclusion must not be vacuously permissive.
+        got = self.mod.compute_unknown_roles(
+            ["architect", "Phantom"], {"architect"}, {"big-pickle"}
+        )
+        self.assertEqual(got, ["Phantom"])
+
+    def test_removing_the_registration_reexposes_the_name(self):
+        # Proves the exclusion is load-bearing: without the address-kinds entry
+        # the same name is reported again.
+        got = self.mod.compute_unknown_roles(["architect", "big-pickle"], {"architect"})
+        self.assertEqual(got, ["big-pickle"])
+
+    def test_expected_role_is_never_unknown(self):
+        got = self.mod.compute_unknown_roles(
+            ["architect", "dba"], {"architect", "dba"}, set()
+        )
+        self.assertEqual(got, [])
+
+    def test_ci_ephemeral_roles_are_excluded(self):
+        got = self.mod.compute_unknown_roles(
+            ["architect", "wr-conf-016-abc"], {"architect"}, set()
+        )
+        self.assertEqual(got, [])
+
+    def test_registered_addresses_default_to_empty_set(self):
+        # The absent-file path: no address-kinds registration -> unchanged
+        # behaviour (the forward-compatible no-op on #712 alone).
+        got = self.mod.compute_unknown_roles(["architect", "big-pickle"], {"architect"})
+        self.assertEqual(got, ["big-pickle"])
+
+    def test_repo_wiring_when_address_kinds_present(self):
+        """Integration pin across the real repo files (skips pre-#715).
+
+        big-pickle must be registered as an address-kind and absent from
+        roles.json, and the delivery set that contains it must yield no
+        unknownRoles.
+        """
+        roles = json.load(
+            open(os.path.join(REPO, "config", "roles", "roles.json"))
+        )["roles"]
+        ak_path = os.path.join(REPO, "config", "roles", "address-kinds.json")
+        if not os.path.exists(ak_path):
+            self.skipTest(
+                "address-kinds.json not present on this branch (arrives with #715)"
+            )
+        addresses = json.load(open(ak_path))["addresses"]
+        self.assertIn("big-pickle", addresses)
+        self.assertNotIn("big-pickle", roles)
+        self.assertEqual(
+            self.mod.compute_unknown_roles(
+                ["architect", "big-pickle"], roles, set(addresses)
+            ),
+            [],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
