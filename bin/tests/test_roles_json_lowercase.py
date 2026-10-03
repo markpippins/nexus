@@ -60,8 +60,12 @@ class TestRolesJsonLowercase(unittest.TestCase):
         self.assertIs(block.get("nebulaCheck"), True)
         self.assertIs(block.get("persona"), True)
         self.assertIs(block.get("harnessFile"), True)
-        self.assertIs(block.get("procedures"), False)
-        self.assertIs(block.get("assemblyAlias"), False)
+        # Flipped to True by #712 step 2: V203 moved the 17 uppercase
+        # role_memory cards onto `dba` (procedures), and V204 case-flipped the
+        # assembly alias DBA -> dba (assemblyAlias). Leaving these False would
+        # make verify-roles WARN "present but not expected".
+        self.assertIs(block.get("procedures"), True)
+        self.assertIs(block.get("assemblyAlias"), True)
         self.assertIs(block.get("governance"), False)
 
     def test_legacy_capitalized_keys_stay_retired(self):
