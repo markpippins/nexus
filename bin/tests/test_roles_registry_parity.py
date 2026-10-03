@@ -101,7 +101,10 @@ def capability_not_in_delivery(nebula_names, tackle_names):
     return sorted(set(nebula_names) - set(tackle_names))
 
 
-# ── live DB access (skips when unavailable) ──────────────────────────────────
+# ── live DB access (the guard is DB-tier: it fails, never skips, when the DB ─
+#    is absent — Ruling 22 (950c761e)). Its invariant (registry ↔ delivery) is
+#    cross-surface file<->DB, so it belongs to the `guards-db` tier.
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _psql(sql):
     out = subprocess.run(
@@ -127,9 +130,14 @@ class _DbCase(unittest.TestCase):
     def setUpClass(cls):
         cls.tackle, cls.nebula = _tables()
         if cls.tackle is None:
-            raise unittest.SkipTest(
-                "no reachable database (no psql / connection refused) — "
-                "CI convention: DB-touching guards skip"
+            # Ruling 22 (950c761e): fail closed. This guard's invariant is
+            # cross-surface file<->DB, so its home is the DB tier `guards-db`,
+            # not a runtime skip.
+            raise RuntimeError(
+                "no reachable database (no psql / connection refused). "
+                "Ruling 22: test_roles_registry_parity runs in the `guards-db` "
+                "tier — it may not runtime-skip. See bin/tests-ci-manifest.json "
+                "and Ruling 22 (record 950c761e)."
             )
         cls.registry = load_registry_roles()
         cls.address_kinds = load_address_kinds()

@@ -2,6 +2,20 @@
   "_policy": "Every guard in bin/tests/ is either run by bin/run_bin_tests.py or named here with a reason, an owner, and the thing tracking the debt. There is no third state. Ruled in architect record fb11ad19 (Decision 4). Each exclusion also declares a `kind`, and the kind decides how it is retired. `defect` means the guard is red because THE REPO IS WRONG; the moment that is fixed the guard passes and the ratchet forces the entry to be removed in the same PR, so debt cannot outlive its cause. `infrastructure` means the guard is red because a bare CI runner has no database and no live services; it may well pass on a developer machine that happens to have them running, so a green run is NOT evidence the debt is closed and those entries are retired by landing the named harness work, not by observing a pass. Conflating the two would either force a green run to be treated as a fix (and turn CI red) or weaken the ratchet on real defects. Exclusions may only shrink.",
   "_why_this_exists": "At origin/main 46cb20e9, 38 of 76 guards were referenced by no workflow and no Makefile target. The Makefile enumerated tests one per line, so a new guard was ungated by default. That gap hid a real defect for seven days: two migrations both numbered V194 (record ccc4c755). 2026-09-28 update: the first cut of this runner invoked each guard as a bare script (`python3 guard.py`). 25 of 79 guards have no __main__ block, so they executed zero tests and were reported PASS - the headline '75 run, 0 failed' overstated coverage, since only 50 actually ran. The runner now executes via `python3 -m pytest` and reports a guard that collects 0 tests as EMPTY, a failure. Doing that surfaced the 7 service-dependent exclusions above, which had been silently 'passing'.",
   "excluded": {
+    "test_verify_roles_transitional.py": {
+      "kind": "infrastructure",
+      "reason": "Cross-surface file<->DB invariant: runs bin/verify-roles.py --json against live tackle.roles and a reachable assembly-srv. The bare `guards` runner has no `services:` block and no database, so this guard cannot assert there. Ruling 22 classifies a runtime `skipTest` as an unsanctioned silent skip, so it now FAILS CLOSED instead and must run where its dependency exists.",
+      "owner": "dba",
+      "tracked": "Ruling 22 (record 950c761e, thread 38da87a6); planner sequencing b1f846f4; added under Ruling 22 §1 ('must become one or the other')",
+      "clears_when": "the engineer lands the DB-tier job `guards-db` (services: postgres + migrations step) in bin-tests.yml; that harness provides the database this guard needs, at which point it runs there and this exclusion is removed"
+    },
+    "test_roles_registry_parity.py": {
+      "kind": "infrastructure",
+      "reason": "Cross-surface file<->DB invariant (roles.json + address-kinds.json vs live tackle.roles / nebula.roles). Needs a database the bare `guards` runner does not have; same Ruling 22 class as test_verify_roles_transitional.py, and it now FAILS CLOSED instead of skipping.",
+      "owner": "dba",
+      "tracked": "Ruling 22 (record 950c761e, thread 38da87a6); added under Ruling 22 §1 (the architect named only the transitional guard; this one is the identical defect class)",
+      "clears_when": "the engineer lands the DB-tier job `guards-db` (services: postgres + migrations step); that harness provides the database, at which point the guard runs there and this exclusion is removed"
+    },
     "test_migration_number_uniqueness.py": {
       "kind": "defect",
       "reason": "FAILS on a real collision at origin/main: V194 is claimed by both V194__decommission_qbe_empty_tables.sql (#424) and V194__expression_register_producer.sql (#422). Excluded because it is red, not because it is broken. It must not be added to the guard's HISTORICAL_DUPLICATES allowlist - that would silence the finding rather than fix it.",
