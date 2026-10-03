@@ -85,6 +85,13 @@
       "owner": "dba",
       "tracked": "defect thread e0a40d6d (harvests trigger loss); Decision 26 00d339f9 routing; migration 070 restores + records via nebula.trigger_restore_log",
       "clears_when": "folded into the pg-integration harness job, which already provides a throwaway postgres:17 stack"
+    },
+    "test_test_clock_hygiene_repo.py": {
+      "kind": "defect",
+      "reason": "FAILS on a real rot at origin/main: bin/tests/test_resolver_soak_report.py pins NOW=datetime(2026,10,2) while deriving OLD/RECENT from datetime.now(). Because resolver-soak-report.analyze() measures the window from the OLDEST fixture timestamp to `now`, the measured age decayed one calendar day per day -- 15d at authoring, under its 14d threshold on 2026-10-03 -- reddening #715's mesh-register probe tests on Python 3.11 and 3.13 with no code change on that branch. Excluded because it is red, not because it is broken. It must NOT be weakened to accommodate the signature: the detector is calibrated to fire on exactly this file and zero false positives across the rest of the suite.",
+      "owner": "dba",
+      "tracked": "record c801f521 (date-rot audit); record a125cc63 (CI red); PR #715 commit 1deed8769 (fix)",
+      "clears_when": "PR #715 (commit 1deed8769) merges, at which point this guard passes and the defect-kind ratchet in test_bin_tests_manifest.py forces this entry to be removed in the same PR. The hermetic unit tests (test_test_clock_hygiene.py) stay enabled throughout and are NOT excluded."
     }
   }
 }
