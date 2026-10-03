@@ -14,9 +14,14 @@ surfaces still hold the capitalized vocabulary — live-probed 2026-10-02:
 This is tester option (c): the split is recorded as a KNOWN transitional
 state with an explicit delta, so any OTHER regression of the role-surface
 check goes red here instead of passing silently — and `verify-roles.py`
-itself gains a CI-visible guard without needing database provisioning in
-bin-tests.yml (DB-touching guards skip when no DB is reachable; this guard
-skips identically, per the workflow's documented convention).
+itself gains a CI-visible guard.
+
+Ruling 22 (950c761e, thread 38da87a6): this guard's invariant is cross-surface
+file<->DB, so it belongs in the DB-capable tier `guards-db` (services:
+postgres), NOT a runtime skip. It no longer calls `skipTest`: with the
+dependency absent it goes RED. A skipped check is not a pass. The manifest
+entry in bin/tests-ci-manifest.json records the DB-tier debt until `guards-db`
+lands; the exclusion is non-terminal and must be dropped once that job runs it.
 
 Closing path (COMPLETED 2026-10-03 — see STEP 2 below):
   1. tackle.roles gained lowercase dba; the DBA/Rover rows were retired
@@ -139,9 +144,15 @@ class TestVerifyRolesTransitional(unittest.TestCase):
     def setUp(self):
         self.data, self.available = _verify_roles_json()
         if not self.available:
-            self.skipTest(
-                "verify-roles.py JSON not available (no psql / DB unreachable) — "
-                "CI convention: DB-touching guards skip"
+            # Ruling 22 (950c761e): fail closed. This guard's invariant is
+            # cross-surface file<->DB, so its home is the DB tier `guards-db`,
+            # not a runtime skip. Reporting green while asserting nothing is the
+            # exact defect the ruling ends.
+            self.fail(
+                "verify-roles.py JSON not available (no psql / DB unreachable). "
+                "Ruling 22: this guard runs in the `guards-db` tier — it may not "
+                "runtime-skip. See bin/tests-ci-manifest.json and Ruling 22 "
+                "(record 950c761e)."
             )
 
     def _fail_roles(self):
@@ -298,30 +309,35 @@ class TestUnknownRolesExclusionIsPinned(unittest.TestCase):
         got = self.mod.compute_unknown_roles(["architect", "big-pickle"], {"architect"})
         self.assertEqual(got, ["big-pickle"])
 
-    def test_repo_wiring_when_address_kinds_present(self):
-        """Integration pin across the real repo files (skips pre-#715).
+    def test_repo_wiring_registry_shape(self):
+        """Integration pin across the real repo files — never vacuous.
 
-        big-pickle must be registered as an address-kind and absent from
-        roles.json, and the delivery set that contains it must yield no
-        unknownRoles.
+        Post-#715 (address-kinds.json present): big-pickle is registered as an
+        address-kind, absent from roles.json, and yields no unknownRoles.
+        Pre-#715: the registry does not exist yet, so big-pickle is still a
+        roles.json entry. Either way this asserts a real branch shape — it does
+        NOT runtime-skip (Ruling 22 forbids silent skips).
         """
         roles = json.load(
             open(os.path.join(REPO, "config", "roles", "roles.json"))
         )["roles"]
         ak_path = os.path.join(REPO, "config", "roles", "address-kinds.json")
-        if not os.path.exists(ak_path):
-            self.skipTest(
-                "address-kinds.json not present on this branch (arrives with #715)"
+        if os.path.exists(ak_path):
+            addresses = json.load(open(ak_path))["addresses"]
+            self.assertIn("big-pickle", addresses)
+            self.assertNotIn("big-pickle", roles)
+            self.assertEqual(
+                self.mod.compute_unknown_roles(
+                    ["architect", "big-pickle"], roles, set(addresses)
+                ),
+                [],
             )
-        addresses = json.load(open(ak_path))["addresses"]
-        self.assertIn("big-pickle", addresses)
-        self.assertNotIn("big-pickle", roles)
-        self.assertEqual(
-            self.mod.compute_unknown_roles(
-                ["architect", "big-pickle"], roles, set(addresses)
-            ),
-            [],
-        )
+        else:
+            self.assertIn(
+                "big-pickle",
+                roles,
+                "pre-#715 branch must still declare big-pickle in roles.json",
+            )
 
 
 if __name__ == "__main__":
