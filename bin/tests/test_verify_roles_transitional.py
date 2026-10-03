@@ -98,8 +98,11 @@ CLOSED_ROLES_MUST_PASS = ("dba", "sound-technician")
 # declared deliberately absent (persona=false), so it PASSes. Empty, not
 # deleted, so the shape of the contract stays visible.
 PREEXISTING_FAIL_ROLES: dict = {}
-# CLOSED by STEP 2 (V203/V204): no DB-only role vocabulary remains.
-# Hard-empty, not a set to shrink.
+# CLOSED by STEP 2 (V203/V204): no unregistered DB-only role vocabulary
+# remains. `big-pickle` is deliberately DB-only-but-registered (a
+# Ruling 19 non-role address in config/roles/address-kinds.json), so
+# verify-roles.py excludes it by construction — it is NOT unknown
+# vocabulary. Hard-empty, not a set to shrink.
 DELTA_UNKNOWN_ROLES: list[str] = []
 # CLOSED by this change: every role in config/roles/roles.json now has a
 # tackle.roles row. Hard-empty, not a set to shrink.
@@ -204,15 +207,19 @@ class TestVerifyRolesTransitional(unittest.TestCase):
         reconciliation applies it to the live database (V203/V204), so
         `unknownRoles` must be exactly empty. Asserting only "no unexpected
         delta" would be satisfied by skipping the reconciliation entirely, so
-        emptiness is asserted directly: any role present in `tackle.roles` but
-        absent from config/roles/roles.json makes this RED.
+        emptiness is asserted directly: any name present in `tackle.roles` but
+        registered in NEITHER config/roles/roles.json NOR
+        config/roles/address-kinds.json makes this RED. (Ruling 19: names
+        registered as non-role addresses — e.g. the `big-pickle` model alias —
+        are excluded by verify-roles.py itself, not tolerated here.)
         """
         self.assertEqual(
             self.data["unknownRoles"],
             DELTA_UNKNOWN_ROLES,
-            "DB-only role vocabulary reappeared — the uppercase DBA/Rover "
-            "retirement (V203) regressed, or a new unregistered role was added "
-            "to tackle.roles",
+            "DB-only unregistered role vocabulary reappeared — the uppercase "
+            "DBA/Rover retirement (V203) regressed, or a new role was added "
+            "to tackle.roles without registering it in roles.json or "
+            "address-kinds.json",
         )
 
     def test_missing_from_db_is_exactly_lowercase_dba(self):
