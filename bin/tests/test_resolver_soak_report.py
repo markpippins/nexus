@@ -43,11 +43,27 @@ def L(ts, node, demand, verdict, outcome, probe=None, mode="warn"):
             .rstrip())
 
 
-NOW = datetime(2026, 10, 2, 12, 0, 0, tzinfo=timezone.utc)
-T0 = "2026-09-18T09:13:44-0400"   # the actual window-open line
-REAL_NOW = datetime.now(timezone.utc)
-OLD = (REAL_NOW - timedelta(days=15)).astimezone().isoformat()
-RECENT = (REAL_NOW - timedelta(days=1)).astimezone().isoformat()
+# Stable reference clock. Every time-valued fixture below derives from REF, so
+# this file is deterministic and independent of when it runs.
+#
+# ROT THIS FILE HAD (fixed 2026-10-03): NOW was FROZEN at 2026-10-02 while
+# OLD/RECENT were derived from datetime.now(). RSR.analyze() measures the soak
+# window from the OLDEST timestamp in the lines to `now`
+# (bin/resolver-soak-report.py:119-120), so mixing a live fixture clock with a
+# frozen `now` made the measured age decay 1:1 with the calendar: exactly 15d
+# when authored, 14d on 2026-10-02, and under the threshold from 2026-10-03.
+# The test was correct when written and failed on schedule with no code change.
+# One reference clock now drives both sides, and a second instance of the same
+# rot -- an assertion passing `now=REAL_NOW` against a REF-derived line, which
+# would have flipped from PENDING to PASS around 2026-10-15 -- is gone with it.
+REF = datetime(2026, 10, 2, 12, 0, 0, tzinfo=timezone.utc)
+NOW = REF
+T0 = "2026-09-18T09:13:44-0400"   # the actual window-open line (parser fixtures)
+# Fixed offset rather than .astimezone() so the strings do not depend on the
+# runner's local timezone; -0400 matches T0's own offset.
+_EDT = timezone(timedelta(hours=-4))
+OLD = (REF - timedelta(days=15)).astimezone(_EDT).isoformat()
+RECENT = (REF - timedelta(days=1)).astimezone(_EDT).isoformat()
 
 
 def parse(lines):
@@ -122,10 +138,10 @@ class TestCriteria(unittest.TestCase):
         self.assertEqual(r["verdict"], "READY")
 
     def test_window_pending_when_first_observation_fresh(self):
-        # fresh = 1d before REAL now (the report's real clock), so the
-        # 14d window is genuinely still pending.
+        # fresh = 1d before the reference clock, so the 14d window is
+        # genuinely still pending -- deterministically, on any run date.
         lines = [L(RECENT, "n", "capability:k", "satisfied", "ok", probe="synthetic")]
-        r = RSR.analyze(lines, now=REAL_NOW)
+        r = RSR.analyze(lines, now=REF)
         self.assertEqual(r["criteria"]["a_window_ge_14d"]["status"], "PENDING")
         self.assertFalse(r["ready"])
 
