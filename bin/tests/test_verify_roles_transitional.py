@@ -52,10 +52,13 @@ STEP 2 — uppercase retirement (Ruling 8 + Ruling 16 f8bd88f6):
     address-kinds.json.
   - `roles.json` dba entry now declares `procedures`/`assemblyAlias` true.
 
-Still non-PASS, and deliberately NOT part of #712's delta:
-
-  - `sound-technician` FAILs on `persona missing (tackle.prompts)` — a
-    pre-existing main-branch failure; no persona source exists in the repo.
+`sound-technician` — the last non-PASS, also now closed: no persona source
+exists anywhere in the repo (0 `tackle.prompts` rows, no harness file, no
+`docs/*role-prompt`, no `tackle.memory` card — only the DRAFT
+`sql/grants/sound-technician-grant-v0.1.sql`). Rather than a phantom failure,
+its persona surface is declared deliberately absent (`persona: false`), so
+verify-roles is now fully all-PASS (29/29, zero warnings). Authoring a real
+persona is a separate content decision.
 
 Ruling 17 (c16b625b) discipline: a criterion with no enumerable form enforces
 nothing. `CLOSED_ROLES_MUST_PASS` and the now-hard
@@ -86,13 +89,15 @@ VERIFY_ROLES = os.path.join(REPO, "bin", "verify-roles.py")
 # kept as an empty dict rather than deleted so the shape of the transitional
 # contract stays visible until STEP 2 lands.
 DELTA_FAIL_ROLES: dict[str, str] = {}
-# Roles whose database provisioning this change completed. These are asserted
-# to PASS. Without this, emptying DELTA_FAIL_ROLES would leave the guard with
-# no assertion at all about `dba` — it would pass whether or not `dba` exists.
-CLOSED_ROLES_MUST_PASS = ("dba",)
-# Pre-existing on main (29/30 there): not #712's delta, but a permanent
-# non-PASS would hide behind it, so it is asserted explicitly too.
-PREEXISTING_FAIL_ROLES = {"sound-technician": "persona missing (tackle.prompts)"}
+# Roles whose surface this change closed. These are asserted to PASS. Without
+# this, emptying DELTA_FAIL_ROLES would leave the guard with no assertion at
+# all about `dba` or `sound-technician` — it would pass whether or not they
+# are provisioned/declared.
+CLOSED_ROLES_MUST_PASS = ("dba", "sound-technician")
+# No pre-existing failures remain: `sound-technician`'s persona surface is now
+# declared deliberately absent (persona=false), so it PASSes. Empty, not
+# deleted, so the shape of the contract stays visible.
+PREEXISTING_FAIL_ROLES: dict = {}
 # CLOSED by STEP 2 (V203/V204): no DB-only role vocabulary remains.
 # Hard-empty, not a set to shrink.
 DELTA_UNKNOWN_ROLES: list[str] = []

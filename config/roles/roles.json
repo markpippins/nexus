@@ -36,8 +36,9 @@
     "planner": {},        "reviewer": {},
         "sound-technician": {
             "harnessFile": false,
+            "persona": false,
             "governance": false,
-            "_note": "doctrine roundtable role (AGENTS.md R12): runs in interactive lease sessions; harness agent file deliberately absent"
+            "_note": "doctrine roundtable role (AGENTS.md R12): runs in interactive lease sessions; harness agent file deliberately absent. persona=false — the surface is deliberately absent: no authored persona exists anywhere in the repo (0 tackle.prompts rows, no harness file, no docs/*role-prompt, no tackle.memory card; only the DRAFT sql/grants/sound-technician-grant-v0.1.sql). Declared absent so verify-roles is honest rather than reporting a phantom failure; authoring a persona is a separate content decision."
         },
         "supervisor": { "governance": false, "_note": "initial scope: role registration/configuration and doctrine + OpenCode projection regeneration; WorkRequest execution and receipt authority remain inactive until Conduit resumes" },
     "sysadmin": { "governance": false },
