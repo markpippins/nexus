@@ -16,7 +16,7 @@
     "dotenv": "^16.4.0",
     "ioredis": "^5.11.1",
     "moleculer": "^0.14.34",
-    "moleculer-web": "^0.10.7",
+    "moleculer-web": "^0.11.0",
     "mongodb": "^7.6.0",
     "nats": "^2.29.3"
   },
