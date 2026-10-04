@@ -67,3 +67,25 @@ python3 ../../tools/api-docs/check_drift.py   # from the repo root
 
 No CI workflow currently runs a moleculer app's `npm test`; the apidocs drift
 gate is what CI enforces for contract-bearing ports.
+
+## Twin CodeQL policy (rulings 1/4/6)
+
+Every CodeQL alert on a twin path (`moleculer/<app>/…`) is classified against
+the incumbent named in `ports.yaml` by `tools/security/classify_twin_alerts.py`
+(enforced on PRs by `.github/workflows/twin-security-gate.yml`):
+
+- **copied** — the same rule is open on the incumbent subtree. Does not block,
+  but requires a time-boxed entry in **`tools/security/backfill-ledger.yaml`**
+  — the single source of truth for copied findings awaiting backfill, dedup
+  keyed `(service, rule_id, incumbent_path)`. Hardening in a twin is normative:
+  it must reach the incumbent (architect consolidated queue item 7). A copied
+  classification without a ledger entry fails the gate.
+- **novel** — no matching incumbent alert. Blocks the PR.
+- **unclassified** — alert outside the registry-resolvable twin surface.
+  Fails; silence is not classification.
+
+The dated snapshot `tools/security/codeql-baseline.json` (regenerate with
+`python3 tools/security/capture_baseline.py`) records main's open alerts as a
+diff input. It is **not a suppression**: nothing is excluded and no threshold
+is bumped; the incumbent alert backlog is stewarded as the accepted-risk entry
+(DBA-owned, quarterly review — ruling 6 split).

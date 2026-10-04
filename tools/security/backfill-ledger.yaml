@@ -1,0 +1,41 @@
+# tools/security/backfill-ledger.yaml — SINGLE SOURCE OF TRUTH for copied
+# CodeQL findings awaiting backfill to the incumbent.
+#
+# Architect consolidated queue item 5 (record 5f099036, ruling 1/4): one
+# ledger, dedup key (service, rule_id, incumbent_path); "Port README
+# references it"; and **"permanent deliberate divergence" is NOT an
+# available outcome** — every entry is a time-boxed item with an owner.
+# moleculer/README.md §"Twin CodeQL policy" points here.
+#
+# Entry schema (enforced by bin/tests/test_twin_security_gate.py):
+#   service        incumbent relpath (the ledger key's service component;
+#                  matches classify_twin_alerts.py's service = incumbent)
+#   rule_id        CodeQL rule id, e.g. js/cors-permissive-configuration
+#   incumbent_path incumbent relpath (dedup key component; same as service
+#                  today — kept explicit so the key reads unambiguously)
+#   twin_path      twin file carrying the copied finding
+#   status         ONLY: pending-entry | backfill-planned | backfilled
+#                  (the schema deliberately has no "permanent" outcome)
+#   opened         ISO date the copied finding was first classified
+#   owner          role lane owning the backfill (e.g. engineer-lane)
+#   review_by      ISO date the entry must be re-reviewed by (time box)
+#   pr             PR that introduced/carries the copied finding
+#   note           one-line context
+entries:
+  - service: typescript/substance-srv
+    rule_id: js/cors-permissive-configuration
+    incumbent_path: typescript/substance-srv
+    twin_path: moleculer/substance/services/express-app.ts
+    status: backfill-planned
+    opened: 2026-10-01
+    owner: engineer-lane
+    review_by: 2026-11-01
+    pr: "ead7ff59a (substance-srv canary port, merged)"
+    note: >
+      Twin CORS configuration mirrors the incumbent's src/index.ts; the same
+      js/cors-permissive-configuration alert is live on BOTH sides at the
+      2026-10-01 capture (incumbent alert on typescript/substance-srv/src/index.ts,
+      twin alert on moleculer/substance/services/express-app.ts) — classified
+      copied by tools/security/classify_twin_alerts.py, rehearsal 2026-10-01.
+      Time box: re-review by 2026-11-01; backfill a tightened origin policy or
+      reclassify with evidence.
