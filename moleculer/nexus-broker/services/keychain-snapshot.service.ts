@@ -628,8 +628,8 @@ export default class KeychainService extends Service {
 
             return {
               ...buildCensusReportIndex(reports, { truncated }),
-              rejected_report_count: rejected.length,
-              rejected_reports: rejected,
+              rejectedReportCount: rejected.length,
+              rejectedReports: rejected,
             };
           },
         },

@@ -84,14 +84,17 @@ class TestRegistryShape(unittest.TestCase):
 
 # The pre-registry raw total, pinned so the registry can be proven to RECLASSIFY
 # occurrences rather than hide them. 616 was the original value; it moves to 618 when a
-# contract legitimately adds storage-shaped fields. The structural guards below
+# contract legitimately adds storage-shaped fields. It moved 618 -> 603 when the 11
+# buildCensusReportIndex computed aggregates were camelCased and retired from the
+# registry (15 occurrences left the raw scan; the leak floor is unchanged at 575).
+# The structural guards below
 # (exempt + non-exempt == this total, and registry-off == this total) are the real
 # invariants; the number is a snapshot.
 #
 # NOTE for the carrier: pinning a raw count means ANY legitimate new storage-shaped contract
 # breaks this test, so it is brittle by construction. Deriving the number instead of pinning it
 # would be the durable fix; flagged rather than done here, since it is the carrier's guard.
-PRE_REGISTRY_TOTAL = 618
+PRE_REGISTRY_TOTAL = 603
 
 class TestExemptionSemantics(unittest.TestCase):
     @classmethod
@@ -108,7 +111,9 @@ class TestExemptionSemantics(unittest.TestCase):
     def test_floor_is_the_non_exempt_count(self):
         """Decision 18: 'leaks' is the NON-EXEMPT count. The baseline floor
         must equal the current non-exempt total (575 after the Decision 20
-        computed entries; 590 at the Decision 18 registry landing)."""
+        computed entries; 590 at the Decision 18 registry landing; unchanged
+        by the 2026-10-04 census retirement — retirements remove exempt
+        occurrences, not leaks)."""
         base = json.loads(BASELINE.read_text(encoding="utf-8"))
         self.assertEqual(base["leaks"], self.data["leak_total"],
                          "baseline floor must be recalculated to the "
@@ -187,30 +192,36 @@ class TestDecision20Kinds(unittest.TestCase):
     def setUpClass(cls):
         cls.reg = json.loads(REGISTRY.read_text(encoding="utf-8"))["fields"]
 
-    def test_unified_registry_carries_all_kinds(self):
+    def test_unified_registry_carries_storage_kinds(self):
+        """Storage kinds must stay represented; 'computed' is intentionally
+        ABSENT once its remediation pairing is fulfilled — computed reaching
+        zero is the Decision 20 endgame, not a schema violation."""
         kinds = {e.get("kind") for entries in self.reg.values() for e in entries}
-        self.assertIn("column", kinds)
-        self.assertIn("jsonb", kinds)
-        self.assertIn("computed", kinds)
-        self.assertIn("external", kinds)
-        self.assertIn("table", kinds)
+        for kind in ("column", "jsonb", "external", "table"):
+            self.assertIn(kind, kinds)
+        self.assertTrue(kinds <= ccc.VALID_KINDS,
+                        f"unknown kinds: {kinds - ccc.VALID_KINDS}")
 
-    def test_eleven_computed_census_aggregates_declared(self):
-        """Decision 20 option (1): the 11 buildCensusReportIndex aggregates
-        enter as computed with the same evidence discipline."""
+    def test_computed_census_aggregates_retired(self):
+        """Decision 20 remediation fulfilled (2026-10-04): the 11
+        buildCensusReportIndex aggregates were camelCased in the A2b read
+        model, so their computed entries left the registry AND the raw
+        snake scan — retirement, not waiver drift."""
         expected = {
             "report_count", "category_counts", "finding_count", "daily_counts",
             "observed_day_count", "trigger_counts", "rejected_report_count",
             "rejected_reports", "report_ids_with_no_findings",
             "report_count_no_findings", "anticipated_finding_count",
         }
-        self.assertTrue(expected.issubset(self.reg),
-                        f"missing computed entries: {sorted(expected - set(self.reg))}")
-        for field in expected:
-            for entry in self.reg[field]:
-                self.assertEqual(entry.get("kind"), "computed")
-                self.assertIn("buildCensusReportIndex", entry.get("computation", ""))
-                self.assertTrue(entry.get("target"), f"{field}: no remediation target")
+        self.assertFalse(expected & set(self.reg),
+                         f"retired computed entries re-registered: "
+                         f"{sorted(expected & set(self.reg))}")
+        live = set()
+        for f in ccc.TYPESPEC.rglob("models.tsp"):
+            live.update(ccc.snake_fields(f))
+        self.assertFalse(expected & live,
+                         f"retired aggregates still snake_case in typespec/v1: "
+                         f"{sorted(expected & live)}")
 
     def test_computed_entries_without_target_hard_fail(self):
         """A computed entry with no dated target cannot exist: remediation

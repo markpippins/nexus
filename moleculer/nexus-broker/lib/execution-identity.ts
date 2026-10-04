@@ -31,7 +31,7 @@
  * `assertCensusJoin` is **structural** — it checks the relationship between tiers, not
  * whether a Tier-3 payload satisfies its own contract. Each tier validates its own shape:
  * this module owns Tier 1/Tier 2, and the census read path already validates Tier-3 rows on
- * read and quarantines failures into `rejected_reports`. Importing the other validator here
+ * read and quarantines failures into `rejectedReports`. Importing the other validator here
  * would make A2a depend on A2b, put two sources of truth in one place, and buy nothing.
  *
  * ## The four DBA conditions
