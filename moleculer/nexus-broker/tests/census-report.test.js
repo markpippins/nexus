@@ -221,18 +221,18 @@ test('A2b index counts per-card findings, categories, and empty reports', () => 
   ]
   const index = buildCensusReportIndex(reports)
   assert.equal(index.read_only, true)
-  assert.equal(index.report_count, 3)
-  assert.equal(index.report_ids_with_no_findings, 1)
+  assert.equal(index.reportCount, 3)
+  assert.equal(index.reportIdsWithNoFindings, 1)
   assert.equal(index.doctrine_snapshot_count, 1)
-  assert.deepEqual(index.trigger_counts, { rate: 3 })
-  assert.equal(index.category_counts.MISSING, 2)
-  assert.equal(index.category_counts.UNUSED, 1)
+  assert.deepEqual(index.triggerCounts, { rate: 3 })
+  assert.equal(index.categoryCounts.MISSING, 2)
+  assert.equal(index.categoryCounts.UNUSED, 1)
 
   const cardA = index.cards.find((c) => c.asset_id === 'card-a')
-  assert.equal(cardA.finding_count, 2)
-  assert.equal(cardA.report_count, 2)
-  assert.equal(cardA.category_counts.MISSING, 2)
-  assert.equal(cardA.anticipated_finding_count, 1)
+  assert.equal(cardA.findingCount, 2)
+  assert.equal(cardA.reportCount, 2)
+  assert.equal(cardA.categoryCounts.MISSING, 2)
+  assert.equal(cardA.anticipatedFindingCount, 1)
 })
 
 test('A2b index applies no threshold — that policy is A5', () => {
@@ -243,16 +243,16 @@ test('A2b index applies no threshold — that policy is A5', () => {
   }))
   const index = buildCensusReportIndex(reports)
   // 10/10 sampled-missing would trip A5's 30% rule; A2b must not encode that judgement.
-  assert.equal(index.cards[0].finding_count, 10)
+  assert.equal(index.cards[0].findingCount, 10)
   assert.equal(index.cards[0].high_activation, undefined)
   assert.ok(!('threshold' in index) && !('alerts' in index) && !('signals' in index))
 })
 
 test('A2b index is empty-safe and sorts deterministically', () => {
   const empty = buildCensusReportIndex([])
-  assert.equal(empty.report_count, 0)
+  assert.equal(empty.reportCount, 0)
   assert.deepEqual(empty.cards, [])
-  assert.equal(empty.report_ids_with_no_findings, 0)
+  assert.equal(empty.reportIdsWithNoFindings, 0)
 
   const reports = [
     { id: 'r1', created_at: 'x', metadata: report({ findings: [finding('card-z', 'MISSING')] }) },
@@ -264,17 +264,17 @@ test('A2b index is empty-safe and sorts deterministically', () => {
   assert.deepEqual(forward, ['card-a', 'card-z'])
 })
 
-test('A2b Q6: daily_counts gives A6 a measurement to size retention against', () => {
+test('A2b Q6: dailyCounts gives A6 a measurement to size retention against', () => {
   const reports = [
     { id: 'r1', created_at: '2026-09-27T01:00:00Z', metadata: report({ findings: [finding('card-a', 'MISSING')] }) },
     { id: 'r2', created_at: '2026-09-27T23:59:00Z', metadata: report({ findings: [] }) },
     { id: 'r3', created_at: '2026-09-28T00:00:00Z', metadata: report({ findings: [finding('card-b', 'UNUSED')] }) },
   ]
   const index = buildCensusReportIndex(reports)
-  assert.equal(index.observed_day_count, 2)
-  assert.deepEqual(index.daily_counts, [
-    { day: '2026-09-27', report_count: 2, finding_count: 1, report_count_no_findings: 1 },
-    { day: '2026-09-28', report_count: 1, finding_count: 1, report_count_no_findings: 0 },
+  assert.equal(index.observedDayCount, 2)
+  assert.deepEqual(index.dailyCounts, [
+    { day: '2026-09-27', reportCount: 2, findingCount: 1, reportCountNoFindings: 1 },
+    { day: '2026-09-28', reportCount: 1, findingCount: 1, reportCountNoFindings: 0 },
   ])
 })
 
@@ -294,6 +294,6 @@ test('A2b Q6: an unparseable created_at is skipped rather than bucketed as garba
     { id: 'r1', created_at: 'not-a-date', metadata: report({}) },
     { id: 'r2', created_at: '2026-09-27T00:00:00Z', metadata: report({}) },
   ])
-  assert.equal(index.observed_day_count, 1)
-  assert.equal(index.report_count, 2)
+  assert.equal(index.observedDayCount, 1)
+  assert.equal(index.reportCount, 2)
 })
