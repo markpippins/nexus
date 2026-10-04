@@ -13,7 +13,7 @@ on:
   push:
     branches: [main, master, feature/*, dev]
   pull_request:
-    branches: [main, master, feature/*]
+    branches: [main, master, feature/*, dev, roles-vocab-normalize]
   workflow_dispatch:
 
 permissions:
