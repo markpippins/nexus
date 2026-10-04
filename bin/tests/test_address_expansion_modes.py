@@ -266,13 +266,25 @@ class TestShippedRegistry(unittest.TestCase):
                 chk.load_registry(bad)
 
     def test_unmapped_aliases_are_exactly_the_declared_ones(self):
-        """`admin` is the only alias allowed to be unmapped, and only with a note.
+        """After Ruling 27, NO alias is unmapped -- and any new one must be justified.
 
-        Note the predicate is mode-aware, NOT `not e["targets"]`. An earlier
-        draft of this test used the naive rule and reported 7 unmapped aliases
-        -- admin plus the six that legitimately carry no targets by design. That
-        is the exact misreading this guard exists to prevent, and it slipped
-        into the test for the guard; it is pinned here so it cannot come back.
+        This test used to assert `unmapped == ["admin"]`, pinning `admin` as the
+        single tolerated exception. Ruling 27 (3d021bb6) resolved `admin` to
+        targets=["sysadmin"], so the exception is retired and the correct
+        assertion becomes the stronger one: the list is EMPTY.
+
+        An empty list is the right end state, not a loosened check. The five
+        aliases that legitimately carry no targets (`all`, `all-roles`,
+        `assembly`, `self`, `user`) plus `big-pickle` are excluded by the
+        mode-aware predicate below, so they do not appear here -- and if any
+        `targets-expand` alias loses its targets again, this fails and forces
+        the reason to be re-declared.
+
+        Note the predicate stays mode-aware, NOT `not e["targets"]`. An earlier
+        draft used the naive rule and reported 7 unmapped aliases -- admin plus
+        the six that legitimately carry no targets by design. That is the exact
+        misreading this guard exists to prevent, and it slipped into the test for
+        the guard itself; it is pinned here so it cannot come back.
         """
         addresses, _ = chk.load_registry(CONFIG_DIR)
         unmapped = sorted(
@@ -280,17 +292,44 @@ class TestShippedRegistry(unittest.TestCase):
             if e.get("kind") == "alias"
             and chk._mode_of(e) in chk.MODES_WITH_TARGETS
             and not e.get("targets"))
-        self.assertEqual(unmapped, ["admin"])
-        self.assertIn("dbaNote", addresses["admin"],
-                      "an unmapped alias must say WHY it is unmapped")
+        self.assertEqual(unmapped, [],
+                         "every targets-expand alias must carry targets; if one "
+                         "genuinely cannot be mapped it must be re-declared "
+                         "with its reason, not left silently empty")
 
-    def test_naive_targets_predicate_would_report_seven(self):
-        """Pins the difference between the two predicates on real data."""
+    def test_admin_resolved_to_sysadmin_by_ruling_27(self):
+        """Ruling 27's resolution, pinned so it cannot silently regress.
+
+        Also pins WHY the Assembly `admin` row is not a target: Ruling 26 §5
+        single-hop requires every target to be a roles.json `kind: "role"` key,
+        and `admin` is not one. That is what makes the alternative reading
+        (deliver to the Assembly admin principal) structurally unreachable
+        rather than merely unattempted.
+        """
+        addresses, role_keys = chk.load_registry(CONFIG_DIR)
+        admin = addresses["admin"]
+        self.assertEqual(admin.get("targets"), ["sysadmin"])
+        self.assertIn("sysadmin", role_keys)
+        self.assertEqual(chk._mode_of(admin), "targets-expand")
+        # The Assembly row is recorded as context, not as a target.
+        self.assertIn("assemblyAdminRow", admin)
+        self.assertNotIn("admin", admin["targets"])
+        # The superseded blocked-on-ruling framing is gone.
+        self.assertNotIn("dbaNote", admin)
+        self.assertIn("ruling27", admin)
+
+    def test_naive_targets_predicate_would_report_six(self):
+        """Pins the difference between the two predicates on real data.
+
+        Count fell 7 -> 6 when Ruling 27 gave `admin` its target. The naive rule
+        still misreports every decided-but-untargeted alias; only the mode-aware
+        predicate sees the real state.
+        """
         addresses, _ = chk.load_registry(CONFIG_DIR)
         naive = sorted(n for n, e in addresses.items()
                        if e.get("kind") == "alias" and not e.get("targets"))
-        self.assertEqual(len(naive), 7)
-        self.assertEqual(sorted(set(naive) - {"admin"}),
+        self.assertEqual(len(naive), 6)
+        self.assertEqual(naive,
                          ["all", "all-roles", "assembly", "big-pickle", "self", "user"])
 
 
