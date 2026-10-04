@@ -141,6 +141,19 @@ def _verify_roles_json():
 
 
 class TestVerifyRolesTransitional(unittest.TestCase):
+    # The assembly surface (assembly-srv :3107) is NOT part of the guards-db
+    # tier's contract -- that tier provides PostgreSQL, per Ruling 22 §7. When
+    # assembly-srv is unreachable, verify-roles reports the alias criterion as
+    # a WARN skip ("assembly unreachable — skipped", verify-roles.py's
+    # unreachable branch -- keep this string in sync with it). That is an
+    # environmental condition of the CI runner, not a provisioning state.
+    # Tolerating it here is scoped to EXACTLY that marker: any provisioning
+    # warn or fail (persona, cards, grants, registry shape) still goes red,
+    # and a REACHABLE assembly missing the alias is a FAIL, not a warn.
+    # Found on the tier's first real CI run (PR #719): the dev machine's live
+    # assembly-srv had been silently satisfying this criterion.
+    ASSEMBLY_UNREACHABLE_WARN = "assembly unreachable — skipped"
+
     def setUp(self):
         self.data, self.available = _verify_roles_json()
         if not self.available:
@@ -156,10 +169,20 @@ class TestVerifyRolesTransitional(unittest.TestCase):
             )
 
     def _fail_roles(self):
+        """Results that are not fully green, EXCLUDING the one environmental warn.
+
+        The assembly-unreachable skip is filtered here -- the single choke point
+        both the delta test and the closure test read -- so the tolerance cannot
+        drift between them. Everything else non-PASS is returned untouched.
+        """
         return {
             r["role"]: r["detail"]
             for r in self.data["results"]
             if r["status"] != "PASS"
+            and not (
+                r["status"] == "WARN"
+                and (r.get("detail") or "").strip() == self.ASSEMBLY_UNREACHABLE_WARN
+            )
         }
 
     def test_the_named_delta_is_the_entire_extra_failure(self):
@@ -193,6 +216,15 @@ class TestVerifyRolesTransitional(unittest.TestCase):
         only that "nothing unexpected fails" would be satisfied equally well by
         `dba` being absent from the database, so closure is asserted directly:
         the role must be present in results AND carry status PASS.
+
+        One environmental exception, scoped as tightly as it can be: on the
+        guards-db CI runner there is no assembly-srv, so the alias criterion
+        comes back as the assembly-unreachable WARN skip (see
+        ASSEMBLY_UNREACHABLE_WARN). A closed role is accepted as PASS, or as a
+        WARN carrying ONLY that marker -- every provisioning warn or fail still
+        goes red here, and on any machine where assembly-srv IS reachable, a
+        missing alias is a FAIL (verify-roles' unreachable branch), so the
+        closure keeps its teeth on dev machines too.
         """
         by_role = {r["role"]: r for r in self.data["results"]}
         for role in CLOSED_ROLES_MUST_PASS:
@@ -202,9 +234,13 @@ class TestVerifyRolesTransitional(unittest.TestCase):
                 f"'{role}' is declared closed but verify-roles does not even "
                 f"evaluate it — the registry key may have been removed",
             )
-            self.assertEqual(
-                by_role[role]["status"],
-                "PASS",
+            status = by_role[role]["status"]
+            detail = (by_role[role].get("detail") or "").strip()
+            environmental_skip = (
+                status == "WARN" and detail == self.ASSEMBLY_UNREACHABLE_WARN
+            )
+            self.assertTrue(
+                status == "PASS" or environmental_skip,
                 f"'{role}' provisioning regressed: "
                 f"{by_role[role].get('detail')!r} — re-provision tackle.roles / "
                 f"tackle.prompts / tackle.role_tool_access, or move it back to "

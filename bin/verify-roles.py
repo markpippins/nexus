@@ -179,7 +179,17 @@ def main():
         in_db = db_roles
         in_check = check_roles | {r.lower() for r in check_roles}
         in_harness = harness_files | {f.lower() for f in harness_files}
-        in_assembly = assembly_users or set()
+        # None = the assembly surface is unreachable (the WARN-skip branch below,
+        # the author's declared intent); a set -- even empty -- = reachable.
+        # `assembly_users or set()` was a bug: it coerced None to an empty set,
+        # making the unreachable branch dead code and turning "assembly
+        # unreachable" into "assembly alias missing" for every role that expects
+        # an alias -- including inside the guards-db CI tier, whose contract is a
+        # PostgreSQL service, not assembly-srv. Found on the tier's first real CI
+        # run (PR #719): the local 21/21 was accidentally green because the dev
+        # machine's live assembly-srv happened to be up with the post-V204 alias.
+        # A REACHABLE assembly missing the alias still fails below.
+        in_assembly = assembly_users
 
         if exp.get("persona") and role not in persona_roles:
             fails.append("persona missing (tackle.prompts)")
