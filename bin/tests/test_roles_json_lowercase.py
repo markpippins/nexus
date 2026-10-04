@@ -61,18 +61,52 @@ class TestRolesJsonLowercase(unittest.TestCase):
         )
 
     def test_dba_block_is_canonical_and_honest(self):
+        """dba's surface expectations must match the LIVE post-V203/V204 state.
+
+        procedures/assemblyAlias were pinned False here when that was the live
+        truth; V203 (17 permanent dba cards reassigned from the uppercase row)
+        and V204 (assembly alias flipped DBA -> dba on the same id 1ea49b6d)
+        have since made True the honest value for both. Re-verified live
+        2026-10-04 before flipping: 17 tackle.role_memory rows with
+        expiration_dt IS NULL (the exact population verify-roles counts), and
+        :3107/api/users carrying name='dba' on 1ea49b6d. Pinning the stale
+        False values after the world moved would be the title-vs-evidence
+        defect class (Ruling 23): the file would claim a state the database
+        contradicts.
+        """
         self.assertIn("dba", self.roles, "lowercase dba key is the canonical DBA registration")
         block = self.roles["dba"]
         self.assertIs(block.get("nebulaCheck"), True)
         self.assertIs(block.get("persona"), True)
         self.assertIs(block.get("harnessFile"), True)
-        self.assertIs(block.get("procedures"), False)
-        self.assertIs(block.get("assemblyAlias"), False)
+        self.assertIs(block.get("procedures"), True)
+        self.assertIs(block.get("assemblyAlias"), True)
         self.assertIs(block.get("governance"), False)
 
     def test_legacy_capitalized_keys_stay_retired(self):
         self.assertNotIn("DBA", self.roles, "capitalized DBA stub was retired (Ruling 8); must not return")
         self.assertNotIn("Rover", self.roles, "legacy Rover was retired (0 corpus records); must not return")
+
+    def test_sound_technician_persona_declared_absent(self):
+        """sound-technician's persona surface must stay DECLARED absent, not merely absent.
+
+        The role has no authored persona anywhere (0 tackle.prompts rows —
+        re-verified live 2026-10-04; no harness file; no docs prompt). If the
+        persona key is simply MISSING, verify-roles treats the surface as
+        expected-present and reports a phantom FAIL on the merged tree — the
+        exact divergence the guards-db seed validation surfaced (PR #719).
+        Declaring persona=false is what makes verify-roles honest here.
+        """
+        block = self.roles.get("sound-technician")
+        self.assertIsNotNone(block, "sound-technician is a registered role")
+        self.assertIs(
+            block.get("persona"),
+            False,
+            "sound-technician has no persona source; the surface must be "
+            "DECLARED absent (persona=false) so verify-roles does not report a "
+            "phantom failure. Authoring a real persona is a separate content "
+            "decision and would flip this pin deliberately.",
+        )
 
     def test_kind_is_role_on_every_entry(self):
         """Ruling 13 (de5d538f): every roles.json entry is kind=role.
