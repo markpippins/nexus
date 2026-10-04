@@ -57,3 +57,88 @@ jobs:
       # which is a real failure and must not be confused with a red guard.
       - name: Discover and run every non-excluded guard
         run: make bintests
+
+  # ── guards-db: the DB tier (engineer-owned, Ruling 22 §7) ─────────────────
+  #
+  # The bare `guards` job has no `services:` block and no database, so the two
+  # cross-surface file<->DB invariants could not run there. Ruling 22 forbids a
+  # runtime skip, so they were made to FAIL CLOSED and manifest-excluded. This job is
+  # what those exclusions' `clears_when` named: postgres + migrations + a membership list.
+  #
+  # Membership is first-class, not another exclusion list: `bin/tests-ci-manifest.json`
+  # declares `tiers.db`, and `run_bin_tests.py --tier db` runs exactly those guards. The
+  # default job automatically skips every tiered guard, so a DB guard can never run (and
+  # fail closed) in the job that lacks its dependency.
+  guards-db:
+    name: bin/tests guards (db tier)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: pguser
+          POSTGRES_PASSWORD: pgpass
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pguser"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # Same DSN shape the guards default to; set explicitly so the job cannot silently
+      # pass by falling back to a localhost database that happens to exist.
+      NEXUS_PG_DSN: postgresql://pguser:pgpass@localhost:5432/nexus
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install test dependencies
+        run: pip install --quiet pyyaml pytest setuptools
+      # Schema comes from the repo-canonical snapshot; the ledger is stamped at the dump's
+      # vintage so a boot migration runner would apply anything newer. Mirrors the seeding
+      # step in service-test-gates.yml rather than inventing a second convention.
+      - name: Seed throwaway DB from repo-canonical ci-bootstrap + vintage role seed
+        run: |
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 -h localhost -U pguser -d postgres -tAc "DROP DATABASE IF EXISTS nebula"
+          psql -v ON_ERROR_STOP=1 -h localhost -U pguser -d postgres -tAc "CREATE DATABASE nebula"
+          psql -v ON_ERROR_STOP=1 -h localhost -U pguser -d nebula -q -f sql/ci-bootstrap/nexus-ci-bootstrap.sql
+          DUMPV=$(git ls-tree --name-only "$(git log -1 --format=%H -- sql/ci-bootstrap/nexus-ci-bootstrap.sql)" \
+                    -- typescript/nebula-srv/migrations/ | xargs -n1 basename \
+                    | grep -oE '^[0-9]{3}' | sort -n | tail -1)
+          if [ -z "$DUMPV" ]; then
+            echo "::error::could not compute the dump vintage -- refusing to guess the ledger stamp"
+            exit 1
+          fi
+          psql -v ON_ERROR_STOP=1 -h localhost -U pguser -d nebula -tAc \
+            "INSERT INTO nebula.schema_version (version, description) VALUES ($DUMPV, 'ci-bootstrap born at dump vintage') ON CONFLICT (version) DO NOTHING"
+          # Role rows come from the CANONICAL VINTAGE SEED -- the answer to the
+          # escalation this job used to carry (engineer-iii 0e5af833: "where does a
+          # canonical, INDEPENDENT role seed come from?"). DBA decision: the seed is a
+          # snapshot of LIVE provisioning state exported by bin/export_tackle_roles_seed.py
+          # (sql/ci-bootstrap/tackle_roles_vintage_seed.sql), NEVER derived from
+          # config/roles/roles.json -- that file is the guards' own subject, so a seed
+          # derived from it would make "every declared role exists in tackle.roles"
+          # tautological. The snapshot covers the full provisionRole footprint
+          # (roles, memory cards, prompts, role_memory, tool grants) because
+          # verify-roles inspects all of it, not just the role names.
+          psql -v ON_ERROR_STOP=1 -h localhost -U pguser -d nebula -q -f sql/ci-bootstrap/tackle_roles_vintage_seed.sql
+          # Keep the fail-loud contract: a zero-row vocabulary here no longer means
+          # "no seed exists" (it does), it means THE SEED IS BROKEN or out of sync
+          # with the bootstrap schema. Either way the tier must go red here, loudly,
+          # rather than let the guards report a confusing assertion downstream.
+          SEEDED=$(psql -v ON_ERROR_STOP=1 -h localhost -U pguser -d nebula -tAc "SELECT count(*) FROM tackle.roles")
+          echo "tackle.roles rows after ci-bootstrap + vintage seed: $SEEDED"
+          if [ "$SEEDED" -eq 0 ]; then
+            echo "::error::guards-db cannot pass: tackle.roles is STILL empty after applying"
+            echo "::error::sql/ci-bootstrap/tackle_roles_vintage_seed.sql. The seed file is broken"
+            echo "::error::or diverged from the bootstrap schema. Regenerate it with"
+            echo "::error::bin/export_tackle_roles_seed.py against a live database (DBA-owned)."
+            exit 1
+          fi
+      - name: Run the db-tier guards
+        run: python3 bin/run_bin_tests.py --tier db
