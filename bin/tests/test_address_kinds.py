@@ -4,8 +4,12 @@
 Ruling 13 (de5d538f, 2026-10-02, thread f60b8eb4) gives addresses a KIND:
 `role` (delivery obligation; reject only if unregistered — #693's scope),
 `alias` (expand at write, never reject), `telemetry` (recorded, never
-delivered). Non-role addresses must not live in roles.json.roles (keys there
-must match tackle.roles exactly), so they register in address-kinds.json.
+delivered). Non-role addresses must not live in roles.json.roles, so they
+register in address-kinds.json. The roles<->delivery relation is a UNION, not
+equality (Ruling 24, 8a466f98): roles.json (union) address-kinds.json is a
+SUBSET OF tackle.roles, and tackle.roles may be a STRICT SUPERSET. A registered
+non-role address may legitimately hold a delivery row -- that row records the
+address, not a delivery obligation.
 
 This guard locks the R13-mandated registrations:
 
@@ -14,8 +18,11 @@ This guard locks the R13-mandated registrations:
   Retagging was explicitly forbidden by the ruling; this entry is the
   registration the ruling ordered — it is not a role and must never be
   mistaken for one.
-- the nine broadcast/legacy alias addresses (decisions 2 and 4), expansion
-  targets pending the architect (Phase C).
+- the nine broadcast/legacy alias addresses (decisions 2 and 4). Their
+  expansion-target decisions are now MADE: each carries an `expansion.mode` plus
+  ruling and rationale (Ruling 26 1-5; leader/designer/watchdog targets in 5,
+  ratified Ruling 27). No alias carries a `targets` key -- the target set is
+  derived, so an explicit list would be a second, silently-ignored source.
 
 It also prevents category errors: an address cannot be both a role and a
 non-role kind, and telemetry is never a delivery target.
