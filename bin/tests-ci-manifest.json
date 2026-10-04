@@ -11,13 +11,6 @@
     "_why": "Membership lists for guards whose dependency the default job does not provide. A tiered guard runs in EXACTLY ONE job - the one that provides its dependency - and is skipped by the default job automatically. A tier is a membership list, not an exclusion: listed here means the guard RUNS. Only list-valued, non-underscore keys are tiers."
   },
   "excluded": {
-    "test_migration_number_uniqueness.py": {
-      "kind": "defect",
-      "reason": "FAILS on a real collision at origin/main: V194 is claimed by both V194__decommission_qbe_empty_tables.sql (#424) and V194__expression_register_producer.sql (#422). Excluded because it is red, not because it is broken. It must not be added to the guard's HISTORICAL_DUPLICATES allowlist - that would silence the finding rather than fix it.",
-      "owner": "dba",
-      "tracked": "record ccc4c755 (renumber ruling); decision fb11ad19",
-      "clears_when": "V194 is renumbered on main, at which point this guard passes and the ratchet forces its removal here"
-    },
     "test_backfill_propositions.py": {
       "kind": "infrastructure",
       "reason": "Needs POPULATED state, not merely a schema: test_forward_ingest_state_preserved asserts resolution propositions exist (observed 0 against a freshly seeded ci-bootstrap), so a throwaway database cannot satisfy it and seeding it from live data would make the assertion circular. Measured 2026-11-01 against ci-bootstrap + vintage role seed: 6 passed, 1 failed on exactly that data-dependent assertion.",

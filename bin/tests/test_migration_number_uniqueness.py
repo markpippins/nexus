@@ -8,16 +8,22 @@ collision audit (DBA R1 793679f8):
   Two migrations sharing one V-number breaks apply-order determinism: which
   file "is" V125 depends on directory sort order, and a fresh environment
   (CI bootstrap, new laptop, vanadium restore) may apply them in a different
-  order than the machine that evolved the schema — silently diverging.
-
-The live corpus contained SIX historical duplicate numbers (V039, V040,
+  order than the machine that evolved the schema — silently diverging.The live corpus contained SIX historical duplicate numbers (V039, V040,
 V045, V046, V051, V125). The 2026-09-18 audit verified by live schema
 introspection that BOTH files of every pair were already applied-live
 history — immutable, unrenumberable — EXCEPT V039__open_question_entities
 (applied-then-retired: its table was deliberately dropped by nebula-srv
-migration 042 / approved disposition D4), which was renumbered to V183 in
-the same PR as this guard. The FIVE surviving pairs are pinned as a
-permanent ALLOWLIST — and any NEW duplicate fails CI:
+migration 042 / approved disposition D4), which was renumbered to V183 in the
+same PR as this guard. The FIVE surviving pairs are pinned as a
+permanent ALLOWLIST — and any NEW duplicate fails CI.
+
+A SEVENTH collision, V194, surfaced later and was resolved by the same
+precedent on 2026-10-04: V194__expression_register_producer (#422) is
+applied-live and keeps V194; V194__decommission_qbe_empty_tables (#424) was
+never applied and was renumbered to V205. It was NOT added to the allowlist —
+an allowlist entry silences the finding instead of fixing it, which is the
+one thing this guard exists to prevent. Its drop list was also narrowed to
+ruling 4dc4459e's actual scope in that same change; see the file header.
 
   - exact pair match against the allowlist  → historical, PASS
   - any other shared number                 → FAIL with the colliding files
@@ -120,6 +126,33 @@ class TestNumberUniqueness(unittest.TestCase):
         self.assertFalse(
             any(f.startswith("V039__open_question_entities") for f in os.listdir(SQL_DIR)),
             "old V039__open_question_entities still present",
+        )
+
+    def test_v194_collision_resolved_by_renumbering_the_unapplied_member(self):
+        """V194 belonged to the APPLIED member; the unapplied one moved to V205.
+
+        Two files claimed V194 (#422 expression_register_producer, #424
+        decommission_qbe_empty_tables). Resolved the same way as V039: the
+        applied member keeps the number, the unapplied member is renumbered.
+        Live introspection 2026-10-04 confirmed which is which --
+        resolution.producer_registry holds the `expression-pipeline` row with
+        registered_by='V194', while all eight QBE-era tables still exist.
+
+        Pinned by NAME, not by absence: a guard that only asserted "V194 is
+        unique" would pass again if someone renamed a third file into the gap.
+        """
+        names = os.listdir(SQL_DIR)
+        self.assertTrue(
+            any(f.startswith("V194__expression_register_producer") for f in names),
+            "the APPLIED V194 member must keep the number",
+        )
+        self.assertTrue(
+            any(f.startswith("V205__decommission_qbe_empty_tables") for f in names),
+            "the UNAPPLIED member should be renumbered to V205",
+        )
+        self.assertFalse(
+            any(f.startswith("V194__decommission_qbe_empty_tables") for f in names),
+            "old V194__decommission_qbe_empty_tables still present",
         )
 
 
