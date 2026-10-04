@@ -11,6 +11,7 @@ import * as bsRedis from './services/block-segmentation-redis.service';
 import { fetchSubstance, substanceToCamel } from './substance-proxy';
 import { CrossReferenceType } from './crossref-taxonomy';
 import { normalizeTags } from './tagNormalizer';
+import { expandTags } from './tagExpansion';
 import { attestationsLimiter, requirementCompileLimiter } from './limiter';
 import { routingTagErrorMessage, routingCaseErrorMessage } from './routing-tags';
 import { blankRecordError, normalizeHarnessJobId } from './agent-record-write-guard';
@@ -5541,6 +5542,25 @@ export function createRoutes(pool: Pool): Router {
         console.warn(`[tag-normalizer] POST agent-record ${w.reason}: '${w.tag}' (repaired per card §4)`);
       }
 
+      // Phase C alias expansion (Ruling 26 §§1-§5). Branches on each alias's
+      // declared `expansion.mode`, NOT on whether it has `targets`: `to:all`
+      // has no targets and is the widest address in the system, so a
+      // targets-presence test would leave it unexpanded — a silent drop.
+      // Snapshot-at-write: the recipient set freezes here.
+      const expandedTags = expandTags(normalizedTags.tags, { writerRole: role });
+      for (const w of expandedTags.warnings) {
+        console.warn(`[tag-expansion] POST agent-record ${w.reason}: '${w.tag}' — ${w.detail}`);
+      }
+      for (const intent of expandedTags.intents) {
+        // Intents are OUT OF BAND of the tag list by ruling (§2/§3 forbid
+        // synthesizing per-role tags to fake a forum or operator delivery).
+        // Logged here; the delivery channel is the caller's, not the tag's.
+        console.log(`[tag-expansion] POST agent-record intent ${intent.kind} -> ${intent.address}`);
+      }
+      if (expandedTags.degraded) {
+        console.error('[tag-expansion] POST agent-record registry UNAVAILABLE — tags stored unexpanded');
+      }
+
       const validTypes = ['report', 'analysis', 'assessment', 'inspection', 'prompt', 'response', 'engineering_log', 'architecture_note', 'decision'];
       if (!recordType || !validTypes.includes(recordType)) {
         return res.status(400).json({ error: `recordType must be one of: ${validTypes.join(', ')}` });
@@ -5595,7 +5615,7 @@ export function createRoutes(pool: Pool): Router {
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
         [
           recordType, role || '', title || '', content || '',
-          sourcePath || null, metadata || {}, normalizedTags.tags,
+          sourcePath || null, metadata || {}, expandedTags.tags,
           systemId || null, subsystemId || null, featureId || null, planRef || null,
           level ?? 1, visibilityScope || 'all', model || null,
           runAttribution.jobId,
@@ -5616,7 +5636,7 @@ export function createRoutes(pool: Pool): Router {
   router.patch('/agent-records/:id', async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
-      const { title, content, metadata, tags, systemId, subsystemId, featureId, planRef, level, visibilityScope, model } = req.body;
+      const { title, content, metadata, tags, systemId, subsystemId, featureId, planRef, level, visibilityScope, model, role } = req.body;
       if (level !== undefined && (level < 1 || level > 4)) {
         return res.status(400).json({ error: 'level must be between 1 and 4' });
       }
@@ -5632,8 +5652,21 @@ export function createRoutes(pool: Pool): Router {
         for (const w of normalizedTags.warnings) {
           console.warn(`[tag-normalizer] PATCH agent-record ${w.reason}: '${w.tag}' (repaired per card §4)`);
         }
+        // Phase C expansion on PATCH too. `role` may be absent from the body;
+        // a missing writer role makes `to:self` warn `unresolvable-self`
+        // rather than silently expanding to someone else.
+        const expandedTags = expandTags(normalizedTags.tags, { writerRole: role });
+        for (const w of expandedTags.warnings) {
+          console.warn(`[tag-expansion] PATCH agent-record ${w.reason}: '${w.tag}' — ${w.detail}`);
+        }
+        for (const intent of expandedTags.intents) {
+          console.log(`[tag-expansion] PATCH agent-record intent ${intent.kind} -> ${intent.address}`);
+        }
+        if (expandedTags.degraded) {
+          console.error('[tag-expansion] PATCH agent-record registry UNAVAILABLE — tags stored unexpanded');
+        }
         sets.push(`tags = $${i++}`);
-        vals.push(normalizedTags.tags);
+        vals.push(expandedTags.tags);
       }
       if (systemId !== undefined) { sets.push(`system_id = $${i++}`); vals.push(systemId); }
       if (subsystemId !== undefined) { sets.push(`subsystem_id = $${i++}`); vals.push(subsystemId); }
