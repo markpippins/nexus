@@ -91,6 +91,12 @@ jobs:
       # Same DSN shape the guards default to; set explicitly so the job cannot silently
       # pass by falling back to a localhost database that happens to exist.
       NEXUS_PG_DSN: postgresql://pguser:pgpass@localhost:5432/nexus
+      # psql client auth for the seed steps. POSTGRES_PASSWORD above configures the
+      # SERVER; without PGPASSWORD every psql call in the seed step prompts on a tty
+      # that does not exist and dies with fe_sendauth. Found on this job's first real
+      # CI run -- the pull_request filter had previously prevented the job from ever
+      # executing on GitHub (engineer-iii verified it locally, where ~/.pgpass exists).
+      PGPASSWORD: pgpass
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
