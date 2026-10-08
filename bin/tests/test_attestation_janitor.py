@@ -22,6 +22,11 @@ Pins the safety rails from the janitor docstring:
   - dispatch fallback: after the attempt cap, gate workflows are dispatched
     against the head branch — once per PR, --apply only, partial failures
     retried on a later tick, cooldown still precedes it
+  - stale-checkrun repair (CIR-5): a CI_PENDING refusal where the run already
+    completed but its check-run never finalized gets `gh run rerun` — probe
+    verified, head-unchanged first, cooldown 30m + 3 lifetime attempts per
+    (PR, head), --apply only, never merges; genuinely running runs and
+    nothing-stale probes stay on the silent CI_PENDING path
 """
 
 from __future__ import annotations
@@ -925,6 +930,201 @@ def test_server_defect_key_helper():
         ["CI_PENDING", "ATT_TIMESTAMP_MISSING"]) == "SERVER-DEFECT:::ATT_TIMESTAMP_MISSING+CI_PENDING"
     assert janitor._server_defect_key(["ATT_STALE_HEAD"]) is None
     assert janitor._server_defect_key([]) is None
+
+
+# ── stale-checkrun repair (CIR-5): completed-but-unfinalized check-runs ────
+
+PENDING_CI = gate_report(
+    passes=[
+        "pr open & ready: state=OPEN draft=False mergeable=MERGEABLE head=abc",
+        "tester attestation: record postdates head",
+    ],
+    fails=["ci green (CI_PENDING): 1 check(s) not completed: ['wr-conf-032']"],
+)
+PENDING_PLUS_ATT_FAIL = gate_report(
+    passes=["pr open & ready: state=OPEN draft=False mergeable=MERGEABLE head=abc"],
+    fails=["ci green (CI_PENDING): 1 check(s) not completed: ['wr-conf-032']",
+           "tester attestation (ATT_NO_CI_EVIDENCE): cites no CI run references"],
+)
+RUN_LIST_STALE = {"returncode": 0, "stdout": json.dumps([
+    {"databaseId": 36680804542, "status": "completed", "conclusion": None, "headSha": "b" * 40},
+]), "stderr": ""}
+RUN_LIST_RUNNING = {"returncode": 0, "stdout": json.dumps([
+    {"databaseId": 36680804542, "status": "in_progress", "conclusion": None, "headSha": "b" * 40},
+]), "stderr": ""}
+RUN_LIST_TERMINAL = {"returncode": 0, "stdout": json.dumps([
+    {"databaseId": 36680804542, "status": "completed", "conclusion": "success", "headSha": "b" * 40},
+]), "stderr": ""}
+RUN_LIST_OTHER_HEAD = {"returncode": 0, "stdout": json.dumps([
+    {"databaseId": 36680804542, "status": "completed", "conclusion": None, "headSha": "e" * 40},
+]), "stderr": ""}
+RERUN_OK = {"returncode": 0, "stdout": "", "stderr": ""}
+
+
+def _stale_cycle(plan, **kw):
+    """_cycle_with_runner with the CI_PENDING report pre-wired; pass a plan
+    of EXTRA commands after the gate."""
+    full = [("pr list", DISCOVERY_600),
+            ("merge_pr.py 600", {"returncode": 1, "stdout": PENDING_CI, "stderr": ""})]
+    full.extend(plan)
+    return _cycle_with_runner(full, **kw)
+
+
+def test_stale_checkrun_probe_finds_completed_unfinalized_run():
+    assert janitor.find_stale_checkrun(600, HEAD_600, _probe_runner(RUN_LIST_STALE)) == "36680804542"
+
+
+def test_stale_checkrun_probe_ignores_genuinely_running_run():
+    assert janitor.find_stale_checkrun(600, HEAD_600, _probe_runner(RUN_LIST_RUNNING)) is None
+
+
+def test_stale_checkrun_probe_ignores_terminal_conclusions():
+    assert janitor.find_stale_checkrun(600, HEAD_600, _probe_runner(RUN_LIST_TERMINAL)) is None
+
+
+def test_stale_checkrun_probe_ignores_other_head_shas():
+    assert janitor.find_stale_checkrun(600, HEAD_600, _probe_runner(RUN_LIST_OTHER_HEAD)) is None
+
+
+def test_stale_checkrun_probe_fail_safe_on_error():
+    r = make_runner([("run list", {"returncode": 1, "stdout": "", "stderr": "rate limited"})])
+    assert janitor.find_stale_checkrun(600, HEAD_600, r) is None
+
+
+def test_sole_fail_is_pending_ci_helper():
+    assert janitor._sole_fail_is_pending_ci(
+        type("P", (), {"stdout": PENDING_CI, "returncode": 1})())
+    assert not janitor._sole_fail_is_pending_ci(
+        type("P", (), {"stdout": PENDING_PLUS_ATT_FAIL, "returncode": 1})())
+    assert not janitor._sole_fail_is_pending_ci(
+        type("P", (), {"stdout": EMPTY_CI, "returncode": 1})())
+
+
+def test_stale_checkrun_repair_fires_rerun():
+    rc, out, state, calls, pre, logs = _stale_cycle([
+        ("pr view 600", _view(HEAD_600)),
+        ("run list", RUN_LIST_STALE),
+        ("run rerun 36680804542", RERUN_OK),
+    ], apply=True, only_pr=600)
+    assert rc == 0
+    assert "run rerun 36680804542" in " ".join(calls)
+    assert "stale-checkrun repair fired" in out
+    rec = state["stale_checkrun_repairs"][f"600:{HEAD_600[:12]}"]
+    assert rec["attempts"] == 1 and rec["last_run_id"] == "36680804542"
+    assert any("CIR-5 stale-checkrun repair for PR #600" in t for t in logs)
+
+
+def test_stale_checkrun_repair_check_only_is_readonly():
+    rc, out, state, calls, pre, logs = _stale_cycle([
+        ("pr view 600", _view(HEAD_600)),
+        ("run list", RUN_LIST_STALE),
+    ], apply=False, only_pr=600)
+    assert not any("run rerun" in c for c in calls), "check-only must not mutate"
+    assert "would fire under --apply" in out
+    assert "stale_checkrun_repairs" not in state, "no ledger for a readonly cycle"
+
+
+def test_stale_checkrun_nothing_stale_stays_silent_transient():
+    rc, out, state, calls, pre, logs = _stale_cycle([
+        ("pr view 600", _view(HEAD_600)),
+        ("run list", RUN_LIST_TERMINAL),
+    ], apply=True, only_pr=600)
+    assert not any("run rerun" in c for c in calls)
+    assert "ordinary CI_PENDING" in out
+    assert not logs, "no post when the probe finds nothing stale"
+    assert "stale_checkrun_repairs" not in state
+
+
+def test_stale_checkrun_head_moved_aborts_and_alerts_once():
+    rc, out, state, calls, pre, logs = _stale_cycle([
+        ("pr view 600", _view("c" * 40)),
+    ], apply=True, only_pr=600)
+    assert rc == 1 and "head moved" in out
+    assert not any("run rerun" in c for c in calls)
+    assert any("head moved during stale-checkrun repair" in t for t in logs)
+    assert state["stale_checkrun_repairs"][f"600:{HEAD_600[:12]}"].get("head_moved_at")
+
+
+def test_stale_checkrun_head_moved_no_duplicate_alert():
+    tmp = Path(tempfile.mkdtemp())
+    state_path = tmp / "state.json"
+    all_logs = []
+    for _ in range(2):
+        rc, out, state, calls, pre, logs = _stale_cycle([
+            ("pr view 600", _view("c" * 40)),
+        ], apply=True, only_pr=600, state_path=state_path)
+        all_logs.extend(logs)
+    alerts = [t for t in all_logs if "head moved during stale-checkrun repair" in t]
+    assert len(alerts) == 1, "alert once per drift event, not per tick"
+
+
+def test_stale_checkrun_cap_and_exhaustion_alert_once():
+    tmp = Path(tempfile.mkdtemp())
+    state_path = tmp / "state.json"
+    state_path.write_text(json.dumps({
+        "stale_checkrun_repairs": {f"600:{HEAD_600[:12]}": {"attempts": 3}},
+    }))
+    rc, out, state, calls, pre, logs = _stale_cycle([
+        ("pr view 600", _view(HEAD_600)),
+        ("run list", RUN_LIST_STALE),
+    ], apply=True, only_pr=600, state_path=state_path)
+    assert not any("run rerun" in c for c in calls), "cap precedes any mutation"
+    assert "exhausted" in out
+    assert any("stale-checkrun reruns exhausted" in t for t in logs)
+    assert state["stale_checkrun_repairs"][f"600:{HEAD_600[:12]}"].get("exhausted_logged")
+
+
+def test_stale_checkrun_cooldown_waits_silently():
+    tmp = Path(tempfile.mkdtemp())
+    state_path = tmp / "state.json"
+    state_path.write_text(json.dumps({
+        "stale_checkrun_repairs": {
+            f"600:{HEAD_600[:12]}": {"attempts": 1, "last_attempt": janitor.time.time()},
+        },
+    }))
+    rc, out, state, calls, pre, logs = _stale_cycle([
+        ("pr view 600", _view(HEAD_600)),
+        ("run list", RUN_LIST_STALE),
+    ], apply=True, only_pr=600, state_path=state_path)
+    assert not any("run rerun" in c for c in calls)
+    assert "cooldown" in out
+    assert not logs, "cooldown is silent"
+
+
+def test_stale_checkrun_rerun_failure_is_tool_error():
+    rc, out, state, calls, pre, logs = _stale_cycle([
+        ("pr view 600", _view(HEAD_600)),
+        ("run list", RUN_LIST_STALE),
+        ("run rerun 36680804542", {"returncode": 1, "stdout": "", "stderr": "boom"}),
+    ], apply=True, only_pr=600)
+    assert rc == 1 and "rerun FAILED" in out
+    assert "stale_checkrun_repairs" not in state, "failed attempt is not counted"
+    assert not logs, "no change-log entry for a failed rerun"
+
+
+def test_stale_checkrun_requires_attestation_gate_pass():
+    """A CI_PENDING refusal alongside a failing attestation gate is NOT
+    repairable — the whole repair branch requires the attestation to pass."""
+    full = [("pr list", DISCOVERY_600),
+            ("merge_pr.py 600", {"returncode": 1, "stdout": PENDING_PLUS_ATT_FAIL, "stderr": ""})]
+    rc, out, state, calls, pre, logs = _cycle_with_runner(full, apply=True, only_pr=600)
+    assert not any("run list" in c for c in calls), "no probe when attestation fails"
+    assert not any("run rerun" in c for c in calls)
+
+
+def _probe_runner(result):
+    """Minimal runner stubbing just `gh run list` for direct probe tests."""
+    calls = []
+
+    def runner(cmd, **kwargs):
+        cmdstr = " ".join(str(c) for c in cmd)
+        calls.append(cmdstr)
+        if "run list" in cmdstr:
+            return FakeResult(**result) if isinstance(result, dict) else result
+        raise AssertionError(f"unexpected command: {cmdstr}")
+
+    runner.calls = calls
+    return runner
 
 
 # ── dual-runnable runner (keep at EOF: collects every test_ defined above) ──

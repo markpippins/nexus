@@ -29,7 +29,15 @@ One cycle:
      empty, the janitor ESCALATES to the workflow_dispatch fallback: it
      dispatches the light gate workflows against the PR's head branch
      (the #535/#536 manual recovery), once per PR, head-verified,
-     --apply only, change-logged.
+     --apply only, change-logged. If instead the sole failing gate is
+     `ci green` with code CI_PENDING — the CIR-5 signature: a check stuck
+     IN_PROGRESS in the rollup while its Actions run already completed at
+     this exact head (#673 manual `gh run rerun` precedent) — the janitor
+     probes the PR's runs and RERUNS the completed-but-unfinalized run:
+     cooldown 30m, 3 lifetime attempts per (PR, head), head-verified,
+     --apply only, change-logged. Genuinely running runs are never touched,
+     and a probe finding nothing stale leaves CI_PENDING on its ordinary
+     silent-transient path.
 
 Safety rails (all non-negotiable):
   - --merge is passed to the gate only after an immediately-preceding
@@ -43,6 +51,12 @@ Safety rails (all non-negotiable):
     head is unchanged at mutation time. Genuine CI failures are never
     repaired; a moved head aborts the repair and alerts; exhausting the
     attempt cap is surfaced once and then left for a human.
+  - Stale-check-run repair (rerun) only ever fires when the PR is attested,
+    the only failing gate is CI_PENDING, the probe found a run that already
+    completed but never finalized its check-run at the unchanged head, and
+    --apply is set. A genuinely running run is never rerun; cooldown (30m)
+    and a 3-attempt lifetime cap per (PR, head) bound it like the other
+    rungs; exhausting the cap is surfaced once and left for a human.
   - The janitor never edits branches, never forces anything, never bypasses
     a gate: a BYPASS line in the gate report is treated as failure.
 
@@ -108,6 +122,17 @@ PROMOTABLE_FAIL = "pr open & ready"
 EMPTY_CI_MARKER = "no CI checks reported"
 REPAIR_COOLDOWN_S = 60 * 60   # min spacing between repair attempts per PR
 REPAIR_MAX_ATTEMPTS = 3       # lifetime close/reopen attempts per PR
+
+# Stale-check-run repair (CIR-5 class, third rung): the statusCheckRollup can
+# show a check stuck IN_PROGRESS while the underlying Actions run has already
+# COMPLETED at the exact PR head — GitHub failed to finalize the check-run
+# row (#673 needed a manual `gh run rerun 36642067144`; #683 self-resolved).
+# The gate refuses CI_PENDING, which routes as a silent transient, so without
+# this rung nothing converges until a human notices. The rerun is safe
+# precisely because the run already proved itself at the pinned head — the
+# check-run row is a stale projection; genuinely running runs are untouched.
+STALE_CHECKRUN_COOLDOWN_S = 30 * 60   # min spacing per (PR, head)
+STALE_CHECKRUN_MAX_ATTEMPTS = 3       # lifetime reruns per (PR, head)
 
 # Dispatch-fallback ladder (second rung): after REPAIR_MAX_ATTEMPTS
 # close/reopen cycles leave the rollup empty, dispatch these light gate
@@ -246,6 +271,61 @@ def _sole_fail_is_empty_ci(proc: "subprocess.CompletedProcess") -> bool:
 
 def _attestation_gate_passes(proc: "subprocess.CompletedProcess") -> bool:
     return any(ln.startswith("tester attestation") for ln in _gate_pass_lines(proc))
+
+
+def _sole_fail_is_pending_ci(proc: "subprocess.CompletedProcess") -> bool:
+    """Sole failing gate is `ci green` with structured code CI_PENDING."""
+    fails = _gate_fail_lines(proc)
+    return (
+        len(fails) == 1
+        and fails[0].startswith("ci green")
+        and f"({gate_codes.CI_PENDING})" in fails[0]
+    )
+
+
+def find_stale_checkrun(
+    num: int,
+    head_full: str,
+    runner: Callable,
+    out: Any = sys.stdout,
+) -> Optional[str]:
+    """Return the run ID of a completed-but-unfinalized Actions run, if any.
+
+    CIR-5 probe: `gh run list` for the repo, looking for a run whose status
+    is COMPLETED but whose conclusion is not a terminal value — the workflow
+    finished while its check-run row never finalized. Runs on other head
+    SHAs are ignored (sha prefix match when both sides are known), and a
+    genuinely running run (status != completed) is never a candidate.
+    Returns None when nothing is stale or the probe itself fails (failing
+    safe: the next cycle re-probes; CI_PENDING stays a silent transient).
+    """
+    terminal = {
+        "success", "failure", "cancelled", "skipped", "neutral",
+        "timed_out", "action_required", "startup_failure",
+    }
+    try:
+        proc = runner(
+            ["gh", "run", "list", "--limit", "20", "--json",
+             "databaseId,status,conclusion,headSha"],
+            capture_output=True, text=True, timeout=60,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(proc.stderr.strip()[:160] or f"exit={proc.returncode}")
+        runs = json.loads(proc.stdout or "[]")
+    except (RuntimeError, ValueError) as exc:
+        print(f"  #{num}: stale-checkrun probe failed — {exc}; no repair this cycle", file=out)
+        return None
+    for run in runs if isinstance(runs, list) else []:
+        if str(run.get("status") or "").lower() != "completed":
+            continue
+        conclusion = str(run.get("conclusion") or "").lower()
+        if conclusion in terminal:
+            continue
+        sha = str(run.get("headSha") or "").lower()
+        if sha and head_full and not head_full.lower().startswith(sha[:7]):
+            continue
+        return str(run.get("databaseId") or "")
+    return None
 
 
 def _parse_int(val: Any, default: int = 0) -> int:
@@ -412,6 +492,106 @@ def _dispatch_fallback(
     return "dispatched"
 
 
+def repair_stale_checkrun(
+    num: int,
+    head_full: str,
+    rec: Dict[str, Any],
+    now_s: float,
+    apply: bool,
+    runner: Callable,
+    out: Any = sys.stdout,
+) -> str:
+    """Attempt the stale-check-run repair (rerun) for one PR.
+
+    CIR-5 class: a check stuck IN_PROGRESS in the rollup while the underlying
+    Actions run already completed at this exact head. Mirrors
+    repair_empty_rollup's rails, in order: head-unchanged verification (abort
+    + alert once on drift), probe for the stale run (none -> ordinary
+    transient), lifetime attempt cap per (PR, head) (exhaustion alerted
+    once), cooldown (silent wait), --apply gate (check-only prints intent and
+    mutates nothing). The rerun targets only runs the probe proved completed;
+    the gate re-runs on a later cycle and a repair never merges. Returns one
+    of: 'done', 'cooldown', 'capped', 'head-moved', 'failed', 'readonly',
+    'nothing-stale'.
+    """
+    # 1. Head verification BEFORE anything else: the repair is only sound at
+    #    the exact head the attestation pinned.
+    try:
+        current = gh_json("pr", "view", str(num), "--json", "headRefOid", runner=runner).get("headRefOid", "")
+    except RuntimeError as exc:
+        print(f"  #{num}: stale-checkrun repair aborted — head lookup failed: {exc}", file=out)
+        return "failed"
+    if current != head_full:
+        print(f"  #{num}: stale-checkrun repair aborted — head moved since discovery ({head_full[:12]} -> {current[:12]})", file=out)
+        if not rec.get("head_moved_at"):
+            if not post_change_log(
+                f"attestation-janitor: repair-blocked — PR #{num} head moved during stale-checkrun repair",
+                f"bin/attestation_janitor.py at {_now_iso()}: stale-checkrun (CIR-5) repair for "
+                f"PR #{num} aborted: discovery head {head_full[:12]} but live head is "
+                f"{current[:12]}. A new push invalidates any pinned attestation — human "
+                "attention requested.",
+            ):
+                print(f"  #{num}: WARNING — change-log post failed (abort itself succeeded)", file=out)
+            rec["head_moved_at"] = _now_iso()
+        return "head-moved"
+
+    # 2. Probe: is there actually a completed-but-unfinalized run at this
+    #    head? No -> this is ordinary CI_PENDING; stay on the silent path.
+    run_id = find_stale_checkrun(num, head_full, runner, out)
+    if not run_id:
+        print(f"  #{num}: no completed-but-unfinalized run at this head — ordinary CI_PENDING, retry next cycle", file=out)
+        return "nothing-stale"
+
+    attempts = _parse_int(rec.get("attempts"))
+    if attempts >= STALE_CHECKRUN_MAX_ATTEMPTS:
+        if not rec.get("exhausted_logged"):
+            print(f"  #{num}: stale-checkrun attempts exhausted ({attempts}/{STALE_CHECKRUN_MAX_ATTEMPTS}) — escalating to a human", file=out)
+            if post_change_log(
+                f"attestation-janitor: PR #{num} stale-checkrun reruns exhausted",
+                f"bin/attestation_janitor.py at {_now_iso()}: PR #{num} (head "
+                f"{head_full[:12]}) kept refusing CI_PENDING after "
+                f"{attempts} completed-run reruns (cooldown "
+                f"{STALE_CHECKRUN_COOLDOWN_S // 60}m) — the check-run row is not "
+                "finalizing even though the runs complete. Human attention requested.",
+            ):
+                rec["exhausted_logged"] = True
+        return "capped"
+
+    last = _parse_float(rec.get("last_attempt"))
+    if last and (now_s - last) < STALE_CHECKRUN_COOLDOWN_S:
+        wait = int(STALE_CHECKRUN_COOLDOWN_S - (now_s - last))
+        print(f"  #{num}: stale-checkrun cooldown — next attempt eligible in ~{wait // 60}m", file=out)
+        return "cooldown"
+
+    if not apply:
+        print(f"  #{num}: stale run {run_id} (completed, check-run unfinalized) — rerun would fire under --apply", file=out)
+        return "readonly"
+
+    r = runner(["gh", "run", "rerun", run_id], capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        print(f"  #{num}: stale-checkrun rerun FAILED on run {run_id}: {r.stderr.strip()[:160]}", file=out)
+        return "failed"
+
+    rec["attempts"] = attempts + 1
+    rec["last_attempt"] = now_s
+    rec["last_attempt_iso"] = _now_iso()
+    rec["last_head"] = head_full[:12]
+    rec["last_run_id"] = run_id
+    print(f"  #{num}: stale-checkrun repair fired — `gh run rerun {run_id}` (attempt {attempts + 1}/{STALE_CHECKRUN_MAX_ATTEMPTS}) — check-run re-finalizes as CI completes", file=out)
+    if not post_change_log(
+        f"attestation-janitor: CIR-5 stale-checkrun repair for PR #{num} (run rerun)",
+        f"bin/attestation_janitor.py at {_now_iso()}: PR #{num} (head {head_full[:12]}) "
+        f"refused CI_PENDING: a check sat IN_PROGRESS while its Actions run had already "
+        f"completed at this exact head (CIR-5: unfinalized check-run row; manual "
+        f"precedent `gh run rerun` on #673). Probe confirmed run {run_id} completed but "
+        f"unfinalized; rerun fired (attempt {attempts + 1}/{STALE_CHECKRUN_MAX_ATTEMPTS}, "
+        f"cooldown {STALE_CHECKRUN_COOLDOWN_S // 60}m). The gate re-runs on a later "
+        "cycle; repair never merges.",
+    ):
+        print(f"  #{num}: WARNING — change-log post failed (repair itself succeeded)", file=out)
+    return "done"
+
+
 def load_state(path: Path) -> Dict[str, Any]:
     try:
         return json.loads(path.read_text())
@@ -569,6 +749,7 @@ def run_cycle(
     state = load_state(state_path)
     merged_book = state.setdefault("merged", {})
     repairs = state.setdefault("repairs", {})
+    stale_checkrun_repairs = state.setdefault("stale_checkrun_repairs", {})
     anomalies = state.setdefault("anomaly_dedup", {})
     now_s = time.time()
     # Dedup memory ages out at LOAD: a key unseen for 14 days may re-alert.
@@ -653,6 +834,21 @@ def run_cycle(
                     # note: the dispatch fallback's 'failed' lands here too
                     # (it is a tool error), while 'waited'/'dispatched'/
                     # 'readonly' are expected outcomes.
+                    tool_error = True
+                held.append(num)
+                continue
+            if pre is True and _sole_fail_is_pending_ci(proc) and _attestation_gate_passes(proc):
+                # CIR-5 repairable anomaly: attested PR, sole failing gate is
+                # CI_PENDING — the rollup may be lying (check stuck
+                # IN_PROGRESS while the run already completed). The repair
+                # probe decides: a stale run gets rerun under the usual
+                # rails; nothing stale stays an ordinary silent transient.
+                outcome = repair_stale_checkrun(
+                    num, pr.get("headRefOid", ""),
+                    stale_checkrun_repairs.setdefault(f"{num}:{head}", {"attempts": 0}),
+                    now_s, apply, runner, out,
+                )
+                if outcome in ("head-moved", "failed"):
                     tool_error = True
                 held.append(num)
                 continue
@@ -743,6 +939,11 @@ def run_cycle(
         del repairs[k]
     if not repairs:
         state.pop("repairs", None)  # keep the state file free of empty ledgers
+    for k in [k for k, r in stale_checkrun_repairs.items()
+              if not r.get("attempts") and not r.get("exhausted_logged") and not r.get("head_moved_at")]:
+        del stale_checkrun_repairs[k]
+    if not stale_checkrun_repairs:
+        state.pop("stale_checkrun_repairs", None)  # keep the state file free of empty ledgers
     if not anomalies:
         state.pop("anomaly_dedup", None)  # keep the state file free of empty ledgers
     state["runs"] = state["runs"][-50:]
