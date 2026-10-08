@@ -30,7 +30,11 @@ export default class ApiService extends Service {
           {
             path: "/",
             whitelist: ["peb.**"],
-            bodyParsers: { json: true },
+            // Incumbent's parser limit (typescript/peb-srv/src/index.js:
+            // express.json({ limit: '2mb' })) — the gateway parser must
+            // match or oversized writes 413 here before the verbatim stack
+            // ever sees them.
+            bodyParsers: { json: { limit: "2mb" } },
             aliases: {
               "GET /health": "peb.dispatch",
               "GET /api/peb/health/circuit-breakers": "peb.dispatch",

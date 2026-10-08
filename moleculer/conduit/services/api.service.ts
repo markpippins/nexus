@@ -22,7 +22,11 @@ export default class ApiService extends Service {
           {
             path: "/",
             whitelist: ["conduit.**"],
-            bodyParsers: { json: true },
+            // Incumbent's parser limit (typescript/conduit-srv/src/app.ts:
+            // express.json({ limit: "2mb" })) — the gateway parser must
+            // match or oversized writes 413 here before the verbatim stack
+            // ever sees them.
+            bodyParsers: { json: { limit: "2mb" } },
             aliases: {
               "GET /": "conduit.dispatch",
               "GET /health": "conduit.dispatch",
@@ -44,6 +48,16 @@ export default class ApiService extends Service {
               "GET /vision/receipts": "conduit.dispatch",
               "GET /wr/:id/projection-drift": "conduit.dispatch",
               "GET /wr/drift-scan": "conduit.dispatch",
+              // Registered LAST: catch-alls into the verbatim Express app for
+              // everything the literals don't name (unmatched paths, GET-only
+              // routes hit with other methods). `(.*)` = path-to-regexp 3.x
+              // catch-all; bare `/` is a separate alias. Without these,
+              // moleculer-web answers unmatched requests with its JSON
+              // NotFoundError envelope instead of the incumbent's
+              // Express-default HTML 404 — and dispatch that exhausts the
+              // stack used to resolve early, yielding 200-empty.
+              "* /": "conduit.dispatch",
+              "* /(.*)": "conduit.dispatch",
             },
             onBeforeCall(ctx: any, _route: any, req: any, res: any) {
               ctx.meta.$req = req;

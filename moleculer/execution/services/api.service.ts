@@ -26,7 +26,11 @@ export default class ApiService extends Service {
           {
             path: "/",
             whitelist: ["execution.**"],
-            bodyParsers: { json: true },
+            // Incumbent's parser limit (typescript/execution-srv/src/app.ts:
+            // express.json({ limit: '1mb' })) — the gateway parser must
+            // match or oversized writes 413 here before the verbatim stack
+            // ever sees them.
+            bodyParsers: { json: { limit: "1mb" } },
             aliases: {
               "GET /health": "execution.dispatch",
               "GET /api/execution/requests": "execution.dispatch",

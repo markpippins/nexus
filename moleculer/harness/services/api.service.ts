@@ -40,6 +40,16 @@ export default class ApiService extends Service {
               "GET /jobs/:jobId": "harness.dispatch",
               "GET /jobs/:jobId/events": "harness.dispatch",
               "POST /jobs/:jobId/interrupt": "harness.dispatch",
+              // Registered LAST: catch-alls into the verbatim Express app for
+              // everything the literals don't name (unmatched paths, GET-only
+              // routes hit with other methods). `(.*)` = path-to-regexp 3.x
+              // catch-all; bare `/` is a separate alias. Without these,
+              // moleculer-web answers unmatched requests with its JSON
+              // NotFoundError envelope instead of the incumbent's
+              // Express-default HTML 404 — and dispatch that exhausts the
+              // stack used to resolve early, yielding 200-empty.
+              "* /": "harness.dispatch",
+              "* /(.*)": "harness.dispatch",
             },
             onBeforeCall(ctx: any, _route: any, req: any, res: any) {
               ctx.meta.$req = req;
