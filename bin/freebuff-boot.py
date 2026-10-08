@@ -136,7 +136,9 @@ class Boot:
                  want_conn: bool = False, want_attest_scan: bool = True,
                  want_calendar: bool = True, want_consolidate: bool = True,
                  want_blackboard: bool = True, blackboard_advance: bool = False,
-                 blackboard_advance_only: bool = False):
+                 blackboard_advance_only: bool = False,
+                 want_forum_hygiene: bool = True, hygiene_force: bool = False,
+                 hygiene_state_dir: str | None = None):
         self.role = role
         self.model = model
         self.channel = channel
@@ -155,6 +157,9 @@ class Boot:
         self.want_blackboard = want_blackboard
         self.blackboard_advance = blackboard_advance
         self.blackboard_advance_only = blackboard_advance_only
+        self.want_forum_hygiene = want_forum_hygiene
+        self.hygiene_force = hygiene_force
+        self.hygiene_state_dir = hygiene_state_dir
         self.lease_instant: str | None = None  # captured at clock-in (Q2 anchor)
         # --attest payload: (cites_id, evidence list, session_id) or None
         self.attest_cmd: tuple | None = None
@@ -521,6 +526,71 @@ class Boot:
         except Exception as e:
             self.record("forums", "degraded", f"assembly-srv forums unavailable: {type(e).__name__}: {str(e)[:120]}")
 
+    # 5c ─ weekly forum-hygiene sweep (staleness audit, report-only) -------
+    def forum_hygiene_step(self) -> None:
+        """Weekly staleness audit for the issue forums (merge-evidence vs
+        thread ratings).
+
+        Compares open thread ratings against independently verifiable
+        evidence (merged PRs via `gh`, resolution records via nebula) and
+        REPORTS threads whose rating lags the evidence. Report-only by
+        design: closing a thread is a role decision that must carry its
+        own evidence comment (2026-10-01 issues-forum audit, record
+        9f31ea64). Weekly-gated by a state file — the sweep itself decides
+        due/not-due and persists its last-run stamp; --hygiene-force
+        sweeps now; --no-hygiene opts out entirely.
+
+        Degrades, never fails the boot (census lesson):
+        - opted out                 -> step absent
+        - --dry-run                 -> [skipped] (zero-mutation stance)
+        - tool absent               -> [degraded]
+        - all dependencies down     -> [degraded] (tool exit 1)
+        """
+        if not self.want_forum_hygiene:
+            return
+        if self.dry_run:
+            self.record("forum-hygiene", "skipped",
+                        "dry-run: staleness sweep not run (zero-mutation stance)")
+            return
+        tool = os.path.join(SCRIPT_DIR, os.pardir, "bin",
+                            "forum_hygiene_sweep.py")
+        if not os.path.exists(tool):
+            self.record("forum-hygiene", "degraded",
+                        "bin/forum_hygiene_sweep.py not present in this checkout")
+            return
+        cmd = [sys.executable, str(tool)]
+        if self.hygiene_force:
+            cmd.append("--force")
+        if self.hygiene_state_dir:
+            cmd.extend(["--state-file",
+                        os.path.join(self.hygiene_state_dir,
+                                     "forum-hygiene-sweep.json")])
+        try:
+            res = subprocess.run(cmd, capture_output=True, text=True,
+                                 timeout=120,
+                                 cwd=os.environ.get(
+                                     "NEXUS_REPO_ROOT",
+                                     str(Path(SCRIPT_DIR).parent)))
+        except Exception as e:  # noqa: BLE001 — never fail the boot
+            self.record("forum-hygiene", "degraded",
+                        f"sweep failed to run: {type(e).__name__}: {str(e)[:120]}")
+            return
+        out = (res.stdout or "").strip()
+        if res.returncode == 3:
+            self.record("forum-hygiene", "skipped", "not due (weekly gate)")
+            return
+        if res.returncode not in (0, 1):
+            self.record("forum-hygiene", "degraded",
+                        f"tool error (exit {res.returncode}): "
+                        f"{(res.stderr or '')[-140:]}")
+            return
+        if out:
+            print("\n" + "\n".join("    " + ln for ln in out.splitlines()))
+        header = next((ln for ln in out.splitlines() if " stale ==" in ln), "")
+        self.record("forum-hygiene",
+                    "ok" if res.returncode == 0 else "degraded",
+                    header or (out.splitlines()[-1] if out else "no output"))
+
     # 6 ─ procedures -------------------------------------------------------
     def procedures(self) -> None:
         print("== procedure registry ==")
@@ -742,6 +812,7 @@ class Boot:
         if self.blackboard_advance_only:
             self.blackboard_advance_step()
         self.forums()
+        self.forum_hygiene_step()
         self.procedures()
         return self.report()
 
@@ -803,6 +874,16 @@ def main(argv: list[str]) -> int:
                          "inbox/todo checkpoints without the full boot (no digest, "
                          "no lease, no clock-in). Run after the R17 inbox review; "
                          "mutates only coordination_checkpoints")
+    ap.add_argument("--no-hygiene", action="store_false", dest="forum_hygiene",
+                    help="skip the weekly forum-hygiene sweep (default-on, "
+                         "weekly-gated, report-only staleness audit of the "
+                         "issue forums)")
+    ap.add_argument("--hygiene-force", action="store_true",
+                    help="run the forum-hygiene sweep now, ignoring the "
+                         "7-day gate (state stamp still updates)")
+    ap.add_argument("--hygiene-state-dir", default=None,
+                    help="directory for the sweep's weekly-gate state file "
+                         "(default ~/.local/state/nexus)")
     ap.add_argument("--no-attest-scan", action="store_true",
                     help="skip the default read-only attest-scan (open V179 chains)")
     ap.add_argument("--attest", metavar="CITES_ID",
@@ -832,7 +913,10 @@ def main(argv: list[str]) -> int:
         want_consolidate=args.consolidate,
         want_blackboard=args.blackboard,
         blackboard_advance=args.blackboard_advance,
-        blackboard_advance_only=args.blackboard_advance_only)
+        blackboard_advance_only=args.blackboard_advance_only,
+        want_forum_hygiene=args.forum_hygiene,
+        hygiene_force=args.hygiene_force,
+        hygiene_state_dir=args.hygiene_state_dir)
 
     if args.attest:
         if not args.evidence:
