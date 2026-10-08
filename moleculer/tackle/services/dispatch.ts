@@ -1,27 +1,21 @@
 import type { Express, Request, Response } from "express";
 
-/**
- * Dispatch — the funnel behind all 86 gateway aliases.
- *
- * Extracted from tackle.service.ts so the hermetic suite can drive it
- * directly with real req/res objects (no broker), exactly like the sibling
- * ports' handler extraction.
- *
- * Contract: handed the REAL req/res (stashed on ctx.meta by the gateway's
- * onBeforeCall), routes through the incumbent's express app and resolves
- * when the response is finished. Rejects only on dispatch failure before
- * any handler ran.
- */
-
-export function dispatch(
-  app: Express,
+// finalhandler is Express's own terminal handler: a top-level Express app
+// (app.listen) supplies it as the `done` callback of the router, which is
+// where the incumbent's default `Cannot GET <url>` HTML 404 comes from.
+// Embedded (dispatch-through-Express) the caller passes its own next(), so
+// Express defers the 404 to US — this module — and must reproduce the
+// incumbent's terminal default for any request the stack never answered.
+// (Same express dependency tree → same finalhandler → same bytes.)
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const finalhandler = require("finalhandler") as (
   req: Request,
-  res: Response
-): Promise<void> {
+  res: Response,
+) => (err?: any) => void;
+
+/** Route a real gateway request through the Express app and wait for completion. */
+export function dispatch(app: Express, req: Request, res: Response): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    // res 'finish'/'close' fire for normal responses; the SSE route ends
-    // itself after its 30s window (its 'close'/'end' resolves us the same
-    // way).
     const cleanup = () => {
       res.off("finish", onFinish);
       res.off("close", onClose);
@@ -37,19 +31,25 @@ export function dispatch(
     res.once("finish", onFinish);
     res.once("close", onClose);
 
-    // Route through the full incumbent middleware stack
-    // (cors → json → request-log → routers). express(req, res) is exactly
-    // what app.listen runs per-request.
     app(req, res, (err?: any) => {
       cleanup();
       if (err) {
         reject(err);
         return;
       }
-      // No error and no handler took the request: express's default 404
-      // (finalhandler) already wrote the response, but 'finish' may not
-      // have fired yet if the socket is idle — resolve on next tick.
-      else setImmediate(resolve);
+      if (!res.headersSent) {
+        // Stack exhausted without an answer: the incumbent's http-server
+        // embedding would now run finalhandler (default 404). Do the same.
+        // Do NOT resolve here — finalhandler owns the response now (it may
+        // write synchronously, or defer until the request stream finishes);
+        // resolving early lets the gateway's sendResponse res.end() race the
+        // deferred write and crash the process (ERR_HTTP_HEADERS_SENT inside
+        // finalhandler's removeHeader — observed LIVE). onFinish/onClose
+        // below resolve once the response actually ends.
+        finalhandler(req, res)();
+        return;
+      }
+      setImmediate(resolve);
     });
   });
 }
