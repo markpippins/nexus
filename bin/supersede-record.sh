@@ -104,7 +104,26 @@ ROLE, MODEL = os.environ["SR_ROLE"], os.environ["SR_MODEL"]
 DRY_RUN = os.environ["SR_DRY_RUN"] == "1"
 
 I4_RECORD_TYPES = {"prompt", "response"}
+
+# Lifecycle tags are dropped on supersede/retire. This used to be an
+# explicit allowlist of NON-TERMINAL statuses only ({status:open,
+# status:claimed, status:in_progress}), which meant a record carrying a
+# TERMINAL status kept it: retiring an attestation tagged status:done left
+# the record simultaneously status:done AND status:retired, so a tag query
+# still returned it as live. The contract in this file's header ("lifecycle
+# statuses dropped") is only honoured if terminal statuses drop too, so
+# every status:* tag drops and the operation's own status is authoritative.
+# Non-status tags (to:* breadcrumbs, area:*, pr:*, type:*) are untouched.
 LIFECYCLE_TAGS = {"status:open", "status:claimed", "status:in_progress"}
+
+
+def is_lifecycle_tag(tag):
+    """True for any lifecycle status tag, terminal or not."""
+    return tag.startswith("status:")
+
+
+def without_lifecycle(tags):
+    return [t for t in tags if not is_lifecycle_tag(t)]
 
 
 def fail(msg, code):
@@ -248,7 +267,7 @@ if MODE == "supersede":
         print(f"[dry-run] would POST archive record: {archive_title}")
         print(f"[dry-run] would PATCH old record -> title "
               f"'[SUPERSEDED → {short(NEW_ID)}] {old_title}'")
-        print(f"[dry-run] would set tags: {[t for t in tags if t not in LIFECYCLE_TAGS] + ['status:superseded', f'superseded-by:{short(NEW_ID)}']}")
+        print(f"[dry-run] would set tags: {without_lifecycle(tags) + ['status:superseded', f'superseded-by:{short(NEW_ID)}']}")
         print("[dry-run] no writes performed")
         sys.exit(0)
 
@@ -277,7 +296,7 @@ if MODE == "supersede":
     print(f"archive round-trip verified: sha256 {digest[:16]}… matches")
 
     # ── step 5: the ONE pointer mutation ───────────────────────────────
-    new_tags = [t for t in tags if t not in LIFECYCLE_TAGS]
+    new_tags = without_lifecycle(tags)
     new_tags += ["status:superseded", f"superseded-by:{short(NEW_ID)}"]
     patch = {
         "title": f"[SUPERSEDED → {short(NEW_ID)}] {old_title}",
@@ -307,7 +326,7 @@ if MODE == "supersede":
 # ── retire mode (Amendment 1): status transition only ─────────────────
 if DRY_RUN:
     print(f"[dry-run] would PATCH old record -> title '[RETIRED {today}] {old_title}'")
-    print(f"[dry-run] would set tags: {[t for t in tags if t not in LIFECYCLE_TAGS] + ['status:retired']}")
+    print(f"[dry-run] would set tags: {without_lifecycle(tags) + ['status:retired']}")
     print(f"[dry-run] would set metadata.retired = {{at, note}}; body UNCHANGED; no archive")
     print("[dry-run] no writes performed")
     sys.exit(0)
@@ -315,7 +334,7 @@ if DRY_RUN:
 meta = dict(old.get("metadata") or {})
 meta["retired"] = {"at": now_iso, "note": NOTE, "by": ROLE, "model": MODEL,
                    "convention": "Decision 24 (cfcc9d65) Amendment 1"}
-new_tags = [t for t in tags if t not in LIFECYCLE_TAGS] + ["status:retired"]
+new_tags = without_lifecycle(tags) + ["status:retired"]
 patch = {"title": f"[RETIRED {today}] {old_title}", "tags": new_tags,
          "metadata": meta}
 status, out = call(f"{BASE}/api/agent-records/{OLD_ID}", patch, "PATCH")
