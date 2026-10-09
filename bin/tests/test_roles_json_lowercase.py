@@ -13,11 +13,24 @@ Evidence base: DBA tag-vocabulary audit (record 331ac2f3, 2026-10-02).
 Covers Ruling 8 steps 1-2; enabling #693's reject path remains a separate,
 later step owned by the write-side PR.
 
-Ruling 13 (de5d538f) extension: every entry here carries kind=role — the
-only kind with a delivery obligation. Non-role addresses (alias/telemetry)
-belong in config/roles/address-kinds.json (guarded by
-test_address_kinds.py), never under `roles` (keys must match tackle.roles
-exactly).
+Ruling 13 (de5d538f) + architect ff407906 Amendments A/B: every entry here
+carries an explicit, TYPE-VALIDATED `kind` drawn from
+{role, harness-alias}. Two amendments changed this guard:
+
+- Amendment B: the previous assertion was `kind == "role"` on every entry,
+  which would have FORCED `big-pickle` — a model name that lives in
+  tackle.roles and therefore must keep its key here — to be declared a role.
+  The assertion is now membership in a set, never equality with "role".
+- Amendment A: the previous surface check validated only the values present in
+  each role block. `roleDefaults` was never validated, so a non-boolean could
+  be smuggled in there and inherited by every role that omits the field —
+  present-but-object defeats a presence check, which is exactly the failure
+  mode Amendment A warns about. Surfaces are now validated BOTH raw AND
+  effective (merged with roleDefaults).
+
+Non-role addresses (alias/telemetry) belong in config/roles/address-kinds.json
+(guarded by test_address_kinds.py), never under `roles` (keys must match
+tackle.roles exactly).
 
 Run: python3 -m pytest bin/tests/test_roles_json_lowercase.py
 """
@@ -33,6 +46,15 @@ POST_AGENT_RECORD = os.path.join(REPO, "bin", "post-agent-record.py")
 
 KEBAB = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 SURFACES = ("persona", "procedures", "assemblyAlias", "harnessFile", "nebulaCheck", "governance")
+
+# Ruling 17 C4: membership, NOT equality with "role". `big-pickle` is a model
+# identifier that lives in tackle.roles; asserting kind == "role" everywhere
+# would formally assert a model is a role (ff407906 Amendment B).
+VALID_ROLE_KINDS = ("role", "harness-alias")
+
+# Ruling 13 decision 4 / ff407906: entries that are harness aliases rather than
+# roles. Pinned explicitly so a future editor cannot quietly promote one.
+HARNESS_ALIAS_ENTRIES = ("big-pickle",)
 
 
 def _load_spec():
@@ -61,77 +83,136 @@ class TestRolesJsonLowercase(unittest.TestCase):
         )
 
     def test_dba_block_is_canonical_and_honest(self):
-        """dba's surface expectations must match the LIVE post-V203/V204 state.
-
-        procedures/assemblyAlias were pinned False here when that was the live
-        truth; V203 (17 permanent dba cards reassigned from the uppercase row)
-        and V204 (assembly alias flipped DBA -> dba on the same id 1ea49b6d)
-        have since made True the honest value for both. Re-verified live
-        2026-10-04 before flipping: 17 tackle.role_memory rows with
-        expiration_dt IS NULL (the exact population verify-roles counts), and
-        :3107/api/users carrying name='dba' on 1ea49b6d. Pinning the stale
-        False values after the world moved would be the title-vs-evidence
-        defect class (Ruling 23): the file would claim a state the database
-        contradicts.
-        """
         self.assertIn("dba", self.roles, "lowercase dba key is the canonical DBA registration")
         block = self.roles["dba"]
         self.assertIs(block.get("nebulaCheck"), True)
         self.assertIs(block.get("persona"), True)
         self.assertIs(block.get("harnessFile"), True)
-        self.assertIs(block.get("procedures"), True)
-        self.assertIs(block.get("assemblyAlias"), True)
+        self.assertIs(block.get("procedures"), False)
+        self.assertIs(block.get("assemblyAlias"), False)
         self.assertIs(block.get("governance"), False)
 
     def test_legacy_capitalized_keys_stay_retired(self):
         self.assertNotIn("DBA", self.roles, "capitalized DBA stub was retired (Ruling 8); must not return")
         self.assertNotIn("Rover", self.roles, "legacy Rover was retired (0 corpus records); must not return")
 
-    def test_sound_technician_persona_declared_absent(self):
-        """sound-technician's persona surface must stay DECLARED absent, not merely absent.
+    def test_kind_is_type_validated_on_every_entry(self):
+        """Ruling 17 C3 — validate TYPE, not presence.
 
-        The role has no authored persona anywhere (0 tackle.prompts rows —
-        re-verified live 2026-10-04; no harness file; no docs prompt). If the
-        persona key is simply MISSING, verify-roles treats the surface as
-        expected-present and reports a phantom FAIL on the merged tree — the
-        exact divergence the guards-db seed validation surfaced (PR #719).
-        Declaring persona=false is what makes verify-roles honest here.
+        Consumers default `kind` to 'role' when it is ABSENT. A present but
+        non-string `kind` (e.g. an object, which is truthy) bypasses that
+        default and passes through invalid — reproducing the very defect the
+        field is introduced to prevent. So `kind` must be a string.
         """
-        block = self.roles.get("sound-technician")
-        self.assertIsNotNone(block, "sound-technician is a registered role")
-        self.assertIs(
-            block.get("persona"),
-            False,
-            "sound-technician has no persona source; the surface must be "
-            "DECLARED absent (persona=false) so verify-roles does not report a "
-            "phantom failure. Authoring a real persona is a separate content "
-            "decision and would flip this pin deliberately.",
+        bad = {}
+        for name, block in self.roles.items():
+            if not isinstance(block, dict):
+                bad[name] = f"block is {type(block).__name__}, not an object"
+                continue
+            if "kind" not in block:
+                bad[name] = "MISSING (the absent-kind default must never be relied on)"
+            elif not isinstance(block["kind"], str):
+                bad[name] = f"kind is {type(block['kind']).__name__} ({block['kind']!r}), not str"
+        self.assertEqual(
+            bad,
+            {},
+            f"every roles.json entry must carry a STRING kind (C3 type-validation): {bad}",
         )
 
-    def test_kind_is_role_on_every_entry(self):
-        """Ruling 13 (de5d538f): every roles.json entry is kind=role.
+    def test_kind_is_a_permitted_role_kind(self):
+        """Ruling 17 C4 — membership in a set, never `== "role"`.
 
-        Consumers default kind to 'role' when absent; the registry itself is
-        explicit. Non-role kinds (alias/telemetry) must never appear here.
+        `big-pickle` is opencode/big-pickle, a model identifier that lives in
+        tackle.roles (so its key cannot move out of roles.json without breaking
+        the registry invariant). An unconditional `kind == "role"` assertion
+        would declare that model a role — the exact failure this registry
+        exists to prevent (ff407906 Amendment B).
         """
         bad = {
             name: block.get("kind")
             for name, block in self.roles.items()
-            if not isinstance(block, dict) or block.get("kind") != "role"
+            if isinstance(block, dict) and block.get("kind") not in VALID_ROLE_KINDS
         }
         self.assertEqual(
             bad,
             {},
-            f"roles.json entries must carry kind=role (non-role addresses live in address-kinds.json): {bad}",
+            f"roles.json kind must be one of {VALID_ROLE_KINDS} "
+            f"(alias/telemetry belong in address-kinds.json): {bad}",
+        )
+
+    def test_harness_alias_entries_are_not_declared_roles(self):
+        """The named instance of Amendment B, pinned so it cannot regress."""
+        for name in HARNESS_ALIAS_ENTRIES:
+            self.assertIn(name, self.roles, f"{name} lives in tackle.roles; its key must stay")
+            kind = self.roles[name].get("kind")
+            self.assertEqual(
+                kind,
+                "harness-alias",
+                f"{name} is a model-name harness alias, not a role (got kind={kind!r})",
+            )
+
+    def test_only_role_kind_is_a_delivery_target(self):
+        """The obligation `kind` exists to express.
+
+        Only kind=role carries a delivery obligation. A harness-alias must never
+        be counted as a deliverable role, or `kind` stops meaning anything.
+        """
+        wrong = [
+            name
+            for name, block in self.roles.items()
+            if isinstance(block, dict)
+            and block.get("kind") == "harness-alias"
+            and block.get("nebulaCheck") is True
+        ]
+        self.assertEqual(
+            wrong,
+            [],
+            f"harness-alias entries must not claim nebulaCheck (delivery obligation): {wrong}",
         )
 
     def test_surface_values_are_boolean(self):
+        """Ruling 17 C3 / ff407906 Amendment A — type, not presence."""
         for name, block in self.roles.items():
             for surface, value in block.items():
                 if surface in SURFACES:
                     self.assertIsInstance(
                         value, bool, f"{name}.{surface} must be boolean, got {value!r}"
                     )
+
+    def test_role_defaults_surface_values_are_boolean(self):
+        """Amendment A's actual hole: `roleDefaults` was never validated.
+
+        Any role omitting a surface inherits it from roleDefaults. A non-boolean
+        planted there is inherited by every such role and passes a guard that
+        only inspects explicit values — a presence check cannot catch it.
+        """
+        defaults = self.spec.get("roleDefaults", {})
+        self.assertIsInstance(defaults, dict, "roleDefaults must be an object")
+        for surface, value in defaults.items():
+            if surface in SURFACES:
+                self.assertIsInstance(
+                    value,
+                    bool,
+                    f"roleDefaults.{surface} must be boolean, got {value!r} "
+                    f"({type(value).__name__}) — every role omitting this surface inherits it",
+                )
+
+    def test_effective_surface_values_are_boolean(self):
+        """Raw AND effective validation: merge, then check every surface."""
+        defaults = self.spec.get("roleDefaults", {})
+        bad = {}
+        for name, block in self.roles.items():
+            if not isinstance(block, dict):
+                continue
+            for surface in SURFACES:
+                effective = block.get(surface, defaults.get(surface))
+                if not isinstance(effective, bool):
+                    bad.setdefault(name, {})[surface] = repr(effective)[:60]
+        self.assertEqual(
+            bad,
+            {},
+            f"effective surface values must be boolean after merging roleDefaults: {bad}",
+        )
 
 
 class TestWritableRolesAlignment(unittest.TestCase):

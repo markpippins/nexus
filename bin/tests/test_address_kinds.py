@@ -4,12 +4,8 @@
 Ruling 13 (de5d538f, 2026-10-02, thread f60b8eb4) gives addresses a KIND:
 `role` (delivery obligation; reject only if unregistered — #693's scope),
 `alias` (expand at write, never reject), `telemetry` (recorded, never
-delivered). Non-role addresses must not live in roles.json.roles, so they
-register in address-kinds.json. The roles<->delivery relation is a UNION, not
-equality (Ruling 24, 8a466f98): roles.json (union) address-kinds.json is a
-SUBSET OF tackle.roles, and tackle.roles may be a STRICT SUPERSET. A registered
-non-role address may legitimately hold a delivery row -- that row records the
-address, not a delivery obligation.
+delivered). Non-role addresses must not live in roles.json.roles (keys there
+must match tackle.roles exactly), so they register in address-kinds.json.
 
 This guard locks the R13-mandated registrations:
 
@@ -18,14 +14,17 @@ This guard locks the R13-mandated registrations:
   Retagging was explicitly forbidden by the ruling; this entry is the
   registration the ruling ordered — it is not a role and must never be
   mistaken for one.
-- the nine broadcast/legacy alias addresses (decisions 2 and 4). Their
-  expansion-target decisions are now MADE: each carries an `expansion.mode` plus
-  ruling and rationale (Ruling 26 1-5; leader/designer/watchdog targets in 5,
-  ratified Ruling 27). No alias carries a `targets` key -- the target set is
-  derived, so an explicit list would be a second, silently-ignored source.
+- the nine broadcast/legacy alias addresses (decisions 2 and 4).
 
-It also prevents category errors: an address cannot be both a role and a
-non-role kind, and telemetry is never a delivery target.
+Ruling 17 C5 — rejectable IFF in NEITHER registry. Everything registered here
+is therefore NOT rejectable, and the two registries must stay disjoint so the
+"neither" test is well-defined.
+
+Architect ff407906 decided the Phase C expansion targets, so `mechanism` is
+recorded per alias (`tag-fanout` vs `service-route`) rather than left implicit:
+without it an implementer could reasonably build forum-ingest as a tag copy.
+Addresses the architect did NOT decide keep mechanism=null — recorded as
+undecided rather than guessed.
 
 Evidence base: DBA scoping record ab18534c (2026-10-02); corpus census via
 live probe (wr-conf-observer ×299; alias occurrences ×41 across 9 addresses).
@@ -43,10 +42,24 @@ ROLES = os.path.join(REPO, "config", "roles", "roles.json")
 
 KEBAB = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 VALID_KINDS = ("alias", "telemetry")
+
+# Ruling 13 decisions 2 + 4.
 R13_ALIASES = (
     "all", "all-roles", "assembly", "self", "user",
     "admin", "leader", "designer", "watchdog",
 )
+
+# Architect ff407906 §5.4 decided exactly these five; the rest stay undecided.
+# `to:assembly` is a SERVICE ROUTE to assembly-srv, not a tag fan-out — building
+# forum-ingest as a tag copy is the specific mistake this field prevents.
+DECIDED_MECHANISMS = {
+    "all": "tag-fanout",          # expand-and-replace, bounded by the predicate
+    "all-roles": "tag-fanout",    # kind=role AND nebulaCheck=true
+    "assembly": "service-route",  # assembly-srv, NOT tag fan-out
+    "user": "service-route",      # operator identity
+    "self": "deterministic",      # writer's own role
+}
+VALID_MECHANISMS = ("tag-fanout", "service-route", "deterministic")
 
 
 def _load(path):
@@ -109,7 +122,79 @@ class TestAddressKinds(unittest.TestCase):
             entry = self.addresses[name]
             self.assertEqual(entry.get("kind"), "alias")
             self.assertIn("ruling", entry, f"{name}.ruling is required")
-            self.assertIn("expansion", entry, f"{name}.expansion status is required (Phase C pending architect)")
+            self.assertIn("expansion", entry, f"{name}.expansion status is required")
+
+    def test_decided_aliases_record_their_mechanism(self):
+        """ff407906 §5.4: an alias's expansion mechanism must be recorded.
+
+        Two mechanisms exist and they are not interchangeable: `tag-fanout`
+        rewrites the tag, `service-route` hands off to another service.
+        """
+        for name, expected in DECIDED_MECHANISMS.items():
+            entry = self.addresses[name]
+            self.assertEqual(
+                entry.get("mechanism"),
+                expected,
+                f"{name}: architect ff407906 decided mechanism={expected!r}, "
+                f"got {entry.get('mechanism')!r}",
+            )
+
+    def test_undecided_aliases_do_not_guess_a_mechanism(self):
+        """An address the architect did not rule on must record no mechanism.
+
+        Guessing here is how forum-ingest gets built as a tag copy.
+        """
+        guessed = {
+            name: self.addresses[name].get("mechanism")
+            for name in R13_ALIASES
+            if name not in DECIDED_MECHANISMS and self.addresses[name].get("mechanism")
+        }
+        self.assertEqual(
+            guessed,
+            {},
+            f"mechanism is undecided for these; recording one is a guess: {guessed}",
+        )
+
+    def test_mechanism_values_are_valid(self):
+        for name, entry in self.addresses.items():
+            mech = entry.get("mechanism")
+            if mech is None:
+                continue
+            self.assertIn(
+                mech, VALID_MECHANISMS, f"{name}.mechanism={mech!r} is not a known mechanism"
+            )
+
+    def test_no_registered_non_role_address_is_rejectable(self):
+        """Ruling 17 C5 — rejectable IFF in NEITHER registry.
+
+        Everything registered here is in one registry, so nothing here may be
+        rejectable. Aliases expand at write and telemetry is archival; rejecting
+        either would drop a message the ruling says to keep.
+        """
+        offenders = {
+            name: entry
+            for name, entry in self.addresses.items()
+            if entry.get("rejectable") is True
+        }
+        self.assertEqual(
+            offenders,
+            {},
+            "a registered address is not rejectable (C5): aliases/telemetry must never reject",
+        )
+
+    def test_rejectability_test_is_well_defined(self):
+        """C5 is a test over the UNION of both registries.
+
+        If the registries overlap, "in neither" silently loses a member, so the
+        two must be disjoint for the rule to mean what it says.
+        """
+        roles = set(_load(ROLES)["roles"])
+        overlap = sorted(set(self.addresses) & roles)
+        self.assertEqual(
+            overlap,
+            [],
+            f"registry overlap makes C5 ill-defined (an address in both): {overlap}",
+        )
 
 
 if __name__ == "__main__":
