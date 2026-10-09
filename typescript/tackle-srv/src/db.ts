@@ -1060,6 +1060,7 @@ const DEFAULT_ROLES: { name: string; description: string }[] = [
   { name: "analyst", description: "Gap and triage analyst — identifies missing coverage, classifies incidents" },
   { name: "inspector", description: "Compliance auditor — verifies invariants, issues violation reports" },
   { name: "supervisor", description: "Role-system administrator — registers and configures roles, regenerates doctrine and OpenCode projections, and verifies role-surface coverage; no WorkRequest execution authority" },
+  { name: "dba", description: "Database Administrator — schema, migration and role-vocabulary authority over nebula/tackle; owns migration attestation, canonical role-key normalization in the database, and off-machine replication sign-off" },
   { name: "test", description: "Internal test harness role — used for test invoke sessions and ad-hoc agent runs" },
   { name: "leased-builder", description: "Interactive-channel implementation executor — bounded role lease (RoleLeases, plan 1286): consumes from the READY pool under a window+budget lease, mirroring builder with a mandatory time limit" },
 ];

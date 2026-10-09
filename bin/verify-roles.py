@@ -15,6 +15,13 @@ verifies every expected surface against the LIVE system:
 Exit 0 = all expected surfaces present; exit 1 = one or more FAIL.
 WARN = informational (unexpected presence, case-variant notes) — not fatal.
 
+`unknownRoles` = names in tackle.roles that are registered NOWHERE: neither a
+key in roles.json.roles nor a registered non-role address in
+config/roles/address-kinds.json (Ruling 13 de5d538f, Ruling 19 f054ba36). A
+model-name harness alias such as `big-pickle` may legitimately carry a
+tackle.roles row while being deliberately excluded from roles.json; it is a
+registered address, not an unknown role.
+
 Usage: bin/verify-roles.py [--json]
 """
 import argparse
@@ -30,6 +37,13 @@ PG_DSN = os.environ.get(
 ASSEMBLY_URL = os.environ.get("ASSEMBLY_URL", "http://localhost:3107")
 ROLES_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "config", "roles", "roles.json"
+)
+ADDRESS_KINDS_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "..",
+    "config",
+    "roles",
+    "address-kinds.json",
 )
 GOVERNANCE_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -47,6 +61,35 @@ HARNESS_DIR = os.path.join(
     "opencode",
     "agents",
 )
+
+# CI-ephemeral roles are minted by wr-conf E2E grant suites on throwaway
+# databases and dropped with them; they must never enter the expectations file,
+# and their presence in a long-lived DB is reportable but not a coverage
+# failure.
+CI_EPHEMERAL_PREFIXES = ("wr-conf-",)
+
+
+def compute_unknown_roles(
+    db_roles,
+    expectations,
+    registered_addresses=(),
+    ephemeral_prefixes=CI_EPHEMERAL_PREFIXES,
+):
+    """Names in the live delivery table (`tackle.roles`) registered NOWHERE.
+
+    A name is "unknown" only if it is absent from BOTH the expected-role set
+    (config/roles/roles.json) and the registered non-role address set
+    (config/roles/address-kinds.json), and is not CI-ephemeral. Ruling 13
+    (de5d538f) / Ruling 19 (f054ba36): a registered alias such as `big-pickle`
+    (a model identity) is deliberately kept out of roles.json and must NOT be
+    reported as unknown role vocabulary. Extracted as a pure function so the
+    predicate is unit-testable without a database.
+    """
+    return sorted(
+        r
+        for r in set(db_roles) - set(expectations) - set(registered_addresses)
+        if not r.startswith(tuple(ephemeral_prefixes))
+    )
 
 
 def pg_query(sql):
@@ -74,6 +117,17 @@ def main():
         role: {**defaults, **(cfg or {})}
         for role, cfg in spec["roles"].items()
     }
+
+    # Registered NON-role addresses (Ruling 13/Ruling 19). These are known
+    # addresses deliberately kept OUT of roles.json.roles; a tackle.roles row
+    # for one of them is not "unknown role vocabulary". Mirrors the parity
+    # guard's unregistered_live_roles() (bin/tests/test_roles_registry_parity.py).
+    try:
+        registered_addresses = set(
+            json.load(open(ADDRESS_KINDS_FILE)).get("addresses", {})
+        )
+    except (OSError, json.JSONDecodeError):
+        registered_addresses = set()
 
     # ── Load live surfaces ───────────────────────────────────────────
     db_roles = set(pg_query("SELECT name FROM tackle.roles").splitlines())
@@ -111,19 +165,9 @@ def main():
     m = re.search(r"KNOWN_EXECUTORS\s*=\s*new Set\(\[(.*?)\]\)", gov_text, re.S)
     gov_roles = set(re.findall(r'"([^"]+)"', m.group(1))) if m else set()
 
-    # CI-ephemeral roles are minted by wr-conf E2E grant suites on throwaway
-    # databases and dropped with them; they must never enter the expectations
-    # file, and their presence in a long-lived DB is reportable but not a
-    # coverage failure.
-    CI_EPHEMERAL_PREFIXES = ("wr-conf-",)
-
     # ── Verify ───────────────────────────────────────────────────────
     results = []
-    unknown = sorted(
-        r
-        for r in db_roles - set(expectations)
-        if not r.startswith(CI_EPHEMERAL_PREFIXES)
-    )
+    unknown = compute_unknown_roles(db_roles, expectations, registered_addresses)
     unseeded = sorted(set(expectations) - db_roles)
 
     for role, exp in sorted(expectations.items()):

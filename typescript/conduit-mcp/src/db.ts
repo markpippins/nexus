@@ -2078,6 +2078,7 @@ const migrations: Migration[] = [
         { name: "operator", desc: "Pipeline and platform operator — monitors pipeline state, investigates stuck plans and drift, keeps operational surfaces healthy" },
         { name: "sysadmin", desc: "Infrastructure health governance — systemd-timer cycles, service health, incident reporting; runs standalone" },
         { name: "supervisor", desc: "Role-system administrator — registers and configures roles, regenerates doctrine and OpenCode projections, and verifies role-surface coverage; no WorkRequest execution authority" },
+        { name: "dba", desc: "Database Administrator — schema, migration and role-vocabulary authority over nebula/tackle; owns migration attestation, canonical role-key normalization in the database, and off-machine replication sign-off" },
         { name: "test", desc: "Internal test harness role — used for test invoke sessions and ad-hoc agent runs" },
         { name: "tester", desc: "Walkthrough role (b80f0fdb) — full-surface demonstration of the role-creation runbook" },
       ];

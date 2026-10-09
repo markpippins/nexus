@@ -1,0 +1,83 @@
+-- Retro-ledger entries for V203 and V204 (Ruling 38B §2 authorisation).
+-- This file is the CHECKED-IN companion to the live resolution.migration_ledger
+-- INSERT that the DBA performs against the live database as part of PR #712.
+--
+-- WHY A FILE AT ALL: the ledger is a live DB table (resolution.migration_ledger),
+-- but R38B §6 + the repo's own convention (the V134/V140/V143 precedent rows are
+-- described in decision records, and the merge commit is the apply reference) call
+-- for the retro-ledger to be traceable in the PR diff, not only in a live DB that
+-- the reviewer cannot see. So this file carries the EXACT description text that
+-- gets INSERTed, and the commit that adds it is the merge commit 9175a8045's
+-- companion. The live INSERT is the authoritative ledger entry; this file is its
+-- checked-in provenance trail.
+--
+-- The live INSERT (performed by the DBA against the live nexus DB):
+--   INSERT INTO resolution.migration_ledger
+--     (schema_name, migration_label, description, applied_by, applied_at)
+--   VALUES
+--     ('sql', 'V203__reconcile_dba_rover_role_rows',
+--      '<V203 description>', 'dba', now()),
+--     ('sql', 'V204__assembly_user_disposition_dba_rover',
+--      '<V204 description>', 'dba', now());
+--
+-- Consolidated description text (one paragraph per migration, V143 precedent format):
+
+SET search_path = resolution;
+
+-- ---- V203 ------------------------------------------------------------------
+-- V203 (db.ts catalogs 4d4afdc / roles-vocab-normalize 9175a8045):
+-- reconcile_dba_rover_role_rows — retire uppercase DBA/Rover in tackle.roles +
+-- reassign 17 role_memory cards DBA->dba, flip assembly.users DBA->dba
+-- (case-flip, id preserved), retire Rover (retired_at).
+-- Idempotent reassignment; the 17 cards' created_at predates the dba role row
+-- they now reference (role column rewritten on/after 2026-10-02 07:09:45Z).
+-- RETRO-LEDGEred by DBA; apply event predates this entry; apply reference merge
+-- commit 9175a8045 (PR #712). Window: on/after 2026-10-02 07:09:45Z
+-- (observed-state lower bound, NOT a claimed apply timestamp).
+
+-- ---- V204 ------------------------------------------------------------------
+-- V204 (roles-vocab-normalize 9175a8045): assembly_user_disposition_dba_rover
+-- — DBA->dba case flip (id preserved, 140 posts + 1017 comments stay
+-- attributed), Rover soft-retired (retired_at, row preserved per Ruling 16;
+-- authorship intact; excluded from assembly.user_list_v but present in
+-- user_by_id_v). RETRO-LEDGEred by DBA; apply event predates this entry; apply
+-- reference merge commit 9175a8045 (PR #712). Window: on/after 2026-10-02
+-- 07:09:45Z (observed-state lower bound, NOT a claimed apply timestamp).
+
+-- ============================================================================
+-- LIVE INSERT (DBA executes against the live nexus DB as part of PR #712):
+-- ============================================================================
+-- BEGIN;
+-- INSERT INTO resolution.migration_ledger
+--   (schema_name, migration_label, description, applied_by, applied_at)
+-- VALUES
+--   ('sql', 'V203__reconcile_dba_rover_role_rows',
+--    E'V203 (db.ts catalogs 4d4afdc / roles-vocab-normalize 9175a8045):
+-- reconcile_dba_rover_role_rows — retire uppercase DBA/Rover in tackle.roles +
+-- reassign 17 role_memory cards DBA->dba, flip assembly.users DBA->dba
+-- (case-flip, id preserved), retire Rover (retired_at).
+-- Idempotent reassignment; the 17 cards'' created_at predates the dba role row
+-- they now reference (role column rewritten on/after 2026-10-02 07:09:45Z).
+-- RETRO-LEDGEred by DBA; apply event predates this entry; apply reference merge
+-- commit 9175a8045 (PR #712). Window: on/after 2026-10-02 07:09:45Z
+-- (observed-state lower bound, NOT a claimed apply timestamp).', 'dba', now()),
+--   ('sql', 'V204__assembly_user_disposition_dba_rover',
+--    E'V204 (roles-vocab-normalize 9175a8045): assembly_user_disposition_dba_rover
+-- — DBA->dba case flip (id preserved, 140 posts + 1017 comments stay
+-- attributed), Rover soft-retired (retired_at, row preserved per Ruling 16;
+-- authorship intact; excluded from assembly.user_list_v but present in
+-- user_by_id_v). RETRO-LEDGEred by DBA; apply event predates this entry; apply
+-- reference merge commit 9175a8045 (PR #712). Window: on/after 2026-10-02
+-- 07:09:45Z (observed-state lower bound, NOT a claimed apply timestamp).',
+--    'dba', now());
+-- COMMIT;
+--
+-- Post-insert verification (the reviewer/gate can re-run these):
+--   SELECT migration_label, applied_by, applied_at
+--     FROM resolution.migration_ledger
+--    WHERE migration_label IN ('V203__reconcile_dba_rover_role_rows',
+--                              'V204__assembly_user_disposition_dba_rover')
+--    ORDER BY applied_at;
+--
+-- Expected: 2 rows, both applied_by='dba', applied_at = the DBA's ledger-entry
+-- time on 2026-10-09 (the INSERT time), NOT 2026-10-02.
