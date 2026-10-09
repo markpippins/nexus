@@ -95,7 +95,6 @@ jobs:
       # 21 tier tests in 0.7s on exactly that. Point the DSN at the database the
       # step above actually creates and seeds.
       NEXUS_PG_DSN: postgresql://pguser:pgpass@localhost:5432/nebula
-=======
       # psql client auth for the seed steps. POSTGRES_PASSWORD above configures the
       # SERVER; without PGPASSWORD every psql call in the seed step prompts on a tty
       # that does not exist and dies with fe_sendauth. Found on this job's first real
