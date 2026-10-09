@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "comment": "Landed-tool parity pin registry. The landed_digest_guard.py hourly tripwire compares the blob digest of each pinned path on origin/main against 'digest'. digest: sha256 hex of the file content, or null when the tool has not landed yet (then queued_prs carries the expected digest(s)). queued_prs: open PRs that introduce or modify the path; head digest verified live on every tick so a force-push after capture flips QUEUED to DRIFT. Tier 1 = audit-chain tools (supersede-record.sh, attestation_janitor.py, merge_pr.py, gate_codes.py); tier 2 = record-hygiene + record/attestation-chain helper scripts (every digest computed from an origin/main blob, existence positively verified first). Pin-advance procedure: bin/PIN_ADVANCE_TEMPLATE.md. Re-pinning after an intended change requires a PR with its own tester attestation; the guard itself never mutates anything.",
+  "pins": [
+    {
+      "path": "bin/supersede-record.sh",
+      "digest": "bd39b5e646c37f819c6ba00ae2aac893ad23124682413a65631435ada97156fb",
+      "provenance": "PIN ADVANCE 2026-09-30: PR #673 landed (squash e7f482c88) at byte-exact parity — digest bd39b5e6…56fb verified via pre-staged protocol (20/20 suite from main; probe battery A/B diff empty); pre-merge capture provenance fd2796e4",
+      "queued_prs": []
+    },
+    {
+      "path": "bin/attestation_janitor.py",
+      "digest": "a3c9d3d3b6c2f09a3160f48f6cc0f54aba3e3ce7a2b6b68d9f78ec49ba13c7d3",
+      "provenance": "PIN ADVANCE 2026-09-30: PR #675 landed (squash 587c770e9) at its queued digest — parity confirmed by squash-of-head; epoch-0 pre-#675 digest dfa0850a…",
+      "queued_prs": [
+        {
+          "pr": 695,
+          "head": "856ccd474a7e50928813fc1c521be8201c910e81",
+          "digest": "15295414a18a03e21c2f266a6da9697a1a5d32516db36bf156c9cfb3e8c6489f",
+          "provenance": "CIR-5 stale-checkrun repair rung (R1 4306214a); head digest captured 2026-10-01 from PR #695 head 856ccd474 — expected to land; pin advance via bin/PIN_ADVANCE_TEMPLATE.md"
+        }
+      ]
+    },
+    {
+      "path": "bin/merge_pr.py",
+      "digest": "bcb4d638b3b1dff6796caf7bd55a438cb0aad5020bef83df08b052285f76d3ca",
+      "provenance": "epoch-0 landed capture @ origin/main 78fd07e4d (2026-09-30)",
+      "queued_prs": []
+    },
+    {
+      "path": "bin/gate_codes.py",
+      "digest": "d4f60f411c45ec1f776d90ed25b2782f285347d003c64daad14c82825b6cbc6f",
+      "provenance": "PIN ADVANCE 2026-09-30: PR #675 landed (squash 587c770e9) at its queued digest; pre-#675 landed digest af99dad7… (landed since #657; initial capture mislabel caught by this guard's own first live run)",
+      "queued_prs": []
+    },
+    {
+      "path": "bin/record_hygiene_sweep.py",
+      "digest": "e32e04b79bc833bb65499a0ff290269a46da65dc0d84adb4753ecc8f3b3438cc",
+      "provenance": "TIER-2 CAPTURE 2026-10-01 @ origin/main ead7ff59a: Decision-24 hygiene engine, landed #678 (squash 7191ea9d9), byte-stable since; existence positively verified via git cat-file -e before digest",
+      "queued_prs": []
+    },
+    {
+      "path": "bin/post-agent-record.py",
+      "digest": "13ba888f195f4a607c389cca0a6df617f965afc6fc408a6ea782f644a4891fb3",
+      "provenance": "TIER-2 CAPTURE 2026-10-01 @ origin/main ead7ff59a: canonical record poster (--file mode from #539), byte-stable since; the write path this registry's own audit trail depends on",
+      "queued_prs": []
+    },
+    {
+      "path": "bin/post-change-log.sh",
+      "digest": "336f8e1898f4dc21adfa96aef096466788d295a3ea5915fced507541920335f6",
+      "provenance": "TIER-2 CAPTURE 2026-10-01 @ origin/main ead7ff59a: canonical change-log poster with write-verification (#655), byte-stable since; the janitor's own audit channel",
+      "queued_prs": []
+    },
+    {
+      "path": "bin/pgie-evidence.py",
+      "digest": "8713a16a86de08161de6c8fa86b6809caccc64f177d3bd33952f504e18d2a4dc",
+      "provenance": "TIER-2 CAPTURE 2026-10-01 @ origin/main ead7ff59a: attestation head-minting + CI-evidence guard helper (#648), byte-stable since; minting tool referenced by Decision 15 item C",
+      "queued_prs": []
+    }
+  ]
+}
