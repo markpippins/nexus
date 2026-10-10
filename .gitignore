@@ -172,5 +172,6 @@ etc/
 !typescript/role-memory-srv/package-lock.json
 !typescript/harness-srv/package-lock.json
 !typescript/tackle-srv/package-lock.json
+!typescript/resolution-srv/package-lock.json
 !moleculer/nexus-broker/package-lock.json
 !moleculer/search/package-lock.json
