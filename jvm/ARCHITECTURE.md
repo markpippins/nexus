@@ -105,11 +105,9 @@ Free in the Spring/Quarkus band on titanium: 8083, 8086-8089, 8093-8097, 8099 (8
    (`:4222`) in their namespace and expose REST via moleculer-web on their
    port; they do NOT claim JVM-band ports (8080-8099) or the shared 8085.
    Moleculer ports (4050/4060/4080; canary twins
-<<<<<<< HEAD
-     4050/4060/4080/4100/4101/4104/4106/4109/4110/4111/4114/4115/4116/4150/4160/4170/4118/4171/4410/4420/4501) are
+     4100/4101/4104/4106/4109/4110/4111/4114/4115/4116/4150/4160/4170/4118/4171/4410/4420/4501) are
      recorded in `moleculer/PORT-MAP.md`. On titanium these ports are asserted
    recorded in `moleculer/PORT-MAP.md`. On titanium these ports are asserted
->>>>>>> a9552f77b (feat(moleculer): complete nebula twin — registry wiring, substance canary-tooling fix, fleet guard)
    UNBOUND by `bin/assert_moleculer_ports.sh` (moleculer does not run locally;
    the candidate-tier lane is containerized on host :14080) — the script is
    the enforcement of that posture, with a documented time-boxed exception
