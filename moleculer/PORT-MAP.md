@@ -85,12 +85,7 @@ Moleculer does **not run locally** on titanium — enforced, not assumed:
 - Any port change ratified in `jvm/ARCHITECTURE.md` must be mirrored here and
   in the owning service's config + launch units in the same change; the
   terrain registry entry follows at the next registration heartbeat.
-<<<<<<< HEAD
-  - Canary/deployment ports (4100/4101/4104/4106/4109/4110/4111/4114/4115/4116/4150/4160/4170/4118/4171/4410/4420/4501) are the exception to  one-live-authority: a canary twin may co-listen on its 41xx twin while its
-=======
-- Canary/deployment ports (4100/4104/4106/4107/4109/4110/4111/4114/4115/4116/4150/4160/4170/4410/4420/4501) are the exception to
-  one-live-authority: a canary twin may co-listen on its 41xx twin while its
->>>>>>> ba01d71de (feat(moleculer): port assembly-srv as eighteenth canary twin (:3107 → :4107))
+  - Canary/deployment ports (4100/4101/4104/4106/4107/4109/4110/4111/4114/4115/4116/4150/4160/4170/4118/4171/4410/4420/4501) are the exception to  one-live-authority: a canary twin may co-listen on its 41xx twin while its
   incumbent stays live, and must be removed from the map when cutover completes
   (dead routes die). <!-- GENERATED: moleculer-port-registry BEGIN ratification-ledger -->
 - Canary rows in this table require architect ratification under Ruling 4

@@ -53,11 +53,7 @@ if [ -r "$PORTS_YAML" ]; then
     fi
 else
     echo "NOTICE: registry $PORTS_YAML not readable; using inline fallback port list" >&2
-<<<<<<< HEAD
-MAPPED_PORTS="4050 4060 4080 4100 4101 4104 4106 4109 4110 4111 4114 4115 4116 4150 4160 4170 4118 4171 4410 4420 4501"
-=======
-    MAPPED_PORTS="4050 4060 4080 4100 4104 4106 4107 4109 4110 4111 4114 4115 4116 4150 4160 4170 4410 4420 4501"
->>>>>>> ba01d71de (feat(moleculer): port assembly-srv as eighteenth canary twin (:3107 → :4107))
+MAPPED_PORTS="4050 4060 4080 4100 4101 4104 4106 4107 4109 4110 4111 4114 4115 4116 4150 4160 4170 4118 4171 4410 4420 4501"
 fi
 SS_BIN="${SS_BIN-$(command -v ss || true)}"   # dash-form: empty override = simulate absence (tests)
 failures=()
