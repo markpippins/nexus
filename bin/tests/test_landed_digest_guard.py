@@ -332,8 +332,9 @@ def test_repo_registry_wellformed_and_pinned_digests_stable():
     data = json.loads(reg.read_text())
     assert data["version"] == 1 and len(data["pins"]) >= 8
     by_path = {p["path"]: p for p in data["pins"]}
+    # ADVANCED 2026-10-10 (Ruling 38D D3.1): PR #691 landed 1da39fddb.
     assert by_path["bin/supersede-record.sh"]["digest"] == (
-        "bd39b5e646c37f819c6ba00ae2aac893ad23124682413a65631435ada97156fb")
+        "0a4b32371587f514d5904829fcf9f2db8da0356bceb120c1d4f0bec3f864a901")
     assert by_path["bin/attestation_janitor.py"]["digest"] == (
         "a3c9d3d3b6c2f09a3160f48f6cc0f54aba3e3ce7a2b6b68d9f78ec49ba13c7d3")
     assert by_path["bin/merge_pr.py"]["digest"] == (
@@ -343,8 +344,9 @@ def test_repo_registry_wellformed_and_pinned_digests_stable():
     # Tier-2 (2026-10-01 capture @ ead7ff59a)
     assert by_path["bin/record_hygiene_sweep.py"]["digest"] == (
         "e32e04b79bc833bb65499a0ff290269a46da65dc0d84adb4753ecc8f3b3438cc")
+    # ADVANCED 2026-10-10 (Ruling 38D D3.1): PR #689 landed 849bf145d.
     assert by_path["bin/post-agent-record.py"]["digest"] == (
-        "13ba888f195f4a607c389cca0a6df617f965afc6fc408a6ea782f644a4891fb3")
+        "e548f40532d43c9e59e8d8106fb2b834217368371d69a11a7f1565066732abc9")
     assert by_path["bin/post-change-log.sh"]["digest"] == (
         "336f8e1898f4dc21adfa96aef096466788d295a3ea5915fced507541920335f6")
     assert by_path["bin/pgie-evidence.py"]["digest"] == (

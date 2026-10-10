@@ -4,8 +4,8 @@
   "pins": [
     {
       "path": "bin/supersede-record.sh",
-      "digest": "bd39b5e646c37f819c6ba00ae2aac893ad23124682413a65631435ada97156fb",
-      "provenance": "PIN ADVANCE 2026-09-30: PR #673 landed (squash e7f482c88) at byte-exact parity — digest bd39b5e6…56fb verified via pre-staged protocol (20/20 suite from main; probe battery A/B diff empty); pre-merge capture provenance fd2796e4",
+      "digest": "0a4b32371587f514d5904829fcf9f2db8da0356bceb120c1d4f0bec3f864a901",
+      "provenance": "PIN ADVANCE 2026-10-10 (Ruling 38D D3.1): PR #691 landed (1da39fddb) — 'drop ALL lifecycle statuses, not just non-terminal ones'. INTENDED post-pin change; prior pin bd39b5e6… was advanced 2026-09-30 via #673 and is now stale. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2. Landing identified at step 1. Tier 1 audit-chain tool. Guard classification: intended drift, runbook branch 1.",
       "queued_prs": []
     },
     {
@@ -41,8 +41,8 @@
     },
     {
       "path": "bin/post-agent-record.py",
-      "digest": "13ba888f195f4a607c389cca0a6df617f965afc6fc408a6ea782f644a4891fb3",
-      "provenance": "TIER-2 CAPTURE 2026-10-01 @ origin/main ead7ff59a: canonical record poster (--file mode from #539), byte-stable since; the write path this registry's own audit trail depends on",
+      "digest": "e548f40532d43c9e59e8d8106fb2b834217368371d69a11a7f1565066732abc9",
+      "provenance": "PIN ADVANCE 2026-10-10 (Ruling 38D D3.1): PR #689 landed (849bf145d) — 'make --tags repeatable so routing tags stop vanishing'. INTENDED post-pin change; prior pin 13ba888f… was captured 2026-10-01 @ ead7ff59a and is now stale. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 (cat-file -e + show | sha256sum), not the working tree. Landing identified at step 1 (git log origin/main -- path). Guard classification: intended drift, runbook branch 1 — no tampering, no unexplained bytes, squash-merge attested.",
       "queued_prs": []
     },
     {
