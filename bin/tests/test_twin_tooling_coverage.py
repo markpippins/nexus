@@ -67,6 +67,7 @@ TOOLING = {
     "substance": {"canary-diff.py", "canary-run.sh"},
     "tackle": {"canary-diff.py"},
     "voyager": {"canary-diff.py", "canary-run.sh"},
+    "wind": {"canary-diff.py", "canary-run.sh"},
 }
 
 
