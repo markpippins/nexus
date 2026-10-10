@@ -1,5 +1,5 @@
 [Unit]
-Description=Cascade write-queue reconciler — drains nexus.write-queue.v1.> (thallium NATS) into canonical resolution schema
+Description=Cascade write-queue reconciler — drains nexus.write-queue.v1.> (local NATS) into canonical resolution schema
 Documentation=https://github.com/nexus/python/cascade/write_queue_reconciler.py
 After=network-online.target
 Wants=network-online.target
@@ -11,16 +11,30 @@ Group=codex
 WorkingDirectory=/home/codex/dev/nexus/python/cascade
 
 # ── Environment ────────────────────────────────────────────────────────
-# NATS bus lives on thallium (the nexus-core host); canonical PG is local.
-# NATS_URL MUST be explicit — the script default (localhost:4222) is wrong
-# on titanium since the bus moved to thallium (2026-09-22).
-Environment=NATS_URL=nats://192.168.1.82:4222
+# NATS bus is LOCAL on titanium; canonical PG is local too.
+#
+# NATS_URL MUST be explicit (do not rely on the script default) — but it must
+# point at the broker that is actually authoritative:
+#   2026-09-22 .. 2026-10-10 : nats://192.168.1.82:4222 (thallium, the
+#                               nexus-core host) — this address is now
+#                               UNREACHABLE from titanium.
+#   2026-10-10 ->            : nats://localhost:4222 — operator confirmed
+#                               local is authoritative.
+# If the bus moves again, update THIS line and the date above together.
+Environment=NATS_URL=nats://localhost:4222
 Environment=DATABASE_URL=postgres://pguser:pgpass@localhost:5432/nexus
 Environment=WRITE_QUEUE_CAPABILITY=nexus.storage.canonical
 Environment=WRITE_QUEUE_DURABLE=write_queue_reconciler
 Environment=WRITE_QUEUE_STREAM=WRITE_QUEUE
 
 # ── Executable ─────────────────────────────────────────────────────────
+# Paths below MUST point at the CANONICAL checkout (/home/codex/dev/nexus).
+# NEVER pin this unit at a git worktree (AGENTS.md R8.0): worktrees are
+# transient scratch, so a boot-time daemon pinned to one dies at
+# status=200/CHDIR the moment it is pruned — it never reaches ExecStart, so
+# it never subscribes, so the durable consumer is never created. That is
+# exactly how WRITE_QUEUE ran 24 days with a stream and no consumer
+# (incident 2026-10-10, escalation 4644f5f6, trace 13a81664).
 # Start through the Option A deployment wrapper (f63bfbc7): it enforces
 # provision → readiness → staging pre-existence gates, starts the
 # fail-fast reconciler, and waits for durable-consumer attach before
