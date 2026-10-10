@@ -19,6 +19,7 @@ const prod = require("./moleculer.config");
 
 module.exports = Object.assign({}, prod, {
   transporter: null,
+  namespace: "voyager",
   nodeID: "voyager-standalone-1",
   metrics: { enabled: false },
   hotReload: false,
