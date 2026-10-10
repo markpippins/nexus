@@ -6,8 +6,9 @@ Checks the invariants that keep the schedule safe and honest:
             catch-up), the scheduled Unit is the drainer service, a small
             random skew, and [Install] under timers.target
   - service: Type=oneshot, User codex, ExecStart points at the in-tree
-            drainer, NATS_URL set (thallium), and NO DATABASE_URL (the
-            drainer never touches PG — dead config would lie)
+            drainer, NATS_URL set to the LOCAL broker and NOT pinned at a
+            stale host, and NO DATABASE_URL (the drainer never touches PG —
+            dead config would lie)
   - both:   parse clean via `systemd-analyze verify` when systemd is
             present (skipped otherwise); ExecStart target exists in-tree
 
@@ -92,9 +93,36 @@ class ServiceUnitTest(unittest.TestCase):
         self.assertEqual(len(execs), 1)
         self.assertTrue(execs[0].endswith("/bin/drain_write_queue_buffer.py"), execs)
 
-    def test_nats_url_is_thallium(self):
+    def test_nats_url_is_explicit_and_current(self):
+        # INVARIANT, not a pinned fact: NATS_URL must be explicitly set (so
+        # the unit is self-describing) and must agree with the drainer's own
+        # default. Asserting a specific *host* here is what originally froze
+        # this unit on thallium 192.168.1.82:4222 — a guard that worked as
+        # designed and produced the wrong outcome, because it encoded a fact
+        # (which broker) where it should have encoded an invariant (the unit
+        # states its broker, and the value is not stale).
         self.assertEqual(_get(self.s, "Service", "Environment"),
-                         ["NATS_URL=nats://192.168.1.82:4222"])
+                         ["NATS_URL=nats://localhost:4222"])
+
+    def test_no_stale_thallium_pin(self):
+        # REGRESSION guard for the 2026-10-10 incident class: no ACTIVE line
+        # may pin the unreachable thallium host. This is the check that would
+        # have caught WRITE_QUEUE running 24 days with a stream and no
+        # consumer. It forbids the failure MODE rather than pinning a value,
+        # so it survives the next topology change instead of breaking on it.
+        #
+        # Comments are stripped first, deliberately: a `#` line cannot
+        # configure anything, and the dated history note above the env line
+        # records the old address on purpose (same convention as the
+        # reconciler unit, PR #740). The invariant is about what systemd
+        # ACTUALLY RESOLVES, not what the file mentions.
+        active = "\n".join(
+            line for line in SERVICE.read_text().splitlines()
+            if not line.lstrip().startswith(("#", ";"))
+        )
+        self.assertNotIn("192.168.1.82", active,
+                         "write-queue-buffer-drain.service has an ACTIVE pin to the "
+                         "unreachable thallium host 192.168.1.82 — see incident 4644f5f6")
 
     def test_no_database_url_dead_config(self):
         # The drainer never touches PG; a DATABASE_URL here would imply it does.

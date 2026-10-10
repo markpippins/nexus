@@ -15,13 +15,22 @@ Group=codex
 WorkingDirectory=/home/codex/dev/nexus
 
 # ── Environment ────────────────────────────────────────────────────────
-# NATS bus lives on thallium (the nexus-core host). NOTE: unlike the
-# reconciler unit, NO DATABASE_URL — the drainer never touches PG
-# (gate = stream helper, publish = JetStream; dedup is reconciler-side
-# via the staging write_id PK). The buffer directory default
-# (/tmp/nexus-writequeue) matches the Java producer's default; override
-# NEXUS_CORE_WRITEQUEUE_DIR here if the producer's environment moves.
-Environment=NATS_URL=nats://192.168.1.82:4222
+# NATS bus is LOCAL on titanium. NOTE: unlike the reconciler unit, NO
+# DATABASE_URL — the drainer never touches PG (gate = stream helper,
+# publish = JetStream; dedup is reconciler-side via the staging write_id PK).
+#
+# NATS_URL history (update the line AND the date together if the bus moves):
+#   2026-09-22 .. 2026-10-10 : nats://192.168.1.82:4222 (thallium, the
+#                               nexus-core host) — UNREACHABLE from titanium
+#                               as of 2026-10-10.
+#   2026-10-10 ->            : nats://localhost:4222 — operator confirmed
+#                               local authoritative. Matches the drainer's
+#                               own default (drain_write_queue_buffer.py).
+#
+# The buffer directory default (/tmp/nexus-writequeue) matches the Java
+# producer's default; override NEXUS_CORE_WRITEQUEUE_DIR here if the
+# producer's environment moves.
+Environment=NATS_URL=nats://localhost:4222
 
 # ── Executable ─────────────────────────────────────────────────────────
 ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/drain_write_queue_buffer.py
