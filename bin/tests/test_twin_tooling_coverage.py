@@ -69,6 +69,7 @@ TOOLING = {
     "voyager": {"canary-diff.py", "canary-run.sh"},
     "wind": {"canary-diff.py", "canary-run.sh"},
     "resolution": {"canary-diff.py", "canary-run.sh"},
+    "nebula": {"canary-diff.py", "canary-run.sh"},
 }
 
 

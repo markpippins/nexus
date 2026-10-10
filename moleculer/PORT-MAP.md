@@ -85,10 +85,10 @@ Moleculer does **not run locally** on titanium — enforced, not assumed:
   in the owning service's config + launch units in the same change; the
   terrain registry entry follows at the next registration heartbeat.
 <<<<<<< HEAD
-  - Canary/deployment ports (4100/4104/4106/4109/4110/4111/4114/4115/4116/4150/4160/4170/4118/4171/4410/4420/4501) are the exception to
+  - Canary/deployment ports (4050/4060/4080/4100/4101/4104/4106/4109/4110/4111/4114/4115/4116/4150/4160/4170/4118/4171/4410/4420/4501) are the exception to
 =======
-- Canary/deployment ports (4100/4104/4106/4109/4110/4111/4114/4115/4116/4150/4160/4170/4118/4410/4420/4101/4501) are the exception to
->>>>>>> a9552f77b (feat(moleculer): complete nebula twin — registry wiring, substance canary-tooling fix, fleet guard)
+- Canary/deployment ports (4100/4101/4104/4106/4109/4110/4111/4114/4115/4116/4150/4160/4170/4118/4410/4420/4501) are the exception to
+>>>>>>> f48567001 (fix(moleculer): reconcile rebased #685 — nebula twin registered, tooling declared, ports derived)
   one-live-authority: a canary twin may co-listen on its 41xx twin while its
   incumbent stays live, and must be removed from the map when cutover completes
   (dead routes die). <!-- GENERATED: moleculer-port-registry BEGIN ratification-ledger -->
