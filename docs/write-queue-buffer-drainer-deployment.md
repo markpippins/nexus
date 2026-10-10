@@ -73,7 +73,7 @@ journalctl --user -t write-queue-buffer-drain -n 50
 systemctl --user start write-queue-buffer-drain.service
 
 # Pure rehearsal without touching anything:
-NATS_URL=nats://192.168.1.82:4222 \
+NATS_URL=nats://localhost:4222 \
   python3 /home/codex/dev/nexus/bin/drain_write_queue_buffer.py --dry-run
 ```
 
