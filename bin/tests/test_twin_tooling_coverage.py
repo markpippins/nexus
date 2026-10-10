@@ -70,6 +70,7 @@ TOOLING = {
     "wind": {"canary-diff.py", "canary-run.sh"},
     "resolution": {"canary-diff.py", "canary-run.sh"},
     "nebula": {"canary-diff.py", "canary-run.sh"},
+    "assembly": {"canary-diff.py", "canary-run.sh"},
 }
 
 
