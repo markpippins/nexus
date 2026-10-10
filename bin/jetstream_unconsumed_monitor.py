@@ -73,10 +73,12 @@ class StreamState:
     """The subset of stream info the decision needs. Pure data — no client."""
 
     __slots__ = ("name", "messages", "bytes", "max_msgs", "max_bytes",
-                 "max_age", "discard", "consumer_count", "max_pending")
+                 "max_age", "discard", "consumer_count", "max_pending",
+                 "subjects", "core_subscribers")
 
     def __init__(self, name, messages, nbytes, max_msgs, max_bytes, max_age,
-                 discard, consumer_count, max_pending=0):
+                 discard, consumer_count, max_pending=0, subjects=None,
+                 core_subscribers=0):
         self.name = name
         self.messages = messages
         self.bytes = nbytes
@@ -86,6 +88,8 @@ class StreamState:
         self.discard = discard            # "old" | "new"
         self.consumer_count = consumer_count
         self.max_pending = max_pending
+        self.subjects = subjects or []
+        self.core_subscribers = core_subscribers
 
     # ── the boundedness question, which is the whole design ────────────
     def at_msg_cap(self):
@@ -102,6 +106,47 @@ class StreamState:
     def has_messages(self):
         return self.messages > 0
 
+    def has_any_consumer(self):
+        """JetStream consumer OR a live core-NATS subscriber.
+
+        THIS IS THE FIX FOR A FALSE POSITIVE I SHIPPED. My first version only
+        counted JetStream consumers via jsm.consumers_info(). That is blind to
+        core-NATS subscribers, which never appear in the consumer list. FS_VOYAGER
+        is consumed by voyager-adapter over core NATS (obs/hint/span) and was
+        flagged as WARNING "zero consumers" — a live pipeline misread as dead.
+        A stream consumed either way is consumed; only streams with NEITHER are
+        at risk of never being drained.
+        """
+        return self.consumer_count > 0 or self.core_subscribers > 0
+
+
+def subject_matches(filter_subject: str, subscriber: str) -> bool:
+    """NATS subject matching: does subscriber fall under filter_subject?
+
+    Supports the two NATS wildcards: `*` = exactly one token, `>` = one or more
+    trailing tokens. Used to decide whether a core-NATS subscription actually
+    consumes a given stream's subjects.
+    """
+    f = filter_subject.split(".")
+    s = subscriber.split(".")
+    for i, tok in enumerate(f):
+        if tok == ">":
+            return len(s) > i
+        if i >= len(s):
+            return False
+        if tok != "*" and tok != s[i]:
+            return False
+    return len(s) == len(f)
+
+
+def count_core_subscribers(stream_subjects, subscriber_list):
+    """How many distinct subscriptions actually consume this stream's subjects."""
+    n = 0
+    for sub in subscriber_list:
+        if any(subject_matches(st, sub) for st in stream_subjects):
+            n += 1
+    return n
+
 
 def classify(s: StreamState) -> str:
     """Return 'ok' | 'warning' | 'critical'. Pure — the unit-tested core.
@@ -112,7 +157,7 @@ def classify(s: StreamState) -> str:
     """
     if not s.has_messages():
         return "ok"
-    if s.consumer_count > 0:
+    if s.has_any_consumer():
         return "ok"
     if s.is_bounded_and_shedding():
         return "warning"
@@ -172,11 +217,42 @@ def update_counts(state: dict, verdicts: dict, min_consecutive: int,
 
 # ── broker I/O (the only part that needs a live server) ───────────────
 
-def fetch_stream_states(nats_url: str) -> list:
+def fetch_core_subscribers(nats_url: str) -> list:
+    """Read core-NATS subscription subjects from the monitoring endpoint.
+
+    Core-NATS subscribers never appear in jsm.consumers_info(), so without this
+    the monitor is blind to every stream consumed by a plain `subscribe()`.
+    Returns [] if the monitoring port is unavailable — callers then fall back
+    to JetStream-only counting rather than failing.
+    """
+    import urllib.request
+
+    host = nats_url.rsplit("@", 1)[-1].split("//", 1)[-1].split(":", 1)[0] or "localhost"
+    url = f"http://{host}:8222/connz?subs=1&limit=1000"
+    subs = []
+    try:
+        with urllib.request.urlopen(url, timeout=5) as r:
+            data = json.loads(r.read().decode())
+        for c in data.get("connections", []) or []:
+            for s in c.get("subscriptions_list") or []:
+                if isinstance(s, str):
+                    subs.append(s)
+    except Exception as e:
+        print(f"[jetstream-unconsumed-monitor] WARN: could not read core-NATS "
+              f"subscriptions from {url}: {type(e).__name__}: {e}. Falling back "
+              f"to JetStream-consumer counting only — streams consumed via core "
+              f"NATS may be reported as unconsumed.", file=sys.stderr)
+    return subs
+
+
+def fetch_stream_states(nats_url: str, core_subs: list = None) -> list:
     """Read-only pull of every stream. Raises on broker failure."""
     import asyncio
 
     from nats import connect
+
+    if core_subs is None:
+        core_subs = fetch_core_subscribers(nats_url)
 
     async def _go():
         nc = await connect(servers=[nats_url], connect_timeout=5,
@@ -193,6 +269,7 @@ def fetch_stream_states(nats_url: str) -> list:
                     max_pending = max((x.num_pending for x in cons), default=0)
                 except Exception:
                     n_cons, max_pending = 0, 0
+                subjects = list(getattr(c, "subjects", []) or [])
                 out.append(StreamState(
                     name=i.config.name,
                     messages=i.state.messages,
@@ -203,6 +280,8 @@ def fetch_stream_states(nats_url: str) -> list:
                     discard=str(getattr(c, "discard", "")),
                     consumer_count=n_cons,
                     max_pending=max_pending,
+                    subjects=subjects,
+                    core_subscribers=count_core_subscribers(subjects, core_subs),
                 ))
             return out
         finally:
@@ -220,8 +299,11 @@ def describe(s: StreamState, verdict: str) -> str:
     if s.max_age > 0:
         cap.append(f"max_age={int(s.max_age)}s")
     cap_s = ",".join(cap) if cap else "UNBOUNDED"
+    cons_s = f"{s.consumer_count}"
+    if s.core_subscribers:
+        cons_s += f"+{s.core_subscribers}core"
     return (f"  [{verdict.upper():8s}] {s.name}: msgs={s.messages} "
-            f"bytes={s.bytes} consumers={s.consumer_count} "
+            f"bytes={s.bytes} consumers={cons_s} "
             f"discard={s.discard} limits({cap_s})")
 
 

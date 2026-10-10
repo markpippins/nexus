@@ -36,15 +36,16 @@ Environment=NATS_URL=nats://localhost:4222
 # Two consecutive bad checks (~20 min at the timer's cadence) clears that bar
 # while still catching the 24-day case within one hour.
 #
-# --ack FS_VOYAGER: KNOWN ORPHAN, not a dismissal. FS_VOYAGER holds exactly
-# 50000 msgs (its max_msgs) with discard=old and ZERO consumers — pinned at
-# cap and shedding, i.e. bounded, not accumulating. It has no references
-# anywhere in the tree (orphaned ~2026-06-16). Reported as WARNING rather
-# than CRITICAL for exactly this reason, and acked here so the alert stays
-# meaningful. SEEKING AN OPERATOR DECISION: adopt it (attach a consumer),
-# drain+delete it, or drop the --ack and accept the standing warning.
-# Do NOT remove this line without a plan for the 67 MB it holds.
-ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/jetstream_unconsumed_monitor.py --min-consecutive 2 --ack FS_VOYAGER
+# NO --ack IS NEEDED. An earlier version of this unit shipped with
+# `--ack FS_VOYAGER` because I misread that stream as an orphan: I counted only
+# JETSTREAM consumers via jsm.consumers_info(), which is blind to core-NATS
+# subscribers. FS_VOYAGER is in fact consumed live by voyager-adapter over core
+# NATS (nexus.fs.v1.observation/.hint/.span) and has processed ~37.4M messages.
+# The monitor now checks core-NATS subscriptions via the :8222 connz endpoint,
+# so it classifies that stream OK on its own merits rather than by suppression.
+# Lesson kept in place: verify the consumer EXISTS before assuming absence,
+# and never reach for --ack to paper over a measurement gap.
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/jetstream_unconsumed_monitor.py --min-consecutive 2
 
 # ── Exit-code contract (the tool's, mirrored for the journal) ──────────
 # 0 healthy · 1 alert-worthy · 2 could not check. NONE are masked as

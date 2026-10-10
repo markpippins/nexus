@@ -60,6 +60,9 @@ class ClassifyPredicateTest(unittest.TestCase):
         # Capped and shedding: pinned at max_msgs with discard=old. Bounded,
         # not accumulating. Paging on this forever trains the operator to
         # ignore the alert — the exact failure mode this tool exists to avoid.
+        # NOTE: this is the bare shape with NO consumer of any kind. The live
+        # FS_VOYAGER stream DOES have a core-NATS subscriber and is therefore
+        # classified ok — see CoreNatsSubscriberTest.
         s = _stream(messages=50000, max_msgs=50000, discard="old", consumers=0)
         self.assertEqual(classify(s), "warning")
 
@@ -84,6 +87,90 @@ class ClassifyPredicateTest(unittest.TestCase):
         # capped FS_VOYAGER stream would be misfiled as critical.
         s = _stream(messages=50000, max_msgs=50000, discard="old", consumers=0)
         self.assertNotEqual(classify(s), "critical")
+
+
+class CoreNatsSubscriberTest(unittest.TestCase):
+    """Regression suite for a FALSE POSITIVE I shipped in the first version.
+
+    The original classify() counted only JetStream consumers
+    (jsm.consumers_info()), which is blind to core-NATS subscribers. FS_VOYAGER
+    is consumed live by voyager-adapter over core NATS (obs/hint/span) and was
+    reported as WARNING "zero consumers" — a running pipeline misread as dead.
+    Every test here exists to make that specific miss impossible again.
+    """
+
+    def test_fs_voyager_with_core_subscriber_is_ok(self):
+        # The exact false positive: capped stream, zero JETSTREAM consumers,
+        # but a live core-NATS subscriber. Must be ok, NOT warning.
+        s = _stream(messages=50000, max_msgs=50000, discard="old", consumers=0)
+        s.subjects = ["nexus.fs.v1.>"]
+        s.core_subscribers = 3
+        self.assertEqual(classify(s), "ok")
+
+    def test_fs_voyager_without_core_subscriber_still_warns(self):
+        # Removing the subscriber must flip it back — proves the assertion
+        # actually depends on core_subscribers and is not vacuously ok.
+        s = _stream(messages=50000, max_msgs=50000, discard="old", consumers=0)
+        s.subjects = ["nexus.fs.v1.>"]
+        s.core_subscribers = 0
+        self.assertEqual(classify(s), "warning")
+
+    def test_unbounded_with_core_subscriber_is_ok(self):
+        # The WRITE_QUEUE shape WITH a core consumer: not critical either.
+        s = _stream(messages=16, max_msgs=-1, max_bytes=-1, consumers=0)
+        s.subjects = ["nexus.write-queue.v1.>"]
+        s.core_subscribers = 1
+        self.assertEqual(classify(s), "ok")
+
+    def test_jetstream_consumer_alone_still_suffices(self):
+        s = _stream(messages=100, consumers=1)
+        self.assertEqual(classify(s), "ok")
+
+    def test_neither_consumer_nor_subscriber_is_flagged(self):
+        # The genuine failure case must STILL alert after the fix.
+        s = _stream(messages=100, consumers=0)
+        s.subjects = ["dead.subject.>"]
+        s.core_subscribers = 0
+        self.assertEqual(classify(s), "critical")
+
+
+class SubjectMatchTest(unittest.TestCase):
+    """NATS wildcard matching decides whether a subscription is real coverage."""
+
+    def test_exact_match(self):
+        self.assertTrue(jum.subject_matches("nexus.fs.v1.observation",
+                                            "nexus.fs.v1.observation"))
+
+    def test_gt_wildcard_covers_deeper_subject(self):
+        # The FS_VOYAGER case: stream filter 'nexus.fs.v1.>' must be satisfied
+        # by a subscriber on 'nexus.fs.v1.observation'.
+        self.assertTrue(jum.subject_matches("nexus.fs.v1.>",
+                                            "nexus.fs.v1.observation"))
+        self.assertTrue(jum.subject_matches("nexus.fs.v1.>", "nexus.fs.v1.span"))
+
+    def test_star_wildcard_matches_exactly_one_token(self):
+        self.assertTrue(jum.subject_matches("nexus.*.v1", "nexus.fs.v1"))
+        self.assertFalse(jum.subject_matches("nexus.*.v1", "nexus.fs.deep.v1"))
+
+    def test_different_subject_does_not_match(self):
+        self.assertFalse(jum.subject_matches("nexus.fs.v1.>",
+                                             "nexus.write-queue.v1.x"))
+
+    def test_prefix_without_wildcard_is_not_enough(self):
+        # 'nexus.fs.v1' is a DIFFERENT subject from 'nexus.fs.v1.observation';
+        # only '>' or '*' makes them related.
+        self.assertFalse(jum.subject_matches("nexus.fs.v1",
+                                             "nexus.fs.v1.observation"))
+
+    def test_count_counts_only_matching(self):
+        subs = ["nexus.fs.v1.observation", "nexus.fs.v1.span",
+                "nexus.fs.v1.hint", "other.subject"]
+        self.assertEqual(
+            jum.count_core_subscribers(["nexus.fs.v1.>"], subs), 3)
+
+    def test_count_zero_when_nothing_matches(self):
+        self.assertEqual(
+            jum.count_core_subscribers(["nexus.fs.v1.>"], ["a.b.c"]), 0)
 
 
 class BoundednessHelpersTest(unittest.TestCase):
