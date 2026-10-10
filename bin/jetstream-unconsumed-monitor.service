@@ -1,0 +1,59 @@
+[Unit]
+Description=JetStream unconsumed-stream monitor — alerts when a stream holds messages no consumer will receive
+Documentation=https://github.com/markpippins/nexus/pull/740
+# WHY THIS EXISTS
+# WRITE_QUEUE ran 24 days with a stream and NO durable consumer (incident
+# 2026-10-10, escalation 4644f5f6). Publishers kept publishing, JetStream kept
+# acking, nothing drained it, and no alert fired anywhere — because no such
+# alert existed. This is that alert, and it watches for the whole CLASS of
+# defect (dead unit, pruned worktree, deleted consumer), not just that cause.
+#
+# READ-ONLY: the monitor only reads stream/consumer info. It never creates,
+# updates, deletes or drains anything. That is deliberate — the incident was
+# caused by a well-intentioned mutation, so the monitor guarding against it
+# must be incapable of causing one.
+#
+# Pairs with write-queue-reconciler.service (the consumer) but is independent
+# of it: if the reconciler dies, THIS is what notices.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=codex
+Group=codex
+WorkingDirectory=/home/codex/dev/nexus
+
+# ── Environment ────────────────────────────────────────────────────────
+# NATS bus is LOCAL on titanium (thallium 192.168.1.82 was unreachable as of
+# 2026-10-10; operator confirmed local authoritative). Same dated-note
+# convention as write-queue-reconciler.service and
+# write-queue-buffer-drain.service.
+Environment=NATS_URL=nats://localhost:4222
+
+# --min-consecutive 2: a stream may be legitimately consumer-less for a few
+# seconds while its unit restarts; paging on that is how monitors get muted.
+# Two consecutive bad checks (~20 min at the timer's cadence) clears that bar
+# while still catching the 24-day case within one hour.
+#
+# --ack FS_VOYAGER: KNOWN ORPHAN, not a dismissal. FS_VOYAGER holds exactly
+# 50000 msgs (its max_msgs) with discard=old and ZERO consumers — pinned at
+# cap and shedding, i.e. bounded, not accumulating. It has no references
+# anywhere in the tree (orphaned ~2026-06-16). Reported as WARNING rather
+# than CRITICAL for exactly this reason, and acked here so the alert stays
+# meaningful. SEEKING AN OPERATOR DECISION: adopt it (attach a consumer),
+# drain+delete it, or drop the --ack and accept the standing warning.
+# Do NOT remove this line without a plan for the 67 MB it holds.
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/jetstream_unconsumed_monitor.py --min-consecutive 2 --ack FS_VOYAGER
+
+# ── Exit-code contract (the tool's, mirrored for the journal) ──────────
+# 0 healthy · 1 alert-worthy · 2 could not check. NONE are masked as
+# success: every outcome is visible in `systemctl --user status` and the
+# journal, and a non-zero exit leaves the timer's last result inspectable.
+# Exit 2 (broker unreachable) is itself a page — an unmonitorable broker is
+# an outage.
+TimeoutStartSec=120
+SyslogIdentifier=jetstream-unconsumed-monitor
+
+[Install]
+WantedBy=default.target
