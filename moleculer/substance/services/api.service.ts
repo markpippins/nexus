@@ -32,6 +32,16 @@ export default class ApiService extends Service {
             path: "/",
             whitelist: ["substance.**"],
             bodyParsers: { json: true },
+            // moleculer-web 0.10.x does NOT populate ctx.meta.$req/$res from the
+            // route; only this alias hook hands the REAL Express req/res to the
+            // action context, which `substance.dispatch` requires. (Live-confirmed
+            // 2026-10-11 per Ruling 38G §4: without this, every aliased call 500s
+            // DISPATCH_NO_REQRES; jest suites hit the Express app directly and
+            // never see it. Canonical form: moleculer/wind/services/api.service.ts.)
+            onBeforeCall: (ctx: any, _route: any, req: any, res: any) => {
+              ctx.meta.$req = req;
+              ctx.meta.$res = res;
+            },
             aliases: {
               "GET /healthz": "substance.dispatch",
 
