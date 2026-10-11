@@ -33,7 +33,10 @@ MYSQL_USER="${MYSQL_USER:-root}"
 MYSQL_PASS="${MYSQL_PASS:-rootpass}"
 BACKUP_DIR="${BACKUP_DIR:-/home/codex/backups/mysql}"
 LOG_FILE="${LOG_FILE:-${BACKUP_DIR}/mysql-backup.log}"
-LOCK_FILE="/tmp/mysql-backup.lock"
+# LOCK_FILE is overridable so tests can isolate themselves from a live
+# scheduled run (the guard test used to contend on this flock whenever two
+# bin-tier runners ran concurrently). Production default is unchanged.
+LOCK_FILE="${LOCK_FILE:-/tmp/mysql-backup.lock}"
 KEEP_DAYS="${KEEP_DAYS:-14}"
 NEBULA_URL="${NEBULA_URL:-http://localhost:3101/api/agent-records}"
 

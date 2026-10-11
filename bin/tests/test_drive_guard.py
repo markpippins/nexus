@@ -25,12 +25,18 @@ DRIVE_GUARD_FAKE_MOUNTS seams; production default bases are /mnt and /media):
   covering the retarget/V4 behaviors)
 - mysql-health-monitor.sh: stale alert text names the drive state; lib
   source line present (monitor stays read-only, no require/skip semantics)
+- LOCK_FILE isolation: both backup scripts honor a LOCK_FILE env override
+  (production defaults unchanged), so concurrent bin-tier runners cannot
+  contend on one flock — the exact race that failed test_absent_drive_
+  honest_fail_fast during the 2026-10-10 #687 attestation (two parallel
+  worktree runs, one saw SKIP: another backup run holds the lock)
 
 Run:
   python3 -m pytest bin/tests/test_drive_guard.py -v
 """
 from __future__ import annotations
 
+import fcntl
 import os
 import subprocess
 import tempfile
@@ -185,6 +191,12 @@ class MysqlBackupGuardTest(unittest.TestCase):
         self.log = os.path.join(self.tmp, "mysql-backup.log")
         self.env = {
             "LOG_FILE": self.log,
+            # Isolate the flock: without this the invoked mysql-backup.sh
+            # grabs the production default /tmp/mysql-backup.lock, so two
+            # concurrent bin-tier runners race and one sees SKIP (rc=1 where
+            # this test asserts an honest fail-fast). Requires the LOCK_FILE
+            # env seam in mysql-backup.sh (this commit).
+            "LOCK_FILE": os.path.join(self.tmp, "lock"),
             # unwritable path -> best-effort curl fails silently (by design)
             "NEBULA_URL": os.path.join(self.tmp, "nebula-post.txt"),
             # NOTE: production default bases (/mnt /media) apply — no seam,
@@ -306,6 +318,106 @@ class VdciSkipTest(unittest.TestCase):
             log = fh.read()
         self.assertIn("dry run complete", log)
         self.assertNotIn("skipped", log)
+
+
+class LockIsolationTest(unittest.TestCase):
+    """LOCK_FILE env override: honored by both backup scripts, and isolates
+    the caller from a concurrent runner's flock.
+
+    Regression for the 2026-10-10 flake: running the bin tier in two
+    worktrees concurrently made two MysqlBackupGuardTest instances contend
+    on the hardcoded /tmp/mysql-backup.lock — one saw
+    "SKIP: another backup run holds the lock" (exit 0) where the test
+    asserts an honest fail-fast (exit 1). Both scripts hardcoded their
+    lock paths, which also silently ignored the LOCK_FILE env that
+    VdciSkipTest had been passing all along.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="dg-lock-")
+        self.log = os.path.join(self.tmp, "backup.log")
+        self.base_env = {
+            "LOG_FILE": self.log,
+            # unwritable path -> best-effort curl fails silently (by design)
+            "NEBULA_URL": os.path.join(self.tmp, "nebula-post.txt"),
+        }
+
+    class _HeldLock:
+        """Hold an exclusive flock on `path` for the duration of a with-block
+        (parent keeps the fd open, so a subprocess's flock -n fails)."""
+
+        def __init__(self, path):
+            self.path = path
+            self.fd = None
+
+        def __enter__(self):
+            self.fd = os.open(self.path, os.O_CREAT | os.O_RDWR)
+            fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return self
+
+        def __exit__(self, *exc):
+            if self.fd is not None:
+                os.close(self.fd)  # closing releases the flock
+            return False
+
+    def test_mysql_honors_lock_file_override(self):
+        # Without the script-side seam this FAILS: the env is ignored, the
+        # script locks the (free) production default, proceeds past the
+        # flock and hits the dangling drive guard (rc 1) instead of SKIP.
+        lock = os.path.join(self.tmp, "isolated-mysql.lock")
+        with self._HeldLock(lock):
+            proc = subprocess.run(
+                ["bash", MYSQL_BACKUP, "--dry-run"],
+                capture_output=True, text=True,
+                env={**os.environ, **self.base_env, "LOCK_FILE": lock},
+            )
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        with open(self.log) as fh:
+            log = fh.read()
+        self.assertIn("SKIP: another backup run holds the lock", log)
+        # skipped BEFORE any drive-guard work, not instead of it
+        self.assertNotIn("dangling symlink", log)
+
+    def test_mysql_isolated_from_other_runners_lock(self):
+        # The attestation flake, hermetic: another runner holds its lock
+        # (simulated), our run must not see it when LOCK_FILE points elsewhere.
+        other = os.path.join(self.tmp, "other-runner.lock")
+        mine = os.path.join(self.tmp, "my.lock")
+        link = os.path.join(self.tmp, "backups")
+        os.symlink(f"{self.tmp}/MyDrive/home/backups", link)
+        with self._HeldLock(other):
+            proc = subprocess.run(
+                ["bash", MYSQL_BACKUP],
+                capture_output=True, text=True,
+                env={**os.environ, **self.base_env,
+                     "LOCK_FILE": mine, "BACKUP_DIR": link},
+            )
+        # our lock is free -> no SKIP; the dangling drive still fail-fasts
+        self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
+        with open(self.log) as fh:
+            log = fh.read()
+        self.assertNotIn("another backup run holds the lock", log)
+        self.assertIn("dangling symlink", log)
+
+    def test_vdci_honors_lock_file_override(self):
+        # VdciSkipTest has been passing LOCK_FILE all along; this pins that
+        # the script actually reads it (it used to be silently ignored).
+        lock = os.path.join(self.tmp, "isolated-vdci.lock")
+        spool = os.path.join(self.tmp, "spool")
+        os.symlink(f"{self.tmp}/MyDrive/home/dev/pgsql/vdci-spool", spool)
+        with self._HeldLock(lock):
+            proc = subprocess.run(
+                ["bash", VDCI_BACKUP],
+                capture_output=True, text=True,
+                env={**os.environ, **self.base_env,
+                     "LOCK_FILE": lock, "SPOOL_DIR": spool},
+            )
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        with open(self.log) as fh:
+            log = fh.read()
+        self.assertIn("SKIP: lock held", log)
+        # lock skip wins over the drive skip -> the flock line runs first
+        self.assertNotIn("skipped (drive absent)", log)
 
 
 class HealthMonitorGuardTest(unittest.TestCase):
