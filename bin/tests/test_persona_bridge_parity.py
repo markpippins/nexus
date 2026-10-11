@@ -27,13 +27,21 @@ What this pins
       asks the bridge for, case-insensitively. Catches an agent file wired
       to a persona belonging to a differently-named role.  (hermetic)
 
-  P3  Case-exact agreement, with a short, explicit exception list. This is
-      the check that is currently RED for DBA and is pinned as known drift
-      rather than left to rot: `dba.md` declares `assumes_role: dba` but
-      requests `DBA/database-admin`, because the role row and the persona
-      were both created uppercase. Tracked as the D1 role-name
-      canonicalisation item. When DBA is canonicalised, delete the entry
-      from KNOWN_CASE_DRIFT — the test then holds the line.
+  P3  Case-exact agreement, with a short, explicit exception list. Empty
+      since the D1 role-name canonicalisation landed: agent files declare
+      the lowercase role and request the lowercase `<role>/opencode-persona`.
+      The (now-empty) exception list is the ratchet — any NEW case drift
+      between an agent file and the registry row must be fixed, or pinned
+      here with a reason.
+
+Why the requested slug is always `opencode-persona`
+---------------------------------------------------
+A role's persona resolves under exactly ONE name: `<role>/opencode-persona`.
+`tackle-prompt-bridge` serves that name, and tackle-srv's default-persona path
+is `getPromptByRoleSlug(role, "opencode-persona")`. The `database-admin` slug
+some rows carried was ad-hoc — the bridge 404s on it — so it is the DB row,
+never the agent file, that is wrong when the two disagree. P1 therefore keys
+off the request, and the request is the one name the contract resolves.
 
 Scoping note — why "referenced by an agent .md" and not "every role"
 ------------------------------------------------------------------------
