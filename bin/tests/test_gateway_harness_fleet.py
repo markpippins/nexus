@@ -30,12 +30,17 @@ Run:
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 MARKER = "LIVE-GATEWAY HARNESS (hermetic)"
-DISPATCH_TWINS = ["tackle", "conduit", "harness", "peb", "execution", "aegis"]
+# substance added 2026-10-11 per Ruling 38I §4: it is the one dispatch-through-Express
+# twin that demonstrably failed this defect class (shipped with no onBeforeCall hook,
+# every aliased call 500'd DISPATCH_NO_REQRES while its jest suite stayed green —
+# PR #745). It must not be the only one without a runtime harness.
+DISPATCH_TWINS = ["tackle", "conduit", "harness", "peb", "execution", "aegis", "substance"]
 
 
 def twin_test_file(twin: str) -> Path:
@@ -117,7 +122,18 @@ def test_execution_lockfile_is_tracked():
 
 
 def test_broker_e2e_matrix_names_execution():
+    """execution must be in the CI twin matrix (its lockfile gate, acfcee27).
+
+    Parses the matrix list rather than substring-matching it: the previous
+    `assert "service: [...six...]" in wf` broke the moment a seventh twin was
+    added, which is exactly the brittleness that lets a twin silently drop out
+    of CI. Membership is the invariant; exact ordering/spelling is not.
+    """
     wf = (REPO / ".github" / "workflows" / "broker-e2e.yml").read_text(encoding="utf-8")
-    assert "service: [tackle, conduit, harness, peb, execution, aegis]" in wf, (
-        "broker-e2e.yml twin matrix must include execution"
-    )
+    m = re.search(r"service:\s*\[([^\]]+)\]", wf)
+    assert m, "broker-e2e.yml has no `service: [...]` twin matrix"
+    services = [s.strip() for s in m.group(1).split(",") if s.strip()]
+    for twin in ("execution", "aegis", "substance"):
+        assert twin in services, (
+            f"broker-e2e.yml twin matrix must include {twin}; got {services}"
+        )

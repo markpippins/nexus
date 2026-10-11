@@ -273,3 +273,70 @@ describe("alias-map sanity", () => {
     }
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LIVE-GATEWAY HARNESS (hermetic) — the CI gap that let the fleet-wide
+// $req/$res defect class hide (PR #688/#690 wave, 2026-09-30).
+//
+// The suites above drive the verbatim Express app through supertest — they
+// never touch the moleculer-web gateway, so a gateway regression (onBeforeCall
+// $req/$res stash dropped, catch-all aliases lost) cannot redden CI. That is
+// NOT hypothetical for this twin: substance shipped with NO onBeforeCall hook
+// at all, so every aliased call 500'd DISPATCH_NO_REQRES while its jest suite
+// stayed green. Fixed in PR #745; this block is what makes that class
+// non-recurring for substance specifically (Ruling 38G §2 / 38I §4).
+//
+// Boots the REAL broker + ApiService + substance service in-process
+// (transporter null; PG mocked by the jest.mock above) on an EPHEMERAL port
+// (SERVICE_PORT="0", set before api.service is dynamically imported — the
+// gateway captures settings.port at construction) and asserts:
+//   1. matched route 200 — transitively proves the onBeforeCall $req/$res
+//      stash: without it, every alias-dispatch call 500s (DISPATCH_NO_REQRES);
+//   2. unmatched path 404;
+//   3. wrong-method request 404 — GET-only aliases must never 405/500.
+// Unlike tackle, substance's gateway declares no finalhandler/onNotFound/onError,
+// so the 404 assertions check status only (no byte-for-byte body claim).
+// No live incumbents, no PG, no Redis, no fixed ports — CI-hermetic by design.
+// ═══════════════════════════════════════════════════════════════════════════
+process.env.SERVICE_PORT = "0"; // must precede the dynamic imports below
+
+describe("live gateway (real broker + moleculer-web on ephemeral port)", () => {
+  const UNMATCHED = "/definitely/not/a/gateway/route";
+  let base = "";
+  let stop = async () => {};
+
+  beforeAll(async () => {
+    // CommonJS require on purpose (see tackle's block): require() works under
+    // both ts-jest modes; a dynamic import() can stay untransformed under
+    // isolatedModules and throw.
+    const { ServiceBroker } = require("moleculer");
+    const ApiService = require("../services/api.service").default;
+    const TwinService = require("../services/substance.service").default;
+    const broker = new ServiceBroker({ transporter: null, logger: false, metrics: false });
+    broker.createService(ApiService);
+    broker.createService(TwinService);
+    await broker.start();
+    const gw = broker.getLocalService("api") as any;
+    base = `http://127.0.0.1:${gw.server.address().port}`;
+    stop = async () => {
+      await broker.stop();
+    };
+  }, 30000);
+
+  afterAll(() => stop());
+
+  it("matched route 200 — proves the onBeforeCall $req/$res stash (dispatch 500s without it)", async () => {
+    const res = await fetch(`${base}/healthz`);
+    expect(res.status).toBe(200);
+  });
+
+  it("unmatched path 404", async () => {
+    const res = await fetch(`${base}${UNMATCHED}`);
+    expect(res.status).toBe(404);
+  });
+
+  it("wrong-method request 404 — GET-only aliases never 405/500", async () => {
+    const res = await fetch(`${base}/healthz`, { method: "POST" });
+    expect(res.status).toBe(404);
+  });
+});
