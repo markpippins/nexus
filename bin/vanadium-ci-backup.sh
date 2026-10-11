@@ -26,7 +26,11 @@ BAR_HOST="${BAR_HOST:-vanadium}"
 REMOTE_DIR="${REMOTE_DIR:-pg-backups/vanadium-ci}"
 SPOOL_DIR="${SPOOL_DIR:-/home/codex/dev/pgsql/vdci-spool}"
 LOG_FILE="${LOG_FILE:-/home/codex/dev/pgsql/vanadium-ci-backup.log}"
-LOCK_FILE="/tmp/vanadium-ci-backup.lock"
+# LOCK_FILE is overridable so tests can isolate themselves from a live
+# scheduled run. VdciSkipTest already passes LOCK_FILE in its env — before
+# this seam that env was silently ignored and the test contended on the
+# production flock. Production default is unchanged.
+LOCK_FILE="${LOCK_FILE:-/tmp/vanadium-ci-backup.lock}"
 
 JENKINS_C="${JENKINS_C:-vd-ci-jenkins}"
 SONAR_C="${SONAR_C:-vd-ci-sonarqube}"
