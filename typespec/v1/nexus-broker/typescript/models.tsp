@@ -337,10 +337,10 @@ namespace org.nexus.nexusbroker {
   /** Per-doctrine-card census observation counts (CDLC A2b). */
   model KeychainCensusCardIndex {
     asset_id: string;
-    report_count: int32;
-    finding_count: int32;
-    category_counts: Record<unknown>;
-    anticipated_finding_count: int32;
+    reportCount: int32;
+    findingCount: int32;
+    categoryCounts: Record<unknown>;
+    anticipatedFindingCount: int32;
   }
 
   /** A census row that failed its own contract on read; reported, never silently counted. */
@@ -355,18 +355,18 @@ namespace org.nexus.nexusbroker {
     read_only: boolean;
     basis: string;
     limitation: string;
-    report_count: int32;
-    report_ids_with_no_findings: int32;
+    reportCount: int32;
+    reportIdsWithNoFindings: int32;
     doctrine_snapshot_count: int32;
-    trigger_counts: Record<unknown>;
-    category_counts: Record<unknown>;
+    triggerCounts: Record<unknown>;
+    categoryCounts: Record<unknown>;
     cards: KeychainCensusCardIndex[];
     truncated: boolean;
     /** Q6 retention instrumentation: rows per UTC calendar day, so A6 sizes against a measurement. */
-    daily_counts: KeychainCensusDailyCount[];
-    observed_day_count: int32;
-    rejected_report_count: int32;
-    rejected_reports: KeychainCensusRejection[];
+    dailyCounts: KeychainCensusDailyCount[];
+    observedDayCount: int32;
+    rejectedReportCount: int32;
+    rejectedReports: KeychainCensusRejection[];
   }
 
   /**
@@ -410,9 +410,9 @@ namespace org.nexus.nexusbroker {
   /** Census rows per UTC calendar day. Bounded by the rows the call read, hence a floor. */
   model KeychainCensusDailyCount {
     day: string;
-    report_count: int32;
-    finding_count: int32;
-    report_count_no_findings: int32;
+    reportCount: int32;
+    findingCount: int32;
+    reportCountNoFindings: int32;
   }
 
   /**

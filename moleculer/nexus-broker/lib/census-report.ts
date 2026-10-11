@@ -371,19 +371,19 @@ export interface CensusStoredReport {
 
 export interface CensusCardIndexEntry {
   asset_id: string;
-  report_count: number;
-  finding_count: number;
-  category_counts: Partial<Record<CensusCategory, number>>;
-  anticipated_finding_count: number;
+  reportCount: number;
+  findingCount: number;
+  categoryCounts: Partial<Record<CensusCategory, number>>;
+  anticipatedFindingCount: number;
 }
 
 export interface CensusDailyCount {
   /** UTC calendar day, `YYYY-MM-DD`. */
   day: string;
-  report_count: number;
-  finding_count: number;
+  reportCount: number;
+  findingCount: number;
   /** Reports for that day that carried no finding — a complete record of nothing observed. */
-  report_count_no_findings: number;
+  reportCountNoFindings: number;
 }
 
 export interface CensusReportIndex {
@@ -391,11 +391,11 @@ export interface CensusReportIndex {
   read_only: true;
   basis: string;
   limitation: string;
-  report_count: number;
-  report_ids_with_no_findings: number;
+  reportCount: number;
+  reportIdsWithNoFindings: number;
   doctrine_snapshot_count: number;
-  trigger_counts: Partial<Record<CensusTrigger, number>>;
-  category_counts: Partial<Record<CensusCategory, number>>;
+  triggerCounts: Partial<Record<CensusTrigger, number>>;
+  categoryCounts: Partial<Record<CensusCategory, number>>;
   cards: CensusCardIndexEntry[];
   truncated: boolean;
   /**
@@ -407,9 +407,9 @@ export interface CensusReportIndex {
    * Bounded by the rows the caller read, so it is a floor on true daily volume, not a
    * census of it. `truncated` tells you when that floor is not the whole truth.
    */
-  daily_counts: CensusDailyCount[];
-  /** Days observed in `daily_counts`. Extrapolating rows/day needs this as the denominator. */
-  observed_day_count: number;
+  dailyCounts: CensusDailyCount[];
+  /** Days observed in `dailyCounts`. Extrapolating rows/day needs this as the denominator. */
+  observedDayCount: number;
 }
 
 /**
@@ -448,19 +448,19 @@ export function buildCensusReportIndex(
       categoryCounts[category] = (categoryCounts[category] || 0) + 1;
       const entry = cards.get(assetId) || {
         asset_id: assetId,
-        report_count: 0,
-        finding_count: 0,
-        category_counts: {},
-        anticipated_finding_count: 0,
+        reportCount: 0,
+        findingCount: 0,
+        categoryCounts: {},
+        anticipatedFindingCount: 0,
       };
-      entry.finding_count += 1;
-      entry.category_counts[category] = (entry.category_counts[category] || 0) + 1;
-      if (finding.anticipated === false) entry.anticipated_finding_count += 1;
+      entry.findingCount += 1;
+      entry.categoryCounts[category] = (entry.categoryCounts[category] || 0) + 1;
+      if (finding.anticipated === false) entry.anticipatedFindingCount += 1;
       cards.set(assetId, entry);
     }
   }
 
-  // report_count per card: a report that produced no finding still observed that card, so
+  // reportCount per card: a report that produced no finding still observed that card, so
   // count it from the frame's card set when present, otherwise from findings alone.
   const reportCounts = new Map<string, number>();
   for (const report of reports) {
@@ -471,11 +471,11 @@ export function buildCensusReportIndex(
     for (const assetId of assets) reportCounts.set(assetId, (reportCounts.get(assetId) || 0) + 1);
   }
   for (const [assetId, entry] of cards) {
-    entry.report_count = reportCounts.get(assetId) || 0;
+    entry.reportCount = reportCounts.get(assetId) || 0;
   }
 
   const orderedCards = [...cards.values()].sort(
-    (left, right) => right.finding_count - left.finding_count || left.asset_id.localeCompare(right.asset_id),
+    (left, right) => right.findingCount - left.findingCount || left.asset_id.localeCompare(right.asset_id),
   );
 
   // Q6 retention instrumentation: rows per UTC calendar day, so A6 can size retention
@@ -486,14 +486,14 @@ export function buildCensusReportIndex(
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
     const bucket = dailyBuckets.get(day) || {
       day,
-      report_count: 0,
-      finding_count: 0,
-      report_count_no_findings: 0,
+      reportCount: 0,
+      findingCount: 0,
+      reportCountNoFindings: 0,
     };
-    bucket.report_count += 1;
+    bucket.reportCount += 1;
     const findings = report.metadata?.findings || [];
-    bucket.finding_count += findings.length;
-    if (findings.length === 0) bucket.report_count_no_findings += 1;
+    bucket.findingCount += findings.length;
+    if (findings.length === 0) bucket.reportCountNoFindings += 1;
     dailyBuckets.set(day, bucket);
   }
   const dailyCounts = [...dailyBuckets.values()].sort((left, right) => left.day.localeCompare(right.day));
@@ -508,16 +508,16 @@ export function buildCensusReportIndex(
       "No governance threshold is applied here; threshold policy is A5. A card absent from this " +
       "index was not reported in a finding — which is not the same as being correctly present, " +
       "because a sampled execution with zero findings is a complete record of nothing observed. " +
-      "daily_counts is bounded by the rows this call read, so it is a floor on true daily volume " +
+      "dailyCounts is bounded by the rows this call read, so it is a floor on true daily volume " +
       "whenever truncated is true.",
-    report_count: reports.length,
-    report_ids_with_no_findings: emptyReports,
+    reportCount: reports.length,
+    reportIdsWithNoFindings: emptyReports,
     doctrine_snapshot_count: doctrineSnapshots.size,
-    trigger_counts: triggerCounts,
-    category_counts: categoryCounts,
+    triggerCounts: triggerCounts,
+    categoryCounts: categoryCounts,
     cards: orderedCards,
     truncated: Boolean(options.truncated),
-    daily_counts: dailyCounts,
-    observed_day_count: dailyCounts.length,
+    dailyCounts: dailyCounts,
+    observedDayCount: dailyCounts.length,
   };
 }
