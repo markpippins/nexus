@@ -92,13 +92,21 @@ def parse_timer_ts(ts: str) -> dt.datetime:
 
 
 def parse_manifest_ts(name: str):
-    """manifest__20260920_033503.txt -> aware UTC datetime (pipeline clock)."""
+    """manifest__20260920_033503.txt -> aware datetime (LOCAL pipeline clock).
+
+    The pipeline builds the name from `date +%Y%m%d_%H%M%S` (see
+    pg-backup-to-vanadium.sh TS=...) and the systemd unit sets no TZ, so the
+    stamp is LOCAL wall-clock, not UTC. Force-tagging UTC made every manifest
+    look 4h older than reality on an EDT host: V5 overstated the RPO age, and
+    any --applied-after within 4h of a run false-FAILed ('backup PREDATES
+    latest applied migration'). Interpret as local, as parse_timer_ts does.
+    """
     m = re.match(r"manifest__(\d{8})_(\d{6})\.txt$", name.strip())
     if not m:
         return None
     return dt.datetime.strptime(
         m.group(1) + m.group(2), "%Y%m%d%H%M%S"
-    ).replace(tzinfo=dt.timezone.utc)
+    ).astimezone()
 
 
 def rpo_classify(age_hours: float) -> str:
