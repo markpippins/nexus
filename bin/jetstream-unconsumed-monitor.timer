@@ -1,0 +1,24 @@
+[Unit]
+Description=Schedule the JetStream unconsumed-stream monitor every 10 minutes
+Documentation=https://github.com/markpippins/nexus/pull/740
+
+[Timer]
+# Every 10 minutes. Cadence chosen against the incident timeline: WRITE_QUEUE
+# was unconsumed for 24 DAYS, so 10-minute detection is four orders of
+# magnitude earlier than the failure it exists to catch, while costing one
+# read-only query per tick.
+#
+# Persistent=true replays a tick missed while the machine was down — the same
+# post-outage catch-up property the buffer-drain timer relies on, and the
+# reason a reboot does not blind the monitor.
+OnCalendar=*:0/10
+Persistent=true
+# Skew so this never collides head-on with other :00/:10 jobs (matches the
+# buffer-drain timer's convention).
+RandomizedDelaySec=30
+# The tool takes no lock (it is read-only and fast); a tick that lands while
+# the previous one runs is harmless and this keeps missed ticks from piling.
+Unit=jetstream-unconsumed-monitor.service
+
+[Install]
+WantedBy=timers.target

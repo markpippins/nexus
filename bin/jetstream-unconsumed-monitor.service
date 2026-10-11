@@ -1,0 +1,60 @@
+[Unit]
+Description=JetStream unconsumed-stream monitor — alerts when a stream holds messages no consumer will receive
+Documentation=https://github.com/markpippins/nexus/pull/740
+# WHY THIS EXISTS
+# WRITE_QUEUE ran 24 days with a stream and NO durable consumer (incident
+# 2026-10-10, escalation 4644f5f6). Publishers kept publishing, JetStream kept
+# acking, nothing drained it, and no alert fired anywhere — because no such
+# alert existed. This is that alert, and it watches for the whole CLASS of
+# defect (dead unit, pruned worktree, deleted consumer), not just that cause.
+#
+# READ-ONLY: the monitor only reads stream/consumer info. It never creates,
+# updates, deletes or drains anything. That is deliberate — the incident was
+# caused by a well-intentioned mutation, so the monitor guarding against it
+# must be incapable of causing one.
+#
+# Pairs with write-queue-reconciler.service (the consumer) but is independent
+# of it: if the reconciler dies, THIS is what notices.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=codex
+Group=codex
+WorkingDirectory=/home/codex/dev/nexus
+
+# ── Environment ────────────────────────────────────────────────────────
+# NATS bus is LOCAL on titanium (thallium 192.168.1.82 was unreachable as of
+# 2026-10-10; operator confirmed local authoritative). Same dated-note
+# convention as write-queue-reconciler.service and
+# write-queue-buffer-drain.service.
+Environment=NATS_URL=nats://localhost:4222
+
+# --min-consecutive 2: a stream may be legitimately consumer-less for a few
+# seconds while its unit restarts; paging on that is how monitors get muted.
+# Two consecutive bad checks (~20 min at the timer's cadence) clears that bar
+# while still catching the 24-day case within one hour.
+#
+# NO --ack IS NEEDED. An earlier version of this unit shipped with
+# `--ack FS_VOYAGER` because I misread that stream as an orphan: I counted only
+# JETSTREAM consumers via jsm.consumers_info(), which is blind to core-NATS
+# subscribers. FS_VOYAGER is in fact consumed live by voyager-adapter over core
+# NATS (nexus.fs.v1.observation/.hint/.span) and has processed ~37.4M messages.
+# The monitor now checks core-NATS subscriptions via the :8222 connz endpoint,
+# so it classifies that stream OK on its own merits rather than by suppression.
+# Lesson kept in place: verify the consumer EXISTS before assuming absence,
+# and never reach for --ack to paper over a measurement gap.
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/jetstream_unconsumed_monitor.py --min-consecutive 2
+
+# ── Exit-code contract (the tool's, mirrored for the journal) ──────────
+# 0 healthy · 1 alert-worthy · 2 could not check. NONE are masked as
+# success: every outcome is visible in `systemctl --user status` and the
+# journal, and a non-zero exit leaves the timer's last result inspectable.
+# Exit 2 (broker unreachable) is itself a page — an unmonitorable broker is
+# an outage.
+TimeoutStartSec=120
+SyslogIdentifier=jetstream-unconsumed-monitor
+
+[Install]
+WantedBy=default.target
