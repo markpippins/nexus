@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Seed the DBA opencode-persona into tackle.prompts from the checked-in file.
+"""Seed the dba role's opencode-persona into tackle.prompts from the file.
 
 Ratification-gated helper for the DBA charter (architect record 2dca56d4:
 DBA authors -> Supervisor validates -> Architect ratifies). The single
@@ -23,7 +23,11 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 PERSONA_PATH = REPO / "config" / "harnesses" / "opencode" / "agents" / "dba.md"
-ROLE = "DBA"
+# Canonical lowercase role (D1 role-name canonicalisation; dba.md declares
+# `assumes_role: dba`). The persona BRIDGE contract is `<role>/opencode-persona`
+# — the `database-admin` slug some rows carried was ad-hoc and resolved nothing
+# (the bridge 404s on it; see test_persona_bridge_parity.py).
+ROLE = "dba"
 SLUG = "opencode-persona"
 TITLE = "DBA — role charter (opencode-persona)"
 TAGS = ["opencode-persona", "role-charter", "v0.1-draft"]
