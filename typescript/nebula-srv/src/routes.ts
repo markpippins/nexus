@@ -5311,15 +5311,25 @@ export function createRoutes(pool: Pool): Router {
         return res.status(400).json({ error: 'level must be between 1 and 4' });
       }
 
-      // Write-side guard for undeliverable routing tags. Inbox lookup matches
-      // `to:`+role.toLowerCase() exactly, so an uppercase routing tag (to:DBA)
-      // reaches no inbox at all. Rejected here rather than normalized: a
-      // silent rewrite would hide the mistake from the writer. See
-      // src/routing-tags.ts and DBA inspection 26a6acb3.
-      const routingTagError = routingTagErrorMessage(tags);
-      if (routingTagError) {
-        return res.status(400).json({ error: routingTagError });
-      }
+// Write-side guard for undeliverable routing tags (Ruling 38I:
+        // NORMALIZE-THEN-VALIDATE). Inbox lookup matches `to:`+role.toLowerCase()
+        // exactly, so an uppercase routing tag (to:DBA) reaches no inbox at all.
+        //
+        // Validate the NORMALIZED tags, not the raw ones. normalizeTags() ran
+        // above (R13 §4) and already repaired recoverable defects — notably
+        // concatenated addresses (`to:engineer-to:engineer-ii` →
+        // `to:engineer,to:engineer-ii`) and case (`to:DBA` → `to:dba`) — and
+        // `normalizedTags.tags` is what actually gets stored. Validating the raw
+        // input instead would reject records whose stored form is perfectly
+        // deliverable, colliding with the R13 normalizer suites that assert the
+        // repair.
+        //
+        // What this guard still catches: tags the normalizer could NOT make
+        // deliverable (non-string entries, empty/unsplittable role suffixes).
+        const routingTagError = routingTagErrorMessage(normalizedTags.tags);
+        if (routingTagError) {
+          return res.status(400).json({ error: routingTagError });
+        }
 
       const { rows: [row] } = await pool.query(
         `INSERT INTO nebula.agent_records (record_type, role, title, content, source_path, metadata, tags, system_id, subsystem_id, feature_id, plan_ref, level, visibility_scope, model)
