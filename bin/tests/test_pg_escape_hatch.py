@@ -58,6 +58,9 @@ class MechanicsMockTest(unittest.TestCase):
             "PGDATABASE": "nexus",
             "BACKUP_DIR": self.bk,
             "LOCK_FILE": os.path.join(self.tmp, "lock"),
+            # Keep the cluster serialization lock off the shared default path
+            # so these tests never contend with a real/PARALLEL pg backup run.
+            "PG_DUMP_CLUSTER_LOCK": os.path.join(self.tmp, "cluster.lock"),
             "NEBULA_URL": os.path.join(self.tmp, "unwritable-nebula"),  # best-effort incident fails silently
             "PATH": self.bindir + os.pathsep + os.environ["PATH"],
             "PG_DUMP_MARKER": self.marker,
