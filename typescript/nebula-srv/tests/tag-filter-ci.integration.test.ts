@@ -115,8 +115,15 @@ async function main(): Promise<void> {
   // only the write-side handling of ROUTING tags moved (38J). `area:` carries no
   // delivery semantics, so its case is preserved verbatim and a case-insensitive
   // read must find it regardless of the query's case.
-  const upper = await insert(['area:Inbox'], `${NS} upper`);
-  const lower = await insert(['area:inbox'], `${NS} lower`);
+  // AND fixtures carry a second DISTINCT tag. `allTagsClause` (tagFilter.ts:61)
+  // counts tag ELEMENTS matching ANY lowered query term and requires that count
+  // to equal the number of query TERMS. Since matching is case-insensitive,
+  // `AREA:INBOX` and `area:inbox` are the SAME value — so a 2-term AND made of
+  // two case-variants of one tag is unsatisfiable by a 1-tag record. `ns:and`
+  // gives the conjunction a real second term while the cross-case property
+  // still rides on the `area:` term.
+  const upper = await insert(['area:Inbox', 'ns:and'], `${NS} upper`);
+  const lower = await insert(['area:inbox', 'ns:and'], `${NS} lower`);
   const mixed = await insert(['AREA:INBOX'], `${NS} mixed`);
   const control = await insert(['area:Outbox'], `${NS} control`);
   const created: Fixture[] = [upper, lower, mixed, control];
@@ -125,7 +132,7 @@ async function main(): Promise<void> {
     // 1. Write-side verbatim for non-routing tags — the Ruling 8 contract.
     const roundTrip = await httpReq('GET', `/api/agent-records?id=${upper.id}`);
     await expect(
-      JSON.stringify(roundTrip.body.items?.[0]?.tags ?? roundTrip.body.tags) === JSON.stringify(['area:Inbox']),
+      JSON.stringify(roundTrip.body.items?.[0]?.tags ?? roundTrip.body.tags) === JSON.stringify(['area:Inbox', 'ns:and']),
       'write-side verbatim: non-routing tag keeps its original case',
       roundTrip.body,
     );
@@ -139,9 +146,9 @@ async function main(): Promise<void> {
     await expect(!singleIds.includes(control.id), 'single area:inbox excludes control');
 
     // 3. Multi-tag AND, cross-case against stored case.
-    const andQ = await httpReq('GET', `/api/agent-records?tag=AREA:INBOX,area:inbox&pageSize=500&includeContent=false`);
+    const andQ = await httpReq('GET', `/api/agent-records?tag=AREA:INBOX,ns:and&pageSize=500&includeContent=false`);
     const andIds: string[] = (andQ.body.items ?? []).map((r: any) => r.id);
-    await expect(andIds.includes(upper.id) && andIds.includes(lower.id), 'AND AREA:INBOX+area:inbox delivers both case variants');
+    await expect(andIds.includes(upper.id) && andIds.includes(lower.id), 'AND AREA:INBOX+ns:and delivers both area: case variants');
     await expect(!andIds.includes(control.id), 'AND excludes control');
 
     // 4. POST /agent-records/search, OR semantics, cross-case.
