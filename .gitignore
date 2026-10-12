@@ -175,3 +175,4 @@ etc/
 !typescript/resolution-srv/package-lock.json
 !moleculer/nexus-broker/package-lock.json
 !moleculer/search/package-lock.json
+!moleculer/substance/package-lock.json
