@@ -115,7 +115,7 @@ try {
       'GET',
       `/api/agent-records?tag=${encodeURIComponent('to:engineer-ii')}&pageSize=500&includeContent=false`,
     );
-    const ids: (deliv.body.items ?? []).map((r: any) => r.id);
+    const ids: string[] = (deliv.body.items ?? []).map((r: any) => r.id);
     await expect(ids.includes(created[0].id), 'normalized record delivers via canonical to:engineer-ii query');
 
     // ── PATCH path normalizes too — and is where Class R CASE repair lives ──

@@ -109,6 +109,17 @@ describe('routingCaseErrorMessage (Ruling 38J)', () => {
     expect(routingCaseErrorMessage(['  to:DBA  '])).toContain('to:DBA');
   });
 
+  it('matches the prefix case-insensitively, like the normalizer\'s Class R rule', () => {
+    // Regression: the guard used a lowercase-only `to:` prefix test while
+    // normalizeTags classifies with `t.toLowerCase().startsWith('to:')`. A
+    // `TO:DBA` is a routing tag the normalizer would repair into a
+    // deliverable `to:dba` — so it must be rejected, not slip past.
+    expect(routingCaseErrorMessage(['TO:DBA'])).toContain('TO:DBA');
+    expect(routingCaseErrorMessage(['  To:Dba  '])).toContain('To:Dba');
+    // but a mixed-case prefix with an already-canonical role is deliverable
+    expect(routingCaseErrorMessage(['To:tester'])).toBeNull();
+  });
+
   it('leaves non-routing tags alone — case there carries no delivery semantics', () => {
     expect(routingCaseErrorMessage(['type:Report', 'blocks:PR-580'])).toBeNull();
   });
