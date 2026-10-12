@@ -676,6 +676,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+          cache: npm
+          cache-dependency-path: moleculer/substance/package-lock.json
 
       - name: Locate the twin (deleted is an error; not-yet-landed is a notice)
         id: locate
