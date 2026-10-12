@@ -134,13 +134,29 @@ async function main(): Promise<void> {
     );
     check(s2.tags.length === 3, 'S2 produced exactly three tags (no residue)', s2.tags);
 
-    // ── S3: case-mixed concat — split THEN lowercase (§4.2d before §4.3) ──
-    const s3 = await post('case-mixed', ['to:Engineer-to:Engineer-II']);
-    check(
-      s3.tags.includes('to:engineer') && s3.tags.includes('to:engineer-ii'),
-      'S3 case-mixed concat split and lowercased',
-      s3.tags,
-    );
+    // ── S3: case-mixed concat is REJECTED at POST (Ruling 38J) ──────────
+    // Previously this case asserted "split THEN lowercase (§4.2d before §4.3)":
+    // `to:Engineer-to:Engineer-II` was silently repaired into two lowercase
+    // addresses. Ruling 38J forbids exactly that for ROUTING tags — a case-only
+    // routing address is the defect class (DBA 26a6acb3), not a structural fix,
+    // so POST rejects it and the writer is told to correct it. The concat
+    // repair itself is unchanged and still proven by S1/S2/S7 below, which use
+    // canonical-case segments.
+    {
+      const res = await httpReq('POST', '/api/agent-records', {
+        recordType: 'engineering_log',
+        role: 'dba',
+        title: `${NS} S3 case-mixed routing must be rejected`,
+        content: `tag-normalizer concat fixture ${NS} — never stored`,
+        tags: ['to:Engineer-to:Engineer-II'],
+      });
+      check(res.status === 400, 'S3 case-mixed routing tag rejected at POST (38J)', res.status);
+      check(
+        typeof res.body?.error === 'string' && res.body.error.includes('to:'),
+        'S3 400 names the routing tag',
+        JSON.stringify(res.body),
+      );
+    }
 
     // ── S4: already-clean address must NOT be re-split (no over-split) ──
     const s4 = await post('clean', ['to:engineer']);

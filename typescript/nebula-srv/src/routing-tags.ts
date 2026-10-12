@@ -98,7 +98,12 @@ export function findRoutingCaseProblems(tags: unknown): RoutingTagProblem[] {
   for (const raw of tags) {
     if (typeof raw !== 'string') continue;
     const trimmed = raw.trim();
-    if (!trimmed.startsWith(ROUTING_TAG_PREFIX)) continue;
+    // Case-insensitive prefix, matching the normalizer's own Class R
+    // classification (`t.toLowerCase().startsWith('to:')`). A `TO:DBA` is a
+    // routing tag — the normalizer will lowercase it into a deliverable
+    // `to:dba` — so it must be caught here too, not slip past a
+    // lowercase-only prefix test.
+    if (!trimmed.toLowerCase().startsWith(ROUTING_TAG_PREFIX)) continue;
 
     const role = trimmed.slice(ROUTING_TAG_PREFIX.length);
     if (role === role.toLowerCase()) continue; // already canonical case
