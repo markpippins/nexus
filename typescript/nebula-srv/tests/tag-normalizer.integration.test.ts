@@ -55,28 +55,51 @@ async function main(): Promise<void> {
   console.log(`tag normalizer integration (ns=${NS}) against ${BASE}`);
   const created: Array<{ id: string }> = [];
 
-  try {
-    // ── POST with a maximally dirty payload (all §4 repairs at once) ──
+try {
+    // ── Ruling 38J: POST REJECTS a case-only routing tag ──────────────────
+    // A routing tag whose case differs from canonical (`to:DBA`) is a routing
+    // bug that historically caused delivery loss (DBA inspection 26a6acb3), not
+    // a structural defect to auto-repair. POST returns 400 naming the corrected
+    // form. The normalizer's CASE repair is therefore asserted on the PATCH
+    // path below (PATCH still normalizes — see the "PATCH path normalizes too"
+    // block) and on the structural-repair POST that follows, which carries only
+    // unambiguous repairs (concat, comma-split, JSON-unwrap, Class V case).
+    const caseOnly = await httpReq('POST', '/api/agent-records', {
+      recordType: 'engineering_log',
+      role: 'dba',
+      title: `${NS} case-only routing tag must be rejected`,
+      content: `tag normalizer integration fixture ${NS} — safe to delete`,
+      tags: ['  to:DBA  ', 'type:report'],
+    });
+    await expect(caseOnly.status === 400, 'POST rejects case-only routing tag to:DBA', caseOnly.status);
+    await expect(
+      typeof caseOnly.body?.error === 'string' && caseOnly.body.error.includes('to:DBA'),
+      '400 names the offending tag to:DBA',
+      JSON.stringify(caseOnly.body),
+    );
+
+    // ── POST with a maximally dirty payload (all §4 STRUCTURAL repairs at once;
+    //     the only case-bearing tag is Class V, whose case is preserved) ──
     const post = await httpReq('POST', '/api/agent-records', {
       recordType: 'engineering_log',
       role: 'dba',
       title: `${NS} dirty write`,
       content: `tag normalizer integration fixture ${NS} — safe to delete`,
       tags: [
-        '  to:DBA  ',                                    // trim + Class R lowercase
         JSON.stringify(['area:inbox', '"type:change"']), // JSON-unwrap + strip quotes
         'affects:pr:613,pr:614,pr:615',                  // comma-split
         'to:engineer-to:engineer-ii',                    // §4.2d concat split-repair (R13 step 2)
+        'to:engineer-ii',                                // canonical routing tag, unchanged
         'blocks:PR-580',                                 // Class V case preserved
         '',                                              // dropped
       ],
     });
-    if (post.status !== 201) throw new Error(`POST failed: ${post.status} ${JSON.stringify(post.body).slice(0, 200)}`);
+    if (post.status !== 201) throw new Error(`POST failed: ${post.status} ${JSON.stringify(post.body).slice(0, 400)}`);
     created.push({ id: post.body.id });
 
     const stored: string[] = post.body.tags;
     await expect(Array.isArray(stored), 'POST returns a tags array');
-    await expect(stored.includes('to:dba'), 'to:DBA stored lowercase (Class R)', stored);
+    await expect(stored.includes('to:engineer-ii'), 'canonical routing tag stored verbatim', stored);
     await expect(stored.includes('area:inbox'), 'JSON-unwrapped tag stored', stored);
     await expect(stored.includes('type:change'), 'quote-stripped tag stored', stored);
     await expect(stored.includes('affects:pr:613') && stored.includes('pr:614') && stored.includes('pr:615'),
@@ -87,21 +110,26 @@ async function main(): Promise<void> {
     await expect(!stored.some((t: string) => t.includes(',') || /[\[\]{}"]/.test(t) || t.trim() === ''),
       'no commas/brackets/empties survive', stored);
 
-    // ── delivery still works post-normalization (to:dba lowercase) ──
+// ── delivery still works post-normalization (canonical to: tag) ──
     const deliv = await httpReq(
       'GET',
-      `/api/agent-records?tag=${encodeURIComponent('to:dba')}&pageSize=500&includeContent=false`,
+      `/api/agent-records?tag=${encodeURIComponent('to:engineer-ii')}&pageSize=500&includeContent=false`,
     );
-    const ids: string[] = (deliv.body.items ?? []).map((r: any) => r.id);
-    await expect(ids.includes(created[0].id), 'normalized record delivers via canonical to:dba query');
+    const ids: (deliv.body.items ?? []).map((r: any) => r.id);
+    await expect(ids.includes(created[0].id), 'normalized record delivers via canonical to:engineer-ii query');
 
-    // ── PATCH path normalizes too ──
+    // ── PATCH path normalizes too — and is where Class R CASE repair lives ──
+    // Ruling 38J keeps PATCH out of the POST validation scope (PATCH asymmetry
+    // acknowledged, out of scope), so PATCH still normalizes `to:` case. This
+    // block is now the canonical assertion that the normalizer's Class R
+    // lowercase repair works — it moved here from the POST path.
     const patch = await httpReq('PATCH', `/api/agent-records/${created[0].id}`, {
-      tags: ['  TO:tester ', '"patched-flag"'],
+      tags: ['  to:DBA  ', 'to:tester', '"patched-flag"'],
     });
     await expect(patch.status === 200, 'PATCH answers 200', patch.status);
     const reread = await httpReq('GET', `/api/agent-records?id=${created[0].id}`);
     const patchedTags: string[] = reread.body.items?.[0]?.tags ?? [];
+    await expect(patchedTags.includes('to:dba'), 'PATCH stored to:DBA lowercased to to:dba (Class R case repair — Ruling 38J)', patchedTags);
     await expect(patchedTags.includes('to:tester'), 'PATCH stored to:tester lowercase', patchedTags);
     await expect(patchedTags.includes('patched-flag'), 'PATCH stored quote-stripped tag', patchedTags);
 
