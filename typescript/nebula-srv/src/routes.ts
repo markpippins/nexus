@@ -12,7 +12,7 @@ import { fetchSubstance, substanceToCamel } from './substance-proxy';
 import { CrossReferenceType } from './crossref-taxonomy';
 import { normalizeTags } from './tagNormalizer';
 import { attestationsLimiter } from './limiter';
-import { routingTagErrorMessage } from './routing-tags';
+import { routingTagErrorMessage, routingCaseErrorMessage } from './routing-tags';
 import {
   camelCaseRow,
   AGENT_RECORD_LIST_COLUMNS,
@@ -5311,21 +5311,31 @@ export function createRoutes(pool: Pool): Router {
         return res.status(400).json({ error: 'level must be between 1 and 4' });
       }
 
-// Write-side guard for undeliverable routing tags (Ruling 38I:
-        // NORMALIZE-THEN-VALIDATE). Inbox lookup matches `to:`+role.toLowerCase()
-        // exactly, so an uppercase routing tag (to:DBA) reaches no inbox at all.
+// Write-side guard for undeliverable routing tags (Rulings 38I + 38J:
+        // NORMALIZE-THEN-VALIDATE, with case-only violations still rejected).
+        // Inbox lookup matches `to:`+role.toLowerCase() exactly, so an uppercase
+        // routing tag (to:DBA) reaches no inbox at all.
         //
-        // Validate the NORMALIZED tags, not the raw ones. normalizeTags() ran
-        // above (R13 §4) and already repaired recoverable defects — notably
-        // concatenated addresses (`to:engineer-to:engineer-ii` →
-        // `to:engineer,to:engineer-ii`) and case (`to:DBA` → `to:dba`) — and
-        // `normalizedTags.tags` is what actually gets stored. Validating the raw
-        // input instead would reject records whose stored form is perfectly
-        // deliverable, colliding with the R13 normalizer suites that assert the
-        // repair.
+        // Two checks, each against the right form:
         //
-        // What this guard still catches: tags the normalizer could NOT make
-        // deliverable (non-string entries, empty/unsplittable role suffixes).
+        //  1. CASE — checked on the RAW input, BEFORE normalization. The
+        //     normalizer would lowercase `to:DBA` to `to:dba` and repair it
+        //     silently, which would re-admit the exact defect this module
+        //     exists to stop (DBA inspection 26a6acb3: 694 to:dba vs 7 to:DBA;
+        //     a Supervisor record undelivered ~6.5h). The writer gets a 400
+        //     naming the corrected form rather than a quiet rewrite.
+        //
+        //  2. STRUCTURE — checked on the NORMALIZED form. normalizeTags() ran
+        //     above (R13 §4) and `normalizedTags.tags` is what actually gets
+        //     stored, so validating the raw input would reject records whose
+        //     stored form is perfectly deliverable. Structural repairs
+        //     (concat/split, whitespace) are accepted here — the R13 suites
+        //     assert them, including
+        //     `to:engineer-to:engineer-ii` → `to:engineer,to:engineer-ii`.
+        const routingCaseError = routingCaseErrorMessage(tags);
+        if (routingCaseError) {
+          return res.status(400).json({ error: routingCaseError });
+        }
         const routingTagError = routingTagErrorMessage(normalizedTags.tags);
         if (routingTagError) {
           return res.status(400).json({ error: routingTagError });
