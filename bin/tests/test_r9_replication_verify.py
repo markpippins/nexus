@@ -20,6 +20,7 @@ import importlib.util
 import io
 import os
 import sys
+import time
 import unittest
 
 _SELF = os.path.dirname(os.path.abspath(__file__))
@@ -66,6 +67,23 @@ def run(r, **kw):
     return r9rv.run_battery(r, now=NOW, **kw)
 
 
+@contextlib.contextmanager
+def pinned_tz(tzname):
+    """Pin the process timezone so a naive datetime's .astimezone() is
+    deterministic, independent of the host's zone."""
+    old = os.environ.get("TZ")
+    os.environ["TZ"] = tzname
+    time.tzset()
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = old
+        time.tzset()
+
+
 def get(rep, cid):
     return next(c for c in rep.checks if c.cid == cid)
 
@@ -77,8 +95,25 @@ class Helpers(unittest.TestCase):
         self.assertEqual(r9rv.parse_timer_line(line), "2026-09-20 03:22:14")
 
     def test_manifest_ts(self):
-        self.assertEqual(r9rv.parse_manifest_ts("manifest__20260920_033503.txt"),
-                         dt.datetime(2026, 9, 20, 3, 35, 3,
+        with pinned_tz("UTC"):
+            self.assertEqual(
+                r9rv.parse_manifest_ts("manifest__20260920_033503.txt"),
+                dt.datetime(2026, 9, 20, 3, 35, 3, tzinfo=dt.timezone.utc))
+        self.assertIsNone(r9rv.parse_manifest_ts("garbage"))
+
+    def test_manifest_ts_is_local_not_forced_utc(self):
+        """Regression for the 4h EDT bug (fails on pre-fix code).
+
+        The manifest name is built from `date +%Y%m%d_%H%M%S` (LOCAL), so the
+        stamp must be read as local. Pinned to America/New_York: local
+        2026-09-20 03:35:03 EDT is 2026-09-20 07:35:03 UTC. Pre-fix code
+        force-tagged UTC, returning offset 0 instead of -4h.
+        """
+        with pinned_tz("America/New_York"):
+            ts = r9rv.parse_manifest_ts("manifest__20260920_033503.txt")
+        self.assertEqual(ts.utcoffset(), dt.timedelta(hours=-4))
+        self.assertEqual(ts.astimezone(dt.timezone.utc),
+                         dt.datetime(2026, 9, 20, 7, 35, 3,
                                      tzinfo=dt.timezone.utc))
 
     def test_rpo_bands(self):
@@ -190,12 +225,33 @@ class Battery(unittest.TestCase):
         self.assertNotIn("2026-09-14", get(rep, "V9").evidence)
         self.assertNotIn("2026-09-15", get(rep, "V9").evidence)
 
+    def test_manifest_local_zone_keeps_fresh_manifest_ok(self):
+        """End-to-end regression for the 4h bug (fails on pre-fix code).
+
+        manifest__20260919_033503.txt is LOCAL 03:35:03 EDT == 07:35:03 UTC.
+        At NOW (2026-09-20 12:00 UTC) that is 28.4h old -> RPO ok -> V5 PASS.
+        Pre-fix the stamp was forced to 03:35:03 UTC (32.4h) -> warn -> FAIL.
+        """
+        r = fake_runner(ssh=lambda a: (
+            0, "manifest__20260919_033503.txt" if "ls" in a
+            else "/dev/sdb1 1T 800G 200G 80% /x", ""))
+        with pinned_tz("America/New_York"):
+            rep = run(r)
+        self.assertEqual(get(rep, "V5").status, "PASS")
+        self.assertIn("28.4h old", get(rep, "V5").evidence)
+
     def test_applied_after_gate(self):
-        ls = "manifest__20260920_033503.txt"  # fresh, but pre-migration
+        # Fresh manifest (LOCAL 03:35:03 EDT == 07:35:03Z, well inside the ok
+        # band at NOW) that nonetheless predates a migration applied at 09:00Z.
+        # Pinned TZ keeps the comparison host-independent; the old fixture used
+        # 05:00Z, which only read as "predates" while the stamp was wrongly
+        # force-tagged UTC — i.e. it was asserting the 4h bug's false FAIL.
+        ls = "manifest__20260920_033503.txt"
         r = fake_runner(ssh=lambda a: (0, ls if "ls" in a
                                        else "/dev/x 1T 10G 80% /x", ""))
-        after = dt.datetime(2026, 9, 20, 5, 0, 0, tzinfo=dt.timezone.utc)
-        rep = run(r, applied_after=after)
+        after = dt.datetime(2026, 9, 20, 9, 0, 0, tzinfo=dt.timezone.utc)
+        with pinned_tz("America/New_York"):
+            rep = run(r, applied_after=after)
         self.assertEqual(get(rep, "V5").status, "FAIL")
         self.assertIn("PREDATES", get(rep, "V5").evidence)
 

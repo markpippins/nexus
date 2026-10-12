@@ -1,0 +1,71 @@
+{
+  "_comment": [
+    "RATIFIED PINS for the governing frame. Decision 29 (c38ea344) ratifies",
+    "docs/governing-frame.md as the bootstrap input to the doctrine snapshot.",
+    "",
+    "WHY THIS FILE EXISTS SEPARATELY: the generator must be deterministic AND the frame",
+    "must stay stable across incidental edits to the texts it pins. Deriving the pins from",
+    "live git HEAD would mint a new frame on every commit, which is exactly the",
+    "fragmentation Decision 28 Ruling 3 rejected. So the ratified revisions live here.",
+    "and they move only when doctrine is deliberately re-ratified -- a reviewed change to",
+    "THIS FILE, which is a doctrine change, not a routine edit.",
+    "",
+    "CHANGING ANY VALUE HERE IS A DOCTRINE CHANGE and re-mints the bootstrap hash, which",
+    "deliberately starts a new B1/B3 cohort rather than contaminating an old one."
+  ],
+  "frame_schema_version": 1,
+  "ratified_by": [
+    "85c6d979-c862-42ae-bd68-945e1b0c6a9a",
+    "c38ea344-f84d-4ffa-93c4-e762d4fb925d"
+  ],
+  "pins": [
+    {
+      "id": "agent-operating-doctrine",
+      "kind": "workspace-file",
+      "path": "/home/codex/dev/AGENTS.md",
+      "revision": "v2.5",
+      "revision_kind": "declared-version",
+      "note": "Workspace operating doctrine. Not in a git repo, so it is pinned by its DECLARED version rather than a git SHA. A file edit that does not change the declared version does NOT move the frame."
+    },
+    {
+      "id": "workspace-claude-md",
+      "kind": "workspace-file",
+      "path": "/home/codex/dev/CLAUDE.md",
+      "revision": "workspace-root",
+      "revision_kind": "pinned-locator",
+      "note": "Workspace-level companion doctrine."
+    },
+    {
+      "id": "repo-claude-md",
+      "kind": "repo-file",
+      "path": "CLAUDE.md",
+      "revision": "c22cdc1f2f92799193d3b0359f4e9b6cedd2297d",
+      "revision_kind": "git-sha",
+      "note": "Repository compiler contract; the strictest of the two CLAUDE.md files."
+    },
+    {
+      "id": "role-personas",
+      "kind": "db-table",
+      "locator": "tackle.prompts",
+      "revision": "persona-set@seed-2026-09",
+      "revision_kind": "named-revision",
+      "note": "Role persona sources. Per-role variation is hashed separately as system_prompt_hash, so this pin names the SET, not each persona."
+    },
+    {
+      "id": "procedure-registry",
+      "kind": "db-table",
+      "locator": "tackle.role_memory",
+      "revision": "registry@2026-09",
+      "revision_kind": "named-revision",
+      "note": "Procedure-card registry, PG->Redis synced. Active cards are hashed per-walk into the snapshot's card set, so this pin names the registry itself."
+    },
+    {
+      "id": "conduit-state",
+      "kind": "service",
+      "locator": "conduit-mcp:3100",
+      "revision": "live-state",
+      "revision_kind": "live-locator",
+      "note": "Pipeline authority. Deliberately NOT content-addressed: pinning live pipeline state would mint a new frame on every plan transition and fragment every cohort. Named as a live locator instead."
+    }
+  ]
+}
