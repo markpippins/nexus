@@ -124,7 +124,7 @@ jobs:
       # classification is the classify step's (Ruling 1/4) job. The exit
       # code here only fails on a broken diff input (missing/tampered
       # baseline, gh failure, unanalyzed ref) — exit 2, never exit 1.
-      - name: Baseline diff (RULING-6: report-only)
+      - name: "Baseline diff (RULING-6: report-only)"
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
