@@ -5,7 +5,7 @@
 
 Canonical asset graph: systems, subsystems, features, documents, harvests, agent records, projections, knowledge graph, and cross-references.
 
-**231 endpoints** — inventory generated from source route registrations (`nexus/tools/api-docs/`).
+**233 endpoints** — inventory generated from source route registrations (`nexus/tools/api-docs/`).
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -160,7 +160,7 @@ Canonical asset graph: systems, subsystems, features, documents, harvests, agent
 | GET | `/api/requirements/:id` | GET /api/requirements/:id — single requirement by ID |
 | PATCH | `/api/requirements/:id` | PATCH /api/requirements/:id |
 | GET | `/api/requirements/:id/children` | GET /api/requirements/:id/children — fetch direct child requirements with pagination |
-| POST | `/api/requirements/:id/compile` | REQUIREMENT → WORKREQUEST COMPILATION (Plan 1062) POST /api/requirements/:id/compile — compile a requirement into a WorkRequest IR Runs the two-stage compiler (Stage 1 normalization + Stage 2 op_registry compilation). Optionally creates a conduit plan if createPlan=true. |
+| POST | `/api/requirements/:id/compile` | POST /api/requirements/:id/compile — compile a requirement into a WorkRequest IR Runs the two-stage compiler (Stage 1 normalization + Stage 2 op_registry compilation). Optionally creates a conduit plan if createPlan=true. |
 | GET | `/api/requirements/:id/dependencies` | GET /api/requirements/:id/dependencies — list blockers and blocked-by with pagination |
 | POST | `/api/requirements/:id/dependencies` | POST /api/requirements/:id/dependencies — create a dependency link |
 | DELETE | `/api/requirements/:id/dependencies/:depId` | DELETE /api/requirements/:id/dependencies/:depId — remove a dependency link |
@@ -234,6 +234,8 @@ Canonical asset graph: systems, subsystems, features, documents, harvests, agent
 | GET | `/api/systems/:id/work-requests` | GET /api/systems/:id/work-requests — list work requests scoped to a system |
 | DELETE | `/api/systems/:systemId/folders/:folderId` | DELETE /api/systems/:systemId/folders/:folderId |
 | POST | `/api/systems/demote/:id` | POST /api/systems/demote/:id — demote a system into a subsystem of another system |
+| POST | `/api/v1/capabilities/requirement-compile/compile` | REQUIREMENT → WORKREQUEST COMPILATION (Plan 1062) Governed v1 adapter. It reserves an idempotency key before forwarding to the legacy compiler below, then stores the resulting contract response and immutable receipt atomically. The legacy endpoint remains wire-compatible for existing clients. |
+| GET | `/api/v1/capabilities/requirement-compile/receipts/:receiptId` |  |
 | GET | `/api/work-requests` | WORK REQUESTS (scoped via requirements OR specifications → agenda items → harvest_candidates) GET /api/work-requests — list ALL work requests with pagination |
 | GET | `/api/work-requests/:id` | GET /api/work-requests/:id — single work request |
 | GET | `/api/workspaces` | WORKSPACES GET /api/workspaces — list all workspace paths with pagination |
