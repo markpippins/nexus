@@ -11,7 +11,7 @@ import * as bsRedis from './services/block-segmentation-redis.service';
 import { fetchSubstance, substanceToCamel } from './substance-proxy';
 import { CrossReferenceType } from './crossref-taxonomy';
 import { normalizeTags } from './tagNormalizer';
-import { attestationsLimiter } from './limiter';
+import { attestationsLimiter, requirementCompileLimiter } from './limiter';
 import { routingTagErrorMessage, routingCaseErrorMessage } from './routing-tags';
 import {
   camelCaseRow,
@@ -1185,7 +1185,7 @@ export function createRoutes(pool: Pool): Router {
   // Governed v1 adapter. It reserves an idempotency key before forwarding to the
   // legacy compiler below, then stores the resulting contract response and immutable
   // receipt atomically. The legacy endpoint remains wire-compatible for existing clients.
-  router.post('/v1/capabilities/requirement-compile/compile', async (req: Request, res: Response, next) => {
+  router.post('/v1/capabilities/requirement-compile/compile', requirementCompileLimiter, async (req: Request, res: Response, next) => {
     const { requirementId, createPlan = false, dryRun = false, deliverable } = req.body ?? {};
     const callerKey = req.body?.idempotencyKey ?? req.header('Idempotency-Key');
     if (typeof requirementId !== 'string' || !requirementId.trim()) {
@@ -1381,7 +1381,7 @@ export function createRoutes(pool: Pool): Router {
     }
   });
 
-  router.get('/v1/capabilities/requirement-compile/receipts/:receiptId', async (req: Request, res: Response) => {
+  router.get('/v1/capabilities/requirement-compile/receipts/:receiptId', requirementCompileLimiter, async (req: Request, res: Response) => {
     try {
       const { rows: [row] } = await pool.query(
         `SELECT receipt FROM nebula.compilation_receipts WHERE receipt_id = $1::uuid`,
