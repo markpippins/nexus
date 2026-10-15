@@ -160,7 +160,7 @@ def test_default_uses_get_inbox_single_call():
         assert tool_calls("nebula_get_inbox"), "default path must use nebula_get_inbox"
         assert tool_calls("nebula_list_agent_records") == [], "default path must NOT use list path"
         assert set_pointer_args_list() == [], "default path must not write the pointer"
-        assert f"since {STORE_POINTER}" in r.stdout
+        assert f"since STORED_POINTER={STORE_POINTER}" in r.stdout
         assert "newer record" in r.stdout and "older record" in r.stdout
     finally:
         srv.shutdown()
@@ -175,7 +175,7 @@ def test_pointer_is_non_destructive():
         assert r.returncode == 0, r.stderr
         assert list_args().get("createdAfter") == OLDER, "createdAfter must equal the --pointer value"
         assert set_pointer_args_list() == [], "--pointer must not write the stored pointer"
-        assert f"since {OLDER}" in r.stdout
+        assert f"since CALLER_OVERRIDE={OLDER}" in r.stdout
         assert "newer record" in r.stdout
     finally:
         srv.shutdown()
