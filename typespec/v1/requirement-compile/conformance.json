@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/requirement-compile-conformance-v1.json",
+  "title": "Requirement Compilation Capability v1 conformance cases",
+  "type": "object",
+  "required": ["capability", "cases"],
+  "properties": {
+    "capability": { "const": "nexus.requirement.compile-to-plan/1.0" },
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "request", "expectedStatus", "assertions"],
+        "properties": {
+          "id": { "type": "string" },
+          "request": { "type": "object" },
+          "expectedStatus": { "type": "integer" },
+          "assertions": { "type": "array", "items": { "type": "string" } }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "cases": [
+    {
+      "id": "dry-run-no-effects",
+      "request": { "requirementId": "<existing-id>", "dryRun": true },
+      "expectedStatus": 200,
+      "assertions": ["result.outcome == compiled", "result.ir exists", "result.effect.dryRun == true", "result.effect.planCreated == false", "result.effect.executionAuthorized == false", "no POST /api/plans", "receipt fetch returns matching immutable receipt"]
+    },
+    {
+      "id": "dry-run-suppresses-plan-request",
+      "request": { "requirementId": "<existing-id>", "createPlan": true, "dryRun": true },
+      "expectedStatus": 200,
+      "assertions": ["result.outcome == compiled", "result.effect.planRequested == true", "result.effect.planCreated == false", "result.warnings includes PLAN_SUPPRESSED_DRY_RUN", "no POST /api/plans"]
+    },
+    {
+      "id": "plan-key-required",
+      "request": { "requirementId": "<existing-id>", "createPlan": true },
+      "expectedStatus": 400,
+      "assertions": ["error.code == IDEMPOTENCY_KEY_REQUIRED", "no POST /api/plans"]
+    },
+    {
+      "id": "confirmed-pending-plan",
+      "request": { "requirementId": "<existing-id>", "createPlan": true },
+      "expectedStatus": 201,
+      "assertions": ["result.outcome == plan_created", "result.effect.planStatus == pending", "result.effect.executionAuthorized == false"]
+    },
+    {
+      "id": "partial-plan-failure",
+      "request": { "requirementId": "<existing-id>", "createPlan": true },
+      "expectedStatus": 200,
+      "assertions": ["result.outcome == partial", "result.ir exists", "result.effect.planCreated == false", "result.warnings includes PLAN_CREATION_FAILED", "receipt outcome == partial"]
+    },
+    {
+      "id": "receipt-persistence-failure",
+      "request": { "requirementId": "<existing-id>", "dryRun": true },
+      "expectedStatus": 500,
+      "assertions": ["error.code == RECEIPT_PERSISTENCE_FAILED", "error.receiptId identifies the failed attempt", "error advises retrying only with the original idempotency key"]
+    },
+    {
+      "id": "idempotent-replay",
+      "request": { "requirementId": "<existing-id>", "dryRun": true },
+      "expectedStatus": 200,
+      "assertions": ["same key and canonical input returns same status and response", "no duplicate compilation, receipt, or plan effect"]
+    },
+    {
+      "id": "idempotency-input-conflict",
+      "request": { "requirementId": "<existing-id>", "dryRun": true },
+      "expectedStatus": 409,
+      "assertions": ["same key with different canonical input returns IDEMPOTENCY_KEY_CONFLICT", "no additional compilation or side effect"]
+    }
+  ]
+}

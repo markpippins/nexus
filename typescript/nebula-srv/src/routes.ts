@@ -4,14 +4,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import * as bs from './block-segmentation.service';
 import { singleTagClause, allTagsClause, anyTagClause } from './tagFilter';
 import * as bsRedis from './services/block-segmentation-redis.service';
 import { fetchSubstance, substanceToCamel } from './substance-proxy';
 import { CrossReferenceType } from './crossref-taxonomy';
 import { normalizeTags } from './tagNormalizer';
-import { attestationsLimiter } from './limiter';
+import { attestationsLimiter, requirementCompileLimiter } from './limiter';
 import { routingTagErrorMessage, routingCaseErrorMessage } from './routing-tags';
 import {
   camelCaseRow,
@@ -1182,6 +1182,219 @@ export function createRoutes(pool: Pool): Router {
   //  REQUIREMENT → WORKREQUEST COMPILATION (Plan 1062)
   // ════════════════════════════════════════════════════════════════
 
+  // Governed v1 adapter. It reserves an idempotency key before forwarding to the
+  // legacy compiler below, then stores the resulting contract response and immutable
+  // receipt atomically. The legacy endpoint remains wire-compatible for existing clients.
+  router.post('/v1/capabilities/requirement-compile/compile', requirementCompileLimiter, async (req: Request, res: Response, next) => {
+    const { requirementId, createPlan = false, dryRun = false, deliverable } = req.body ?? {};
+    const callerKey = req.body?.idempotencyKey ?? req.header('Idempotency-Key');
+    if (typeof requirementId !== 'string' || !requirementId.trim()) {
+      return res.status(400).json({ code: 'INVALID_REQUIREMENT_ID', message: 'requirementId must be a non-empty string' });
+    }
+    if (typeof createPlan !== 'boolean' || typeof dryRun !== 'boolean' ||
+        (deliverable !== undefined && typeof deliverable !== 'string') ||
+        (callerKey !== undefined && (typeof callerKey !== 'string' || !callerKey.trim() || callerKey.trim().length > 200))) {
+      return res.status(400).json({ code: 'INVALID_REQUEST', message: 'createPlan and dryRun must be booleans; deliverable must be a string and idempotencyKey must be a non-empty string of at most 200 characters' });
+    }
+    if (createPlan && !dryRun && !callerKey) {
+      return res.status(400).json({ code: 'IDEMPOTENCY_KEY_REQUIRED', message: 'createPlan requires a caller-supplied idempotencyKey or Idempotency-Key header' });
+    }
+    const idempotencyKey = callerKey?.trim() || randomUUID();
+    const canonicalInput = { requirementId: requirementId.trim(), createPlan, dryRun, deliverable: deliverable?.trim() || null };
+    const inputDigest = createHash('sha256').update(JSON.stringify(canonicalInput)).digest('hex');
+    try {
+      const reserved = await pool.query(
+        `INSERT INTO nebula.compilation_idempotency (idempotency_key, input_digest)
+         VALUES ($1, $2) ON CONFLICT (idempotency_key) DO NOTHING RETURNING idempotency_key`,
+        [idempotencyKey, inputDigest]
+      );
+      if (reserved.rows.length === 0) {
+        const { rows: [existing] } = await pool.query(
+          `SELECT input_digest, state, response, response_status FROM nebula.compilation_idempotency WHERE idempotency_key = $1`,
+          [idempotencyKey]
+        );
+        if (!existing || existing.input_digest !== inputDigest) {
+          return res.status(409).json({ code: 'IDEMPOTENCY_KEY_CONFLICT', message: 'This idempotency key was already used with a different request' });
+        }
+        if (existing.state === 'completed' && existing.response) return res.status(existing.response_status ?? 200).json(existing.response);
+        return res.status(409).json({ code: 'REQUEST_IN_PROGRESS', message: 'A request with this idempotency key is still in progress; retry with the same key' });
+      }
+
+      const sendJson = res.json.bind(res);
+      const forwardedBody = { stage1Only: false, createPlan: createPlan && !dryRun, dryRun, deliverable };
+      req.body = forwardedBody;
+      req.url = `/requirements/${encodeURIComponent(requirementId.trim())}/compile`;
+      res.json = ((legacyBody: any) => {
+        const legacyStatus = res.statusCode;
+        res.json = sendJson;
+        void (async () => {
+          const errorBody = legacyStatus >= 400;
+          const stage1 = legacyBody?.stage1;
+          const stage2 = legacyBody?.stage2;
+          const compileSucceeded = !errorBody && !!stage1 && !!stage2;
+          const planNumber = legacyBody?.plan_number ?? null;
+          const planCreated = createPlan && !!planNumber;
+          const effectiveCreatePlan = createPlan && !dryRun;
+          const partialPlanFailure = compileSucceeded && effectiveCreatePlan && !planCreated;
+          const outcome = errorBody ? 'failed' : partialPlanFailure ? 'partial' : planCreated ? 'plan_created' : 'compiled';
+          const receiptId = randomUUID();
+          const correlationId = randomUUID();
+          const occurredAt = new Date().toISOString();
+          let matchedPattern: string | null = null;
+          if (stage2?.matched_op_registry_id) {
+            try {
+              const { rows: [matchedRegistryEntry] } = await pool.query(
+                `SELECT match_patterns FROM nebula.op_registry WHERE id = $1`,
+                [stage2.matched_op_registry_id]
+              );
+              const intentText = `${stage1?.title ?? ''} ${stage1?.intent_summary ?? ''}`.toLowerCase();
+              let bestPatternLength = 0;
+              for (const pattern of matchedRegistryEntry?.match_patterns ?? []) {
+                try {
+                  const length = new RegExp(pattern, 'i').exec(intentText)?.[0].length ?? 0;
+                  if (length > bestPatternLength) {
+                    bestPatternLength = length;
+                    matchedPattern = pattern;
+                  }
+                } catch { /* ignore malformed registry regex, as the compiler does */ }
+              }
+            } catch (selectionErr) {
+              console.warn('[requirement-compile] selection evidence lookup failed:', selectionErr);
+            }
+          }
+          const selection = {
+            kind: stage2?.matched_op_registry_id ? 'registry_match' : 'fallback',
+            entryId: stage2?.matched_op_registry_id ?? null,
+            intentId: stage2?.intent_id ?? '',
+            version: stage2?.registry_version ?? null,
+            matchedPattern,
+            selectionMethod: 'longest-regex-substring/v1',
+            fallbackReason: stage2?.matched_op_registry_id ? null : 'No active registry entry matched; criteria fallback generated the IR',
+          };
+          const ir = stage2 ? {
+            opSequence: (stage2.op_sequence ?? []).map((step: any) => ({
+              step: step.step, opcode: step.op, target: step.target,
+              args: step.args ?? {}, idempotencyKey: step.idempotency_key,
+            })),
+            filesAffected: stage2.files_affected ?? [],
+            dependencies: stage2.dependencies ?? [],
+            acceptanceCriteria: stage2.acceptance_criteria ?? [],
+            deliverable: stage2.deliverable ?? null,
+          } : undefined;
+          const requirement = stage1 ? {
+            requirementId: stage1.requirement_id,
+            title: stage1.title,
+            ...(stage1.description != null ? { description: stage1.description } : {}),
+            ...(stage1.status != null ? { status: stage1.status } : {}),
+            ...(stage1.priority != null ? { priority: stage1.priority } : {}),
+            ...(stage1.requirement_type != null ? { requirementType: stage1.requirement_type } : {}),
+            acceptanceCriteria: stage1.normalized_criteria ?? [],
+            hierarchy: stage1.hierarchy_context ?? {},
+            crossReferences: (stage1.cross_references ?? []).map((ref: any) => ({
+              relationType: ref.rel_type, targetType: ref.target_type,
+              targetId: ref.target_id, targetLabel: ref.target_label,
+            })),
+            sourceRevision: null,
+          } : { requirementId: requirementId.trim(), title: '', acceptanceCriteria: [], hierarchy: {}, crossReferences: [], sourceRevision: null };
+          const effect = {
+            dryRun,
+            planRequested: createPlan,
+            planCreated,
+            planNumber: planCreated ? String(planNumber) : null,
+            planStatus: planCreated ? 'pending' : null,
+            executionAuthorized: false as const,
+          };
+          const warnings = partialPlanFailure
+            ? [{ code: 'PLAN_CREATION_FAILED', message: 'Compilation succeeded, but the pending plan was not confirmed by the plan service' }]
+            : dryRun && createPlan
+              ? [{ code: 'PLAN_SUPPRESSED_DRY_RUN', message: 'createPlan was suppressed because dryRun=true' }]
+              : [];
+          const result = {
+            outcome,
+            receiptId,
+            requirement,
+            selection,
+            ...(ir ? { ir } : {}),
+            effect,
+            warnings,
+          };
+          const receipt = {
+            receiptSchema: 'nexus.compilation-receipt/v1',
+            receiptId,
+            capabilityName: 'nexus.requirement.compile-to-plan',
+            capabilityVersion: '1.0',
+            correlationId,
+            occurredAt,
+            outcome,
+            actorRole: req.header('X-Nexus-Role') || 'unknown',
+            actorPrincipalId: null,
+            requirement,
+            canonicalInput,
+            normalizedInputDigest: inputDigest,
+            compilerService: 'nebula-srv',
+            compilerBuild: process.env.BUILD_ID || null,
+            algorithmVersion: 'longest-regex-substring/v1',
+            selection,
+            resultIr: ir ?? null,
+            resultIrDigest: ir ? createHash('sha256').update(JSON.stringify(ir)).digest('hex') : null,
+            effect,
+            journalRecordId: legacyBody?.journal_entry_id ?? null,
+            evidence: planCreated ? [{ kind: 'pending_plan', id: String(planNumber) }] : [],
+            warnings,
+            error: errorBody ? { code: legacyStatus === 404 ? 'REQUIREMENT_NOT_FOUND' : 'COMPILATION_FAILED', message: String(legacyBody?.error ?? 'Compilation failed'), retryable: legacyStatus >= 500 } : null,
+            replayable: false,
+          };
+          const responseStatus = errorBody ? legacyStatus : planCreated ? 201 : 200;
+          const responseBody = errorBody
+          ? { code: receipt.error?.code, message: receipt.error?.message, correlationId, receiptId }
+          : { result };
+          try {
+            const { rows: [persisted] } = await pool.query(
+              `WITH saved AS (
+                 INSERT INTO nebula.compilation_receipts
+                   (receipt_id, idempotency_key, input_digest, requirement_id, outcome, receipt)
+                 VALUES ($1::uuid, $2, $3, $4, $5, $6::jsonb)
+                 RETURNING receipt_id
+               )
+               UPDATE nebula.compilation_idempotency i
+               SET state = 'completed', response = $7::jsonb, response_status = $8, receipt_id = saved.receipt_id, completed_at = now()
+               FROM saved WHERE i.idempotency_key = $2
+               RETURNING i.response`,
+              [receiptId, idempotencyKey, inputDigest, requirement.requirementId, outcome,
+                JSON.stringify(receipt), JSON.stringify(responseBody), responseStatus]
+            );
+            if (!persisted) throw new Error('Receipt and idempotency completion did not persist');
+            res.status(responseStatus);
+            sendJson(responseBody);
+          } catch (persistErr: any) {
+            console.error('[requirement-compile] receipt persistence failed:', persistErr);
+            res.status(500);
+            sendJson({ code: 'RECEIPT_PERSISTENCE_FAILED', message: 'Compilation effect may have completed, but its receipt could not be persisted; retry only with the original idempotency key', correlationId, receiptId });
+          }
+        })();
+        return res;
+      }) as Response['json'];
+      next();
+    } catch (err: any) {
+      console.error('[requirement-compile] idempotency reservation failed:', err);
+      return res.status(500).json({ code: 'IDEMPOTENCY_STORE_UNAVAILABLE', message: 'Could not reserve the request idempotency key' });
+    }
+  });
+
+  router.get('/v1/capabilities/requirement-compile/receipts/:receiptId', requirementCompileLimiter, async (req: Request, res: Response) => {
+    try {
+      const { rows: [row] } = await pool.query(
+        `SELECT receipt FROM nebula.compilation_receipts WHERE receipt_id = $1::uuid`,
+        [req.params.receiptId]
+      );
+      if (!row) return res.status(404).json({ code: 'RECEIPT_NOT_FOUND', message: 'Compilation receipt not found' });
+      return res.json({ receipt: row.receipt });
+    } catch (err: any) {
+      if (err?.code === '22P02') return res.status(404).json({ code: 'RECEIPT_NOT_FOUND', message: 'Compilation receipt not found' });
+      return res.status(500).json({ code: 'RECEIPT_READ_FAILED', message: 'Could not read the compilation receipt' });
+    }
+  });
+
   // POST /api/requirements/:id/compile — compile a requirement into a WorkRequest IR
   // Runs the two-stage compiler (Stage 1 normalization + Stage 2 op_registry compilation).
   // Optionally creates a conduit plan if createPlan=true.
@@ -1254,6 +1467,10 @@ export function createRoutes(pool: Pool): Router {
       const stage1 = {
         requirement_id: id,
         title: reqt.title,
+        description: reqt.description,
+        status: reqt.status,
+        priority: reqt.priority,
+        requirement_type: reqt.req_type,
         hierarchy_context: hierarchyContext,
         normalized_criteria: normalizedCriteria,
         cross_references: crossRefs,
@@ -1407,7 +1624,7 @@ export function createRoutes(pool: Pool): Router {
             }),
           });
           const planResult = await planResponse.json() as any;
-          if (planResult.created && planResult.planNumber) {
+          if (planResponse.ok && planResult.created && planResult.planNumber) {
             planNumber = planResult.planNumber;
             // Requirement → plan linkage is column-based (requirements.conduit_plan_id)
             // per T22 Step 5.4 ruling — no parallel compiles_to edge.
