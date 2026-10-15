@@ -78,6 +78,17 @@ incident() {  # best-effort alert; NEVER lets a notification failure kill us
 exec 200>"$LOCK_FILE"
 flock -n 200 || { log "SKIP: another backup run holds the lock"; exit 0; }
 
+# Cluster lock: serialize with the OTHER nightly PG dump tiers (backup-nexus,
+# sync-to-vanadium, pg-escape-hatch). Each tier's own lock above only excludes
+# itself; overlapping timer windows let two dumps run at once and OOM-killed
+# the host on 2026-10-02. Resolve the real path — this script is symlinked
+# from /home/codex/dev/pgsql/.
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/pg-dump-lock.sh"
+if ! pg_dump_lock_acquire; then
+  log "SKIP: another PG backup tier holds the cluster lock (>${PG_DUMP_LOCK_WAIT:-3600}s)"
+  exit 0
+fi
+
 if [ "$VERIFY_LAST" = 1 ]; then
   LATEST_MANIFEST="$(ssh_remote "ls -1 ${REMOTE_DIR}/manifest__*.txt 2>/dev/null | sort | tail -1")"
   if [ -z "$LATEST_MANIFEST" ]; then log "FAIL: no remote manifest found"; exit 1; fi
