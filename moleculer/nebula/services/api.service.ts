@@ -292,6 +292,8 @@ export default class ApiService extends Service {
               "GET /api/workspaces": "nebula.dispatch",
               "POST /api/workspaces": "nebula.dispatch",
               "DELETE /api/workspaces/:id": "nebula.dispatch",
+              "POST /api/v1/capabilities/requirement-compile/compile": "nebula.dispatch",
+              "GET /api/v1/capabilities/requirement-compile/receipts/:receiptId": "nebula.dispatch",
               "GET /health": "nebula.dispatch",
               // Registered LAST: catch-alls into the verbatim Express app for
               // everything the literals don't name (unmatched paths anywhere,
