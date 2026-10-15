@@ -180,6 +180,13 @@ etc/
 # tree, and its Adonis runtime deps are floating devDependencies, so an untracked
 # lockfile meant production resolved whatever ^ resolved to on install day.
 !adonisjs/nexus-control-edge/package-lock.json
+# 38M priority 1a — deployed TypeScript services. Both are live (wind-srv :3300,
+# conduit-srv :3104, systemd-managed) and both had entirely floating ranges with
+# untracked lockfiles in the working tree. heartbeat-client is tracked because it
+# is a file: build dependency BOTH images compile in -- it is the shared leaf.
+!typescript/wind-srv/package-lock.json
+!typescript/conduit-srv/package-lock.json
+!typescript/heartbeat-client/package-lock.json
 
 # In-repo worktree scratch — must never live here (AGENTS.md R8.0).
 # Canonical worktree root is the SIBLING directory /home/codex/dev/nexus-worktrees,

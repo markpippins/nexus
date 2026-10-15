@@ -4,11 +4,15 @@
 FROM node:20-bookworm AS build
 WORKDIR /app/conduit-srv
 
-COPY conduit-srv/package.json ./
+# Lockfiles are TRACKED (38M priority 1a). Previously `npm install --no-package-lock`,
+# which tells npm to ignore any lockfile present -- so a tracked lockfile would not
+# have been read, and the image would still float. `npm ci` reads the committed lock.
+COPY conduit-srv/package.json conduit-srv/package-lock.json ./
 COPY heartbeat-client ../heartbeat-client
-RUN npm install --no-package-lock --include=dev
+RUN npm ci --include=dev --no-audit --no-fund
 # Build file: sibling so its dist/ exists at runtime (main -> ./dist/index.js)
-RUN cd ../heartbeat-client && npm install --no-package-lock --include=dev && npm run build
+# --include=dev kept explicit: `npm run build` here is tsc, which lives in devDeps.
+RUN cd ../heartbeat-client && npm ci --include=dev --no-audit --no-fund && npm run build
 
 COPY conduit-srv/ ./
 RUN npm run build
