@@ -499,5 +499,235 @@ class TestWrpKernelEngineAlignment(unittest.TestCase):
         )
 
 
+# ══════════════════════════════════════════════════════════════════════
+# Section 6: WRP *kernel* vocabulary (runtime-kernel.ts) — D1 guard
+# ══════════════════════════════════════════════════════════════════════
+#
+# Two DISTINCT state machines exist by design, and neither is canonical
+# over the other:
+#
+#   KERNEL — conduit-mcp/src/runtime-kernel.ts
+#           DRAFT, VALIDATED, QUEUED, CLAIMED, ACKED, SETTLED, REJECTED,
+#           FAILED, NOOP, DEFERRED   (execution/runtime lifecycle)
+#
+#   WRP    — nexus_core/wrp/states.py == nebula-mcp/conduit-wrp-contract.ts
+#           CREATED, INTAKE, PLANNING, CRITIQUE, SPECIFICATION, APPROVED,
+#           QUEUED, EXECUTING, COMPLETED, ARCHIVED, FAILED  (planning lifecycle)
+#
+# Sections 1-5 above already guard Python↔nebula. This section closes the
+# gap: runtime-kernel.ts had NO mechanical guard at all, so a state added
+# there would drift silently. It does NOT assert the two vocabularies are
+# equal — they must NOT be. It asserts their *relationship*: the documented
+# collision set is exactly {QUEUED, FAILED}, so any new name collision fails
+# here and forces a conscious decision instead of a silent semantic merge.
+#
+# Inspector finding D1 (report 5d45f921); fix is "shared vocabulary /
+# reconciliation guard, NOT rename" — deliberately no rename is performed.
+
+KERNEL_STATUSES_PINNED = {
+    "DRAFT", "VALIDATED", "QUEUED", "CLAIMED", "ACKED",
+    "SETTLED", "REJECTED", "FAILED", "NOOP", "DEFERRED",
+}
+KERNEL_EVENT_TYPES_PINNED = {
+    "WR_SUBMITTED", "WR_VALIDATED", "WR_QUEUED", "WR_CLAIMED", "WR_ACKED",
+    "WR_SETTLED", "WR_REJECTED", "WR_FAILED", "WR_NOOP", "WR_DEFERRED",
+}
+KERNEL_TERMINAL_PINNED = {
+    "SETTLED", "REJECTED", "FAILED", "NOOP", "DEFERRED",
+}
+# The ONLY names that legitimately appear in both vocabularies, with
+# different meanings in each. Adding a third collision is a guard failure.
+KERNEL_WRP_COLLISIONS_PINNED = {"QUEUED", "FAILED"}
+
+RUNTIME_KERNEL_TS = "typescript/conduit-mcp/src/runtime-kernel.ts"
+
+
+def extract_ts_kernel_statuses() -> set[str]:
+    """Extract WR_STATUSES from runtime-kernel.ts."""
+    src = _read(RUNTIME_KERNEL_TS)
+    m = re.search(r"export const WR_STATUSES = \[(.*?)\] as const;", src, re.DOTALL)
+    if not m:
+        return set()
+    return set(re.findall(r'"(\w+)"', m.group(1)))
+
+
+def extract_ts_kernel_event_types() -> set[str]:
+    """Extract RUNTIME_EVENT_TYPES from runtime-kernel.ts."""
+    src = _read(RUNTIME_KERNEL_TS)
+    m = re.search(
+        r"export const RUNTIME_EVENT_TYPES = \[(.*?)\] as const;", src, re.DOTALL,
+    )
+    if not m:
+        return set()
+    return set(re.findall(r'"(\w+)"', m.group(1)))
+
+
+def extract_ts_kernel_transitions() -> dict[str, set[tuple[str, str]]]:
+    """Extract TRANSITION_TABLE from runtime-kernel.ts.
+
+    Returns {from_status: {(event, next_status), ...}}. Terminal states map
+    to an empty set. Entry lists span multiple lines, so each
+    ``STATE: [ ... ]`` block is captured whole rather than line-by-line.
+    """
+    src = _read(RUNTIME_KERNEL_TS)
+    m = re.search(r"const TRANSITION_TABLE.*?= \{(.*?)\n\};", src, re.DOTALL)
+    if not m:
+        return {}
+
+    table: dict[str, set[tuple[str, str]]] = {}
+    for block in re.finditer(r'(\w+)\s*:\s*\[(.*?)\]', m.group(1), re.DOTALL):
+        table[block.group(1)] = set(re.findall(
+            r'event:\s*"(\w+)",\s*nextStatus:\s*"(\w+)"', block.group(2),
+        ))
+    return table
+
+
+class TestKernelVocabularyPinned(unittest.TestCase):
+    """The kernel vocabulary must not drift without a conscious edit here."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.statuses = extract_ts_kernel_statuses()
+        cls.events = extract_ts_kernel_event_types()
+
+    def test_statuses_exactly_pinned(self):
+        self.assertEqual(
+            self.statuses, KERNEL_STATUSES_PINNED,
+            f"WR_STATUSES drifted from the pinned set.\n"
+            f"  added:   {sorted(self.statuses - KERNEL_STATUSES_PINNED)}\n"
+            f"  removed: {sorted(KERNEL_STATUSES_PINNED - self.statuses)}\n"
+            f"If this change is intended, update KERNEL_STATUSES_PINNED in "
+            f"this file (Section 6) and re-check the collision set in "
+            f"TestKernelAndWrpAreDistinctVocabularies.",
+        )
+
+    def test_event_types_exactly_pinned(self):
+        self.assertEqual(
+            self.events, KERNEL_EVENT_TYPES_PINNED,
+            f"RUNTIME_EVENT_TYPES drifted from the pinned set.\n"
+            f"  added:   {sorted(self.events - KERNEL_EVENT_TYPES_PINNED)}\n"
+            f"  removed: {sorted(KERNEL_EVENT_TYPES_PINNED - self.events)}",
+        )
+
+    def test_statuses_not_empty(self):
+        """Guards against a regex silently failing to extract."""
+        self.assertTrue(self.statuses, "WR_STATUSES extraction returned empty")
+        self.assertTrue(self.events, "RUNTIME_EVENT_TYPES extraction returned empty")
+
+
+class TestKernelTransitionTableWellFormed(unittest.TestCase):
+    """TRANSITION_TABLE must be closed over the two pinned vocabularies."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.table = extract_ts_kernel_transitions()
+        cls.statuses = extract_ts_kernel_statuses()
+        cls.events = extract_ts_kernel_event_types()
+
+    def test_table_covers_every_status(self):
+        """Every WR_STATUS has a transition entry (terminal ones empty)."""
+        self.assertEqual(
+            set(self.table), self.statuses,
+            f"TRANSITION_TABLE keys != WR_STATUSES.\n"
+            f"  status without entry: {sorted(self.statuses - set(self.table))}\n"
+            f"  entry without status: {sorted(set(self.table) - self.statuses)}",
+        )
+
+    def test_every_event_is_declared(self):
+        undeclared = {
+            ev for entries in self.table.values() for ev, _ in entries
+            if ev not in self.events
+        }
+        self.assertEqual(
+            undeclared, set(),
+            f"TRANSITION_TABLE references undeclared events: {sorted(undeclared)}",
+        )
+
+    def test_every_destination_is_declared(self):
+        undeclared = {
+            nxt for entries in self.table.values() for _, nxt in entries
+            if nxt not in self.statuses
+        }
+        self.assertEqual(
+            undeclared, set(),
+            f"TRANSITION_TABLE targets undeclared statuses: {sorted(undeclared)}",
+        )
+
+    def test_terminal_states_match_pinned(self):
+        """Terminal = no outgoing edges; must match the documented set."""
+        terminal = {s for s, e in self.table.items() if not e}
+        self.assertEqual(
+            terminal, KERNEL_TERMINAL_PINNED,
+            f"Terminal-state set drifted.\n"
+            f"  now:     {sorted(terminal)}\n"
+            f"  pinned:  {sorted(KERNEL_TERMINAL_PINNED)}",
+        )
+
+    def test_birth_state_is_draft(self):
+        """WR_SUBMITTED is the birth event; DRAFT is the initial status."""
+        self.assertIn("WR_SUBMITTED", self.events)
+        self.assertIn("DRAFT", self.statuses)
+        sources = {ev for ev, _ in self.table.get("DRAFT", set())}
+        self.assertIn(
+            "WR_SUBMITTED", sources,
+            "WR_SUBMITTED is expected to be emitted from DRAFT",
+        )
+
+
+class TestKernelAndWrpAreDistinctVocabularies(unittest.TestCase):
+    """The D1 relationship guard.
+
+    The two state machines are separate by design. This asserts their
+    *relationship* rather than their equality: the collision set must be
+    exactly {QUEUED, FAILED}. A new collision fails here so a human must
+    decide whether the two meanings stay distinct — it is never silently
+    merged, and no rename is performed.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.kernel = extract_ts_kernel_statuses()
+        cls.wrp = extract_ts_wrp_states()
+
+    def test_wrp_extraction_non_empty(self):
+        self.assertTrue(self.wrp, "WRP state extraction returned empty")
+
+    def test_collision_set_is_exactly_pinned(self):
+        collisions = self.kernel & self.wrp
+        self.assertEqual(
+            collisions, KERNEL_WRP_COLLISIONS_PINNED,
+            f"Name collision between the kernel and WRP vocabularies changed.\n"
+            f"  now:     {sorted(collisions)}\n"
+            f"  pinned:  {sorted(KERNEL_WRP_COLLISIONS_PINNED)}\n"
+            f"A new collision means the two lifecycles have started sharing a "
+            f"name with different semantics. Decide deliberately: either keep "
+            f"them distinct (update the pin + document the meanings) or "
+            f"reconcile the vocabularies. Do not let it drift silently.",
+        )
+
+    def test_kernel_names_never_leak_into_wrp(self):
+        """Kernel-only names must not appear in the WRP vocabulary.
+
+        Guards against a partial merge: someone 'helpfully' copying DRAFT /
+        ACKED / SETTLED into the planning lifecycle.
+        """
+        kernel_only = self.kernel - self.wrp
+        leaked = {s for s in kernel_only if s in self.wrp}
+        self.assertEqual(
+            leaked, set(),
+            f"Kernel-only statuses leaked into the WRP vocabulary: "
+            f"{sorted(leaked)}",
+        )
+
+    def test_vocabularies_are_not_equal(self):
+        """They must remain genuinely distinct — a merge would be a rename."""
+        self.assertNotEqual(
+            self.kernel, self.wrp,
+            "Kernel and WRP vocabularies have become identical; the D1 guard "
+            "assumes two separate lifecycles. If they were intentionally "
+            "unified, this guard and its pins must be retired deliberately.",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
