@@ -176,6 +176,10 @@ etc/
 !moleculer/nexus-broker/package-lock.json
 !moleculer/search/package-lock.json
 !moleculer/substance/package-lock.json
+# 38L priority 1 (deployed-first): nexus-control-edge runs live on :8082 from this
+# tree, and its Adonis runtime deps are floating devDependencies, so an untracked
+# lockfile meant production resolved whatever ^ resolved to on install day.
+!adonisjs/nexus-control-edge/package-lock.json
 
 # In-repo worktree scratch — must never live here (AGENTS.md R8.0).
 # Canonical worktree root is the SIBLING directory /home/codex/dev/nexus-worktrees,
