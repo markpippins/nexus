@@ -52,7 +52,7 @@
 	url = https://github.com/markpippins/nebula-control-plane.git
 [submodule "angular/throttler-ui"]
 	path = angular/throttler-ui
-	url = https://github.com/markpippins/nexus-explorer.git
+	url = https://github.com/markpippins/throttler-b.git
 	branch = main
 [submodule "angular/wind-ui-v2"]
 	path = angular/wind-ui-v2
