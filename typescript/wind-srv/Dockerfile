@@ -8,10 +8,25 @@ FROM node:20-bookworm-slim
 ENV NODE_ENV=production
 WORKDIR /app/wind-srv
 
-COPY wind-srv/package.json ./
+# Lockfiles are TRACKED (38M priority 1a). These lines previously used
+# `npm install --no-package-lock`, which makes npm IGNORE any lockfile present --
+# so tracking one would have changed nothing about what the image actually
+# installed. `npm ci` reads the committed lock and fails loudly if it is missing
+# or out of sync, instead of quietly re-resolving floating ranges.
+COPY wind-srv/package.json wind-srv/package-lock.json ./
 COPY heartbeat-client ../heartbeat-client
-RUN npm install --omit=dev --no-package-lock
+RUN npm ci --omit=dev --no-audit --no-fund
 # Build file: sibling so its dist/ exists at runtime (main -> ./dist/index.js)
+# --include=dev is load-bearing: ENV NODE_ENV=production is set above, and without
+# it npm omits devDependencies, taking the `tsc` that builds this file with them.
+# Build file: sibling so its dist/ exists at runtime (main -> ./dist/index.js)
+# --include=dev is load-bearing for wind-srv: ENV NODE_ENV=production precedes
+# this RUN, and without it npm drops the devDeps that `tsc` needs.
+#
+# Still `npm install --no-package-lock` -- deliberately UNCHANGED. heartbeat-client is a
+# file: build dep of 22 services, so tracking ITS lockfile in a PR scoped to two
+# services would make 9 unrelated Dockerfiles and 4 workflows violate wf-lint's
+# npm-ci rule. That is a shared-dependency decision, not a P1a one; deferred.
 RUN cd ../heartbeat-client && npm install --no-package-lock --include=dev && npm run build
 
 COPY wind-srv/src ./src
