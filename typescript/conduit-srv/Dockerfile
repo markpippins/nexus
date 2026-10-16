@@ -4,10 +4,22 @@
 FROM node:20-bookworm AS build
 WORKDIR /app/conduit-srv
 
-COPY conduit-srv/package.json ./
+# Lockfiles are TRACKED (38M priority 1a). Previously `npm install --no-package-lock`,
+# which tells npm to ignore any lockfile present -- so a tracked lockfile would not
+# have been read, and the image would still float. `npm ci` reads the committed lock.
+COPY conduit-srv/package.json conduit-srv/package-lock.json ./
 COPY heartbeat-client ../heartbeat-client
-RUN npm install --no-package-lock --include=dev
+RUN npm ci --include=dev --no-audit --no-fund
 # Build file: sibling so its dist/ exists at runtime (main -> ./dist/index.js)
+# --include=dev kept explicit: `npm run build` here is tsc, which lives in devDeps.
+# Build file: sibling so its dist/ exists at runtime (main -> ./dist/index.js)
+# --include=dev is load-bearing for wind-srv: ENV NODE_ENV=production precedes
+# this RUN, and without it npm drops the devDeps that `tsc` needs.
+#
+# Still `npm install --no-package-lock` -- deliberately UNCHANGED. heartbeat-client is a
+# file: build dep of 22 services, so tracking ITS lockfile in a PR scoped to two
+# services would make 9 unrelated Dockerfiles and 4 workflows violate wf-lint's
+# npm-ci rule. That is a shared-dependency decision, not a P1a one; deferred.
 RUN cd ../heartbeat-client && npm install --no-package-lock --include=dev && npm run build
 
 COPY conduit-srv/ ./
