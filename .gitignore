@@ -186,7 +186,6 @@ etc/
 # is a file: build dependency BOTH images compile in -- it is the shared leaf.
 !typescript/wind-srv/package-lock.json
 !typescript/conduit-srv/package-lock.json
-!typescript/heartbeat-client/package-lock.json
 
 # In-repo worktree scratch — must never live here (AGENTS.md R8.0).
 # Canonical worktree root is the SIBLING directory /home/codex/dev/nexus-worktrees,

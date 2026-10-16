@@ -19,7 +19,15 @@ RUN npm ci --omit=dev --no-audit --no-fund
 # Build file: sibling so its dist/ exists at runtime (main -> ./dist/index.js)
 # --include=dev is load-bearing: ENV NODE_ENV=production is set above, and without
 # it npm omits devDependencies, taking the `tsc` that builds this file with them.
-RUN cd ../heartbeat-client && npm ci --include=dev --no-audit --no-fund && npm run build
+# Build file: sibling so its dist/ exists at runtime (main -> ./dist/index.js)
+# --include=dev is load-bearing for wind-srv: ENV NODE_ENV=production precedes
+# this RUN, and without it npm drops the devDeps that `tsc` needs.
+#
+# Still `npm install --no-package-lock` -- deliberately UNCHANGED. heartbeat-client is a
+# file: build dep of 22 services, so tracking ITS lockfile in a PR scoped to two
+# services would make 9 unrelated Dockerfiles and 4 workflows violate wf-lint's
+# npm-ci rule. That is a shared-dependency decision, not a P1a one; deferred.
+RUN cd ../heartbeat-client && npm install --no-package-lock --include=dev && npm run build
 
 COPY wind-srv/src ./src
 
