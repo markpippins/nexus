@@ -2,16 +2,31 @@
 WRP state machine primitives — canonical adjacency matrix and receipt mapping.
 
 # CANONICAL SOURCE
-These tables are the canonical Python definition of the WRP state machine.
-They are kept in sync with the TypeScript canonical:
+These tables are the canonical Python definition of the WRP (planning
+lifecycle) state machine. They are kept in sync with:
+    typescript/nebula-mcp/src/conduit-wrp-contract.ts (WRP states — mirror)
     typescript/conduit-mcp/src/receipts.ts           (receipt transitions)
-    typescript/nebula-mcp/src/conduit-wrp-contract.ts (WRP states)
 
 Do not edit these tables independently — reconcile against the TypeScript
-canonical if changes are needed.
+canonical if changes are needed. That reconciliation is enforced
+mechanically by:
+    python/nexus_core/wrp/tests/test_cross_language_contract.py
+
+# NOT THE SAME MACHINE AS THE KERNEL (inspector finding D1, report 5d45f921)
+There is a SECOND, deliberately separate state machine:
+    typescript/conduit-mcp/src/runtime-kernel.ts
+        — WR_STATUSES (DRAFT, VALIDATED, QUEUED, CLAIMED, ACKED, SETTLED,
+          REJECTED, FAILED, NOOP, DEFERRED) and RUNTIME_EVENT_TYPES (WR_*)
+
+That one is the kernel/execution lifecycle; this one is the planning
+lifecycle. Neither is canonical over the other and they are deliberately NOT
+merged — no rename was performed. They share exactly two names with
+different meanings in each (QUEUED, FAILED). That collision set is pinned in
+test_cross_language_contract.py, so any new shared name fails the guard and
+forces a conscious decision.
 
 # SEMANTICS
-WRP_ADJACENCY_MATRIX: The 12-state WRP state machine defining which state
+WRP_ADJACENCY_MATRIX: The 11-state WRP state machine defining which state
 transitions are valid. Every transition must be registered here.
 
 RECEIPT_TO_WRP_STATE: Maps Conduit receipt types to their corresponding
@@ -23,7 +38,7 @@ from typing import Dict, Set
 
 
 # ── The WRP adjacency matrix ──────────────────────────────────────────
-# 12 states: CREATED → INTAKE → PLANNING → CRITIQUE → SPECIFICATION →
+# 11 states: CREATED → INTAKE → PLANNING → CRITIQUE → SPECIFICATION →
 # APPROVED → QUEUED → EXECUTING → COMPLETED → ARCHIVED + FAILED
 
 WRP_ADJACENCY_MATRIX: Dict[str, Set[str]] = {
