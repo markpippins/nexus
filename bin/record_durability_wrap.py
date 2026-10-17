@@ -93,7 +93,7 @@ def _file_record(kind: str, when: str, extra: str = "") -> bool:
     }
     record = subprocess.run(
         [sys.executable, str(REPO / "bin" / "post-agent-record.py"),
-         "-r", "DBA",
+         "-r", "dba",
          "-t", titles[kind],
          "--record-type", "report",
          "--level", "1",
@@ -128,7 +128,7 @@ def _file_findings_record(when: str, findings: list[dict]) -> bool:
     )
     record = subprocess.run(
         [sys.executable, str(REPO / "bin" / "post-agent-record.py"),
-         "-r", "DBA",
+         "-r", "dba",
          "-t", f"Hollow agent records detected (nightly sweep, {when}): {len(findings)} record(s) need disposition",
          "--record-type", "inspection",
          "--level", "1",
