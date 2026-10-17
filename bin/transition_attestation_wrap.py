@@ -86,7 +86,7 @@ def _file_record(kind: str, when: str, out: str, extra: str = "") -> bool:
     }
     record = subprocess.run(
         [sys.executable, str(REPO / "bin" / "post-agent-record.py"),
-         "-r", "DBA",
+         "-r", "dba",
          "-t", titles[kind],
          "--record-type", "report",
          "--level", "1",
@@ -144,7 +144,7 @@ def main() -> int:
 
     record = subprocess.run(
         [sys.executable, str(REPO / "bin" / "post-agent-record.py"),
-         "-r", "DBA",
+         "-r", "dba",
          "-t", f"Transition-event attestation DRIFT (daily check, {today}): terminal tickets mutated without transition events",
          "--record-type", "inspection",
          "--level", "1",

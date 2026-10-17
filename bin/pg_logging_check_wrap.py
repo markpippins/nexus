@@ -90,7 +90,7 @@ def _file_record(kind: str, when: str, extra: str = "") -> bool:
     }
     record = subprocess.run(
         [sys.executable, str(REPO / "bin" / "post-agent-record.py"),
-         "-r", "DBA",
+         "-r", "dba",
          "-t", titles[kind],
          "--record-type", "report",
          "--level", "1",
@@ -129,7 +129,7 @@ def _file_findings_record(when: str, payload: dict) -> bool:
     )
     record = subprocess.run(
         [sys.executable, str(REPO / "bin" / "post-agent-record.py"),
-         "-r", "DBA",
+         "-r", "dba",
          "-t", f"PG logging integrity findings (nightly check, {when})",
          "--record-type", "inspection",
          "--level", "1",

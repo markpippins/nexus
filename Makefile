@@ -335,6 +335,34 @@ sdk-drift-install-timer:
 	@systemctl --user enable --now sdk-drift-stamp.timer
 	@systemctl --user list-timers sdk-drift-stamp.timer --no-pager | head -3
 
+# ─── pg_wal guard (incident e7a15424) ───────────────────────────────────────
+#   make pg-wal-guard-test           hermetic checker/wrapper tests (also in CI
+#                                    via `make bintests` guard discovery)
+#   make pg-wal-guard-install-timer  install + enable the 15-minute user timer
+#   make pg-wal-guard-status         show the timer and the last run
+#
+# History: archive_mode='on' with an empty archive_command pinned every WAL
+# segment for 30 days (156 GB / 10,007 .ready, disk down to 17 GB free) and
+# nothing watched either pg_wal size or archiver progress. An enabled
+# durability feature that silently did nothing is not visible in any single
+# measurement, which is why this guard exists (architect ruling 3056d149).
+
+pg-wal-guard-test:
+	@echo "[pg-wal-guard] hermetic checker/wrapper tests..."
+	@python3 -m pytest bin/tests/test_pg_wal_guard.py bin/tests/test_pg_wal_guard_units.py -q
+
+pg-wal-guard-install-timer:
+	@echo "[pg-wal-guard] installing pg-wal-guard.timer (every 15 minutes)..."
+	@mkdir -p $(HOME)/.config/systemd/user $(HOME)/.cache/pg-wal-guard
+	@cp bin/pg-wal-guard.service bin/pg-wal-guard.timer $(HOME)/.config/systemd/user/
+	@systemctl --user daemon-reload
+	@systemctl --user enable --now pg-wal-guard.timer
+	@systemctl --user list-timers pg-wal-guard.timer --no-pager | head -3
+
+pg-wal-guard-status:
+	@systemctl --user list-timers pg-wal-guard.timer --no-pager | head -3
+	@systemctl --user status pg-wal-guard.service --no-pager -n 5 || true
+
 # Daily To Do lifecycle sweep (units are committed: bin/nexus-todo-lifecycle.*).
 todo-lifecycle-install-timer:
 	@echo "[todo-lifecycle] installing nexus-todo-lifecycle.timer (daily 07:15 UTC)..."
