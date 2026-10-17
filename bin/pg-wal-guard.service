@@ -1,0 +1,33 @@
+# Source of truth for ~/.config/systemd/user/pg-wal-guard.service
+#
+# Deploy:
+#   cp bin/pg-wal-guard.service ~/.config/systemd/user/
+#   cp bin/pg-wal-guard.timer   ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now pg-wal-guard.timer
+#
+# Why this file is in the repo: host-only units drift from the corpus
+# (the 2026-09-21 helium probe incident). ExecStart resolves the wrapper
+# through the repo working tree so merges deploy themselves.
+#
+# Why this guard exists: incident e7a15424 — archive_mode='on' with an empty
+# archive_command pinned every WAL segment for 30 days (156 GB / 10,007
+# .ready, disk to 17 GB free) and nothing watched either the size or the
+# archiver's non-progress. Architect ruling 3056d149 asked for both guards.
+#
+# Tunables (all optional, read by bin/check_pg_wal.py):
+#   PG_WAL_DSN, PG_WAL_PGDATA_HOST, PG_WAL_SIZE_WARN_GIB,
+#   PG_WAL_SIZE_CRIT_GIB, PG_WAL_READY_WARN, PG_WAL_READY_CRIT,
+#   PG_WAL_DISK_FREE_WARN_GIB, PG_WAL_DISK_FREE_CRIT_GIB,
+#   PG_WAL_STALL_READY_FLOOR, PG_WAL_GUARD_STATE
+
+[Unit]
+Description=pg_wal / archiver progress guard: WAL size, .ready backlog, disk headroom, archiver progress (15 min)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/dev/nexus/bin/pg_wal_guard_wrap.py
+TimeoutStartSec=180
+
+[Install]
+WantedBy=default.target

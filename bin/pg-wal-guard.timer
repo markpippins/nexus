@@ -1,0 +1,23 @@
+# Source of truth for ~/.config/systemd/user/pg-wal-guard.timer
+#
+# Every 15 minutes. Incident e7a15424 grew pg_wal at roughly 3 GB per 32 h
+# (about 2.3 GB/day). At that rate a 15-minute cadence bounds the unnoticed
+# growth between runs to tens of megabytes, so a threshold crossing is
+# reported while there is still ~weeks of headroom rather than hours. The
+# run is one SQL round-trip plus a statvfs, so the cadence is cheap.
+#
+# Persistent=true catches up if the machine was off at the scheduled time.
+# RandomizedDelaySec keeps this off the exact quarter-hour boundary shared by
+# the other */15 timers.
+
+[Unit]
+Description=Run the pg_wal / archiver guard every 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+RandomizedDelaySec=30
+Unit=pg-wal-guard.service
+
+[Install]
+WantedBy=timers.target
