@@ -1,5 +1,5 @@
 -- =============================================================================
--- V205 (DBA) — retire the stale `big-pickle` role row (Ruling 19 follow-up).
+-- V206 (DBA) — retire the stale `big-pickle` role row (Ruling 19 follow-up).
 --
 -- STATUS: STAGED INERT — DRAFT. This migration REFUSES to run until the
 -- destination for big-pickle's model-scoped artifacts is decided (architect
@@ -37,7 +37,7 @@
 -- registered aliases), this migration is not needed and should be dropped.
 --
 -- APPLY ORDER: assumes V203 and V204 (PR #712, branch roles-vocab-normalize)
--- applied first — V205 is the next free number after them.
+-- applied first — V206 is the next free number after them.
 --
 -- R9: data change — replicate to vanadium only on explicit operator go.
 --
@@ -57,22 +57,22 @@ DECLARE
 BEGIN
     IF dest_role = sentinel THEN
         RAISE EXCEPTION
-            'V205 staged inert: destination for big-pickle prompts/config_bundle '
+            'V206 staged inert: destination for big-pickle prompts/config_bundle '
             'is undecided (Ruling 19 §3 / thread 181845a4). Set dest_role to the '
             'ruled destination role before applying.';
     END IF;
 
     IF NOT EXISTS (SELECT 1 FROM tackle.roles WHERE name = 'big-pickle') THEN
-        RAISE NOTICE 'V205: no big-pickle role row — already reconciled, nothing to do';
+        RAISE NOTICE 'V206: no big-pickle role row — already reconciled, nothing to do';
         RETURN;
     END IF;
 
     IF dest_role = 'big-pickle' THEN
-        RAISE EXCEPTION 'V205: destination must differ from big-pickle';
+        RAISE EXCEPTION 'V206: destination must differ from big-pickle';
     END IF;
 
     IF NOT EXISTS (SELECT 1 FROM tackle.roles WHERE name = dest_role) THEN
-        RAISE EXCEPTION 'V205: destination role % is not a tackle.roles row — refusing', dest_role;
+        RAISE EXCEPTION 'V206: destination role % is not a tackle.roles row — refusing', dest_role;
     END IF;
 
     -- Collision preflight against the two unique keys we are about to re-key:
@@ -88,7 +88,7 @@ BEGIN
          WHERE p.role = 'big-pickle'
     ) THEN
         RAISE EXCEPTION
-            'V205: re-keying would collide on uq_prompts_role_slug_version for %', dest_role;
+            'V206: re-keying would collide on uq_prompts_role_slug_version for %', dest_role;
     END IF;
 
     IF EXISTS (
@@ -100,7 +100,7 @@ BEGIN
          WHERE c.role = 'big-pickle'
     ) THEN
         RAISE EXCEPTION
-            'V205: re-keying would collide on config_bundle_role_model_id_key for %', dest_role;
+            'V206: re-keying would collide on config_bundle_role_model_id_key for %', dest_role;
     END IF;
 
     -- ── Relocate the model-scoped artifacts onto the decided destination ──────
@@ -121,13 +121,13 @@ BEGIN
     ) s;
 
     IF v_left IS NOT NULL THEN
-        RAISE EXCEPTION 'V205: unreconciled big-pickle references remain in %', v_left;
+        RAISE EXCEPTION 'V206: unreconciled big-pickle references remain in %', v_left;
     END IF;
 
     DELETE FROM tackle.roles WHERE name = 'big-pickle';
 
     RAISE NOTICE
-        'V205: relocated % prompt(s) and % config_bundle(s) to %; big-pickle role row deleted',
+        'V206: relocated % prompt(s) and % config_bundle(s) to %; big-pickle role row deleted',
         v_prompts, v_bundles, dest_role;
 END $$;
 
@@ -137,7 +137,7 @@ END $$;
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM tackle.roles WHERE name = 'big-pickle') THEN
-        RAISE EXCEPTION 'V205: big-pickle survived the delete';
+        RAISE EXCEPTION 'V206: big-pickle survived the delete';
     END IF;
 END $$;
 
