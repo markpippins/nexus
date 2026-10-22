@@ -3,7 +3,11 @@ import http from "node:http";
 import { PipelineWatcher } from "./watcher";
 import { createError, createSuccess } from "./errors";
 import { validate } from "./validate";
-import { validateReceipt, receiptProvenanceMetadata } from "./receipts";
+import {
+  validateReceipt,
+  chooseUnblockReceiptType,
+  receiptProvenanceMetadata,
+} from "./receipts";
 import {
   createTicketIfMissing,
   advanceTicketsOnReceipt,
@@ -456,11 +460,10 @@ export const toolDefinitions: MCPToolDefinition[] = [
     name: "unblock_plan",
     description:
       "Move a blocked plan back to pending: undeletes (status→pending) if archived, "
-      + "deletes the unblock-family receipts (BLOCK/PLAN_BLOCK/CANCELLED/ABANDONED — "
-      + "this tool is the SOLE legitimate caller of deleteReceiptsByPlanAndType; the "
-      + "scoped receipt purge is the receipt-immutability exception, architect ruling "
-      + "fcec95a2 #2), issues a PLAN_CREATE receipt, "
-      + "and spawns a builder ticket so the conduit can pick it up again.",
+      + "APPENDS a REQUEUED receipt (append-only — the BLOCK/PLAN_BLOCK/CANCELLED/ABANDONED "
+      + "rows are preserved, because execution.receipts is immutable per architect ruling "
+      + "fcec95a2 #2), and spawns a fresh builder ticket so the conduit picks it up again. "
+      + "Synthetic/vision-only plans with no unblock-family receipt fall back to PLAN_CREATE.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1245,7 +1248,9 @@ export function registerToolHandlers(
         plan_id: revised.planNumber,
         type: "PLANNING",
         agent_role: "planner",
-        session_id: null, // no interactive session context: null, not ""
+        // session_id omitted on purpose — see unblock_plan: "no interactive
+        // session" must not be manufactured, and an explicit null 422s on the
+        // older deployed API build.
         ticket_id: null,
         artifact_path: null,
         producer_id: "conduit-mcp",
@@ -1999,16 +2004,24 @@ export function registerToolHandlers(
         );
       }
 
-      // Delete all BLOCK / PLAN_BLOCK receipts
-      const deleted = await api.deleteReceiptsByPlanAndType(args.planNumber, [
-        "BLOCK",
-        "PLAN_BLOCK",
-        "CANCELLED",
-        "ABANDONED",
-      ]);
-      console.log(
-        `[${now}] unblock_plan: deleted ${deleted} BLOCK/PLAN_BLOCK receipts for plan ${args.planNumber}`,
-      );
+      // Resolve the reopening transition BEFORE mutating anything. Receipts are
+      // append-only: for a plan-backed plan the BLOCK row lives in the canonical,
+      // immutable execution.receipts store, so "unblock" MUST append REQUEUED.
+      // The old delete-then-PLAN_CREATE path deleted from vision.receipts (0 rows
+      // for plan-backed plans) and was then refused by the transition map, leaving
+      // the plan pending with no receipt (plan 8261653, 2026-10-22).
+      const receiptType = await chooseUnblockReceiptType(args.planNumber);
+
+      // Validate the transition before creating tickets, so a refusal leaves no
+      // orphan ticket behind.
+      const unblockValidation = await validateReceipt(args.planNumber, receiptType);
+      if (!unblockValidation.valid) {
+        throw createError(
+          "INVALID_ARGUMENTS",
+          `Cannot issue ${receiptType} receipt for unblock: ${unblockValidation.error}`,
+          null,
+        );
+      }
 
       // Cancel any orphaned tickets FIRST so the plan gets fresh tickets.
       // Must run BEFORE createTicketIfMissing — otherwise cancelTicketsByPlan
@@ -2023,7 +2036,8 @@ export function registerToolHandlers(
         );
       }
 
-      // Issue a PLAN_CREATE receipt (moves plan back to pending)
+      // The receipt references the fresh ticket, so the ticket must exist first
+      // (same ordering as DBAdapter.trip_and_requeue).
       const receiptId = crypto.randomUUID();
       const ticketId = await createTicketIfMissing(
         args.planNumber,
@@ -2039,20 +2053,27 @@ export function registerToolHandlers(
           `[${now}] unblock_plan: bootstrapped builder ticket ${ticketId} for plan ${args.planNumber}`,
         );
       }
-      // Validate receipt transition before inserting (C-2 fix)
-      const unblockValidation = await validateReceipt(args.planNumber, "PLAN_CREATE");
-      if (!unblockValidation.valid) {
-        throw createError("INVALID_ARGUMENTS", `Cannot issue PLAN_CREATE receipt for unblock: ${unblockValidation.error}`, null);
-      }
       await api.insertReceipt({
         id: receiptId,
         plan_id: args.planNumber,
-        type: "PLAN_CREATE",
+        type: receiptType,
         agent_role: "planner",
-        session_id: null, // no interactive session context: null, not ""
-        summary: `Unblocked: ${plan.title}`,
+        // session_id is deliberately omitted, not sent as null: it means "no
+        // interactive session". Current main persists that as SQL NULL; the
+        // older API build still deployed at CONDUIT_API_URL types the field as a
+        // non-nullable string and 422s on an explicit null. Omitting the key
+        // satisfies both shapes.
+        ticket_id: ticketId,
+        artifact_path: null,
+        summary:
+          receiptType === "REQUEUED"
+            ? `Unblocked (requeued): ${plan.title}`
+            : `Unblocked: ${plan.title}`,
         metadata_json: JSON.stringify({
           unblocked: true,
+          unblock_receipt_type: receiptType,
+          // The prior BLOCK/PLAN_BLOCK rows are preserved by design.
+          prior_block_receipts_preserved: true,
           ...receiptProvenanceMetadata(receiptId),
         }),
         tokens_used: 0,
@@ -2074,7 +2095,7 @@ export function registerToolHandlers(
           data: {
             planNumber: args.planNumber,
             planTitle: plan.title,
-            receiptType: "PLAN_CREATE",
+            receiptType,
             agentRole: "planner",
             newDerivedStatus: "PLAN_CREATE",
             timestamp: now,
@@ -2085,7 +2106,9 @@ export function registerToolHandlers(
       return {
         unblocked: true,
         planNumber: args.planNumber,
-        deletedBlockReceipts: deleted,
+        receiptType,
+        priorBlockReceiptsPreserved: true,
+        ticketId,
         ticketsCancelled,
         newStatus: "pending",
         timestamp: now,

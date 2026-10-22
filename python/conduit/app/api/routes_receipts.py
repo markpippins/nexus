@@ -6,7 +6,9 @@ Provides receipt lifecycle operations from conduit-mcp's db.ts:
   GET  /api/receipts/:planId/raw       — getReceiptsForPlan (raw rows)
   GET  /api/receipts/:planId/latest-type — getLatestReceiptType
   POST /api/receipts                   — insertReceipt
-  DELETE /api/receipts/:planId         — deleteReceiptsByPlanAndType (query: types)
+  DELETE /api/receipts/:planId         — deleteReceiptsByPlanAndType (query: types;
+                                         no caller since 2026-10-22 — unblock is
+                                         append-only, see UNBLOCK_RECEIPT_TYPES)
 
 Design: Plan 1055 — conduit-mcp SQL consolidation into Python conduit
 Validation (validateReceipt) stays in conduit-mcp's receipts.ts.
@@ -174,14 +176,17 @@ def insert_receipt(body: ReceiptInsertRequest):
     return {"ok": True, "id": body.id, "plan_id": body.plan_id}
 
 
-# Sole legitimate caller of the DELETE surface is conduit-mcp's unblock_plan
-# tool (typescript/conduit-mcp/src/tools.ts ~L1905), which purges the unblock
-# receipt family so a previously-blocked plan can be re-ticketed cleanly.
-# Per architect ruling fcec95a2 (#2): the endpoint must NOT remain a
+# NO CALLER as of 2026-10-22. This surface formerly existed for conduit-mcp's
+# unblock_plan, which deleted the unblock-family rows before re-ticketing. That
+# path could never work for a plan-backed plan: the canonical store is
+# execution.receipts (immutable, trg_receipts_immutable) while this DELETE only
+# reaches vision.receipts, so it removed 0 rows and the follow-up PLAN_CREATE was
+# refused by the transition map (plan 8261653). unblock_plan now APPENDS REQUEUED
+# and deletes nothing.
+# Per architect ruling fcec95a2 (#2) the endpoint must NOT become a
 # general-purpose receipt deleter — any type outside the unblock family is
-# rejected. This is the receipt-immutability exception, scoped and typed to
-# the unblock workflow (see unblock_plan). Do not widen without an architect
-# decision.
+# rejected. Retained as the narrow, typed exception; do NOT re-wire unblock_plan
+# to it. Do not widen without an architect decision.
 UNBLOCK_RECEIPT_TYPES = {"BLOCK", "PLAN_BLOCK", "CANCELLED", "ABANDONED"}
 
 

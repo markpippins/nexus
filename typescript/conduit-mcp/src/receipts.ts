@@ -22,8 +22,8 @@ const ALLOWED: Record<string, string[]> = {
   CCNF_EXECUTION: ["IMPLEMENTATION", "CCNF_EXECUTION", "HOLD"],
   // Rejection → builder re-implements, or manual REVIEW_PASS override, or hold:
   REVIEW_REJECT: ["IMPLEMENTATION", "REVIEW_PASS", "HOLD"],
-  // Block → implement (unblocked), hold while blocked is allowed:
-  BLOCK: ["IMPLEMENTATION", "HOLD"],
+  // Block → requeue (append-only unblock), implement (legacy edge), or hold:
+  BLOCK: ["REQUEUED", "IMPLEMENTATION", "HOLD"],
   // REVIEW_PASS is terminal — no further receipts for THIS plan.
   // But a revision creates a NEW plan with a PLANNING receipt.
   REVIEW_PASS: [],
@@ -41,13 +41,13 @@ const ALLOWED: Record<string, string[]> = {
   // resolved by validateReceipt from the last non-CRITIQUE receipt.
   CRITIQUE_PASS: ["IMPLEMENTATION", "REVIEW", "HOLD"],
   CRITIQUE_REJECT: ["PLAN_CREATE", "IMPLEMENTATION", "HOLD"],
-  // Planner block:
-  PLAN_BLOCK: ["IMPLEMENTATION", "HOLD"], // unblock or hold
+  // Planner block → requeue (append-only unblock), implement, or hold:
+  PLAN_BLOCK: ["REQUEUED", "IMPLEMENTATION", "HOLD"], // unblock or hold
   // Requeued plans can be re-dispatched:
   REQUEUED: ["PLAN_CREATE", "IMPLEMENTATION"],
-  // Cancelled / abandoned plans can be resurrected:
-  CANCELLED: ["PLAN_CREATE"],
-  ABANDONED: ["PLAN_CREATE"],
+  // Cancelled / abandoned plans can be requeued or resurrected:
+  CANCELLED: ["REQUEUED", "PLAN_CREATE"],
+  ABANDONED: ["REQUEUED", "PLAN_CREATE"],
   // API_LIMIT is always valid (like BLOCK) — handled as special case in validateReceipt
   API_LIMIT: [],
 };
@@ -58,6 +58,53 @@ const ALLOWED: Record<string, string[]> = {
  * resolved from the last non-CRITIQUE receipt — never a new state/receipt type.
  */
 const CRITIQUE_FAMILY = new Set(["CRITIQUE", "CRITIQUE_PASS", "CRITIQUE_REJECT"]);
+
+/**
+ * The unblock receipt family — the states a plan is in when an operator asks
+ * to reopen it.
+ *
+ * Unblocking MUST NOT delete these rows. `execution.receipts` is the canonical
+ * store for plan-backed plans and it is append-only (trg_receipts_immutable,
+ * architect ruling fcec95a2 #2), so the only reachable transition is
+ * `BLOCK|PLAN_BLOCK|CANCELLED|ABANDONED → REQUEUED`. The old delete-then-
+ * PLAN_CREATE path could never work for a plan-backed plan: the DELETE hit
+ * `vision.receipts` (0 rows) and PLAN_CREATE was then refused by this map,
+ * leaving the plan pending but un-receipted.
+ */
+export const UNBLOCK_RECEIPT_TYPES = [
+  "BLOCK",
+  "PLAN_BLOCK",
+  "CANCELLED",
+  "ABANDONED",
+] as const;
+
+const UNBLOCK_FAMILY = new Set<string>(UNBLOCK_RECEIPT_TYPES);
+
+/** Read-only view of the transition map (hermetic tests; no network). */
+export function allowedTransitionsFrom(currentType: string): string[] {
+  return [...(ALLOWED[currentType] || [])];
+}
+
+/**
+ * Which receipt reopens a plan, given its latest receipt type.
+ *
+ * `REQUEUED` for the unblock family — the append-only path, and the only one
+ * that works against the immutable canonical store. `PLAN_CREATE` otherwise
+ * (no receipts yet, or a synthetic/vision-only plan), preserving the previous
+ * behaviour where it is still valid.
+ */
+export function unblockReceiptTypeFor(
+  latest: string | null | undefined,
+): "REQUEUED" | "PLAN_CREATE" {
+  return latest && UNBLOCK_FAMILY.has(latest) ? "REQUEUED" : "PLAN_CREATE";
+}
+
+/** Resolve the unblock transition from the live latest receipt type. */
+export async function chooseUnblockReceiptType(
+  planId: string,
+): Promise<"REQUEUED" | "PLAN_CREATE"> {
+  return unblockReceiptTypeFor(await getLatestReceiptType(planId));
+}
 
 /**
  * Resolve the position of a critique-family receipt: "admission" (after
