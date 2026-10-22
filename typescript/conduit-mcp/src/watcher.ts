@@ -411,7 +411,10 @@ export class PipelineWatcher {
             plan_id: plan.plan_number,
             type: "PLAN_CREATE",
             agent_role: "planner",
-            session_id: null, // no interactive session context: null, not ""
+            // session_id omitted on purpose ("no interactive session"). Current main
+            // persists NULL; the older API build still deployed at CONDUIT_API_URL
+            // types the field as a non-nullable string and 422s on an explicit null,
+            // so the key is left out — compatible with both shapes.
             artifact_path: null,
             summary: `Auto-bootstrapped: ${plan.title}`,
             metadata_json: JSON.stringify({

@@ -1,9 +1,12 @@
 """Receipts DELETE hardening (architect ruling fcec95a2 #2).
 
 Locks the constraint that DELETE /api/receipts/{plan_id} is NOT a general-
-purpose receipt deleter. The sole legitimate caller is conduit-mcp's
-unblock_plan tool, which purges the unblock receipt family. Any type outside
-{BLOCK, PLAN_BLOCK, CANCELLED, ABANDONED} must be rejected.
+purpose receipt deleter. Any type outside {BLOCK, PLAN_BLOCK, CANCELLED,
+ABANDONED} must be rejected.
+
+Note (2026-10-22): unblock_plan no longer calls this endpoint — it APPENDS
+REQUEUED because execution.receipts is immutable. The endpoint is retained as
+the narrow ruling-scoped exception; the hardening below still applies.
 
 Source-contract style (matches test_c1/test_c2 in this suite) — no DB
 required; asserts bind the Python route to the ruling.

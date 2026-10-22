@@ -7,7 +7,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "vitest run src/db.schema.test.ts",
+    "test": "vitest run src/db.schema.test.ts src/unblock-requeued.test.ts",
     "daemon": "bash scripts/mcp-daemon.sh start",
     "daemon-stop": "bash scripts/mcp-daemon.sh stop",
     "daemon-status": "bash scripts/mcp-daemon.sh status"
