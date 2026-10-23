@@ -49,9 +49,13 @@ jobs:
         with:
           python-version: "3.11"
 
+      # pydantic is a transitive requirement: the suite imports
+      # losm_ir.invariant, which imports BaseModel/Field from pydantic.
+      # Omitting it made this job fail with ModuleNotFoundError on every
+      # branch cut from main, regardless of the branch's own changes.
       - name: Install test dependencies
         run: |
-          python3 -m pip install pytest psycopg2-binary
+          python3 -m pip install pytest psycopg2-binary pydantic
 
       - name: Run LOSM PG suite validation
         run: |
