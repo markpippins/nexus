@@ -1,17 +1,19 @@
 {
   "$comment": [
-    "W-B4 evidence prototype (DBA, 2026-09-24): structured start-condition gating",
-    "spec for plans 8261652-8261655 — the candidate metadata shape for planner",
-    "ratification. NOT live plan metadata yet; the checker reads this file.",
-    "",
-    "start_conditions: each entry is one gate. evaluator = a small named",
-    "  predicate the checker knows how to compute from live evidence",
-    "  (bin/check_plan_gating.py). params carry the evidence references.",
-    "family: parent/child links. status = active|superseded|duplicate-parent.",
-    "  'duplicate-parent' marks a parent whose scope is fully carried by its",
-    "  children — the W-B4 duplication case this prototype demonstrates."
+    "W-B decomposition blueprint (plan 8261654). Two blocks:",
+    "  plans       — the W-B4 start-condition prototype for 8261652-8261655",
+    "                (candidate metadata shape for planner ratification).",
+    "  decomposition — the W-B inventory, unified status vocabulary, W-B1..W-B6",
+    "                package registry, evidence slots + aggregate matrix, and the",
+    "                W-B6 contract with CD-1/CD-2/CD-3 regression fixtures.",
+    "bin/check_plan_gating.py reads both: 'plans' is evaluated against live state;",
+    "'decomposition' is validated structurally and the W-B6 fixtures are run",
+    "through reference functions. The decomposition block never requires runtime",
+    "projection-sync logs and never claims runtime agreement — that is delegated",
+    "to child execution WorkRequests (stop_condition.delegation).",
+    "Human-readable twin: docs/promotion-flow/w-b-conduit-nebula-visibility-unification.md"
   ],
-  "version": "wb4-prototype-1",
+  "version": "wb-decomposition-1",
   "plans": {
     "8261652": {
       "title": "Decompose promotion post-ST.01 waves (W-A/W-B/W-C) into M-sized packages",
@@ -43,7 +45,8 @@
          "evidence_ref": "PR #493 merged",
          "note": "met 2026-09-23"}
       ],
-      "expected_gating": "BLOCKED-BUT-OPEN — ST.01 was met after ticket expiry; startable content-wise but no live ticket; planner re-emit required"
+      "artifact_state": "completed 2026-10-23 (REVIEW_PASS); W-A merged as PR #781 after this spec's 09-24 snapshot",
+      "expected_gating": "UNKNOWN — conditions met and all builder/reviewer rows are terminal (post-completion state quirk, not a gating defect)"
     },
     "8261654": {
       "title": "W-B decomposition: Conduit/Nebula visibility unification into M-sized packages",
@@ -52,8 +55,8 @@
         "parent": "8261652"
       },
       "start_conditions": [],
-      "artifact_state": "review_reject: 5/7 ACs; AC4 evidence undefined; AC5 is wave end-state (blueprint conflation) — needs planner re-scope + re-emit",
-      "expected_gating": "IN-REWORK — not startable by any builder until planner re-scopes AC4/AC5 and re-emits"
+      "artifact_state": "review_reject re-scoped: AC4/AC5 rewritten to decomposition evidence slots + W-B6 blueprint contract (planner b728da54); blueprint re-emitted in this spec's decomposition block; gen-2 builder ticket cancelled with planner-return reason; rework proceeds under the re-scoped ACs",
+      "expected_gating": "IN-REWORK — not startable by any builder until the re-scoped blueprint is re-reviewed"
     },
     "8261655": {
       "title": "W-C decomposition: consumer migration (writer fencing + Stage D gates) into M-sized packages",
@@ -68,6 +71,456 @@
          "note": "W-B terminal pass required first"}
       ],
       "expected_gating": "BLOCKED-WITH-EXPIRED — expired gen-1 ticket awaits disposition; conditions (W-A/W-B done) remain unmet; post-CD-2 the live-work exhibit class requires an open ticket"
+    }
+  },
+  "decomposition": {
+    "plan": "8261654",
+    "wave": "W-B",
+    "title": "Conduit/Nebula visibility unification — M-sized package decomposition",
+    "scope_class": "decomposition-blueprint",
+    "snapshot": {
+      "captured_at": "2026-10-24T15:13:48Z",
+      "sources": [
+        "GET http://localhost:3100/state",
+        "nebula.plans",
+        "nebula.implementation_plans",
+        "nebula.plan_status",
+        "nebula.receipts_unified",
+        "vision.tickets",
+        "resolution.ticket",
+        "resolution.receipt",
+        "kernel.transition_event"
+      ]
+    },
+    "surface_inventory": {
+      "conduit_buckets": {
+        "pending": 16,
+        "active": 3,
+        "completed": 15,
+        "blocked": 0,
+        "archived": 0,
+        "planning": 0,
+        "hold": 0
+      },
+      "nebula_statuses": {
+        "pending": 19,
+        "completed": 16,
+        "archived": 6
+      },
+      "union_plans": 41,
+      "conduit_visible_plans": 34,
+      "receipts_unified": 2105,
+      "vision_tickets": 779,
+      "resolution_ticket": 0,
+      "expired_tickets": 171,
+      "expiry_detection_events": 84,
+      "terminal_tickets_without_event": 574,
+      "mismatches": [
+        {
+          "id": "M1",
+          "class": "receipt-derived-status-vs-blueprint-status",
+          "plans": ["0002", "0005"],
+          "observed": "Conduit active/IMPLEMENTATION; Nebula completed",
+          "covered_by": ["W-B1"]
+        },
+        {
+          "id": "M2",
+          "class": "receipt-derived-status-vs-blueprint-status",
+          "plans": ["8261653"],
+          "observed": "Conduit completed/REVIEW_PASS; Nebula pending",
+          "covered_by": ["W-B1"]
+        },
+        {
+          "id": "M3",
+          "class": "archived-visibility",
+          "plans": ["0003", "0004", "0006", "0008", "0015", "8261652"],
+          "observed": "canonical archived set = 6; /state.archived = 0; watcher.getState replaces the DB bucket with the filesystem list",
+          "covered_by": ["W-B5", "W-B6"]
+        },
+        {
+          "id": "M4",
+          "class": "unreachable-plan-no-derived-status",
+          "plans": ["8261662"],
+          "observed": "pending in nebula.implementation_plans, present in nebula.plans, derived_status NULL (zero receipts), dropped by the /state switch; 14 builder ticket generations",
+          "covered_by": ["W-B4", "W-B6"]
+        },
+        {
+          "id": "M5",
+          "class": "field-hydration",
+          "plans": ["all-34-visible"],
+          "observed": "filesAffected and acceptanceCriteria empty for 34/34 /state plans; JSON.parse applied to text[]/jsonb columns",
+          "covered_by": ["W-B6"]
+        },
+        {
+          "id": "M6",
+          "class": "generation-blind-ticket-projection",
+          "plans": ["8261654", "8261662", "8261653"],
+          "observed": "/state ticket map keys by role only, ORDER BY plan_id, role; newer open generation can be hidden by an older closed row (CD-1)",
+          "covered_by": ["W-B3", "W-B6"]
+        },
+        {
+          "id": "M7",
+          "class": "ticket-store-split",
+          "plans": ["all-ticket-bearing"],
+          "observed": "vision.tickets = 779 live rows; resolution.ticket = 0 rows (holds generation/predecessor columns)",
+          "covered_by": ["W-B2", "W-B6"]
+        },
+        {
+          "id": "M8",
+          "class": "expiry-audit-gap",
+          "plans": ["171-expired-tickets"],
+          "observed": "171 expired tickets vs 84 expiry_detection events; 574 terminal tickets with zero transition events (1 post-cutoff DRIFT)",
+          "covered_by": ["W-B2", "W-B6"]
+        },
+        {
+          "id": "M9",
+          "class": "reject-scope-absent",
+          "plans": ["338-review-reject-receipts"],
+          "observed": "no review_reject receipt carries a structured scope; every reject resolves through the implementation default (CD-3)",
+          "covered_by": ["W-B6"]
+        }
+      ]
+    },
+    "status_vocabulary": {
+      "canonical_states": ["pending", "active", "completed", "archived"],
+      "conduit_receipt_states": {
+        "pending": ["PLAN_CREATE", "PLANNING", "REQUEUED", "HOLD", "CRITIQUE", "CRITIQUE_PASS", "CRITIQUE_REJECT"],
+        "active": ["IMPLEMENTATION", "REVIEW", "REVIEW_REJECT", "BLOCK", "PLAN_BLOCK", "API_LIMIT"],
+        "completed": ["REVIEW_PASS"],
+        "archived": ["CANCELLED", "ABANDONED"]
+      },
+      "nebula_projection_states": {
+        "pending": "pending",
+        "active": "pending",
+        "completed": "completed",
+        "archived": "archived"
+      },
+      "lossy_edges": [
+        "active -> pending: the Nebula blueprint lifecycle has no active value yet; the sub-state remains in the receipt chain"
+      ],
+      "precedence": [
+        "the receipt chain is canonical; a blueprint status may lag but never overrides a terminal receipt",
+        "REVIEW_REJECT is active (rework), never completed",
+        "archived = explicit Nebula archive disposition plus terminal non-success receipts"
+      ],
+      "rows": [
+        {"conduit": "PLAN_CREATE", "canonical": "pending", "nebula": "pending"},
+        {"conduit": "PLANNING", "canonical": "pending", "nebula": "pending"},
+        {"conduit": "REQUEUED", "canonical": "pending", "nebula": "pending"},
+        {"conduit": "HOLD", "canonical": "pending", "nebula": "pending"},
+        {"conduit": "CRITIQUE", "canonical": "pending", "nebula": "pending"},
+        {"conduit": "CRITIQUE_PASS", "canonical": "pending", "nebula": "pending"},
+        {"conduit": "CRITIQUE_REJECT", "canonical": "pending", "nebula": "pending"},
+        {"conduit": "IMPLEMENTATION", "canonical": "active", "nebula": "pending"},
+        {"conduit": "REVIEW", "canonical": "active", "nebula": "pending"},
+        {"conduit": "REVIEW_REJECT", "canonical": "active", "nebula": "pending"},
+        {"conduit": "BLOCK", "canonical": "active", "nebula": "pending"},
+        {"conduit": "PLAN_BLOCK", "canonical": "active", "nebula": "pending"},
+        {"conduit": "API_LIMIT", "canonical": "active", "nebula": "pending"},
+        {"conduit": "REVIEW_PASS", "canonical": "completed", "nebula": "completed"},
+        {"conduit": "CANCELLED", "canonical": "archived", "nebula": "archived"},
+        {"conduit": "ABANDONED", "canonical": "archived", "nebula": "archived"}
+      ]
+    },
+    "packages": {
+      "W-B1": {
+        "title": "Legacy/derived plan-status reconciliation",
+        "owner": "dba",
+        "dependencies": [],
+        "independent": true,
+        "evidence_outputs": ["WB1-DISPOSITION"],
+        "stop_condition": "Every plan in the M1/M2 set carries one recorded disposition (complete/archive/requeue) citing the winning receipt; no plan disagrees across the two surfaces without a disposition.",
+        "stop_condition_authority": "non-authoritative: the dba records dispositions; runtime projection agreement is the child WR's result",
+        "child_work_request": "W-B1 execution WR (docket c7c26160)"
+      },
+      "W-B2": {
+        "title": "Ticket-state semantics: expired is not completed",
+        "owner": "engineer",
+        "dependencies": [],
+        "independent": true,
+        "evidence_outputs": ["WB2-TICKET-CLASS"],
+        "stop_condition": "No terminal plan displays expired as its outcome; every expired generation has a durable non-success transition or an enumerated waiver.",
+        "stop_condition_authority": "non-authoritative: the engineer records classification; uniform enforcement lands in W-B6",
+        "child_work_request": "W-B2 execution WR (docket c7c26160)"
+      },
+      "W-B3": {
+        "title": "Generation-aware ticket hygiene and orphan sweep",
+        "owner": "reviewer",
+        "dependencies": ["W-B2"],
+        "independent": true,
+        "evidence_outputs": ["WB3-SWEEP-LOG"],
+        "stop_condition": "No open/claimed generation past expires_at without a recorded sweep disposition; every generation closes with a reason.",
+        "stop_condition_authority": "non-authoritative: the reviewer attests the sweep log; it does not close plans",
+        "child_work_request": "W-B3 execution WR (docket c7c26160)"
+      },
+      "W-B4": {
+        "title": "Structured start-condition gating and family links",
+        "owner": "planner",
+        "dependencies": [],
+        "independent": true,
+        "evidence_outputs": ["WB4-GATING"],
+        "stop_condition": "Every W-family plan carries a structured start-condition block and a family link; no open builder ticket presents work its own acceptance criteria forbid.",
+        "stop_condition_authority": "non-authoritative: prototype evidence only; schema ratification stays with the canonical blueprint (Architect/DBA)",
+        "child_work_request": "W-B4 execution WR (docket c7c26160)"
+      },
+      "W-B5": {
+        "title": "Unified vocabulary and archived visibility ratification",
+        "owner": "architect",
+        "dependencies": ["W-B1", "W-B4"],
+        "independent": true,
+        "evidence_outputs": ["WB5-PROJECTION"],
+        "stop_condition": "The vocabulary is ratified and the projection exposes the archived set plus previously unreachable plans; no plan is absent from both surfaces.",
+        "stop_condition_authority": "non-authoritative: the architect ratifies; the runtime change belongs to the child WR",
+        "child_work_request": "W-B5 execution WR (docket c7c26160)"
+      },
+      "W-B6": {
+        "title": "Single generation-aware projection surface, uniform expiry audit, reject-scope routing",
+        "owner": "engineer",
+        "dependencies": ["8261650", "8261651", "W-B2", "W-B3"],
+        "independent": true,
+        "evidence_outputs": ["WB6-GENERATION", "WB6-EXPIRY", "WB6-REJECT"],
+        "stop_condition": "All three W-B6 fixtures pass against the child implementation: /state hydrates every plan field and exposes every open generation, every ticket generation has a durable expiry transition with no completion implication, and a blueprint-scope REVIEW_REJECT produces a Planner re-scope event rather than a builder ticket.",
+        "stop_condition_authority": "non-authoritative: the engineer records the fixture run; blueprint conformance is not runtime evidence",
+        "child_work_request": "W-B6 execution WR (docket c7c26160)"
+      }
+    },
+    "evidence_slot_schema": {
+      "required_fields": [
+        "artifact_or_query",
+        "observed_field",
+        "timestamp",
+        "source_reference",
+        "verification_owner"
+      ],
+      "requires_runtime_projection_sync_logs": false,
+      "note": "Observations are produced by the named query/artifact and stamped at read time. The aggregate matrix is a static linkage, not a synchronization trace."
+    },
+    "evidence_slots": {
+      "WB1-DISPOSITION": {
+        "package": "W-B1",
+        "artifact_or_query": "select plan_number, status from nebula.implementation_plans where plan_number in ('0002','0005','8261653') + GET /state",
+        "observed_field": "disposition (complete|archive|requeue)",
+        "timestamp": "recorded_at",
+        "source_reference": "winning receipt kind in nebula.receipts_unified + vision.tickets row",
+        "verification_owner": "architect"
+      },
+      "WB2-TICKET-CLASS": {
+        "package": "W-B2",
+        "artifact_or_query": "select plan_id, role, status, count(*) from vision.tickets group by 1,2,3",
+        "observed_field": "terminal_outcome vs attention_lost",
+        "timestamp": "closed_at",
+        "source_reference": "vision.tickets + kernel.transition_event",
+        "verification_owner": "reviewer"
+      },
+      "WB3-SWEEP-LOG": {
+        "package": "W-B3",
+        "artifact_or_query": "select id, plan_id, role, status, expires_at from vision.tickets where status in ('open','claimed','stale')",
+        "observed_field": "sweep_disposition",
+        "timestamp": "swept_at",
+        "source_reference": "vision.tickets + sweep transition event",
+        "verification_owner": "planner"
+      },
+      "WB4-GATING": {
+        "package": "W-B4",
+        "artifact_or_query": "python3 bin/check_plan_gating.py bin/plan-gating-specs/w-decomposition.json",
+        "observed_field": "plans.<id>.gating",
+        "timestamp": "captured_at (run stamp)",
+        "source_reference": "this spec file + nebula.receipts_unified derived status",
+        "verification_owner": "dba"
+      },
+      "WB5-PROJECTION": {
+        "package": "W-B5",
+        "artifact_or_query": "GET /state + select plan_number,status from nebula.implementation_plans",
+        "observed_field": "projection_bucket",
+        "timestamp": "projected_at",
+        "source_reference": "nebula.plan_status / nebula.receipts_unified",
+        "verification_owner": "reviewer"
+      },
+      "WB6-GENERATION": {
+        "package": "W-B6",
+        "artifact_or_query": "select plan_id, role, position, status from resolution.ticket order by plan_id, role, position (fallback vision.tickets)",
+        "observed_field": "open_generations",
+        "timestamp": "projected_at",
+        "source_reference": "ticket rows + kernel.transition_event",
+        "verification_owner": "architect"
+      },
+      "WB6-EXPIRY": {
+        "package": "W-B6",
+        "artifact_or_query": "python3 bin/check_transition_attestation.py + expiry-event census",
+        "observed_field": "unattested and expiry_events",
+        "timestamp": "run_at",
+        "source_reference": "kernel.transition_event + vision.tickets",
+        "verification_owner": "reviewer"
+      },
+      "WB6-REJECT": {
+        "package": "W-B6",
+        "artifact_or_query": "select kind, payload->>'scope' from resolution.receipt where kind='review_reject'",
+        "observed_field": "route (builder_rework_ticket|planner_rescope_event)",
+        "timestamp": "receipt.created_at",
+        "source_reference": "resolution.receipt payload",
+        "verification_owner": "planner"
+      }
+    },
+    "aggregate_matrix": {
+      "requires_runtime_projection_sync_logs": false,
+      "links": [
+        {"package": "W-B1", "slots": ["WB1-DISPOSITION"], "satisfied_when": "every M1/M2 plan has a disposition row"},
+        {"package": "W-B2", "slots": ["WB2-TICKET-CLASS"], "satisfied_when": "terminal vs attention-lost classification covers all tickets"},
+        {"package": "W-B3", "slots": ["WB3-SWEEP-LOG"], "satisfied_when": "every open/claimed generation has a disposition"},
+        {"package": "W-B4", "slots": ["WB4-GATING"], "satisfied_when": "the gating run finds no forbidden live work"},
+        {"package": "W-B5", "slots": ["WB5-PROJECTION"], "satisfied_when": "the vocabulary is ratified and archived/unreachable plans are visible"},
+        {"package": "W-B6", "slots": ["WB6-GENERATION", "WB6-EXPIRY", "WB6-REJECT"], "satisfied_when": "all three W-B6 fixtures pass in the child implementation"}
+      ]
+    },
+    "wb6_contract": {
+      "ruling": "1867c88d",
+      "generation_projection": {
+        "clause": "CD-1",
+        "invariant": "/state exposes all open ticket generations; a closed older-generation row never hides a newer open row of the same role. Canonical ticket/receipt stores stay authoritative; /state is a projection.",
+        "required_semantics": [
+          "project per (plan_id, role) by generation position, not by row order",
+          "expose the newest generation per role",
+          "report any open/claimed generation that is not the newest as hidden_open_generations (a defect signal, never a silent collapse)"
+        ],
+        "live_defect": "watcher.getState() builds a role-keyed ticket map with ORDER BY plan_id, role and no generation ordering (M6)"
+      },
+      "expiry_audit": {
+        "clause": "CD-2",
+        "invariant": "Conduit core owns expiry semantics; the sweeper is the enforcement mechanism. Every generation, including REVIEW_REJECT rework, receives a durable expiry transition/audit event at expires_at. Expiry never implies completion; an expired unclaimed implementation ticket re-alerts/returns according to the reject scope.",
+        "required_semantics": [
+          "for each non-terminal (open/claimed/stale) generation past expires_at emit exactly one audit event",
+          "the event carries plan_id, role, generation, expires_at, from_status, to_status=expired, reason=expiry_detection, implies_completion=false",
+          "already-terminal generations are untouched"
+        ],
+        "live_defect": "171 expired tickets vs 84 expiry_detection events; 574 terminal tickets with zero transition events (M8)"
+      },
+      "reject_routing": {
+        "clause": "CD-3",
+        "invariant": "Classify REVIEW_REJECT by scope. scope=implementation routes to a builder rework ticket; scope=blueprint routes to a Planner re-scope/repair event, not another builder ticket, preserving the original evidence and stopping the builder->review->reject loop until the Planner response is recorded.",
+        "required_semantics": [
+          "classify the latest REVIEW_REJECT by its structured scope field",
+          "scope=blueprint emits a Planner re-scope/repair event and creates no builder ticket",
+          "scope=implementation emits a builder rework ticket",
+          "absent scope resolves to the documented default implementation",
+          "blueprint return preserves the original evidence and stops the builder->review->reject loop until the Planner response is recorded"
+        ],
+        "default_scope": "implementation",
+        "live_defect": "all 338 review_reject receipts carry no scope; every reject resolves through the implementation default (M9)"
+      },
+      "fixtures": [
+        {
+          "id": "WB6-F1-hidden-generation-projection",
+          "clause": "CD-1",
+          "kind": "projection",
+          "cases": [
+            {
+              "name": "newer-open-wins-regardless-of-row-order",
+              "rows": [
+                {"ticket_id": "t-gen2", "role": "builder", "generation": 2, "status": "open", "created_at": "2026-09-22T19:33:34Z"},
+                {"ticket_id": "t-gen1", "role": "builder", "generation": 1, "status": "completed", "created_at": "2026-09-22T01:28:56Z"},
+                {"ticket_id": "t-rev1", "role": "reviewer", "generation": 1, "status": "failed", "created_at": "2026-09-22T19:30:37Z"}
+              ],
+              "expect": {
+                "open_generations": {"builder": 2},
+                "hidden_open_generations": [],
+                "newest_status": {"builder": "open", "reviewer": "failed"}
+              }
+            },
+            {
+              "name": "newer-cancelled-does-not-resurrect-older-open",
+              "rows": [
+                {"ticket_id": "t-gen1", "role": "builder", "generation": 1, "status": "completed", "created_at": "2026-09-22T01:28:56Z"},
+                {"ticket_id": "t-gen2", "role": "builder", "generation": 2, "status": "cancelled", "created_at": "2026-09-22T19:33:34Z"}
+              ],
+              "expect": {
+                "open_generations": {},
+                "hidden_open_generations": [],
+                "newest_status": {"builder": "cancelled"}
+              }
+            }
+          ]
+        },
+        {
+          "id": "WB6-F2-expiry-enforcement",
+          "clause": "CD-2",
+          "kind": "expiry",
+          "now": "2026-09-25T12:00:00Z",
+          "tickets": [
+            {"ticket_id": "e-open-past", "plan_id": "P", "role": "builder", "generation": 1, "status": "open", "expires_at": "2026-09-24T12:00:00Z"},
+            {"ticket_id": "e-claimed-future", "plan_id": "P", "role": "builder", "generation": 2, "status": "claimed", "expires_at": "2026-09-26T12:00:00Z"},
+            {"ticket_id": "e-terminal-past", "plan_id": "P", "role": "reviewer", "generation": 1, "status": "completed", "expires_at": "2026-09-24T12:00:00Z", "closed_at": "2026-09-23T12:00:00Z"}
+          ],
+          "expect": {
+            "events": [
+              {
+                "ticket_id": "e-open-past",
+                "plan_id": "P",
+                "role": "builder",
+                "generation": 1,
+                "from_status": "open",
+                "to_status": "expired",
+                "reason": "expiry_detection",
+                "implies_completion": false,
+                "expires_at": "2026-09-24T12:00:00Z"
+              }
+            ],
+            "unexpired": ["e-claimed-future"],
+            "already_terminal_untouched": ["e-terminal-past"],
+            "every_expired_generation_has_event": true
+          }
+        },
+        {
+          "id": "WB6-F3-planner-return",
+          "clause": "CD-3",
+          "kind": "routing",
+          "cases": [
+            {
+              "name": "blueprint-scope-returns-to-planner",
+              "payload": {"kind": "review_reject", "plan_id": "8261654", "scope": "blueprint"},
+              "expect": {
+                "route": "planner_rescope_event",
+                "scope": "blueprint",
+                "creates_builder_ticket": false,
+                "preserves_evidence": true,
+                "stops_builder_loop": true
+              }
+            },
+            {
+              "name": "implementation-scope-routes-to-builder-rework",
+              "payload": {"kind": "review_reject", "plan_id": "8261654", "scope": "implementation"},
+              "expect": {
+                "route": "builder_rework_ticket",
+                "scope": "implementation",
+                "creates_builder_ticket": true,
+                "preserves_evidence": true,
+                "stops_builder_loop": false
+              }
+            },
+            {
+              "name": "absent-scope-defaults-to-implementation",
+              "payload": {"kind": "review_reject", "plan_id": "8261654"},
+              "expect": {
+                "route": "builder_rework_ticket",
+                "scope": "implementation",
+                "creates_builder_ticket": true,
+                "preserves_evidence": true,
+                "stops_builder_loop": false
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "stop_condition": {
+      "decomposition": "W-B1..W-B6 are linked through the package registry and the aggregate evidence matrix; each is independently reviewable; and no open builder ticket can claim the unsatisfiable end-state AC, because the end state is not in this plan's scope. Runtime Conduit/Nebula agreement is delegated to the child execution WorkRequests and is evidenced only by their filled slots.",
+      "linked_packages": ["W-B1", "W-B2", "W-B3", "W-B4", "W-B5", "W-B6"],
+      "open_builder_ticket_guard": "A builder ticket may claim a package's implementation slice only when its own start conditions are met. It may never claim the wave end-state AC (Conduit/Nebula runtime agreement); that claim is reserved for the child execution WorkRequests and their evidence slots.",
+      "claims_runtime_agreement": false,
+      "delegation": {
+        "runtime_agreement": "child execution WorkRequests per package (docket c7c26160); this blueprint's conformance harness is not runtime evidence",
+        "st01_dependency": false,
+        "parallel_with": ["W-A"]
+      }
     }
   }
 }
