@@ -1,0 +1,62 @@
+-- Retro-ledger entry for V205 (companion to sql/V205__w_a_duplicate_history_reconciliation.sql).
+--
+-- WHY A FILE AT ALL: the ledger is a live DB table
+-- (resolution.migration_ledger), but the repo's own convention (the
+-- V203/V204 precedent, and the fact that a reviewer cannot see the live DB)
+-- calls for the retro-ledger to be traceable in the PR diff, not only in a
+-- live database. This file carries the EXACT description text that gets
+-- INSERTed. The live INSERT is the authoritative ledger entry; this file is
+-- its checked-in provenance trail.
+--
+-- Apply reference: the merge commit for plan 8261653 (PR TBD at write time).
+-- Applied by: dba.
+--
+-- The live INSERT (performed by the DBA against the live nexus DB):
+--   INSERT INTO resolution.migration_ledger
+--     (schema_name, migration_label, description, applied_by, applied_at)
+--   VALUES
+--     ('sql', 'V205__w_a_duplicate_history_reconciliation',
+--      '<V205 description>', 'dba', now());
+--
+-- Consolidated description text (one paragraph per migration, V143 precedent format):
+
+SET search_path = resolution;
+
+-- ---- V205 ------------------------------------------------------------------
+-- V205 (plan 8261653, W-A duplicate-history reconciliation; docket thread
+-- c7c26160-5b22-463f-9ee0-6e4784bae0e8): creates the append-only
+-- reconciliation ledger that the W-A wrap-not-drop rule requires, plus the
+-- per-row fingerprint trail it was missing. Three surfaces:
+-- resolution.reconciliation_set (the catalog of detected duplicate-history
+-- sets), resolution.reconciliation_disposition (the append-only ledger of
+-- merge|preserve|archive decisions, each carrying the record ref, its
+-- fingerprint and a reason; a re-decision is a new generation, never an
+-- update), and resolution.fingerprint_audit (the per-row fingerprint trail
+-- that closes the gap where resolution.migration_disposition records
+-- target_refs but no fingerprint of the row it dispositioned — 77 groups
+-- share one identical target_refs value in the 2026-10-22 census).
+-- Append-only is enforced by trigger, mirroring
+-- resolution.forbid_canonical_admission_mutation() on resolution.receipt.
+-- The migration creates EMPTY surfaces and touches no canonical row, so it
+-- carries zero data risk; the dispositions are applied separately by the
+-- DBA lane from the builder-side inventory (python/nebula). RETRO-LEDGEred
+-- by DBA; apply reference is the plan 8261653 merge commit (PR TBD at write
+-- time).
+
+-- Post-insert verification (the reviewer/gate can re-run these):
+--   SELECT migration_label, applied_by, applied_at
+--     FROM resolution.migration_ledger
+--    WHERE migration_label = 'V205__w_a_duplicate_history_reconciliation'
+--    ORDER BY applied_at;
+--
+-- Expected: 1 row, applied_by='dba', applied_at = the DBA's ledger-entry
+-- time (the INSERT time), NOT the V205 file's authoring date.
+--
+-- Post-apply surface verification:
+--   SELECT to_regclass('resolution.reconciliation_set'),
+--          to_regclass('resolution.reconciliation_disposition'),
+--          to_regclass('resolution.fingerprint_audit');
+--   SELECT count(*) FROM resolution.reconciliation_disposition;  -- 0 at apply
+--
+-- Expected: three non-null regclass values; count 0 (the migration creates
+-- empty surfaces; dispositions are applied by the DBA lane afterwards).
