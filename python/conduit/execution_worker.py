@@ -201,13 +201,15 @@ def _list_ready(db: DBAdapter, include_legacy: bool, eligible_plan_ids: set) -> 
         placeholders = ", ".join(["%s"] * len(eligible_plan_ids))
         with db._get_connection() as conn:
             cursor = conn.execute(
-                # D-T19-2(b) guard: exclude legacy-provisioned requests
-                # (get-or-create bridge rows, intent_type='legacy') from the
-                # automated claim/lease path — only WR-backed / real execution
-                # requests are eligible for execution workers.
+                # Eligibility is scoped by source_plan_id IN (eligible plans
+                # with live open tickets). No intent_type predicate: tier-2
+                # bridge rows created by resolve_request_for_receipt() for REAL
+                # plans carry intent_type='legacy' (business_key legacy-plan-*),
+                # so excluding them would skip live plans (W-A 8261653,
+                # planner record cd206980). Stale June/July rows are excluded
+                # by the IN clause — their plans have no live ticket.
                 f"""SELECT * FROM execution.requests
                     WHERE status = 'READY' AND source_plan_id IN ({placeholders})
-                      AND intent_type IS DISTINCT FROM 'legacy'
                     ORDER BY created_at ASC
                     LIMIT 100""",
                 tuple(eligible_plan_ids),
