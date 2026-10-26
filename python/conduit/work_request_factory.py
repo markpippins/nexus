@@ -111,6 +111,7 @@ class WorkRequestFactory:
         model_cfg: Optional[ModelConfig] = None,
         working_path: str = ".",
         session_id: str = "",
+        ticket_completion_criteria: str = "",
     ) -> WorkRequestDCO:
         plan_id = plan.get("id", "?")
         _log.info("create_from_plan: plan=%s role=%s model=%s",
@@ -119,6 +120,10 @@ class WorkRequestFactory:
         now = datetime.utcnow().isoformat() + "Z"
 
         acceptance_criteria = _parse_json(plan.get("acceptance_criteria"))
+        if role == "reviewer" and ticket_completion_criteria.strip():
+            acceptance_criteria.append(
+                f"Reviewer ticket completion criterion: {ticket_completion_criteria.strip()}"
+            )
         files_affected = _build_files_affected(plan)
 
         # ── intent ────────────────────────────────────────────────────

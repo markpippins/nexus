@@ -72,6 +72,50 @@ SUCCESS_RECEIPT = "IMPLEMENTATION"
 FAIL_RECEIPT = "BLOCK"
 LEASE_TTL = 600  # 10 min — renewed in the background during a run; crash recovery ≤10 min
 RENEW_INTERVAL = 240  # renew every 4 min (well inside the 10-min TTL)
+OUTCOME_EXCERPT_CHARS = 2000
+REVIEW_SETTLEMENT_CRITERIA = (
+    "Before issuing REVIEW_PASS, inspect the linked execution attempt and session "
+    "outcomes. Explicitly record a disposition for any attempt/session exit-code "
+    "mismatch; treat the attempt and session as distinct observations and do not "
+    "infer one exit code from the other."
+)
+
+
+class ReviewSettlementCriteriaError(RuntimeError):
+    """The reviewer ticket could not be safely made to require mismatch disposition."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.review_criterion = {"status": "not_enforced", "reason": message}
+
+
+def _bounded_text(value: str, limit: int = OUTCOME_EXCERPT_CHARS) -> dict:
+    text = value or ""
+    return {
+        "excerpt": text[:limit],
+        "length_chars": len(text),
+        "truncated": len(text) > limit,
+    }
+
+
+def _text_value(value) -> str:
+    if isinstance(value, dict) and "excerpt" in value:
+        return str(value.get("excerpt") or "")
+    return str(value or "")
+
+
+def _review_criteria_for_result(result: dict) -> str:
+    reconciliation = (result or {}).get("outcome_reconciliation") or {}
+    if reconciliation.get("kind") != "attempt_session_exit_mismatch":
+        return REVIEW_SETTLEMENT_CRITERIA
+    return (
+        f"{REVIEW_SETTLEMENT_CRITERIA}\n\n"
+        "Observed linked mismatch requiring explicit disposition: "
+        f"attempt {reconciliation.get('attempt_id')} exit code "
+        f"{reconciliation.get('attempt_exit_code')}; session "
+        f"{reconciliation.get('session_id')} exit code "
+        f"{reconciliation.get('session_exit_code')}."
+    )
 
 # ── API usage limit detection (ported from conduit/main.py, v075) ───
 _API_LIMIT_PATTERNS = [
@@ -234,16 +278,76 @@ def _reconcile_plans(db: DBAdapter) -> list[dict]:
             title=plan.get("title", ""),
             objective=plan.get("goal", ""),
         )
-        if req["status"] != "READY":
+        request_status = req.get("status")
+        may_set_ready = request_status in {"DRAFT", "COMPILED", "VALIDATED", "ADMITTED"}
+        if request_status == "FAILED":
+            may_set_ready = db.has_plan_requeued_after_last_attempt(plan_id, req["id"])
+        elif request_status == "CANCELLED":
+            may_set_ready = db.has_plan_requeued_after_cancellation(
+                plan_id, req["id"]
+            )
+        elif request_status == "COMPLETED":
+            may_set_ready = db.has_plan_rework_after_last_success(
+                plan_id, req["id"]
+            )
+        # CANCELLED/COMPLETED remain terminal without their explicit, newer
+        # requeue/rework receipt; plan eligibility alone is not authorization.
+        if may_set_ready:
+            where = "r.id = %s AND r.status = %s"
+            params = [req["id"], request_status]
+            if request_status == "CANCELLED":
+                where += (
+                    " AND r.source_plan_id = %s AND r.updated_at = %s"
+                    " AND EXISTS (SELECT 1 FROM nebula.receipts_unified rr"
+                    " WHERE rr.plan_id = r.source_plan_id AND rr.type = 'REQUEUED'"
+                    " AND rr.created_at > r.updated_at)"
+                )
+                params.extend((plan_id, req.get("updated_at")))
+            elif request_status == "COMPLETED":
+                where += (
+                    " AND r.source_plan_id = %s"
+                    " AND EXISTS (SELECT 1 FROM execution.attempts a"
+                    " WHERE a.request_id = r.id AND a.status = 'SUCCEEDED')"
+                    " AND EXISTS (SELECT 1 FROM nebula.receipts_unified rr"
+                    " WHERE rr.plan_id = r.source_plan_id"
+                    " AND rr.type IN ('REVIEW_REJECT', 'CRITIQUE_PASS')"
+                    " AND rr.created_at > (SELECT MAX(a.completed_at)"
+                    " FROM execution.attempts a WHERE a.request_id = r.id"
+                    " AND a.status = 'SUCCEEDED'))"
+                )
+                params.append(plan_id)
+            elif request_status == "FAILED":
+                where += (
+                    " AND EXISTS (SELECT 1 FROM nebula.receipts_unified rr"
+                    " WHERE rr.plan_id = r.source_plan_id AND rr.type = 'REQUEUED'"
+                    " AND rr.created_at > COALESCE((SELECT MAX(a.completed_at)"
+                    " FROM execution.attempts a WHERE a.request_id = r.id),"
+                    " '-infinity'::timestamptz))"
+                )
             with db._get_connection() as conn:
-                conn.execute(
-                    "UPDATE execution.requests SET status = 'READY', updated_at = NOW() "
-                    "WHERE id = %s AND status != 'READY'",
-                    (req["id"],),
+                cursor = conn.execute(
+                    f"UPDATE execution.requests r SET status = 'READY', updated_at = NOW() WHERE {where}",
+                    tuple(params),
                 )
                 conn.commit()
-            _log.info("reconcile: plan %s → request %s READY", plan_id, req["id"])
-            req["status"] = "READY"
+            if cursor.rowcount > 0:
+                _log.info("reconcile: plan %s request %s (%s) → READY",
+                          plan_id, req["id"], request_status)
+                req["status"] = "READY"
+            else:
+                with db._get_connection() as conn:
+                    latest = conn.execute(
+                        "SELECT status FROM execution.requests WHERE id = %s",
+                        (req["id"],),
+                    ).fetchone()
+                actual_status = latest[0] if latest else None
+                if actual_status is not None:
+                    req["status"] = actual_status
+                _log.warning(
+                    "reconcile: READY transition lost race/authorization plan=%s "
+                    "request=%s expected_status=%s current_status=%s",
+                    plan_id, req["id"], request_status, actual_status,
+                )
         created.append(req)
     return created
 
@@ -321,22 +425,22 @@ def _complete_conduit_lifecycle(
     wr_id: str,
     model: str,
     success: bool,
-) -> None:
+    attempt_id: str = "",
+    review_criteria: str = REVIEW_SETTLEMENT_CRITERIA,
+) -> dict | None:
     """Replicate _dispatch_one's success/failure tail: receipt, close ticket,
     advance cursor, create next tickets (Invariant 5).
 
     GOVERNANCE COVERAGE (do NOT add vision_bridge.issue_receipt here):
-    db.insert_receipt below writes to vision.receipts, whose
-    trg_receipt_governance trigger creates a peb.governance_events row for
-    every receipt — this channel ALREADY leaves a governance event (verified
-    live 2026-08-10: receipt:IMPLEMENTATION rows for plans 1284/1286).
-    Adding issue_receipt() on top would double-write vision.receipts AND map
-    SUCCESS -> REVIEW_PASS, which create_next_tickets' terminal-state guard
-    (treats REVIEW_PASS/BLOCK/PLAN_BLOCK as plan-terminal) would suppress
-    spawning the reviewer ticket and break the pipeline. Keep the
-    IMPLEMENTATION/BLOCK lifecycle receipt here; the trigger covers governance.
+    db.insert_receipt owns the plan-level IMPLEMENTATION/BLOCK write across
+    request-backed and synthetic receipt channels. Adding issue_receipt() on
+    top would duplicate lifecycle evidence and can map success directly to
+    REVIEW_PASS, which create_next_tickets' terminal-state guard treats as
+    plan-terminal and would suppress the reviewer ticket. Keep the
+    IMPLEMENTATION/BLOCK lifecycle receipt here.
     """
     if success:
+        receipt_id = f"rec-execution-worker-{attempt_id or wr_id}-implementation"
         db.insert_receipt(
             plan_id=plan_id,
             receipt_type=SUCCESS_RECEIPT,
@@ -345,8 +449,15 @@ def _complete_conduit_lifecycle(
             ticket_id=ticket_id or "",
             summary=f"builder completed via {wr_id} (model={model})",
             metadata={"work_request_id": wr_id, "role": ROLE, "harness": "opencode",
-                      "model": model, "executor": "execution-worker"},
+                      "model": model, "executor": "execution-worker",
+                      "attempt_id": attempt_id},
+            receipt_id=receipt_id,
         )
+        if not db.has_plan_receipt(plan_id, receipt_id, SUCCESS_RECEIPT):
+            raise RuntimeError(
+                f"plan-level {SUCCESS_RECEIPT} receipt is not visible "
+                f"(plan={plan_id}, receipt={receipt_id})"
+            )
         if ticket_id:
             db.close_ticket(plan_id, ROLE, session_id, "completed")
         db.advance_cursor(ROLE, plan_id, wr_id)
@@ -354,10 +465,22 @@ def _complete_conduit_lifecycle(
             plan_id, ROLE, "completed",
             parent_ticket_id=ticket_id or "",
             objective=wr_id,
-            completion_criteria="",
+            completion_criteria=review_criteria,
             owner=ROLE,
+            idempotency_key=f"execution-worker:{attempt_id or wr_id}:reviewer",
         )
+        if not db.ensure_reviewer_ticket_completion_criteria(
+            plan_id,
+            ticket_id,
+            wr_id,
+            review_criteria,
+        ):
+            raise ReviewSettlementCriteriaError(
+                "no matching open reviewer child could be safely updated, or a "
+                "claimed reviewer ticket has a different completion criterion"
+            )
         _log_ok(f"IMPLEMENTATION receipt + next tickets created (plan {plan_id})")
+        return {"status": "enforced", "criteria": review_criteria}
     else:
         db.insert_receipt(
             plan_id=plan_id,
@@ -373,6 +496,275 @@ def _complete_conduit_lifecycle(
             db.close_ticket(plan_id, ROLE, session_id, "failed")
         db.advance_cursor(ROLE, plan_id, wr_id)
         _log_warn(f"BLOCK receipt recorded (plan {plan_id})")
+    return None
+
+
+def _set_governance_finalization(
+    db: DBAdapter,
+    attempt_id: str,
+    result: dict,
+    status: str,
+    error: str | None = None,
+    review_criterion: dict | None = None,
+) -> dict:
+    """Update plan-governance state without changing process/work outcome."""
+    updated = dict(result or {})
+    governance = dict(updated.get("governance_finalization") or {})
+    governance["status"] = status
+    governance["error"] = error
+    governance["updated_at"] = datetime.now(timezone.utc).isoformat()
+    if review_criterion is not None:
+        governance["review_settlement_criterion"] = dict(review_criterion)
+    updated["governance_finalization"] = governance
+    if not db.update_attempt_result(attempt_id, updated):
+        raise RuntimeError(f"attempt result update affected no row (attempt={attempt_id})")
+    return updated
+
+
+def _ensure_success_execution_evidence(
+    db: DBAdapter,
+    attempt_id: str,
+    request_id: str,
+    result: dict,
+    executor_id: str,
+) -> None:
+    """Ensure attempt-linked success evidence exists before completing its request."""
+    if not db.has_attempt_execution_receipt(attempt_id, request_id):
+        db.issue_execution_receipt(
+            attempt_id=attempt_id,
+            request_id=request_id,
+            receipt_type=SUCCESS_RECEIPT,
+            agent_role=executor_id,
+            summary=f"builder completed via {result.get('work_request_id')} "
+                    f"(model={result.get('model')})",
+            metadata={
+                "work_request_id": result.get("work_request_id"),
+                "executor": executor_id,
+                "model": result.get("model"),
+                "session_id": result.get("session_id"),
+                "attempt_exit_code": result.get("process_outcome", {}).get("returncode"),
+            },
+        )
+    if not db.has_attempt_execution_receipt(attempt_id, request_id):
+        raise RuntimeError(
+            f"attempt-linked success receipt is not visible (attempt={attempt_id}, request={request_id})"
+        )
+    if not db.mark_request_completed_after_attempt(attempt_id, request_id):
+        raise RuntimeError(
+            f"request completion requires a SUCCEEDED exit_code=0 attempt and its receipt "
+            f"(attempt={attempt_id}, request={request_id})"
+        )
+
+
+def _finalize_governance_row(db: DBAdapter, row: dict) -> dict:
+    """Retry plan fan-out for an already successful execution attempt."""
+    attempt_id = str(row["attempt_id"])
+    result = row.get("result") or {}
+    if isinstance(result, str):
+        result = json.loads(result)
+    plan_id = row.get("source_plan_id") or result.get("plan_id")
+    request_id = str(row.get("request_id") or result.get("request_id") or "")
+    if row.get("attempt_status") != "SUCCEEDED" or row.get("exit_code") not in (0, "0"):
+        raise RuntimeError(
+            f"attempt evidence is not a successful zero-exit outcome "
+            f"(attempt={attempt_id}, status={row.get('attempt_status')}, exit_code={row.get('exit_code')})"
+        )
+    _ensure_success_execution_evidence(
+        db, attempt_id, request_id, result, result.get("executor_id", "conduit-worker")
+    )
+    if not plan_id:
+        return _set_governance_finalization(db, attempt_id, result, "not_applicable")
+    review_criterion = _complete_conduit_lifecycle(
+        db,
+        plan_id,
+        result.get("session_id", ""),
+        result.get("ticket_id"),
+        result.get("work_request_id", ""),
+        result.get("model", ""),
+        success=True,
+        attempt_id=attempt_id,
+        review_criteria=_review_criteria_for_result(result),
+    )
+    return _set_governance_finalization(
+        db, attempt_id, result, "complete",
+        review_criterion=review_criterion or {"status": "not_required"},
+    )
+
+
+def _retry_pending_governance_finalizations(db: DBAdapter, limit: int = 100) -> tuple[int, int]:
+    """Reconcile successful attempts without reacquiring a lease or relaunching."""
+    try:
+        pending = db.get_pending_governance_finalizations(limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("pending governance lookup failed: %s", exc)
+        return 0, 0
+    finalized = 0
+    still_pending = 0
+    for row in pending:
+        result = row.get("result") or {}
+        if isinstance(result, str):
+            result = json.loads(result)
+        try:
+            _finalize_governance_row(db, row)
+            finalized += 1
+        except Exception as exc:  # noqa: BLE001
+            still_pending += 1
+            _log.error(
+                "governance finalization remains pending request=%s plan=%s session=%s attempt=%s: %s",
+                row.get("request_id"), row.get("source_plan_id"),
+                result.get("session_id"), row.get("attempt_id"), exc,
+            )
+            try:
+                _set_governance_finalization(
+                    db, str(row["attempt_id"]), result, "pending", str(exc),
+                    review_criterion=getattr(exc, "review_criterion", None),
+                )
+            except Exception as record_exc:  # noqa: BLE001
+                _log.error("could not update pending governance error attempt=%s: %s",
+                           row.get("attempt_id"), record_exc)
+    return finalized, still_pending
+
+
+def _surface_session_exit_observations(db: DBAdapter) -> int:
+    """Persist and surface only mismatched attempt/session exit observations."""
+    try:
+        observations = db.get_worker_session_outcomes(limit=100)
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("worker session outcome lookup failed: %s", exc)
+        return 0
+    mismatch_count = 0
+    for observation in observations:
+        attempt_code = observation.get("attempt_exit_code")
+        session_code = observation.get("session_exit_code")
+        if attempt_code is None or session_code is None or attempt_code == session_code:
+            continue
+
+        mismatch_count += 1
+        result = observation.get("attempt_result") or {}
+        if isinstance(result, str):
+            result = json.loads(result)
+        prior = result.get("outcome_reconciliation") or {}
+        same_observation = (
+            prior.get("kind") == "attempt_session_exit_mismatch"
+            and prior.get("attempt_exit_code") == attempt_code
+            and prior.get("session_exit_code") == session_code
+            and prior.get("session_id") == observation.get("session_id")
+        )
+        prior_criterion = prior.get("review_ticket_criterion") or {}
+        if same_observation and prior_criterion.get("status") == "enforced":
+            continue
+
+        observed_at = (
+            prior.get("observed_at") if same_observation
+            else datetime.now(timezone.utc).isoformat()
+        )
+        result["session_outcome"] = {
+            "session_id": observation.get("session_id"),
+            "exit_code": session_code,
+            "observed_at": observed_at,
+        }
+        reviewer_criteria = _review_criteria_for_result({
+            **result,
+            "outcome_reconciliation": {
+                "kind": "attempt_session_exit_mismatch",
+                "attempt_id": observation.get("attempt_id"),
+                "attempt_exit_code": attempt_code,
+                "session_id": observation.get("session_id"),
+                "session_exit_code": session_code,
+            },
+        })
+        try:
+            criterion_enforced = bool(observation.get("plan_id")) and db.ensure_reviewer_ticket_completion_criteria(
+                observation.get("plan_id"),
+                result.get("ticket_id"),
+                result.get("work_request_id", ""),
+                reviewer_criteria,
+            )
+            criterion_record = (
+                {"status": "enforced", "criteria": reviewer_criteria}
+                if criterion_enforced else
+                {"status": "not_enforced", "reason": "no safely updatable matching reviewer ticket"}
+            )
+        except Exception as exc:  # noqa: BLE001
+            criterion_enforced = False
+            criterion_record = {"status": "not_enforced", "reason": str(exc)[:500]}
+        result["outcome_reconciliation"] = {
+            "kind": "attempt_session_exit_mismatch",
+            "review_required": True,
+            "attempt_id": observation.get("attempt_id"),
+            "request_id": observation.get("request_id"),
+            "plan_id": observation.get("plan_id"),
+            "session_id": observation.get("session_id"),
+            "attempt_exit_code": attempt_code,
+            "session_exit_code": session_code,
+            "disposition": prior.get("disposition") if same_observation else None,
+            "review_ticket_criterion": criterion_record,
+            "observed_at": observed_at,
+        }
+        governance = dict(result.get("governance_finalization") or {})
+        governance["review_settlement_criterion"] = criterion_record
+        if not criterion_enforced:
+            governance["status"] = "pending"
+            governance["error"] = criterion_record.get("reason")
+        result["governance_finalization"] = governance
+        try:
+            if not db.update_attempt_result(observation["attempt_id"], result):
+                raise RuntimeError("attempt result update affected no row")
+        except Exception as exc:  # noqa: BLE001
+            _log.error(
+                "attempt/session exit mismatch could not be persisted attempt=%s "
+                "session=%s attempt_exit_code=%s session_exit_code=%s: %s",
+                observation.get("attempt_id"), observation.get("session_id"),
+                attempt_code, session_code, exc,
+            )
+            continue
+        if not same_observation or prior_criterion != criterion_record:
+            _log.warning(
+                "review required: independent attempt/session exit mismatch attempt=%s "
+                "request=%s plan=%s session=%s attempt_exit_code=%s session_exit_code=%s "
+                "review_ticket_criterion=%s",
+                observation.get("attempt_id"), observation.get("request_id"),
+                observation.get("plan_id"), observation.get("session_id"),
+                attempt_code, session_code, criterion_record.get("status"),
+            )
+    return mismatch_count
+
+
+def _release_lease_safely(db: DBAdapter, lease_id: str) -> None:
+    """Release an active or already released lease without masking outcomes."""
+    try:
+        db.release_lease(lease_id)
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("lease release failed lease=%s: %s", lease_id, exc)
+
+
+def _close_worker_session_safely(db: DBAdapter, session_id: str, exit_code: int | None) -> None:
+    """Close this worker's session without replacing another writer's outcome."""
+    try:
+        if not db.close_worker_session(session_id, exit_code):
+            _log.info("worker session already closed; preserving stored outcome session=%s",
+                      session_id)
+    except Exception as exc:  # noqa: BLE001
+        _log.error("worker session close failed session=%s exit_code=%s: %s",
+                   session_id, exit_code, exc)
+
+
+def _release_claimed_ticket_safely(
+    db: DBAdapter, plan_id: str, session_id: str
+) -> None:
+    """Return this worker's claimed ticket to the pool without failing it."""
+    try:
+        if not db.release_ticket(plan_id, ROLE, session_id):
+            _log.info(
+                "builder ticket was no longer claimed by this worker; preserving ticket state "
+                "plan=%s session=%s",
+                plan_id, session_id,
+            )
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "builder ticket release failed after admission refusal plan=%s session=%s: %s",
+            plan_id, session_id, exc,
+        )
 
 
 def _process_one(db: DBAdapter, row: dict, executor_id: str, dry_run: bool, model: str = "") -> str:
@@ -395,6 +787,13 @@ def _process_one(db: DBAdapter, row: dict, executor_id: str, dry_run: bool, mode
     session_id = f"worker-{executor_id}-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{os.urandom(4).hex()}"
     ticket_id = None
     attempt_id = None
+    session_created = False
+    worker_session_exit_code = 1
+    attempt_outcome_saved = False
+    outcome_result: dict = {}
+    model_attempts: list[dict] = []
+    last_process_outcome: dict = {}
+    session_log_path = None
     renewer_stop = threading.Event()
 
     def _renew_lease_loop():
@@ -410,11 +809,31 @@ def _process_one(db: DBAdapter, row: dict, executor_id: str, dry_run: bool, mode
     try:
         # ── Ticket (Invariant 1) — claim if plan-backed ─────────────
         if plan_id:
+            session_created = True
             db.create_session(session_id, ROLE, [plan_id])
             ticket_id = _claim_conduit_ticket(db, plan_id, session_id)
 
         # ── Attempt (ADR-006) ───────────────────────────────────────
-        attempt = db.create_attempt(lease_id=lease_id, request_id=request_id, executor_id=executor_id)
+        attempt = db.create_attempt(
+            lease_id=lease_id,
+            request_id=request_id,
+            executor_id=executor_id,
+            work_role=ROLE,
+            session_id=session_id,
+            result={"session_id": session_id, "plan_id": plan_id},
+        )
+        if attempt is None:
+            _log.info(
+                "builder attempt refused by admission recheck request=%s plan=%s",
+                request_id, plan_id,
+            )
+            _release_lease_safely(db, lease_id)
+            if plan_id and ticket_id:
+                _release_claimed_ticket_safely(db, plan_id, session_id)
+            # No process was launched; preserve the session's null outcome
+            # rather than reporting a build failure.
+            worker_session_exit_code = None
+            return "admission-race"
         attempt_id = attempt["id"]
         db.start_attempt(attempt_id)
         _log.info("attempt %s started (request %s, plan %s)", attempt_id, request_id, plan_id)
@@ -462,7 +881,7 @@ def _process_one(db: DBAdapter, row: dict, executor_id: str, dry_run: bool, mode
             raise RuntimeError(f"no model chain resolved for role={ROLE} (tackle role config empty)")
         _log.info("model chain: %s", [e["model"] for e in chain])
 
-        result = ""
+        work_result = ""
         last_error = ""
         used_model = ""
         for idx, entry in enumerate(chain):
@@ -472,13 +891,50 @@ def _process_one(db: DBAdapter, row: dict, executor_id: str, dry_run: bool, mode
             label = "primary" if idx == 0 else f"fallback#{idx}"
             try:
                 _log.info("launching opencode builder via run_opencode [%s] model=%s …", label, entry_model)
-                result = executor_cloud.run_opencode(req, PROJECT_ROOT, session_log_path=session_log_path)
+                outcome = executor_cloud.run_opencode_outcome(
+                    req, PROJECT_ROOT, session_log_path=session_log_path
+                )
+                if not isinstance(outcome, executor_cloud.HarnessExecutionResult):
+                    raise TypeError(
+                        "run_opencode_outcome must return HarnessExecutionResult; "
+                        f"got {type(outcome).__name__}"
+                    )
+                if outcome.returncode != 0:
+                    raise executor_cloud.HarnessExecutionError(
+                        f"harness exited with code {outcome.returncode}", outcome
+                    )
+                model_attempts.append({
+                    "model": entry_model,
+                    "harness": entry.get("harness", "opencode"),
+                    "returncode": outcome.returncode,
+                    "stdout": _bounded_text(outcome.stdout),
+                    "stderr": _bounded_text(outcome.stderr),
+                    "error": None,
+                })
+                last_process_outcome = model_attempts[-1]
+                work_result = outcome.stdout
                 used_model = entry_model
-                _log.info("builder finished via [%s] model=%s (chars=%d)", label, entry_model, len(result or ""))
+                _log.info("builder finished via [%s] model=%s (chars=%d)", label, entry_model, len(work_result or ""))
                 break
             except Exception as e:  # noqa: BLE001
                 last_error = str(e)
-                is_limit = _detect_api_limit_error(-1, last_error)
+                process_outcome = getattr(e, "outcome", None)
+                failed_model_attempt = {
+                    "model": entry_model,
+                    "harness": entry.get("harness", "opencode"),
+                    "returncode": getattr(process_outcome, "returncode", None),
+                    "stdout": _bounded_text(getattr(process_outcome, "stdout", "")),
+                    "stderr": _bounded_text(getattr(process_outcome, "stderr", "")),
+                    "error": _bounded_text(last_error),
+                }
+                model_attempts.append(failed_model_attempt)
+                last_process_outcome = failed_model_attempt
+                is_limit = _detect_api_limit_error(
+                    failed_model_attempt["returncode"] if failed_model_attempt["returncode"] is not None else -1,
+                    "\n".join((last_error,
+                               getattr(process_outcome, "stdout", ""),
+                               getattr(process_outcome, "stderr", ""))),
+                )
                 _log.warning("[%s] model=%s failed rate_limit=%s: %s",
                              label, entry_model, is_limit, last_error[:300])
                 continue
@@ -487,48 +943,189 @@ def _process_one(db: DBAdapter, row: dict, executor_id: str, dry_run: bool, mode
                 f"all {len(chain)} model(s) in chain failed for request {request_id}: {last_error[:500]}")
         _log.info("builder succeeded via model=%s", used_model)
 
-        # ── Success path ────────────────────────────────────────────
-        db.complete_attempt(attempt_id, "SUCCEEDED", exit_code=0,
-                            result={"work_request_id": req.get("id"), "model": used_model})
-        db.issue_execution_receipt(
-            attempt_id=attempt_id, request_id=request_id,
-            receipt_type=SUCCESS_RECEIPT, agent_role=executor_id,
-            summary=f"builder completed via {req.get('id')} (model={used_model})",
-            metadata={"work_request_id": req.get("id"), "executor": executor_id, "model": used_model},
+        # ── Process outcome + WorkRequest result ────────────────────
+        outcome_result = {
+            "work_request_id": req.get("id"),
+            "work_result": _bounded_text(work_result),
+            "process_outcome": {
+                "returncode": last_process_outcome.get("returncode", 0),
+                "stdout": last_process_outcome["stdout"],
+                "stderr": last_process_outcome["stderr"],
+                "model": used_model,
+                "session_log_path": session_log_path,
+            },
+            "model_attempts": model_attempts,
+            "session_log_path": session_log_path,
+            "session_id": session_id,
+            "attempt_id": attempt_id,
+            "plan_id": plan_id,
+            "ticket_id": ticket_id,
+            "request_id": str(request_id),
+            "executor_id": executor_id,
+            "model": used_model,
+            "governance_finalization": {
+                "status": "pending",
+                "error": None,
+                "attempt_id": attempt_id,
+                "request_id": str(request_id),
+                "plan_id": plan_id,
+                "session_id": session_id,
+                "review_settlement_criterion": {
+                    "status": "pending" if plan_id else "not_required",
+                    "required": bool(plan_id),
+                },
+            },
+        }
+        attempt_saved = db.complete_attempt(
+            attempt_id, "SUCCEEDED", exit_code=0, result=outcome_result
         )
-        db.release_lease(lease_id)
-        with db._get_connection() as conn:
-            conn.execute("UPDATE execution.requests SET status = 'COMPLETED', updated_at = NOW() WHERE id = %s", (request_id,))
-            conn.commit()
+        if not attempt_saved:
+            raise RuntimeError(
+                f"attempt completion rejected because it is already terminal (attempt={attempt_id})"
+            )
+        attempt_outcome_saved = True
+        _ensure_success_execution_evidence(
+            db, attempt_id, request_id, outcome_result, executor_id
+        )
+        _release_lease_safely(db, lease_id)
         _log_ok(f"request {request_id} COMPLETED")
 
         if plan_id:
-            _complete_conduit_lifecycle(
-                db, plan_id, session_id, ticket_id, req.get("id", ""),
-                used_model, success=True,
-            )
-            # ── consumed_units tracking (RoleLeases plan 1286) ──────
-            # Unified accounting: POST /api/role-leases/consume (canonical endpoint)
             try:
-                _body = json.dumps({"role": ROLE}).encode()
-                _req = urllib.request.Request(
-                    "http://localhost:3101/api/role-leases/consume",
-                    data=_body,
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                )
-                with urllib.request.urlopen(_req, timeout=5):
-                    pass
+                outcome_result = _finalize_governance_row(db, {
+                    "attempt_id": attempt_id,
+                    "request_id": request_id,
+                    "source_plan_id": plan_id,
+                    "result": outcome_result,
+                    "attempt_status": "SUCCEEDED",
+                    "exit_code": 0,
+                })
             except Exception as e:  # noqa: BLE001
-                _log.warning("consumed_units update failed: %s", e)
+                _log.error(
+                    "execution completed; plan governance finalization pending "
+                    "request=%s plan=%s session=%s attempt=%s: %s",
+                    request_id, plan_id, session_id, attempt_id, e,
+                )
+                try:
+                    outcome_result = _set_governance_finalization(
+                        db, attempt_id, outcome_result, "pending", str(e),
+                        review_criterion=getattr(e, "review_criterion", None),
+                    )
+                except Exception as persist_error:  # noqa: BLE001
+                    # The initial successful attempt result already carries
+                    # status=pending, so a future pass can still reconcile it.
+                    _log.error("could not persist governance error attempt=%s: %s",
+                               attempt_id, persist_error)
+            # ── consumed_units tracking (RoleLeases plan 1286) ──────
+            if outcome_result.get("governance_finalization", {}).get("status") == "complete":
+                # Unified accounting: POST /api/role-leases/consume (canonical endpoint)
+                try:
+                    _body = json.dumps({"role": ROLE}).encode()
+                    _req = urllib.request.Request(
+                        "http://localhost:3101/api/role-leases/consume",
+                        data=_body,
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(_req, timeout=5):
+                        pass
+                except Exception as e:  # noqa: BLE001
+                    _log.warning("consumed_units update failed: %s", e)
+        else:
+            outcome_result = _set_governance_finalization(
+                db, attempt_id, outcome_result, "not_applicable"
+            )
         renewer_stop.set()
+        if outcome_result.get("governance_finalization", {}).get("status") == "pending":
+            return "finalization-pending"
+        worker_session_exit_code = 0
         return "completed"
 
     except Exception as e:  # noqa: BLE001
         _log.error("execution failed request=%s error=%s", request_id, e)
         renewer_stop.set()
+        if attempt_outcome_saved:
+            # Preserve the builder/process success. Any persistence error
+            # after that point must not rewrite it as a failed attempt or
+            # create a contradictory plan BLOCK.
+            _release_lease_safely(db, lease_id)
+            try:
+                _ensure_success_execution_evidence(
+                    db, attempt_id, request_id, outcome_result, executor_id
+                )
+                if plan_id:
+                    try:
+                        outcome_result = _set_governance_finalization(
+                            db, attempt_id, outcome_result, "pending", str(e),
+                            review_criterion=getattr(e, "review_criterion", None),
+                        )
+                    except Exception as persist_error:  # noqa: BLE001
+                        _log.error("could not persist pending governance attempt=%s: %s",
+                                   attempt_id, persist_error)
+                else:
+                    try:
+                        outcome_result = _set_governance_finalization(
+                            db, attempt_id, outcome_result, "not_applicable"
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+                _log.error("successful attempt retained; governance remains pending request=%s", request_id)
+                return (
+                    "finalization-pending"
+                    if outcome_result.get("governance_finalization", {}).get("status") == "pending"
+                    else "completed"
+                )
+            except Exception as completion_error:  # noqa: BLE001
+                _log.error("could not restore completed request status request=%s: %s",
+                           request_id, completion_error)
+                try:
+                    _set_governance_finalization(
+                        db, attempt_id, outcome_result, "pending", str(completion_error)
+                    )
+                except Exception as persist_error:  # noqa: BLE001
+                    _log.error("could not persist recovery pending state attempt=%s: %s",
+                               attempt_id, persist_error)
+                return "finalization-pending"
+
+        process_outcome = getattr(e, "outcome", None)
+        if process_outcome is None and last_process_outcome:
+            process_outcome = executor_cloud.HarnessExecutionResult(
+                last_process_outcome.get("returncode"),
+                _text_value(last_process_outcome.get("stdout", "")),
+                _text_value(last_process_outcome.get("stderr", "")),
+            )
+        exact_exit_code = getattr(process_outcome, "returncode", None)
+        if exact_exit_code not in (None, 0):
+            worker_session_exit_code = exact_exit_code
         if attempt_id:
-            db.complete_attempt(attempt_id, "FAILED", exit_code=1, error=str(e))
+            failure_result = {
+                "work_request_id": None,
+                "process_outcome": {
+                    "returncode": exact_exit_code,
+                    "stdout": _bounded_text(getattr(process_outcome, "stdout", "")),
+                    "stderr": _bounded_text(getattr(process_outcome, "stderr", "")),
+                    "session_log_path": session_log_path,
+                },
+                "model_attempts": model_attempts,
+                "session_log_path": session_log_path,
+                "session_id": session_id,
+                "plan_id": plan_id,
+                "ticket_id": ticket_id,
+                "request_id": str(request_id),
+                "governance_finalization": {"status": "not_applicable", "error": None},
+            }
+            attempt_saved = db.complete_attempt(
+                attempt_id, "FAILED", exit_code=exact_exit_code,
+                error=str(e), result=failure_result,
+            )
+            if not attempt_saved:
+                _log.error(
+                    "attempt is already terminal; preserving stored status/exit_code "
+                    "and skipping BLOCK request=%s attempt=%s",
+                    request_id, attempt_id,
+                )
+                _release_lease_safely(db, lease_id)
+                return "attempt-terminal"
         if plan_id:
             db.insert_receipt(
                 plan_id=plan_id, receipt_type="BLOCK", agent_role=ROLE,
@@ -547,6 +1144,12 @@ def _process_one(db: DBAdapter, row: dict, executor_id: str, dry_run: bool, mode
             conn.commit()
         _log_warn(f"request {request_id} FAILED")
         return "failed"
+    finally:
+        renewer_stop.set()
+        if session_created:
+            _close_worker_session_safely(
+                db, session_id, worker_session_exit_code
+            )
 
 
 def _recover_orphans(db: DBAdapter) -> int:
@@ -661,12 +1264,24 @@ def _role_lease_blocked(role: str) -> str | None:
 
 def _run_pass(db: DBAdapter, executor_id: str, dry_run: bool, include_legacy: bool, model: str = "") -> dict:
     """One full pass: recover + reconcile + consume. Returns summary."""
-    summary = {"recovered": 0, "reconciled": 0, "consumed": 0, "skipped_leased": 0, "failed": 0, "dry_run": 0, "lease_blocked": None}
+    summary = {"recovered": 0, "governance_finalized": 0,
+               "finalization_pending": 0, "session_mismatches": 0,
+               "reconciled": 0, "consumed": 0,
+               "skipped_leased": 0, "skipped_admission_race": 0, "failed": 0,
+               "dry_run": 0, "lease_blocked": None}
 
     # 0. Self-heal after a crashed run
     summary["recovered"] = _recover_orphans(db)
 
-    # 0.5 Role-lease gate (T20 B3): an expired/exhausted role lease blocks
+    # 0.25 Surface session mismatches first so any unsafe reviewer-ticket
+    # criterion update is persisted as pending before governance retry runs.
+    if not dry_run:
+        summary["session_mismatches"] = _surface_session_exit_observations(db)
+        # Reconcile completed attempts without reacquiring a lease or launching.
+        (summary["governance_finalized"],
+         summary["finalization_pending"]) = _retry_pending_governance_finalizations(db)
+
+    # 0.75 Role-lease gate (T20 B3): an expired/exhausted role lease blocks
     #     worker-pool consumption — skip reconcile + consume this pass.
     blocked = _role_lease_blocked(ROLE)
     if blocked:
@@ -699,10 +1314,14 @@ def _run_pass(db: DBAdapter, executor_id: str, dry_run: bool, include_legacy: bo
         outcome = _process_one(db, row, executor_id, dry_run, model=model)
         if outcome == "completed":
             summary["consumed"] += 1
+        elif outcome == "finalization-pending":
+            summary["finalization_pending"] += 1
         elif outcome == "failed":
             summary["failed"] += 1
         elif outcome == "leased":
             summary["skipped_leased"] += 1
+        elif outcome == "admission-race":
+            summary["skipped_admission_race"] += 1
         elif outcome == "dry-run":
             summary["dry_run"] += 1
 
