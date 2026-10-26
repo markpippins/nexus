@@ -25,6 +25,11 @@ _log = logging.getLogger("kernel.api.receipts")
 router = APIRouter()
 
 
+def _new_db_adapter():
+    from db_adapter import DBAdapter
+    return DBAdapter()
+
+
 # ── Pydantic models ────────────────────────────────────────────────
 
 class ReceiptInsertRequest(BaseModel):
@@ -136,8 +141,8 @@ def insert_receipt(body: ReceiptInsertRequest):
     ``id`` is honored verbatim (idempotency key parity with the direct
     Python path); no receipt id is generated here anymore. Provenance
     (producer/source channel/correlation) is stamped inside the adapter."""
-    from db_adapter import DBAdapter
-    db = DBAdapter()
+    from db_adapter import ReviewPassReconciliationError
+    db = _new_db_adapter()
 
     base_meta: dict = {}
     if body.metadata_json:
@@ -154,21 +159,24 @@ def insert_receipt(body: ReceiptInsertRequest):
                 detail=f"metadata_json is not valid JSON: {exc}",
             )
 
-    db.insert_receipt(
-        plan_id=body.plan_id,
-        receipt_type=body.type,
-        agent_role=body.agent_role,
-        session_id=body.session_id,
-        ticket_id=body.ticket_id,
-        summary=body.summary or "",
-        artifact_path=body.artifact_path,
-        metadata={**base_meta,
-                  "producer_id": body.producer_id,
-                  "source_channel": body.source_channel},
-        tokens_used=body.tokens_used or 0,
-        correlation_id=body.correlation_id,
-        receipt_id=body.id,
-    )
+    try:
+        db.insert_receipt(
+            plan_id=body.plan_id,
+            receipt_type=body.type,
+            agent_role=body.agent_role,
+            session_id=body.session_id,
+            ticket_id=body.ticket_id,
+            summary=body.summary or "",
+            artifact_path=body.artifact_path,
+            metadata={**base_meta,
+                      "producer_id": body.producer_id,
+                      "source_channel": body.source_channel},
+            tokens_used=body.tokens_used or 0,
+            correlation_id=body.correlation_id,
+            receipt_id=body.id,
+        )
+    except ReviewPassReconciliationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     _log.info("insert_receipt: plan=%s type=%s id=%s channel=%s",
               body.plan_id, body.type, body.id,

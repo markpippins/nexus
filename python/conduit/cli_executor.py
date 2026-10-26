@@ -108,7 +108,12 @@ def claim_and_execute(db: DBAdapter, request_id: str, executor_id: str = "cli-ex
             lease_id=lease_id,
             request_id=request_id,
             executor_id=executor_id,
+            work_role="builder",
         )
+        if attempt is None:
+            print("FAILED: Plan became terminal before attempt creation; dispatch refused.")
+            db.release_lease(lease_id)
+            return
         attempt_id = attempt["id"]
         print(f"Attempt created: {attempt_id}")
 

@@ -1,3 +1,6 @@
+import contextvars
+import hashlib
+import itertools
 import json
 import logging
 import os
@@ -8,6 +11,10 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta, timezone
 
 _log = logging.getLogger("conduit.db_adapter")
+
+
+class ReviewPassReconciliationError(ValueError):
+    """A REVIEW_PASS attempted to settle an unresolved session-outcome mismatch."""
 
 # C1 gate 1 (Lilac plan 8261639): process-level invocation identity for
 # receipt-write provenance. systemd sets INVOCATION_ID per service run;
@@ -103,6 +110,15 @@ import psycopg2
 import psycopg2.pool
 
 _pg_pool = None
+_ACTIVE_DB_CONNECTION = contextvars.ContextVar("conduit_active_db_connection", default=None)
+_SAVEPOINT_SEQUENCE = itertools.count()
+
+
+_TERMINAL_PLAN_RECEIPTS = frozenset({
+    "REVIEW_PASS", "BLOCK", "PLAN_BLOCK", "CANCELLED", "ABANDONED",
+})
+
+
 def _get_schema(explicit: str | None = None) -> str:
     """Return the schema name, resolving from explicit arg, then env, then default.
 
@@ -172,6 +188,7 @@ class _ConnectionProxy:
     Returns _CursorProxy that supports fetchone/fetchall (tuples) and dict_fetchone/dict_fetchall (dicts)."""
     def __init__(self, conn, schema: str = "conduit"):
         self._conn = conn
+        self._defer_commit = False
         self.total_changes = 0
         # SECURITY: validate schema is a safe PostgreSQL identifier before
         # DDL interpolation (SET search_path doesn't support parameterized ids).
@@ -195,7 +212,8 @@ class _ConnectionProxy:
         return _CursorProxy(cur)
 
     def commit(self):
-        self._conn.commit()
+        if not self._defer_commit:
+            self._conn.commit()
 
     def rollback(self):
         try:
@@ -279,12 +297,33 @@ class DBAdapter:
 
     @contextmanager
     def _get_connection(self):
+        active = _ACTIVE_DB_CONNECTION.get()
+        if active is not None and active[0] is self:
+            raw_conn, proxy = active[1], active[2]
+            savepoint = f"conduit_nested_{next(_SAVEPOINT_SEQUENCE)}"
+            proxy.execute(f"SAVEPOINT {savepoint}")
+            try:
+                yield proxy
+            except BaseException:
+                try:
+                    proxy.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                    proxy.execute(f"RELEASE SAVEPOINT {savepoint}")
+                except Exception:
+                    pass
+                raise
+            else:
+                try:
+                    proxy.execute(f"RELEASE SAVEPOINT {savepoint}")
+                except Exception:
+                    pass
+            return
+
         pool = _get_pg_pool()
         conn = pool.getconn()
         proxy = _ConnectionProxy(conn, schema=self._schema)
         try:
             yield proxy
-        except Exception:
+        except BaseException:
             # Rollback on error before returning connection to pool
             try:
                 conn.rollback()
@@ -297,6 +336,80 @@ class DBAdapter:
             except Exception:
                 pass
             pool.putconn(conn)
+
+    @staticmethod
+    def _plan_advisory_lock_key(plan_id: str) -> tuple[int, int]:
+        """Stable two-int PostgreSQL advisory-lock key for a conduit plan."""
+        digest = hashlib.sha256(f"conduit-plan:{plan_id}".encode("utf-8")).digest()
+        values = []
+        for offset in (0, 4):
+            value = int.from_bytes(digest[offset:offset + 4], "big", signed=False)
+            values.append(value - (1 << 32) if value >= (1 << 31) else value)
+        return values[0], values[1]
+
+    @contextmanager
+    def _plan_advisory_lock(self, plan_id: str):
+        """Hold the shared plan lock on one pooled connection for this operation.
+
+        The transaction-scoped lock and all validation/writes share one
+        PostgreSQL transaction. Nested adapter helpers reuse this connection;
+        their commits are deferred and their errors are isolated with
+        savepoints, so neither an inner commit nor a swallowed failure can
+        release the lock early. Lock waiters cannot consume the pool while
+        the lock holder waits for another connection.
+        """
+        active = _ACTIVE_DB_CONNECTION.get()
+        if active is not None and active[0] is self and active[3] == plan_id:
+            yield active[2]
+            return
+
+        pool = _get_pg_pool()
+        raw_conn = pool.getconn()
+        proxy = _ConnectionProxy(raw_conn, schema=self._schema)
+        key = self._plan_advisory_lock_key(plan_id)
+        acquired = False
+        discard = False
+        failed = False
+        token = None
+        try:
+            # Make the post-lock receipt recheck observe the transaction that
+            # released this lock, even if the pool's DSN has a stricter default.
+            proxy.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            proxy.execute("SELECT pg_advisory_xact_lock(%s, %s)", key).fetchone()
+            acquired = True
+            proxy._defer_commit = True
+            token = _ACTIVE_DB_CONNECTION.set((self, raw_conn, proxy, plan_id))
+            yield proxy
+        except BaseException:
+            failed = True
+            if not acquired:
+                # A lost response during lock acquisition leaves server-side
+                # transaction state uncertain; never return it for reuse.
+                discard = True
+            try:
+                raw_conn.rollback()
+            except Exception:
+                discard = True
+            raise
+        finally:
+            if token is not None:
+                _ACTIVE_DB_CONNECTION.reset(token)
+            proxy._defer_commit = False
+            try:
+                if failed or not acquired:
+                    raw_conn.rollback()
+                else:
+                    raw_conn.commit()
+            except Exception:
+                discard = True
+            try:
+                pool.putconn(raw_conn, close=discard)
+            except Exception:
+                _log.exception("failed to return plan-lock connection to pool: plan=%s", plan_id)
+
+    def _holds_plan_advisory_lock(self, plan_id: str) -> bool:
+        active = _ACTIVE_DB_CONNECTION.get()
+        return bool(active is not None and active[0] is self and active[3] == plan_id)
 
     def _init_db(self):
         """Ensure the manager-owned tables exist.
@@ -524,6 +637,15 @@ class DBAdapter:
                 _log.warning("claim_ticket: race lost for %s session=%s", ticket_id, session_id)
             return ticket_id if cursor.rowcount > 0 else None
 
+    def get_ticket_completion_criteria(self, ticket_id: str) -> str:
+        """Return the completion criterion attached to a ticket, if any."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT completion_criteria FROM tickets WHERE id = %s",
+                (ticket_id,),
+            ).fetchone()
+            return (row[0] or "") if row else ""
+
     def close_ticket(
         self, plan_id: str, role: str, session_id: str, terminal_status: str = "completed"
     ) -> bool:
@@ -685,6 +807,7 @@ class DBAdapter:
         self, plan_id: str, ticket_role: str, terminal_status: str,
         parent_ticket_id: str = "", objective: str = "",
         completion_criteria: str = "", owner: str = "",
+        idempotency_key: Optional[str] = None,
     ) -> int:
         """After a Ticket reaches a terminal state, spawn the next Ticket(s).
 
@@ -765,7 +888,34 @@ class DBAdapter:
         count = 0
         with self._get_connection() as conn:
             for role in next_roles:
-                ticket_id = f"ticket-{plan_id}-{role}-{int(datetime.utcnow().timestamp())}-{uuid.uuid4().hex[:8]}"
+                if idempotency_key and role == "reviewer":
+                    existing = conn.execute(
+                        """SELECT id, status, completion_criteria
+                           FROM tickets
+                           WHERE plan_id = %s AND role = 'reviewer'
+                             AND objective = %s
+                             AND parent_ticket_id IS NOT DISTINCT FROM %s
+                           ORDER BY created_at DESC LIMIT 1""",
+                        (plan_id, objective or "", parent_ticket_id or None),
+                    ).fetchone()
+                    if existing:
+                        existing_id, existing_status, existing_criteria = existing
+                        if (completion_criteria and existing_status == "open"
+                                and existing_criteria != completion_criteria):
+                            conn.execute(
+                                """UPDATE tickets SET completion_criteria = %s, last_activity = NOW()
+                                   WHERE id = %s AND status = 'open'""",
+                                (completion_criteria, existing_id),
+                            )
+                        # Reuse the matching child. ensure_reviewer_ticket_completion_criteria
+                        # below validates whether a claimed/terminal row already carries
+                        # the required criterion or can safely be updated.
+                        continue
+                if idempotency_key:
+                    key_hash = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()[:16]
+                    ticket_id = f"ticket-{plan_id}-{role}-exec-{key_hash}"
+                else:
+                    ticket_id = f"ticket-{plan_id}-{role}-{int(datetime.utcnow().timestamp())}-{uuid.uuid4().hex[:8]}"
                 spawn_reason = f"{ticket_role} {terminal_status} → {role}"
                 cursor = conn.execute(
                     """
@@ -1059,6 +1209,23 @@ class DBAdapter:
         derivable without guesswork."""
         _log.info("insert_receipt: plan=%s type=%s role=%s ticket=%s tokens=%d",
                   plan_id, receipt_type, agent_role, ticket_id, tokens_used)
+        if receipt_type == "REVIEW_PASS" and not self._holds_plan_advisory_lock(plan_id):
+            with self._plan_advisory_lock(plan_id):
+                # Keep reconciliation and every existing receipt writer path
+                # inside the same lock, including redirects and shadow writes.
+                return self.insert_receipt(
+                    plan_id=plan_id,
+                    receipt_type=receipt_type,
+                    agent_role=agent_role,
+                    session_id=session_id,
+                    ticket_id=ticket_id,
+                    summary=summary,
+                    artifact_path=artifact_path,
+                    metadata=metadata,
+                    tokens_used=tokens_used,
+                    correlation_id=correlation_id,
+                    receipt_id=receipt_id,
+                )
         now = datetime.utcnow().isoformat() + "Z"
         # C1 gate 2 (Lilac plan 8261639): the direct Python path now derives
         # its identity from the same canonical scheme as the HTTP path —
@@ -1067,6 +1234,8 @@ class DBAdapter:
         # distinguishable while keeping the identity contract identical.
         receipt_id = receipt_id or f"rec-{plan_id}-{receipt_type}-{uuid.uuid4().hex[:12]}"
         metadata = dict(metadata or {})
+        if receipt_type == "REVIEW_PASS":
+            self.validate_review_pass_reconciliation(plan_id, metadata)
         # Declaring-producer overrides (REST front-door path); stripped so
         # they are not duplicated verbatim inside the metadata blob.
         producer_id = metadata.pop("producer_id", None)
@@ -1142,6 +1311,7 @@ class DBAdapter:
                                   "ticket_id": ticket_id or None,
                                   "request_id": request_id},
                             source_system="conduit",
+                            manage_transaction=not self._holds_plan_advisory_lock(plan_id),
                         )
                     _log.info(
                         "redirect=enforce: canonical %s accepted (outcome=%s "
@@ -1267,6 +1437,7 @@ class DBAdapter:
                 self,
                 schema=os.environ.get("CONDUIT_LILAC_SCHEMA", "resolution"),
                 force=(redirect_mode == "shadow"),
+                manage_transaction=not self._holds_plan_advisory_lock(plan_id),
                 receipt_row={
                     "kind": receipt_type_to_kind(receipt_type),
                     "source_receipt_id": receipt_id,
@@ -1647,16 +1818,52 @@ class DBAdapter:
             )
             conn.commit()
 
-    def close_session(self, session_id: str, exit_code: int):
-        """Close a session.  Caller must release Tickets before calling."""
-        _log.info("close_session: session=%s exit_code=%d", session_id, exit_code)
+    def close_session(self, session_id: str, exit_code: Optional[int]) -> bool:
+        """Close a session once; a late close cannot overwrite the first outcome.
+
+        Caller must release Tickets before calling. Repeated closes are
+        idempotent. A different later exit code is logged as a conflicting
+        observation and left for explicit reconciliation rather than replacing
+        the original process outcome.
+        """
+        _log.info("close_session: session=%s exit_code=%s", session_id, exit_code)
         now = datetime.utcnow().isoformat() + "Z"
         with self._get_connection() as conn:
-            conn.execute(
-                "UPDATE sessions SET end_iso=%s, is_running=0, exit_code=%s, last_activity=%s WHERE id=%s",
+            cursor = conn.execute(
+                "UPDATE sessions SET end_iso=%s, is_running=0, exit_code=%s, last_activity=%s "
+                "WHERE id=%s AND is_running=1 AND end_iso IS NULL",
                 (now, exit_code, now, session_id),
             )
             conn.commit()
+            if cursor.rowcount > 0:
+                return True
+            row = conn.execute(
+                "SELECT end_iso, exit_code FROM sessions WHERE id=%s",
+                (session_id,),
+            ).fetchone()
+            if row and row[0] is not None and row[1] != exit_code:
+                _log.error(
+                    "conflicting late session close ignored session=%s stored_exit=%s incoming_exit=%s",
+                    session_id, row[1], exit_code,
+                )
+            return False
+
+    def close_worker_session(self, session_id: str, exit_code: Optional[int]) -> bool:
+        """Close a worker-owned session only if another writer has not closed it.
+
+        Unlike ``close_session``, this conditional close is safe to retry and
+        preserves an existing session outcome written by another process.
+        """
+        _log.info("close_worker_session: session=%s exit_code=%s", session_id, exit_code)
+        now = datetime.utcnow().isoformat() + "Z"
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "UPDATE sessions SET end_iso=%s, is_running=0, exit_code=%s, last_activity=%s "
+                "WHERE id=%s AND end_iso IS NULL AND is_running=1",
+                (now, exit_code, now, session_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
 
     # ── v079: Stale / expired detection ──────────────────────────
 
@@ -2612,19 +2819,145 @@ class DBAdapter:
         lease_id: str,
         request_id: str,
         executor_id: str,
-    ) -> dict:
-        """Create an execution attempt. Returns the attempt dict."""
+        session_id: Optional[str] = None,
+        result: Optional[Dict[str, Any]] = None,
+        work_role: Optional[str] = None,
+    ) -> Optional[dict]:
+        """Create an attempt with optional initial correlation data.
+
+        ``session_id`` is written in the same INSERT as the CREATED attempt so
+        REVIEW_PASS validation can observe in-flight work before the child exits.
+        Existing callers may omit both optional arguments. Governed builder and
+        reviewer calls return
+        ``None`` if the request is no longer READY, the plan is terminal, or its
+        current derived status is no longer eligible.
+        """
         _log.info("create_attempt: lease=%s request=%s executor=%s", lease_id, request_id, executor_id)
-        with self._get_connection() as conn:
+        if work_role is not None and work_role not in {"builder", "reviewer"}:
+            raise ValueError(f"unsupported governed work role: {work_role}")
+        governed_role = work_role or (
+            "builder" if executor_id in {"builder", "conduit-worker"} else None
+        )
+        initial_result = dict(result or {})
+        if session_id:
+            initial_result.setdefault("session_id", session_id)
+
+        def insert_on(conn):
             cursor = conn.execute(
                 """INSERT INTO execution.attempts
-                   (lease_id, request_id, executor_id, status)
-                   VALUES (%s, %s, %s, 'CREATED')
+                   (lease_id, request_id, executor_id, status, result)
+                   VALUES (%s, %s, %s, 'CREATED', %s)
                    RETURNING *""",
-                (lease_id, request_id, executor_id),
+                (lease_id, request_id, executor_id, json.dumps(initial_result)),
             )
             conn.commit()
             return cursor.dict_fetchone()
+
+        if executor_id != "conduit-worker" and governed_role is None:
+            with self._get_connection() as conn:
+                return insert_on(conn)
+
+        # Resolve the request and plan identity, then re-read both after
+        # taking the common plan lock so request admission, plan eligibility,
+        # and attempt insertion are serialized with terminal receipt writes.
+        with self._get_connection() as conn:
+            request = conn.execute(
+                "SELECT status, source_plan_id FROM execution.requests WHERE id = %s",
+                (request_id,),
+            ).fetchone()
+        if not request or request[0] != "READY":
+            _log.info(
+                "create_attempt: builder request is no longer READY; refusing attempt "
+                "request=%s status=%s",
+                request_id, request[0] if request else None,
+            )
+            return None
+        plan_id = str(request[1]) if request[1] is not None else None
+        if not plan_id:
+            with self._get_connection() as conn:
+                current = conn.execute(
+                    "SELECT status, source_plan_id FROM execution.requests WHERE id = %s FOR UPDATE",
+                    (request_id,),
+                ).fetchone()
+                if not current or current[0] != "READY" or current[1] is not None:
+                    _log.info(
+                        "create_attempt: unplanned builder request is no longer READY; "
+                        "refusing attempt request=%s status=%s",
+                        request_id, current[0] if current else None,
+                    )
+                    return None
+                return insert_on(conn)
+
+        with self._plan_advisory_lock(plan_id) as conn:
+            current = conn.execute(
+                "SELECT status, source_plan_id FROM execution.requests WHERE id = %s",
+                (request_id,),
+            ).fetchone()
+            if (not current or current[0] != "READY"
+                    or current[1] is None or str(current[1]) != plan_id):
+                _log.warning(
+                    "create_attempt: request is no longer READY or its plan association "
+                    "changed while acquiring lock; refusing builder attempt request=%s "
+                    "plan=%s status=%s current_plan=%s",
+                    request_id, plan_id, current[0] if current else None,
+                    current[1] if current else None,
+                )
+                return None
+            latest = conn.execute(
+                """SELECT type FROM nebula.receipts_unified
+                   WHERE plan_id = %s
+                   ORDER BY created_at DESC, id DESC
+                   LIMIT 1""",
+                (plan_id,),
+            ).fetchone()
+            if latest and latest[0] in _TERMINAL_PLAN_RECEIPTS:
+                _log.info(
+                    "create_attempt: terminal plan receipt %s won race; refusing builder attempt "
+                    "request=%s plan=%s",
+                    latest[0], request_id, plan_id,
+                )
+                return None
+            eligibility = conn.execute(
+                "SELECT derived_status FROM plan_status WHERE id = %s",
+                (plan_id,),
+            ).fetchone()
+            eligible_statuses = self._ROLE_DERIVED_STATUS_MAP.get(governed_role, ())
+            if not eligibility or eligibility[0] not in eligible_statuses:
+                _log.info(
+                    "create_attempt: plan is no longer %s-eligible; refusing attempt "
+                    "request=%s plan=%s derived_status=%s",
+                    governed_role, request_id, plan_id,
+                    eligibility[0] if eligibility else None,
+                )
+                return None
+
+            if governed_role == "builder":
+                pending = conn.execute(
+                    """SELECT id, completed_at FROM execution.attempts
+                       WHERE request_id = %s AND status = 'SUCCEEDED'
+                         AND result->'governance_finalization'->>'status' = 'pending'
+                       ORDER BY completed_at DESC NULLS LAST
+                       LIMIT 1""",
+                    (request_id,),
+                ).fetchone()
+                if pending:
+                    rework = conn.execute(
+                        """SELECT 1 FROM nebula.receipts_unified
+                           WHERE plan_id = %s
+                             AND type IN ('REQUEUED', 'REVIEW_REJECT', 'CRITIQUE_PASS')
+                             AND created_at > %s
+                           ORDER BY created_at ASC, id ASC
+                           LIMIT 1""",
+                        (plan_id, pending[1]),
+                    ).fetchone()
+                    if not rework:
+                        _log.info(
+                            "create_attempt: pending successful attempt has no newer rework "
+                            "authorization; refusing builder attempt request=%s plan=%s",
+                            request_id, plan_id,
+                        )
+                        return None
+            return insert_on(conn)
 
     def start_attempt(self, attempt_id: str) -> bool:
         """Mark attempt as RUNNING. Returns True if updated."""
@@ -2651,12 +2984,93 @@ class DBAdapter:
             cursor = conn.execute(
                 """UPDATE execution.attempts
                    SET status = %s, completed_at = NOW(),
-                       exit_code = %s, result = %s, error = %s
-                   WHERE id = %s""",
+                        exit_code = %s, result = %s, error = %s
+                   WHERE id = %s AND status IN ('CREATED', 'RUNNING')""",
                 (status, exit_code, json.dumps(result or {}), error, attempt_id),
             )
             conn.commit()
             return cursor.rowcount > 0
+
+    def ensure_reviewer_ticket_completion_criteria(
+        self,
+        plan_id: str,
+        parent_ticket_id: Optional[str],
+        objective: str,
+        completion_criteria: str,
+    ) -> bool:
+        """Ensure the open reviewer child requires disposition of linked mismatches.
+
+        Existing open child tickets are updated only when their plan, objective,
+        and parent match this implementation. A ticket already claimed with a
+        different criterion is left untouched and reported as not enforced.
+        """
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """SELECT id, status, completion_criteria
+                   FROM tickets
+                   WHERE plan_id = %s AND role = 'reviewer'
+                     AND objective = %s
+                     AND parent_ticket_id IS NOT DISTINCT FROM %s
+                   ORDER BY created_at DESC LIMIT 1""",
+                (plan_id, objective or "", parent_ticket_id),
+            ).fetchone()
+            if not row:
+                return False
+            ticket_id, status, current_criteria = row
+            if current_criteria == completion_criteria:
+                return True
+            if status != "open":
+                return False
+            updated = conn.execute(
+                """UPDATE tickets SET completion_criteria = %s, last_activity = NOW()
+                   WHERE id = %s AND status = 'open'""",
+                (completion_criteria, ticket_id),
+            )
+            conn.commit()
+            return updated.rowcount > 0
+
+    def has_plan_receipt(
+        self, plan_id: str, receipt_id: str, receipt_type: str
+    ) -> bool:
+        """Check request-backed and synthetic plan receipt identities directly.
+
+        Request-backed receipts preserve the caller's deterministic identity
+        in execution.receipts.lineage_original_id. Synthetic receipts use
+        vision.receipts.id. The unified view's exposed ``id`` is projection-
+        dependent, so verification must use the source identity for each path.
+        """
+        with self._get_connection() as conn:
+            request_backed = conn.execute(
+                """SELECT 1
+                   FROM execution.receipts e
+                   JOIN execution.requests r ON r.id = e.request_id
+                   WHERE r.source_plan_id = %s
+                     AND e.lineage_source = 'conduit'
+                     AND e.lineage_original_id = %s
+                     AND e.type = %s
+                   LIMIT 1""",
+                (plan_id, receipt_id, receipt_type),
+            ).fetchone()
+            if request_backed is not None:
+                return True
+
+            synthetic = conn.execute(
+                """SELECT 1 FROM vision.receipts
+                   WHERE plan_id = %s AND id = %s AND type = %s LIMIT 1""",
+                (plan_id, receipt_id, receipt_type),
+            ).fetchone()
+            if synthetic is not None:
+                return True
+
+            # Enforce-mode synthetic writes can be canonical-only. The current
+            # V140 view exposes this branch's id directly, so retain it as a
+            # third visible source while the canonical cutover is staged.
+            canonical = conn.execute(
+                """SELECT 1 FROM nebula.receipts_unified
+                   WHERE plan_id = %s AND id = %s AND type = %s LIMIT 1""",
+                (plan_id, receipt_id, receipt_type),
+            ).fetchone()
+            return canonical is not None
 
     def issue_execution_receipt(
         self,
@@ -2669,17 +3083,349 @@ class DBAdapter:
     ) -> dict:
         """Issue an immutable receipt from an attempt. Returns the receipt dict."""
         _log.info("issue_execution_receipt: attempt=%s type=%s role=%s", attempt_id, receipt_type, agent_role)
+        deterministic_id = uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"nexus-execution-receipt:{attempt_id}:{receipt_type}",
+        )
         with self._get_connection() as conn:
+            existing = conn.execute(
+                """SELECT * FROM execution.receipts
+                   WHERE attempt_id = %s AND type = %s
+                   ORDER BY issued_at ASC LIMIT 1""",
+                (attempt_id, receipt_type),
+            ).dict_fetchone()
+            if existing:
+                return existing
             cursor = conn.execute(
                 """INSERT INTO execution.receipts
-                   (attempt_id, request_id, type, agent_role, summary, metadata)
-                   VALUES (%s, %s, %s, %s, %s, %s)
+                   (id, attempt_id, request_id, type, agent_role, summary, metadata)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (id) DO NOTHING
                    RETURNING *""",
-                (attempt_id, request_id, receipt_type, agent_role, summary,
-                 json.dumps(metadata or {})),
+                (str(deterministic_id), attempt_id, request_id, receipt_type,
+                 agent_role, summary, json.dumps(metadata or {})),
             )
             conn.commit()
-            return cursor.dict_fetchone()
+            inserted = cursor.dict_fetchone()
+            if inserted:
+                return inserted
+            existing = conn.execute(
+                """SELECT * FROM execution.receipts
+                   WHERE attempt_id = %s AND type = %s
+                   ORDER BY issued_at ASC LIMIT 1""",
+                (attempt_id, receipt_type),
+            ).dict_fetchone()
+            if existing:
+                return existing
+            raise RuntimeError(
+                f"execution receipt insert was not visible (attempt={attempt_id}, type={receipt_type})"
+            )
+
+    def has_attempt_execution_receipt(self, attempt_id: str, request_id: str) -> bool:
+        """Check for attempt-linked successful execution evidence."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """SELECT 1 FROM execution.receipts
+                   WHERE attempt_id = %s AND request_id = %s
+                     AND type IN ('EXECUTION_COMPLETE', 'IMPLEMENTATION')
+                   LIMIT 1""",
+                (attempt_id, request_id),
+            ).fetchone()
+            return row is not None
+
+    def mark_request_completed_after_attempt(self, attempt_id: str, request_id: str) -> bool:
+        """Complete READY only when successful attempt evidence is durable.
+
+        A concurrent cancellation (or other terminal state) is never overwritten.
+        An already-COMPLETED request is an idempotent success only while the
+        associated zero-exit attempt and attempt-linked receipt remain present.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """UPDATE execution.requests r
+                   SET status = 'COMPLETED', updated_at = NOW()
+                   WHERE r.id = %s AND r.status = 'READY'
+                     AND EXISTS (
+                         SELECT 1 FROM execution.attempts a
+                         WHERE a.id = %s AND a.request_id = r.id
+                           AND a.status = 'SUCCEEDED' AND a.exit_code = 0
+                     )
+                     AND EXISTS (
+                         SELECT 1 FROM execution.receipts er
+                         WHERE er.attempt_id = %s AND er.request_id = r.id
+                           AND er.type IN ('EXECUTION_COMPLETE', 'IMPLEMENTATION')
+                     )""",
+                (request_id, attempt_id, attempt_id),
+            )
+            conn.commit()
+            if cursor.rowcount > 0:
+                return True
+            current = conn.execute(
+                """SELECT r.status,
+                          EXISTS (
+                              SELECT 1 FROM execution.attempts a
+                              WHERE a.id = %s AND a.request_id = r.id
+                                AND a.status = 'SUCCEEDED' AND a.exit_code = 0
+                          ) AND EXISTS (
+                              SELECT 1 FROM execution.receipts er
+                              WHERE er.attempt_id = %s AND er.request_id = r.id
+                                AND er.type IN ('EXECUTION_COMPLETE', 'IMPLEMENTATION')
+                          ) AS has_success_evidence
+                   FROM execution.requests r WHERE r.id = %s""",
+                (attempt_id, attempt_id, request_id),
+            ).fetchone()
+            return bool(current and current[0] == 'COMPLETED' and current[1])
+
+    def has_plan_requeued_after_last_attempt(self, plan_id: str, request_id: str) -> bool:
+        """Return true only for an explicit REQUEUED receipt newer than its last attempt."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """SELECT EXISTS (
+                       SELECT 1 FROM nebula.receipts_unified r
+                       WHERE r.plan_id = %s AND r.type = 'REQUEUED'
+                         AND r.created_at > COALESCE(
+                             (SELECT MAX(a.completed_at) FROM execution.attempts a
+                              WHERE a.request_id = %s),
+                             '-infinity'::timestamptz
+                         )
+                   )""",
+                (plan_id, request_id),
+            ).fetchone()
+            return bool(row and row[0])
+
+    def has_plan_requeued_after_cancellation(self, plan_id: str, request_id: str) -> bool:
+        """Check for a REQUEUED receipt newer than this request's cancellation update."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """SELECT EXISTS (
+                       SELECT 1
+                       FROM execution.requests r
+                       JOIN nebula.receipts_unified rr ON rr.plan_id = r.source_plan_id
+                       WHERE r.id = %s AND r.source_plan_id = %s
+                         AND r.status = 'CANCELLED'
+                         AND rr.type = 'REQUEUED'
+                         AND rr.created_at > r.updated_at
+                   )""",
+                (request_id, plan_id),
+            ).fetchone()
+            return bool(row and row[0])
+
+    def has_plan_rework_after_last_success(self, plan_id: str, request_id: str) -> bool:
+        """Check for REVIEW_REJECT/CRITIQUE_PASS newer than the last success."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """SELECT EXISTS (
+                       SELECT 1
+                       FROM execution.requests r
+                       JOIN nebula.receipts_unified rr ON rr.plan_id = r.source_plan_id
+                       WHERE r.id = %s AND r.source_plan_id = %s
+                         AND r.status = 'COMPLETED'
+                         AND rr.type IN ('REVIEW_REJECT', 'CRITIQUE_PASS')
+                         AND EXISTS (
+                             SELECT 1 FROM execution.attempts a
+                             WHERE a.request_id = r.id AND a.status = 'SUCCEEDED'
+                         )
+                         AND rr.created_at > (
+                             SELECT MAX(a.completed_at) FROM execution.attempts a
+                             WHERE a.request_id = r.id AND a.status = 'SUCCEEDED'
+                         )
+                   )""",
+                (request_id, plan_id),
+            ).fetchone()
+            return bool(row and row[0])
+
+    def update_attempt_result(
+        self, attempt_id: str, result: Dict[str, Any]
+    ) -> bool:
+        """Persist the current outcome document for an attempt."""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "UPDATE execution.attempts SET result = %s WHERE id = %s",
+                (json.dumps(result or {}), attempt_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def get_pending_governance_finalizations(self, limit: int = 100) -> list[dict]:
+        """Return successful attempts whose plan fan-out remains pending.
+
+        Governance retry state is carried in the existing attempt.result JSON;
+        this does not add a request status or schema object.
+        """
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """SELECT a.id AS attempt_id, a.request_id, a.result,
+                          a.status AS attempt_status, a.exit_code,
+                          r.source_plan_id
+                   FROM execution.attempts a
+                   JOIN execution.requests r ON r.id = a.request_id
+                   WHERE a.status = 'SUCCEEDED'
+                     AND a.result->'governance_finalization'->>'status' = 'pending'
+                   ORDER BY a.completed_at ASC
+                   LIMIT %s""",
+                (limit,),
+            ).dict_fetchall()
+        for row in rows:
+            if isinstance(row.get("result"), str):
+                row["result"] = json.loads(row["result"])
+        return rows
+
+    def get_worker_session_outcomes(self, limit: int = 100) -> list[dict]:
+        """Read session exit codes as independent observations correlated by ID.
+
+        Only unobserved completed mismatches are returned. Since each mismatch
+        is persisted into attempt.result before the next pass, the bounded
+        result set advances without an offset cursor or schema/index change.
+        The worker does not write or infer sessions.exit_code.
+        """
+        with self._get_connection() as conn:
+            return conn.execute(
+                f"""SELECT a.id AS attempt_id, a.request_id,
+                           a.result AS attempt_result,
+                           a.result->>'plan_id' AS plan_id,
+                           a.result->>'session_id' AS session_id,
+                           a.exit_code AS attempt_exit_code,
+                           s.exit_code AS session_exit_code
+                    FROM execution.attempts a
+                    JOIN {self._schema}.sessions s
+                      ON s.id = a.result->>'session_id'
+                    WHERE a.result ? 'session_id'
+                      AND a.completed_at IS NOT NULL
+                      AND a.exit_code IS NOT NULL
+                      AND s.end_iso IS NOT NULL
+                      AND s.exit_code IS NOT NULL
+                      AND a.exit_code IS DISTINCT FROM s.exit_code
+                      AND NOT COALESCE((
+                          a.result->'outcome_reconciliation'->>'kind' =
+                              'attempt_session_exit_mismatch'
+                          AND a.result->'outcome_reconciliation'->>'attempt_exit_code' = a.exit_code::text
+                          AND a.result->'outcome_reconciliation'->>'session_exit_code' = s.exit_code::text
+                          AND a.result->'outcome_reconciliation'->>'session_id' = a.result->>'session_id'
+                      ), FALSE)
+                    ORDER BY a.completed_at ASC
+                    LIMIT %s""",
+                (limit,),
+            ).dict_fetchall()
+
+    def get_unresolved_attempt_session_outcomes(self, plan_id: str) -> list[dict]:
+        """Return unresolved session-backed attempt outcomes for a plan.
+
+        This reads the authoritative attempt and session rows directly instead
+        of depending on the asynchronous worker reconciliation scan. Attempts
+        without a session_id are legacy/out of scope for this gate.
+        """
+        with self._get_connection() as conn:
+            return conn.execute(
+                f"""SELECT a.id::text AS attempt_id,
+                           a.result->>'session_id' AS session_id,
+                           a.status AS attempt_status,
+                           a.exit_code AS attempt_exit_code,
+                           (s.id IS NOT NULL) AS session_present,
+                           (s.end_iso IS NOT NULL) AS session_closed,
+                           s.exit_code AS session_exit_code
+                    FROM execution.attempts a
+                    JOIN execution.requests r ON r.id = a.request_id
+                    LEFT JOIN {self._schema}.sessions s
+                      ON s.id = a.result->>'session_id'
+                    WHERE r.source_plan_id = %s
+                      AND NULLIF(a.result->>'session_id', '') IS NOT NULL
+                      AND (
+                          a.status IN ('CREATED', 'RUNNING')
+                          OR s.id IS NULL
+                          OR s.end_iso IS NULL
+                          OR s.exit_code IS NULL
+                          OR a.exit_code IS NULL
+                          OR a.exit_code IS DISTINCT FROM s.exit_code
+                      )
+                    ORDER BY a.completed_at ASC""",
+                (plan_id,),
+            ).dict_fetchall()
+
+    def validate_review_pass_reconciliation(self, plan_id: str, metadata: dict) -> None:
+        """Require complete dispositions backed by canonical records before REVIEW_PASS."""
+        pending = self.get_unresolved_attempt_session_outcomes(plan_id)
+        if not pending:
+            return
+
+        unresolved_sessions = [
+            row for row in pending
+            if (row.get("attempt_status") in ("CREATED", "RUNNING")
+                or not row.get("session_present") or not row.get("session_closed")
+                or row.get("attempt_exit_code") is None
+                or row.get("session_exit_code") is None)
+        ]
+        if unresolved_sessions:
+            links = "; ".join(
+                f"attempt={row.get('attempt_id')} session={row.get('session_id')}"
+                for row in unresolved_sessions
+            )
+            raise ReviewPassReconciliationError(
+                "REVIEW_PASS rejected: correlated session outcome is not closed and "
+                f"complete yet ({links})"
+            )
+
+        mismatches = [
+            row for row in pending
+            if row.get("attempt_exit_code") != row.get("session_exit_code")
+        ]
+        if not mismatches:
+            return
+
+        reconciliation = (metadata or {}).get("outcome_reconciliation") or {}
+        if not isinstance(reconciliation, dict):
+            reconciliation = {}
+        dispositions = reconciliation.get("dispositions", [])
+        if not isinstance(dispositions, list):
+            dispositions = []
+        by_link = {
+            (str(item.get("attempt_id", "")), str(item.get("session_id", ""))): item
+            for item in dispositions
+            if isinstance(item, dict)
+        }
+        invalid = []
+        for row in mismatches:
+            key = (str(row.get("attempt_id", "")), str(row.get("session_id", "")))
+            item = by_link.get(key, {})
+            link = f"attempt={key[0]} session={key[1]}"
+            if str(item.get("disposition", "")).strip() != "work_complete":
+                invalid.append(f"{link} requires disposition=work_complete")
+                continue
+
+            evidence_ref = item.get("evidence_ref")
+            if not isinstance(evidence_ref, str) or not evidence_ref.startswith("agent_record:"):
+                invalid.append(f"{link} requires evidence_ref=agent_record:<uuid>")
+                continue
+            try:
+                record_id = uuid.UUID(evidence_ref.removeprefix("agent_record:"))
+                if str(record_id) != evidence_ref.removeprefix("agent_record:").lower():
+                    raise ValueError("non-canonical UUID")
+            except (ValueError, AttributeError):
+                invalid.append(f"{link} has malformed agent_record evidence_ref")
+                continue
+
+            with self._get_connection() as conn:
+                evidence = conn.execute(
+                    """SELECT id
+                       FROM nebula.agent_records
+                       WHERE id = %s::uuid
+                         AND plan_ref = %s
+                         AND record_type IN ('report', 'assessment', 'inspection')
+                         AND role IN ('reviewer', 'tester')""",
+                    (str(record_id), plan_id),
+                ).dict_fetchone()
+            if not evidence:
+                invalid.append(
+                    f"{link} references no eligible reviewer/tester agent_record "
+                    f"for plan_ref={plan_id}"
+                )
+
+        if invalid:
+            raise ReviewPassReconciliationError(
+                "REVIEW_PASS rejected: every mismatched attempt/session pair requires "
+                "disposition=work_complete and a valid, eligible canonical agent_record "
+                "evidence_ref in metadata.outcome_reconciliation.dispositions "
+                f"({'; '.join(invalid)})"
+            )
 
     def get_or_create_execution_request(
         self,

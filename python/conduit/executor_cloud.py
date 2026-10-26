@@ -6,6 +6,7 @@ import select
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict
 
@@ -55,6 +56,26 @@ except ImportError:
 
 MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "http://localhost:3100")
 HEARTBEAT_INTERVAL_SECONDS = int(os.environ.get("PIPELINE_HEARTBEAT_INTERVAL", "30"))
+
+
+@dataclass(frozen=True)
+class HarnessExecutionResult:
+    """Outcome observed directly from one harness subprocess."""
+
+    returncode: int | None
+    stdout: str = ""
+    stderr: str = ""
+
+
+class HarnessExecutionError(RuntimeError):
+    """Harness failure carrying the subprocess outcome without lossy coercion."""
+
+    def __init__(self, message: str, outcome: HarnessExecutionResult):
+        super().__init__(message)
+        self.outcome = outcome
+        self.returncode = outcome.returncode
+        self.stdout = outcome.stdout
+        self.stderr = outcome.stderr
 
 
 def _capture_session_cost(session_id: str, opencode_bin: str) -> None:
@@ -431,6 +452,13 @@ def _build_role_instructions(role: str) -> str:
         return (
             "Review the implementation described in this WorkRequest. "
             "Compare the change report in CHANGES/committed/ against the plan. "
+            "Apply every reviewer ticket completion criterion included in the "
+            "WorkRequest acceptance criteria. If a linked attempt/session exit-code "
+            "mismatch is marked review_required, do not issue REVIEW_PASS without "
+            "an explicit disposition and evidence reference for each mismatch. "
+            "Include them in receipt metadata as "
+            "outcome_reconciliation.dispositions: [{attempt_id, session_id, "
+            "disposition, evidence_ref}]. "
             "If changes match the acceptance criteria, issue a REVIEW_PASS receipt. "
             "If they don't match, issue a REVIEW_REJECT receipt with explanation."
         )
@@ -493,8 +521,8 @@ def _run_harness_subprocess(
     *,
     session_id: str = "",
     role: str = "",
-) -> str:
-    """Run a harness CLI subprocess and return stdout.
+) -> HarnessExecutionResult:
+    """Run a harness CLI subprocess and return its complete process outcome.
 
     Shared helper for ``run_opencode``, ``run_codex``, and future harness
     functions.  Handles the full subprocess lifecycle:
@@ -518,7 +546,7 @@ def _run_harness_subprocess(
         role: Agent role for heartbeat liveness reporting.
 
     Returns:
-        Combined stdout as a single string.
+        The return code, stdout, and stderr observed from the child process.
     """
     _log.info("_run_harness_subprocess: entry tool=%s cmd=%s timeout=%ds session=%s",
               tool_name, ' '.join(cmd), timeout, session_id or "(none)")
@@ -553,6 +581,7 @@ def _run_harness_subprocess(
         raise RuntimeError(err_msg)
 
     stdout_lines: list[str] = []
+    stderr_lines: list[str] = []
     start_time = datetime.utcnow()
     heartbeat_ticks = 0
 
@@ -592,6 +621,7 @@ def _run_harness_subprocess(
                         log_fh.write(line)
                         log_fh.flush()
                 elif stream is proc.stderr:
+                    stderr_lines.append(line)
                     # Write stderr to session log with [stderr] prefix so
                     # it's visible in the UI and never silently lost.
                     if log_fh:
@@ -607,23 +637,29 @@ def _run_harness_subprocess(
         proc.kill()
         proc.wait()
         _log.error("_run_harness_subprocess: timed out tool=%s timeout=%ds", tool_name, timeout)
-        raise RuntimeError(
+        raise HarnessExecutionError(
             f"{tool_name} timed out after {timeout}s. "
-            f"The conduit watchdog will clean up orphaned processes."
+            f"The conduit watchdog will clean up orphaned processes.",
+            HarnessExecutionResult(
+                returncode=proc.returncode,
+                stdout="".join(stdout_lines),
+                stderr="".join(stderr_lines),
+            )
         )
     finally:
         if log_fh:
             log_fh.close()
 
     # Read any remaining stderr after process exit
-    stderr_text = ""
+    stderr_text = "".join(stderr_lines)
     try:
-        stderr_text = proc.stderr.read()
+        stderr_text += proc.stderr.read()
     except Exception:
         pass
 
     if proc.returncode != 0:
-        output = "".join(stdout_lines).strip()
+        stdout_text = "".join(stdout_lines)
+        output = stdout_text.strip()
         error_detail = output or f"exit code {proc.returncode}"
         if stderr_text:
             error_detail += f"\n[stderr]: {stderr_text.strip()}"
@@ -643,16 +679,26 @@ def _run_harness_subprocess(
 
         _log.warning("_run_harness_subprocess: non-zero exit tool=%s exit_code=%d%s stderr_len=%d",
                      tool_name, proc.returncode, crash_hint, len(stderr_text))
-        raise RuntimeError(
-            f"{tool_name} invocation failed: {error_detail[:500]}{crash_hint}"
+        raise HarnessExecutionError(
+            f"{tool_name} invocation failed: {error_detail[:500]}{crash_hint}",
+            HarnessExecutionResult(
+                returncode=proc.returncode,
+                stdout=stdout_text,
+                stderr=stderr_text,
+            ),
         )
 
     _log.info("_run_harness_subprocess: success tool=%s pid=%d lines=%d",
               tool_name, proc.pid, len(stdout_lines))
-    return "".join(stdout_lines)
+    return HarnessExecutionResult(
+        returncode=proc.returncode,
+        stdout="".join(stdout_lines),
+        stderr=stderr_text,
+    )
 
 
-def run_opencode(req, working_path, artifacts_dir=None, session_log_path=None):
+def run_opencode_outcome(req, working_path, artifacts_dir=None, session_log_path=None):
+    """Run OpenCode and return its typed process outcome."""
     role = _resolve_role(req)
     prompt = _build_opencode_prompt(req, working_path, artifacts_dir)
     model = _resolve_model_name(req)
@@ -681,8 +727,13 @@ def run_opencode(req, working_path, artifacts_dir=None, session_log_path=None):
         cmd, session_log_path, OPENCODE_TIMEOUT_SECONDS, "opencode",
         session_id=session_id, role=role,
     )
-    _log.info("run_opencode: exit role=%s chars=%d", role, len(result))
+    _log.info("run_opencode: exit role=%s chars=%d", role, len(result.stdout))
     return result
+
+
+def run_opencode(req, working_path, artifacts_dir=None, session_log_path=None):
+    """Compatibility wrapper returning stdout for legacy callers."""
+    return run_opencode_outcome(req, working_path, artifacts_dir, session_log_path).stdout
 
 
 def run_codex(req, working_path, artifacts_dir=None, session_log_path=None):
@@ -723,8 +774,8 @@ def run_codex(req, working_path, artifacts_dir=None, session_log_path=None):
         cmd, session_log_path, OPENCODE_TIMEOUT_SECONDS, "Codex",
         session_id=session_id, role=role,
     )
-    _log.info("run_codex: exit role=%s chars=%d", role, len(result))
-    return result
+    _log.info("run_codex: exit role=%s chars=%d", role, len(result.stdout))
+    return result.stdout
 
 
 def _run_from_path(dco_path: str) -> int:

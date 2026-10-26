@@ -696,9 +696,13 @@ def _dispatch_one(
         # ── Create a fresh DCO for this model ─────────────────
         current_model_cfg = ModelConfig(harness=harness, model=model)
         try:
+            ticket_completion_criteria = (
+                db.get_ticket_completion_criteria(ticket_id) if role == "reviewer" else ""
+            )
             dco = WorkRequestFactory.create_from_plan(
                 plan, role=role, model_cfg=current_model_cfg,
                 working_path=PROJECT_ROOT, session_id=session_id,
+                ticket_completion_criteria=ticket_completion_criteria,
             )
         except Exception as e:
             print(f"  [{model_label}] DCO creation failed: {e}. Skipping to next fallback.")
@@ -749,7 +753,17 @@ def _dispatch_one(
         try:
             for attempt_num in range(1, _retry_max_attempts + 1):
                 # ── Execution Authority: create fresh attempt for each retry ──
-                attempt_rec = db.create_attempt(lease_id=lease_id, request_id=request_id, executor_id=role)
+                attempt_rec = db.create_attempt(
+                    lease_id=lease_id,
+                    request_id=request_id,
+                    executor_id=role,
+                    work_role=role if role in {"builder", "reviewer"} else None,
+                )
+                if attempt_rec is None:
+                    print(f"  [{model_label}] Plan became terminal before attempt creation; refusing dispatch.")
+                    db.release_lease(lease_id)
+                    db.close_session(session_id, 1)
+                    return
                 attempt_id = attempt_rec["id"]
                 print(f"  [{model_label}] attempt {attempt_num}/{_retry_max_attempts} (attempt={attempt_id})")
                 work_start = time.time()

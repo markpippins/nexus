@@ -129,6 +129,7 @@ class LilacAdapter:
         refs: Optional[Dict[str, Any]] = None,
         source_system: str = "conduit",
         contract_version: int = LILAC_CONTRACT_VERSION,
+        manage_transaction: bool = True,
     ) -> Tuple[str, str]:
         """Insert into resolution.receipt (R4 + Q3 kind-scoped grants).
 
@@ -138,10 +139,15 @@ class LilacAdapter:
         Conflict semantics (R4, explicit — never silent): same
         (source_system, source_receipt_id) with a DIFFERENT fingerprint →
         LilacPersistenceError('conflict') with BOTH fingerprints recorded
-        in the message for the refusal evidence trail.
+        in the message for the refusal evidence trail. When
+        ``manage_transaction`` is false, this method uses a savepoint and
+        leaves commit/rollback ownership to the caller's transaction.
         """
         fp = payload_fingerprint(payload)
         cur = conn.cursor()
+        savepoint = "conduit_lilac_insert_receipt"
+        if not manage_transaction:
+            cur.execute(f"SAVEPOINT {savepoint}")
         try:
             cur.execute(
                 self._q(
@@ -155,17 +161,23 @@ class LilacAdapter:
                  fp, json.dumps(payload), json.dumps(refs or {}), contract_version),
             )
             row = cur.fetchone()
-            conn.commit()
+            if manage_transaction:
+                conn.commit()
+            else:
+                cur.execute(f"RELEASE SAVEPOINT {savepoint}")
             return self._classify_insert(1), str(row[0])
         except Exception as exc:
             sqlstate = getattr(exc, "pgcode", None)
+            if manage_transaction:
+                conn.rollback()
+            else:
+                cur.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                cur.execute(f"RELEASE SAVEPOINT {savepoint}")
             if sqlstate == "P0004":
                 # Kind-scoped producer grant refusal (DB-enforced, Q3).
-                conn.rollback()
                 raise LilacPersistenceError(
                     f"refused: producer grant violation: {exc}"
                 ) from exc
-            conn.rollback()
             # Distinguish duplicate-equivalent from conflicting replay (R4).
             dup = self._find_existing_receipt(
                 conn, source_system, source_receipt_id, expect_fingerprint=None
@@ -432,7 +444,7 @@ def shadow_write_enabled() -> bool:
 
 
 def shadow_record_receipt(db, schema: str, receipt_row: Dict[str, Any],
-                          force: bool = False) -> None:
+                          force: bool = False, manage_transaction: bool = True) -> None:
     """Best-effort canonical shadow record for the C2 ratification evidence.
 
     ``db`` is the DBAdapter whose pooled connection is used. Call AFTER the
@@ -444,6 +456,9 @@ def shadow_record_receipt(db, schema: str, receipt_row: Dict[str, Any],
     ``force=True`` (redirect=shadow stage) records unconditionally — the
     writer redirection design (record 281510c7) makes the canonical record
     part of the shadow stage itself, without flipping CONDUIT_LILAC_SHADOW.
+    A caller holding a transaction-scoped plan lock may pass
+    ``manage_transaction=False`` so this canonical write remains in that
+    transaction until the lock-owning caller commits.
     """
     if not force and not shadow_write_enabled():
         return
@@ -476,6 +491,7 @@ def shadow_record_receipt(db, schema: str, receipt_row: Dict[str, Any],
                 payload=receipt_row["payload"],
                 refs=receipt_row.get("refs"),
                 source_system=receipt_row.get("source_system", "conduit"),
+                manage_transaction=manage_transaction,
             )
     except Exception as exc:  # noqa: BLE001 — deliberately swallow (shadow mode)
         _log.warning("lilac shadow receipt skipped: %s", exc)
