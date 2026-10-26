@@ -49,7 +49,7 @@ import {
   VisibilityOff as VisibilityOffIcon,
 } from '@mui/icons-material'
 import { useForm, Controller } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
+import { standardSchemaResolver } from '@hookform/resolvers/standard-schema'
 import { z } from 'zod'
 import { useLibraries, useCreateLibrary, useUpdateLibrary, useDeleteLibrary } from '@/hooks/useApi'
 import type { LibraryPath, CreateLibraryPathForm } from '@/types/api'
@@ -82,7 +82,7 @@ const Libraries: React.FC = () => {
   const deleteLibraryMutation = useDeleteLibrary()
 
   const { control, handleSubmit, reset, formState: { errors }, watch } = useForm<LibraryFormData>({
-    resolver: zodResolver(librarySchema),
+    resolver: standardSchemaResolver(librarySchema),
     defaultValues: {
       scan_enabled: true,
       deep_scan: false,
