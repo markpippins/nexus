@@ -57,7 +57,7 @@ from db_adapter import (  # noqa: E402
 from env_config import load_env  # noqa: E402 — shared .env loader (fires at import)
 import executor_cloud  # noqa: E402
 from executor_registry import ModelConfig  # noqa: E402
-from work_request_factory import WorkRequestFactory  # noqa: E402
+from work_request_factory import WorkRequestFactory, work_evidence_contract  # noqa: E402
 
 _log = logging.getLogger("execution_worker")
 _handler = logging.StreamHandler()
@@ -254,6 +254,18 @@ def _list_ready(db: DBAdapter, include_legacy: bool, eligible_plan_ids: set) -> 
                 # by the IN clause — their plans have no live ticket.
                 f"""SELECT * FROM execution.requests
                     WHERE status = 'READY' AND source_plan_id IN ({placeholders})
+                      AND NOT EXISTS (
+                          SELECT 1 FROM execution.attempts a
+                          WHERE a.request_id = execution.requests.id
+                            AND a.status = 'SUCCEEDED'
+                            AND a.result->'work_evidence'->>'status' = 'evidence_failed'
+                            AND NOT EXISTS (
+                                SELECT 1 FROM nebula.receipts_unified rr
+                                WHERE rr.plan_id = execution.requests.source_plan_id
+                                  AND rr.type IN ('REQUEUED', 'REVIEW_REJECT', 'CRITIQUE_PASS')
+                                  AND rr.created_at > a.completed_at
+                            )
+                      )
                     ORDER BY created_at ASC
                     LIMIT 100""",
                 tuple(eligible_plan_ids),
@@ -528,7 +540,21 @@ def _ensure_success_execution_evidence(
     result: dict,
     executor_id: str,
 ) -> None:
-    """Ensure attempt-linked success evidence exists before completing its request."""
+    """Ensure attempt-linked success evidence exists before completing its request.
+
+    Positive work evidence is part of the success contract. Attempts written
+    before the field existed stay legacy-compatible (no ``work_evidence`` key
+    → no new requirement); a persisted evidence failure can never be upgraded
+    into a success receipt.
+    """
+    work_evidence = (result or {}).get("work_evidence")
+    if isinstance(work_evidence, dict) and work_evidence.get("status") != "valid":
+        raise WorkEvidenceError(
+            f"refusing success settlement: work evidence status="
+            f"{work_evidence.get('status')!r} reason={work_evidence.get('reason')!r} "
+            f"(attempt={attempt_id}, request={request_id})",
+            work_evidence=work_evidence,
+        )
     if not db.has_attempt_execution_receipt(attempt_id, request_id):
         db.issue_execution_receipt(
             attempt_id=attempt_id,
@@ -703,7 +729,7 @@ def _surface_session_exit_observations(db: DBAdapter) -> int:
         }
         governance = dict(result.get("governance_finalization") or {})
         governance["review_settlement_criterion"] = criterion_record
-        if not criterion_enforced:
+        if not criterion_enforced and governance.get("status") != "evidence_failed":
             governance["status"] = "pending"
             governance["error"] = criterion_record.get("reason")
         result["governance_finalization"] = governance
@@ -765,6 +791,275 @@ def _release_claimed_ticket_safely(
             "builder ticket release failed after admission refusal plan=%s session=%s: %s",
             plan_id, session_id, exc,
         )
+
+
+# ── Positive work evidence ─────────────────────────────────────────
+#
+# A zero exit code proves the process ran, not that the work happened.
+# work_evidence is a third, independent outcome (alongside process_outcome
+# and governance_finalization) evaluated from the WorkRequest success
+# contract and persisted inside the existing attempt.result JSON. It adds
+# no schema or request status (architect ruling bcdd3047).
+
+class WorkEvidenceError(RuntimeError):
+    """A SUCCEEDED process attempt lacks positive evidence of work."""
+
+    def __init__(self, message: str, work_evidence: dict | None = None):
+        super().__init__(message)
+        self.work_evidence = work_evidence or {}
+
+
+def _snapshot_target_files(paths, root: str) -> dict:
+    """Capture size/mtime/existence for declared target files before launch."""
+    snapshot: dict = {}
+    for raw in paths or []:
+        path = str(raw)
+        candidate = path if os.path.isabs(path) else os.path.join(root, path)
+        try:
+            stat = os.stat(candidate)
+        except OSError:
+            snapshot[path] = {"exists": False}
+            continue
+        snapshot[path] = {
+            "exists": True,
+            "size": stat.st_size,
+            "mtime_ns": stat.st_mtime_ns,
+        }
+    return snapshot
+
+
+def _target_file_changes(
+    target_files, baseline: dict, root: str
+) -> list[dict]:
+    """Return the declared files that were created, modified, or deleted."""
+    changes: list[dict] = []
+    for path in target_files or []:
+        path = str(path)
+        candidate = path if os.path.isabs(path) else os.path.join(root, path)
+        before = baseline.get(path) or {"exists": False}
+        try:
+            stat = os.stat(candidate)
+            after = {"exists": True, "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+        except OSError:
+            after = {"exists": False}
+
+        changed = (
+            before.get("exists") != after.get("exists")
+            or (
+                after.get("exists")
+                and before.get("exists")
+                and (
+                    before.get("size") != after.get("size")
+                    or before.get("mtime_ns") != after.get("mtime_ns")
+                )
+            )
+        )
+        if not changed:
+            continue
+        changes.append({
+            "path": path,
+            "created": bool(after.get("exists")) and not before.get("exists"),
+            "deleted": bool(before.get("exists")) and not after.get("exists"),
+            "size": after.get("size"),
+            "mtime_ns": after.get("mtime_ns"),
+        })
+    return changes
+
+
+def _evaluate_work_evidence(
+    *,
+    contract: dict,
+    baseline: dict,
+    process_outcome: dict,
+    stdout: str,
+    stderr: str,
+    error: str = "",
+    root: str = PROJECT_ROOT,
+    plan_id: str | None,
+    request_id: str,
+    attempt_id: str,
+    session_id: str,
+    work_request_id: str | None,
+) -> dict:
+    """Evaluate positive work evidence without mutating process state.
+
+    Precedence is deliberately conservative:
+
+    1. empty stdout → ``empty_output`` (even on exit 0);
+    2. a rejection signal → ``tool_execution_rejected``;
+    3. a declared-target-file change or canonical reference → valid;
+    4. no target files but substantive output → valid;
+    5. declared target files and no change/reference → ``no_reviewable_evidence``.
+    """
+    output = stdout if isinstance(stdout, str) else ""
+    stderr_text = stderr if isinstance(stderr, str) else ""
+    error_text = error if isinstance(error, str) else ""
+    combined = "\n".join((output, stderr_text, error_text))
+
+    refs = executor_cloud.extract_reviewable_refs(combined)
+    rejection = executor_cloud.detect_evidence_rejection(output, stderr_text, error_text)
+    target_files = [str(p) for p in (contract.get("target_files") or [])]
+    changes = _target_file_changes(target_files, baseline, root)
+    min_chars = int(
+        ((contract.get("requires") or {}).get("min_output_chars")) or 1
+    )
+
+    if not output.strip():
+        status, reason = "evidence_failed", "empty_output"
+    elif rejection:
+        status, reason = "evidence_failed", "tool_execution_rejected"
+    elif changes:
+        status, reason = "valid", "artifact_changed"
+    elif refs:
+        status, reason = "valid", "reviewable_reference"
+    elif target_files:
+        status, reason = "evidence_failed", "no_reviewable_evidence"
+    elif len(output.strip()) < min_chars:
+        status, reason = "evidence_failed", "output_too_short"
+    else:
+        status, reason = "valid", "substantive_output"
+
+    return {
+        "status": status,
+        "valid": status == "valid",
+        "reason": reason,
+        "contract": contract,
+        "artifacts": {
+            "target_files": target_files,
+            "changes": changes,
+        },
+        "references": refs,
+        "output": _bounded_text(output),
+        "rejection": rejection,
+        "process_exit_code": (process_outcome or {}).get("returncode"),
+        "plan_id": plan_id,
+        "request_id": str(request_id),
+        "attempt_id": attempt_id,
+        "session_id": session_id,
+        "work_request_id": work_request_id,
+        "evaluated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _settle_evidence_failure(
+    db: DBAdapter,
+    *,
+    attempt_id: str,
+    request_id: str,
+    plan_id: str | None,
+    session_id: str,
+    ticket_id: str | None,
+    lease_id: str,
+    executor_id: str,
+    result: dict,
+) -> str:
+    """Persist the terminal consequences of an evidence failure, idempotently.
+
+    The process outcome is never rewritten: the attempt stays SUCCEEDED with
+    its exit code. What changes is governance — no IMPLEMENTATION receipt, the
+    request is not COMPLETED, the builder ticket is failed, and a deterministic
+    BLOCK receipt records why. A deterministic receipt id plus a READY-only
+    request update make a retry after a partial settlement safe.
+    """
+    work_evidence = result.get("work_evidence") or {}
+    reason = str(work_evidence.get("reason") or "evidence_failed")
+    result = _set_governance_finalization(
+        db, attempt_id, result, "evidence_failed", reason,
+        review_criterion={"status": "evidence_failed", "required": bool(plan_id)},
+    )
+    receipt_id = f"rec-execution-worker-{attempt_id}-evidence-failed"
+
+    # The request is still READY here (success completion has not run). Never
+    # overwrite a terminal state another writer may have set.
+    with db._get_connection() as conn:
+        conn.execute(
+            "UPDATE execution.requests SET status = 'FAILED', updated_at = NOW() "
+            "WHERE id = %s AND status = 'READY'",
+            (request_id,),
+        )
+        conn.commit()
+
+    if plan_id:
+        db.insert_receipt(
+            plan_id=plan_id,
+            receipt_type=FAIL_RECEIPT,
+            agent_role=ROLE,
+            session_id=session_id,
+            ticket_id=ticket_id or "",
+            summary=(
+                f"builder work evidence failed ({reason}); request {request_id} "
+                f"not completed (attempt={attempt_id})"
+            ),
+            metadata={
+                "work_request_id": result.get("work_request_id"),
+                "role": ROLE,
+                "executor": executor_id,
+                "attempt_id": attempt_id,
+                "request_id": str(request_id),
+                "reason": reason,
+                "evidence_status": "evidence_failed",
+                "receipt_semantics": "positive_work_evidence_required",
+            },
+            receipt_id=receipt_id,
+        )
+        if ticket_id:
+            db.close_ticket(plan_id, ROLE, session_id, "failed")
+        db.advance_cursor(ROLE, plan_id, result.get("work_request_id") or str(request_id))
+
+    if lease_id:
+        _release_lease_safely(db, lease_id)
+    _log_warn(
+        f"work evidence failed request={request_id} plan={plan_id} "
+        f"attempt={attempt_id} reason={reason} — request FAILED, "
+        "no IMPLEMENTATION receipt"
+    )
+    return "evidence-failed"
+
+
+def _retry_evidence_failure_settlements(db: DBAdapter, limit: int = 100) -> tuple[int, int]:
+    """Retry unfinished evidence-failure settlements without relaunching.
+
+    Runs before READY consumption so a crash between ``complete_attempt`` and
+    settlement cannot leave a consumable request behind.
+    """
+    try:
+        pending = db.get_unsettled_evidence_failures(limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("unsettled evidence-failure lookup failed: %s", exc)
+        return 0, 0
+
+    settled = 0
+    still_pending = 0
+    for row in pending:
+        result = row.get("result") or {}
+        if isinstance(result, str):
+            result = json.loads(result)
+        governance = result.get("governance_finalization") or {}
+        if governance.get("status") == "evidence_failed" and row.get("request_status") == "FAILED":
+            settled += 1
+            continue
+        try:
+            _settle_evidence_failure(
+                db,
+                attempt_id=str(row["attempt_id"]),
+                request_id=str(row["request_id"]),
+                plan_id=row.get("source_plan_id"),
+                session_id=result.get("session_id") or "",
+                ticket_id=result.get("ticket_id"),
+                lease_id=str(result.get("lease_id") or ""),
+                executor_id=str(result.get("executor_id") or ""),
+                result=result,
+            )
+            settled += 1
+        except Exception as exc:  # noqa: BLE001
+            still_pending += 1
+            _log.error(
+                "evidence-failure settlement remains pending request=%s plan=%s "
+                "attempt=%s: %s",
+                row.get("request_id"), row.get("source_plan_id"),
+                row.get("attempt_id"), exc,
+            )
+    return settled, still_pending
 
 
 def _process_one(db: DBAdapter, row: dict, executor_id: str, dry_run: bool, model: str = "") -> str:
@@ -843,6 +1138,14 @@ def _process_one(db: DBAdapter, row: dict, executor_id: str, dry_run: bool, mode
         req = _build_req_from_request(db, row, model=model)
         if req is None:
             raise RuntimeError(f"cannot build req for request {request_id}")
+
+        # Positive work-evidence contract, evaluated against a snapshot taken
+        # BEFORE any model launch so a fallback cannot inherit another
+        # model's writes as its own evidence.
+        evidence_contract = work_evidence_contract(req)
+        evidence_baseline = _snapshot_target_files(
+            evidence_contract.get("target_files") or [], PROJECT_ROOT
+        )
 
         # ── Record the WR in vision.work_requests (idempotent) ──────
         # Mirrors _dispatch_one's add_work_request: gives plan 1284's
@@ -943,9 +1246,33 @@ def _process_one(db: DBAdapter, row: dict, executor_id: str, dry_run: bool, mode
                 f"all {len(chain)} model(s) in chain failed for request {request_id}: {last_error[:500]}")
         _log.info("builder succeeded via model=%s", used_model)
 
+        # ── Positive work evidence (independent of exit code) ──────
+        work_evidence = _evaluate_work_evidence(
+            contract=evidence_contract,
+            baseline=evidence_baseline,
+            process_outcome=last_process_outcome,
+            stdout=_text_value(work_result),
+            stderr=_text_value(last_process_outcome.get("stderr", "")),
+            error=_text_value(last_process_outcome.get("error", "")),
+            root=PROJECT_ROOT,
+            plan_id=plan_id,
+            request_id=request_id,
+            attempt_id=attempt_id or "",
+            session_id=session_id,
+            work_request_id=req.get("id"),
+        )
+        if work_evidence["status"] != "valid":
+            _log_warn(
+                f"work evidence failed before settlement request={request_id} "
+                f"plan={plan_id} reason={work_evidence['reason']} "
+                f"artifacts={len(work_evidence['artifacts']['changes'])} "
+                f"refs={len(work_evidence['references'])}"
+            )
+
         # ── Process outcome + WorkRequest result ────────────────────
         outcome_result = {
             "work_request_id": req.get("id"),
+            "work_evidence": work_evidence,
             "work_result": _bounded_text(work_result),
             "process_outcome": {
                 "returncode": last_process_outcome.get("returncode", 0),
@@ -984,6 +1311,22 @@ def _process_one(db: DBAdapter, row: dict, executor_id: str, dry_run: bool, mode
                 f"attempt completion rejected because it is already terminal (attempt={attempt_id})"
             )
         attempt_outcome_saved = True
+        if work_evidence["status"] != "valid":
+            # Keep the SUCCEEDED attempt/exit code verbatim; settle only the
+            # governance consequences. Never issue IMPLEMENTATION/COMPLETED.
+            renewer_stop.set()
+            worker_session_exit_code = 0
+            return _settle_evidence_failure(
+                db,
+                attempt_id=attempt_id,
+                request_id=request_id,
+                plan_id=plan_id,
+                session_id=session_id,
+                ticket_id=ticket_id,
+                lease_id=lease_id,
+                executor_id=executor_id,
+                result=outcome_result,
+            )
         _ensure_success_execution_evidence(
             db, attempt_id, request_id, outcome_result, executor_id
         )
@@ -1048,6 +1391,27 @@ def _process_one(db: DBAdapter, row: dict, executor_id: str, dry_run: bool, mode
             # Preserve the builder/process success. Any persistence error
             # after that point must not rewrite it as a failed attempt or
             # create a contradictory plan BLOCK.
+            if (outcome_result.get("work_evidence") or {}).get("status") == "evidence_failed":
+                try:
+                    return _settle_evidence_failure(
+                        db,
+                        attempt_id=attempt_id,
+                        request_id=request_id,
+                        plan_id=plan_id,
+                        session_id=session_id,
+                        ticket_id=ticket_id,
+                        lease_id=lease_id,
+                        executor_id=executor_id,
+                        result=outcome_result,
+                    )
+                except Exception as settlement_error:  # noqa: BLE001
+                    _log.error(
+                        "evidence-failure settlement remains pending request=%s "
+                        "plan=%s attempt=%s: %s",
+                        request_id, plan_id, attempt_id, settlement_error,
+                    )
+                    _release_lease_safely(db, lease_id)
+                    return "evidence-failure-pending"
             _release_lease_safely(db, lease_id)
             try:
                 _ensure_success_execution_evidence(
@@ -1267,6 +1631,8 @@ def _run_pass(db: DBAdapter, executor_id: str, dry_run: bool, include_legacy: bo
     summary = {"recovered": 0, "governance_finalized": 0,
                "finalization_pending": 0, "session_mismatches": 0,
                "reconciled": 0, "consumed": 0,
+               "evidence_failed": 0, "evidence_settlements": 0,
+               "evidence_failure_pending": 0,
                "skipped_leased": 0, "skipped_admission_race": 0, "failed": 0,
                "dry_run": 0, "lease_blocked": None}
 
@@ -1277,6 +1643,11 @@ def _run_pass(db: DBAdapter, executor_id: str, dry_run: bool, include_legacy: bo
     # criterion update is persisted as pending before governance retry runs.
     if not dry_run:
         summary["session_mismatches"] = _surface_session_exit_observations(db)
+        # Settle evidence failures BEFORE consuming READY so a crash between
+        # attempt completion and settlement cannot hand the request to a new
+        # builder (idempotent; no process relaunch).
+        (summary["evidence_settlements"],
+         summary["evidence_failure_pending"]) = _retry_evidence_failure_settlements(db)
         # Reconcile completed attempts without reacquiring a lease or launching.
         (summary["governance_finalized"],
          summary["finalization_pending"]) = _retry_pending_governance_finalizations(db)
@@ -1316,6 +1687,10 @@ def _run_pass(db: DBAdapter, executor_id: str, dry_run: bool, include_legacy: bo
             summary["consumed"] += 1
         elif outcome == "finalization-pending":
             summary["finalization_pending"] += 1
+        elif outcome == "evidence-failed":
+            summary["evidence_failed"] += 1
+        elif outcome == "evidence-failure-pending":
+            summary["evidence_failure_pending"] += 1
         elif outcome == "failed":
             summary["failed"] += 1
         elif outcome == "leased":

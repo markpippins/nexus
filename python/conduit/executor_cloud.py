@@ -440,13 +440,97 @@ def _resolve_role(req: Dict[str, Any]) -> str:
     return resolved
 
 
+# ── Positive work-evidence extraction ───────────────────────────────
+# Work evidence is derived from what the harness actually emitted. These
+# helpers are pure (no process launch, no DB) so the execution worker can
+# unit-test the contract separately from the process outcome.
+PR_URL_RE = re.compile(
+    r"https?://(?:www\.)?github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/\d+",
+    re.IGNORECASE,
+)
+AGENT_RECORD_RE = re.compile(
+    r"agent_record:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
+)
+COMMIT_SHA_RE = re.compile(
+    r"\bcommit(?:ted)?(?:\s+(?:sha|hash|id))?\s*[:=#]?\s*([0-9a-f]{7,40})\b",
+    re.IGNORECASE,
+)
+WORK_EVIDENCE_REF_LIMIT = 25
+
+# Signals that the harness did not actually perform the work even though
+# it exited 0 (e.g. a denied write/tool invocation reported in output).
+EVIDENCE_REJECTION_SIGNALS = (
+    "permission denied",
+    "permission was denied",
+    "tool execution rejected",
+    "tool call rejected",
+    "tool invocation rejected",
+    "operation not permitted",
+    "read-only file system",
+    "access denied",
+    "not authorized to",
+    "you do not have permission",
+)
+
+
+def extract_reviewable_refs(text: str) -> list[dict]:
+    """Extract PR URLs, commit SHAs, and agent-record refs from harness text.
+
+    Returns a de-duplicated, bounded list of ``{"kind", "ref"}`` dicts.
+    Extraction is deliberately conservative: only explicit, canonical
+    references count as positive evidence.
+    """
+    if not isinstance(text, str) or not text:
+        return []
+    refs: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+
+    def _add(kind: str, ref: str) -> None:
+        key = (kind, ref)
+        if key in seen or len(refs) >= WORK_EVIDENCE_REF_LIMIT:
+            return
+        seen.add(key)
+        refs.append({"kind": kind, "ref": ref})
+
+    for match in PR_URL_RE.findall(text):
+        _add("pr", match)
+    for match in AGENT_RECORD_RE.findall(text):
+        _add("agent_record", f"agent_record:{match}")
+    for match in COMMIT_SHA_RE.findall(text):
+        _add("commit", match)
+    return refs
+
+
+def detect_evidence_rejection(*texts: str) -> dict | None:
+    """Return the first rejection signal found, or ``None``.
+
+    Case-insensitive substring match over the supplied text fragments
+    (stdout/stderr/error). The returned dict is persisted verbatim into
+    ``work_evidence.rejection`` for reviewer inspection.
+    """
+    for text in texts:
+        if not isinstance(text, str) or not text:
+            continue
+        lowered = text.lower()
+        for signal in EVIDENCE_REJECTION_SIGNALS:
+            if signal in lowered:
+                return {"signal": signal}
+    return None
+
+
 def _build_role_instructions(role: str) -> str:
     """Return the role-specific instruction block for agent prompts."""
     if role == "builder":
         return (
             "Execute this WorkRequest. Implement the plan, modifying only "
             "the files listed in Target Files. Satisfy all acceptance criteria "
-            "and completion conditions. Respect all safety constraints."
+            "and completion conditions. Respect all safety constraints. "
+            "Your final output MUST state the concrete evidence that the work "
+            "happened: the files you created or modified (with sizes), or a "
+            "PR URL, a commit SHA, or an agent_record:<uuid> reference. "
+            "An empty or evidence-free final message is treated as a failed "
+            "attempt even when the process exits 0."
         )
     elif role == "reviewer":
         return (
@@ -459,6 +543,11 @@ def _build_role_instructions(role: str) -> str:
             "Include them in receipt metadata as "
             "outcome_reconciliation.dispositions: [{attempt_id, session_id, "
             "disposition, evidence_ref}]. "
+            "If an attempt is marked work_evidence=evidence_failed, do not issue "
+            "REVIEW_PASS without an explicit per-attempt disposition: "
+            "metadata.work_evidence.dispositions: [{attempt_id, "
+            "disposition: \"evidence_confirmed\", evidence_ref}], where "
+            "evidence_ref is an eligible reviewer/tester agent_record for this plan. "
             "If changes match the acceptance criteria, issue a REVIEW_PASS receipt. "
             "If they don't match, issue a REVIEW_REJECT receipt with explanation."
         )

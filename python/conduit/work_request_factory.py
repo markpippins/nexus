@@ -103,6 +103,81 @@ def _build_safety_constraints() -> List[str]:
     return constraints
 
 
+def work_evidence_contract(req: Dict[str, Any]) -> Dict[str, Any]:
+    """Derive the positive work-evidence contract from a WorkRequest DCO.
+
+    The contract does not invent requirements. It projects the existing
+    WorkRequest success surface into what the execution worker must observe
+    before it may settle the request as IMPLEMENTED:
+
+    * declared target files (``artifacts.produced_files``) → at least one
+      must be created or modified, or a canonical PR/commit/agent_record
+      reference must be present;
+    * no declared target files → non-empty, non-rejected output (or a
+      canonical reference) is sufficient. This preserves legacy bridge
+      requests, which carry no artifact list.
+
+    Kept in the existing DCO JSON on the request so this adds no schema or
+    API surface (architect ruling bcdd3047).
+    """
+    req = req or {}
+    artifacts = req.get("artifacts") or {}
+    if not isinstance(artifacts, dict):
+        artifacts = {}
+
+    target_files: List[str] = []
+    seen: set[str] = set()
+    for item in artifacts.get("produced_files") or []:
+        if isinstance(item, dict):
+            path = item.get("path")
+        else:
+            path = item
+        if path and str(path) not in seen:
+            seen.add(str(path))
+            target_files.append(str(path))
+
+    success = req.get("success_criteria") or {}
+    if not isinstance(success, dict):
+        success = {}
+
+    def _conditions(key: str) -> List[str]:
+        values: List[str] = []
+        for item in success.get(key) or []:
+            if isinstance(item, dict):
+                text = item.get("condition") or item.get("test") or ""
+            else:
+                text = item
+            if text:
+                values.append(str(text))
+        return values
+
+    if target_files:
+        required_kind = "target_artifact_or_reviewable_reference"
+        accepted_evidence = ["artifact", "pr", "commit", "agent_record"]
+    else:
+        required_kind = "substantive_output_or_reviewable_reference"
+        accepted_evidence = ["output", "pr", "commit", "agent_record"]
+
+    contract = {
+        "source": "work_request.success_contract",
+        "work_request_id": str(req.get("id") or ""),
+        "target_files": target_files,
+        "completion_conditions": _conditions("completion_conditions"),
+        "acceptance_tests": _conditions("acceptance_tests"),
+        "validation_rules": _conditions("validation_rules"),
+        "requires": {
+            "kind": required_kind,
+            "accepted_evidence": accepted_evidence,
+            "min_output_chars": 1,
+        },
+    }
+    _log.debug(
+        "work_evidence_contract: wr=%s target_files=%d kind=%s",
+        contract["work_request_id"], len(target_files), required_kind,
+    )
+    return contract
+
+
 class WorkRequestFactory:
     @staticmethod
     def create_from_plan(

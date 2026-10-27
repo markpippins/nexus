@@ -2932,10 +2932,17 @@ class DBAdapter:
                 return None
 
             if governed_role == "builder":
+                # A successful attempt whose governance is still pending, or
+                # whose positive work evidence failed, is already the terminal
+                # outcome for this attempt. It must never be relaunched into a
+                # fresh attempt unless a *newer* explicit rework authorization
+                # exists on the plan. Re-running would launder an evidence
+                # failure into a new success.
                 pending = conn.execute(
                     """SELECT id, completed_at FROM execution.attempts
                        WHERE request_id = %s AND status = 'SUCCEEDED'
-                         AND result->'governance_finalization'->>'status' = 'pending'
+                         AND (result->'governance_finalization'->>'status' = 'pending'
+                              OR result->'work_evidence'->>'status' = 'evidence_failed')
                        ORDER BY completed_at DESC NULLS LAST
                        LIMIT 1""",
                     (request_id,),
@@ -2952,8 +2959,9 @@ class DBAdapter:
                     ).fetchone()
                     if not rework:
                         _log.info(
-                            "create_attempt: pending successful attempt has no newer rework "
-                            "authorization; refusing builder attempt request=%s plan=%s",
+                            "create_attempt: successful attempt has unsettled governance or "
+                            "failed work evidence and no newer rework authorization; "
+                            "refusing builder attempt request=%s plan=%s",
                             request_id, plan_id,
                         )
                         return None
@@ -3139,16 +3147,26 @@ class DBAdapter:
         A concurrent cancellation (or other terminal state) is never overwritten.
         An already-COMPLETED request is an idempotent success only while the
         associated zero-exit attempt and attempt-linked receipt remain present.
+
+        Positive work evidence is part of that durability contract: an attempt
+        whose persisted ``work_evidence.status`` is ``evidence_failed`` can
+        never complete the request. Legacy attempts written before the field
+        existed are unchanged (the predicate is NULL-tolerant).
         """
+        evidence_ok = (
+            "(a.result->'work_evidence' IS NULL "
+            "OR a.result->'work_evidence'->>'status' = 'valid')"
+        )
         with self._get_connection() as conn:
             cursor = conn.execute(
-                """UPDATE execution.requests r
+                f"""UPDATE execution.requests r
                    SET status = 'COMPLETED', updated_at = NOW()
                    WHERE r.id = %s AND r.status = 'READY'
                      AND EXISTS (
                          SELECT 1 FROM execution.attempts a
                          WHERE a.id = %s AND a.request_id = r.id
                            AND a.status = 'SUCCEEDED' AND a.exit_code = 0
+                           AND {evidence_ok}
                      )
                      AND EXISTS (
                          SELECT 1 FROM execution.receipts er
@@ -3161,11 +3179,12 @@ class DBAdapter:
             if cursor.rowcount > 0:
                 return True
             current = conn.execute(
-                """SELECT r.status,
+                f"""SELECT r.status,
                           EXISTS (
                               SELECT 1 FROM execution.attempts a
                               WHERE a.id = %s AND a.request_id = r.id
                                 AND a.status = 'SUCCEEDED' AND a.exit_code = 0
+                                AND {evidence_ok}
                           ) AND EXISTS (
                               SELECT 1 FROM execution.receipts er
                               WHERE er.attempt_id = %s AND er.request_id = r.id
@@ -3261,6 +3280,43 @@ class DBAdapter:
                    JOIN execution.requests r ON r.id = a.request_id
                    WHERE a.status = 'SUCCEEDED'
                      AND a.result->'governance_finalization'->>'status' = 'pending'
+                     AND (
+                         a.result->'work_evidence' IS NULL
+                         OR a.result->'work_evidence'->>'status' <> 'evidence_failed'
+                     )
+                   ORDER BY a.completed_at ASC
+                   LIMIT %s""",
+                (limit,),
+            ).dict_fetchall()
+        for row in rows:
+            if isinstance(row.get("result"), str):
+                row["result"] = json.loads(row["result"])
+        return rows
+
+    def get_unsettled_evidence_failures(self, limit: int = 100) -> list[dict]:
+        """Return successful attempts whose work-evidence settlement is unfinished.
+
+        Settlement is the durable consequence of ``work_evidence.status =
+        'evidence_failed'``: the attempt stays SUCCEEDED (process outcome is
+        preserved) but the request must not be consumable and IMPLEMENTATION
+        must not be issued. Carrying the failure in the existing attempt.result
+        JSON keeps this retryable across worker restarts without a schema or
+        request-status change.
+        """
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """SELECT a.id AS attempt_id, a.request_id, a.result,
+                          a.status AS attempt_status, a.exit_code,
+                          r.source_plan_id, r.status AS request_status
+                   FROM execution.attempts a
+                   JOIN execution.requests r ON r.id = a.request_id
+                   WHERE a.status = 'SUCCEEDED'
+                     AND a.result->'work_evidence'->>'status' = 'evidence_failed'
+                     AND (
+                         a.result->'governance_finalization'->>'status'
+                             IS DISTINCT FROM 'evidence_failed'
+                         OR r.status <> 'FAILED'
+                     )
                    ORDER BY a.completed_at ASC
                    LIMIT %s""",
                 (limit,),
@@ -3313,6 +3369,10 @@ class DBAdapter:
         This reads the authoritative attempt and session rows directly instead
         of depending on the asynchronous worker reconciliation scan. Attempts
         without a session_id are legacy/out of scope for this gate.
+
+        An attempt whose positive work-evidence check failed is included even
+        when its process/session outcome agrees: work evidence is a third,
+        independent outcome that REVIEW_PASS must dispose of explicitly.
         """
         with self._get_connection() as conn:
             return conn.execute(
@@ -3320,6 +3380,9 @@ class DBAdapter:
                            a.result->>'session_id' AS session_id,
                            a.status AS attempt_status,
                            a.exit_code AS attempt_exit_code,
+                           a.result->'work_evidence'->>'status' AS work_evidence_status,
+                           a.result->'work_evidence'->>'reason' AS work_evidence_reason,
+                           a.result->'work_evidence'->>'evaluated_at' AS work_evidence_evaluated_at,
                            (s.id IS NOT NULL) AS session_present,
                            (s.end_iso IS NOT NULL) AS session_closed,
                            s.exit_code AS session_exit_code
@@ -3336,10 +3399,45 @@ class DBAdapter:
                           OR s.exit_code IS NULL
                           OR a.exit_code IS NULL
                           OR a.exit_code IS DISTINCT FROM s.exit_code
+                          OR a.result->'work_evidence'->>'status' = 'evidence_failed'
                       )
                     ORDER BY a.completed_at ASC""",
                 (plan_id,),
             ).dict_fetchall()
+
+    def _agent_record_evidence_error(self, evidence_ref, plan_id: str) -> str | None:
+        """Validate ``agent_record:<uuid>`` against eligible canonical records.
+
+        Returns an error string, or ``None`` when the reference is canonical,
+        plan-scoped, and authored by a reviewer/tester as a report/assessment/
+        inspection.
+        """
+        if not isinstance(evidence_ref, str) or not evidence_ref.startswith("agent_record:"):
+            return "requires evidence_ref=agent_record:<uuid>"
+        raw_id = evidence_ref.removeprefix("agent_record:")
+        try:
+            record_id = uuid.UUID(raw_id)
+            if str(record_id) != raw_id.lower():
+                raise ValueError("non-canonical UUID")
+        except (ValueError, AttributeError):
+            return "has malformed agent_record evidence_ref"
+
+        with self._get_connection() as conn:
+            evidence = conn.execute(
+                """SELECT id
+                   FROM nebula.agent_records
+                   WHERE id = %s::uuid
+                     AND plan_ref = %s
+                     AND record_type IN ('report', 'assessment', 'inspection')
+                     AND role IN ('reviewer', 'tester')""",
+                (str(record_id), plan_id),
+            ).dict_fetchone()
+        if not evidence:
+            return (
+                "references no eligible reviewer/tester agent_record "
+                f"for plan_ref={plan_id}"
+            )
+        return None
 
     def validate_review_pass_reconciliation(self, plan_id: str, metadata: dict) -> None:
         """Require complete dispositions backed by canonical records before REVIEW_PASS."""
@@ -3368,9 +3466,20 @@ class DBAdapter:
             row for row in pending
             if row.get("attempt_exit_code") != row.get("session_exit_code")
         ]
-        if not mismatches:
-            return
+        if mismatches:
+            self._validate_session_mismatch_dispositions(plan_id, metadata, mismatches)
 
+        evidence_failures = [
+            row for row in pending
+            if str(row.get("work_evidence_status") or "") == "evidence_failed"
+        ]
+        if evidence_failures:
+            self._validate_work_evidence_dispositions(plan_id, metadata, evidence_failures)
+
+    def _validate_session_mismatch_dispositions(
+        self, plan_id: str, metadata: dict, mismatches: list[dict],
+    ) -> None:
+        """Require a per-mismatch work_complete disposition with canonical evidence."""
         reconciliation = (metadata or {}).get("outcome_reconciliation") or {}
         if not isinstance(reconciliation, dict):
             reconciliation = {}
@@ -3390,40 +3499,61 @@ class DBAdapter:
             if str(item.get("disposition", "")).strip() != "work_complete":
                 invalid.append(f"{link} requires disposition=work_complete")
                 continue
-
-            evidence_ref = item.get("evidence_ref")
-            if not isinstance(evidence_ref, str) or not evidence_ref.startswith("agent_record:"):
-                invalid.append(f"{link} requires evidence_ref=agent_record:<uuid>")
-                continue
-            try:
-                record_id = uuid.UUID(evidence_ref.removeprefix("agent_record:"))
-                if str(record_id) != evidence_ref.removeprefix("agent_record:").lower():
-                    raise ValueError("non-canonical UUID")
-            except (ValueError, AttributeError):
-                invalid.append(f"{link} has malformed agent_record evidence_ref")
-                continue
-
-            with self._get_connection() as conn:
-                evidence = conn.execute(
-                    """SELECT id
-                       FROM nebula.agent_records
-                       WHERE id = %s::uuid
-                         AND plan_ref = %s
-                         AND record_type IN ('report', 'assessment', 'inspection')
-                         AND role IN ('reviewer', 'tester')""",
-                    (str(record_id), plan_id),
-                ).dict_fetchone()
-            if not evidence:
-                invalid.append(
-                    f"{link} references no eligible reviewer/tester agent_record "
-                    f"for plan_ref={plan_id}"
-                )
+            error = self._agent_record_evidence_error(item.get("evidence_ref"), plan_id)
+            if error:
+                invalid.append(f"{link} {error}")
 
         if invalid:
             raise ReviewPassReconciliationError(
                 "REVIEW_PASS rejected: every mismatched attempt/session pair requires "
                 "disposition=work_complete and a valid, eligible canonical agent_record "
                 "evidence_ref in metadata.outcome_reconciliation.dispositions "
+                f"({'; '.join(invalid)})"
+            )
+
+    def _validate_work_evidence_dispositions(
+        self, plan_id: str, metadata: dict, evidence_failures: list[dict],
+    ) -> None:
+        """Require an explicit, canonical disposition per evidence-failed attempt.
+
+        An evidence failure is not a session mismatch: the builder process may
+        have exited 0 and the session may agree. REVIEW_PASS may still proceed,
+        but only by naming each failed attempt and attaching a reviewer/tester
+        agent_record that establishes what work was actually evidenced.
+        """
+        work_evidence = (metadata or {}).get("work_evidence") or {}
+        if not isinstance(work_evidence, dict):
+            work_evidence = {}
+        dispositions = work_evidence.get("dispositions", [])
+        if isinstance(dispositions, dict):
+            dispositions = [dispositions]
+        if not isinstance(dispositions, list):
+            dispositions = []
+        by_attempt = {
+            str(item.get("attempt_id", "")): item
+            for item in dispositions
+            if isinstance(item, dict)
+        }
+        invalid = []
+        for row in evidence_failures:
+            attempt_id = str(row.get("attempt_id", ""))
+            item = by_attempt.get(attempt_id, {})
+            link = (
+                f"attempt={attempt_id} work_evidence=evidence_failed "
+                f"reason={row.get('work_evidence_reason')}"
+            )
+            if str(item.get("disposition", "")).strip() != "evidence_confirmed":
+                invalid.append(f"{link} requires disposition=evidence_confirmed")
+                continue
+            error = self._agent_record_evidence_error(item.get("evidence_ref"), plan_id)
+            if error:
+                invalid.append(f"{link} {error}")
+
+        if invalid:
+            raise ReviewPassReconciliationError(
+                "REVIEW_PASS rejected: every evidence-failed builder attempt requires "
+                "disposition=evidence_confirmed and a valid, eligible canonical "
+                "agent_record evidence_ref in metadata.work_evidence.dispositions "
                 f"({'; '.join(invalid)})"
             )
 
