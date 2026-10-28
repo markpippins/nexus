@@ -62,7 +62,7 @@ export default class ApiService extends Service {
               "GET /witnessed-runs/diagnostics": "worker.execution.witnessed-runs.witnessedRunDiagnostics",
               "GET /projections/witnessed-runs": "worker.execution.witnessed-runs.witnessedRunProjection",
               "GET /metrics": "worker.execution.witnessed-runs.governanceMetrics",
-            },
+            } as any,
 
             onError(req: any, res: any, err: any) {
               // Legacy shape: { error: message }, status from the thrown
@@ -75,7 +75,7 @@ export default class ApiService extends Service {
               res.statusCode = status;
               res.end(JSON.stringify({ error: (err as any)?.message ?? String(err) }));
             },
-          },
+          } as any,
           {
             path: "/api",
 
@@ -111,7 +111,7 @@ export default class ApiService extends Service {
               "POST /keychain-snapshot/agent-records/doctrine-reconstruction/backfill": "keychain-snapshot.agentRecordsDoctrineBackfill",
               "GET /keychain-snapshot/agent-records/rewind": "keychain-snapshot.agentRecordsRewind",
               "GET /keychain-snapshot/agent-records/census": "keychain-snapshot.agentRecordsCensus",
-            },
+            } as any,
 
             bodyParsers: {
               json: {
@@ -122,7 +122,7 @@ export default class ApiService extends Service {
                 extended: true,
                 limit: "5mb",
               },
-            },
+            } as any,
 
             cors: {
               origin: "*",
@@ -130,14 +130,14 @@ export default class ApiService extends Service {
               allowedHeaders: "*",
               credentials: false,
               maxAge: 3600,
-            },
-          },
-        ],
+            } as any,
+          } as any,
+        ] as any,
 
         log4XXResponses: false,
         logRequestParams: "info",
         logResponseData: "info",
-      },
+      } as any,
 
       actions: {
         health: {

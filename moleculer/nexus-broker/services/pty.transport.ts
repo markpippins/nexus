@@ -72,10 +72,10 @@ export default class PtyTransportService extends Service {
         // v0.14) — worker.pty emits these on the broker bus; this adapter
         // receives them and forwards to the matching WebSocket client.
         "pty.output": {
-          handler: (payload: { id: string; data: string }) => this.onPtyOutput(payload),
+          handler: (ctx: Context) => this.onPtyOutput(ctx.params as { id: string; data: string }),
         },
         "pty.exit": {
-          handler: (payload: { id: string; exitCode: number }) => this.onPtyExit(payload),
+          handler: (ctx: Context) => this.onPtyExit(ctx.params as { id: string; exitCode: number }),
         },
       },
     });
