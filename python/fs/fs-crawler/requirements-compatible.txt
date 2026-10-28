@@ -14,7 +14,7 @@ pydantic-settings>=2.1.0
 
 # Media Processing Libraries
 mutagen==1.47.0  # Audio metadata
-Pillow>=12.3.0   # Image processing (security floor — GHSA advisories on <12.3)
+Pillow>=13.0.0   # Image processing (security floor — GHSA advisories on <12.3)
 ExifRead==3.0.0  # EXIF data
 python-magic==0.4.27  # File type detection
 
