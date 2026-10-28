@@ -3133,6 +3133,37 @@ class DBAdapter:
             ).fetchone()
             return row is not None
 
+    def has_builder_work_evidence(
+        self,
+        plan_id: str,
+        *,
+        work_request_id: str | None = None,
+        attempt_id: str | None = None,
+        session_id: str | None = None,
+        evidence_ref: str | None = None,
+    ) -> bool:
+        """Return whether a durable builder record exists for this plan.
+
+        This is deliberately narrower than a generic agent-record lookup: a
+        reviewer or planner record must not be able to manufacture builder
+        completion evidence.
+        """
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """SELECT 1 FROM nebula.agent_records
+                   WHERE plan_ref = %s
+                     AND role = 'builder'
+                     AND record_type IN ('report', 'engineering_log')
+                     AND (%s IS NULL OR id::text = %s OR metadata->>'evidence_ref' = %s)
+                     AND metadata->>'work_request_id' = %s
+                     AND metadata->>'attempt_id' = %s
+                     AND metadata->>'session_id' = %s
+                   LIMIT 1""",
+                (str(plan_id), evidence_ref, evidence_ref, evidence_ref,
+                 work_request_id, attempt_id, session_id),
+            ).fetchone()
+            return row is not None
+
     def mark_request_completed_after_attempt(self, attempt_id: str, request_id: str) -> bool:
         """Complete READY only when successful attempt evidence is durable.
 
@@ -3149,6 +3180,14 @@ class DBAdapter:
                          SELECT 1 FROM execution.attempts a
                          WHERE a.id = %s AND a.request_id = r.id
                            AND a.status = 'SUCCEEDED' AND a.exit_code = 0
+                           AND a.result->>'attempt_id' = a.id::text
+                           AND a.result->>'request_id' = a.request_id::text
+                           AND NULLIF(a.result->>'work_request_id', '') IS NOT NULL
+                           AND NULLIF(a.result->>'session_id', '') IS NOT NULL
+                           AND a.result->'work_evidence'->>'status' = 'valid'
+                           AND a.result->'work_evidence'->'correlation'->>'attempt_id' = a.id::text
+                           AND a.result->'work_evidence'->'correlation'->>'work_request_id' = a.result->>'work_request_id'
+                           AND a.result->'work_evidence'->'correlation'->>'session_id' = a.result->>'session_id'
                      )
                      AND EXISTS (
                          SELECT 1 FROM execution.receipts er
@@ -3166,6 +3205,14 @@ class DBAdapter:
                               SELECT 1 FROM execution.attempts a
                               WHERE a.id = %s AND a.request_id = r.id
                                 AND a.status = 'SUCCEEDED' AND a.exit_code = 0
+                                AND a.result->>'attempt_id' = a.id::text
+                                AND a.result->>'request_id' = a.request_id::text
+                                AND NULLIF(a.result->>'work_request_id', '') IS NOT NULL
+                                AND NULLIF(a.result->>'session_id', '') IS NOT NULL
+                                AND a.result->'work_evidence'->>'status' = 'valid'
+                                AND a.result->'work_evidence'->'correlation'->>'attempt_id' = a.id::text
+                                AND a.result->'work_evidence'->'correlation'->>'work_request_id' = a.result->>'work_request_id'
+                                AND a.result->'work_evidence'->'correlation'->>'session_id' = a.result->>'session_id'
                           ) AND EXISTS (
                               SELECT 1 FROM execution.receipts er
                               WHERE er.attempt_id = %s AND er.request_id = r.id
@@ -3261,6 +3308,7 @@ class DBAdapter:
                    JOIN execution.requests r ON r.id = a.request_id
                    WHERE a.status = 'SUCCEEDED'
                      AND a.result->'governance_finalization'->>'status' = 'pending'
+                     AND COALESCE(a.result->>'work_outcome', '') <> 'evidence_failed'
                    ORDER BY a.completed_at ASC
                    LIMIT %s""",
                 (limit,),
