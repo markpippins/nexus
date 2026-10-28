@@ -115,6 +115,7 @@ class WorkRequestMetadata(BaseModel):
     role: str = ""
     harness: str = "opencode"
     model: str = ""
+    evidence_contract: Dict[str, Any] = Field(default_factory=dict)
 
     model_config = {"extra": "forbid"}
 

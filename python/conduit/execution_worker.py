@@ -37,6 +37,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -73,6 +74,15 @@ FAIL_RECEIPT = "BLOCK"
 LEASE_TTL = 600  # 10 min — renewed in the background during a run; crash recovery ≤10 min
 RENEW_INTERVAL = 240  # renew every 4 min (well inside the 10-min TTL)
 OUTCOME_EXCERPT_CHARS = 2000
+EVIDENCE_FAILURE_OUTCOME = "evidence_failed"
+WORK_EVIDENCE_MARKER = "NEXUS_WORK_EVIDENCE:"
+PERMISSION_FAILURE_MARKERS = (
+    "permission denied", "operation not permitted", "not permitted",
+    "opencode permission", "approval required", "tool permission",
+)
+TOOL_FAILURE_MARKERS = (
+    "tool failed", "command failed", "command not found", "traceback (most recent call last)",
+)
 REVIEW_SETTLEMENT_CRITERIA = (
     "Before issuing REVIEW_PASS, inspect the linked execution attempt and session "
     "outcomes. Explicitly record a disposition for any attempt/session exit-code "
@@ -87,6 +97,288 @@ class ReviewSettlementCriteriaError(RuntimeError):
     def __init__(self, message: str):
         super().__init__(message)
         self.review_criterion = {"status": "not_enforced", "reason": message}
+
+
+class WorkEvidenceError(RuntimeError):
+    """A zero-exit builder process did not produce reviewable work evidence."""
+
+    def __init__(self, reasons: list[str], evidence: dict | None = None):
+        self.reasons = reasons
+        self.evidence = evidence or {}
+        super().__init__("; ".join(reasons))
+
+
+def _parse_work_evidence(*outputs: str) -> dict:
+    """Parse the machine-readable evidence line from stdout or stderr."""
+    for output in outputs:
+        for line in (output or "").splitlines():
+            if line.startswith(WORK_EVIDENCE_MARKER):
+                try:
+                    value = json.loads(line[len(WORK_EVIDENCE_MARKER):].strip())
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(value, dict):
+                    return value
+    return {}
+
+
+def _sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as artifact_file:
+        for chunk in iter(lambda: artifact_file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def capture_artifact_baseline(
+    req: dict,
+    *,
+    project_root: str = PROJECT_ROOT,
+) -> dict[str, str | None]:
+    """Capture content identity before the builder can change artifacts."""
+    contract = ((req.get("metadata") or {}).get("evidence_contract") or {})
+    expected = contract.get("expected_files")
+    if expected is None:
+        expected = [item.get("path") for item in ((req.get("artifacts") or {}).get("produced_files") or [])
+                    if isinstance(item, dict) and item.get("path")]
+    root = os.path.realpath(contract.get("allowed_root") or project_root)
+    baseline: dict[str, str | None] = {}
+    for raw_path in expected or []:
+        path = str(raw_path)
+        candidate = os.path.realpath(os.path.join(root, path))
+        if not (candidate == root or candidate.startswith(root + os.sep)):
+            baseline[path] = None
+        elif os.path.isfile(candidate):
+            baseline[path] = _sha256_file(candidate)
+        elif os.path.isdir(candidate):
+            for current_root, _dirs, filenames in os.walk(candidate):
+                for filename in filenames:
+                    file_path = os.path.join(current_root, filename)
+                    relative = os.path.relpath(file_path, root)
+                    baseline[relative] = _sha256_file(file_path)
+            baseline.setdefault(path, None)
+        else:
+            baseline[path] = None
+    return baseline
+
+
+def validate_work_evidence(
+    db: DBAdapter,
+    req: dict,
+    output: str,
+    plan_id: str | None,
+    *,
+    project_root: str = PROJECT_ROOT,
+    diagnostics: str = "",
+    work_request_id: str | None = None,
+    attempt_id: str | None = None,
+    session_id: str | None = None,
+    attempt_started_at: float | None = None,
+    artifact_baseline: dict[str, str | None] | None = None,
+) -> dict:
+    """Validate positive builder evidence independently from process success.
+
+    Paths are checked on disk under the contract root. Durable references are
+    checked against the DB where possible; a marker in process output alone is
+    never accepted as proof that a file or record exists. Content identity is
+    compared with the pre-attempt baseline; mtime is not freshness evidence.
+    """
+    text = output or ""
+    diagnostic_text = diagnostics or ""
+    lower = f"{text}\n{diagnostic_text}".lower()
+    reasons: list[str] = []
+    for marker in PERMISSION_FAILURE_MARKERS + TOOL_FAILURE_MARKERS:
+        if marker in lower:
+            reasons.append(f"failure marker: {marker}")
+    contract = ((req.get("metadata") or {}).get("evidence_contract") or {})
+    parsed = _parse_work_evidence(text, diagnostic_text)
+    if not parsed:
+        reasons.append("missing machine-readable work evidence marker")
+    expected_correlation = {
+        "work_request_id": work_request_id,
+        "attempt_id": attempt_id,
+        "session_id": session_id,
+    }
+    for field, expected_value in expected_correlation.items():
+        if not expected_value:
+            reasons.append(f"missing current {field} validator context")
+        elif parsed.get(field) != expected_value:
+            reasons.append(f"evidence {field} is missing or does not match current attempt")
+    expected = contract.get("expected_files")
+    if expected is None:
+        expected = [item.get("path") for item in ((req.get("artifacts") or {}).get("produced_files") or [])
+                    if isinstance(item, dict) and item.get("path")]
+    root = os.path.realpath(contract.get("allowed_root") or project_root)
+    artifact_refs = []
+    target_dirs = []
+    reported = parsed.get("artifacts") if isinstance(parsed.get("artifacts"), list) else []
+    for raw_path in expected or []:
+        path = str(raw_path)
+        candidate = os.path.realpath(os.path.join(root, path))
+        if not (candidate == root or candidate.startswith(root + os.sep)):
+            reasons.append(f"artifact outside allowed target tree: {path}")
+        elif os.path.isdir(candidate):
+            target_dirs.append((path, candidate))
+        elif not os.path.isfile(candidate):
+            reasons.append(f"missing artifact: {path}")
+        else:
+            current_hash = _sha256_file(candidate)
+            baseline_hash = (artifact_baseline or {}).get(path)
+            if baseline_hash is not None and current_hash == baseline_hash:
+                reasons.append(f"artifact content was not changed during current attempt: {path}")
+            artifact_refs.append(path)
+
+    for raw_path in reported:
+        artifact_hash = None
+        if isinstance(raw_path, dict):
+            path = str(raw_path.get("path") or "")
+            artifact_hash = raw_path.get("sha256")
+        else:
+            path = str(raw_path)
+        candidate = os.path.realpath(os.path.join(root, path))
+        if not (candidate == root or candidate.startswith(root + os.sep)):
+            reasons.append(f"reported artifact outside allowed target tree: {path}")
+        elif not os.path.isfile(candidate):
+            reasons.append(f"reported artifact is not a file: {path}")
+        else:
+            current_hash = _sha256_file(candidate)
+            baseline_hash = (artifact_baseline or {}).get(path)
+            changed = baseline_hash is None or current_hash != baseline_hash
+            content_matches = bool(artifact_hash) and current_hash == str(artifact_hash).lower()
+            if artifact_hash and not content_matches:
+                reasons.append(f"artifact content hash mismatch: {path}")
+            if not changed:
+                reasons.append(f"artifact content was not changed during current attempt: {path}")
+            elif content_matches:
+                artifact_refs.append(path)
+    for target_path, target in target_dirs:
+        if not any(
+            os.path.realpath(os.path.join(root, ref)).startswith(target + os.sep)
+            and ((artifact_baseline or {}).get(ref) is None
+                 or _sha256_file(os.path.realpath(os.path.join(root, ref))) != (artifact_baseline or {}).get(ref))
+            for ref in artifact_refs
+        ):
+            reasons.append(f"missing reviewable artifact under target tree: {target_path}")
+
+    durable_ref = parsed.get("agent_record") or parsed.get("pr") or parsed.get("docket")
+    durable = False
+    if plan_id and hasattr(db, "has_builder_work_evidence"):
+        try:
+            durable = bool(db.has_builder_work_evidence(
+                plan_id,
+                work_request_id=work_request_id,
+                attempt_id=attempt_id,
+                session_id=session_id,
+                evidence_ref=durable_ref,
+            ))
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("builder evidence lookup failed plan=%s: %s", plan_id, exc)
+    # W-C requires both reviewable target files and a durable trail. Other
+    # plans may use the same DB-backed builder record when available.
+    if plan_id and (str(plan_id) == "8261655" or contract.get("durable_reference_required", False)) and not durable:
+        # A stdout reference is only a locator. The DB-backed record is the
+        # evidence; prose or a claimed PR/docket cannot substitute for it.
+        reasons.append("missing durable builder evidence record")
+    if plan_id and (str(plan_id) == "8261655" or contract.get("durable_reference_required", False)) and not durable_ref:
+        reasons.append("missing durable evidence reference in current marker")
+    if reasons:
+        raise WorkEvidenceError(reasons, {
+            "artifact_refs": artifact_refs,
+            "durable_reference": durable_ref,
+        })
+    return {
+        "status": "valid",
+        "correlation": {
+            "work_request_id": work_request_id,
+            "attempt_id": attempt_id,
+            "session_id": session_id,
+        },
+        "artifact_refs": artifact_refs,
+        "durable_reference": durable_ref,
+        "artifact_baseline": artifact_baseline or {},
+    }
+
+
+def _persist_evidence_failure(
+    db: DBAdapter,
+    request_id: str,
+    plan_id: str | None,
+    session_id: str,
+    ticket_id: str | None,
+    attempt_id: str,
+    wr_id: str,
+    model: str,
+    result: dict,
+    error: WorkEvidenceError,
+) -> dict:
+    """Record evidence failure without rewriting the process outcome.
+
+    Every write is best-effort, but request status is closed in a final step.
+    A persistence error is carried in the result so callers never report a
+    retryable READY row as if evidence handling succeeded.
+    """
+    updated = dict(result)
+    updated["work_outcome"] = EVIDENCE_FAILURE_OUTCOME
+    updated["evidence_failure"] = {
+        "status": "pending",
+        "reasons": error.reasons,
+        "evidence": error.evidence,
+        "retry_requires": "explicit REQUEUED or review rework authorization",
+    }
+    updated["governance_finalization"] = {
+        "status": "pending",
+        "error": str(error),
+        "attempt_id": attempt_id,
+        "request_id": str(request_id),
+        "plan_id": plan_id,
+    }
+    failures = []
+    try:
+        if not db.update_attempt_result(attempt_id, updated):
+            failures.append(f"attempt result update affected no row (attempt={attempt_id})")
+    except Exception as exc:  # noqa: BLE001
+        failures.append(f"attempt result update failed: {exc}")
+    if plan_id:
+        receipt_id = f"rec-execution-worker-{attempt_id}-evidence-failure"
+        try:
+            if not db.has_plan_receipt(plan_id, receipt_id, FAIL_RECEIPT):
+                db.insert_receipt(
+                    plan_id=plan_id, receipt_type=FAIL_RECEIPT, agent_role=ROLE,
+                    session_id=session_id, ticket_id=ticket_id or "",
+                    summary=f"builder evidence failed via {wr_id} (model={model})",
+                    metadata={"work_request_id": wr_id, "attempt_id": attempt_id,
+                              "evidence_failure": updated["evidence_failure"]},
+                    receipt_id=receipt_id,
+                )
+        except Exception as exc:  # noqa: BLE001
+            failures.append(f"evidence failure receipt failed: {exc}")
+        # Keep the plan blocked even if receipt visibility/checking fails.  Do
+        # not let one lifecycle write prevent the ticket from leaving the
+        # eligible pool after a failed request-row update.
+        if ticket_id:
+            try:
+                db.close_ticket(plan_id, ROLE, session_id, "failed")
+            except Exception as exc:  # noqa: BLE001
+                failures.append(f"plan ticket close failed: {exc}")
+        try:
+            db.advance_cursor(ROLE, plan_id, wr_id)
+        except Exception as exc:  # noqa: BLE001
+            failures.append(f"plan cursor advance failed: {exc}")
+    try:
+        with db._get_connection() as conn:
+            conn.execute(
+                "UPDATE execution.requests SET status = 'FAILED', updated_at = NOW() "
+                "WHERE id = %s AND status = 'READY'",
+                (request_id,),
+            )
+            conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        failures.append(f"request fail-closed transition failed: {exc}")
+    if failures:
+        updated["evidence_failure"]["persistence_errors"] = failures
+        updated["non_runnable"] = True
+        _log.error("evidence failure persistence incomplete request=%s: %s", request_id, failures)
+    return updated
 
 
 def _bounded_text(value: str, limit: int = OUTCOME_EXCERPT_CHARS) -> dict:
@@ -528,7 +820,25 @@ def _ensure_success_execution_evidence(
     result: dict,
     executor_id: str,
 ) -> None:
-    """Ensure attempt-linked success evidence exists before completing its request."""
+    """Ensure correlated work evidence and an attempt receipt precede settlement."""
+    if (str(result.get("attempt_id") or "") != str(attempt_id)
+            or str(result.get("request_id") or "") != str(request_id)
+            or not result.get("session_id")
+            or not result.get("work_request_id")):
+        raise RuntimeError(
+            f"successful outcome identity does not match attempt/request/session/WorkRequest "
+            f"(attempt={attempt_id}, request={request_id})"
+        )
+    work_evidence = result.get("work_evidence") or {}
+    correlation = work_evidence.get("correlation") or {}
+    if (work_evidence.get("status") != "valid"
+            or str(correlation.get("attempt_id") or "") != str(attempt_id)
+            or str(correlation.get("work_request_id") or "") != str(result["work_request_id"])
+            or str(correlation.get("session_id") or "") != str(result["session_id"])):
+        raise RuntimeError(
+            f"successful outcome lacks evidence correlated to current attempt/session/WorkRequest "
+            f"(attempt={attempt_id}, request={request_id})"
+        )
     if not db.has_attempt_execution_receipt(attempt_id, request_id):
         db.issue_execution_receipt(
             attempt_id=attempt_id,
@@ -562,6 +872,10 @@ def _finalize_governance_row(db: DBAdapter, row: dict) -> dict:
     result = row.get("result") or {}
     if isinstance(result, str):
         result = json.loads(result)
+    if result.get("work_outcome") == EVIDENCE_FAILURE_OUTCOME:
+        raise RuntimeError(
+            f"evidence-failed attempt cannot be governance-settled (attempt={attempt_id})"
+        )
     plan_id = row.get("source_plan_id") or result.get("plan_id")
     request_id = str(row.get("request_id") or result.get("request_id") or "")
     if row.get("attempt_status") != "SUCCEEDED" or row.get("exit_code") not in (0, "0"):
@@ -787,6 +1101,7 @@ def _process_one(db: DBAdapter, row: dict, executor_id: str, dry_run: bool, mode
     session_id = f"worker-{executor_id}-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{os.urandom(4).hex()}"
     ticket_id = None
     attempt_id = None
+    attempt_started_at = None
     session_created = False
     worker_session_exit_code = 1
     attempt_outcome_saved = False
@@ -836,6 +1151,7 @@ def _process_one(db: DBAdapter, row: dict, executor_id: str, dry_run: bool, mode
             return "admission-race"
         attempt_id = attempt["id"]
         db.start_attempt(attempt_id)
+        attempt_started_at = time.time()
         _log.info("attempt %s started (request %s, plan %s)", attempt_id, request_id, plan_id)
 
         # ── Build req + launch real agent ───────────────────────────
@@ -843,6 +1159,13 @@ def _process_one(db: DBAdapter, row: dict, executor_id: str, dry_run: bool, mode
         req = _build_req_from_request(db, row, model=model)
         if req is None:
             raise RuntimeError(f"cannot build req for request {request_id}")
+        req.setdefault("metadata", {}).update({
+            "work_request_id": req.get("id"),
+            "attempt_id": attempt_id,
+            "session_id": session_id,
+        })
+        artifact_baseline = capture_artifact_baseline(req, project_root=PROJECT_ROOT)
+        req["metadata"]["artifact_baseline"] = artifact_baseline
 
         # ── Record the WR in vision.work_requests (idempotent) ──────
         # Mirrors _dispatch_one's add_work_request: gives plan 1284's
@@ -963,6 +1286,7 @@ def _process_one(db: DBAdapter, row: dict, executor_id: str, dry_run: bool, mode
             "request_id": str(request_id),
             "executor_id": executor_id,
             "model": used_model,
+            "artifact_baseline": artifact_baseline,
             "governance_finalization": {
                 "status": "pending",
                 "error": None,
@@ -976,6 +1300,56 @@ def _process_one(db: DBAdapter, row: dict, executor_id: str, dry_run: bool, mode
                 },
             },
         }
+        try:
+            outcome_result["work_evidence"] = validate_work_evidence(
+                db,
+                req,
+                work_result,
+                plan_id,
+                project_root=PROJECT_ROOT,
+                diagnostics=_text_value(last_process_outcome.get("stderr", "")),
+                work_request_id=req.get("id"),
+                attempt_id=attempt_id,
+                session_id=session_id,
+                attempt_started_at=attempt_started_at,
+                artifact_baseline=artifact_baseline,
+            )
+        except WorkEvidenceError as evidence_error:
+            # The subprocess really did exit zero. Preserve that exact fact in
+            # the attempt/session rows, but do not let process success settle
+            # work that has no reviewable evidence.
+            outcome_result["work_outcome"] = EVIDENCE_FAILURE_OUTCOME
+            outcome_result["evidence_failure"] = {
+                "status": "pending",
+                "reasons": evidence_error.reasons,
+                "evidence": evidence_error.evidence,
+            }
+            attempt_saved = db.complete_attempt(
+                attempt_id, "SUCCEEDED", exit_code=0, result=outcome_result
+            )
+            if not attempt_saved:
+                raise RuntimeError(
+                    f"attempt completion rejected because it is already terminal (attempt={attempt_id})"
+                )
+            attempt_outcome_saved = True
+            try:
+                outcome_result = _persist_evidence_failure(
+                    db, request_id, plan_id, session_id, ticket_id, attempt_id,
+                    req.get("id", ""), used_model, outcome_result, evidence_error,
+                )
+            except Exception as persist_error:  # noqa: BLE001
+                _log.error(
+                    "evidence failure persisted only on attempt; request remains unsettled "
+                    "request=%s attempt=%s: %s", request_id, attempt_id, persist_error,
+                )
+            if outcome_result.get("non_runnable"):
+                _release_lease_safely(db, lease_id)
+                worker_session_exit_code = 0
+                return "evidence-failed-persistence"
+            _release_lease_safely(db, lease_id)
+            worker_session_exit_code = 0
+            _log_warn(f"request {request_id} evidence_failed (explicit requeue required)")
+            return "evidence-failed"
         attempt_saved = db.complete_attempt(
             attempt_id, "SUCCEEDED", exit_code=0, result=outcome_result
         )
@@ -1266,7 +1640,7 @@ def _run_pass(db: DBAdapter, executor_id: str, dry_run: bool, include_legacy: bo
     """One full pass: recover + reconcile + consume. Returns summary."""
     summary = {"recovered": 0, "governance_finalized": 0,
                "finalization_pending": 0, "session_mismatches": 0,
-               "reconciled": 0, "consumed": 0,
+               "reconciled": 0, "consumed": 0, "evidence_failed": 0,
                "skipped_leased": 0, "skipped_admission_race": 0, "failed": 0,
                "dry_run": 0, "lease_blocked": None}
 
@@ -1318,6 +1692,8 @@ def _run_pass(db: DBAdapter, executor_id: str, dry_run: bool, include_legacy: bo
             summary["finalization_pending"] += 1
         elif outcome == "failed":
             summary["failed"] += 1
+        elif outcome == "evidence-failed":
+            summary["evidence_failed"] += 1
         elif outcome == "leased":
             summary["skipped_leased"] += 1
         elif outcome == "admission-race":

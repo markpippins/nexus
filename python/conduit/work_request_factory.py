@@ -222,6 +222,11 @@ class WorkRequestFactory:
             harness=model_cfg.harness if model_cfg else "opencode",
             model=model_cfg.model if model_cfg else "",
             session_id=session_id,
+            evidence_contract={
+                "expected_files": [file.path for file in files_affected],
+                "allowed_root": working_path,
+                "durable_reference_required": True,
+            },
         )
 
         wr = WorkRequestDCO(

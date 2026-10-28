@@ -199,6 +199,28 @@ class _WorkerDB:
     def get_eligible_plans(self, role):
         return []
 
+    def has_builder_work_evidence(self, plan_id, *, work_request_id=None,
+                                  attempt_id=None, session_id=None,
+                                  evidence_ref=None):
+        return (
+            plan_id == "plan-1"
+            and work_request_id == "wr-1"
+            and attempt_id == "attempt-1"
+            and session_id == self.session_id
+            and evidence_ref == "record-current"
+        )
+
+
+def _work_evidence_output(req, prose="done"):
+    metadata = req["metadata"]
+    marker = {
+        "work_request_id": metadata["work_request_id"],
+        "attempt_id": metadata["attempt_id"],
+        "session_id": metadata["session_id"],
+        "agent_record": "record-current",
+    }
+    return f'{prose}\nNEXUS_WORK_EVIDENCE: {json.dumps(marker)}'
+
 
 class _AdvisoryLockPool:
     """Small PostgreSQL boundary fake for plan-lock ordering tests."""
@@ -437,8 +459,8 @@ def test_worker_success_closes_session_after_governance_finalization(monkeypatch
     monkeypatch.setattr(worker, "_resolve_model_chain", lambda *_args: [
         {"harness": "opencode", "model": "provider/model"},
     ])
-    monkeypatch.setattr(worker.executor_cloud, "run_opencode_outcome", lambda *_args, **_kwargs:
-                        executor_cloud.HarnessExecutionResult(0, "done", ""))
+    monkeypatch.setattr(worker.executor_cloud, "run_opencode_outcome", lambda req, *_args, **_kwargs:
+                        executor_cloud.HarnessExecutionResult(0, _work_evidence_output(req), ""))
 
     assert worker._process_one(db, request, "test-executor", False) == "completed"
     assert db.attempt_status == "SUCCEEDED"
@@ -458,8 +480,8 @@ def test_governance_finalization_error_closes_session_nonzero_without_changing_a
     monkeypatch.setattr(worker, "_resolve_model_chain", lambda *_args: [
         {"harness": "opencode", "model": "provider/model"},
     ])
-    monkeypatch.setattr(worker.executor_cloud, "run_opencode_outcome", lambda *_args, **_kwargs:
-                        executor_cloud.HarnessExecutionResult(0, "done", ""))
+    monkeypatch.setattr(worker.executor_cloud, "run_opencode_outcome", lambda req, *_args, **_kwargs:
+                        executor_cloud.HarnessExecutionResult(0, _work_evidence_output(req), ""))
 
     assert worker._process_one(db, request, "test-executor", False) == "finalization-pending"
     assert db.attempt_status == "SUCCEEDED"
@@ -480,8 +502,8 @@ def test_worker_preserves_session_closed_by_another_writer(monkeypatch):
     monkeypatch.setattr(worker, "_resolve_model_chain", lambda *_args: [
         {"harness": "opencode", "model": "provider/model"},
     ])
-    monkeypatch.setattr(worker.executor_cloud, "run_opencode_outcome", lambda *_args, **_kwargs:
-                        executor_cloud.HarnessExecutionResult(0, "done", ""))
+    monkeypatch.setattr(worker.executor_cloud, "run_opencode_outcome", lambda req, *_args, **_kwargs:
+                        executor_cloud.HarnessExecutionResult(0, _work_evidence_output(req), ""))
     finalize = worker._finalize_governance_row
 
     def close_from_other_writer_then_finalize(database, row):
@@ -533,8 +555,8 @@ def test_complete_attempt_refuses_terminal_overwrite_and_worker_handles_false(mo
     monkeypatch.setattr(worker, "_resolve_model_chain", lambda *_args: [
         {"harness": "opencode", "model": "provider/model"},
     ])
-    monkeypatch.setattr(worker.executor_cloud, "run_opencode_outcome", lambda *_args, **_kwargs:
-                        executor_cloud.HarnessExecutionResult(0, "done", ""))
+    monkeypatch.setattr(worker.executor_cloud, "run_opencode_outcome", lambda req, *_args, **_kwargs:
+                        executor_cloud.HarnessExecutionResult(0, _work_evidence_output(req), ""))
 
     assert worker._process_one(db, request, "test-executor", False) == "attempt-terminal"
     assert db.attempt_status == "FAILED"
@@ -908,8 +930,8 @@ def test_unavailable_plan_receipt_keeps_finalization_pending(monkeypatch):
     monkeypatch.setattr(worker, "_resolve_model_chain", lambda *_args: [
         {"harness": "opencode", "model": "provider/model"},
     ])
-    monkeypatch.setattr(worker.executor_cloud, "run_opencode_outcome", lambda *_args, **_kwargs:
-                        executor_cloud.HarnessExecutionResult(0, "done", ""))
+    monkeypatch.setattr(worker.executor_cloud, "run_opencode_outcome", lambda req, *_args, **_kwargs:
+                        executor_cloud.HarnessExecutionResult(0, _work_evidence_output(req), ""))
 
     assert worker._process_one(db, request, "test-executor", False) == "finalization-pending"
     assert db.attempt_status == "SUCCEEDED"
@@ -934,8 +956,8 @@ def test_unsafe_reviewer_criteria_update_is_persistently_not_enforced(monkeypatc
     monkeypatch.setattr(worker, "_resolve_model_chain", lambda *_args: [
         {"harness": "opencode", "model": "provider/model"},
     ])
-    monkeypatch.setattr(worker.executor_cloud, "run_opencode_outcome", lambda *_args, **_kwargs:
-                        executor_cloud.HarnessExecutionResult(0, "done", ""))
+    monkeypatch.setattr(worker.executor_cloud, "run_opencode_outcome", lambda req, *_args, **_kwargs:
+                        executor_cloud.HarnessExecutionResult(0, _work_evidence_output(req), ""))
 
     assert worker._process_one(db, request, "test-executor", False) == "finalization-pending"
     criteria = db.attempt_result["governance_finalization"]["review_settlement_criterion"]
@@ -955,9 +977,9 @@ def test_request_completion_failure_recovers_without_builder_and_repairs_missing
     monkeypatch.setattr(worker, "_resolve_model_chain", lambda *_args: [
         {"harness": "opencode", "model": "provider/model"},
     ])
-    monkeypatch.setattr(worker.executor_cloud, "run_opencode_outcome", lambda *_args, **_kwargs:
+    monkeypatch.setattr(worker.executor_cloud, "run_opencode_outcome", lambda req, *_args, **_kwargs:
                         (launches.append("builder") or
-                         executor_cloud.HarnessExecutionResult(0, "done", "")))
+                         executor_cloud.HarnessExecutionResult(0, _work_evidence_output(req), "")))
 
     assert worker._process_one(db, request, "test-executor", False) == "finalization-pending"
     assert db.lease_release_calls >= 1
@@ -991,8 +1013,8 @@ def test_successful_work_and_governance_closes_worker_session_zero(monkeypatch):
     monkeypatch.setattr(worker, "_resolve_model_chain", lambda *_args: [
         {"harness": "opencode", "model": "provider/model"},
     ])
-    monkeypatch.setattr(worker.executor_cloud, "run_opencode_outcome", lambda *_args, **_kwargs:
-                        executor_cloud.HarnessExecutionResult(0, "done", ""))
+    monkeypatch.setattr(worker.executor_cloud, "run_opencode_outcome", lambda req, *_args, **_kwargs:
+                        executor_cloud.HarnessExecutionResult(0, _work_evidence_output(req), ""))
     monkeypatch.setattr(worker.urllib.request, "urlopen", lambda *_args, **_kwargs: None)
 
     assert worker._process_one(db, request, "test-executor", False) == "completed"
@@ -1031,6 +1053,10 @@ def test_missing_attempt_receipt_keeps_finalization_pending():
         "model": "provider/model",
         "executor_id": "test-executor",
         "process_outcome": {"returncode": 0},
+        "work_evidence": {"status": "valid", "correlation": {
+            "attempt_id": "attempt-1", "request_id": "request-1",
+            "session_id": "session-1", "work_request_id": "wr-1",
+        }},
         "governance_finalization": {"status": "pending"},
     }
 
@@ -1607,6 +1633,7 @@ def test_fallback_and_pending_governance_retry_preserve_success(monkeypatch, cap
     db = _WorkerDB()
     request = {"id": "request-1", "source_plan_id": "plan-1", "title": "contract"}
     launches = []
+    fallback_outputs = []
 
     monkeypatch.setattr(worker, "_build_req_from_request", lambda *_args, **_kwargs: {
         "id": "wr-1",
@@ -1625,7 +1652,9 @@ def test_fallback_and_pending_governance_retry_preserve_success(monkeypatch, cap
                 "child returned 17",
                 executor_cloud.HarnessExecutionResult(17, "primary output\n", "primary error\n"),
             )
-        return executor_cloud.HarnessExecutionResult(0, "fallback work result\n" + "x" * 2500, "")
+        output = _work_evidence_output(req, "fallback work result\n" + "x" * 2500)
+        fallback_outputs.append(output)
+        return executor_cloud.HarnessExecutionResult(0, output, "")
 
     monkeypatch.setattr(worker.executor_cloud, "run_opencode_outcome", launch)
     monkeypatch.setattr(worker.urllib.request, "urlopen", lambda *_args, **_kwargs: None)
@@ -1637,14 +1666,14 @@ def test_fallback_and_pending_governance_retry_preserve_success(monkeypatch, cap
     assert db.attempt_exit_code == 0
     assert db.request_status == "COMPLETED"
     assert db.attempt_result["work_result"]["excerpt"].startswith("fallback work result\n")
-    assert db.attempt_result["work_result"]["length_chars"] == len("fallback work result\n") + 2500
+    assert db.attempt_result["work_result"]["length_chars"] == len(fallback_outputs[0])
     assert db.attempt_result["work_result"]["truncated"] is True
     assert [entry["returncode"] for entry in db.attempt_result["model_attempts"]] == [17, 0]
     assert db.attempt_result["model_attempts"][0]["stdout"]["excerpt"] == "primary output\n"
     assert db.attempt_result["model_attempts"][0]["stdout"]["length_chars"] == len("primary output\n")
     assert db.attempt_result["model_attempts"][0]["stderr"]["excerpt"] == "primary error\n"
     assert len(db.attempt_result["process_outcome"]["stdout"]["excerpt"]) == worker.OUTCOME_EXCERPT_CHARS
-    assert db.attempt_result["process_outcome"]["stdout"]["length_chars"] == len("fallback work result\n") + 2500
+    assert db.attempt_result["process_outcome"]["stdout"]["length_chars"] == len(fallback_outputs[0])
     assert db.attempt_result["session_log_path"].endswith(f"{db.session_id}.log")
     assert db.attempt_result["governance_finalization"]["status"] == "pending"
     assert "lost response" in db.attempt_result["governance_finalization"]["error"]
@@ -1983,6 +2012,10 @@ def test_database_pending_row_shape_is_accepted_by_recovery_finalizer():
         "model": "provider/model",
         "executor_id": "test-executor",
         "process_outcome": {"returncode": 0},
+        "work_evidence": {"status": "valid", "correlation": {
+            "attempt_id": "attempt-1", "request_id": "request-1",
+            "session_id": "session-1", "work_request_id": "wr-1",
+        }},
         "governance_finalization": {"status": "pending"},
     }
     pending_row = {
