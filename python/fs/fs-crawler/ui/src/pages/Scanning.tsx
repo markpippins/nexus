@@ -53,7 +53,7 @@ import {
   ExpandMore as ExpandMoreIcon2,
 } from '@mui/icons-material'
 import { useForm, Controller } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
+import { standardSchemaResolver } from '@hookform/resolvers/standard-schema'
 import { z } from 'zod'
 import { useScanStatus, useStartScan, useStopScan, useLibraries } from '@/hooks/useApi'
 import { formatDistanceToNow } from 'date-fns'
@@ -76,7 +76,7 @@ const Scanning: React.FC = () => {
   const stopScanMutation = useStopScan()
 
   const { control, handleSubmit, reset, watch } = useForm<ScanFormData>({
-    resolver: zodResolver(scanFormSchema),
+    resolver: standardSchemaResolver(scanFormSchema),
     defaultValues: {
       deep_scan: false,
     },

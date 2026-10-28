@@ -147,7 +147,7 @@ export function registerTools(server: McpServer) {
       entity_type: z.string().optional().describe("Entity type"),
       status: z.string().optional().describe("Status"),
       description: z.string().optional().describe("Description text"),
-      properties: z.record(z.any()).optional().describe("Arbitrary JSON payload"),
+      properties: z.record(z.string(), z.any()).optional().describe("Arbitrary JSON payload"),
       source_file: z.string().optional().describe("Optional source file provenance"),
     },
     async (args) => {
@@ -169,7 +169,7 @@ export function registerTools(server: McpServer) {
       entity_type: z.string().optional(),
       status: z.string().optional(),
       description: z.string().optional(),
-      properties: z.record(z.any()).optional(),
+      properties: z.record(z.string(), z.any()).optional(),
     },
     async (args) => {
       const { section, entity_id, ...fields } = args;
@@ -219,7 +219,7 @@ export function registerTools(server: McpServer) {
       relation_type: z.string().describe("Relation type (e.g. 'implements', 'depends_on', 'derived_from')"),
       target_section: z.string().optional().nullable().describe("Target section"),
       target_id: z.string().describe("Target entity ID"),
-      properties: z.record(z.any()).optional(),
+      properties: z.record(z.string(), z.any()).optional(),
     },
     async (args) => {
       const data = await callKnowledgeJson(`/knowledge/edges`, {
