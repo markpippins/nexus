@@ -145,6 +145,11 @@ def capture_artifact_baseline(
     baseline: dict[str, str | None] = {}
     for raw_path in expected or []:
         path = str(raw_path)
+        # F2 mirror of the validator guard: a blank claim must not fall
+        # through to filesystem hashing of the contract root itself.
+        if not path.strip():
+            baseline[path] = None
+            continue
         candidate = os.path.realpath(os.path.join(root, path))
         if not (candidate == root or candidate.startswith(root + os.sep)):
             baseline[path] = None
@@ -214,6 +219,12 @@ def validate_work_evidence(
     reported = parsed.get("artifacts") if isinstance(parsed.get("artifacts"), list) else []
     for raw_path in expected or []:
         path = str(raw_path)
+        # F2 (review 48f213bc): reject a blank claim before filesystem
+        # resolution — os.path.realpath(os.path.join(root, "")) is the root
+        # itself (a directory exists, so blank "claims" would pass).
+        if not path.strip():
+            reasons.append("blank artifact path in evidence contract")
+            continue
         candidate = os.path.realpath(os.path.join(root, path))
         if not (candidate == root or candidate.startswith(root + os.sep)):
             reasons.append(f"artifact outside allowed target tree: {path}")
@@ -235,6 +246,9 @@ def validate_work_evidence(
             artifact_hash = raw_path.get("sha256")
         else:
             path = str(raw_path)
+        if not path.strip():
+            reasons.append("blank artifact path in work evidence marker")
+            continue
         candidate = os.path.realpath(os.path.join(root, path))
         if not (candidate == root or candidate.startswith(root + os.sep)):
             reasons.append(f"reported artifact outside allowed target tree: {path}")
