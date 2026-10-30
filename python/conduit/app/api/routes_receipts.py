@@ -85,7 +85,9 @@ def get_plan_receipts(plan_id: str):
             "type": r["type"],
             "agent_role": r.get("agent_role", ""),
             "session_id": r.get("session_id", ""),
-            "artifact_path": r.get("artifact_path"),
+            # F2 (review 48f213bc): the read path emits null, never "" —
+            # a blank claimed path must not re-materialize as an empty string.
+            "artifact_path": (str(r.get("artifact_path") or "").strip() or None),
             "summary": r.get("summary", ""),
             "metadata": meta,
             "created_at": r.get("created_at"),

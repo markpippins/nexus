@@ -1209,6 +1209,12 @@ class DBAdapter:
         derivable without guesswork."""
         _log.info("insert_receipt: plan=%s type=%s role=%s ticket=%s tokens=%d",
                   plan_id, receipt_type, agent_role, ticket_id, tokens_used)
+        # F2 (review 48f213bc): a blank artifact_path is not a path. Normalize
+        # once at the write funnel — "" and whitespace-only persist as SQL NULL
+        # ("no artifact claimed"), never as "" ("", via pathlib.Path(""),
+        # normalizes to Path(".") whose .exists() is True — a pass-open hazard
+        # for naive validators, and it conflates "no claim" with "blank claim").
+        artifact_path = (artifact_path or "").strip() or None
         if receipt_type == "REVIEW_PASS" and not self._holds_plan_advisory_lock(plan_id):
             with self._plan_advisory_lock(plan_id):
                 # Keep reconciliation and every existing receipt writer path
@@ -1350,14 +1356,39 @@ class DBAdapter:
                     "ticket_id": ticket_id,
                     "tokens_used": tokens_used,
                 }
+                # F3 (review 48f213bc, option a): carry the caller's attempt
+                # linkage onto the mirrored canonical row so consumers dedupe
+                # on (attempt_id, type) — the row stays the lineage='conduit'
+                # projection the V140 unified view and the ticket fan-out read.
+                # An attempt id that does not resolve is linkage the fallthrough
+                # contract cannot honor: it is dropped (with a warning), never
+                # guessed. Unresolved ids must not trip the attempts FK.
+                mirror_attempt_id = None
+                raw_attempt = ""
+                if isinstance(metadata, dict):
+                    raw_attempt = str(metadata.get("attempt_id") or "").strip()
+                if raw_attempt:
+                    with self._get_connection() as conn:
+                        known = conn.execute(
+                            "SELECT 1 FROM execution.attempts WHERE id = %s",
+                            (raw_attempt,),
+                        ).fetchone()
+                    if known:
+                        mirror_attempt_id = raw_attempt
+                    else:
+                        _log.warning(
+                            "insert_receipt: metadata attempt_id %r does not "
+                            "resolve to an attempt — mirrored row stays "
+                            "attempt-null (plan=%s type=%s)",
+                            raw_attempt, plan_id, receipt_type)
                 with self._get_connection() as conn:
                     conn.execute(
                         """INSERT INTO execution.receipts
                            (request_id, attempt_id, type, agent_role, summary, metadata,
                             lineage_source, lineage_original_id, issued_at)
-                           VALUES (%s, NULL, %s, %s, %s, %s, 'conduit', %s, %s)
+                           VALUES (%s, %s, %s, %s, %s, %s, 'conduit', %s, %s)
                            ON CONFLICT (lineage_original_id) WHERE lineage_source = 'conduit' DO NOTHING""",
-                        (request_id, receipt_type, agent_role, summary,
+                        (request_id, mirror_attempt_id, receipt_type, agent_role, summary,
                          json.dumps(exec_meta), receipt_id, now),
                     )
                     conn.commit()

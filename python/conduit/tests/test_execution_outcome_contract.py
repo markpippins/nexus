@@ -329,7 +329,10 @@ class _AdvisoryLockCursor:
             return
         if "INSERT INTO execution.receipts" in sql:
             self.pool.receipt_inserts += 1
-            self.pool.latest_receipt = params[1]
+            # F3 (review 48f213bc): the mirror INSERT is
+            # (request_id, attempt_id, type, ...) — attempt linkage is now a
+            # bound parameter, so the type sits at index 2, not 1.
+            self.pool.latest_receipt = params[2]
             self.row = None
             self.rowcount = 1
             return
