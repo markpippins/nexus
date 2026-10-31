@@ -42,7 +42,11 @@ spring:
     locations: classpath:db/migration
 
 server:
-  port: 8098
+  # 8099, not 8098: the live Python peb-kernel (`python3 -m peb_kernel.main`)
+  # owns 8098 on titanium. Ruling 8ae4761b / jvm/ARCHITECTURE.md
+  # (F2-peb-bootstrap) requires this JVM bootstrap to stay off that port.
+  # Pinned by ServerPortAuthorityTest.
+  port: 8099
 
 management:
   endpoints:
