@@ -121,7 +121,9 @@ def _legacy_payload(row: dict) -> dict:
         "session_id": row["session_id"],
         "ticket_id": row["ticket_id"] or "",
         "summary": row["summary"] or "",
-        "artifact_path": row["artifact_path"] or "",
+        # F2 (review 48f213bc): a blank claimed path is not a path — the
+        # canonical payload carries "no artifact claimed" as None, never "".
+        "artifact_path": (row["artifact_path"] or "").strip() or None,
         "tokens_used": int(row["tokens_used"] or 0),
         "metadata": metadata,
         "request_id": None,
