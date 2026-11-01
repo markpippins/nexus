@@ -649,7 +649,12 @@ export class PipelineWatcher {
         id: dbPlan.id,
         file_name: dbPlan.file_name,
         title: updates.title ?? dbPlan.title,
-        project: updates.project ?? dbPlan.project,
+        // Do NOT fall back to dbPlan.project: dbPlan is a view projection, and
+        // feeding a projection back into the canonical payload is how finding
+        // bf7e8f49 corrupted 23 plans (the view's project used to be the
+        // constant 'wrp'). Omit it unless the caller asked for a change; the
+        // upsert merges, so an omitted key leaves the stored value alone.
+        project: updates.project,
         goal: updates.goal ?? dbPlan.goal,
         content: dbPlan.content,
         files_affected:

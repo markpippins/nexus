@@ -3081,7 +3081,8 @@ export interface PlanRow {
   id: string;
   file_name: string;
   title: string;
-  project: string;
+  /** NULL when the payload carries no project (view projects the real value). */
+  project: string | null;
   goal: string;
   content: string;
   files_affected: string;
@@ -3096,8 +3097,14 @@ export interface PlanRow {
   deleted: number;
 }
 
-export type UpsertPlanInput = Omit<PlanRow, "derived_status" | "deleted"> & {
+export type UpsertPlanInput = Omit<PlanRow, "derived_status" | "deleted" | "project"> & {
   deleted?: number;
+  /**
+   * Omit to leave the stored project untouched. See buildPlanPayload: the
+   * upsert merges, so an omitted key survives and an explicit null/"" does not
+   * mean "unchanged".
+   */
+  project?: string | null;
 };
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -3116,33 +3123,53 @@ function parseTextArray(val: string | undefined | null): string[] {
 
 // ── Write ──────────────────────────────────────────────────────────
 
+/**
+ * Fold flat plan fields into the blueprint payload JSONB (V171).
+ *
+ * The write is `payload = blueprints_history.payload || EXCLUDED.payload`, so
+ * **any key present here overwrites what the canonical payload already holds**.
+ * That makes an always-present default indistinguishable from a deliberate
+ * clear — which is exactly how finding bf7e8f49 damaged data: `tags: []`,
+ * `spec_ref: null` and `requirement_ref: null` were emitted on every write even
+ * though nothing in the input shape can supply them, so the first
+ * `update_plan` call on a plan nulled a real `requirement_ref` (4 plans held
+ * one) and would have emptied a real tag list.
+ *
+ * Rule: emit a key only when the caller supplied a value. Omitted keys are
+ * absent from EXCLUDED and therefore survive the merge untouched. The read-side
+ * views already COALESCE the display defaults (tags -> '[]', spec_ref /
+ * requirement_ref / project -> NULL), so nothing downstream needs the
+ * placeholders to exist in storage.
+ *
+ * The substance keys (goal/content/arrays) stay always-present: every caller
+ * passes them through from a faithful source, and the views expose them as
+ * non-null text.
+ */
+export function buildPlanPayload(plan: UpsertPlanInput): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    goal: plan.goal ?? "",
+    content: plan.content ?? "",
+    files_affected: parseTextArray(plan.files_affected),
+    acceptance_criteria: parseTextArray(plan.acceptance_criteria),
+    dependencies: parseTextArray(plan.dependencies),
+  };
+  // project is optional metadata: only a supplied value may change it.
+  // (An explicit "" is honored — that is a supplied value, not an omission;
+  // null is an omission, because a merge cannot express "clear this key".)
+  if (plan.project !== undefined && plan.project !== null) {
+    payload.project = plan.project;
+  }
+  if (plan.prompt_ref) payload.prompt_ref = plan.prompt_ref;
+  if (plan.notes) payload.notes = plan.notes;
+  if (plan.priority) payload.priority = plan.priority;
+  return payload;
+}
+
 export async function upsertPlan(plan: UpsertPlanInput): Promise<void> {
   const planNumber = plan.id; // old id was the plan number
   const uuid = crypto.randomUUID();
 
-  // Parse array fields — callers may pass JSON or comma-separated
-  const filesAffected = parseTextArray(plan.files_affected);
-  const deps = parseTextArray(plan.dependencies);
-
-  // Fold flat fields into the blueprint payload JSONB (V171). The compat
-  // view nebula.implementation_plans reads these exact keys:
-  //   goal, content, files_affected[], acceptance_criteria[], dependencies[],
-  //   tags[], spec_ref, requirement_ref, project
-  // prompt_ref/notes/priority ride along for fidelity (not surfaced by the view).
-  const payload = {
-    goal: plan.goal ?? "",
-    content: plan.content ?? "",
-    files_affected: filesAffected,
-    acceptance_criteria: parseTextArray(plan.acceptance_criteria),
-    dependencies: deps,
-    tags: [],
-    spec_ref: null,
-    requirement_ref: null,
-    project: plan.project ?? null,
-    ...(plan.prompt_ref ? { prompt_ref: plan.prompt_ref } : {}),
-    ...(plan.notes ? { notes: plan.notes } : {}),
-    ...(plan.priority ? { priority: plan.priority } : {}),
-  };
+  const payload = buildPlanPayload(plan);
 
   // Map deleted flag → blueprint_status (both values valid in the CHECK)
   const blueprintStatus = plan.deleted === 1 ? "archived" : "pending";
@@ -3751,7 +3778,11 @@ export function planRowToPlanCard(row: PlanRow): PlanCard {
     planNumber: row.id,
     baseName: row.file_name.replace(".md", ""),
     title: row.title,
-    project: row.project,
+    // PlanCard.project is a non-null string on the API surface; the view now
+    // projects the real payload value and yields NULL when a plan has none.
+    // "" says "no project" honestly — the previous value here was the
+    // placeholder 'wrp' for every plan (finding bf7e8f49).
+    project: row.project ?? "",
     createdAt: row.created_at,
     movedAt: undefined,
     completedAt: row.derived_status === "REVIEW_PASS" ? row.updated_at : undefined,
