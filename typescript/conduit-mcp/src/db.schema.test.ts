@@ -216,7 +216,7 @@ describe("createSchema on fresh database", () => {
         `SELECT version FROM schema_version ORDER BY version`
       );
       expect(svAfterFirst.rows.map((r: any) => r.version).sort((a: number, b: number) => a - b))
-        .toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]);
+        .toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40]);
     } finally {
       await pool1.end();
     }
@@ -233,7 +233,7 @@ describe("createSchema on fresh database", () => {
       const versions = svAfterSecond.rows.map((r: any) => r.version);
       // Still exactly [1..35] — no duplicate rows from re-applying
       expect(versions.sort((a: number, b: number) => a - b))
-        .toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]);
+        .toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40]);
 
       // The v2 index should still exist (not re-created, just still there)
       const indexResult = await pool2.query(
@@ -261,7 +261,7 @@ describe("createSchema on fresh database", () => {
         `SELECT version FROM schema_version ORDER BY version`
       );
       expect(svBefore.rows.map((r: any) => r.version).sort((a: number, b: number) => a - b))
-        .toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]);
+        .toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40]);
     } finally {
       await poolV6.end();
     }
@@ -340,7 +340,7 @@ describe("createSchema on fresh database", () => {
       );
       // v6..v35 should all be re-applied from the v5 baseline (replay path)
       expect(svResult.rows.map((r: any) => r.version).sort((a: number, b: number) => a - b))
-        .toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]);
+        .toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40]);
 
       // deadline column exists on shared vision.tickets (createSchema DDL;
       // v6 replay is a no-op on fresh schemas)
@@ -665,7 +665,7 @@ describe("createSchema on fresh database", () => {
         `SELECT version FROM schema_version ORDER BY version`
       );
       expect(svResult.rows.map((r: any) => r.version))
-        .toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]);
+        .toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40]);
 
       // v7/v8: role_config CHECK constraint migrations are no-ops
       // (table replaced by config_bundle, tables removed 2026-08-07).
@@ -827,6 +827,37 @@ describe("createSchema on fresh database", () => {
              EXECUTE FUNCTION vision.wr_compile_verdicts_immutable()`,
         );
       }
+      await pool.end();
+    }
+  }, 30000);
+
+  // v40 — finding bf7e8f49: nebula.plans.project was the literal 'wrp' (v24),
+  // so getPlanById returned a placeholder that updatePlanMetadata then wrote
+  // back into the canonical payload. The view must project the stored value.
+  //
+  // nebula.plans lives in the nebula schema (not the test schema), so this
+  // check is read-only against shared state: it asserts the *definition*
+  // carries no constant and the *rows* agree with blueprints_history.
+  test("v40: nebula.plans.project projects the canonical payload, not 'wrp'", async () => {
+    const pool = await initDb();
+    try {
+      const def = await pool.query(
+        `SELECT pg_get_viewdef('nebula.plans'::regclass, true) AS d`
+      );
+      const viewdef: string = def.rows[0].d;
+      expect(viewdef).not.toMatch(/'wrp'::text AS project/);
+      expect(viewdef).toMatch(/metadata\s*->>\s*'project'/);
+
+      // Every row's project must equal the payload value it stands for.
+      // Absent-in-payload and NULL-in-view count as agreement.
+      const drift = await pool.query(
+        `SELECT count(*)::int AS n
+           FROM nebula.plans p
+           JOIN nebula.blueprints_history b ON b.plan_number = p.id
+          WHERE p.project IS DISTINCT FROM (b.payload ->> 'project')`
+      );
+      expect(drift.rows[0].n).toBe(0);
+    } finally {
       await pool.end();
     }
   }, 30000);
