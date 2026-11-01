@@ -78,9 +78,17 @@ export interface WorkRequestState {
   status: WorkRequestStatus;
   version: number; // event count
   workerId?: string;
+  /** When the current claim was taken (WR_QUEUED carrying a workerId), and the
+   *  lease it was taken for. `leaseUntil` is OBSERVABILITY ONLY: the FSM has no
+   *  CLAIMED→CLAIMED reclaim transition, so an expired lease is visible but
+   *  does not by itself free the WR. */
+  claimedAt?: string;
+  leaseUntil?: string;
   reason?: string;
   error?: string;
-  lastEvent: RuntimeEventType;
+  /** Empty string for a WR with no events — there is no last event to report
+   *  (mirrors `lastTimestamp`/`createdAt`, which are "" for the same reason). */
+  lastEvent: RuntimeEventType | "";
   lastTimestamp: string;
   createdAt: string;
   /** D6: held-for-normalization marker — compiled-and-PASSing but deliberately
@@ -184,8 +192,13 @@ const TRANSITION_TABLE: Record<WorkRequestStatus, TransitionEntry[]> = {
 // The Runtime Kernel does NOT auto-advance past VALIDATED.
 
 const DECISION_MAP: Partial<Record<WorkRequestStatus, RuntimeEventType>> = {
-  // VALIDATED intentionally omitted — Vision stops here (ADR-006)
-  QUEUED: "WR_QUEUED",
+  // VALIDATED intentionally omitted — Vision stops here (ADR-006).
+  // QUEUED intentionally omitted — a claim is a deliberate act that names a
+  // worker (`runtime_claim`), not something the tick may do on nobody's
+  // behalf. Auto-claiming here produced WRs marked CLAIMED — and then ACKED and
+  // SETTLED by the following ticks — with no worker and no execution behind
+  // them. Measured on the live runtime: submit → cascade admission queues it →
+  // three ticks → SETTLED, nothing ever ran.
   CLAIMED: "WR_CLAIMED",
   ACKED: "WR_ACKED",
 };
@@ -254,6 +267,109 @@ export function getOpTrace(
 }
 
 /**
+ * The tick hold reason when a WR is parked at VALIDATED with unresolved ops.
+ *
+ * Names the WR: `selectNextRunnable()` returns the same head-of-queue WR every
+ * tick, so an unresolved WR blocks every resolved WR behind it. Without the id
+ * in the reason, the operator sees "UNRESOLVED_OPS" and has no way to tell
+ * which WR to resolve. The `UNRESOLVED_OPS:` prefix is load-bearing — callers
+ * and logs match on it.
+ */
+export function unresolvedHoldReason(wrId: string): string {
+  return `UNRESOLVED_OPS: ${wrId} held at VALIDATED, not auto-advancing`;
+}
+
+/**
+ * The tick hold reason when the selected WR's status has no automatic
+ * transition (decide() → null). Names the WR for the same reason as
+ * `unresolvedHoldReason`: the tick reports on ONE WR, and a reason that omits
+ * which one leaves the operator unable to tell a terminal WR from a stuck one.
+ */
+export function noTransitionHoldReason(
+  wrId: string,
+  status: WorkRequestStatus,
+): string {
+  return `${wrId} at ${status} has no automatic transition`;
+}
+
+/**
+ * The tick hold reason when the CIR-SDM enforcement gate is unreachable and the
+ * tick fails closed. Names the WR (and, via the caller's surfaced blocker, the
+ * event) so an enforcement outage is attributable to a specific request.
+ */
+export function cirsdmUnavailableHoldReason(wrId: string): string {
+  return `CIR_SDM_UNAVAILABLE: ${wrId} held (fail-closed), enforcement gate unreachable`;
+}
+
+/**
+ * The tick hold reason when a WR sits at CLAIMED/ACKED with no `workerId`.
+ *
+ * Those two states assert that an actor did something (acknowledged, settled).
+ * A WR that reached them without an owner has nobody to act for, so the tick
+ * refuses rather than manufacturing progress on the worker's behalf.
+ */
+export function unownedHoldReason(
+  wrId: string,
+  status: WorkRequestStatus,
+): string {
+  return `UNOWNED: ${wrId} at ${status} has no workerId — nothing to advance on its behalf`;
+}
+
+/** Write-side counterpart of `cirsdmUnavailableHoldReason` for a rule reject. */
+export function cirsdmRejectedHoldReason(
+  wrId: string,
+  ruleIds: string[],
+): string {
+  return `CIR_SDM_REJECTED: ${wrId} blocked by ${ruleIds.join(", ")}`;
+}
+
+// ── Claim decision (runtime_claim) ─────────────────────────────────
+
+export type WrClaimAction = "claim" | "refresh" | "conflict" | "none";
+
+export interface WrClaimDecision {
+  action: WrClaimAction;
+  /** Present for `conflict` and `none` — why the claim was refused. */
+  reason?: string;
+}
+
+/**
+ * Decide what a claim request does to a WR — pure, so the policy is testable
+ * without a database and mirrors `decideClaimAction` for plan tickets.
+ *
+ * `claim`:   QUEUED → append the claim event (WR_QUEUED carries workerId).
+ * `refresh`: already CLAIMED by the same worker — no event (the FSM has no
+ *            CLAIMED→CLAIMED no-op; a second append would be a false history).
+ * `conflict`: claimed by someone else. There is NO takeover yet: CLAIMED admits
+ *            only WR_CLAIMED/WR_FAILED, so a forcible re-claim has no legal
+ *            representation. The refusal names the holder instead.
+ * `none`:   wrong state to claim from (DRAFT/VALIDATED/terminal).
+ */
+export function decideWrClaimAction(opts: {
+  status: WorkRequestStatus;
+  holderWorkerId?: string;
+  requestedWorkerId: string;
+}): WrClaimDecision {
+  const { status, holderWorkerId, requestedWorkerId } = opts;
+  if (status === "QUEUED") return { action: "claim" };
+  if (status === "CLAIMED") {
+    if (holderWorkerId && holderWorkerId === requestedWorkerId) {
+      return { action: "refresh" };
+    }
+    return {
+      action: "conflict",
+      reason: holderWorkerId
+        ? `held by ${holderWorkerId}`
+        : "held with no workerId (claimed before ownership was recorded)",
+    };
+  }
+  return {
+    action: "none",
+    reason: `WR is ${status}; only QUEUED can be claimed`,
+  };
+}
+
+/**
  * Validate a transition with D4 op-resolution awareness.
  *
  * An UNRESOLVED WR may be stored/HELD at VALIDATED, but the explicit
@@ -306,10 +422,25 @@ export function reduce(
     version: state.version + 1,
     lastEvent: event.type,
     lastTimestamp: timestamp,
+    // Ownership is recorded by whichever claim event carried a workerId. In
+    // this FSM WR_QUEUED is the QUEUED→CLAIMED transition (the event names the
+    // state being processed, not the state being entered), so a real claim
+    // arrives as WR_QUEUED — WR_CLAIMED is the CLAIMED→ACKED ack.
     workerId:
-      event.type === "WR_CLAIMED"
-        ? (event.payload?.workerId as string) || state.workerId
+      (event.type === "WR_CLAIMED" || event.type === "WR_QUEUED") &&
+      event.payload?.workerId
+        ? (event.payload.workerId as string)
         : state.workerId,
+    claimedAt:
+      (event.type === "WR_CLAIMED" || event.type === "WR_QUEUED") &&
+      event.payload?.workerId
+        ? (event.payload?.claimedAt as string) || timestamp
+        : state.claimedAt,
+    leaseUntil:
+      (event.type === "WR_CLAIMED" || event.type === "WR_QUEUED") &&
+      event.payload?.workerId
+        ? (event.payload?.leaseUntil as string) || state.leaseUntil
+        : state.leaseUntil,
     reason:
       event.type === "WR_REJECTED" || event.type === "WR_DEFERRED"
         ? (event.payload?.reason as string) || undefined
@@ -357,9 +488,17 @@ export function foldEvents(
     wrId,
     status: "DRAFT",
     version: 0,
-    lastEvent: sorted.length > 0 ? sorted[sorted.length - 1].type : "WR_SUBMITTED",
+    // Empty for an eventless WR: reporting "WR_SUBMITTED" was a lie (those WRs
+    // have no submission event), and it is what made the six legacy eventless
+    // WRs read as freshly submitted. The fold reports the ledger, not intent.
+    lastEvent: sorted.length > 0 ? sorted[sorted.length - 1].type : "",
     lastTimestamp: sorted.length > 0 ? sorted[sorted.length - 1].timestamp || "" : "",
-    createdAt: sorted.length > 0 ? sorted[0].timestamp || "" : new Date().toISOString(),
+    // Deterministic for an eventless WR: the fold must be a pure function of
+    // its event log, so it may not read the wall clock. `new Date()` here made
+    // `createdAt` change on every read of a WR with no events (all six legacy
+    // WRs did this), which is also what made an empty WR indistinguishable
+    // from a freshly submitted one. Empty ledger → empty timestamp.
+    createdAt: sorted.length > 0 ? sorted[0].timestamp || "" : "",
   };
 
   return sorted.reduce((state, event) => reduce(state, event), initialState);
@@ -372,6 +511,15 @@ export function foldEvents(
 export function decide(state: WorkRequestState): RuntimeEvent | null {
   const nextEventType = DECISION_MAP[state.status];
   if (!nextEventType) return null;
+  // ACK and SETTLE assert that an actor did something. Without a workerId
+  // there is no one to act for, so the tick refuses rather than manufacturing
+  // progress for a worker who does not exist.
+  if (
+    (state.status === "CLAIMED" || state.status === "ACKED") &&
+    !state.workerId
+  ) {
+    return null;
+  }
 
   const now = new Date().toISOString();
   const event: RuntimeEvent = {
@@ -387,9 +535,10 @@ export function decide(state: WorkRequestState): RuntimeEvent | null {
   } else if (nextEventType === "WR_QUEUED") {
     event.payload = { queuedAt: now };
   } else if (nextEventType === "WR_CLAIMED") {
-    event.payload = { claimedAt: now };
+    // CLAIMED→ACKED: attribute the ack to the worker that holds the WR.
+    event.payload = { acknowledgedAt: now, workerId: state.workerId };
   } else if (nextEventType === "WR_ACKED") {
-    event.payload = { acknowledgedAt: now };
+    event.payload = { acknowledgedAt: now, workerId: state.workerId };
   }
 
   return event;

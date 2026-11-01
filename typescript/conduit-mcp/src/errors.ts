@@ -13,7 +13,9 @@ export type ErrorCode =
   | "CIR_SDM_REJECTED"
   | "CIR_SDM_UNAVAILABLE"
   | "TICKET_CLAIM_CONFLICT"
-  | "NO_CLAIMABLE_TICKET";
+  | "NO_CLAIMABLE_TICKET"
+  | "WR_CLAIM_CONFLICT"
+  | "WR_CLAIM_REFUSED";
 
 export interface AppError {
   error: {

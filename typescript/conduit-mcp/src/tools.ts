@@ -38,6 +38,11 @@ import {
   surfaceBlocker,
   CirsdmEnforceResult,
 } from "./cirsdm";
+import {
+  ClaimError,
+  claimWorkRequest,
+  runTickDrain,
+} from "./runtime-ops";
 import * as api from "./conduit-client";
 import {
   validateCompilerOutput,
@@ -47,6 +52,10 @@ import {
   validateTransitionWithOps,
   getOpTrace,
   isUnresolvedOps,
+  unresolvedHoldReason,
+  noTransitionHoldReason,
+  cirsdmUnavailableHoldReason,
+  cirsdmRejectedHoldReason,
   getDecisionPriority,
   dbEventsToRuntimeEvents,
   WorkRequestState,
@@ -750,11 +759,41 @@ export const toolDefinitions: MCPToolDefinition[] = [
     },
   },
   {
+    name: "runtime_claim",
+    description:
+      "Claim a QUEUED WorkRequest for a worker (records workerId + leaseUntil). " +
+      "A claim is a deliberate act: the tick never claims on anyone's behalf, so a QUEUED WR " +
+      "moves only when someone claims it. Re-claiming a WR you already hold is a no-op refresh; " +
+      "claiming one held by another worker is refused (WR_CLAIM_CONFLICT) — there is no takeover yet.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        wrId: { type: "string", description: "WorkRequest ID (or uuid) to claim" },
+        workerId: { type: "string", description: "Identity of the claiming worker/session" },
+        leaseMinutes: {
+          type: "number",
+          description: `Lease length recorded on the claim (default ${30}). Observability only: an expired lease is visible but does not yet free the WR.`,
+        },
+      },
+      required: ["wrId", "workerId"],
+    },
+  },
+  {
     name: "runtime_tick",
-    description: "Run ONE tick of the causal decision loop. Scans for the next runnable WorkRequest " +
-      "(VALIDATED→QUEUED, QUEUED→CLAIMED, CLAIMED→ACKED), applies the transition, and returns the result. " +
-      "Call this on a loop or after event submission to advance the system.",
-    inputSchema: { type: "object", properties: {} },
+    description: "Run ONE tick of the causal decision loop, as a DRAIN: advances every runnable WorkRequest " +
+      "it can reach (CLAIMED→ACKED, ACKED→SETTLED) and SKIPS held ones instead of stopping on them, " +
+      "so an unresolved or unowned WR no longer starves the queue behind it. Claims are NOT made here — " +
+      "use runtime_claim. Returns steps[] plus ticked/held/idle counts.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        maxSteps: {
+          type: "number",
+          description:
+            "Upper bound on WRs visited in this pass (default 50). `drained:false` in the result means the cap was hit.",
+        },
+      },
+    },
   },
 ];
 
@@ -2290,56 +2329,71 @@ export function registerToolHandlers(
       return { ok: true, state: newState };
     },
 
-    runtime_tick: async () => {
-      const wr = await selectNextRunnable();
-      if (!wr)
-        return { ok: true, ticked: false, reason: "no runnable work requests" };
-      const rawEvents = await getEvents(wr.work_request_uuid);
-      const events = dbEventsToRuntimeEvents(rawEvents);
-      const state = foldEvents(wr.work_request_uuid, events);
-      // D4: never auto-advance an UNRESOLVED WR past VALIDATED.
-      if (state.status === "VALIDATED" && isUnresolvedOps(getOpTrace(events))) {
-        return { ok: true, ticked: false, reason: "UNRESOLVED_OPS: held at VALIDATED, not auto-advancing" };
-      }
-      const decision = decide(state);
-      if (!decision)
-        return { ok: true, ticked: false, reason: `state ${state.status} has no automatic transition` };
-      // T23 Step 8: CIR-SDM pre-row enforcement gate (fail-closed). A gate
-      // outage HOLDS the tick (do not auto-advance) — mirror the D4 hold.
-      let cirsdm: CirsdmEnforceResult | null = null;
-      try {
-        cirsdm = await gateWrTransition(
-          events,
-          decision.type,
-          wr.work_request_uuid,
-        );
-      } catch (e: any) {
-        await surfaceBlocker(
-          `enforcement unavailable for ${wr.work_request_uuid} (${decision.type}): ${e.message}`,
-        );
-      }
-      if (cirsdm === null) {
-        return { ok: true, ticked: false, reason: "CIR_SDM_UNAVAILABLE: held (fail-closed)" };
-      }
-      if (cirsdm.reject) {
-        await recordGovernedDecisions(cirsdm.decisions);
+    /**
+     * One tick of the causal loop — a DRAIN, not a single step.
+     *
+     * Visits every runnable WR once, skipping held ones instead of returning on
+     * them, because the old single-step tick reported the head-of-queue hold
+     * forever and never reached the WRs behind it. The singular fields
+     * (wrId/event/previousStatus/currentStatus/state) describe the last WR
+     * advanced, so existing callers keep working.
+     */
+    runtime_tick: async (args: { maxSteps?: number } = {}) => {
+      const result = await runTickDrain({ maxSteps: args?.maxSteps });
+      const last = result.advanced[result.advanced.length - 1];
+      const summary = {
+        ok: true as const,
+        ticked: result.advanced.length > 0,
+        tickedCount: result.advanced.length,
+        heldCount: result.held.length,
+        idleCount: result.idle.length,
+        drained: result.drained,
+        steps: result.steps,
+      };
+      if (!last) {
         return {
-          ok: true, ticked: false,
-          reason: `CIR_SDM_REJECTED: ${cirsdm.decisions.map((d) => d.rule_id).join(", ")}`,
-          decisions: cirsdm.decisions,
+          ...summary,
+          reason:
+            result.held[0]?.reason ??
+            result.steps[0]?.reason ??
+            "no runnable work requests",
         };
       }
-      await appendEvent(decision.wrId, decision.type, decision.payload as Record<string, unknown>);
-      const rawNewEvents = await getEvents(wr.work_request_uuid);
-      const newState = foldEvents(wr.work_request_uuid, dbEventsToRuntimeEvents(rawNewEvents));
       return {
-        ok: true, ticked: true,
-        wrId: wr.wr_id,
-        event: decision.type,
-        previousStatus: state.status,
-        currentStatus: newState.status,
-        state: newState,
+        ...summary,
+        wrId: last.wrId,
+        event: last.event,
+        previousStatus: last.previousStatus,
+        currentStatus: last.currentStatus,
+        state: last.state,
       };
+    },
+
+    /**
+     * Claim a QUEUED WorkRequest for a worker (workerId + lease).
+     *
+     * A claim is a deliberate act, not something the tick does on nobody's
+     * behalf: until a WR has an owner, the tick will not ack or settle it.
+     */
+    runtime_claim: async (args: {
+      wrId: string;
+      workerId: string;
+      leaseMinutes?: number;
+    }) => {
+      const errs = validate(args, [
+        { field: "wrId", type: "string", required: true },
+        { field: "workerId", type: "string", required: true },
+      ]);
+      if (errs.length > 0)
+        throw createError("INVALID_ARGUMENTS", "Validation failed", errs);
+      try {
+        return await claimWorkRequest(args);
+      } catch (e: any) {
+        if (e instanceof ClaimError) {
+          throw createError(e.code, e.message);
+        }
+        throw e;
+      }
     },
   };
 }
