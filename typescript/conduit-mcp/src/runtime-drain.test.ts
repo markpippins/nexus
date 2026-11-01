@@ -229,6 +229,37 @@ describe("runTickDrain", () => {
     expect(result.idle[0].reason).toContain("no automatic transition");
   });
 
+  test("a QUEUED WR is not advanced — a claim is the only way to gain an owner", async () => {
+    // Submitted and validated, so cascade admission queued it; nobody has
+    // claimed it. Before commit 3 the tick answered a QUEUED WR with
+    // WR_QUEUED — the QUEUED→CLAIMED transition — inventing an owner, and the
+    // two following ticks invented an ack and a settlement on that owner's
+    // behalf. Measured live: submit → three ticks → SETTLED with nothing
+    // executed. Re-adding QUEUED to DECISION_MAP must fail HERE.
+    eventsFor({
+      [WR_A]: [
+        ev(WR_A, "WR_SUBMITTED", { opTrace: RESOLVED_OPS }, 1),
+        ev(WR_A, "WR_VALIDATED", {}, 2),
+      ],
+    });
+    rows(WR_A);
+
+    const result = await runTickDrain();
+
+    expect(result.advanced).toHaveLength(0);
+    expect(appendEventMock).not.toHaveBeenCalled();
+    expect(appendEventMock).not.toHaveBeenCalledWith(
+      WR_A,
+      "WR_QUEUED",
+      expect.anything(),
+    );
+    expect(result.idle).toHaveLength(1);
+    expect(result.held).toHaveLength(0);
+    expect(result.steps[0].previousStatus).toBe("QUEUED");
+    // The idle reason still names the WR (a tick reports on exactly one).
+    expect(result.idle[0].reason).toContain(WR_A);
+  });
+
   test("visits each WR at most once even if the selector ignores the exclusion", async () => {
     eventsFor({ [WR_A]: claimedBy(WR_A) });
     // Always the same row — a selector that does not honour `exclude`.
