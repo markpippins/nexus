@@ -16,6 +16,7 @@ import {
   CensusStoredReport,
   validateCensusReportMetadata,
 } from "../lib/census-report";
+import { computeAgentRecordDrift } from "../lib/keychain-drift";
 
 /**
  * KEYCHAIN SNAPSHOT service (renamed from sol-ir-snapshot per D-2026-08-31 keychains).
@@ -2435,48 +2436,16 @@ export default class KeychainService extends Service {
     }
 
     // ── Compute drift: new/changed instances vs previous snapshot ─────────
-    const driftFindings: any[] = [];
-    const currentInstanceIds = new Set(entries.keys());
-    const currentRecordIds = new Set<string>();
-
-    for (const entry of entries.values()) {
-      currentRecordIds.add(entry.current.record_id);
-    }
-
-    // New instances (appeared since last snapshot)
-    for (const instanceId of currentInstanceIds) {
-      if (!prevInstanceIds.has(instanceId)) {
-        const entry = entries.get(instanceId)!;
-        driftFindings.push({
-          snapshot_version: version,
-          kind: "new_instance",
-          instance_id: instanceId,
-          record_type: entry.record_type,
-          role: entry.role,
-          description: `New keychain instance ${instanceId} (${entry.record_type}/${entry.role})`,
-          severity: "info",
-          detected_at: now,
-        });
-      }
-    }
-
-    // Superseded instances (current record changed since last snapshot)
-    for (const [instanceId, entry] of entries) {
-      if (prevInstanceIds.has(instanceId) && !prevCurrentRecordIds.has(entry.current.record_id)) {
-        driftFindings.push({
-          snapshot_version: version,
-          kind: "superseded",
-          instance_id: instanceId,
-          record_type: entry.record_type,
-          role: entry.role,
-          new_record_id: entry.current.record_id,
-          new_version: entry.current.version,
-          description: `Instance ${instanceId} superseded: now v${entry.current.version} (${entry.current.record_id})`,
-          severity: "info",
-          detected_at: now,
-        });
-      }
-    }
+    // Compare on `instance_id`, never on the entries map's keys: those carry
+    // the entry prefixes (single:/amendment:/explicit:) while the prior index
+    // is keyed by the unprefixed instance id, so a key comparison matches
+    // nothing and reports every instance as new on every checkpoint.
+    const driftFindings: any[] = computeAgentRecordDrift(
+      entries.values(),
+      { instanceIds: prevInstanceIds, recordIds: prevCurrentRecordIds },
+      version,
+      now,
+    );
 
     // ── Stage the checkpoint before changing the active pointer ───────────
     // Mongo transactions are not assumed here because the deployed Mongo
