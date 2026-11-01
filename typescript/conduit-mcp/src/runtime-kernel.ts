@@ -254,6 +254,19 @@ export function getOpTrace(
 }
 
 /**
+ * The tick hold reason when a WR is parked at VALIDATED with unresolved ops.
+ *
+ * Names the WR: `selectNextRunnable()` returns the same head-of-queue WR every
+ * tick, so an unresolved WR blocks every resolved WR behind it. Without the id
+ * in the reason, the operator sees "UNRESOLVED_OPS" and has no way to tell
+ * which WR to resolve. The `UNRESOLVED_OPS:` prefix is load-bearing — callers
+ * and logs match on it.
+ */
+export function unresolvedHoldReason(wrId: string): string {
+  return `UNRESOLVED_OPS: ${wrId} held at VALIDATED, not auto-advancing`;
+}
+
+/**
  * Validate a transition with D4 op-resolution awareness.
  *
  * An UNRESOLVED WR may be stored/HELD at VALIDATED, but the explicit
@@ -359,7 +372,12 @@ export function foldEvents(
     version: 0,
     lastEvent: sorted.length > 0 ? sorted[sorted.length - 1].type : "WR_SUBMITTED",
     lastTimestamp: sorted.length > 0 ? sorted[sorted.length - 1].timestamp || "" : "",
-    createdAt: sorted.length > 0 ? sorted[0].timestamp || "" : new Date().toISOString(),
+    // Deterministic for an eventless WR: the fold must be a pure function of
+    // its event log, so it may not read the wall clock. `new Date()` here made
+    // `createdAt` change on every read of a WR with no events (all six legacy
+    // WRs did this), which is also what made an empty WR indistinguishable
+    // from a freshly submitted one. Empty ledger → empty timestamp.
+    createdAt: sorted.length > 0 ? sorted[0].timestamp || "" : "",
   };
 
   return sorted.reduce((state, event) => reduce(state, event), initialState);

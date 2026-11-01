@@ -45,6 +45,7 @@ import {
   validateTransitionWithOps,
   getOpTrace,
   isUnresolvedOps,
+  unresolvedHoldReason,
   dbEventsToRuntimeEvents,
   WorkRequestState,
 } from "./runtime-kernel";
@@ -1247,7 +1248,11 @@ app.post("/wr/tick", async (_req, res) => {
     const state = foldEvents(wr.work_request_uuid, events);
     // D4: never auto-advance an UNRESOLVED WR past VALIDATED.
     if (state.status === "VALIDATED" && isUnresolvedOps(getOpTrace(events))) {
-      res.json({ ok: true, ticked: false, reason: "UNRESOLVED_OPS: held at VALIDATED, not auto-advancing" });
+      res.json({
+        ok: true,
+        ticked: false,
+        reason: unresolvedHoldReason(wr.work_request_uuid),
+      });
       return;
     }
     const decision = decide(state);

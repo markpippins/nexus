@@ -47,6 +47,7 @@ import {
   validateTransitionWithOps,
   getOpTrace,
   isUnresolvedOps,
+  unresolvedHoldReason,
   getDecisionPriority,
   dbEventsToRuntimeEvents,
   WorkRequestState,
@@ -2299,7 +2300,11 @@ export function registerToolHandlers(
       const state = foldEvents(wr.work_request_uuid, events);
       // D4: never auto-advance an UNRESOLVED WR past VALIDATED.
       if (state.status === "VALIDATED" && isUnresolvedOps(getOpTrace(events))) {
-        return { ok: true, ticked: false, reason: "UNRESOLVED_OPS: held at VALIDATED, not auto-advancing" };
+        return {
+          ok: true,
+          ticked: false,
+          reason: unresolvedHoldReason(wr.work_request_uuid),
+        };
       }
       const decision = decide(state);
       if (!decision)
