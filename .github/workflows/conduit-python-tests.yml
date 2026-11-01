@@ -1,0 +1,66 @@
+name: conduit Python suite
+
+# The Python conduit package (work-request pipeline, execution worker, receipt
+# integrity, evidence gate) had NO CI gate until this workflow: 36 test files
+# under python/conduit/tests/ were referenced by no workflow, and the Makefile
+# `test` target points at legacy/python/conduit — a path that no longer exists.
+# Under R8 that made the merge condition author-asserted for the whole package.
+#
+# Building the gate immediately paid for itself: it found
+# test_c2_validate_receipt.py::test_unblock_plan_has_validation failing on main,
+# because its regex matched a comment line instead of the handler. Fixed in the
+# same PR.
+#
+# Scope is deliberately the hermetic tier. The runner scrubs PYTHONPATH and
+# CONDUIT_PG_DSN, so a test cannot pass by borrowing a developer's database.
+# The 13 DB-backed files and 3 structural stubs are named in
+# python/conduit/tests-ci-manifest.json with an owner and the work that clears
+# them, and the runner exits 2 if that manifest goes stale.
+#
+# Triggers cover pull_request, so a rebased or force-pushed branch re-runs this
+# on `synchronize` — a rebase cannot leave a stale green behind.
+#
+# Same command locally and in CI: python3 bin/run_conduit_tests.py
+
+on:
+  push:
+    branches: [main, master, dev, feature/*]
+  pull_request:
+    branches: [main, master, dev, feature/*]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  conduit-python:
+    name: conduit Python suite (hermetic; no DB)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: 'pip'
+          cache-dependency-path: python/conduit/pyproject.toml
+
+      - name: Install test deps
+        run: |
+          python -m pip install --upgrade pip
+          # psycopg2-binary and tiktoken are imported at module scope by parts of
+          # the suite even in the hermetic tier; they are package runtime deps,
+          # not a database connection.
+          pip install pytest psycopg2-binary tiktoken
+
+      - name: Record resolved tools in the run log
+        run: |
+          python3 --version
+          python3 -m pytest --version
+
+      - name: Run the conduit suite (discovered, manifest-gated)
+        # No `services:` block and no CONDUIT_PG_DSN on purpose: this job proves
+        # the hermetic tier is genuinely DB-free. It must not be handed a
+        # database to "make it pass".
+        run: python3 bin/run_conduit_tests.py
