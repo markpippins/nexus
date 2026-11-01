@@ -1,0 +1,118 @@
+{
+  "_policy": "Every file in python/conduit/tests/test_*.py is either run by bin/run_conduit_tests.py or named here with a `kind`, a reason, an owner, and the thing tracking the debt. There is no third state. Same rule as bin/tests-ci-manifest.json. `kind` decides how an entry is retired: `infrastructure` means the file needs a live PostgreSQL that the hermetic runner deliberately does not provide, so observing a pass on a developer machine (where CONDUIT_PG_DSN happens to be exported) is NOT evidence the debt is closed — these are retired by landing the DB-tier job named in `clears_when`, not by a green run; `structural` means the file is not a test (shared helper) or is a superseded stub, and it is retired by deleting it or populating it. Exclusions may only shrink: the runner fails with exit 2 if a named file no longer exists.",
+  "_why_this_exists": "At origin/main 00a28c5b no CI workflow ran python/conduit/tests at all — the Python conduit suite was gated by nothing, so it passed or failed only on whatever machine ran it by hand. Building this gate immediately found a guard that had been failing on main unnoticed: tests/test_c2_validate_receipt.py::test_unblock_plan_has_validation matched the first `unblock_plan:` occurrence in tools.ts, which is a line inside a comment, and had been asserting against prose since it was written (fixed in the same commit as this manifest). The runner scrubs PYTHONPATH and CONDUIT_PG_DSN so a test cannot pass by borrowing the developer's database; that is what makes the 13 infrastructure entries below visible instead of silently green.",
+  "excluded": {
+    "test_c3_drift_fixture_parity.py": {
+      "kind": "infrastructure",
+      "reason": "Module-level `CONDUIT_PG_DSN must be set to run tests (PG is mandatory)` guard: raises at import, so collection fails on a bare runner.",
+      "owner": "engineer",
+      "tracked": "conduit Python CI gate (this PR); same PG-dependent class as the entries in bin/tests-ci-manifest.json",
+      "clears_when": "the DB-tier conduit job lands (services: postgres:17 + the canonical schema bootstrap) and these files run there instead of being excluded here"
+    },
+    "test_c3_lilac_persistence.py": {
+      "kind": "infrastructure",
+      "reason": "Module-level CONDUIT_PG_DSN requirement; asserts persistence against a real PostgreSQL.",
+      "owner": "engineer",
+      "tracked": "conduit Python CI gate (this PR)",
+      "clears_when": "the DB-tier conduit job lands and runs it against a postgres service"
+    },
+    "test_c3_receipt_redirect.py": {
+      "kind": "infrastructure",
+      "reason": "Module-level CONDUIT_PG_DSN requirement; creates and drops its own isolation schemas, so it needs a live server, not just a parser.",
+      "owner": "engineer",
+      "tracked": "conduit Python CI gate (this PR)",
+      "clears_when": "the DB-tier conduit job lands and runs it against a postgres service"
+    },
+    "test_c4_backfill.py": {
+      "kind": "infrastructure",
+      "reason": "Module-level CONDUIT_PG_DSN requirement; exercises backfill against real tables.",
+      "owner": "engineer",
+      "tracked": "conduit Python CI gate (this PR)",
+      "clears_when": "the DB-tier conduit job lands and runs it against a postgres service"
+    },
+    "test_c5_projection_surface.py": {
+      "kind": "infrastructure",
+      "reason": "Module-level CONDUIT_PG_DSN requirement; projection surface needs a real DB to project from.",
+      "owner": "engineer",
+      "tracked": "conduit Python CI gate (this PR)",
+      "clears_when": "the DB-tier conduit job lands and runs it against a postgres service"
+    },
+    "test_c6_ticket_dispositions.py": {
+      "kind": "infrastructure",
+      "reason": "Module-level CONDUIT_PG_DSN requirement; ticket dispositions are DB state.",
+      "owner": "engineer",
+      "tracked": "conduit Python CI gate (this PR)",
+      "clears_when": "the DB-tier conduit job lands and runs it against a postgres service"
+    },
+    "test_e2e_pipeline.py": {
+      "kind": "infrastructure",
+      "reason": "Module-level CONDUIT_PG_DSN requirement; end-to-end pipeline run against PostgreSQL.",
+      "owner": "engineer",
+      "tracked": "conduit Python CI gate (this PR)",
+      "clears_when": "the DB-tier conduit job lands and runs it against a postgres service"
+    },
+    "test_lifecycle.py": {
+      "kind": "infrastructure",
+      "reason": "Module-level CONDUIT_PG_DSN requirement; plan/request lifecycle transitions are DB-asserted.",
+      "owner": "engineer",
+      "tracked": "conduit Python CI gate (this PR)",
+      "clears_when": "the DB-tier conduit job lands and runs it against a postgres service"
+    },
+    "test_receipt_integrity_f2_f3.py": {
+      "kind": "infrastructure",
+      "reason": "Module-level CONDUIT_PG_DSN requirement; asserts the V206/V207 guards as constraints, which only exist in a migrated database. Note this one passes on a developer machine that has CONDUIT_PG_DSN exported — that is exactly the borrowed-credential pass the runner scrubs for, so it is excluded rather than reported green.",
+      "owner": "engineer",
+      "tracked": "conduit Python CI gate (this PR); content landed via #827",
+      "clears_when": "the DB-tier conduit job lands, applies V206/V207, and runs it there"
+    },
+    "test_transition_emission.py": {
+      "kind": "infrastructure",
+      "reason": "Module-level CONDUIT_PG_DSN requirement; emitted transition events are DB rows.",
+      "owner": "engineer",
+      "tracked": "conduit Python CI gate (this PR)",
+      "clears_when": "the DB-tier conduit job lands and runs it against a postgres service"
+    },
+    "test_v143_stage_b_admission_index.py": {
+      "kind": "infrastructure",
+      "reason": "Module-level CONDUIT_PG_DSN requirement; asserts a migration's index exists in a real catalog.",
+      "owner": "engineer",
+      "tracked": "conduit Python CI gate (this PR)",
+      "clears_when": "the DB-tier conduit job lands and applies V143 before running it"
+    },
+    "test_v144_v145_stage_cd_prep.py": {
+      "kind": "infrastructure",
+      "reason": "Module-level CONDUIT_PG_DSN requirement, and it additionally needs the gate prerequisites (soak days, binding signoffs) to be seeded before the migration will apply — a bare empty database refuses it by design.",
+      "owner": "engineer",
+      "tracked": "conduit Python CI gate (this PR)",
+      "clears_when": "the DB-tier conduit job lands and runs it against a bootstrapped database, not an empty one"
+    },
+    "test_v146_three_signatory_gate.py": {
+      "kind": "infrastructure",
+      "reason": "Module-level CONDUIT_PG_DSN requirement; the three-signatory gate is asserted through migration application.",
+      "owner": "engineer",
+      "tracked": "conduit Python CI gate (this PR)",
+      "clears_when": "the DB-tier conduit job lands and runs it against a bootstrapped database"
+    },
+    "test_dispatch_integration.py": {
+      "kind": "structural",
+      "reason": "Superseded stub, not a test: the class is decorated @unittest.skip and its body is `pass`, so pytest collects 0 tests. The docstring says the legacy _dispatch_one() loop was replaced by Temporal PlanExecutionWorkflow and equivalent coverage now lives in the Temporal integration tests. It is kept as documentation of the contract.",
+      "owner": "engineer",
+      "tracked": "conduit Python CI gate (this PR)",
+      "clears_when": "it is deleted (preferred — dead documentation in a test path) or repopulated against the Temporal workflow; the runner flags it EMPTY the moment it is un-excluded, so it cannot rot back in unnoticed"
+    },
+    "test_e2e_pipeline_v2.py": {
+      "kind": "structural",
+      "reason": "Superseded stub, not a test: same @unittest.skip + `pass` shape as test_dispatch_integration.py, superseded by the Temporal pipeline tests. Collects 0 tests.",
+      "owner": "engineer",
+      "tracked": "conduit Python CI gate (this PR)",
+      "clears_when": "it is deleted or repopulated; until then it documents the old contract"
+    },
+    "test_helpers.py": {
+      "kind": "structural",
+      "reason": "Shared helper module, not a test file: it provides create_test_schema / drop_test_schema / cleanup_orphaned_test_schemas / TestSchema, and other tests import it as `tests.test_helpers`. It is matched by the test_*.py discovery glob, so it is named here explicitly rather than renamed (renaming would break `from tests.test_helpers import ...` across the suite).",
+      "owner": "engineer",
+      "tracked": "conduit Python CI gate (this PR)",
+      "clears_when": "n/a by design — this is the one permanent entry; it stops being an exclusion only if the module is renamed AND every importer updated in the same change"
+    }
+  }
+}

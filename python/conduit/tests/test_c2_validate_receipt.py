@@ -17,6 +17,25 @@ def _read(relpath):
         return f.read()
 
 
+def _handler_body(src, name):
+    """Return the body of the `name: async (...) => {` handler in tools.ts.
+
+    The pattern must anchor on the *handler declaration* (`\n    unblock_plan:
+    async `), not on the bare tool name. A plain `unblock_plan:.*?` match starts
+    at the first occurrence anywhere in the file — for unblock_plan that is a
+    line inside a comment at tools.ts:1251, so the assertion was checking prose
+    rather than code and reported a false failure ("does not call
+    validateReceipt") against a handler that does.
+    """
+    m = re.search(
+        r"\n    " + re.escape(name) + r": async .*?(?=\n    \w+: async)",
+        src,
+        re.DOTALL,
+    )
+    assert m, f"{name} handler not found in tools.ts"
+    return m.group(0)
+
+
 class TestToolsTsRouting:
     """Verify validateReceipt is called before every insertReceipt in tools.ts."""
 
@@ -31,11 +50,7 @@ class TestToolsTsRouting:
 
     def test_revise_plan_has_validation(self):
         src = _read("typescript/conduit-mcp/src/tools.ts")
-        # Find the revise_plan handler block — from "revise_plan:" to next top-level handler
-        # The handler is: revise_plan: async (args: { ... },) => {
-        m = re.search(r'revise_plan:.*?(?=\n    \w+: async)', src, re.DOTALL)
-        assert m, "revise_plan handler not found in tools.ts"
-        body = m.group(0)
+        body = _handler_body(src, "revise_plan")
         assert "validateReceipt(" in body, (
             "revise_plan does not call validateReceipt before insertReceipt"
         )
@@ -47,9 +62,7 @@ class TestToolsTsRouting:
 
     def test_unblock_plan_has_validation(self):
         src = _read("typescript/conduit-mcp/src/tools.ts")
-        m = re.search(r'unblock_plan:.*?(?=\n    \w+: async)', src, re.DOTALL)
-        assert m, "unblock_plan handler not found in tools.ts"
-        body = m.group(0)
+        body = _handler_body(src, "unblock_plan")
         assert "validateReceipt(" in body, (
             "unblock_plan does not call validateReceipt before insertReceipt"
         )
