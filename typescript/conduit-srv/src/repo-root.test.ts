@@ -8,7 +8,10 @@
  * streamed nothing while reporting no error.
  *
  * The sibling copy of this module lives in `adonisjs/nexus-control-edge/app/lib/`
- * and is byte-identical; the same cases exist in that package's unit suite.
+ * and is byte-identical. That package's unit suite cannot currently run (`node ace
+ * test` fails at boot: undeclared `@poppinss/ts-exec`, then `start/env.ts`
+ * validation), so the byte-identity case below is what carries it - not a suite
+ * there. Do not read this as coverage existing on both sides.
  *
  * Pure and DB-free.
  */
