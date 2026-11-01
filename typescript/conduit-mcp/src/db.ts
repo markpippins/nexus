@@ -2977,6 +2977,53 @@ const migrations: Migration[] = [
       console.log("[migrations] v39: added route column to vision.wr_compile_verdicts");
     },
   },
+  {
+    version: 40,
+    description: "Project nebula.plans.project from the canonical payload instead of the literal 'wrp' (finding bf7e8f49) — the constant made update_plan rewrite every plan's project",
+    up: async (exec) => {
+      // Finding bf7e8f49 (lead-engineer, to:architect): v24 exposed
+      // `'wrp'::text AS project` — a constant, not a projection of the stored
+      // value. nebula.plans has 23 rows whose real project is something else
+      // (wrp 21, nexus 11, absent 11, shrapnel 1), and getPlanById reads this
+      // view, so `updatePlanMetadata`'s `updates.project ?? dbPlan.project`
+      // wrote the constant back as though it were data: any goal/criteria edit
+      // silently flipped project to 'wrp' and returned {updated:true}.
+      //
+      // The real value lives in the blueprint payload. nebula.plans reads the
+      // nebula.implementation_plans compat view, which surfaces it as
+      // metadata = jsonb_build_object('project', payload->>'project'). Absent
+      // stays NULL rather than being replaced by a placeholder, so a merge
+      // write-back is idempotent (NULL -> NULL) instead of destructive.
+      //
+      // Column list and order MUST match v24 exactly: CREATE OR REPLACE VIEW
+      // cannot reorder columns (it reads as a rename). Only `project` changes.
+      await exec(`
+        CREATE OR REPLACE VIEW nebula.plans AS
+        SELECT
+          plan_number AS id,
+          ''::text AS file_name,
+          title,
+          (metadata ->> 'project')::text AS project,
+          COALESCE(goal, ''::text) AS goal,
+          COALESCE(content, ''::text) AS content,
+          COALESCE(array_to_string(files_affected, ','::text), ''::text) AS files_affected,
+          COALESCE(acceptance_criteria::text, '[]'::text) AS acceptance_criteria,
+          COALESCE(array_to_string(dependencies, ','::text), ''::text) AS dependencies,
+          ''::text AS prompt_ref,
+          ''::text AS notes,
+          0 AS priority,
+          created_at::text AS created_at,
+          updated_at::text AS updated_at,
+          CASE
+            WHEN status = 'archived' THEN 1
+            ELSE 0
+          END AS deleted,
+          status
+        FROM nebula.implementation_plans
+      `);
+      console.log("[migrations] v40: nebula.plans.project now projects the payload value, not 'wrp'");
+    },
+  },
 ];
 
 /**
