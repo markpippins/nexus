@@ -191,6 +191,11 @@ jobs:
       - name: Install + build (dist/ is untracked)
         working-directory: moleculer/nexus-broker
         run: npm ci && npm run build
+      # Pure unit cases: no PG, no Mongo, no broker boot. Run before the
+      # service-dependent steps so a drift regression fails in seconds.
+      - name: Keychain drift unit cases
+        working-directory: moleculer/nexus-broker
+        run: node --test tests/keychain-drift.test.js
       # pg_isready health checks validate neither credentials nor database
       # (they pass with any server that accepts connections). The only honest
       # readiness signal for schema application is an authenticated query as
