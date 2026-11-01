@@ -120,8 +120,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+      # psycopg2-binary is required HERE and deliberately not in the bare job:
+      # this tier's guards open their own connections, and the first run of it
+      # failed `test_drift_intake` with ModuleNotFoundError: No module named
+      # 'psycopg2' -- a missing driver wearing the costume of a red guard.
       - name: Install test dependencies
-        run: pip install --quiet pyyaml pytest setuptools
+        run: pip install --quiet pyyaml pytest setuptools psycopg2-binary
       # Schema comes from the repo-canonical snapshot; the ledger is stamped at the dump's
       # vintage so a boot migration runner would apply anything newer. Mirrors the seeding
       # step in service-test-gates.yml rather than inventing a second convention.
