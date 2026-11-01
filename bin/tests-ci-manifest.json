@@ -3,6 +3,8 @@
   "_why_this_exists": "At origin/main 46cb20e9, 38 of 76 guards were referenced by no workflow and no Makefile target. The Makefile enumerated tests one per line, so a new guard was ungated by default. That gap hid a real defect for seven days: two migrations both numbered V194 (record ccc4c755). 2026-09-28 update: the first cut of this runner invoked each guard as a bare script (`python3 guard.py`). 25 of 79 guards have no __main__ block, so they executed zero tests and were reported PASS - the headline '75 run, 0 failed' overstated coverage, since only 50 actually ran. The runner now executes via `python3 -m pytest` and reports a guard that collects 0 tests as EMPTY, a failure. Doing that surfaced the 7 service-dependent exclusions above, which had been silently 'passing'.",
   "tiers": {
     "db": [
+      "test_drift_intake.py",
+      "test_grants_e2e.py",
       "test_roles_registry_parity.py",
       "test_verify_roles_transitional.py"
     ],
@@ -18,38 +20,17 @@
     },
     "test_backfill_propositions.py": {
       "kind": "infrastructure",
-      "reason": "RuntimeError: CONDUIT_PG_DSN must be set - requires a live PostgreSQL. Not runnable on a bare runner.",
+      "reason": "Needs POPULATED state, not merely a schema: test_forward_ingest_state_preserved asserts resolution propositions exist (observed 0 against a freshly seeded ci-bootstrap), so a throwaway database cannot satisfy it and seeding it from live data would make the assertion circular. Measured 2026-11-01 against ci-bootstrap + vintage role seed: 6 passed, 1 failed on exactly that data-dependent assertion.",
       "owner": "dba",
       "tracked": "record fb11ad19 (Decision 4), owed with the other two PG-dependent guards",
-      "clears_when": "folded into the pg-integration harness job, which already provides a throwaway postgres:17 stack via bin/run-pg-integration-e2e.sh"
-    },
-    "test_drift_intake.py": {
-      "kind": "infrastructure",
-      "reason": "RuntimeError: CONDUIT_PG_DSN must be set - requires a live PostgreSQL. Not runnable on a bare runner.",
-      "owner": "dba",
-      "tracked": "record fb11ad19 (Decision 4), owed with the other two PG-dependent guards",
-      "clears_when": "folded into the pg-integration harness job"
+      "clears_when": "a harness applies migrations on top of the ci-bootstrap seed before running this guard; the guards-db tier runs against the seed only, so it cannot host it yet"
     },
     "test_shrapnel_bridge.py": {
       "kind": "infrastructure",
-      "reason": "RuntimeError: CONDUIT_PG_DSN must be set - requires a live PostgreSQL. Not runnable on a bare runner.",
+      "reason": "Needs a MIGRATED database, not the ci-bootstrap snapshot: it looks for shrapnel_state_member among registered function bindings and gets an empty set from the dump vintage (measured 2026-11-01: 5 passed, 2 failed). Clearing it needs a job that applies migrations on top of the bootstrap, which does not exist yet. Not moved to tiers.db because it would fail there.",
       "owner": "dba",
       "tracked": "record fb11ad19 (Decision 4), owed with the other two PG-dependent guards",
-      "clears_when": "folded into the pg-integration harness job"
-    },
-    "test_grants_e2e.py": {
-      "kind": "infrastructure",
-      "reason": "Needs a reachable PostgreSQL: creates and drops its own throwaway database (e2e_grants_<pid>) from a skeleton, then applies the real grant files. Also carries a latent hang: it shells out to psql with no -w and no stdin=DEVNULL, so without PGPASSWORD it blocks on an interactive password prompt forever instead of failing. Fix the psql call before wiring this into any harness.",
-      "owner": "engineer",
-      "tracked": "Assembly 27027c44 (psql -w / stdin=DEVNULL fix); architect Decision 4 fb11ad19",
-      "clears_when": "the psql invocation passes -w and stdin=DEVNULL AND the test is folded into the pg-integration harness job, which already provides a throwaway postgres:17 stack"
-    },
-    "test_mark_operator_go_applied.py": {
-      "kind": "infrastructure",
-      "reason": "Asserts the operator-go migration is marked applied against live nebula state (20 tests, 10 of which fail bare). Needs a migrated database, not merely a reachable server.",
-      "owner": "dba",
-      "tracked": "architect Decision 4 fb11ad19 (PG-dependent guards, owed together)",
-      "clears_when": "folded into the pg-integration harness job"
+      "clears_when": "a harness applies migrations on top of the ci-bootstrap seed before running this guard; the guards-db tier runs against the seed only, so it cannot host it yet"
     },
     "test_mesh_register_probe.py": {
       "kind": "infrastructure",
@@ -88,10 +69,10 @@
     },
     "test_harvests_triggers_present.py": {
       "kind": "infrastructure",
-      "reason": "Needs a reachable PostgreSQL with the nebula schema: asserts the exact trigger set on nebula.harvests (relkind-conditional: view INSTEAD-OF trio vs 023-lineage table pair). Not runnable on a bare runner.",
+      "reason": "Needs a MIGRATED database: the trigger set it asserts is restored by migration 070, which the ci-bootstrap snapshot predates (measured 2026-11-01 against ci-bootstrap + role seed, with PGHOST/PGPORT/PGUSER set: 2 passed, 1 failed, 1 skipped - the failure is the trigger-set comparison). Note it needs the PG* env vars rather than CONDUIT_PG_DSN.",
       "owner": "dba",
       "tracked": "defect thread e0a40d6d (harvests trigger loss); Decision 26 00d339f9 routing; migration 070 restores + records via nebula.trigger_restore_log",
-      "clears_when": "folded into the pg-integration harness job, which already provides a throwaway postgres:17 stack"
+      "clears_when": "a harness applies migrations on top of the ci-bootstrap seed before running this guard; the guards-db tier runs against the seed only, so it cannot host it yet"
     }
   }
 }

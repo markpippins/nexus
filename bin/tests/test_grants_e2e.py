@@ -123,10 +123,19 @@ ENV = {**os.environ,
        "PGPORT": os.environ.get("PGPORT", "5432"),
        "PGUSER": os.environ.get("PGUSER", "pguser")}
 
+# `-w` (--no-password) and an explicit DEVNULL stdin, on every client call.
+# Without both, a missing or rejected password makes psql print
+# "Password:" and block on a terminal prompt that does not exist in CI, so the
+# guard HANGS instead of failing -- a wedged job holding a runner for hours.
+# This was the reason the guard sat in the exclusion manifest rather than the
+# DB tier; the prompt was the defect, not the database.
+PSQL = ("psql", "-w")
+
 
 def psql(db, sql, expect_fail=False):
-    r = subprocess.run(["psql", "-d", db, "-v", "ON_ERROR_STOP=1", "-Atc", sql],
-                       env=ENV, capture_output=True, text=True, timeout=60)
+    r = subprocess.run([*PSQL, "-d", db, "-v", "ON_ERROR_STOP=1", "-Atc", sql],
+                       env=ENV, capture_output=True, text=True, timeout=60,
+                       stdin=subprocess.DEVNULL)
     if expect_fail:
         assert r.returncode != 0, f"expected failure, got success: {r.stdout}"
         return r.stdout + r.stderr
@@ -135,8 +144,9 @@ def psql(db, sql, expect_fail=False):
 
 
 def run_file(db, path):
-    r = subprocess.run(["psql", "-d", db, "-v", "ON_ERROR_STOP=1", "-f", path],
-                       env=ENV, capture_output=True, text=True, timeout=60)
+    r = subprocess.run([*PSQL, "-d", db, "-v", "ON_ERROR_STOP=1", "-f", path],
+                       env=ENV, capture_output=True, text=True, timeout=60,
+                       stdin=subprocess.DEVNULL)
     assert r.returncode == 0, f"grant apply failed: {r.stderr}"
     return r.stdout + r.stderr
 
@@ -144,13 +154,17 @@ def run_file(db, path):
 @pytest.fixture(scope="module")
 def e2edb():
     db = f"e2e_grants_{os.getpid()}_{uuid.uuid4().hex[:6]}"
-    assert subprocess.run(["createdb", db], env=ENV,
-                          capture_output=True).returncode == 0, "cannot create throwaway DB"
-    r = subprocess.run(["psql", "-d", db, "-v", "ON_ERROR_STOP=1", "-q"],
+    assert subprocess.run(["createdb", "-w", db], env=ENV, capture_output=True,
+                          stdin=subprocess.DEVNULL).returncode == 0, \
+        "cannot create throwaway DB"
+    # stdin here carries the skeleton, so no DEVNULL -- but still `-w`, so a
+    # password prompt is an error rather than a hang.
+    r = subprocess.run([*PSQL, "-d", db, "-v", "ON_ERROR_STOP=1", "-q"],
                        input=SKELETON, env=ENV, capture_output=True, text=True)
     assert r.returncode == 0, f"skeleton failed: {r.stderr}"
     yield db
-    subprocess.run(["dropdb", db], env=ENV, capture_output=True)
+    subprocess.run(["dropdb", "-w", db], env=ENV, capture_output=True,
+                   stdin=subprocess.DEVNULL)
 
 
 def test_fresh_engineer_iii_grant_inserts_open_snapshot(e2edb):
@@ -162,8 +176,9 @@ def test_fresh_engineer_iii_grant_inserts_open_snapshot(e2edb):
 
 
 def run_file_raw(db, path):
-    return subprocess.run(["psql", "-d", db, "-v", "ON_ERROR_STOP=1", "-f", path],
-                          env=ENV, capture_output=True, text=True, timeout=60)
+    return subprocess.run([*PSQL, "-d", db, "-v", "ON_ERROR_STOP=1", "-f", path],
+                          env=ENV, capture_output=True, text=True, timeout=60,
+                          stdin=subprocess.DEVNULL)
 
 
 def test_replay_is_refused_as_grant_applied(e2edb):

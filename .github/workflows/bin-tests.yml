@@ -103,6 +103,12 @@ jobs:
       # 21 tier tests in 0.7s on exactly that. Point the DSN at the database the
       # step above actually creates and seeds.
       NEXUS_PG_DSN: postgresql://pguser:pgpass@localhost:5432/nebula
+      # The db tier carries two connection conventions, because the guards come
+      # from two codebases: NEXUS_PG_DSN above for the repo guards, and
+      # CONDUIT_PG_DSN here for the conduit guards, which open psycopg2
+      # connections themselves. Both point at the throwaway `nebula` this job
+      # creates and seeds -- there is no second database to fall out of sync.
+      CONDUIT_PG_DSN: host=localhost port=5432 user=pguser password=pgpass dbname=nebula
       # psql client auth for the seed steps. POSTGRES_PASSWORD above configures the
       # SERVER; without PGPASSWORD every psql call in the seed step prompts on a tty
       # that does not exist and dies with fe_sendauth. Found on this job's first real
@@ -114,8 +120,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+      # psycopg2-binary is required HERE and deliberately not in the bare job:
+      # this tier's guards open their own connections, and the first run of it
+      # failed `test_drift_intake` with ModuleNotFoundError: No module named
+      # 'psycopg2' -- a missing driver wearing the costume of a red guard.
       - name: Install test dependencies
-        run: pip install --quiet pyyaml pytest setuptools
+        run: pip install --quiet pyyaml pytest setuptools psycopg2-binary
       # Schema comes from the repo-canonical snapshot; the ledger is stamped at the dump's
       # vintage so a boot migration runner would apply anything newer. Mirrors the seeding
       # step in service-test-gates.yml rather than inventing a second convention.
