@@ -7,13 +7,21 @@
 # V194 migration-number collision on main (record ccc4c755) that nobody saw.
 #
 # Same command locally and in CI: make bintests
+#
+# `pull_request` carries NO `branches:` filter, deliberately. It used to list
+# `[main, master, feature/*, dev, roles-vocab-normalize]`, and `roles-vocab-normalize`
+# was bolted on after the fact (328d23ddd) because a PR STACKED on that base ran
+# nothing at all: the workflow simply never started, which is indistinguishable
+# from a green run in a checks list. Any base branch now runs the guards, so a
+# rebased or stacked branch gate cannot depend on somebody remembering to
+# whitelist its base. `push` stays filtered to the long-lived branches because
+# PR events already cover branch pushes.
 name: bin/tests guards
 
 on:
   push:
     branches: [main, master, feature/*, dev]
   pull_request:
-    branches: [main, master, feature/*, dev, roles-vocab-normalize]
   workflow_dispatch:
 
 permissions:

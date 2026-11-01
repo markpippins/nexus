@@ -14,10 +14,18 @@ must be named in bin/tests-ci-manifest.json with a reason, an owner, and the
 thing tracking the debt. There is no third option -- a guard cannot be silently
 ungated, and an exclusion cannot outlive the failure that justified it.
 
+Tiers: a guard that needs a dependency the bare job does not have (a database)
+is listed in the manifest's `tiers.db` instead of `excluded`, and runs in the
+job that provides that dependency (`python3 bin/run_bin_tests.py --tier db`).
+Tiered means it RUNS -- there, and only there. See
+bin/tests/test_bin_tier_declaration.py, which fails if a workflow names a tier
+the manifest does not declare.
+
 Exit codes:
   0  every discovered guard ran and passed
   1  at least one guard failed
-  2  the manifest is itself invalid (stale/undocumented exclusion)
+  2  the manifest is itself invalid (stale/undocumented exclusion, unknown/
+     empty tier, tier member that is not a file)
 
 Guards are executed with `python3 -m pytest`, never as bare scripts, and a
 guard pytest collects 0 tests from is reported EMPTY (a failure). A guard that
@@ -25,6 +33,7 @@ runs zero tests must never be counted as a pass -- see Decision 4.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import pathlib
@@ -93,12 +102,22 @@ def collected(guard: pathlib.Path) -> int:
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser(description="Run the bin/tests guards.")
+    ap.add_argument(
+        "--tier",
+        default=None,
+        help="Run ONLY the guards in this manifest tier (e.g. `db`). Omit to run the "
+             "default tier, which is every guard NOT assigned to any tier.",
+    )
+    args = ap.parse_args()
+
     guards = discovered()
     if not guards:
         sys.exit("no guards discovered -- the walk is broken, not the suite")
 
     manifest = load_manifest()
     excluded = manifest.get("excluded", {})
+    tiers = manifest.get("tiers", {})
 
     # A stale exclusion is a lie: it claims a debt that no longer exists, and it
     # would keep a now-passing guard out of CI forever.
@@ -112,9 +131,57 @@ def main() -> int:
               file=sys.stderr)
         return 2
 
-    run_set = [g for g in guards if g.name not in excluded]
-    print(f"bin/tests: {len(guards)} discovered, {len(run_set)} running, "
-          f"{len(excluded)} excluded\n")
+    # ── Tier membership ──────────────────────────────────────────────────────
+    # A tiered guard is run by exactly ONE job: the one that provides its
+    # dependency. The default job therefore excludes every tiered guard, not just
+    # the `excluded` ones -- otherwise a DB guard would run a second time in the
+    # no-DB job and fail closed there for the wrong reason.
+    #
+    # This block was LOST in the merge of df6eff7db: .github/workflows/bin-tests.yml
+    # kept its `guards-db` job (and its seed steps), while the runner here lost
+    # `--tier` and the manifest lost `tiers`. argparse never saw the flag, main()
+    # ignored argv entirely, so `run_bin_tests.py --tier db` re-ran the whole
+    # default suite against the seeded database and reported success -- a job that
+    # provided a DB to guards that never received it. bin/tests/test_bin_tier_declaration.py
+    # now fails if a workflow names a tier this manifest does not declare.
+    # Only LIST values are tiers: the manifest also carries `_why` prose, and
+    # iterating a string yields its CHARACTERS, which silently registered 42
+    # one-character "tier members" (df6eff7db's own bug).
+    tiered = {name
+              for tier, members in tiers.items()
+              if not tier.startswith("_") and isinstance(members, list)
+              for name in members}
+
+    if args.tier is not None:
+        if args.tier not in tiers:
+            print(f"MANIFEST INVALID -- unknown tier {args.tier!r}; "
+                  f"declared tiers: {sorted(t for t in tiers if not t.startswith('_')) or 'none'}",
+                  file=sys.stderr)
+            return 2
+        if not isinstance(tiers[args.tier], list):
+            print(f"MANIFEST INVALID -- tier {args.tier!r} is not a list",
+                  file=sys.stderr)
+            return 2
+        members = set(tiers[args.tier])
+        missing = sorted(n for n in members if not (TESTS / n).is_file())
+        if missing:
+            print(f"MANIFEST INVALID -- tier {args.tier!r} lists guards that do "
+                  f"not exist:", file=sys.stderr)
+            for n in missing:
+                print(f"  {n}", file=sys.stderr)
+            return 2
+        if not members:
+            print(f"MANIFEST INVALID -- tier {args.tier!r} is empty; an empty tier "
+                  "is a silently vacuous CI job", file=sys.stderr)
+            return 2
+        run_set = [g for g in guards if g.name in members]
+        print(f"bin/tests: tier {args.tier!r} -- {len(run_set)} of {len(guards)} "
+              f"guards selected\n")
+    else:
+        run_set = [g for g in guards
+                   if g.name not in excluded and g.name not in tiered]
+        print(f"bin/tests: {len(guards)} discovered, {len(run_set)} running, "
+              f"{len(excluded)} excluded, {len(tiered)} tiered\n")
 
     failures, total, ran = [], 0.0, 0
     for g in run_set:
@@ -139,7 +206,9 @@ def main() -> int:
             print(f"  FAIL  {g.name:52} {dt:6.1f}s  (rc={rc}, {n} tests)")
             failures.append((g.name, rc, out))
 
-    if excluded:
+    # Only meaningful for the default run. In a tier run these guards are not
+    # this job's business, and printing them reads like the tier skipped them.
+    if excluded and args.tier is None:
         print(f"\nexcluded ({len(excluded)}) — each is a tracked debt item:")
         for name, why in sorted(excluded.items()):
             print(f"  - {name:52} {why.get('reason', '<no reason>')}")

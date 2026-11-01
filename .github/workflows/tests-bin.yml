@@ -9,13 +9,16 @@
 # Python silently ran "72 guards / 0 tests".
 #
 # Same command locally and in CI: python3 tests/run_all.py bin
+#
+# `pull_request` carries NO `branches:` filter (see bin-tests.yml): a whitelisted
+# base is a silent skip for every base somebody did not think of, and a PR that
+# never starts looks exactly like a PR that passed.
 name: tests/bin suites
 
 on:
   push:
     branches: [main, master, dev, feature/*]
   pull_request:
-    branches: [main, master, dev, feature/*]
   workflow_dispatch:
 
 permissions:
