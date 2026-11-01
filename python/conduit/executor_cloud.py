@@ -477,6 +477,101 @@ def _build_role_instructions(role: str) -> str:
     return ""
 
 
+def _build_evidence_protocol(req: Dict[str, Any], role: str) -> str:
+    """Render the machine-readable work-evidence contract for the agent.
+
+    The pipeline settles a WorkRequest on evidence, not on process exit
+    status: ``execution_worker.validate_work_evidence`` requires the target
+    files to exist and change, one durable builder record, and a stdout marker
+    carrying the current (work_request_id, attempt_id, session_id) triple.
+
+    None of those ids are discoverable by the agent from inside its own run.
+    They are injected here rather than left to be reverse-engineered: on
+    2026-10-31 the builder burned 14 consecutive runs probing /proc, journals
+    and the DB for its own ids, produced no artifacts, and settled nothing.
+    """
+    if role != "builder":
+        return ""
+    meta = req.get("metadata") or {}
+    wr_id = str(meta.get("work_request_id") or req.get("id") or "")
+    attempt_id = str(meta.get("attempt_id") or "")
+    session_id = str(meta.get("session_id") or "")
+    if not (wr_id and attempt_id and session_id):
+        # Without the correlation triple the marker can never validate; better
+        # to omit the block than to hand the agent an unsatisfiable contract.
+        return ""
+    plan_id = str(req.get("_plan_id") or "")
+    targets = [
+        item.get("path", "")
+        for item in ((req.get("artifacts") or {}).get("produced_files") or [])
+        if isinstance(item, dict) and item.get("path")
+    ]
+    record_payload = {
+        "recordType": "report",
+        "role": "builder",
+        "title": f"Builder evidence: plan {plan_id} / {wr_id}",
+        "content": "<what you changed and why>",
+        "tags": ["type:change"],
+        "metadata": {
+            "plan_ref": plan_id,
+            "work_request_id": wr_id,
+            "attempt_id": attempt_id,
+            "session_id": session_id,
+        },
+    }
+    if plan_id:
+        record_payload["planRef"] = plan_id
+
+    lines = [
+        "\n## Work Evidence Protocol (required — this WorkRequest settles on evidence, not on exit status)",
+        "Your correlation ids for this attempt. Use exactly these values; do not try to look them up anywhere else:",
+        f"  - work_request_id: {wr_id}",
+        f"  - attempt_id: {attempt_id}",
+        f"  - session_id: {session_id}",
+    ]
+    if plan_id:
+        lines.append(f"  - plan_ref: {plan_id}")
+    lines.extend([
+        "",
+        "To settle, all three of the following are required in this run:",
+    ])
+    if targets:
+        lines.append(
+            "1. Create or modify every target file, relative to the working directory "
+            f"({req.get('path', '')}): " + ", ".join(targets) + "."
+            " A file whose content is unchanged from the start of the attempt does not count."
+        )
+    else:
+        lines.append(
+            "1. Create or modify the files named under Target Files, relative to the working "
+            "directory. A file whose content is unchanged from the start of the attempt does not count."
+        )
+    lines.extend([
+        "2. Persist one durable builder record (POST returns the record id — use it in step 3):",
+        "   ```bash",
+        "   curl -s -X POST http://localhost:3101/api/agent-records \\",
+        "     -H 'Content-Type: application/json' \\",
+        "     -d '" + json.dumps(record_payload) + "'",
+        "   ```",
+        "3. Print exactly one line as the last line of your final answer:",
+        "   NEXUS_WORK_EVIDENCE: " + json.dumps({
+            "work_request_id": wr_id,
+            "attempt_id": attempt_id,
+            "session_id": session_id,
+            "artifacts": targets or ["<path>",],
+            "agent_record": "<record id from step 2>",
+        }),
+        "",
+        "Constraints:",
+        "- Never run a command or read a path outside the working directory; a permission "
+        "prompt is auto-rejected in this non-interactive run and aborts the whole attempt.",
+        "- Do not stop before the target files exist and the marker line is printed. Do not "
+        "report completion based on intent, exit codes, or a described plan.",
+        "- Do not issue receipts — the conduit manager handles the audit trail.",
+    ])
+    return "\n".join(lines)
+
+
 def _build_system_prompt(req: Dict[str, Any]) -> str:
     """Build a system-level prompt for harnesses that support system/instruction separation."""
     role = _resolve_role(req)
@@ -500,6 +595,10 @@ def _build_opencode_prompt(
             f"\n## Full DCO\nThe complete WorkRequest DCO is on disk at "
             f"{artifacts_dir}/request.json. Read it for full detail."
         )
+
+    evidence_protocol = _build_evidence_protocol(req, role)
+    if evidence_protocol:
+        lines.append(evidence_protocol)
 
     instructions = _build_role_instructions(role)
     if instructions:
