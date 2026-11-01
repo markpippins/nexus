@@ -39,6 +39,38 @@ def _parse_json(val):
     return [] if val is None else [val]
 
 
+def _parse_path_list(val: Any) -> List[str]:
+    """Normalize a plan's file list into individual paths.
+
+    ``nebula.implementation_plans.files_affected`` is a text column, so the
+    same plan may carry a JSON array, a Postgres array literal, or a plain
+    comma-separated string depending on which writer produced it. Treating the
+    comma-joined form as a single path generated evidence contracts whose only
+    "expected file" could never exist on disk, so no builder run could ever
+    validate (plan 8261665, 2026-11-01).
+    """
+    if val is None:
+        return []
+    if isinstance(val, (list, tuple)):
+        raw = [str(item) for item in val]
+    else:
+        text = str(val).strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            parsed = None
+        if isinstance(parsed, list):
+            raw = [str(item) for item in parsed]
+        else:
+            # Postgres array literal: {docs/a.md,"docs/b.md"}
+            if text.startswith("{") and text.endswith("}"):
+                text = text[1:-1]
+            raw = text.split(",")
+    return [path.strip().strip('"').strip() for path in raw if str(path).strip().strip('"')]
+
+
 def _infer_priority(plan: Dict[str, Any]) -> str:
     """Heuristic priority from plan metadata."""
     title = (plan.get("title") or "").lower()
@@ -55,7 +87,7 @@ def _infer_priority(plan: Dict[str, Any]) -> str:
 def _infer_abstraction(plan: Dict[str, Any]) -> str:
     """Infer abstraction level from plan size / acceptance criteria count."""
     n_criteria = len(_parse_json(plan.get("acceptance_criteria")))
-    n_files = len(_parse_json(plan.get("files_affected")))
+    n_files = len(_parse_path_list(plan.get("files_affected")))
     level = "system" if (n_criteria >= 4 or n_files >= 4) else "task"
     _log.debug("_infer_abstraction: plan=%s criteria=%d files=%d level=%s", plan.get("id", "?"), n_criteria, n_files, level)
     return level
@@ -76,7 +108,7 @@ def _build_completion_conditions(
 
 
 def _build_files_affected(plan: Dict[str, Any]) -> List[ProducedFile]:
-    files = _parse_json(plan.get("files_affected"))
+    files = _parse_path_list(plan.get("files_affected"))
     if not files:
         _log.debug("_build_files_affected: no files affected for plan %s", plan.get("id", "?"))
         return []
