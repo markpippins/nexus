@@ -19,6 +19,8 @@ import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import { Pool } from "pg";
 import {
   initDb,
+  plansViewDdl,
+  sharedSchemaDdlEnabled,
   insertCompileVerdict,
   getNewestCompileVerdict,
   getNewestCompileVerdictForPlan,
@@ -835,28 +837,73 @@ describe("createSchema on fresh database", () => {
   // so getPlanById returned a placeholder that updatePlanMetadata then wrote
   // back into the canonical payload. The view must project the stored value.
   //
-  // nebula.plans lives in the nebula schema (not the test schema), so this
-  // check is read-only against shared state: it asserts the *definition*
-  // carries no constant and the *rows* agree with blueprints_history.
-  test("v40: nebula.plans.project projects the canonical payload, not 'wrp'", async () => {
+  // nebula.plans is a NEBULA object, so the migration is guarded off under a
+  // test schema (it used to replace the live view on every suite run — a green
+  // test run silently deployed the migration). This test runs the same DDL
+  // text against a fixture in its own schema instead.
+  test("v40: plans view projects the payload project (fixture in own schema)", async () => {
+    const testSchema = process.env.CONDUIT_PG_SCHEMA!;
+    // A nested scratch schema: the test schema already has a legacy `plans`
+    // TABLE, and v40 creates `plans` as a VIEW.
+    const viewSchema = `${testSchema}_v40`;
     const pool = await initDb();
     try {
-      const def = await pool.query(
-        `SELECT pg_get_viewdef('nebula.plans'::regclass, true) AS d`
-      );
-      const viewdef: string = def.rows[0].d;
-      expect(viewdef).not.toMatch(/'wrp'::text AS project/);
-      expect(viewdef).toMatch(/metadata\s*->>\s*'project'/);
+      // The guard is what keeps this suite out of shared state.
+      expect(sharedSchemaDdlEnabled()).toBe(false);
+      await pool.query(`DROP SCHEMA IF EXISTS ${viewSchema} CASCADE`);
+      await pool.query(`CREATE SCHEMA ${viewSchema}`);
 
-      // Every row's project must equal the payload value it stands for.
-      // Absent-in-payload and NULL-in-view count as agreement.
-      const drift = await pool.query(
-        `SELECT count(*)::int AS n
-           FROM nebula.plans p
-           JOIN nebula.blueprints_history b ON b.plan_number = p.id
-          WHERE p.project IS DISTINCT FROM (b.payload ->> 'project')`
+      // The migration always targets the shared schema; the DDL is
+      // parameterised so the same text can build the view locally.
+      expect(plansViewDdl()).toContain("nebula.plans");
+      expect(plansViewDdl()).toMatch(/metadata\s*->>\s*'project'/);
+      expect(plansViewDdl()).not.toMatch(/'wrp'::text AS project/);
+
+      // Minimal stand-in for nebula.implementation_plans (the shape v40 reads).
+      await pool.query(`
+        CREATE TABLE ${viewSchema}.plans_fixture (
+          plan_number text PRIMARY KEY,
+          title text,
+          goal text,
+          content text,
+          files_affected text[],
+          acceptance_criteria jsonb,
+          dependencies text[],
+          status text,
+          metadata jsonb,
+          created_at timestamptz,
+          updated_at timestamptz
+        );
+        CREATE VIEW ${viewSchema}.implementation_plans AS
+          SELECT plan_number, title, goal, content, files_affected,
+                 acceptance_criteria, dependencies, status, metadata,
+                 created_at, updated_at
+          FROM ${viewSchema}.plans_fixture;
+      `);
+      await pool.query(
+        `INSERT INTO ${viewSchema}.plans_fixture
+           (plan_number, title, goal, content, files_affected,
+            acceptance_criteria, dependencies, status, metadata,
+            created_at, updated_at)
+         VALUES
+           ('9001', 'has project', 'g', 'c', ARRAY['a.ts'], '[]'::jsonb,
+            ARRAY[]::text[], 'pending',
+            jsonb_build_object('project', 'nexus'), now(), now()),
+           ('9002', 'no project', 'g', 'c', ARRAY['b.ts'], '[]'::jsonb,
+            ARRAY[]::text[], 'pending', '{}'::jsonb, now(), now())`
       );
-      expect(drift.rows[0].n).toBe(0);
+
+      await pool.query(plansViewDdl(viewSchema));
+
+      const rows = await pool.query(
+        `SELECT id, project FROM ${viewSchema}.plans ORDER BY id`
+      );
+      expect(rows.rows).toEqual([
+        { id: "9001", project: "nexus" },
+        { id: "9002", project: null }, // absent stays absent — no placeholder
+      ]);
+
+      await pool.query(`DROP SCHEMA IF EXISTS ${viewSchema} CASCADE`);
     } finally {
       await pool.end();
     }

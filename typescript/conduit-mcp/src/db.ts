@@ -86,6 +86,56 @@ const TACKLE_SCHEMA = "tackle";
 const VISION_SCHEMA = "vision";
 const PEB_SCHEMA = "peb";
 
+// ── Shared-schema DDL guard ─────────────────────────────────────────
+// Some migrations write into the `nebula` schema (nebula.plans and its
+// neighbours are nebula-owned objects, not conduit-owned), and their DDL is
+// schema-qualified `nebula.` on purpose. Under a conformance/test schema that
+// is a write OUTSIDE the test's sandbox: before this guard, running
+// db.schema.test.ts replaced the live nebula.plans view on every run, so a
+// green suite silently deployed a migration. Tests must not mutate shared
+// objects; they exercise the DDL text against their own schema instead
+// (plansViewDdl takes the target schema for exactly that).
+const SHARED_SCHEMA_DDL = !PG_SCHEMA.startsWith("test_");
+
+/** False when this process is bound to a test/conformance schema. */
+export function sharedSchemaDdlEnabled(): boolean {
+  return SHARED_SCHEMA_DDL;
+}
+
+/**
+ * DDL for `nebula.plans` (v24 shape, v40 projection).
+ *
+ * `schema` is parameterised so the schema suite can build the same view in its
+ * own schema against a local fixture — the migration itself always passes the
+ * default.
+ */
+export function plansViewDdl(schema = "nebula"): string {
+  return `
+        CREATE OR REPLACE VIEW ${schema}.plans AS
+        SELECT
+          plan_number AS id,
+          ''::text AS file_name,
+          title,
+          (metadata ->> 'project')::text AS project,
+          COALESCE(goal, ''::text) AS goal,
+          COALESCE(content, ''::text) AS content,
+          COALESCE(array_to_string(files_affected, ','::text), ''::text) AS files_affected,
+          COALESCE(acceptance_criteria::text, '[]'::text) AS acceptance_criteria,
+          COALESCE(array_to_string(dependencies, ','::text), ''::text) AS dependencies,
+          ''::text AS prompt_ref,
+          ''::text AS notes,
+          0 AS priority,
+          created_at::text AS created_at,
+          updated_at::text AS updated_at,
+          CASE
+            WHEN status = 'archived' THEN 1
+            ELSE 0
+          END AS deleted,
+          status
+        FROM ${schema}.implementation_plans
+      `;
+}
+
 let pool: Pool;
 
 export async function initDb(_conduitDataDir?: string): Promise<Pool> {
@@ -1816,6 +1866,11 @@ const migrations: Migration[] = [
       // updated_at, deleted) and append status at the END. CREATE OR REPLACE
       // VIEW cannot change column names — any reordering is interpreted as a
       // rename and rejected.
+      if (!SHARED_SCHEMA_DDL) {
+        console.log("[migrations] v24: skipped — shared nebula schema is "
+          + "off-limits from a test/conformance schema");
+        return;
+      }
       await exec(`
         CREATE OR REPLACE VIEW nebula.plans AS
         SELECT
@@ -2997,30 +3052,14 @@ const migrations: Migration[] = [
       //
       // Column list and order MUST match v24 exactly: CREATE OR REPLACE VIEW
       // cannot reorder columns (it reads as a rename). Only `project` changes.
-      await exec(`
-        CREATE OR REPLACE VIEW nebula.plans AS
-        SELECT
-          plan_number AS id,
-          ''::text AS file_name,
-          title,
-          (metadata ->> 'project')::text AS project,
-          COALESCE(goal, ''::text) AS goal,
-          COALESCE(content, ''::text) AS content,
-          COALESCE(array_to_string(files_affected, ','::text), ''::text) AS files_affected,
-          COALESCE(acceptance_criteria::text, '[]'::text) AS acceptance_criteria,
-          COALESCE(array_to_string(dependencies, ','::text), ''::text) AS dependencies,
-          ''::text AS prompt_ref,
-          ''::text AS notes,
-          0 AS priority,
-          created_at::text AS created_at,
-          updated_at::text AS updated_at,
-          CASE
-            WHEN status = 'archived' THEN 1
-            ELSE 0
-          END AS deleted,
-          status
-        FROM nebula.implementation_plans
-      `);
+      // The DDL lives in plansViewDdl so the schema suite can run the same text
+      // against its own schema instead of replacing the live view.
+      if (!SHARED_SCHEMA_DDL) {
+        console.log("[migrations] v40: skipped — shared nebula schema is "
+          + "off-limits from a test/conformance schema");
+        return;
+      }
+      await exec(plansViewDdl());
       console.log("[migrations] v40: nebula.plans.project now projects the payload value, not 'wrp'");
     },
   },
