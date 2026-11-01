@@ -5,6 +5,7 @@ import { Router } from "express";
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
+import { resolvePipelineDir } from "../lib/repo-root.js";
 
 const router = Router();
 
@@ -12,10 +13,9 @@ const router = Router();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PIPELINE_DIR =
-  process.env.PIPELINE_DIR ||
-  // .conduit-data deleted 2026-08-09; mirror is the posterity home
-  path.resolve(__dirname, "../../../../../nexus/audit/CONDUIT_DATA");
+// .conduit-data deleted 2026-08-09; the mirror is the posterity home. Resolved
+// from the checkout that owns this file, so a worktree reads its own tree.
+const PIPELINE_DIR = process.env.PIPELINE_DIR || resolvePipelineDir(__dirname);
 
 router.get("/:sessionId", async (req, res) => {
   const { sessionId } = req.params;
