@@ -30,4 +30,4 @@ ProtectHome=read-only
 ReadWritePaths=/home/codex/dev/nexus/typescript/tackle-prompt-sync-srv
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
