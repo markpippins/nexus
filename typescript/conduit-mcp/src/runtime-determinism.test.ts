@@ -16,6 +16,9 @@
  *      unresolved WR blocks every resolved WR behind it — and the reason named
  *      the condition but not the WR, so the blocker was unactionable.
  *
+ *   3. `foldEvents` reported `lastEvent: "WR_SUBMITTED"` for a WR with no
+ *      events, describing an event that does not exist.
+ *
  * Pure and DB-free.
  *
  * Usage:
@@ -25,7 +28,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  cirsdmRejectedHoldReason,
+  cirsdmUnavailableHoldReason,
   foldEvents,
+  noTransitionHoldReason,
   unresolvedHoldReason,
   type RuntimeEvent,
 } from "./runtime-kernel.js";
@@ -41,6 +47,12 @@ describe("fold determinism (eventless)", () => {
     expect(state.status).toBe("DRAFT");
     expect(state.version).toBe(0);
     expect(state.lastTimestamp).toBe("");
+  });
+
+  it("AC1b — an eventless WR does not claim a WR_SUBMITTED event", () => {
+    // Before the fix the fold reported lastEvent "WR_SUBMITTED" for a WR with
+    // zero events — the reason the six legacy WRs read as freshly submitted.
+    expect(foldEvents("wr-empty", []).lastEvent).toBe("");
   });
 
   it("AC2 — the same empty log folds identically at different wall-clock times", () => {
@@ -85,9 +97,12 @@ describe("fold determinism (eventless)", () => {
       },
     ]);
     // Distinguishable on the timestamp the fold carries forward, rather than
-    // both looking like they were created at read time.
+    // both looking like they were created at read time — and on the last event
+    // the ledger actually contains.
     expect(empty.createdAt).toBe("");
     expect(submitted.createdAt).not.toBe("");
+    expect(empty.lastEvent).toBe("");
+    expect(submitted.lastEvent).toBe("WR_SUBMITTED");
   });
 });
 
@@ -105,5 +120,33 @@ describe("UNRESOLVED_OPS hold reason", () => {
     const reason = unresolvedHoldReason("wr-abc");
     expect(reason).toContain("VALIDATED");
     expect(reason).toContain("wr-abc");
+  });
+});
+
+describe("every tick hold names its WR", () => {
+  // A tick reports on exactly ONE selected WR; a hold reason that omits it
+  // leaves an operator unable to tell which request is parked.
+  const WR = "1f0c2a44-8e5b-4d1f-9a37-6f2b0d5c8e11";
+
+  it("AC8 — no-transition hold names the WR and its status", () => {
+    const reason = noTransitionHoldReason(WR, "SETTLED");
+    expect(reason).toContain(WR);
+    expect(reason).toContain("SETTLED");
+    expect(reason).toContain("no automatic transition");
+  });
+
+  it("AC9 — CIR_SDM_UNAVAILABLE hold names the WR and keeps its code prefix", () => {
+    const reason = cirsdmUnavailableHoldReason(WR);
+    expect(reason).toMatch(/^CIR_SDM_UNAVAILABLE: /);
+    expect(reason).toContain(WR);
+    expect(reason).toContain("fail-closed");
+  });
+
+  it("AC10 — CIR_SDM_REJECTED hold names the WR and the rules that blocked it", () => {
+    const reason = cirsdmRejectedHoldReason(WR, ["SDM-7", "SDM-12"]);
+    expect(reason).toMatch(/^CIR_SDM_REJECTED: /);
+    expect(reason).toContain(WR);
+    expect(reason).toContain("SDM-7");
+    expect(reason).toContain("SDM-12");
   });
 });

@@ -48,6 +48,9 @@ import {
   getOpTrace,
   isUnresolvedOps,
   unresolvedHoldReason,
+  noTransitionHoldReason,
+  cirsdmUnavailableHoldReason,
+  cirsdmRejectedHoldReason,
   getDecisionPriority,
   dbEventsToRuntimeEvents,
   WorkRequestState,
@@ -2308,7 +2311,11 @@ export function registerToolHandlers(
       }
       const decision = decide(state);
       if (!decision)
-        return { ok: true, ticked: false, reason: `state ${state.status} has no automatic transition` };
+        return {
+          ok: true,
+          ticked: false,
+          reason: noTransitionHoldReason(wr.work_request_uuid, state.status),
+        };
       // T23 Step 8: CIR-SDM pre-row enforcement gate (fail-closed). A gate
       // outage HOLDS the tick (do not auto-advance) — mirror the D4 hold.
       let cirsdm: CirsdmEnforceResult | null = null;
@@ -2324,13 +2331,20 @@ export function registerToolHandlers(
         );
       }
       if (cirsdm === null) {
-        return { ok: true, ticked: false, reason: "CIR_SDM_UNAVAILABLE: held (fail-closed)" };
+        return {
+          ok: true,
+          ticked: false,
+          reason: cirsdmUnavailableHoldReason(wr.work_request_uuid),
+        };
       }
       if (cirsdm.reject) {
         await recordGovernedDecisions(cirsdm.decisions);
         return {
           ok: true, ticked: false,
-          reason: `CIR_SDM_REJECTED: ${cirsdm.decisions.map((d) => d.rule_id).join(", ")}`,
+          reason: cirsdmRejectedHoldReason(
+            wr.work_request_uuid,
+            cirsdm.decisions.map((d) => d.rule_id),
+          ),
           decisions: cirsdm.decisions,
         };
       }

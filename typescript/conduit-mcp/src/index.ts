@@ -46,6 +46,9 @@ import {
   getOpTrace,
   isUnresolvedOps,
   unresolvedHoldReason,
+  noTransitionHoldReason,
+  cirsdmUnavailableHoldReason,
+  cirsdmRejectedHoldReason,
   dbEventsToRuntimeEvents,
   WorkRequestState,
 } from "./runtime-kernel";
@@ -1257,7 +1260,11 @@ app.post("/wr/tick", async (_req, res) => {
     }
     const decision = decide(state);
     if (!decision) {
-      res.json({ ok: true, ticked: false, reason: `state ${state.status} has no automatic transition` });
+      res.json({
+        ok: true,
+        ticked: false,
+        reason: noTransitionHoldReason(wr.work_request_uuid, state.status),
+      });
       return;
     }
     // T23 Step 8: CIR-SDM pre-row enforcement gate (fail-closed) — HOLD the
@@ -1267,14 +1274,21 @@ app.post("/wr/tick", async (_req, res) => {
       cirsdm = await gateWrTransition(events, decision.type, wr.work_request_uuid);
     } catch (e: any) {
       await surfaceBlocker(`enforcement unavailable for ${wr.work_request_uuid} (${decision.type}): ${e.message}`);
-      res.json({ ok: true, ticked: false, reason: "CIR_SDM_UNAVAILABLE: held (fail-closed)" });
+      res.json({
+        ok: true,
+        ticked: false,
+        reason: cirsdmUnavailableHoldReason(wr.work_request_uuid),
+      });
       return;
     }
     if (cirsdm.reject) {
       await recordGovernedDecisions(cirsdm.decisions);
       res.json({
         ok: true, ticked: false,
-        reason: `CIR_SDM_REJECTED: ${cirsdm.decisions.map((d) => d.rule_id).join(", ")}`,
+        reason: cirsdmRejectedHoldReason(
+          wr.work_request_uuid,
+          cirsdm.decisions.map((d) => d.rule_id),
+        ),
         decisions: cirsdm.decisions,
       });
       return;

@@ -80,7 +80,9 @@ export interface WorkRequestState {
   workerId?: string;
   reason?: string;
   error?: string;
-  lastEvent: RuntimeEventType;
+  /** Empty string for a WR with no events — there is no last event to report
+   *  (mirrors `lastTimestamp`/`createdAt`, which are "" for the same reason). */
+  lastEvent: RuntimeEventType | "";
   lastTimestamp: string;
   createdAt: string;
   /** D6: held-for-normalization marker — compiled-and-PASSing but deliberately
@@ -267,6 +269,36 @@ export function unresolvedHoldReason(wrId: string): string {
 }
 
 /**
+ * The tick hold reason when the selected WR's status has no automatic
+ * transition (decide() → null). Names the WR for the same reason as
+ * `unresolvedHoldReason`: the tick reports on ONE WR, and a reason that omits
+ * which one leaves the operator unable to tell a terminal WR from a stuck one.
+ */
+export function noTransitionHoldReason(
+  wrId: string,
+  status: WorkRequestStatus,
+): string {
+  return `${wrId} at ${status} has no automatic transition`;
+}
+
+/**
+ * The tick hold reason when the CIR-SDM enforcement gate is unreachable and the
+ * tick fails closed. Names the WR (and, via the caller's surfaced blocker, the
+ * event) so an enforcement outage is attributable to a specific request.
+ */
+export function cirsdmUnavailableHoldReason(wrId: string): string {
+  return `CIR_SDM_UNAVAILABLE: ${wrId} held (fail-closed), enforcement gate unreachable`;
+}
+
+/** Write-side counterpart of `cirsdmUnavailableHoldReason` for a rule reject. */
+export function cirsdmRejectedHoldReason(
+  wrId: string,
+  ruleIds: string[],
+): string {
+  return `CIR_SDM_REJECTED: ${wrId} blocked by ${ruleIds.join(", ")}`;
+}
+
+/**
  * Validate a transition with D4 op-resolution awareness.
  *
  * An UNRESOLVED WR may be stored/HELD at VALIDATED, but the explicit
@@ -370,7 +402,10 @@ export function foldEvents(
     wrId,
     status: "DRAFT",
     version: 0,
-    lastEvent: sorted.length > 0 ? sorted[sorted.length - 1].type : "WR_SUBMITTED",
+    // Empty for an eventless WR: reporting "WR_SUBMITTED" was a lie (those WRs
+    // have no submission event), and it is what made the six legacy eventless
+    // WRs read as freshly submitted. The fold reports the ledger, not intent.
+    lastEvent: sorted.length > 0 ? sorted[sorted.length - 1].type : "",
     lastTimestamp: sorted.length > 0 ? sorted[sorted.length - 1].timestamp || "" : "",
     // Deterministic for an eventless WR: the fold must be a pure function of
     // its event log, so it may not read the wall clock. `new Date()` here made
