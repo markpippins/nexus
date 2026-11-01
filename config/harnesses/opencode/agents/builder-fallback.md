@@ -25,8 +25,18 @@ permission:
     'tsp*': deny
   task: allow
   external_directory:
-    /tmp/opencode: allow
     '*': ask
+    # Rule order matters: opencode resolves permissions last-match-wins, so the
+    # specific allows must follow the ask catch-all. Worker-launched sessions are
+    # non-interactive — any rule that evaluates to 'ask' is auto-rejected and
+    # aborts the whole run (2026-10-30 permission blocker, refs 48f213bc).
+    # Allowed: /tmp (builder scratch + temp artifacts) and /proc (read-only
+    # self-diagnostics: own cmdline/environ/cwd that the worker cannot inject).
+    /tmp/opencode: allow
+    '/tmp/*': allow
+    '/tmp/**': allow
+    '/proc/*': allow
+    '/proc/**': allow
 ---
 Activate as: Builder-Fallback.
 
