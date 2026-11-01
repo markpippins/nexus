@@ -22,7 +22,10 @@ file was forced to learn:
   * **Strip PYTHONPATH **and** CONDUIT_PG_DSN.** A CI runner has neither. Tests
     that only pass because the developer has a database and an exported DSN are
     not evidence of anything, so the runner scrubs both: the gate proves the
-    hermetic tier is DB-free instead of trusting that it is.
+    hermetic tier is DB-free instead of trusting that it is. (An ambient
+    PYTHONPATH is scrubbed and replaced with the repo-local package roots only
+    -- `python/` and `python/vision/losm-ir/src` -- so `tackle` and `nexus_core`
+    resolve from the same checkout without re-admitting machine state.)
 
 Exit codes:
   0  every discovered test file ran and passed
@@ -51,6 +54,15 @@ PER_FILE_TIMEOUT = int(os.environ.get("CONDUIT_TEST_TIMEOUT", "300"))
 # environment so a test cannot quietly depend on either.
 SCRUBBED_ENV = ("PYTHONPATH", "CONDUIT_PG_DSN", "CONDUIT_PG_SCHEMA")
 
+# Repo-local package roots, provided deliberately after the scrub. An ambient
+# PYTHONPATH is developer-machine state and is not evidence; these paths are IN
+# the repository, and two guards import them as ordinary packages:
+#   tests/test_harness_launcher.py  ->  from tackle.harness_launcher import ...
+#   tests/test_wrp_kernel.py        ->  from nexus_core.wrp.kernel import ...
+# Without them the gate reports collection errors for code that is on the same
+# commit, which says nothing about the commit.
+LOCAL_PACKAGE_ROOTS = ("python", "python/vision/losm-ir/src")
+
 
 def discovered() -> list[pathlib.Path]:
     return sorted(TESTS.glob("test_*.py"))
@@ -65,6 +77,8 @@ def load_manifest() -> dict:
 def env_for_child() -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if k not in SCRUBBED_ENV}
     env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTHONPATH"] = os.pathsep.join(
+        str(REPO / r) for r in LOCAL_PACKAGE_ROOTS if (REPO / r).is_dir())
     return env
 
 

@@ -17,8 +17,14 @@ name: conduit Python suite
 # python/conduit/tests-ci-manifest.json with an owner and the work that clears
 # them, and the runner exits 2 if that manifest goes stale.
 #
-# Triggers cover pull_request, so a rebased or force-pushed branch re-runs this
-# on `synchronize` — a rebase cannot leave a stale green behind.
+# Triggers cover pull_request with NO `branches:` filter, so a rebased or
+# force-pushed branch re-runs this on `synchronize` — a rebase cannot leave a
+# stale green behind — and a PR stacked on a base nobody thought to whitelist
+# still runs. A base whitelist is how bin-tests.yml lost a whole branch class:
+# a stacked PR targeting `roles-vocab-normalize` ran NOTHING until that base was
+# added by hand (328d23ddd). Filtering push to the long-lived branches is fine —
+# branch pushes are covered by the PR event — but filtering the PR event itself
+# means "no runs" looks identical to "all green".
 #
 # Same command locally and in CI: python3 bin/run_conduit_tests.py
 
@@ -26,7 +32,6 @@ on:
   push:
     branches: [main, master, dev, feature/*]
   pull_request:
-    branches: [main, master, dev, feature/*]
   workflow_dispatch:
 
 permissions:
@@ -52,7 +57,13 @@ jobs:
           # psycopg2-binary and tiktoken are imported at module scope by parts of
           # the suite even in the hermetic tier; they are package runtime deps,
           # not a database connection.
-          pip install pytest psycopg2-binary tiktoken
+          #
+          # pydantic and fastapi are the same story, and their absence was this
+          # job's first real finding: 10 of 20 files failed collection with
+          # ModuleNotFoundError, so the gate reported the runner's install list
+          # rather than the commit. The suite is still DB-free -- these are
+          # import-time deps of the app package, not a connection.
+          pip install pytest psycopg2-binary tiktoken pydantic fastapi
 
       - name: Record resolved tools in the run log
         run: |

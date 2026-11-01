@@ -15,7 +15,9 @@ a way the gate could quietly become decorative:
 3. **Every exclusion is documented.** kind/reason/owner/tracked/clears_when are
    all required, so an exclusion cannot be an unexplained `skip`.
 4. **The gate is actually DB-free.** CONDUIT_PG_DSN, CONDUIT_PG_SCHEMA and
-   PYTHONPATH must be scrubbed from the child environment. If that list ever
+   PYTHONPATH must be scrubbed from the child environment (then replaced with
+   the repo-local package roots, so `tackle`/`nexus_core` resolve from the
+   checkout instead of from machine state). If that list ever
    loses CONDUIT_PG_DSN, tests silently start borrowing a developer's database
    and the "hermetic" tier becomes a machine-dependent result — green here,
    red or absent in CI.
@@ -27,6 +29,7 @@ inspects the runner module.
 """
 import importlib.util
 import json
+import os
 import pathlib
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
@@ -101,7 +104,15 @@ def test_runner_child_env_actually_omits_the_dsn(monkeypatch):
     monkeypatch.setenv("PYTHONPATH", "/tmp/leaked")
     env = runner.env_for_child()
     assert "CONDUIT_PG_DSN" not in env
-    assert "PYTHONPATH" not in env
+    # PYTHONPATH is not carried through: the ambient value is dropped and
+    # replaced with the repo-local package roots only. A leaked path here would
+    # mean the child could import things that are not on this commit.
+    assert "/tmp/leaked" not in env.get("PYTHONPATH", "")
+    roots = [p for p in env.get("PYTHONPATH", "").split(os.pathsep) if p]
+    assert roots, "repo-local package roots must be provided (tackle, nexus_core)"
+    assert all(pathlib.Path(p).is_relative_to(runner.REPO) for p in roots), (
+        f"every PYTHONPATH entry must be inside the checkout, got {roots}"
+    )
     assert env.get("PYTHONDONTWRITEBYTECODE") == "1"
     # Non-scrubbed vars must survive, or the child cannot run pytest sanely.
     assert "PATH" in env or not env.get("PATH")  # PATH may be unset in the test env
