@@ -158,11 +158,14 @@ describe("runtime_tick — CIR-SDM gate (stub bridge)", () => {
       work_request_uuid: WR_UUID,
       wr_id: WR_ID,
     });
-    // WR_SUBMITTED → VALIDATED → QUEUED → CLAIMED (decide → WR_CLAIMED)
+    // After runtime_claim, the auto-chain starts at CLAIMED: a QUEUED WR is
+    // claimed deliberately (it no longer auto-claims), so the tick's decision
+    // here is CLAIMED → ACKED (WR_CLAIMED). The claim event carries the owner,
+    // without which the tick would refuse to ack on the worker's behalf.
     getEventsMock.mockResolvedValue([
       SUBMITTED,
       row("e2", "WR_VALIDATED"),
-      row("e3", "WR_QUEUED"),
+      row("e3", "WR_QUEUED", { workerId: "w1" }),
     ]);
   });
 

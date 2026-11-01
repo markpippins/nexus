@@ -52,6 +52,11 @@ import {
   dbEventsToRuntimeEvents,
   WorkRequestState,
 } from "./runtime-kernel";
+import {
+  ClaimError,
+  claimWorkRequest,
+  runTickDrain,
+} from "./runtime-ops";
 import { loadEnv } from "./env"; // shared .env loader (no dotenv dependency)
 import { validateReceipt, receiptProvenanceMetadata } from "./receipts";
 
@@ -1234,93 +1239,93 @@ app.post("/wr/:id/transition", async (req, res) => {
 });
 
 /**
- * POST /wr/tick — Run ONE tick of the decision loop.
- * Scans for the next runnable WR, applies the decision, returns what happened.
- * This is the "causal loop" entry point — call it on a timer or after any event.
+ * POST /wr/tick — Run ONE tick of the decision loop, as a DRAIN.
+ * Advances every runnable WR it can reach and skips held ones, so a blocked
+ * WR no longer starves the queue behind it. Body: { maxSteps?: number }.
  */
-app.post("/wr/tick", async (_req, res) => {
+app.post("/wr/tick", async (req, res) => {
   try {
-    const wr = await selectNextRunnable();
-    if (!wr) {
-      res.json({ ok: true, ticked: false, reason: "no runnable work requests" });
-      return;
-    }
-    // Get current state
-    const rawEvents = await getEvents(wr.work_request_uuid);
-    const events = dbEventsToRuntimeEvents(rawEvents);
-    const state = foldEvents(wr.work_request_uuid, events);
-    // D4: never auto-advance an UNRESOLVED WR past VALIDATED.
-    if (state.status === "VALIDATED" && isUnresolvedOps(getOpTrace(events))) {
-      res.json({
-        ok: true,
-        ticked: false,
-        reason: unresolvedHoldReason(wr.work_request_uuid),
-      });
-      return;
-    }
-    const decision = decide(state);
-    if (!decision) {
-      res.json({
-        ok: true,
-        ticked: false,
-        reason: noTransitionHoldReason(wr.work_request_uuid, state.status),
-      });
-      return;
-    }
-    // T23 Step 8: CIR-SDM pre-row enforcement gate (fail-closed) — HOLD the
-    // tick on a gate outage (mirror the D4 UNRESOLVED hold).
-    let cirsdm: CirsdmEnforceResult;
-    try {
-      cirsdm = await gateWrTransition(events, decision.type, wr.work_request_uuid);
-    } catch (e: any) {
-      await surfaceBlocker(`enforcement unavailable for ${wr.work_request_uuid} (${decision.type}): ${e.message}`);
-      res.json({
-        ok: true,
-        ticked: false,
-        reason: cirsdmUnavailableHoldReason(wr.work_request_uuid),
-      });
-      return;
-    }
-    if (cirsdm.reject) {
-      await recordGovernedDecisions(cirsdm.decisions);
-      res.json({
-        ok: true, ticked: false,
-        reason: cirsdmRejectedHoldReason(
-          wr.work_request_uuid,
-          cirsdm.decisions.map((d) => d.rule_id),
-        ),
-        decisions: cirsdm.decisions,
-      });
-      return;
-    }
-    await appendEvent(decision.wrId, decision.type, decision.payload as Record<string, unknown>);
-    const rawNewEvents = await getEvents(wr.work_request_uuid);
-    const newEvents = dbEventsToRuntimeEvents(rawNewEvents);
-    const newState = foldEvents(wr.work_request_uuid, newEvents);
-    // Broadcast SSE event
+    const maxSteps = Number(req.body?.maxSteps) || undefined;
+    const result = await runTickDrain({ maxSteps });
+    // Broadcast an SSE event per advanced WR
     const now = new Date().toISOString();
-    watcher.emitToolEvent({
-      type: "wr_state_changed",
-      data: {
-        wrId: wr.wr_id,
-        event: decision.type,
-        previousStatus: state.status,
-        currentStatus: newState.status,
-        state: newState,
-      },
-      timestamp: now,
-    });
+    for (const step of result.advanced) {
+      watcher.emitToolEvent({
+        type: "wr_state_changed",
+        data: {
+          wrId: step.wrId,
+          event: step.event,
+          previousStatus: step.previousStatus,
+          currentStatus: step.currentStatus,
+          state: step.state,
+        },
+        timestamp: now,
+      });
+    }
+    const last = result.advanced[result.advanced.length - 1];
+    const summary = {
+      ok: true as const,
+      ticked: result.advanced.length > 0,
+      tickedCount: result.advanced.length,
+      heldCount: result.held.length,
+      idleCount: result.idle.length,
+      drained: result.drained,
+      steps: result.steps,
+    };
+    if (!last) {
+      res.json({
+        ...summary,
+        reason:
+          result.held[0]?.reason ??
+          result.steps[0]?.reason ??
+          "no runnable work requests",
+      });
+      return;
+    }
     res.json({
-      ok: true,
-      ticked: true,
-      wrId: wr.wr_id,
-      event: decision.type,
-      previousStatus: state.status,
-      currentStatus: newState.status,
-      state: newState,
+      ...summary,
+      wrId: last.wrId,
+      event: last.event,
+      previousStatus: last.previousStatus,
+      currentStatus: last.currentStatus,
+      state: last.state,
     });
   } catch (err: any) {
     res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * POST /wr/:id/claim — Claim a QUEUED WorkRequest for a worker.
+ * Body: { workerId, leaseMinutes? }. 409 on a claim held by someone else.
+ */
+app.post("/wr/:id/claim", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { workerId, leaseMinutes } = req.body || {};
+    if (!workerId) {
+      res.status(400).json({ ok: false, error: "Missing required field: workerId" });
+      return;
+    }
+    const result = await claimWorkRequest({ wrId: id, workerId, leaseMinutes });
+    watcher.emitToolEvent({
+      type: "wr_state_changed",
+      data: {
+        wrId: id,
+        event: "WR_QUEUED",
+        currentStatus: result.state.status,
+        workerId,
+        state: result.state,
+      },
+      timestamp: new Date().toISOString(),
+    });
+    res.json(result);
+  } catch (err: any) {
+    const conflict = err instanceof ClaimError && err.code === "WR_CLAIM_CONFLICT";
+    res.status(conflict ? 409 : 422).json({
+      ok: false,
+      error: err?.code ? `${err.code}: ${err.message}` : err.message,
+    });
   }
 });
 

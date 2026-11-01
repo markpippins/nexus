@@ -5236,14 +5236,29 @@ export async function getVisionIRArtifacts(
   );
 }
 
-export async function selectNextRunnable(): Promise<WorkRequestRow | undefined> {
+/**
+ * Select the next runnable WorkRequest.
+ *
+ * `exclude` lists work_request_uuid values already visited in the current drain
+ * pass. Without it the same head-of-queue WR is returned until it moves, so one
+ * held WR starves every runnable WR behind it — which is exactly what a
+ * single-step tick did.
+ */
+export async function selectNextRunnable(
+  exclude: string[] = [],
+): Promise<WorkRequestRow | undefined> {
+  const exclusion =
+    exclude.length > 0
+      ? "AND work_request_uuid::text <> ALL(@exclude::text[])"
+      : "";
   for (const status of ["validated", "queued", "claimed", "acked"]) {
     const row = await qOne(
       `SELECT * FROM ${VISION_SCHEMA}.work_requests
        WHERE status = @status
+       ${exclusion}
        ORDER BY recorded_on_dt ASC
        LIMIT 1`,
-      { status },
+      exclude.length > 0 ? { status, exclude } : { status },
     );
     if (row) return row;
   }
