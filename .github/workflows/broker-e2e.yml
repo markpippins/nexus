@@ -160,7 +160,7 @@ jobs:
       contents: read
     services:
       postgres:
-        image: postgres:17
+        image: pgvector/pgvector:pg17
         env:
           POSTGRES_DB: nexus
           POSTGRES_USER: pguser
@@ -246,7 +246,7 @@ jobs:
     timeout-minutes: 40
     services:
       postgres:
-        image: postgres:17
+        image: pgvector/pgvector:pg17
         env:
           POSTGRES_DB: nexus
           POSTGRES_USER: pguser

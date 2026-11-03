@@ -13,8 +13,16 @@
 # definition, so trigger functions like public.notify_member_expired() come
 # along automatically.
 #
-# Vector-backed embedding tables are excluded: they pull in a pgvector
-# dependency, and nothing in the tested code paths reads them.
+# pgvector is REQUIRED (as of 2026-11-03). Vector objects used to be excluded on
+# the rationale "nothing in the tested code paths reads them" — that premise was
+# false: conduit-mcp/src/steward-recall.ts calls steward.semantic_search(), which
+# takes public.vector, and steward.evidence_links joins into it. Excluding the
+# vector TABLES also does not compose: functions keep the vector type in their
+# signature, and views over an excluded table dangle (knowledge.v_graph_summary
+# reads knowledge.graph_entity_embeddings). Partial exclusion produced three
+# different apply failures in sequence. So the snapshot now carries every object
+# and the CI image must provide the extension: pgvector/pgvector:pg17 (an
+# accepted pin — bin/lint_postgres_pins.py recognises it).
 #
 # Born-clean seed: the ratified aspects vocabulary seed (sql/seeds/) is
 # embedded verbatim at the END of the snapshot (after the schema body), so
@@ -27,7 +35,19 @@ OUT="$(dirname "$0")/nexus-ci-bootstrap.sql"
 BODY="$(mktemp /tmp/ci-bootstrap-body.XXXXXX)"
 trap 'rm -f "$BODY"' EXIT
 
-SCHEMAS=(execution vision nebula conduit semantics terrain peb registry resolution wind cascade tackle aspects assembly duality aegis kernel shrapnel)
+# The schema set is driven by what RUNTIME SQL REFERENCES, not by what happens to
+# sit in the source DB. Provenance for the second group (added 2026-11-03): scan
+# runtime code (excluding tests/dist/node_modules) for FROM|JOIN|INTO|UPDATE <schema>.
+# and require every referenced schema to be present. Without this, a missing schema
+# is invisible until a suite 500s against a fresh DB, and the 500 reads as a code
+# defect — that is exactly how throttler was found (Adonis /api/links).
+#
+# Group 1 (original closure) + Group 2 (code-referenced, were missing):
+SCHEMAS=(execution vision nebula conduit semantics terrain peb registry resolution wind cascade tackle aspects assembly duality aegis kernel shrapnel absorb jenkins knowledge mcp operator sonar steward throttler voyager)
+# Deliberately NOT included (measured: no runtime SQL references them):
+#   gateway (1 table), inventory (0 tables), mesh (0 tables), scratch (94 tables,
+#   scratch debris). Adding a schema here is a deliberate act — the vector-table
+#   exclusions below are the reason this cannot simply dump "everything".
 SCHEMA_ARGS=(); for s in "${SCHEMAS[@]}"; do SCHEMA_ARGS+=(--schema="$s"); done
 VALUES_LIST=$(printf "('%s')," "${SCHEMAS[@]}"); VALUES_LIST="${VALUES_LIST%,}"
 NOT_IN=$(printf "'%s'," "${SCHEMAS[@]}"); NOT_IN="${NOT_IN%,}"
@@ -154,19 +174,26 @@ FROM closure
 ORDER BY 1" 2>"${PUBFUNCS_ERR:-/dev/null}")
 if [ -n "${PUBFUNCS_ERR:-}" ] && [ -s "$PUBFUNCS_ERR" ]; then echo "closure query error:" >&2; cat "$PUBFUNCS_ERR" >&2; fi
 
-# Full schema-only dump of the closed schema set, minus vector tables.
+# Full schema-only dump of the closed schema set. NO object exclusions: a
+# partially-included schema does not compose (see the pgvector note at the top).
 PGPASSWORD="${PGPASSWORD:-}" pg_dump -h "$HOST" -p "$PORT" -U "$USER" -d "$DB" \
   --schema-only --no-owner --no-privileges "${SCHEMA_ARGS[@]}" \
-  --exclude-table=nebula.agent_record_embeddings \
-  --exclude-table=nebula.harvest_candidate_embeddings \
-  --exclude-table=nebula.harvest_candidate_embeddings_history \
-  --exclude-table=semantics.source_observation_embeddings > "$BODY"
+  > "$BODY"
 
 # pg_dump 17.x emits \restrict/\unrestrict psql meta-commands with a RANDOM
 # per-run token (psql meta-command-injection guard). They make the artifact
 # non-deterministic run-to-run; strip them — this dump is generated from our
 # own trusted DB, not an untrusted file. (Folded from PR #495.)
 sed -i '/^\\restrict /d; /^\\unrestrict /d' "$BODY"
+
+# Fail-closed extension precondition: the dump now carries vector objects, so the
+# artifact is only applicable on a server that has the extension available. Catch
+# that here rather than as an opaque CREATE TABLE failure during apply.
+if grep -q 'public\.vector' "$BODY" && ! $PSQL -AtAc "SELECT 1 FROM pg_extension WHERE extname = 'vector'" | grep -qx 1; then
+  echo "ERROR: dump body uses public.vector but the source server has no 'vector' extension." >&2
+  echo "The snapshot is complete (no object exclusions), so CI MUST run pgvector/pgvector:pg17." >&2
+  exit 1
+fi
 
 # Closure verification (folded from PR #495): every real source schema
 # referenced anywhere in the dump body must be in SCHEMAS() (public is always
@@ -213,8 +240,19 @@ CREATE SCHEMA IF NOT EXISTS aegis;
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS citext;
+-- Required: the snapshot carries vector columns and vector-typed functions.
+CREATE EXTENSION IF NOT EXISTS vector;
 CREATE SCHEMA IF NOT EXISTS kernel;
 CREATE SCHEMA IF NOT EXISTS shrapnel;
+CREATE SCHEMA IF NOT EXISTS absorb;
+CREATE SCHEMA IF NOT EXISTS jenkins;
+CREATE SCHEMA IF NOT EXISTS knowledge;
+CREATE SCHEMA IF NOT EXISTS mcp;
+CREATE SCHEMA IF NOT EXISTS operator;
+CREATE SCHEMA IF NOT EXISTS sonar;
+CREATE SCHEMA IF NOT EXISTS steward;
+CREATE SCHEMA IF NOT EXISTS throttler;
+CREATE SCHEMA IF NOT EXISTS voyager;
 PRELUDE
   # Public functions referenced by dumped views/triggers (closure above) —
   # must exist before any view/trigger definition that calls them.

@@ -23,7 +23,7 @@
 #
 # ─── Boot smoke (phase-1 ACTIVE per ruling 619049d6/D4; phase-2 ACTIVE 2026-09-25) ─
 # The boot-smoke job below boots the built image against a schema-provisioned
-# postgres:17-alpine (sql/ci-bootstrap/nexus-ci-bootstrap.sql) and asserts
+# pgvector/pgvector:pg17 (sql/ci-bootstrap/nexus-ci-bootstrap.sql) and asserts
 # /actuator/health returns UP with components.db UP — a real ddl-auto=validate
 # pass, which the build-only gate cannot exercise. Validated empirically on
 # titanium 2026-09-22 (scratch PG 17, clean bootstrap apply, health UP + db UP
@@ -143,13 +143,13 @@ jobs:
       - name: Provision schema-provisioned Postgres 17
         run: |
           docker network create ci-boot-smoke
-          # postgres:17-alpine — matches the dump vintage and production
+          # pgvector/pgvector:pg17 — matches the dump vintage and production
           # (vanadium runs 17); DBA decision D1, ratified.
           # -p 5432:5432 — published so the runner-side reconciler can reach
           # the DB for the D5 arc (the app itself uses the docker network).
           docker run -d --name ci-pg --network ci-boot-smoke -p 5432:5432 \
             -e POSTGRES_USER=nexus -e POSTGRES_PASSWORD=nexus \
-            -e POSTGRES_DB=nexus postgres:17-alpine
+            -e POSTGRES_DB=nexus pgvector/pgvector:pg17
           # D5 (phase 2): JetStream server for the write-queue arc probe.
           # -p 4222:4222 — same rationale: runner-side stream provisioning
           # and the probe publisher live on the runner.

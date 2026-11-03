@@ -167,7 +167,7 @@ pipeline {
                     sh '''
                         docker run --rm -d --name ci-conduit-pg \
                             -e POSTGRES_USER=pguser -e POSTGRES_PASSWORD=pgpass \
-                            -e POSTGRES_DB=nexus postgres:17-alpine
+                            -e POSTGRES_DB=nexus pgvector/pgvector:pg17
                         # pg_isready answers OK against initdb's temporary
                         # server, which then restarts before the real one
                         # listens. Require a real SQL connection to succeed
