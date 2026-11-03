@@ -19,6 +19,7 @@
  */
 
 import crypto from "node:crypto";
+import fs from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { insertCirViolation } from "./db";
@@ -52,11 +53,56 @@ function pythonBin(): string {
   return process.env.CONDUIT_PYTHON || "python3";
 }
 
+/**
+ * Walk up from `startDir` to the checkout that owns the Python tree, i.e. the
+ * nearest ancestor containing `python/nexus_core/wrp/enforce_cli.py`.
+ *
+ * Anchored on the file we actually need to import rather than on `.git`: it is
+ * the thing the subprocess requires, and a linked worktree has a `.git` *file*
+ * while a renamed or relocated checkout keeps the same layout. Returns
+ * `undefined` when no ancestor qualifies (packaged/dist layout).
+ */
+export function findRepoRoot(startDir: string): string | undefined {
+  let dir = path.resolve(startDir);
+  for (;;) {
+    if (
+      fs.existsSync(path.join(dir, "python", "nexus_core", "wrp", "enforce_cli.py"))
+    ) {
+      return dir;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+}
+
+/**
+ * Default PYTHONPATH for the CIR-SDM CLI: the `python/` of whichever checkout
+ * this source lives in.
+ *
+ * The previous default walked four levels up from `src/` and then named the
+ * repo `nexus/` — correct only when the checkout is literally named `nexus`.
+ * From a linked worktree (`nexus-worktrees/<topic>`) it resolved to
+ * `nexus-worktrees/nexus/python`, which does not exist, so every CIR-SDM call
+ * died with `ModuleNotFoundError` and `gateWrTransition` failed CLOSED: a
+ * worktree-run conduit-mcp held every transition while reporting
+ * "enforcement gate unreachable". Discovery by content is name- and
+ * depth-independent, so it survives worktrees and a repo rename.
+ */
+export function resolvePythonPath(startDir: string = __dirname): string {
+  const root = findRepoRoot(startDir);
+  if (root) return path.join(root, "python");
+  // Unchanged fallback: preserve the previous resolution when no ancestor owns
+  // the Python tree, so a relocated build keeps its existing failure message.
+  return path.resolve(startDir, "../../../../nexus/python");
+}
+
+let cachedDefaultPythonPath: string | undefined;
+
 function pythonPath(): string {
-  return (
-    process.env.PYTHONPATH ||
-    path.resolve(__dirname, "../../../../nexus/python")
-  );
+  if (process.env.PYTHONPATH) return process.env.PYTHONPATH;
+  cachedDefaultPythonPath ??= resolvePythonPath();
+  return cachedDefaultPythonPath;
 }
 
 interface CliResult {
