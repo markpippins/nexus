@@ -113,8 +113,21 @@ POLICY_TAG = "type:vendor-bump"
 
 _RUN_URL_RE = re.compile(r"/actions/runs/(\d+)")
 _UPDATE_TYPE_RE = re.compile(r"update-type:\s*([A-Za-z0-9:_-]+)")
-_VERSION_PAIR_RE = re.compile(
-    r"\bfrom\s+v?([0-9][\w.+-]*)\s+to\s+v?([0-9][\w.+-]*)", re.IGNORECASE
+# Security-update bodies carry NO update-type metadata; their authoritative
+# signal is the top-level `Updates `pkg` from X to Y` line. A blanket
+# "from X to Y" scan over the body is wrong: Dependabot embeds the
+# dependency's CHANGELOG, so an unrelated upstream line ("<li>Bump pillow
+# from 12.3.0 to 13.0.0</li>") refused #823 for a major bump that was not
+# being made. Anchoring to the update lines and the title is what keeps the
+# fallback honest.
+_UPDATES_LINE_RE = re.compile(
+    r"^Updates? `([^`]+)` from (\S+) to (\S+)\s*$", re.MULTILINE
+)
+# The PR title always names the bumped package and the pair (grouped titles
+# omit the pair, which is why the update lines stay the primary signal).
+_TITLE_PAIR_RE = re.compile(
+    r"\bbump\s+(?:the\s+)?`?([@\w./-]+)`?\s+from\s+v?([\w.+-]+)\s+to\s+v?([\w.+-]+)",
+    re.IGNORECASE,
 )
 _DEP_NAME_RE = re.compile(r"dependency-name:\s*(\S+)")
 
@@ -177,15 +190,23 @@ def classify_paths(paths: Sequence[str]) -> Tuple[bool, str]:
     return True, f"{len(paths)} dependency manifest/lockfile path(s)"
 
 
-def classify_update(body: str) -> Tuple[bool, str, List[str]]:
+def _same_major(a: str, b: str) -> bool:
+    return a.split(".")[0].lstrip("v") == b.split(".")[0].lstrip("v")
+
+
+def classify_update(body: str, title: str = "") -> Tuple[bool, str, List[str]]:
     """True when the update is patch/minor and classified.
 
-    Primary signal is Dependabot's embedded `update-type:` metadata (one per
-    bumped dependency, including inside grouped PRs). When that block is
-    absent, fall back to the `from X to Y` pairs in the body/title: same
-    major on every pair is patch/minor; any differing major is a major bump.
-    No usable signal at all refuses (fail closed) — "cannot tell" is not
-    "safe".
+    Signals, in order of authority:
+      1. Dependabot's `update-type:` metadata (version-update bodies, one
+         entry per dependency in a grouped PR);
+      2. the security-update body's `Updates `pkg` from X to Y` lines;
+      3. the PR title's `bump <pkg> from X to Y`.
+
+    Only those are consulted — see _UPDATES_LINE_RE for why a blanket body
+    scan refused a legitimate PR. Every observed pair must stay on the same
+    major. No usable signal at all refuses (fail closed): "cannot tell" is
+    not "safe".
     """
     kinds = [k.lower() for k in _UPDATE_TYPE_RE.findall(body or "")]
     if kinds:
@@ -197,17 +218,23 @@ def classify_update(body: str) -> Tuple[bool, str, List[str]]:
             return False, f"unrecognised update-type(s): {sorted(set(unknown))}", kinds
         return True, f"update-type(s): {', '.join(sorted(set(kinds)))}", kinds
 
-    pairs = _VERSION_PAIR_RE.findall(body or "")
+    pairs: List[Tuple[str, str, str]] = [
+        (name, a, b) for name, a, b in _UPDATES_LINE_RE.findall(body or "")
+    ]
+    pairs += [
+        (name, a, b) for name, a, b in _TITLE_PAIR_RE.findall(title or "")
+    ]
     if not pairs:
         return False, "no update-type metadata and no 'from X to Y' pair (unclassified)", kinds
-    majors = [
-        (a, b) for a, b in pairs
-        if a.split(".")[0].lstrip("v") != b.split(".")[0].lstrip("v")
-    ]
+    majors = [p for p in pairs if not _same_major(p[1], p[2])]
     if majors:
-        shown = ", ".join(f"{a} -> {b}" for a, b in majors[:3])
+        shown = ", ".join(f"{n} {a} -> {b}" for n, a, b in majors[:3])
         return False, f"major version change in version pair(s): {shown}", kinds
-    return True, f"{len(pairs)} version pair(s), all same-major (no update-type metadata)", kinds
+    return (
+        True,
+        f"{len(pairs)} version pair(s), all same-major (no update-type metadata)",
+        kinds,
+    )
 
 
 def dependency_names(body: str) -> List[str]:
@@ -245,10 +272,43 @@ def cited_run_ids(rollup: Sequence[Dict[str, Any]]) -> List[str]:
     return ids[:MAX_CITED_RUNS]
 
 
-def mint_head(pr_number: int, runner: Callable) -> str:
+def resolve_repo(runner: Callable) -> str:
+    """OWNER/REPO for the current checkout, or "" when unresolvable.
+
+    mint-head cannot resolve it on its own from an R8.0 linked worktree
+    (the remote lookup yields ::error::could not resolve OWNER/REPO), so the
+    caller resolves it once and passes it through explicitly.
+    """
+    try:
+        data = gh_json("repo", "view", "--json", "nameWithOwner", runner=runner)
+        full = str((data or {}).get("nameWithOwner") or "").strip()
+        if full.count("/") == 1:
+            return full
+    except (RuntimeError, ValueError):
+        pass
+    try:
+        proc = runner(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if proc.returncode == 0:
+            m = re.search(
+                r"[:/]([^/:]+/[^/]+?)(?:\.git)?$", (proc.stdout or "").strip()
+            )
+            if m:
+                return m.group(1)
+    except (OSError, RuntimeError):
+        pass
+    return ""
+
+
+def mint_head(pr_number: int, runner: Callable, repo: str = "") -> str:
     """`head:<sha7>` minted from the live remote (Decision 10). Never typed."""
+    argv = [sys.executable, str(PGIE), "mint-head", "--pr", str(pr_number)]
+    if repo:
+        argv += ["--repo", repo]
     proc = runner(
-        [sys.executable, str(PGIE), "mint-head", "--pr", str(pr_number)],
+        argv,
         capture_output=True, text=True, timeout=60,
     )
     if proc.returncode != 0:
@@ -369,12 +429,40 @@ def post_attestation(
 
 # ── One PR ──────────────────────────────────────────────────────────────
 
+def workflow_run_ids(head_sha: str, runner: Callable) -> List[str]:
+    """Successful workflow runs at `head_sha`, from `gh run list --commit`.
+
+    Fallback for PRs whose check-rollup carries no Actions details URLs
+    (#788: green, but no run reference recoverable from the rollup), so the
+    evidence rule still cites real runs instead of refusing a legitimate
+    bump for a presentation quirk. Only completed successes qualify.
+    """
+    try:
+        runs = gh_json(
+            "run", "list", "--commit", head_sha, "--limit", "20",
+            "--json", "databaseId,status,conclusion", runner=runner,
+        )
+    except (RuntimeError, ValueError):
+        return []
+    ids: List[str] = []
+    for run in runs or []:
+        if str(run.get("status") or "").lower() != "completed":
+            continue
+        if str(run.get("conclusion") or "").lower() != "success":
+            continue
+        rid = str(run.get("databaseId") or "")
+        if rid and rid not in ids:
+            ids.append(rid)
+    return ids[:MAX_CITED_RUNS]
+
+
 def attest_pr(
     pr_number: int,
     *,
     apply: bool,
     runner: Callable,
     run_json: Callable[..., Any],
+    repo: str = "",
     out: Any = sys.stdout,
 ) -> str:
     """Evaluate and (under --apply) attest one PR.
@@ -412,8 +500,9 @@ def attest_pr(
         print(f"  #{pr_number}: REFUSED — {detail}", file=out)
         return "refused"
 
-    body = f"{pr.get('title') or ''}\n{pr.get('body') or ''}"
-    ok, update_detail, _kinds = classify_update(body)
+    ok, update_detail, _kinds = classify_update(
+        pr.get("body") or "", pr.get("title") or ""
+    )
     if not ok:
         print(f"  #{pr_number}: REFUSED — {update_detail} (needs human/tester attestation)", file=out)
         return "refused"
@@ -423,12 +512,16 @@ def attest_pr(
     if not ci_ok:
         print(f"  #{pr_number}: REFUSED — CI not green: {ci_detail}", file=out)
         return "refused"
-    run_ids = cited_run_ids(rollup)
+    head_sha = str(pr.get("headRefOid") or "")
+    run_ids = cited_run_ids(rollup) or workflow_run_ids(head_sha, runner)
     if not run_ids:
-        print(f"  #{pr_number}: REFUSED — no workflow run IDs recoverable from the rollup", file=out)
+        print(
+            f"  #{pr_number}: REFUSED — no successful workflow run IDs "
+            "recoverable at this head",
+            file=out,
+        )
         return "refused"
 
-    head_sha = str(pr.get("headRefOid") or "")
     evidence_ok, evidence_detail, transient = merge_pr.verify_ci_runs(
         run_ids, head_sha, run_json
     )
@@ -442,7 +535,7 @@ def attest_pr(
         return "attested"
 
     try:
-        head_tag = mint_head(pr_number, runner)
+        head_tag = mint_head(pr_number, runner, repo)
     except (RuntimeError, OSError) as exc:
         print(f"  #{pr_number}: REFUSED — {exc}", file=out)
         return "error"
@@ -505,6 +598,10 @@ def run_cycle(
         file=out,
     )
 
+    repo = resolve_repo(runner)
+    if not repo:
+        print("vendor_attest: WARNING — repository could not be resolved; "
+              "head minting may fail", file=out)
     posted = 0
     tool_error = False
     for pr in prs:
@@ -513,7 +610,7 @@ def run_cycle(
             print(f"  #{num}: per-cycle attestation cap {cap} reached — next tick", file=out)
             continue
         outcome = attest_pr(
-            num, apply=apply, runner=runner, run_json=run_json, out=out
+            num, apply=apply, runner=runner, run_json=run_json, repo=repo, out=out
         )
         if outcome == "posted":
             posted += 1

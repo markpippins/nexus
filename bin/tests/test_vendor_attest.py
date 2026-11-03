@@ -133,6 +133,10 @@ class World:
         self.calls = []
         self.posts = []
         self.post_body = ""
+        self.repo = "markpippins/nexus"
+        self.runs = [
+            {"databaseId": int(RUN_ID), "status": "completed", "conclusion": "success"}
+        ]
 
     # subprocess.run-shaped
     def __call__(self, argv, **kwargs):
@@ -157,6 +161,10 @@ class World:
             return FakeResult(
                 0, json.dumps(self.run_data.get(rid, {"c": "success", "s": SHA}))
             )
+        if argv[:3] == ["gh", "repo", "view"]:
+            return FakeResult(0, json.dumps({"nameWithOwner": self.repo}))
+        if argv[:3] == ["gh", "run", "list"]:
+            return FakeResult(0, json.dumps(self.runs))
         raise AssertionError(f"unexpected command: {argv}")
 
     # merge_pr.verify_ci_runs-shaped
@@ -259,18 +267,57 @@ def test_unclassifiable_update_fails_closed():
     assert not ok and "unclassified" in detail
 
 
-def test_version_pair_fallback_allows_same_major():
-    ok, detail, _ = vendor.classify_update("Bump qs from 6.16.0 to 6.16.2")
+def test_title_pair_fallback_allows_same_major():
+    ok, detail, _ = vendor.classify_update(
+        "", "chore(deps): bump qs from 6.16.0 to 6.16.2 in /typescript/execution-srv"
+    )
     assert ok and "same-major" in detail
 
 
-def test_version_pair_fallback_refuses_major():
-    ok, detail, _ = vendor.classify_update("Bump @adonisjs/core from 6.21.0 to 7.5.2")
+def test_title_pair_fallback_refuses_major():
+    ok, detail, _ = vendor.classify_update(
+        "", "chore(deps): bump @adonisjs/core from 6.21.0 to 7.5.2 in /adonisjs/x"
+    )
     assert not ok and "major version change" in detail
+
+
+def test_security_update_body_pair_is_read_from_the_updates_line():
+    # The security-update body format carries no update-type metadata.
+    ok, detail, _ = vendor.classify_update("Updates `qs` from 6.16.0 to 6.16.2")
+    assert ok and "same-major" in detail
+
+
+def test_updates_line_major_is_refused():
+    ok, detail, _ = vendor.classify_update("Updates `pillow` from 12.3.0 to 13.0.0")
+    assert not ok and "major version change" in detail
+
+
+def test_embedded_changelog_does_not_refuse_a_legitimate_pr():
+    # Regression for #823: the dependency's own CHANGELOG is pasted into the
+    # PR body, and a blanket "from X to Y" scan read an unrelated upstream
+    # major as if it were this update.
+    body = (
+        "Updates `pymongo` from 4.6.3 to 4.18.3\n"
+        "<li>Bump pillow from 12.3.0 to 13.0.0 by @dependabot in #2675</li>\n"
+        "<li>Bump astral-sh/setup-uv from 7.1.6 to 7.2.0 in the actions group</li>\n"
+    )
+    ok, detail, _ = vendor.classify_update(body, "chore(deps): bump the pip group")
+    assert ok and "same-major" in detail
 
 
 def test_dependency_names_are_extracted():
     assert vendor.dependency_names(PATCH_BODY) == ["qs"]
+
+
+def test_run_ids_fall_back_to_run_list_when_the_rollup_has_no_urls():
+    # #788 shape: green rollup, but no Actions details URL to harvest.
+    checks = [
+        {"name": f"c{i}", "status": "COMPLETED", "conclusion": "SUCCESS"}
+        for i in range(3)
+    ]
+    outcome, world = run(pr=pr_payload(checks=checks))
+    assert outcome == "posted"
+    assert f"CI run {RUN_ID}" in world.post_body
 
 
 # ── evidence ────────────────────────────────────────────────────────────
@@ -415,6 +462,14 @@ def test_cycle_attests_and_respects_the_cap():
     world = World(pr_payload())
     rc = vendor.run_cycle(apply=True, cap=1, author="app/dependabot", runner=world)
     assert rc == 0 and len(world.posts) == 1
+
+
+def test_cycle_resolves_the_repo_and_passes_it_to_the_minter():
+    # mint-head cannot resolve OWNER/REPO from an R8.0 worktree on its own.
+    world = World(pr_payload())
+    vendor.run_cycle(apply=True, cap=1, author="app/dependabot", runner=world)
+    mint = [c for c in world.calls if "mint-head" in " ".join(c)][0]
+    assert "--repo" in mint and "markpippins/nexus" in mint
 
 
 def test_cycle_discovery_failure_is_a_tool_error():
