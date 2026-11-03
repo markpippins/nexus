@@ -5331,22 +5331,22 @@ export function createRoutes(pool: Pool): Router {
   // GET /api/attestations?pr=<N> — indexed, exact attestation lookup.
   //
   // Purpose-built for merge-gate gate 3 (bin/merge_pr.py): returns only
-  // attestation-shaped tester rows carrying the exact pr:<N> tag, newest
-  // first. The server-side shape constraint encodes tester finding
-  // 84ca2388 — canonical rows are record_type=assessment with
-  // type:approval + status:done; legacy rows carry type:attestation.
-  // Intent/status-update/finding records never qualify, so the gate's
-  // match is exact and index-backed (GIN on tags, migration 055) instead
-  // of a bounded newest-N scan. Tester role is hardcoded: attestation is
-  // the tester's binding output (roundtable invariant I2).
-  //
-  // Withdrawn rows are excluded. Decision 24 retirement/supersession drops
-  // every status:* tag and adds status:retired | status:superseded, but
-  // deliberately keeps type:* and pr:* — so a withdrawn legacy attestation
-  // still carries `type:attestation` and a withdrawn canonical one still
-  // carries `type:approval`. Without this clause the lookup keeps returning
-  // them, and gate 3 reads "an attestation exists" for a record that was
-  // explicitly withdrawn (client-side filter: merge_pr.is_withdrawn).
+  // attestation-shaped tester rows for one PR, newest first, so the gate does
+  // not need a bounded newest-N scan. The shape rule encodes tester finding
+  // 84ca2388. Two clauses ride on it. Matching accepts pr:<N> or gate:<N>, the
+  // tester's live tag since #842 being gate:<N> + verdict:approve with the PR
+  // number only in the title — a pr:-only filter returned nothing for attested
+  // PRs. And withdrawn rows never match: Decision 24 retirement drops every
+  // status:* tag and adds status:retired | status:superseded while keeping
+  // type:* and pr:*, so a withdrawn attestation stays shape-matching forever
+  // (client-side equivalent: merge_pr.is_withdrawn).
+
+  // Canonical rows are record_type=assessment with type:approval + status:done
+  // and legacy rows carry type:attestation; intent and finding rows never
+  // qualify, and tester role is hardcoded since attestation is the tester's
+  // binding output (roundtable invariant I2). Matching accepts pr:<N> or
+  // gate:<N>; withdrawn rows (status:retired, status:superseded) never match,
+  // because Decision 24 keeps type:* and only swaps the status tag.
   router.get('/attestations', attestationsLimiter, async (req: Request, res: Response) => {
     try {
       const prRaw = req.query.pr;

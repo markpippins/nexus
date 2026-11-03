@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: nebula-srv — Nebula Knowledge-Graph API
-  version: 1.0.80c3af3e
+  version: 1.0.826e9926
   description: 'Canonical asset graph: systems, subsystems, features, documents, harvests, agent records, projections, knowledge
     graph, and cross-references.
 
@@ -841,8 +841,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-      summary: 84ca2388 — canonical rows are record_type=assessment with type:approval + status:done; legacy rows carry type:attestation.
-        Intent/status-upd
+      summary: Canonical rows are record_type=assessment with type:approval + status:done and legacy rows carry type:attestation;
+        intent and finding rows n
   /api/audit:
     get:
       tags:
