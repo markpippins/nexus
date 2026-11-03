@@ -4,6 +4,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { q } from '../services/nebula_helpers.js'
+import { resolvePipelineDir } from '../lib/repo-root.js'
 
 /**
  * conduit-srv (Wave 3.3) — workflows / tickets / tokens / config /
@@ -520,9 +521,7 @@ export default class ConduitController {
       return response.status(400).json({ error: 'Invalid session ID' })
     }
 
-    const PIPELINE_DIR =
-      process.env.PIPELINE_DIR ||
-      path.resolve(__dirname, '../../../../../nexus/audit/CONDUIT_DATA')
+    const PIPELINE_DIR = process.env.PIPELINE_DIR || resolvePipelineDir(__dirname)
 
     const sessionsDir = path.join(PIPELINE_DIR, 'sessions')
     const logPath = path.join(sessionsDir, `${sessionId}.log`)
