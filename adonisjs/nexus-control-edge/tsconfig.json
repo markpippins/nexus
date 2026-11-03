@@ -2,6 +2,12 @@
   "extends": "@adonisjs/tsconfig/tsconfig.app.json",
   "compilerOptions": {
     "rootDir": "./",
-    "outDir": "./build"
+    "outDir": "./build",
+    // @adonisjs/assembler v8 runs TypeScript source through
+    // `node --import=@poppinss/ts-exec`, whose resolver REJECTS a `.ts`
+    // extension on an import unless this is enabled (its error message names
+    // the flag). The framework itself resolves config/*.ts by constructing a
+    // `.ts` URL, so `npm test` cannot boot without it. TypeScript >= 5.7.
+    "rewriteRelativeImportExtensions": true
   }
 }

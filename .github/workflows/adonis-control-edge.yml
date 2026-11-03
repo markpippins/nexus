@@ -1,0 +1,163 @@
+# Adonis control-plane edge — the ONLY job that runs its test suite.
+#
+# Until this workflow, neither Adonis app was executed by anything. Grepping
+# `.github/workflows/` for "adonis" returned exactly one hit (wr-conf-046.yml)
+# and it is a comment inside an unrelated bcrypt-migration E2E. So
+# adonisjs/nexus-control-edge carried two functional specs (~20 assertions
+# across the health, conduit, tackle, wind, kernel, ui-tools and vision
+# surfaces) that had never run anywhere but a developer's laptop — a suite
+# that reads as coverage and executes nothing, the same class of defect as the
+# 38 unreferenced bin guards (fb11ad19) and the base-filtered PR workflows.
+#
+# ─── Two things had to be fixed before this could exist ────────────────────
+#
+# 1. `npm test` did not boot at all:
+#      Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@poppinss/ts-exec'
+#    @adonisjs/assembler v8 launches bin/test.ts as
+#      node --import=@poppinss/ts-exec --enable-source-maps
+#    and `@poppinss/ts-exec` is a devDependency of the assembler's OWN repo —
+#    it is not shipped with the assembler, so every consuming app must install
+#    it. Fixed in package.json (devDependency) in this PR.
+#
+# 2. The specs are live-database integration tests: they POST a work request,
+#    upsert it, and write the conduit failure-recovery config. Pointed at a
+#    developer's database they mutate real rows. Here they get a throwaway
+#    postgres built from the committed schema-only snapshot
+#    (sql/ci-bootstrap/nexus-ci-bootstrap.sql — the same artifact
+#    nexus-core-image, bin-tests, broker-e2e and the cib-snapshot-* jobs use),
+#    plus tests/fixtures/ci-seed.sql for the two preconditions the snapshot
+#    cannot supply. Both files, same order, locally and here.
+#
+# ─── Why the snapshot alone is not enough (measured, not assumed) ──────────
+#
+# Snapshot-only run: 17 passed / 3 failed.
+#   * GET /api/links 500 — `throttler` is not one of refresh.sh's covered
+#     schemas, so throttler.links is absent.
+#   * GET+POST /config/failure-recovery/conduit — with no id=1 row the
+#     controller falls back to retry_after 1800, which is exactly what the
+#     TACKLE table serves. On an unseeded database the "two distinct breaker
+#     paths" the spec exists to prove collapse into identical numbers.
+# The fixture supplies both; the run is then 20/20.
+#
+# `pull_request` carries NO `branches:` filter, deliberately (same ruling as
+# bin-tests.yml and the other 51 workflows): a PR based on another PR's branch
+# must still run its own checks, because a workflow that never starts is
+# indistinguishable from a green one in the checks list.
+name: Adonis control edge
+
+on:
+  push:
+    branches: [main, master, feature/*, dev]
+    paths:
+      - 'adonisjs/nexus-control-edge/**'
+      - 'sql/ci-bootstrap/**'
+      - '.github/workflows/adonis-control-edge.yml'
+  pull_request:
+    paths:
+      - 'adonisjs/nexus-control-edge/**'
+      - 'sql/ci-bootstrap/**'
+      - '.github/workflows/adonis-control-edge.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  functional:
+    name: nexus-control-edge functional suite (PG17 + Redis)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        # postgres:17, the house pin since the wr-conf-025 PG17 lesson. The
+        # snapshot needs only btree_gist, pgcrypto and citext — all in the
+        # stock image; vector-backed tables are excluded from the snapshot by
+        # design, so pgvector is not required here.
+        image: postgres:17
+        env:
+          POSTGRES_USER: pguser
+          POSTGRES_PASSWORD: pgpass
+          POSTGRES_DB: nexus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pguser"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        # GET /health asserts redis is up (the spec's own precondition), so the
+        # service has to be real rather than a stub.
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # start/env.ts validates every one of these and fails the boot if any is
+      # missing (that is how the broker app fails today). A CI runner has no
+      # .env — it is gitignored — so they all come from here.
+      HOST: 127.0.0.1
+      PORT: 8082
+      APP_NAME: nexus-control-edge
+      LOG_LEVEL: warn
+      APP_KEY: ci-only-control-edge-key-not-a-secret
+      PG_HOST: localhost
+      PG_PORT: 5432
+      PG_USER: pguser
+      PG_PASSWORD: pgpass
+      PG_DB_NAME: ci_edge
+      REDIS_HOST: localhost
+      REDIS_PORT: 6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # @adonisjs/core 7.x, @adonisjs/assembler 8.x and @poppinss/ts-exec
+          # all declare engines.node >=24.0.0. On 22 the toolchain refuses
+          # before any test runs.
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: adonisjs/nexus-control-edge/package-lock.json
+
+      - name: Provision throwaway database (schema snapshot + spec preconditions)
+        env:
+          PGPASSWORD: pgpass
+        run: |
+          set -euo pipefail
+          psql -h localhost -U pguser -d postgres -q \
+            -c "DROP DATABASE IF EXISTS ${PG_DB_NAME};" \
+            -c "CREATE DATABASE ${PG_DB_NAME};"
+          # ON_ERROR_STOP: a partially-applied snapshot must fail this step
+          # rather than let the suite run against half a schema.
+          psql -h localhost -U pguser -d "${PG_DB_NAME}" -q -v ON_ERROR_STOP=1 \
+            -f sql/ci-bootstrap/nexus-ci-bootstrap.sql
+          psql -h localhost -U pguser -d "${PG_DB_NAME}" -q -v ON_ERROR_STOP=1 \
+            -f adonisjs/nexus-control-edge/tests/fixtures/ci-seed.sql
+
+      - name: Install dependencies
+        working-directory: adonisjs/nexus-control-edge
+        # ci, not install: the lockfile is the artifact under test.
+        run: npm ci
+
+      - name: Functional suite
+        working-directory: adonisjs/nexus-control-edge
+        # THE ASSERTION. bin/test.ts sets NODE_ENV=test; the suite talks to the
+        # throwaway database above and nowhere else.
+        run: npm test
+
+      - name: Typecheck
+        working-directory: adonisjs/nexus-control-edge
+        # `tsc --noEmit`, separate from the suite because it is the only step
+        # that would notice the tsconfig rewriteRelativeImportExtensions flag
+        # (required by the ts-exec resolver) being dropped or mistyped for the
+        # `node ace build` path rather than for tests.
+        run: npm run typecheck
