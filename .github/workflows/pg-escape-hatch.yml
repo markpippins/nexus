@@ -24,7 +24,8 @@ on:
       - 'bin/tests/test_pg_escape_hatch.py'
       - '.github/workflows/pg-escape-hatch.yml'
   pull_request:
-    branches: [ main, master, feature/* ]
+    # every base, incl. stacked-PR bases — a base filter silently skips CI
+    branches: ['**']
     paths:
       - 'bin/pg-escape-hatch.sh'
       - 'bin/lib/drive-guard.sh'

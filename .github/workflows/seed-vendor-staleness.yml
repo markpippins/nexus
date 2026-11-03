@@ -33,7 +33,8 @@ on:
       - 'bin/regenerate_memory_seed.py'
       - '.github/workflows/seed-vendor-staleness.yml'
   pull_request:
-    branches: [main]
+    # every base, incl. stacked-PR bases — a base filter silently skips CI
+    branches: ['**']
     paths:
       - 'typescript/tackle-seeds/**'
       - 'moleculer/*/vendor/tackle-seeds/**'

@@ -50,7 +50,8 @@ on:
       - '**/Dockerfile*'
       - '**/migrations/**/*.sql'
   pull_request:
-    branches: [ main, master, dev, feature/* ]
+    # every base, incl. stacked-PR bases — a base filter silently skips CI
+    branches: ['**']
     paths:
       - '.github/workflows/**'
       - 'bin/wf_lint.py'

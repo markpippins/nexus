@@ -2,7 +2,8 @@ name: vanadium-sonar
 
 on:
   pull_request:
-    branches: [ main ]
+    # every base, incl. stacked-PR bases — a base filter silently skips CI
+    branches: ['**']
   push:
     branches: [ main ]
   # On-demand runs: cache verification (npm entry, same rationale as mesh-pytest).

@@ -8,7 +8,8 @@ on:
   push:
     branches: [ main, master, dev, feature/* ]
   pull_request:
-    branches: [ main, master, dev, feature/* ]
+    # every base, incl. stacked-PR bases — a base filter silently skips CI
+    branches: ['**']
   # On-demand runs: cache verification (per-workflow Maven keys from #573 —
   # miss+save then hit can be proven without a throwaway push).
   workflow_dispatch:

@@ -11,7 +11,8 @@ on:
   push:
     branches: [ main, master, dev, feature/* ]
   pull_request:
-    branches: [ main, master, dev, feature/* ]
+    # every base, incl. stacked-PR bases — a base filter silently skips CI
+    branches: ['**']
   # On-demand runs (work item 7017d5ce remedy 2): lets CI be re-triggered
   # for a branch without a throwaway push. ci.yml already has this (#573).
   workflow_dispatch:

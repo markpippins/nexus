@@ -10,7 +10,8 @@ on:
   push:
     branches: [main, master, feature/*, dev]
   pull_request:
-    branches: [main, master, feature/*]
+    # every base, incl. stacked-PR bases — a base filter silently skips CI
+    branches: ['**']
   workflow_dispatch:
 
 permissions:
