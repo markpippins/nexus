@@ -65,7 +65,15 @@ ExecStartPre=/usr/bin/git -C /home/codex/dev/nexus-janitor reset --hard --quiet 
 # Skip cleanly (result=skipped, unit NOT failed) if the script is not present
 # on the deploy checkout — i.e. if the clone predates the PR that adds it.
 ExecCondition=/usr/bin/test -f /home/codex/dev/nexus-janitor/bin/attestation_janitor.py
-ExecStart=/usr/bin/python3 /home/codex/dev/nexus-janitor/bin/attestation_janitor.py --apply --cap 3
+# Vendor (Dependabot) attestation runs FIRST, then the janitor merges through
+# the same gate as any other PR. Ordering is the point: the janitor only
+# merges what is already attested, so the attestation has to exist before the
+# merge pass. bin/vendor_attest.py can only POST a record — it never merges,
+# never edits a branch, and never sets NEXUS_ALLOW_UNATTESTED_MERGE. Its scope
+# is bounded to dependency-manifest-only, non-major diffs (operator ruling
+# 2026-11-03); everything else still needs a human/tester attestation.
+ExecStartPre=/usr/bin/python3 /home/codex/dev/nexus-janitor/bin/vendor_attest.py --apply --cap 5
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus-janitor/bin/attestation_janitor.py --apply --cap 3 --extra-author app/dependabot
 TimeoutStartSec=600
 SyslogIdentifier=attestation-janitor
 
