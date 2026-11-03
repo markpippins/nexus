@@ -225,6 +225,62 @@ class Boot:
         except Exception as e:
             self.record("lease", "degraded", f"nebula-mcp lease tools unavailable: {type(e).__name__}: {str(e)[:120]}")
 
+    # 2b ─ lease precheck (checkpoint-only path) ---------------------------
+    def lease_precheck(self) -> None:
+        """Report lease presence before advancing checkpoints (R17.1).
+
+        `--blackboard-advance-only` is deliberately checkpoint-only: no lease
+        issue/renew, no clock-in, no inbox pull. That is the right shape for an
+        end-of-turn step — but it also means a session can reach it having
+        never run the full boot, and then advance checkpoints, write records,
+        raise PRs and post to forums with no lease window covering any of it.
+        Nothing said so; the report looked clean.
+
+        This makes the gap visible without changing the path's shape: it
+        READS the lease state and records `ok` / `degraded` accordingly. It
+        never issues or renews — issuing here would open a window *after* the
+        work and make the census claim coverage the session never had, which
+        is worse than a visible gap.
+
+        Degrades, never fails: an unreachable nebula-mcp is data, not a
+        reason to lose the end-of-turn checkpoint advance.
+        """
+        print("== lease precheck (checkpoint-only) ==")
+        if self.lease_policy == "skip":
+            self.record("lease-precheck", "skipped", "--lease skip")
+            return
+        if McpClient is None:
+            # _MCP_IMPORT_ERROR is only bound when the import failed; a stub or
+            # patched-out client (tests) leaves the name absent.
+            err = globals().get("_MCP_IMPORT_ERROR", "client unavailable")
+            self.record("lease-precheck", "degraded",
+                        f"nebula-mcp-client library not importable: {err}")
+            return
+        try:
+            client = McpClient(NEBULA_MCP)
+            data = parse_json(text_of(client.call(
+                "role_lease_status", {"role": self.role, "status": "ACTIVE"}))) or {}
+            items = data.get("items") or []
+        except Exception as e:  # noqa: BLE001 — degrade, never fail the turn
+            self.record("lease-precheck", "degraded",
+                        f"nebula-mcp lease tools unavailable: {type(e).__name__}: {str(e)[:120]}")
+            return
+        mine = next((l for l in items
+                     if (l.get("channel") or self.channel) == self.channel), None)
+        if mine is not None:
+            self.record("lease-precheck", "ok",
+                        f"active lease {mine.get('id')} for {self.role}@{self.channel} "
+                        f"(expires {mine.get('expires_at') or '?'})")
+            return
+        elsewhere = sorted({(l.get("channel") or "?") for l in items})
+        other = (f"; {self.role} holds ACTIVE leases on {', '.join(elsewhere)} only"
+                 if elsewhere else f"; no ACTIVE lease for {self.role} anywhere")
+        self.record("lease-precheck", "degraded",
+                    f"no ACTIVE lease for {self.role}@{self.channel}{other} — "
+                    "checkpoints advanced outside any lease window; run the full "
+                    f"boot to issue one (freebuff-boot.py --role {self.role} "
+                    f"--model {self.model})")
+
     # 3 ─ clock-in ---------------------------------------------------------
     def clock_in(self) -> None:
         print("== clock-in (R13) ==")
@@ -620,8 +676,12 @@ class Boot:
         print(f"\n== boot report: {ok} ok, {skipped} skipped, {degraded} degraded, {failed} failed "
               f"({'dry-run' if self.dry_run else 'live'}, role={self.role}@{self.channel}) ==")
         if degraded:
-            print("  DEGRADED MODE: some governance services are unreachable; the boot "
-                  "continued, but the missing surfaces were NOT enforced this session.")
+            # "unreachable OR unheld": a degraded lease-precheck means the service
+            # answered and said no lease is held — accurate, but neither
+            # unreachable nor a surface that was silently dropped.
+            print("  DEGRADED MODE: some governance surfaces were unreachable or "
+                  "unheld; the boot continued, but those surfaces were NOT "
+                  "enforced this session.")
         exit_code = 0
         if self.strict and (degraded or failed):
             exit_code = 1
@@ -928,8 +988,12 @@ def main(argv: list[str]) -> int:
                            args.attest_session)
     if args.blackboard_advance_only:
         # End-of-turn protocol step: advance checkpoints, print the report, exit.
-        # Deliberately NOT the full boot — no lease, no clock-in, no inbox pull.
+        # Deliberately NOT the full boot — no lease issue/renew, no clock-in, no
+        # inbox pull. The lease state is still READ (never written) so a session
+        # that reached the end of its turn without ever taking a lease sees that
+        # as a degraded step instead of a clean report.
         boot.steps = []
+        boot.lease_precheck()
         boot.blackboard_advance_step()
         return boot.report()
 

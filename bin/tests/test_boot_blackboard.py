@@ -279,6 +279,9 @@ class TestArgParsing(unittest.TestCase):
             def run(self):
                 return 0
 
+            def lease_precheck(self):
+                captured["lease_precheck"] = True
+
             def blackboard_advance_step(self):
                 pass
 
