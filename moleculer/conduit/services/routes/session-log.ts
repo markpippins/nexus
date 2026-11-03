@@ -6,11 +6,43 @@ import fs from "node:fs";
 
 const router = Router();
 
-// The twin is one directory deeper than the incumbent build, so the
-// compatibility fallback includes that extra level.
-const PIPELINE_DIR =
-  process.env.PIPELINE_DIR ||
-  path.resolve(__dirname, "../../../../../../nexus/audit/CONDUIT_DATA");
+/**
+ * Nearest ancestor of `startDir` that is a checkout root — `.git` is a
+ * directory in a clone and a *file* in a linked worktree, and `existsSync`
+ * covers both. Returns `undefined` when no ancestor qualifies (a packaged or
+ * dist-only deployment).
+ */
+export function findRepoRoot(startDir: string): string | undefined {
+  let dir = path.resolve(startDir);
+  for (;;) {
+    if (fs.existsSync(path.join(dir, ".git"))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+}
+
+/**
+ * Default `PIPELINE_DIR`: `audit/CONDUIT_DATA` of whichever checkout this file
+ * lives in.
+ *
+ * The previous default walked six levels up and then named the repo `nexus/`.
+ * Six is right for the built layout (`dist/services/routes`), one too many for
+ * `services/routes` — which is what `npm start` runs, since `moleculer-runner`
+ * loads the `.service.ts` files under `services/` from source (`main` points at
+ * `dist`, but no script uses it). So the default was wrong in the main checkout,
+ * and from a worktree it resolved to the *main* checkout's data: the twin read
+ * the wrong tree rather than nothing.
+ */
+export function resolvePipelineDir(startDir: string = __dirname): string {
+  const root = findRepoRoot(startDir);
+  if (root) return path.join(root, "audit", "CONDUIT_DATA");
+  // Unchanged fallback: preserve the previous resolution (and its failure mode)
+  // when no ancestor is a checkout.
+  return path.resolve(startDir, "../../../../../../nexus/audit/CONDUIT_DATA");
+}
+
+const PIPELINE_DIR = process.env.PIPELINE_DIR || resolvePipelineDir();
 
 router.get("/:sessionId", async (req, res) => {
   const { sessionId } = req.params;
