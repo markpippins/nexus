@@ -309,24 +309,6 @@ def fetch_attestations(
     return None
 
 
-def fetch_tester_pr_mentions(
-    http_get: Callable[[str], Any],
-    pr_number: int,
-    base_url: str = NEBULA_BASE,
-) -> List[Dict[str, Any]]:
-    """Newest few tester records carrying the pr:<N> tag (any shape) — used
-    only to make 'no attestation' refusals self-explaining. Indexed via the
-    same GIN tags index; never raises."""
-    url = f"{base_url}/api/agent-records?role=tester&tag=pr:{pr_number}&limit=3"
-    try:
-        data = http_get(url)
-    except Exception:
-        return []
-    if isinstance(data, dict) and isinstance(data.get("items"), list):
-        return data["items"]
-    return []
-
-
 def attestation_check(
     http_get: Callable[[str], Any],
     pr_number: int,
@@ -335,13 +317,22 @@ def attestation_check(
     run_json: Callable[..., Any] = _gh_json,
 ) -> Tuple[bool, str, Optional[str]]:
     """Gate 3 lookup, exact by preference: the indexed /api/attestations
-    endpoint when available (server-side shape filter + GIN tags index),
+    endpoint when it returns rows (server-side shape filter + GIN tags index),
     bounded-scan fallback otherwise. Both paths share the client-side
     shape + freshness + CI-evidence rules in evaluate_attestation().
 
+    An EMPTY indexed result is inconclusive, not absence: the index matches
+    tag conventions (pr:<N> / gate:<N>), and a tester attestation that names
+    the PR only in its title has no matching tag, so the query is blind to it.
+    Measured 2026-11-03: /api/attestations?pr=842 returned items:[] while the
+    tester's real attestation sat in the table (tags type:attestation,
+    gate:842, verdict:approve; '#842' in the title). Trusting the empty result
+    reported ATT_MISSING for a PR whose attestation existed. Empty therefore
+    falls through to the bounded scan, which finds it by title mention.
+
     Returns (ok, detail, code) like evaluate_attestation()."""
     rows = fetch_attestations(http_get, pr_number)
-    if rows is not None:
+    if rows:
         # The indexed endpoint returns a projection WITHOUT record content,
         # but the CI-evidence rule reads the attestation body (cited run IDs).
         # Content-less rows are hydrated from the bounded scan before
@@ -410,44 +401,63 @@ def attestation_check(
             rows, pr_number, head_date_ms,
             head_sha=head_sha, run_json=run_json,
         )
-        if not rows:
-            detail = (
-                f"no attestation-shaped tester record for PR #{pr_number} "
-                "(indexed lookup)"
-            )
-            mentions = fetch_tester_pr_mentions(http_get, pr_number)
-            if mentions:
-                ids = ", ".join(str(r.get("id"))[:8] for r in mentions[:3])
-                detail += (
-                    f" — tester records mentioning the PR: {ids} — none "
-                    "carries an attestation marker (type:attestation tag, "
-                    "or recordType=assessment with type:approval+status:done)"
-                )
-                code = gate_codes.ATT_SHAPE_UNSEEN
-            else:
-                code = gate_codes.ATT_MISSING
-        else:
-            detail += " (indexed lookup)"
-        return ok, detail, code
+        return ok, detail + " (indexed lookup)", code
+    scan_note = (
+        "/api/attestations returned no rows, which is inconclusive"
+        if rows == []
+        else "/api/attestations unavailable"
+    )
     records = fetch_agent_records(http_get)
     ok, detail, code = evaluate_attestation(
         records, pr_number, head_date_ms,
         head_sha=head_sha, run_json=run_json,
     )
-    return ok, detail + " (scan fallback: /api/attestations unavailable)", code
+    return ok, detail + f" (scan fallback: {scan_note})", code
 
 
 def attestation_mentions_pr(record: Dict[str, Any], pr_number: int) -> bool:
-    """Match convention: pr:<N> tag, or '#<N>' with a word boundary in
-    title/content (so #48 does not match PR #487)."""
+    """Match convention: pr:<N> tag, gate:<N> tag, or '#<N>' with a word
+    boundary in title/content (so #48 does not match PR #487).
+
+    gate:<N> is the tester's live attestation convention (every tester
+    attestation row from #842 onward carries gate:<N> + verdict:approve and
+    names the PR only in its title). It is not registered anywhere, which is
+    how it stayed invisible to the indexed lookup; matching it here keeps the
+    scan path exact instead of relying on title text alone."""
     tags = {str(t).lower() for t in (record.get("tags") or [])}
-    if f"pr:{pr_number}" in tags:
+    if f"pr:{pr_number}" in tags or f"gate:{pr_number}" in tags:
         return True
     pattern = re.compile(rf"#{pr_number}\b")
     return bool(
         pattern.search(record.get("title") or "")
         or pattern.search(record.get("content") or "")
     )
+
+
+# Tags that WITHDRAW a record without changing its shape. Decision 24
+# (supersede the content / retire without a successor) drops every status:*
+# tag and adds exactly one of these, deliberately leaving type:* and pr:*
+# untouched — so a retired attestation keeps `type:attestation` (legacy) or
+# `type:approval` (canonical) and sails through a shape test.
+#
+# Without this filter, retirement is not a withdrawal as far as gate 3 is
+# concerned: the row still binds as "an attestation exists", so a withdrawn
+# attestation can only ever be REPLACED, never removed. That made the
+# retirement convention (supersede-record.sh retire) unable to repair a bad
+# attestation — the exact situation the 2026-11-03 stub batch created, where
+# twelve empty-bodied type:attestation rows took the whole queue from the
+# routine-silent ATT_MISSING to a permanent ATT_NO_CI_EVIDENCE nag.
+WITHDRAWN_STATUS_TAGS = frozenset({"status:retired", "status:superseded"})
+
+
+def is_withdrawn(record: Dict[str, Any]) -> bool:
+    """True when the record was retired or superseded (Decision 24).
+
+    Withdrawn rows keep their shape tags, so they must be dropped BEFORE any
+    attestation-shape or mention test rather than after it.
+    """
+    tags = {str(t or "").lower() for t in (record.get("tags") or [])}
+    return bool(tags & WITHDRAWN_STATUS_TAGS)
 
 
 def is_attestation_record(record: Dict[str, Any]) -> bool:
@@ -463,6 +473,11 @@ def is_attestation_record(record: Dict[str, Any]) -> bool:
 
     Intent rows (``type:status-update``, ``engineering_log``), reports and
     findings never qualify — “I intend to attest” is not “attested”.
+
+    Withdrawal is NOT this function's business: retirement keeps the shape
+    tags, so a withdrawn row is still attestation-SHAPED. Callers that decide
+    whether an attestation *counts* must filter with :func:`is_withdrawn`
+    first — see evaluate_attestation().
     """
     tags = {str(t or "").lower() for t in (record.get("tags") or [])}
     if "type:attestation" in tags:
@@ -487,11 +502,17 @@ def evaluate_attestation(
     SHA binding). Stated test counts ("engine reports 54/54") are the
     engine's self-attestation and never satisfy the evidence rule. Records
     must satisfy :func:`is_attestation_record` — a tester record that merely
-    mentions the PR (e.g. an intent row) does not count.
-
-    Returns (ok, detail, code) — code is a gate_codes value on failure
+    mentions the PR (e.g. an intent row) does not count.    Returns (ok, detail, code) — code is a gate_codes value on failure
     (ATT_MISSING / ATT_SHAPE_UNSEEN / HEAD_DATE_UNKNOWN / ATT_STALE_HEAD /
-    ATT_NO_CI_EVIDENCE / ATT_CI_LOOKUP_FAILED), None on pass."""
+    ATT_NO_CI_EVIDENCE / ATT_CI_LOOKUP_FAILED), None on pass.
+
+    Withdrawn rows (status:retired / status:superseded) are removed first, so
+    they count neither as an attestation (`matches`) nor as a mention. Dropping
+    them only from `matches` would still leave them in `mentions`, which turns
+    clear code ATT_MISSING into noisy ATT_SHAPE_UNSEEN — the same nag the
+    withdrawal was meant to end.
+    """
+    records = [r for r in records if not is_withdrawn(r)]
     mentions = [
         r
         for r in records

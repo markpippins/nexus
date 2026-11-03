@@ -106,6 +106,19 @@ def test_match_by_pr_tag():
     assert merge_pr.attestation_mentions_pr(rec(tags=["to:tester", "pr:487"]), 487)
 
 
+def test_match_by_gate_tag():
+    """Real tester attestations tag gate:<N> + verdict:approve and carry the PR
+    number only in the title (#842-#847 rows). The scan path must match the
+    tag itself rather than depend on title text."""
+    assert merge_pr.attestation_mentions_pr(
+        rec(tags=["type:attestation", "gate:487", "verdict:approve"], title="no number"),
+        487,
+    )
+    # the fixture's default title carries '#487', so silence it here
+    assert not merge_pr.attestation_mentions_pr(
+        rec(tags=["gate:491"], title="no number"), 487)
+
+
 def test_match_by_title_number():
     assert merge_pr.attestation_mentions_pr(rec(title="Tester attestation: PR #487 verified"), 487)
 
@@ -209,6 +222,109 @@ def test_is_attestation_record_rejects_missing_recordtype():
     assert merge_pr.is_attestation_record(
         {"tags": ["type:attestation"], "recordType": "response"}
     )
+
+
+# ── gate 3: withdrawal (Decision 24) beats the shape test ────────────────
+
+def test_empty_indexed_lookup_falls_back_to_the_scan():
+    """Measured regression (2026-11-03): /api/attestations?pr=842 returned
+    items:[] for a PR whose real attestation was in the table, so gate 3 said
+    ATT_MISSING. An empty indexed result must not be read as absence."""
+    def http_get(url):
+        if "/api/attestations" in url:
+            return {"items": [], "total": 0, "pr": 487}
+        if "/api/agent-records" in url:
+            return {"items": [rec(tags=["type:attestation", "gate:487",
+                                        "verdict:approve"])]}
+        raise AssertionError(f"unexpected url {url}")
+
+    ok, detail, code = merge_pr.attestation_check(
+        http_get, 487, NOW_MS - 7200_000, run_json=evidence_run_json)
+    assert ok, detail
+    assert "scan fallback" in detail
+    assert "inconclusive" in detail
+
+
+def test_populated_indexed_lookup_does_not_scan():
+    """The fallback must not turn the fast path into a scan: a populated
+    indexed result is authoritative."""
+    def http_get(url):
+        if "/api/attestations" in url:
+            return {"items": [rec()]}
+        if "/api/agent-records" in url:
+            raise AssertionError("scan should not run when the index has rows")
+        raise AssertionError(f"unexpected url {url}")
+
+    ok, detail, code = merge_pr.attestation_check(
+        http_get, 487, NOW_MS - 7200_000, run_json=evidence_run_json)
+    assert ok, detail
+    assert "indexed lookup" in detail
+
+
+def test_retired_legacy_attestation_is_not_an_attestation():
+    """Retirement drops status:done and adds status:retired, keeping
+    type:attestation and pr:487. The row is still attestation-SHAPED, so
+    without the withdrawal filter gate 3 reports ATT_NO_CI_EVIDENCE forever
+    and no retired attestation can ever be cleared."""
+    retired = rec(
+        recordType="report",
+        tags=["type:attestation", "pr:487", "status:retired"],
+        title="[RETIRED 2026-11-03] Vendor attestation - PR #487",
+        content="",
+    )
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [retired], 487, NOW_MS - 7200_000, run_json=evidence_run_json)
+    assert not ok
+    assert code == merge_pr.gate_codes.ATT_MISSING, (
+        f"withdrawn rows must fall back to the routine-silent ATT_MISSING, "
+        f"got {code}: {detail}"
+    )
+
+
+def test_superseded_canonical_attestation_is_not_an_attestation():
+    """Same for supersession: type:approval survives, status:done does not."""
+    superseded = rec(tags=["type:approval", "pr:487", "status:superseded",
+                           "superseded-by:deadbeef"])
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [superseded], 487, NOW_MS - 7200_000, run_json=evidence_run_json)
+    assert not ok
+    assert code == merge_pr.gate_codes.ATT_MISSING
+
+
+def test_withdrawn_row_does_not_count_as_a_mention_either():
+    """A withdrawn row must not survive as a *mention*: that path returns
+    ATT_SHAPE_UNSEEN, which is just as noisy as ATT_NO_CI_EVIDENCE and would
+    keep the queue nagging about a record nobody can act on."""
+    retired = rec(tags=["type:attestation", "pr:487", "status:retired"])
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [retired], 487, NOW_MS - 7200_000)
+    assert not ok
+    assert "mention" not in detail
+    assert code == merge_pr.gate_codes.ATT_MISSING
+
+
+def test_live_attestation_still_passes_alongside_a_withdrawn_one():
+    """Withdrawal must remove only the withdrawn row: a fresh live
+    attestation in the same set still satisfies the gate."""
+    retired = rec(
+        rec_id="dead1111",
+        tags=["type:attestation", "pr:487", "status:retired"],
+        title="[RETIRED 2026-11-03] Vendor attestation - PR #487",
+        content="",
+    )
+    live = rec(rec_id="beef2222")
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [retired, live], 487, NOW_MS - 7200_000, run_json=evidence_run_json)
+    assert ok, detail
+    assert "CI run(s) verified" in detail
+
+
+def test_is_withdrawn_matches_only_withdrawal_statuses():
+    assert merge_pr.is_withdrawn({"tags": ["status:retired", "pr:1"]})
+    assert merge_pr.is_withdrawn({"tags": ["status:superseded"]})
+    assert not merge_pr.is_withdrawn({"tags": ["status:done", "type:attestation"]})
+    assert not merge_pr.is_withdrawn({"tags": ["status:open"]})
+    assert not merge_pr.is_withdrawn({})
 
 
 def test_fresh_attestation_passes():
@@ -426,7 +542,13 @@ def test_fallback_scan_still_fails_closed_on_empty():
 
 def test_indexed_empty_refusal_names_markerless_mentions():
     """Indexed empty result + marker-less tester mentions: refusal explains
-    the gap by name (the 84ca2388 remediation UX, now server-assisted)."""
+    the gap by name (the 84ca2388 remediation UX).
+
+    An empty indexed result now falls through to the bounded scan rather than
+    ending the lookup, so the provenance note reads "scan fallback …
+    inconclusive" instead of "(indexed lookup)". The contract this test
+    guards — that the refusal NAMES the marker-less mentions instead of just
+    saying "missing" — is unchanged and still asserted below."""
     poison = rec(
         rec_id="b8acd611", recordType="engineering_log",
         tags=["to:engineer", "type:status-update", "pr:492"],
@@ -443,7 +565,7 @@ def test_indexed_empty_refusal_names_markerless_mentions():
         http_get=_dispatching_http([], [poison, finding], [poison, finding]), env={})
     gate3 = gates[2]
     assert not gate3.passed
-    assert "indexed lookup" in gate3.detail
+    assert "scan fallback" in gate3.detail and "inconclusive" in gate3.detail
     assert "b8acd611" in gate3.detail and "84ca2388" in gate3.detail
     assert "attestation marker" in gate3.detail
 
@@ -453,8 +575,7 @@ def test_fetch_attestations_never_raises_and_shape_checks():
     assert merge_pr.fetch_attestations(lambda url: {"items": "not-a-list"}, 492) is None
     assert merge_pr.fetch_attestations(lambda url: ["legacy-list-shape"], 492) is None
     assert merge_pr.fetch_attestations(lambda url: {"items": [{"id": "x"}]}, 492) == [{"id": "x"}]
-    assert merge_pr.fetch_tester_pr_mentions(lambda url: (_ for _ in ()).throw(RuntimeError("x")), 492) == []
-    assert merge_pr.fetch_tester_pr_mentions(lambda url: {"items": [{"id": "y"}]}, 492) == [{"id": "y"}]
+
 
 
 def test_evaluate_gh_failure_yields_single_fail_closed_gate():
