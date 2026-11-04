@@ -47,7 +47,14 @@ REC_NEWER = {"createdAt": T2, "recordType": "report", "title": "newer record"}
 
 
 def iso_of(epoch_ms: int) -> str:
-    return datetime.fromtimestamp(epoch_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """Exact ISO-8601 at millisecond precision — what a pointer write must be.
+
+    Truncating to whole seconds is the bug pin #856 guards: it claims up to
+    999ms of never-shown mail was read.
+    """
+    secs, ms = divmod(int(epoch_ms), 1000)
+    return "%s.%03dZ" % (
+        datetime.fromtimestamp(secs, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"), ms)
 
 
 # ── mock MCP server (Streamable-HTTP, stateless) ─────────────────────────
@@ -191,6 +198,31 @@ def test_update_pointer_advances_to_newest():
         assert len(args) == 1, f"expected exactly one pointer write, got {len(args)}"
         assert args[0]["timestamp"] == iso_of(T2), "pointer must advance to the NEWEST record"
         assert f"# pointer updated to {iso_of(T2)}" in r.stdout
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_update_pointer_preserves_milliseconds():
+    """The pointer must keep the record's exact millisecond (PR #856).
+
+    A whole-second pointer covers up to 999ms of records that were never
+    shown, and /api/inbox-pointers flattens precision so the reader cannot
+    tell — the loss is unrecoverable once written.
+    """
+    record = {"createdAt": T2 + 981, "recordType": "report", "title": "sub-second record"}
+    srv = start_server({"stored_pointer": STORE_POINTER, "records": [record]})
+    try:
+        r = run_script(srv.server_port, ["--role", "engineer", "--update-pointer"])
+        assert r.returncode == 0, r.stderr
+        args = set_pointer_args_list()
+        assert len(args) == 1, f"expected exactly one pointer write, got {len(args)}"
+        ts = args[0]["timestamp"]
+        assert ts == iso_of(T2 + 981), ts
+        assert ts.endswith(".981Z"), ts
+        truncated = datetime.fromtimestamp(
+            (T2 + 981) / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        assert ts != truncated, "pointer write must not truncate to whole seconds"
     finally:
         srv.shutdown()
         srv.server_close()

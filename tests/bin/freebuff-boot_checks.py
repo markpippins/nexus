@@ -283,7 +283,28 @@ def test_update_pointer_advances_to_newest():
         assert r.returncode == 0, r.stderr
         writes = mcp_calls("nebula_set_inbox_pointer")
         assert len(writes) == 1, f"expected one pointer write, got {writes}"
-        assert writes[0][1]["timestamp"] == "2025-07-08T18:46:00Z", writes
+        # Millisecond precision, not the whole second (PR #856).
+        assert writes[0][1]["timestamp"] == "2025-07-08T18:46:00.000Z", writes
+    finally:
+        mcp.shutdown(); mcp.server_close()
+        rest.shutdown(); rest.server_close()
+
+
+def test_update_pointer_preserves_milliseconds():
+    """A record's exact millisecond survives the pointer write (PR #856).
+
+    Truncating to the second claims up to 999ms of never-shown mail as read,
+    and /api/inbox-pointers flattens precision, so it cannot be recovered.
+    """
+    record = {"createdAt": T2 + 457, "recordType": "report", "title": "sub-second record"}
+    mcp, rest = start_servers({"active_leases": [], "records": [record]})
+    try:
+        r = run_shim(mcp.server_port, rest.server_port,
+                     ["--role", "tester", "--update-pointer"])
+        assert r.returncode == 0, r.stderr
+        writes = mcp_calls("nebula_set_inbox_pointer")
+        assert len(writes) == 1, f"expected one pointer write, got {writes}"
+        assert writes[0][1]["timestamp"] == "2025-07-08T18:46:00.457Z", writes
     finally:
         mcp.shutdown(); mcp.server_close()
         rest.shutdown(); rest.server_close()
