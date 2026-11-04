@@ -82,7 +82,20 @@ DEFAULT_CHANNEL = "interactive"  # R18: Freebuff agents lease the interactive ch
 # ── helpers ───────────────────────────────────────────────────────────────
 
 def iso_of(epoch_ms: int) -> str:
-    return datetime.fromtimestamp(epoch_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """ISO-8601 UTC at millisecond precision — the precision a pointer needs.
+
+    Records carry createdAt as epoch MILLISECONDS while created_at holds
+    microseconds, so a pointer truncated to whole seconds claims up to 999ms
+    of mail was read that was never shown. /api/inbox-pointers flattens every
+    stored pointer to ...000Z, so the reader cannot recover precision the
+    writer threw away — only the writer can preserve it. Both writers (this
+    shim and bin/check-inbox.sh) therefore emit .mmmZ;
+    bin/inbox_pointer_watchdog.py still accepts the second-granular pointers
+    written before this change (PR #856).
+    """
+    secs, ms = divmod(int(epoch_ms), 1000)
+    stamp = datetime.fromtimestamp(secs, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    return f"{stamp}.{ms:03d}Z"
 
 
 def text_of(mcp_result: object) -> str:

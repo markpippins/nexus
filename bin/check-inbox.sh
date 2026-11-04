@@ -11,6 +11,10 @@
 #   http://localhost:3101/api/inbox-pointer/<role>
 # and filters records created after it. Records' createdAt is epoch ms; the
 # pointer/createdAfter expect ISO strings (only ISO was verified to parse).
+# Pointers are written at millisecond precision (.mmmZ) by --update-pointer:
+# a second-truncated pointer marks up to 999ms of never-shown mail as read,
+# and the reader cannot recover it (/api/inbox-pointers flattens to ...000Z).
+# See PR #856; second-granular pointers written earlier stay readable.
 #
 # Usage:
 #   check-inbox.sh [--role <role>] [--pointer <ISO>|--since <SPEC>|--all]
@@ -273,7 +277,13 @@ if update_pointer and records:
         sys.exit(3)
     newest = max((r.get("createdAt") or 0) for r in records)
     if newest:
-        iso = datetime.fromtimestamp(newest / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # Millisecond precision is not cosmetic: created_at carries microseconds
+        # while createdAt is epoch ms, so truncating the pointer to whole
+        # seconds marks up to 999ms of never-shown mail as read. Preserve the
+        # record's exact millisecond instead (PR #856).
+        _secs, _ms = divmod(int(newest), 1000)
+        iso = "%s.%03dZ" % (
+            datetime.fromtimestamp(_secs, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"), _ms)
         try:
             client.call("nebula_set_inbox_pointer", {"role": role, "timestamp": iso})
             print("# pointer updated to %s" % iso)
