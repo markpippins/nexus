@@ -8,6 +8,10 @@
 # Logical dumps are architecture-neutral, so cross-arch is a non-issue.
 #
 # What this does (per run):
+#   0. Preflight the target (name → TCP → ssh) BEFORE dumping, so a powered-off
+#      vanadium reports as "target unreachable" instead of burning a dump cycle
+#      and surfacing as a DNS or remote-path error. See
+#      bin/lib/pg-target-preflight.sh for why (2026-11-02).
 #   1. Full custom-format dump (-Fc) of EVERY non-template database
 #      (the legacy backup-nexus.sh covers only `nexus`, plain SQL).
 #   2. Cluster globals (roles/tablespaces) via pg_dumpall --globals-only.
@@ -87,6 +91,19 @@ flock -n 200 || { log "SKIP: another backup run holds the lock"; exit 0; }
 if ! pg_dump_lock_acquire; then
   log "SKIP: another PG backup tier holds the cluster lock (>${PG_DUMP_LOCK_WAIT:-3600}s)"
   exit 0
+fi
+
+# ------------------------------------------------------------- preflight ---
+# Fail in ~1s on an absent target rather than after a full dump pass. Skipped
+# for --dry-run, which must stay hermetic (no ssh, no network).
+if [ "$DRY_RUN" = 0 ]; then
+  . "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/pg-target-preflight.sh"
+  if ! PREFLIGHT="$(pg_target_preflight)"; then
+    log "FAIL(preflight): ${REMOTE_HOST} is not reachable — aborting before any dump"
+    while IFS= read -r line; do log "$line"; done <<< "$PREFLIGHT"
+    log "the off-machine copy for this run did NOT happen; rerun once the target is back"
+    incident; exit 1
+  fi
 fi
 
 if [ "$VERIFY_LAST" = 1 ]; then
