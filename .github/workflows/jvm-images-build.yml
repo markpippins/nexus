@@ -42,7 +42,8 @@ on:
       - 'jvm/**'
       - '.github/workflows/jvm-images-build.yml'
   pull_request:
-    branches: [ main, master, dev, feature/* ]
+    # every base, incl. stacked-PR bases — a base filter silently skips CI
+    branches: ['**']
     paths:
       - 'jvm/**'
       - '.github/workflows/jvm-images-build.yml'

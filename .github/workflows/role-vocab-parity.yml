@@ -34,7 +34,8 @@ on:
       - 'sql/**'
       - '.github/workflows/role-vocab-parity.yml'
   pull_request:
-    branches: [ main, master, feature/* ]
+    # every base, incl. stacked-PR bases — a base filter silently skips CI
+    branches: ['**']
     paths:
       - 'typescript/nebula-srv/migrations/**'
       - 'bin/tests/test_role_vocab_parity_runner.py'

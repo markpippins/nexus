@@ -27,7 +27,8 @@ on:
       - 'bin/sdk-type-stamps/**'
       - '.github/workflows/sdk-drift-guard.yml'
   pull_request:
-    branches: [main, master, feature/*]
+    # every base, incl. stacked-PR bases — a base filter silently skips CI
+    branches: ['**']
     paths:
       - 'typespec/v1/**'
       - 'python/conduit/generated/**'

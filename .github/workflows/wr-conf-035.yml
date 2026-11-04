@@ -12,7 +12,8 @@ name: WR Conf 035 — Applied-Grants Pre-Flight (self-idempotent grant files)
 on:
   workflow_dispatch:
   pull_request:
-    branches: [main]
+    # every base, incl. stacked-PR bases — a base filter silently skips CI
+    branches: ['**']
 
 permissions:
   contents: read

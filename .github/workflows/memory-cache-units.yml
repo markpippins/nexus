@@ -35,7 +35,8 @@ on:
       - 'typescript/role-memory-srv/**'
       - 'typescript/tackle-prompt-sync-srv/**'
   pull_request:
-    branches: [ main, master, dev, feature/* ]
+    # every base, incl. stacked-PR bases — a base filter silently skips CI
+    branches: ['**']
     paths:
       - '.github/workflows/memory-cache-units.yml'
       - 'bin/memory-cache-refresh.sh'

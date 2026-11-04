@@ -25,7 +25,8 @@ on:
       - 'jvm/spring/nexus-core/pom.xml'
       - '.github/workflows/meep-parity-gate.yml'
   pull_request:
-    branches: [ main, master, dev, feature/* ]
+    # every base, incl. stacked-PR bases — a base filter silently skips CI
+    branches: ['**']
     paths:
       - 'python/meep/**'
       - 'jvm/spring/nexus-core/nexus-core-meep/**'

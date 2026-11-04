@@ -25,7 +25,8 @@ on:
   push:
     branches: [main, master, feature/*, dev]
   pull_request:
-    branches: [main, master, feature/*]
+    # every base, incl. stacked-PR bases — a base filter silently skips CI
+    branches: ['**']
   workflow_dispatch:
   schedule:
     # Daily 6 AM UTC — catches drift even without code pushes (e.g. a

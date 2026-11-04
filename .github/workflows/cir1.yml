@@ -4,7 +4,8 @@ on:
   push:
     branches: [main, master]
   pull_request:
-    branches: [main, master]
+    # every base, incl. stacked-PR bases — a base filter silently skips CI
+    branches: ['**']
 
 permissions:
   contents: read
