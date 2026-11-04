@@ -2,7 +2,7 @@
   "card_count": 57,
   "cards": [
     {
-      "body_md": "## Agent Config Role Definition\n\nEach agent role .md file (in .opencode/agents/) MUST include a message block in its frontmatter:\n\n```yaml\n---\nassumes_role: <role>\nmessage:\n  inbox_query:\n    - tags contain \"to:<role>\"\n    - tags contain \"status:open\"\n  record_types: [list of valid record types for this role]\n  auto_present: true\n  enrich_context: true\n---\n```\n\n### Fields\n- assumes_role: The role this agent config activates (engineer, architect, planner, etc.)\n- inbox_query: Tag filters for inbox querying\n- record_types: Valid agent record types this role may write\n- auto_present: Whether to surface inbox items on every turn start\n- enrich_context: Whether to load linked system/subsystem/plan data on boot\n\n### Valid record_type values\nreport, analysis, assessment, inspection, prompt, response, engineering_log, architecture_note, decision",
+      "body_md": "## Agent Config Role Definition\n\nEach agent role .md file (in `.opencode/agents/`) declares the role it activates\nas a YAML **comment**, never as a frontmatter key:\n\n```yaml\n---\n# assumes_role: <role>\ndescription: |\n  <what this role does>\nmode: primary\n---\n```\n\n### Why a comment\n\nopencode forwards unknown agent-frontmatter keys to the model provider as\noptions, and `openai-responses` transports reject any option they cannot\nrepresent:\n\n```\nError: assumes_role: cannot be represented by openai-responses\n```\n\nA live `assumes_role:` key therefore makes the agent unlaunchable on those\nmodels \u2014 it fails before the first token. Lenient transports accept the\nunknown option silently, so the same file works on some models and dies on\nothers. As a YAML comment the declaration is invisible to every parser (so it\nis never forwarded) while staying greppable for the persona-parity tests in\n`bin/tests/test_persona_bridge_parity.py` (P2/P3, with guard P4 against\nreverting to a live key).\n\nKeep frontmatter to keys opencode itself defines: `description`, `mode`,\n`model`, `temperature`, `tools`, `permission`, `options`, `disable`, `hidden`,\n`color`, `prompt`. Any other key carries the same rejection risk.\n\n### Fields\n- `# assumes_role`: the role this agent config activates (engineer, architect,\n  planner, ...). It must match the persona the file requests via\n  `.../opencode-persona`.\n- Inbox behaviour (`inbox_query` tag filters, `record_types`, `auto_present`,\n  `enrich_context`) is **not** declared in frontmatter. It comes from the\n  role's procedure cards and the R17 inbox tooling (`bin/check-inbox.sh`,\n  `nebula_get_inbox`). Do not add a `message:` block \u2014 as an unknown\n  frontmatter key it is forwarded to the provider and rejected exactly like a\n  live `assumes_role`.\n\n### Valid record_type values\nreport, analysis, assessment, inspection, prompt, response, engineering_log, architecture_note, decision",
       "mcp_tools": [],
       "roles": [
         "analyst",
@@ -21,7 +21,7 @@
         "supervisor",
         "topologist"
       ],
-      "sha256": "c8ee53af63a26ab4b810700caa8f8cb323062c0c9f70d92cd48ef11c47a5dc6d",
+      "sha256": "3d8bbf735cf267870e04a570076c750aaded44acbfbfa8ec5d7de63e35ed01b6",
       "slug": "agent-config-template",
       "summary": "Frontmatter template for .opencode/agents/ role definition files.",
       "tags": [
@@ -130,7 +130,7 @@
         "auditor",
         "builder",
         "critic",
-        "DBA",
+        "dba",
         "design-synthesist",
         "devops",
         "engineer",
@@ -173,7 +173,7 @@
         "auditor",
         "builder",
         "critic",
-        "DBA",
+        "dba",
         "design-synthesist",
         "devops",
         "engineer",
@@ -213,7 +213,7 @@
         "nebula_create_agent_record"
       ],
       "roles": [
-        "DBA"
+        "dba"
       ],
       "sha256": "b31df7090f94d5c4f8d6707cdb5fbd30f12f4f3ee11d9a47d8bc19217b293ae0",
       "slug": "dba-change-review-workflow",
@@ -237,7 +237,7 @@
         "nebula_create_agent_record"
       ],
       "roles": [
-        "DBA"
+        "dba"
       ],
       "sha256": "494d084c5392f6ca49d9894970b5f56309a7982944582fbfa7c87618bf60be83",
       "slug": "dba-replication-protocol",
@@ -262,7 +262,7 @@
         "memory_get_procedures"
       ],
       "roles": [
-        "DBA"
+        "dba"
       ],
       "sha256": "e42a1f16b5c747235a5b4603777bf1e88a4f7f00a09a42d664ae496db0f04675",
       "slug": "dba-schema-map",
@@ -287,7 +287,7 @@
         "nebula_create_agent_record"
       ],
       "roles": [
-        "DBA"
+        "dba"
       ],
       "sha256": "e0bdef3ac187c9714d0bf3bbcc8da9713e12141dc991c5b065a0c003b940c541",
       "slug": "dba-schema-migration-path",
@@ -506,7 +506,7 @@
         "auditor",
         "builder",
         "critic",
-        "DBA",
+        "dba",
         "design-synthesist",
         "devops",
         "engineer",
@@ -677,7 +677,7 @@
         "auditor",
         "builder",
         "critic",
-        "DBA",
+        "dba",
         "design-synthesist",
         "devops",
         "engineer",
@@ -754,7 +754,7 @@
         "auditor",
         "builder",
         "critic",
-        "DBA",
+        "dba",
         "design-synthesist",
         "devops",
         "engineer",
@@ -794,7 +794,7 @@
         "architect",
         "auditor",
         "builder",
-        "DBA",
+        "dba",
         "design-synthesist",
         "devops",
         "engineer",
@@ -1086,7 +1086,7 @@
         "auditor",
         "builder",
         "critic",
-        "DBA",
+        "dba",
         "design-synthesist",
         "devops",
         "engineer",
@@ -1417,7 +1417,7 @@
         "architect",
         "builder",
         "critic",
-        "DBA",
+        "dba",
         "devops",
         "engineer",
         "engineer-ii",
@@ -1522,7 +1522,7 @@
         "auditor",
         "builder",
         "critic",
-        "DBA",
+        "dba",
         "design-synthesist",
         "devops",
         "engineer",
@@ -1665,7 +1665,7 @@
         "architect",
         "builder",
         "critic",
-        "DBA",
+        "dba",
         "devops",
         "engineer",
         "engineer-ii",
@@ -1710,7 +1710,7 @@
         "auditor",
         "builder",
         "critic",
-        "DBA",
+        "dba",
         "design-synthesist",
         "devops",
         "engineer",
@@ -1753,7 +1753,7 @@
         "auditor",
         "builder",
         "critic",
-        "DBA",
+        "dba",
         "design-synthesist",
         "devops",
         "engineer",
@@ -1860,7 +1860,7 @@
         "auditor",
         "builder",
         "critic",
-        "DBA",
+        "dba",
         "design-synthesist",
         "devops",
         "engineer",
