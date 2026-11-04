@@ -1,5 +1,5 @@
 {
-  "card_count": 57,
+  "card_count": 58,
   "cards": [
     {
       "body_md": "## Agent Config Role Definition\n\nEach agent role .md file (in `.opencode/agents/`) declares the role it activates\nas a YAML **comment**, never as a frontmatter key:\n\n```yaml\n---\n# assumes_role: <role>\ndescription: |\n  <what this role does>\nmode: primary\n---\n```\n\n### Why a comment\n\nopencode forwards unknown agent-frontmatter keys to the model provider as\noptions, and `openai-responses` transports reject any option they cannot\nrepresent:\n\n```\nError: assumes_role: cannot be represented by openai-responses\n```\n\nA live `assumes_role:` key therefore makes the agent unlaunchable on those\nmodels \u2014 it fails before the first token. Lenient transports accept the\nunknown option silently, so the same file works on some models and dies on\nothers. As a YAML comment the declaration is invisible to every parser (so it\nis never forwarded) while staying greppable for the persona-parity tests in\n`bin/tests/test_persona_bridge_parity.py` (P2/P3, with guard P4 against\nreverting to a live key).\n\nKeep frontmatter to keys opencode itself defines: `description`, `mode`,\n`model`, `temperature`, `tools`, `permission`, `options`, `disable`, `hidden`,\n`color`, `prompt`. Any other key carries the same rejection risk.\n\n### Fields\n- `# assumes_role`: the role this agent config activates (engineer, architect,\n  planner, ...). It must match the persona the file requests via\n  `.../opencode-persona`.\n- Inbox behaviour (`inbox_query` tag filters, `record_types`, `auto_present`,\n  `enrich_context`) is **not** declared in frontmatter. It comes from the\n  role's procedure cards and the R17 inbox tooling (`bin/check-inbox.sh`,\n  `nebula_get_inbox`). Do not add a `message:` block \u2014 as an unknown\n  frontmatter key it is forwarded to the provider and rejected exactly like a\n  live `assumes_role`.\n\n### Valid record_type values\nreport, analysis, assessment, inspection, prompt, response, engineering_log, architecture_note, decision",
@@ -36,6 +36,40 @@
         "frontmatter",
         "role definition",
         ".opencode/agents"
+      ]
+    },
+    {
+      "body_md": "# Attestation Authoring \u2014 policy `attestation/v2`\n\nHow to write a tester attestation that the merge gate (`bin/merge_pr.py`,\ngate 3) can read. Written 2026-11-04 after three live v2 rows were each\nreconstructed by guessing from gate error messages \u2014 one of them\n(`9309bea5`) copied a `type:vendor-bump` tag from an earlier row it did not\nbelong to, and was refused.\n\n**The gate reads evidence; it cannot see your intention.** Everything below\nis a property of the record, not of what you meant.\n\n## 1. Who may attest\n\nOnly a record with `role: tester` is even considered. The gate filters\ncandidate rows to `role == \"tester\"` before any shape test, so an engineer's\n\"LGTM\" row is invisible (and an engineer must not attest its own PR \u2014\n`AGENTS.md` R8).\n\n## 2. The record shape\n\nTwo shapes count. Use the first:\n\n| Shape | Requires |\n|---|---|\n| current | `recordType: engineering_log` **and** tag `type:attestation` |\n| canonical (alternative) | `recordType: assessment` **and** tags `type:approval` + `status:done` |\n\nAnything else \u2014 `report`, `status-update`, a record that merely *mentions*\nthe PR \u2014 is a mention, not an attestation, and produces `ATT_SHAPE_UNSEEN`\n(a noisier form of \"nothing found\").\n\n## 3. Tags, in full\n\n```\ntype:attestation,pr:<number>,policy:attestation/v2,verdict:<token>,status:done,head:<sha>\n```\n\n- `pr:<number>` \u2014 the PR this attests. Required, or the row is not associated.\n- `policy:attestation/v2` \u2014 the contract. **Declare it.** A row with no\n  policy is read under legacy rules (no verdict required); a row declaring a\n  policy the gate does not know fails closed (`ATT_POLICY_UNSUPPORTED`).\n- `verdict:<token>` \u2014 the decision (see \u00a74).\n- `status:done` \u2014 do not omit it.\n- `head:<sha>` \u2014 7\u201340 lowercase hex, the **full or short SHA of the PR head\n  you actually tested**. Mint it from the remote, never hand-type it:\n  `python3 bin/pgie-evidence.py mint-head --pr <n>`. A malformed tag fails\n  on shape; a well-formed tag for a different commit fails as `ATT_STALE_HEAD`.\n  The binding is the binding: if the branch moves, the attestation is void.\n\n`status:retired` / `status:superseded` withdraw a row (Decision 24). A\nwithdrawn row stops counting *and* stops nagging.\n\n## 4. The verdict \u2014 required under v2\n\nThe gate reads the **last** declaration in the body, falling back to the\n`verdict:` tag; the body wins when both exist.\n\n| Intent | Accepted tokens (normalized, case-insensitive) |\n|---|---|\n| approve | `approved`, `approve`, `passed`, `pass`, `accepted`, `accept` |\n| reject | `rejected`, `reject`, `blocked`, `failed`, `fail`, `change requested`, `changes requested` |\n| hold | `hold`, `on hold` |\n| rule | `approved by rule` (tag form `verdict:approved_by_rule`) |\n\n`hold` is a real judgement, not a malformed one: the tester looked and said\n\"not yet\" without asserting a defect. It is an author action, not a merge.\n\n**Never** write `approved by rule` on ordinary work. That token claims the\nvendor-bump rule granted the approval, and the gate re-proves all four of its\nconditions at gate time (see \u00a77). A human approval is written `approved`.\n\n## 5. The body\n\nMinimum viable body \u2014 one declared verdict plus verified CI evidence:\n\n```markdown\nVerdict: approved.\n\nChecked at head 6f4cae0f6:\n- <what you actually ran, with its result>\n- <what you inspected, and what you concluded>\n\nCI run 41921578832: conclusion success, head 6f4cae0f64307ead4ae7b0b2bfc40fb5ba2cd204\n```\n\nRules that bite:\n\n- **A stated test count is not evidence.** \"18 tests passed\" is your\n  self-report unless a CI run backs it. This gate was built to replace\n  self-attestation by proxy.\n- **Cite `CI run <id>` with a real id**, 8+ digits, verified to exist at\n  *this* PR's head and to be `success`. A `404` on the id means you have the\n  wrong id \u2014 it is not \"CI still pending\". (That misreading once blocked a\n  PR for claiming a run that never existed.)\n- **Queued is not success.** Wait for the checks to finish before attesting;\n  a run list full of `queued` entries is not evidence.\n- **One verdict per body.** If you quote an earlier verdict and then state\n  yours, yours must come last.\n- Say what you did **not** run. A gap named is a small gap; a gap implied to\n  be covered is a lie with good grammar.\n\n## 6. Freshness\n\nThe row's `createdAt` must be at or after the head commit's date, and the\n`head:` binding (when present) must match the PR head. Both encode the same\nfact: *the code that was tested is the code being merged.* Pushing after\nattesting invalidates the attestation \u2014 re-attest, do not edit.\n\n## 7. Vendor approvals (`approved by rule`)\n\nPermitted only when **all four** hold, and the gate re-checks 1\u20134 itself:\n\n1. the row carries `type:vendor-bump`;\n2. the PR author is a dependency bot (`vendor_attest.is_vendor_author`);\n3. the diff is vendor-only \u2014 manifests/lockfiles, no semver-major;\n4. the row records the rule: a `vendor rule: <id>` line (e.g.\n   `vendor rule: vendor-bump/v1`).\n\nAn `approved by rule` verdict without the tag, the rule line, or a qualifying\ndiff fails as `ATT_VENDOR_RULE_UNVERIFIED`. Automation does not get to\nimpersonate a tester because it cited a green run.\n\n## 8. What the gate will tell you when it refuses\n\n| Code | Meaning | Your move |\n|---|---|---|\n| `ATT_MISSING` | no tester record mentions this PR | write one |\n| `ATT_SHAPE_UNSEEN` | a tester row mentions it but is not attestation-shaped (or a malformed `head:` tag) | post the row with `type:attestation` + `status:done` |\n| `ATT_VERDICT_MISSING` | v2 declared, no verdict found | add `Verdict: approved` (or rejected/hold) |\n| `ATT_VERDICT_INVALID` | something was declared that the gate cannot read | use a token from \u00a74 |\n| `ATT_VERDICT_HOLD` | tester withheld approval | author action: ask what blocks |\n| `ATT_VERDICT_REJECTED` | the tester said no | fix, then re-attest |\n| `ATT_NO_CI_EVIDENCE` | no `CI run <id>` line | cite the run you checked |\n| `ATT_CI_LOOKUP_FAILED` | GitHub could not be asked | retry; do not assume pass |\n| `ATT_POLICY_UNSUPPORTED` | unknown `policy:` | declare `attestation/v2` |\n| `ATT_STALE_HEAD` | binding/date predates the head | re-attest at the current head |\n| `ATT_VENDOR_RULE_UNVERIFIED` | rule claim failed re-proof | attest as a tester, or fix the claim |\n\n## 9. Worked example (record `f538fa2b`, PR #862 \u2014 merged)\n\n```\npython3 bin/post-agent-record.py -r tester \\\n  -t \"APPROVED: #862 comment-form assumes_role, seeds verified against generator\" \\\n  --tags \"type:attestation,pr:862,policy:attestation/v2,verdict:approved,status:done,head:6f4cae0\" \\\n  -c \"<body: Verdict: approved. + what was run + 'CI run 41921578832: ...'>\"\n```\n\nGate output for that row:\n\n```\n[PASS] tester attestation: tester attestation 2026-11-04T23:14:01Z (record f538fa2b)\n       postdates head commit; 1 CI run(s) verified success; head SHA verified (6f4cae0)\n```\n\n## 10. Anti-patterns (all observed live)\n\n- **Copying tags from a precedent row.** `9309bea5` carried `type:vendor-bump`\n  because earlier rows did. The tag silently changed which rules applied.\n- **Citing a run id you did not look up.** A 6\u201311 digit number that looks\n  plausible is indistinguishable from a real one until the gate asks GitHub.\n- **Approving to be agreeable.** A `hold` or `rejected` with a reason is\n  worth more than an approval nobody believes; the divergence is the signal.\n- **Attesting your own work** when you are not the tester role \u2014 the row will\n  not even be seen, and the attempt is itself reviewable evidence.\n",
+      "mcp_tools": [
+        "nebula_create_agent_record",
+        "nebula_list_agent_records"
+      ],
+      "roles": [
+        "architect",
+        "engineer",
+        "tester"
+      ],
+      "sha256": "7d0923e90037217a04ce29edc135134fb490827e5d7f6b5d9f0a258a184a4c26",
+      "slug": "attestation-authoring",
+      "summary": "How to write a tester attestation the merge gate can read: record shape, tags, verdict vocabulary, CI citation, head binding, vendor rule.",
+      "tags": [
+        "tester",
+        "attestation",
+        "merge-gate",
+        "policy-v2",
+        "verification"
+      ],
+      "title": "Attestation Authoring \u2014 policy v2 tester verdicts",
+      "triggers": [
+        "attest a pr",
+        "write an attestation",
+        "tester verdict",
+        "policy attestation v2",
+        "attestation format",
+        "verdict approved",
+        "re-attest",
+        "merge gate blocked by attestation",
+        "attestation rejected"
       ]
     },
     {
@@ -2073,6 +2107,6 @@
       ]
     }
   ],
-  "role_count": 580,
+  "role_count": 583,
   "schema": "tackle"
 }
