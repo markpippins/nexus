@@ -106,13 +106,25 @@ ATT_NO_CI_EVIDENCE = "ATT_NO_CI_EVIDENCE"
 # Genuinely-absent references (gh 404) still route ATT_NO_CI_EVIDENCE.
 ATT_CI_LOOKUP_FAILED = "ATT_CI_LOOKUP_FAILED"
 
+# The attestation row itself DECLARES a rejecting verdict ("Verdict:
+# REJECTED", "changes requested", "blocked"). Before this code, gate 3 read
+# the row's shape, freshness and CI citation but never its verdict, so a
+# rejection that happened to cite a CI run was a PASSING attestation — the
+# gate would merge exactly the code the tester refused (record ebb0a911).
+# #726/#823 were stopped only by their missing citation, one cited run away
+# from merging.
+#
+# Routed as AUTHOR action, not a re-attestation request: re-attesting the
+# same head cannot clear a rejection, the work has to change first.
+ATT_VERDICT_REJECTED = "ATT_VERDICT_REJECTED"
+
 ALL_CODES = frozenset({
     GH_LOOKUP_FAILED, HEAD_DATE_UNKNOWN,
     PR_NOT_OPEN, PR_DRAFT, MERGE_CONFLICT, MERGE_UNKNOWN,
     CI_NO_CHECKS, CI_PENDING, CI_FAIL,
     ATT_MISSING, ATT_SHAPE_UNSEEN, ATT_STALE_HEAD,
     ATT_LOOKUP_FAILED, ATT_BYPASSED, ATT_NO_CI_EVIDENCE,
-    ATT_CI_LOOKUP_FAILED, ATT_TIMESTAMP_MISSING,
+    ATT_CI_LOOKUP_FAILED, ATT_TIMESTAMP_MISSING, ATT_VERDICT_REJECTED,
 })
 
 # Codes whose condition may clear on the next cycle without anyone acting:

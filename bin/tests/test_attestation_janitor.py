@@ -879,6 +879,18 @@ def test_server_defect_body_pins_re_attest_will_not_clear():
     assert "SERVER side" in body
 
 
+def test_rejected_verdict_routes_as_author_action():
+    """A verdict-refused PR (record ebb0a911) must not be posted as a
+    re-attestation request: the same head cannot be re-attested into an
+    approval, so the wording has to send the author back to the work."""
+    title, body = janitor._refusal_post_text(
+        726, "a" * 40, ["ATT_VERDICT_REJECTED"], "refusal detail")
+    assert "TESTER REJECTED" in title and "ATT_VERDICT_REJECTED" in title
+    assert "AUTHOR action" in body
+    assert "re-attesting the same head cannot" in body
+    assert "RE-ATTESTATION REQUESTED" not in title
+
+
 def test_server_defect_mixed_codes_still_route_as_server_defect():
     """ATT_TIMESTAMP_MISSING present alongside a transient code (CI_PENDING)
     still routes as the cross-PR server defect, not as a silent transient."""
