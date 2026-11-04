@@ -101,7 +101,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Union
 
 # Sibling module (bin/gate_codes.py); shim keeps the import working when this
 # file is loaded by path in tests (importlib) rather than run as a script.
@@ -164,14 +164,29 @@ def gh_json(*args: str, runner: Optional[Callable] = None) -> Any:
     return json.loads(proc.stdout)
 
 
-def discover_open_prs(author: str, runner: Callable) -> List[Dict[str, Any]]:
-    """Open PRs authored by `author`, oldest first (stable merge order)."""
-    prs = gh_json(
-        "pr", "list", "--state", "open", "--author", author,
-        "--json", "number,isDraft,headRefOid,title", "--limit", "200",
-        runner=runner,
-    )
-    return sorted(prs, key=lambda p: p["number"])
+def discover_open_prs(
+    authors: Union[str, Iterable[str]], runner: Callable
+) -> List[Dict[str, Any]]:
+    """Open PRs authored by any of `authors`, oldest first (stable order).
+
+    A single string keeps the historical signature. Multiple authors are
+    queried one `gh pr list` per author (the API has no OR filter over
+    authors) and deduplicated by PR number — the vendor path adds
+    `app/dependabot` alongside the operator's own account, and a PR must
+    never be gated twice in one cycle.
+    """
+    if isinstance(authors, str):
+        authors = [authors]
+    by_number: Dict[int, Dict[str, Any]] = {}
+    for author in authors:
+        prs = gh_json(
+            "pr", "list", "--state", "open", "--author", author,
+            "--json", "number,isDraft,headRefOid,title", "--limit", "200",
+            runner=runner,
+        )
+        for pr in prs or []:
+            by_number.setdefault(pr["number"], pr)
+    return sorted(by_number.values(), key=lambda p: p["number"])
 
 
 def _urlopen_json(url: str, timeout: int = 8) -> Any:
@@ -741,6 +756,7 @@ def run_cycle(
     base_url: str,
     state_path: Path,
     only_pr: Optional[int] = None,
+    extra_authors: Sequence[str] = (),
     runner: Optional[Callable] = None,
     out: Any = sys.stdout,
 ) -> int:
@@ -762,14 +778,19 @@ def run_cycle(
     held: List[int] = []
     tool_error = False
 
+    authors = [author, *extra_authors]
     try:
-        prs = discover_open_prs(author, runner)
+        prs = discover_open_prs(authors, runner)
     except RuntimeError as exc:
         print(f"janitor: discovery failed: {exc}", file=out)
         return 1
     if only_pr is not None:
         prs = [p for p in prs if p["number"] == only_pr]
-    print(f"janitor: {len(prs)} open PR(s) authored by {author} (apply={apply}, cap={cap})", file=out)
+    print(
+        f"janitor: {len(prs)} open PR(s) authored by {', '.join(authors)} "
+        f"(apply={apply}, cap={cap})",
+        file=out,
+    )
 
     for pr in prs:
         num = pr["number"]
@@ -960,6 +981,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--base-url", default=DEFAULT_NEBULA_BASE, help="nebula-srv base URL for attestation prefilter")
     ap.add_argument("--state", default=DEFAULT_STATE, help="state file path")
     ap.add_argument("--author", default=os.environ.get("JANITOR_AUTHOR"), help="PR author filter (default: gh api user)")
+    ap.add_argument(
+        "--extra-author", action="append", default=None,
+        help="additional PR author to include, repeatable (e.g. app/dependabot "
+             "for vendor bumps attested by bin/vendor_attest.py)",
+    )
     args = ap.parse_args(argv)
 
     author = args.author
@@ -973,6 +999,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     return run_cycle(
         apply=args.apply, cap=max(1, args.cap), author=author,
         base_url=args.base_url, state_path=Path(args.state), only_pr=args.pr,
+        extra_authors=tuple(args.extra_author or ()),
     )
 
 
