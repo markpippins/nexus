@@ -1,0 +1,58 @@
+# Source of truth for ~/.config/systemd/user/inbox-pointer-watchdog.service
+#
+# Deploy:
+#   cp bin/inbox-pointer-watchdog.service ~/.config/systemd/user/
+#   cp bin/inbox-pointer-watchdog.timer   ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now inbox-pointer-watchdog.timer
+#
+# Why this file is in the repo: same doctrine as the other units here
+# (2026-09-21 helium probe incident) — host-only units drift from the corpus,
+# so the corpus carries the unit and the host carries a copy.
+#
+# Why the watchdog is on a timer at all: PR #856 shipped the script, but an
+# alarm nobody schedules is a library function. The tester mailbox sat at
+# 2026-10-01T05:33:23.844Z for a month with ~200 unread records behind it,
+# including a handoff written to unblock the merge queue, and the only way to
+# notice was for someone to remember to look. That is the failure this tick
+# removes.
+#
+# Why a dedicated deploy checkout: the janitor's lesson (see
+# attestation-janitor.service) is that a unit pointed at the primary checkout
+# runs whatever branch happens to be checked out there, and a comment claiming
+# otherwise does not fail. /home/codex/dev/nexus-watchdog is written by nothing
+# else, so `reset --hard` is safe and ExecStartPre below makes "running
+# origin/main" a precondition of every tick instead of a claim. A pinned clone
+# that is never updated would reproduce the same bug on a delay.
+#
+# Exit-code contract: the watchdog exits 1 when mail is waiting behind a stale
+# watermark. That is a FINDING, not a unit failure — SuccessExitStatus=1 keeps
+# the unit green and puts the alarm in the journal where an operator will read
+# it, instead of turning every backlogged role into a red unit that trains
+# everyone to ignore systemd. Exit 2 (lookup failed) is deliberately NOT in
+# that list: a watchdog that cannot see must not look quiet.
+#
+# Signals: oneshot, no daemon. The finding text goes to journald under
+# SyslogIdentifier=inbox-pointer-watchdog. It never writes a pointer — the
+# watermark means "reviewed up to T", and advancing it to clear an alarm would
+# hide exactly the mail the alarm exists to surface.
+
+[Unit]
+Description=Inbox-pointer watchdog: report stale delivery watermarks that still have unread mail behind them
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/codex/dev/nexus-watchdog
+ExecStartPre=/usr/bin/git -C /home/codex/dev/nexus-watchdog fetch --quiet origin main
+ExecStartPre=/usr/bin/git -C /home/codex/dev/nexus-watchdog reset --hard --quiet origin/main
+# Skip cleanly (result=skipped, unit NOT failed) if the checkout predates the
+# PR that adds the script.
+ExecCondition=/usr/bin/test -f /home/codex/dev/nexus-watchdog/bin/inbox_pointer_watchdog.py
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus-watchdog/bin/inbox_pointer_watchdog.py --max-age-days 7
+SuccessExitStatus=1
+TimeoutStartSec=180
+SyslogIdentifier=inbox-pointer-watchdog
+
+[Install]
+WantedBy=default.target
