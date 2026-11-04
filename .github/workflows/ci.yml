@@ -26,7 +26,7 @@ jobs:
     # local runs never saw because titanium has live PG on 5432.
     services:
       postgres:
-        image: postgres:17
+        image: pgvector/pgvector:pg17
         env:
           POSTGRES_DB: nexus
           POSTGRES_USER: pguser

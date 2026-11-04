@@ -7,7 +7,7 @@
 # Brings up the SAME throwaway chain the CI job runs, on isolated default
 # ports so it is safe to run on titanium alongside the live services:
 #
-#   postgres:17  (docker, port 55442)  seeded from
+#   pgvector/pgvector:pg17 (docker, port 55442)  seeded from
 #                sql/ci-bootstrap/nexus-ci-bootstrap.sql
 #   mongo:7      (docker, port 28018)
 #   peb-kernel   (fat jar,  port 18098) booted against the seeded DB
@@ -151,7 +151,7 @@ say "starting throwaway containers ($PG_CONTAINER :$PG_PORT, $MONGO_CONTAINER :$
 docker rm -f "$PG_CONTAINER" "$MONGO_CONTAINER" >/dev/null 2>&1 || true
 docker run -d --name "$PG_CONTAINER" -p "$PG_PORT:5432" \
   -e POSTGRES_DB=nexus -e POSTGRES_USER=pguser -e POSTGRES_PASSWORD=pgpass \
-  postgres:17 >/dev/null \
+  pgvector/pgvector:pg17 >/dev/null \
   || die "could not start $PG_CONTAINER (host port $PG_PORT taken? see: docker ps)"
 docker run -d --name "$MONGO_CONTAINER" -p "$MONGO_PORT:27017" mongo:7 >/dev/null \
   || die "could not start $MONGO_CONTAINER (host port $MONGO_PORT taken? see: docker ps)"

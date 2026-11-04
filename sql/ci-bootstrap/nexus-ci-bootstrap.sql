@@ -20,8 +20,19 @@ CREATE SCHEMA IF NOT EXISTS aegis;
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS citext;
+-- Required: the snapshot carries vector columns and vector-typed functions.
+CREATE EXTENSION IF NOT EXISTS vector;
 CREATE SCHEMA IF NOT EXISTS kernel;
 CREATE SCHEMA IF NOT EXISTS shrapnel;
+CREATE SCHEMA IF NOT EXISTS absorb;
+CREATE SCHEMA IF NOT EXISTS jenkins;
+CREATE SCHEMA IF NOT EXISTS knowledge;
+CREATE SCHEMA IF NOT EXISTS mcp;
+CREATE SCHEMA IF NOT EXISTS operator;
+CREATE SCHEMA IF NOT EXISTS sonar;
+CREATE SCHEMA IF NOT EXISTS steward;
+CREATE SCHEMA IF NOT EXISTS throttler;
+CREATE SCHEMA IF NOT EXISTS voyager;
 CREATE OR REPLACE FUNCTION public.bcrypt_write_guard()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -156,6 +167,12 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
+-- Name: absorb; Type: SCHEMA; Schema: -; Owner: -
+--
+
+
+
+--
 -- Name: aegis; Type: SCHEMA; Schema: -; Owner: -
 --
 
@@ -205,6 +222,12 @@ COMMENT ON SCHEMA aegis IS 'State Machine Registry for TLA+ formal methods bridg
 
 
 --
+-- Name: jenkins; Type: SCHEMA; Schema: -; Owner: -
+--
+
+
+
+--
 -- Name: kernel; Type: SCHEMA; Schema: -; Owner: -
 --
 
@@ -218,7 +241,32 @@ COMMENT ON SCHEMA kernel IS 'Semantic Kernel — authoritative state machine. Ow
 
 
 --
+-- Name: knowledge; Type: SCHEMA; Schema: -; Owner: -
+--
+
+
+
+--
+-- Name: SCHEMA knowledge; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON SCHEMA knowledge IS 'Knowledge graph (PC6 persistence projection contract, fingerprint lineage 9a073a10). Metadata columns per Track 2: authority_ref / knowledge_level / assertion / valid_from / valid_to — nullable, explicit-when-known, never fabricated.';
+
+
+--
+-- Name: mcp; Type: SCHEMA; Schema: -; Owner: -
+--
+
+
+
+--
 -- Name: nebula; Type: SCHEMA; Schema: -; Owner: -
+--
+
+
+
+--
+-- Name: operator; Type: SCHEMA; Schema: -; Owner: -
 --
 
 
@@ -261,6 +309,25 @@ COMMENT ON SCHEMA resolution IS 'SOL sandbox: greenfield redevelopment of semant
 
 
 --
+-- Name: sonar; Type: SCHEMA; Schema: -; Owner: -
+--
+
+
+
+--
+-- Name: steward; Type: SCHEMA; Schema: -; Owner: -
+--
+
+
+
+--
+-- Name: SCHEMA steward; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON SCHEMA steward IS 'Steward-owned schema: semantic projections, evidence bridges, and cognitive API surface. Steward is the maintainer of the knowledge graph (KG) — the cognitive model. Nebula is operational reality. KG references Nebula but never becomes it.';
+
+
+--
 -- Name: tackle; Type: SCHEMA; Schema: -; Owner: -
 --
 
@@ -273,7 +340,19 @@ COMMENT ON SCHEMA resolution IS 'SOL sandbox: greenfield redevelopment of semant
 
 
 --
+-- Name: throttler; Type: SCHEMA; Schema: -; Owner: -
+--
+
+
+
+--
 -- Name: vision; Type: SCHEMA; Schema: -; Owner: -
+--
+
+
+
+--
+-- Name: voyager; Type: SCHEMA; Schema: -; Owner: -
 --
 
 
@@ -327,6 +406,90 @@ CREATE TYPE kernel.event_type AS ENUM (
 --
 
 COMMENT ON TYPE kernel.event_type IS 'Canonical event types. Extensible — additive only, never removed.';
+
+
+--
+-- Name: document_kind; Type: DOMAIN; Schema: steward; Owner: -
+--
+
+CREATE DOMAIN steward.document_kind AS text
+	CONSTRAINT valid_document_kind CHECK ((VALUE = ANY (ARRAY['knowledge_entity'::text, 'harvest_candidate'::text, 'transcript_chunk'::text, 'agent_record'::text, 'requirement'::text, 'plan'::text, 'incident'::text, 'peb_document'::text])));
+
+
+--
+-- Name: DOMAIN document_kind; Type: COMMENT; Schema: steward; Owner: -
+--
+
+COMMENT ON DOMAIN steward.document_kind IS 'Enumerated taxonomy of document origins for the semantic projection layer.';
+
+
+--
+-- Name: evidence_link_status; Type: DOMAIN; Schema: steward; Owner: -
+--
+
+CREATE DOMAIN steward.evidence_link_status AS text
+	CONSTRAINT valid_evidence_link_status CHECK ((VALUE = ANY (ARRAY['proposed'::text, 'accepted'::text, 'rejected'::text, 'superseded'::text])));
+
+
+--
+-- Name: DOMAIN evidence_link_status; Type: COMMENT; Schema: steward; Owner: -
+--
+
+COMMENT ON DOMAIN steward.evidence_link_status IS 'Lifecycle: proposed → accepted | rejected. Accepted links can be superseded when newer evidence arrives.';
+
+
+--
+-- Name: evidence_link_type; Type: DOMAIN; Schema: steward; Owner: -
+--
+
+CREATE DOMAIN steward.evidence_link_type AS text
+	CONSTRAINT valid_evidence_link_type CHECK ((VALUE = ANY (ARRAY['supports'::text, 'refines'::text, 'instantiates'::text, 'contradicts'::text])));
+
+
+--
+-- Name: DOMAIN evidence_link_type; Type: COMMENT; Schema: steward; Owner: -
+--
+
+COMMENT ON DOMAIN steward.evidence_link_type IS 'Sufficient link types for system utility without ontology bloat. supports | refines | instantiates | contradicts';
+
+
+--
+-- Name: origin_system; Type: DOMAIN; Schema: steward; Owner: -
+--
+
+CREATE DOMAIN steward.origin_system AS text
+	CONSTRAINT valid_origin_system CHECK ((VALUE = ANY (ARRAY['knowledge'::text, 'nebula'::text])));
+
+
+--
+-- Name: DOMAIN origin_system; Type: COMMENT; Schema: steward; Owner: -
+--
+
+COMMENT ON DOMAIN steward.origin_system IS 'Which system the document originates from: knowledge (KG/cognitive) or nebula (operational/filing cabinets).';
+
+
+--
+-- Name: drift_magnitude; Type: TYPE; Schema: voyager; Owner: -
+--
+
+CREATE TYPE voyager.drift_magnitude AS ENUM (
+    'TRACE',
+    'MINOR',
+    'MAJOR',
+    'MASSIVE'
+);
+
+
+--
+-- Name: span_type; Type: TYPE; Schema: voyager; Owner: -
+--
+
+CREATE TYPE voyager.span_type AS ENUM (
+    'STRUCTURAL',
+    'DISCOURSE',
+    'EVENT_CANDIDATE',
+    'NOISE'
+);
 
 
 --
@@ -2479,6 +2642,31 @@ $$;
 
 
 --
+-- Name: semantic_search(public.vector, integer, text); Type: FUNCTION; Schema: knowledge; Owner: -
+--
+
+CREATE FUNCTION knowledge.semantic_search(query_embedding public.vector, result_limit integer DEFAULT 10, target_section text DEFAULT NULL::text) RETURNS TABLE(section text, entity_id text, name text, description text, similarity real)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        ge.section,
+        ge.kg_entity_id,
+        ge.name,
+        ge.embed_text,
+        (1 - (ge.embedding <=> query_embedding))::real AS similarity
+    FROM knowledge.graph_entity_embeddings ge
+    WHERE
+        (target_section IS NULL OR ge.section = target_section)
+    ORDER BY
+        ge.embedding <=> query_embedding
+    LIMIT result_limit;
+END;
+$$;
+
+
+--
 -- Name: agenda_to_specification(uuid, text); Type: FUNCTION; Schema: nebula; Owner: -
 --
 
@@ -3898,6 +4086,27 @@ COMMENT ON FUNCTION nebula.features_update_trigger() IS 'DBA 2026-08-13: unattac
 
 
 --
+-- Name: fn_executions_append_only(); Type: FUNCTION; Schema: nebula; Owner: -
+--
+
+CREATE FUNCTION nebula.fn_executions_append_only() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  RAISE EXCEPTION 'nebula.executions is append-only (DBA answers d15c197f Q4): % on execution_id % forbidden',
+    TG_OP, OLD.execution_id;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION fn_executions_append_only(); Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON FUNCTION nebula.fn_executions_append_only() IS 'DBA review 57420389 / answers d15c197f Q4: nebula.executions is append-only. UPDATE and DELETE raise. Supersession, if ever required, is an explicit later migration.';
+
+
+--
 -- Name: get_blocking_questions(uuid); Type: FUNCTION; Schema: nebula; Owner: -
 --
 
@@ -4880,6 +5089,20 @@ BEGIN
     'version', next_version,
     'timestamp', now()
   )::text);
+END;
+$$;
+
+
+--
+-- Name: reject_compilation_receipt_mutation(); Type: FUNCTION; Schema: nebula; Owner: -
+--
+
+CREATE FUNCTION nebula.reject_compilation_receipt_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RAISE EXCEPTION 'nebula.compilation_receipts is append-only; % is not permitted', TG_OP
+        USING ERRCODE = '55000';
 END;
 $$;
 
@@ -6526,6 +6749,56 @@ $$;
 --
 
 COMMENT ON FUNCTION nebula.work_sessions_update_trigger() IS 'DBA 2026-08-13: unattached trigger-returning function retained as historical SCD-4/view-trigger residue pending ownership review; no active trigger binding was present when migration 043 ran.';
+
+
+--
+-- Name: clear_queue(text); Type: FUNCTION; Schema: operator; Owner: -
+--
+
+CREATE FUNCTION operator.clear_queue(p_session_id text) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    DELETE FROM operator.continuity_queue WHERE session_id = p_session_id;
+END;
+$$;
+
+
+--
+-- Name: load_queue(text); Type: FUNCTION; Schema: operator; Owner: -
+--
+
+CREATE FUNCTION operator.load_queue(p_session_id text) RETURNS TABLE(summary text, user_message text, topic text, item_position integer)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RETURN QUERY
+    SELECT cq.summary, cq.user_message, cq.topic, cq.position
+    FROM operator.continuity_queue cq
+    WHERE cq.session_id = p_session_id
+    ORDER BY cq.position ASC;
+END;
+$$;
+
+
+--
+-- Name: save_queue_item(text, text, text, text, integer); Type: FUNCTION; Schema: operator; Owner: -
+--
+
+CREATE FUNCTION operator.save_queue_item(p_session_id text, p_summary text, p_user_message text, p_topic text, p_position integer) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    INSERT INTO operator.continuity_queue (session_id, summary, user_message, topic, position)
+    VALUES (p_session_id, p_summary, p_user_message, p_topic, p_position)
+    ON CONFLICT (session_id, position)
+    DO UPDATE SET
+        summary = EXCLUDED.summary,
+        user_message = EXCLUDED.user_message,
+        topic = EXCLUDED.topic,
+        created_at = now();
+END;
+$$;
 
 
 --
@@ -10735,6 +11008,157 @@ $$;
 
 
 --
+-- Name: docs_missing_embeddings(integer); Type: FUNCTION; Schema: steward; Owner: -
+--
+
+CREATE FUNCTION steward.docs_missing_embeddings(limit_count integer DEFAULT 100) RETURNS TABLE(id uuid, origin_system steward.origin_system, origin_table text, origin_id text, document_kind steward.document_kind, title text)
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT id, origin_system, origin_table, origin_id, document_kind, title
+    FROM steward.semantic_documents
+    WHERE embedding IS NULL
+    ORDER BY created_at ASC
+    LIMIT limit_count;
+$$;
+
+
+--
+-- Name: FUNCTION docs_missing_embeddings(limit_count integer); Type: COMMENT; Schema: steward; Owner: -
+--
+
+COMMENT ON FUNCTION steward.docs_missing_embeddings(limit_count integer) IS 'Find semantic documents that need embeddings generated. Used by the embedding pipeline worker: detect missing → generate → update.';
+
+
+--
+-- Name: entities_for_candidate(uuid, steward.evidence_link_status); Type: FUNCTION; Schema: steward; Owner: -
+--
+
+CREATE FUNCTION steward.entities_for_candidate(p_candidate_id uuid, p_status steward.evidence_link_status DEFAULT 'accepted'::text) RETURNS TABLE(id uuid, knowledge_entity_id uuid, link_type steward.evidence_link_type, confidence numeric, rationale text)
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT id, knowledge_entity_id, link_type, confidence, rationale
+    FROM steward.evidence_links
+    WHERE nebula_candidate_id = p_candidate_id
+      AND status = p_status
+    ORDER BY confidence DESC NULLS LAST;
+$$;
+
+
+--
+-- Name: FUNCTION entities_for_candidate(p_candidate_id uuid, p_status steward.evidence_link_status); Type: COMMENT; Schema: steward; Owner: -
+--
+
+COMMENT ON FUNCTION steward.entities_for_candidate(p_candidate_id uuid, p_status steward.evidence_link_status) IS 'Get all knowledge entities linked to a harvest candidate. Enables: candidate → linked entities → supporting evidence traversal.';
+
+
+--
+-- Name: evidence_for_entity(uuid, steward.evidence_link_type, steward.evidence_link_status); Type: FUNCTION; Schema: steward; Owner: -
+--
+
+CREATE FUNCTION steward.evidence_for_entity(p_entity_id uuid, p_link_type steward.evidence_link_type DEFAULT NULL::text, p_status steward.evidence_link_status DEFAULT 'accepted'::text) RETURNS TABLE(id uuid, link_type steward.evidence_link_type, status steward.evidence_link_status, confidence numeric, nebula_candidate_id uuid, nebula_harvest_id uuid, rationale text)
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT id, link_type, status, confidence, nebula_candidate_id, nebula_harvest_id, rationale
+    FROM steward.evidence_links
+    WHERE knowledge_entity_id = p_entity_id
+      AND (p_link_type IS NULL OR link_type = p_link_type)
+      AND status = p_status
+    ORDER BY confidence DESC NULLS LAST;
+$$;
+
+
+--
+-- Name: FUNCTION evidence_for_entity(p_entity_id uuid, p_link_type steward.evidence_link_type, p_status steward.evidence_link_status); Type: COMMENT; Schema: steward; Owner: -
+--
+
+COMMENT ON FUNCTION steward.evidence_for_entity(p_entity_id uuid, p_link_type steward.evidence_link_type, p_status steward.evidence_link_status) IS 'Get all evidence links for a knowledge graph entity. Default: accepted links only, sorted by confidence.';
+
+
+--
+-- Name: semantic_search(public.vector, integer, steward.document_kind, steward.origin_system); Type: FUNCTION; Schema: steward; Owner: -
+--
+
+CREATE FUNCTION steward.semantic_search(query_embedding public.vector, match_count integer DEFAULT 10, filter_kind steward.document_kind DEFAULT NULL::text, filter_system steward.origin_system DEFAULT NULL::text) RETURNS TABLE(id uuid, origin_system steward.origin_system, origin_table text, origin_id text, document_kind steward.document_kind, title text, body text, similarity double precision)
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT
+        id, origin_system, origin_table, origin_id, document_kind,
+        title, body,
+        1 - (embedding <=> query_embedding) AS similarity
+    FROM steward.semantic_documents
+    WHERE embedding IS NOT NULL
+      AND (filter_kind IS NULL OR document_kind = filter_kind)
+      AND (filter_system IS NULL OR origin_system = filter_system)
+    ORDER BY embedding <=> query_embedding
+    LIMIT match_count;
+$$;
+
+
+--
+-- Name: FUNCTION semantic_search(query_embedding public.vector, match_count integer, filter_kind steward.document_kind, filter_system steward.origin_system); Type: COMMENT; Schema: steward; Owner: -
+--
+
+COMMENT ON FUNCTION steward.semantic_search(query_embedding public.vector, match_count integer, filter_kind steward.document_kind, filter_system steward.origin_system) IS 'Semantic similarity search over the projection layer. Returns documents ranked by cosine similarity to the query embedding. Optional filters by document kind and origin system.';
+
+
+--
+-- Name: set_evidence_links_updated_at(); Type: FUNCTION; Schema: steward; Owner: -
+--
+
+CREATE FUNCTION steward.set_evidence_links_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: set_updated_at(); Type: FUNCTION; Schema: steward; Owner: -
+--
+
+CREATE FUNCTION steward.set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: supersede_evidence_link(uuid, uuid); Type: FUNCTION; Schema: steward; Owner: -
+--
+
+CREATE FUNCTION steward.supersede_evidence_link(p_link_id uuid, p_superseded_by uuid) RETURNS boolean
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    UPDATE steward.evidence_links
+    SET status = 'superseded',
+        metadata = metadata || jsonb_build_object('superseded_by', p_superseded_by::text)
+    WHERE id = p_link_id AND status = 'accepted';
+
+    IF NOT FOUND THEN
+        RAISE NOTICE 'No accepted link found with id %', p_link_id;
+        RETURN false;
+    END IF;
+    RETURN true;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION supersede_evidence_link(p_link_id uuid, p_superseded_by uuid); Type: COMMENT; Schema: steward; Owner: -
+--
+
+COMMENT ON FUNCTION steward.supersede_evidence_link(p_link_id uuid, p_superseded_by uuid) IS 'Mark an accepted evidence link as superseded by a newer link. Used when newer evidence arrives that replaces the old link. Returns true if the link was superseded, false if no accepted link was found.';
+
+
+--
 -- Name: audit_log_categories(); Type: FUNCTION; Schema: tackle; Owner: -
 --
 
@@ -13091,6 +13515,20 @@ CREATE FUNCTION vision.wr_compile_verdicts_immutable() RETURNS trigger
 
 
 --
+-- Name: set_updated_at(); Type: FUNCTION; Schema: voyager; Owner: -
+--
+
+CREATE FUNCTION voyager.set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: bridge_instance_to_cascade(); Type: FUNCTION; Schema: wind; Owner: -
 --
 
@@ -13412,6 +13850,150 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: artifacts; Type: TABLE; Schema: absorb; Owner: -
+--
+
+CREATE TABLE absorb.artifacts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    producer_profile text NOT NULL,
+    profile_version integer DEFAULT 1 NOT NULL,
+    document_id uuid,
+    artifact_type text NOT NULL,
+    ref jsonb NOT NULL,
+    warning_codes text[] DEFAULT '{}'::text[] NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: documents; Type: TABLE; Schema: absorb; Owner: -
+--
+
+CREATE TABLE absorb.documents (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    profile_id text NOT NULL,
+    profile_version integer DEFAULT 1 NOT NULL,
+    source_path text NOT NULL,
+    content_hash text NOT NULL,
+    conversation_id text,
+    title text NOT NULL,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    source_date date,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: profile_versions; Type: TABLE; Schema: absorb; Owner: -
+--
+
+CREATE TABLE absorb.profile_versions (
+    profile_id text NOT NULL,
+    version integer NOT NULL,
+    yaml_content text NOT NULL,
+    changelog text,
+    activated_at timestamp with time zone DEFAULT now() NOT NULL,
+    activated_by text
+);
+
+
+--
+-- Name: profiles; Type: TABLE; Schema: absorb; Owner: -
+--
+
+CREATE TABLE absorb.profiles (
+    id text NOT NULL,
+    version integer DEFAULT 1 NOT NULL,
+    schema_version text DEFAULT '1.0'::text NOT NULL,
+    yaml_content text NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    description text,
+    depends_on jsonb DEFAULT '[]'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: run_steps; Type: TABLE; Schema: absorb; Owner: -
+--
+
+CREATE TABLE absorb.run_steps (
+    run_id uuid NOT NULL,
+    step_index integer NOT NULL,
+    step_type text NOT NULL,
+    config jsonb,
+    status text DEFAULT 'pending'::text NOT NULL,
+    error_code text,
+    retryable boolean,
+    skip_reason text,
+    error_message text,
+    attempts integer DEFAULT 0 NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT run_steps_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'claimed'::text, 'done'::text, 'failed'::text, 'skipped'::text])))
+);
+
+
+--
+-- Name: runs; Type: TABLE; Schema: absorb; Owner: -
+--
+
+CREATE TABLE absorb.runs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    profile_id text NOT NULL,
+    profile_ver integer DEFAULT 1 NOT NULL,
+    document_id uuid,
+    status text DEFAULT 'pending'::text NOT NULL,
+    dry_run boolean DEFAULT false NOT NULL,
+    summary jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT runs_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'done'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: segments; Type: TABLE; Schema: absorb; Owner: -
+--
+
+CREATE TABLE absorb.segments (
+    document_id uuid NOT NULL,
+    seg_index integer NOT NULL,
+    start_turn integer NOT NULL,
+    end_turn integer NOT NULL,
+    arc_type text,
+    boundary_reason text,
+    heading text,
+    is_filler boolean[] DEFAULT '{}'::boolean[] NOT NULL
+);
+
+
+--
+-- Name: turns; Type: TABLE; Schema: absorb; Owner: -
+--
+
+CREATE TABLE absorb.turns (
+    document_id uuid NOT NULL,
+    turn_index integer NOT NULL,
+    role text NOT NULL,
+    content_md text NOT NULL,
+    ts text
+);
+
+
+--
+-- Name: watermarks; Type: TABLE; Schema: absorb; Owner: -
+--
+
+CREATE TABLE absorb.watermarks (
+    profile_id text NOT NULL,
+    profile_version integer NOT NULL,
+    source_fingerprint text NOT NULL,
+    last_processed_at timestamp with time zone DEFAULT now() NOT NULL
+);
 
 
 --
@@ -14176,6 +14758,7 @@ CREATE TABLE assembly.users (
     avatar_url character varying(255),
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    retired_at timestamp with time zone,
     CONSTRAINT users_password_bcrypt_check CHECK (((((password)::text ~~ '$2%'::text) AND (length((password)::text) = 60)) OR ((password)::text = ''::text)))
 );
 
@@ -14472,6 +15055,7 @@ CREATE VIEW assembly.user_list_v AS
     avatar_url,
     created_at
    FROM assembly.users
+  WHERE (retired_at IS NULL)
   ORDER BY alias;
 
 
@@ -15097,6 +15681,84 @@ CREATE TABLE execution.requests (
 
 
 --
+-- Name: builds; Type: TABLE; Schema: jenkins; Owner: -
+--
+
+CREATE TABLE jenkins.builds (
+    job_name text NOT NULL,
+    number integer NOT NULL,
+    result text,
+    "timestamp" bigint NOT NULL,
+    duration integer,
+    display_name text,
+    url text,
+    branch text,
+    commit_sha text,
+    commit_msg text,
+    author text,
+    change_count integer DEFAULT 0,
+    test_total integer,
+    test_pass integer,
+    test_fail integer,
+    test_skip integer,
+    raw_json jsonb DEFAULT '{}'::jsonb NOT NULL,
+    synced_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: jobs; Type: TABLE; Schema: jenkins; Owner: -
+--
+
+CREATE TABLE jenkins.jobs (
+    name text NOT NULL,
+    url text NOT NULL,
+    description text,
+    buildable boolean DEFAULT true NOT NULL,
+    color text,
+    last_build_num integer,
+    last_build_result text,
+    last_build_ts bigint,
+    last_build_dur integer,
+    health_score integer,
+    health_desc text,
+    raw_json jsonb DEFAULT '{}'::jsonb NOT NULL,
+    synced_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: stages; Type: TABLE; Schema: jenkins; Owner: -
+--
+
+CREATE TABLE jenkins.stages (
+    job_name text NOT NULL,
+    build_number integer NOT NULL,
+    stage_name text NOT NULL,
+    status text,
+    duration integer,
+    raw_json jsonb DEFAULT '{}'::jsonb NOT NULL,
+    synced_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: sync_state; Type: TABLE; Schema: jenkins; Owner: -
+--
+
+CREATE TABLE jenkins.sync_state (
+    id integer DEFAULT 1 NOT NULL,
+    last_jobs_sync timestamp with time zone,
+    last_builds_sync timestamp with time zone,
+    jobs_total integer,
+    builds_total integer,
+    last_sync_status text,
+    last_sync_count integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: event_log; Type: TABLE; Schema: kernel; Owner: -
 --
 
@@ -15555,6 +16217,223 @@ COMMENT ON VIEW kernel.v_recent_events IS 'Last 100 projected events with propag
 
 
 --
+-- Name: graph_cross_references; Type: TABLE; Schema: knowledge; Owner: -
+--
+
+CREATE TABLE knowledge.graph_cross_references (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    map_name text NOT NULL,
+    source_section text,
+    source_id text,
+    target_section text,
+    target_id text,
+    weight real DEFAULT 1.0,
+    properties jsonb DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: graph_edges; Type: TABLE; Schema: knowledge; Owner: -
+--
+
+CREATE TABLE knowledge.graph_edges (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    source_section text NOT NULL,
+    source_id text NOT NULL,
+    relation_type text NOT NULL,
+    target_section text,
+    target_id text NOT NULL,
+    properties jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    source_migration_id uuid,
+    resolution text DEFAULT 'resolved'::text NOT NULL,
+    unresolved_reason text,
+    assertion text DEFAULT 'asserted'::text NOT NULL,
+    valid_from timestamp with time zone,
+    valid_to timestamp with time zone,
+    CONSTRAINT ck_graph_edges_assertion CHECK ((assertion = ANY (ARRAY['asserted'::text, 'inferred'::text, 'disputed'::text]))),
+    CONSTRAINT ck_graph_edges_valid_window CHECK (((valid_from IS NULL) OR (valid_to IS NULL) OR (valid_from <= valid_to)))
+);
+
+
+--
+-- Name: COLUMN graph_edges.assertion; Type: COMMENT; Schema: knowledge; Owner: -
+--
+
+COMMENT ON COLUMN knowledge.graph_edges.assertion IS 'PC6 Track 2: assertion status {asserted, inferred, disputed}; defaults to asserted. Coexists with resolution {resolved, unresolved}.';
+
+
+--
+-- Name: COLUMN graph_edges.valid_from; Type: COMMENT; Schema: knowledge; Owner: -
+--
+
+COMMENT ON COLUMN knowledge.graph_edges.valid_from IS 'PC6 Track 2 bitemporal: valid-time lower bound. NULL until real valid-time data exists.';
+
+
+--
+-- Name: COLUMN graph_edges.valid_to; Type: COMMENT; Schema: knowledge; Owner: -
+--
+
+COMMENT ON COLUMN knowledge.graph_edges.valid_to IS 'PC6 Track 2 bitemporal: valid-time upper bound. NULL = unbounded/unknown.';
+
+
+--
+-- Name: graph_entities; Type: TABLE; Schema: knowledge; Owner: -
+--
+
+CREATE TABLE knowledge.graph_entities (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    section text NOT NULL,
+    entity_id text NOT NULL,
+    name text,
+    entity_type text,
+    status text,
+    description text,
+    properties jsonb DEFAULT '{}'::jsonb NOT NULL,
+    source_file text,
+    checksum text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    ingested_at timestamp with time zone DEFAULT now() NOT NULL,
+    asset_id uuid,
+    authority_ref text,
+    knowledge_level text,
+    assertion text DEFAULT 'asserted'::text NOT NULL,
+    valid_from timestamp with time zone,
+    valid_to timestamp with time zone,
+    CONSTRAINT ck_graph_entities_assertion CHECK ((assertion = ANY (ARRAY['asserted'::text, 'inferred'::text, 'disputed'::text]))),
+    CONSTRAINT ck_graph_entities_knowledge_level CHECK (((knowledge_level IS NULL) OR (knowledge_level = ANY (ARRAY['L1'::text, 'L2'::text, 'L3'::text, 'L4'::text])))),
+    CONSTRAINT ck_graph_entities_valid_window CHECK (((valid_from IS NULL) OR (valid_to IS NULL) OR (valid_from <= valid_to)))
+);
+
+
+--
+-- Name: COLUMN graph_entities.authority_ref; Type: COMMENT; Schema: knowledge; Owner: -
+--
+
+COMMENT ON COLUMN knowledge.graph_entities.authority_ref IS 'PC6 Track 2: which system owns the truth for this entity (e.g. semantics.canonical_asset, resolution.*, aegis.*). NULL until an explicit authority mapping exists — no prefix-derived backfill.';
+
+
+--
+-- Name: COLUMN graph_entities.knowledge_level; Type: COMMENT; Schema: knowledge; Owner: -
+--
+
+COMMENT ON COLUMN knowledge.graph_entities.knowledge_level IS 'PC6 Track 2: abstraction altitude L1-L4 per AGENTS.md knowledge stratification. NULL = unknown (never guessed).';
+
+
+--
+-- Name: COLUMN graph_entities.assertion; Type: COMMENT; Schema: knowledge; Owner: -
+--
+
+COMMENT ON COLUMN knowledge.graph_entities.assertion IS 'PC6 Track 2: assertion status {asserted, inferred, disputed}; defaults to asserted. Aligned with graph_edges.resolution semantics.';
+
+
+--
+-- Name: COLUMN graph_entities.valid_from; Type: COMMENT; Schema: knowledge; Owner: -
+--
+
+COMMENT ON COLUMN knowledge.graph_entities.valid_from IS 'PC6 Track 2 bitemporal: valid-time lower bound (when true in the world). NULL until real valid-time data exists — never fabricated.';
+
+
+--
+-- Name: COLUMN graph_entities.valid_to; Type: COMMENT; Schema: knowledge; Owner: -
+--
+
+COMMENT ON COLUMN knowledge.graph_entities.valid_to IS 'PC6 Track 2 bitemporal: valid-time upper bound. NULL = unbounded/unknown.';
+
+
+--
+-- Name: graph_entity_embeddings; Type: TABLE; Schema: knowledge; Owner: -
+--
+
+CREATE TABLE knowledge.graph_entity_embeddings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    entity_id uuid NOT NULL,
+    section text NOT NULL,
+    kg_entity_id text NOT NULL,
+    name text NOT NULL,
+    embed_text text NOT NULL,
+    embedding public.vector(768),
+    model_used text DEFAULT 'nomic-embed-text'::text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: graph_migrations; Type: TABLE; Schema: knowledge; Owner: -
+--
+
+CREATE TABLE knowledge.graph_migrations (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    source_file text NOT NULL,
+    file_checksum text NOT NULL,
+    entity_count integer NOT NULL,
+    edge_count integer NOT NULL,
+    cross_ref_count integer NOT NULL,
+    version text,
+    migrated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: v_entity_edges; Type: VIEW; Schema: knowledge; Owner: -
+--
+
+CREATE VIEW knowledge.v_entity_edges AS
+ SELECT e.id AS entity_uuid,
+    e.section,
+    e.entity_id,
+    e.name,
+    jsonb_agg(DISTINCT jsonb_build_object('relation', g.relation_type, 'target_section', g.target_section, 'target_id', g.target_id)) FILTER (WHERE (g.id IS NOT NULL)) AS outgoing_edges,
+    jsonb_agg(DISTINCT jsonb_build_object('relation', g2.relation_type, 'source_section', g2.source_section, 'source_id', g2.source_id)) FILTER (WHERE (g2.id IS NOT NULL)) AS incoming_edges
+   FROM ((knowledge.graph_entities e
+     LEFT JOIN knowledge.graph_edges g ON (((g.source_section = e.section) AND (g.source_id = e.entity_id))))
+     LEFT JOIN knowledge.graph_edges g2 ON (((g2.target_section = e.section) AND (g2.target_id = e.entity_id))))
+  GROUP BY e.id, e.section, e.entity_id, e.name;
+
+
+--
+-- Name: v_graph_summary; Type: VIEW; Schema: knowledge; Owner: -
+--
+
+CREATE VIEW knowledge.v_graph_summary AS
+ SELECT e.section,
+    count(DISTINCT e.entity_id) AS entity_count,
+    count(DISTINCT em.kg_entity_id) AS embedded_count
+   FROM (knowledge.graph_entities e
+     LEFT JOIN knowledge.graph_entity_embeddings em ON (((e.entity_id = em.kg_entity_id) AND (e.section = em.section))))
+  GROUP BY e.section
+  ORDER BY e.section;
+
+
+--
+-- Name: command_registry; Type: TABLE; Schema: mcp; Owner: -
+--
+
+CREATE TABLE mcp.command_registry (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    service text NOT NULL,
+    command text NOT NULL,
+    description text DEFAULT ''::text NOT NULL,
+    param_schema jsonb DEFAULT '{}'::jsonb NOT NULL,
+    source_mcp text DEFAULT ''::text NOT NULL,
+    protocol text DEFAULT 'auto'::text NOT NULL,
+    schema_hash text DEFAULT ''::text NOT NULL,
+    last_seen_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE command_registry; Type: COMMENT; Schema: mcp; Owner: -
+--
+
+COMMENT ON TABLE mcp.command_registry IS 'Canonical command registry: one row per (service, command) tool from the live MCP surface. Seeded from tools-aggregator /tools (which queries all MCP servers via tools/list). Filesystem slash/ docs are a projection of this table.';
+
+
+--
 -- Name: agendas_history; Type: TABLE; Schema: nebula; Owner: -
 --
 
@@ -15826,6 +16705,23 @@ CREATE TABLE nebula.agent_connections (
 --
 
 COMMENT ON TABLE nebula.agent_connections IS 'Session affordance census (DBA pre-stage, continuity 65fe85a8): what an execution context could actually see and do at session start — MCP tools registered, procedure-card visibility, inbox status, handoff/digest availability, keychain availability. Refs-only by design: the census records WHAT WAS AVAILABLE, never WHAT IT SAID. Append-only boot-time attestations; NOT APPLIED until adopted by the boot shim flow.';
+
+
+--
+-- Name: agent_record_embeddings; Type: TABLE; Schema: nebula; Owner: -
+--
+
+CREATE TABLE nebula.agent_record_embeddings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    agent_record_id uuid NOT NULL,
+    role text,
+    record_type text,
+    title text,
+    embed_text text NOT NULL,
+    embedding public.vector(768),
+    model_used text DEFAULT 'nomic-embed-text'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
 
 
 --
@@ -16512,6 +17408,54 @@ COMMENT ON COLUMN nebula.capabilities.protocol_spec IS 'Abstract protocol contra
 
 
 --
+-- Name: compilation_idempotency; Type: TABLE; Schema: nebula; Owner: -
+--
+
+CREATE TABLE nebula.compilation_idempotency (
+    idempotency_key text NOT NULL,
+    input_digest text NOT NULL,
+    state text DEFAULT 'in_progress'::text NOT NULL,
+    response jsonb,
+    response_status integer,
+    receipt_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT compilation_idempotency_check CHECK ((((state = 'in_progress'::text) AND (response IS NULL) AND (response_status IS NULL) AND (completed_at IS NULL)) OR ((state = 'completed'::text) AND (response IS NOT NULL) AND (response_status IS NOT NULL) AND ((response_status >= 200) AND (response_status <= 599)) AND (completed_at IS NOT NULL)))),
+    CONSTRAINT compilation_idempotency_state_check CHECK ((state = ANY (ARRAY['in_progress'::text, 'completed'::text])))
+);
+
+
+--
+-- Name: TABLE compilation_idempotency; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON TABLE nebula.compilation_idempotency IS 'Idempotency reservations for requirement compilation; reserve before effects to prevent duplicate plan creation.';
+
+
+--
+-- Name: compilation_receipts; Type: TABLE; Schema: nebula; Owner: -
+--
+
+CREATE TABLE nebula.compilation_receipts (
+    receipt_id uuid NOT NULL,
+    idempotency_key text NOT NULL,
+    input_digest text NOT NULL,
+    requirement_id text NOT NULL,
+    outcome text NOT NULL,
+    receipt jsonb NOT NULL,
+    occurred_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT compilation_receipts_outcome_check CHECK ((outcome = ANY (ARRAY['compiled'::text, 'plan_created'::text, 'partial'::text, 'rejected'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: TABLE compilation_receipts; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON TABLE nebula.compilation_receipts IS 'Append-only versioned evidence for requirement compilation attempts.';
+
+
+--
 -- Name: conversation_blocks_history; Type: TABLE; Schema: nebula; Owner: -
 --
 
@@ -16720,6 +17664,68 @@ COMMENT ON TABLE nebula.deliberation_participants IS 'Tracks which roles partici
 
 
 --
+-- Name: executions; Type: TABLE; Schema: nebula; Owner: -
+--
+
+CREATE TABLE nebula.executions (
+    execution_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    session_id text,
+    census_enabled boolean NOT NULL,
+    census_sampled boolean NOT NULL,
+    census_id uuid,
+    census_rate text,
+    source_namespace text NOT NULL,
+    ticket_id text,
+    work_item_id text,
+    doctrine_snapshot_id text NOT NULL,
+    procedure_card_set_hash text,
+    outcome_status text NOT NULL,
+    outcome_detail text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT executions_census_disabled_is_inert CHECK ((census_enabled OR ((NOT census_sampled) AND (census_rate IS NULL)))),
+    CONSTRAINT executions_census_id_iff_sampled CHECK (((census_id IS NULL) = (NOT census_sampled))),
+    CONSTRAINT executions_census_rate_bounds CHECK (
+CASE
+    WHEN (census_enabled IS NOT TRUE) THEN true
+    WHEN (census_rate ~ '^[0-9]+/[0-9]+$'::text) THEN (((split_part(census_rate, '/'::text, 2))::integer >= 1) AND ((split_part(census_rate, '/'::text, 1))::integer <= (split_part(census_rate, '/'::text, 2))::integer))
+    ELSE false
+END),
+    CONSTRAINT executions_census_rate_shape CHECK (((census_rate IS NULL) OR (census_rate ~ '^[0-9]+/[0-9]+$'::text))),
+    CONSTRAINT executions_census_sampled_implies_enabled CHECK (((NOT census_sampled) OR census_enabled)),
+    CONSTRAINT executions_session_id_not_a_uuid CHECK (((session_id IS NULL) OR (session_id !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'::text))),
+    CONSTRAINT executions_session_id_not_empty CHECK (((session_id IS NULL) OR (session_id <> ''::text)))
+);
+
+
+--
+-- Name: TABLE executions; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON TABLE nebula.executions IS 'CDLC A2a Tier-1 execution identity + Tier-2 census marker. session_id is a text reference (many-per-session), NOT a parent and NOT a uuid. session_id = '' is forbidden, per the dffa404e finding that 45% of receipts_unified rows violate the NULL-means-un-shimmed sentinel. No FK to vision.sessions by ruling. DRAFT: not yet authorised to run; this file is deliberately outside the NNN-*.sql runner pattern.';
+
+
+--
+-- Name: COLUMN executions.session_id; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON COLUMN nebula.executions.session_id IS 'Opaque text reference to a harness session, NULL when un-shimmed. Never a uuid: a uuid here is the vision.sessions concept colliding with the reference family (DBA ruling dffa404e condition 3).';
+
+
+--
+-- Name: COLUMN executions.census_enabled; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON COLUMN nebula.executions.census_enabled IS 'Tier-2 marker part 1. NOT NULL by design: absence is illegal so a missing marker cannot be confused with a disabled census (A5 measures 30% sampled-missing).';
+
+
+--
+-- Name: COLUMN executions.census_id; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON COLUMN nebula.executions.census_id IS 'Join key to the single Tier-3 census report. Non-null exactly when census_sampled.';
+
+
+--
 -- Name: features_history; Type: TABLE; Schema: nebula; Owner: -
 --
 
@@ -16757,6 +17763,49 @@ CREATE VIEW nebula.features AS
     path,
     asset_id
    FROM nebula.features_history
+  WHERE ((now() >= recorded_on_dt) AND (now() < recorded_until_dt) AND (now() >= valid_from) AND (now() < valid_until));
+
+
+--
+-- Name: harvest_candidate_embeddings_history; Type: TABLE; Schema: nebula; Owner: -
+--
+
+CREATE TABLE nebula.harvest_candidate_embeddings_history (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    harvest_id uuid NOT NULL,
+    candidate_index integer NOT NULL,
+    candidate_title text NOT NULL,
+    intent_text text NOT NULL,
+    embedding public.vector(768),
+    source_filename text,
+    model_used text DEFAULT 'nomic-embed-text'::text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    valid_from timestamp with time zone DEFAULT now() NOT NULL,
+    valid_until timestamp with time zone DEFAULT '9999-12-31 00:00:00+00'::timestamp with time zone NOT NULL,
+    recorded_on_dt timestamp with time zone DEFAULT now() NOT NULL,
+    recorded_until_dt timestamp with time zone DEFAULT '9999-12-31 00:00:00+00'::timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: harvest_candidate_embeddings; Type: VIEW; Schema: nebula; Owner: -
+--
+
+CREATE VIEW nebula.harvest_candidate_embeddings AS
+ SELECT id,
+    harvest_id,
+    candidate_index,
+    candidate_title,
+    intent_text,
+    embedding,
+    source_filename,
+    model_used,
+    created_at,
+    valid_from,
+    valid_until,
+    recorded_on_dt,
+    recorded_until_dt
+   FROM nebula.harvest_candidate_embeddings_history hceh
   WHERE ((now() >= recorded_on_dt) AND (now() < recorded_until_dt) AND (now() >= valid_from) AND (now() < valid_until));
 
 
@@ -17348,7 +18397,7 @@ CREATE VIEW nebula.plans AS
  SELECT plan_number AS id,
     ''::text AS file_name,
     title,
-    'wrp'::text AS project,
+    (metadata ->> 'project'::text) AS project,
     COALESCE(goal, ''::text) AS goal,
     COALESCE(content, ''::text) AS content,
     COALESCE(array_to_string(files_affected, ','::text), ''::text) AS files_affected,
@@ -17451,6 +18500,7 @@ CREATE TABLE vision.receipts (
     recorded_until_dt timestamp with time zone,
     sequence integer NOT NULL,
     CONSTRAINT chk_receipts_sequence_non_negative CHECK ((sequence >= 0)),
+    CONSTRAINT chk_vision_receipts_artifact_path_nonblank CHECK (((artifact_path IS NULL) OR (btrim(artifact_path) <> ''::text))),
     CONSTRAINT chk_vision_receipts_type CHECK ((type = ANY (ARRAY['ABANDONED'::text, 'API_LIMIT'::text, 'BLOCK'::text, 'CANCELLED'::text, 'CCNF_EXECUTION'::text, 'CRITIQUE'::text, 'CRITIQUE_PASS'::text, 'CRITIQUE_REJECT'::text, 'HOLD'::text, 'IMPLEMENTATION'::text, 'PLANNING'::text, 'PLAN_BLOCK'::text, 'PLAN_CREATE'::text, 'PROPOSED'::text, 'REQUEUED'::text, 'REVIEW'::text, 'REVIEW_PASS'::text, 'REVIEW_REJECT'::text])))
 );
 
@@ -17869,6 +18919,45 @@ CREATE VIEW nebula.requirements AS
 
 
 --
+-- Name: role_inbox_pointers; Type: TABLE; Schema: nebula; Owner: -
+--
+
+CREATE TABLE nebula.role_inbox_pointers (
+    role text NOT NULL,
+    pointer timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE role_inbox_pointers; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON TABLE nebula.role_inbox_pointers IS 'Durable per-role inbox delivery watermarks. Canonical; Redis is cache only. Defect db3992b2: pointers were Redis-resident and were lost to a restart on 2026-10-01.';
+
+
+--
+-- Name: COLUMN role_inbox_pointers.role; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON COLUMN nebula.role_inbox_pointers.role IS 'Role name, matching the inbox:pointer:<role> key it replaces.';
+
+
+--
+-- Name: COLUMN role_inbox_pointers.pointer; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON COLUMN nebula.role_inbox_pointers.pointer IS 'Last-seen instant for this role. NULL is never stored; absence of a row means no pointer.';
+
+
+--
+-- Name: COLUMN role_inbox_pointers.updated_at; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON COLUMN nebula.role_inbox_pointers.updated_at IS 'Last write time; dates the loss if one ever occurs again.';
+
+
+--
 -- Name: roles; Type: VIEW; Schema: nebula; Owner: -
 --
 
@@ -17910,7 +18999,8 @@ CREATE VIEW nebula.roles AS
 CREATE TABLE nebula.schema_version (
     version integer NOT NULL,
     description text NOT NULL,
-    applied_at timestamp with time zone DEFAULT now() NOT NULL
+    applied_at timestamp with time zone DEFAULT now() NOT NULL,
+    content_hash text
 );
 
 
@@ -17919,6 +19009,13 @@ CREATE TABLE nebula.schema_version (
 --
 
 COMMENT ON TABLE nebula.schema_version IS 'Forward ledger for nebula-srv numbered migrations. Versions 001-041 predate per-version ledger tracking and are represented by baseline version 41.';
+
+
+--
+-- Name: COLUMN schema_version.content_hash; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON COLUMN nebula.schema_version.content_hash IS 'sha256 of the migration file bytes as applied (Decision 23 content binding). NULL for versions stamped before this column existed; historical rows are backfilled from migrations/attestations.json by bin/backfill-migration-content-hashes.py.';
 
 
 --
@@ -18389,6 +19486,18 @@ CREATE VIEW nebula.systems AS
     asset_id
    FROM nebula.systems_history
   WHERE ((now() >= recorded_on_dt) AND (now() < recorded_until_dt) AND (now() >= valid_from) AND (now() < valid_until));
+
+
+--
+-- Name: trigger_restore_log; Type: TABLE; Schema: nebula; Owner: -
+--
+
+CREATE TABLE nebula.trigger_restore_log (
+    version integer NOT NULL,
+    restored_on timestamp with time zone DEFAULT now() NOT NULL,
+    relkind "char" NOT NULL,
+    restored text[] NOT NULL
+);
 
 
 --
@@ -19274,6 +20383,59 @@ CREATE VIEW nebula.work_sessions AS
     valid_until
    FROM nebula.work_sessions_history
   WHERE ((now() >= recorded_on_dt) AND (now() < recorded_until_dt) AND (now() >= valid_from) AND (now() < valid_until));
+
+
+--
+-- Name: continuity_queue; Type: TABLE; Schema: operator; Owner: -
+--
+
+CREATE TABLE operator.continuity_queue (
+    id bigint NOT NULL,
+    session_id text NOT NULL,
+    summary text NOT NULL,
+    user_message text,
+    topic text,
+    "position" integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: continuity_queue_id_seq; Type: SEQUENCE; Schema: operator; Owner: -
+--
+
+CREATE SEQUENCE operator.continuity_queue_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: continuity_queue_id_seq; Type: SEQUENCE OWNED BY; Schema: operator; Owner: -
+--
+
+ALTER SEQUENCE operator.continuity_queue_id_seq OWNED BY operator.continuity_queue.id;
+
+
+--
+-- Name: prompts_responses; Type: TABLE; Schema: operator; Owner: -
+--
+
+CREATE TABLE operator.prompts_responses (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    session_id text NOT NULL,
+    role text DEFAULT 'operator'::text NOT NULL,
+    user_message text NOT NULL,
+    model_response text,
+    model_identifier text,
+    tokens_in integer,
+    tokens_out integer,
+    latency_ms integer,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    metadata jsonb DEFAULT '{}'::jsonb
+);
 
 
 --
@@ -21947,6 +23109,23 @@ CREATE TABLE semantics.evidence_type (
 
 
 --
+-- Name: source_observation_embeddings; Type: TABLE; Schema: semantics; Owner: -
+--
+
+CREATE TABLE semantics.source_observation_embeddings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    source_observation_id uuid NOT NULL,
+    asset_kind text NOT NULL,
+    platform text,
+    raw_location text,
+    embed_text text NOT NULL,
+    embedding public.vector(768),
+    model_used text DEFAULT 'nomic-embed-text'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: statement_evidence; Type: TABLE; Schema: semantics; Owner: -
 --
 
@@ -22607,6 +23786,147 @@ CREATE TABLE shrapnel.value_uuid (
 --
 
 COMMENT ON TABLE shrapnel.value_uuid IS 'UUID typed value extension (field_type_code = 7).';
+
+
+--
+-- Name: hotspots; Type: TABLE; Schema: sonar; Owner: -
+--
+
+CREATE TABLE sonar.hotspots (
+    key text NOT NULL,
+    security_category text NOT NULL,
+    vulnerability_probability text NOT NULL,
+    status text NOT NULL,
+    resolution text,
+    project_key text NOT NULL,
+    component_key text,
+    line integer,
+    rule_key text NOT NULL,
+    message text NOT NULL,
+    author text,
+    raw_json jsonb NOT NULL,
+    update_key text,
+    review_status text,
+    review_owner text,
+    review_note text,
+    reviewed_at timestamp with time zone,
+    synced_to_sonar boolean DEFAULT false NOT NULL,
+    first_seen_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: issues; Type: TABLE; Schema: sonar; Owner: -
+--
+
+CREATE TABLE sonar.issues (
+    key text NOT NULL,
+    sonar_type text NOT NULL,
+    severity text NOT NULL,
+    status text NOT NULL,
+    resolution text,
+    project_key text NOT NULL,
+    component_key text,
+    line integer,
+    rule_key text NOT NULL,
+    message text NOT NULL,
+    effort text,
+    author text,
+    tags jsonb DEFAULT '[]'::jsonb NOT NULL,
+    raw_json jsonb NOT NULL,
+    update_key text,
+    review_status text,
+    review_owner text,
+    review_note text,
+    reviewed_at timestamp with time zone,
+    synced_to_sonar boolean DEFAULT false NOT NULL,
+    first_seen_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: measures; Type: TABLE; Schema: sonar; Owner: -
+--
+
+CREATE TABLE sonar.measures (
+    project_key text NOT NULL,
+    metric_key text NOT NULL,
+    metric_value text NOT NULL,
+    quality_gate_status text,
+    captured_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: sync_state; Type: TABLE; Schema: sonar; Owner: -
+--
+
+CREATE TABLE sonar.sync_state (
+    id integer NOT NULL,
+    last_issues_sync timestamp with time zone,
+    last_hotspots_sync timestamp with time zone,
+    last_measures_sync timestamp with time zone,
+    issues_cursor text,
+    hotspots_cursor text,
+    issues_total integer,
+    hotspots_total integer,
+    last_sync_status text,
+    last_sync_error text,
+    last_sync_count integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sync_state_id_check CHECK ((id = 1))
+);
+
+
+--
+-- Name: evidence_links; Type: TABLE; Schema: steward; Owner: -
+--
+
+CREATE TABLE steward.evidence_links (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    knowledge_entity_id uuid NOT NULL,
+    nebula_harvest_id uuid,
+    nebula_candidate_id uuid,
+    link_type steward.evidence_link_type NOT NULL,
+    status steward.evidence_link_status DEFAULT 'proposed'::text NOT NULL,
+    reviewed_by text,
+    reviewed_at timestamp with time zone,
+    confidence numeric(5,4),
+    provenance text DEFAULT 'auto_ingestor'::text NOT NULL,
+    rationale text,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT chk_evidence_has_source CHECK (((nebula_harvest_id IS NOT NULL) OR (nebula_candidate_id IS NOT NULL)))
+);
+
+ALTER TABLE ONLY steward.evidence_links REPLICA IDENTITY FULL;
+
+
+--
+-- Name: semantic_documents; Type: TABLE; Schema: steward; Owner: -
+--
+
+CREATE TABLE steward.semantic_documents (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    origin_system steward.origin_system NOT NULL,
+    origin_table text NOT NULL,
+    origin_id text NOT NULL,
+    document_kind steward.document_kind NOT NULL,
+    title text DEFAULT ''::text NOT NULL,
+    body text DEFAULT ''::text NOT NULL,
+    embedding public.vector(1536),
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    embedding_model text,
+    embedding_generated_at timestamp with time zone,
+    embedding_version integer DEFAULT 1,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+ALTER TABLE ONLY steward.semantic_documents REPLICA IDENTITY FULL;
 
 
 --
@@ -23335,6 +24655,23 @@ CREATE SEQUENCE terrain.service_types_id_seq
 --
 
 ALTER SEQUENCE terrain.service_types_id_seq OWNED BY terrain.service_types.id;
+
+
+--
+-- Name: links; Type: TABLE; Schema: throttler; Owner: -
+--
+
+CREATE TABLE throttler.links (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    address text NOT NULL,
+    imagename text NOT NULL,
+    text text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    type text DEFAULT 'link'::text NOT NULL,
+    sort_order integer DEFAULT 0 NOT NULL,
+    CONSTRAINT chk_links_type CHECK ((type = ANY (ARRAY['link'::text, 'separator'::text])))
+);
 
 
 --
@@ -24070,6 +25407,412 @@ COMMENT ON COLUMN vision.wr_compile_verdicts.route IS 'classification.route (con
 
 
 --
+-- Name: directory_observation; Type: TABLE; Schema: voyager; Owner: -
+--
+
+CREATE TABLE voyager.directory_observation (
+    id bigint NOT NULL,
+    observation_id uuid NOT NULL,
+    epoch_id uuid NOT NULL,
+    path text NOT NULL,
+    inode bigint NOT NULL,
+    device_id bigint NOT NULL,
+    stat_raw jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE directory_observation; Type: COMMENT; Schema: voyager; Owner: -
+--
+
+COMMENT ON TABLE voyager.directory_observation IS 'Directory snapshot. Used by the Topology Engine for structural adjacency.';
+
+
+--
+-- Name: directory_observation_id_seq; Type: SEQUENCE; Schema: voyager; Owner: -
+--
+
+ALTER TABLE voyager.directory_observation ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME voyager.directory_observation_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: entity; Type: TABLE; Schema: voyager; Owner: -
+--
+
+CREATE TABLE voyager.entity (
+    id bigint NOT NULL,
+    entity_id uuid NOT NULL,
+    canonical_observations uuid[] NOT NULL,
+    lineage jsonb NOT NULL,
+    stability_score double precision DEFAULT 0 NOT NULL,
+    state jsonb,
+    valid_from timestamp with time zone DEFAULT now() NOT NULL,
+    valid_to timestamp with time zone,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT entity_stability_score_check CHECK (((stability_score >= (0)::double precision) AND (stability_score <= (1)::double precision)))
+);
+
+
+--
+-- Name: TABLE entity; Type: COMMENT; Schema: voyager; Owner: -
+--
+
+COMMENT ON TABLE voyager.entity IS 'Stable identity container. Authoritative source of "what" persisted across
+   structural transformations. NOT semantic — identity is physical+structural continuity.';
+
+
+--
+-- Name: entity_drift; Type: TABLE; Schema: voyager; Owner: -
+--
+
+CREATE TABLE voyager.entity_drift (
+    id bigint NOT NULL,
+    drift_id uuid NOT NULL,
+    entity_id uuid NOT NULL,
+    observation_id uuid NOT NULL,
+    delta jsonb NOT NULL,
+    magnitude voyager.drift_magnitude NOT NULL,
+    confidence double precision NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT entity_drift_confidence_check CHECK (((confidence >= (0)::double precision) AND (confidence <= (1)::double precision)))
+);
+
+
+--
+-- Name: TABLE entity_drift; Type: COMMENT; Schema: voyager; Owner: -
+--
+
+COMMENT ON TABLE voyager.entity_drift IS 'Identity Engine output — physical change classification. Magnitude is
+   non-semantic (TRACE→MASSIVE). LOSM consumes this for impact assessment.';
+
+
+--
+-- Name: entity_drift_id_seq; Type: SEQUENCE; Schema: voyager; Owner: -
+--
+
+ALTER TABLE voyager.entity_drift ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME voyager.entity_drift_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: entity_id_seq; Type: SEQUENCE; Schema: voyager; Owner: -
+--
+
+ALTER TABLE voyager.entity ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME voyager.entity_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: file_observation; Type: TABLE; Schema: voyager; Owner: -
+--
+
+CREATE TABLE voyager.file_observation (
+    id bigint NOT NULL,
+    observation_id uuid NOT NULL,
+    epoch_id uuid NOT NULL,
+    path text NOT NULL,
+    size bigint NOT NULL,
+    mtime timestamp with time zone NOT NULL,
+    inode bigint NOT NULL,
+    device_id bigint NOT NULL,
+    content_hash text,
+    fast_hash text,
+    stat_raw jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE file_observation; Type: COMMENT; Schema: voyager; Owner: -
+--
+
+COMMENT ON TABLE voyager.file_observation IS 'Immutable filesystem snapshot. One row per scan observation.';
+
+
+--
+-- Name: file_observation_id_seq; Type: SEQUENCE; Schema: voyager; Owner: -
+--
+
+ALTER TABLE voyager.file_observation ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME voyager.file_observation_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: identity_candidate; Type: TABLE; Schema: voyager; Owner: -
+--
+
+CREATE TABLE voyager.identity_candidate (
+    id bigint NOT NULL,
+    candidate_id uuid NOT NULL,
+    observation_ids uuid[] NOT NULL,
+    evidence jsonb NOT NULL,
+    confidence double precision NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    evidence_item_id uuid,
+    CONSTRAINT identity_candidate_confidence_check CHECK (((confidence >= (0)::double precision) AND (confidence <= (1)::double precision)))
+);
+
+
+--
+-- Name: TABLE identity_candidate; Type: COMMENT; Schema: voyager; Owner: -
+--
+
+COMMENT ON TABLE voyager.identity_candidate IS 'Identity Engine output — hypothesis of continuity across observations.';
+
+
+--
+-- Name: identity_candidate_id_seq; Type: SEQUENCE; Schema: voyager; Owner: -
+--
+
+ALTER TABLE voyager.identity_candidate ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME voyager.identity_candidate_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: metadata_span; Type: TABLE; Schema: voyager; Owner: -
+--
+
+CREATE TABLE voyager.metadata_span (
+    id bigint NOT NULL,
+    span_id uuid NOT NULL,
+    epoch_id uuid NOT NULL,
+    observation_id uuid NOT NULL,
+    text text NOT NULL,
+    start_pos integer NOT NULL,
+    end_pos integer NOT NULL,
+    span_type voyager.span_type NOT NULL,
+    confidence double precision NOT NULL,
+    markdown_role text,
+    discourse_role text,
+    event_candidate boolean DEFAULT false NOT NULL,
+    features jsonb DEFAULT '{}'::jsonb NOT NULL,
+    provenance jsonb DEFAULT '{}'::jsonb NOT NULL,
+    embedding public.vector(1536),
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT metadata_span_confidence_check CHECK (((confidence >= (0)::double precision) AND (confidence <= (1)::double precision)))
+);
+
+
+--
+-- Name: TABLE metadata_span; Type: COMMENT; Schema: voyager; Owner: -
+--
+
+COMMENT ON TABLE voyager.metadata_span IS 'Content spans extracted from file observations. Consumed exclusively by LOSM
+   for semantic interpretation, requirement extraction, and embedding search.';
+
+
+--
+-- Name: COLUMN metadata_span.embedding; Type: COMMENT; Schema: voyager; Owner: -
+--
+
+COMMENT ON COLUMN voyager.metadata_span.embedding IS 'pgvector embedding (1536-d). Requires pgvector extension.';
+
+
+--
+-- Name: metadata_span_id_seq; Type: SEQUENCE; Schema: voyager; Owner: -
+--
+
+ALTER TABLE voyager.metadata_span ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME voyager.metadata_span_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: observation_edge_hint; Type: TABLE; Schema: voyager; Owner: -
+--
+
+CREATE TABLE voyager.observation_edge_hint (
+    id bigint NOT NULL,
+    hint_id uuid NOT NULL,
+    epoch_id uuid NOT NULL,
+    observation_ids uuid[] NOT NULL,
+    evidence jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    evidence_item_id uuid
+);
+
+
+--
+-- Name: TABLE observation_edge_hint; Type: COMMENT; Schema: voyager; Owner: -
+--
+
+COMMENT ON TABLE voyager.observation_edge_hint IS 'Weak structural signals from fs-crawler. Does NOT imply identity authority.
+   Consumed by Identity Engine for continuity clustering.';
+
+
+--
+-- Name: observation_edge_hint_id_seq; Type: SEQUENCE; Schema: voyager; Owner: -
+--
+
+ALTER TABLE voyager.observation_edge_hint ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME voyager.observation_edge_hint_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: requirement_candidate; Type: TABLE; Schema: voyager; Owner: -
+--
+
+CREATE TABLE voyager.requirement_candidate (
+    id bigint NOT NULL,
+    req_id uuid NOT NULL,
+    text text NOT NULL,
+    provenance uuid[] NOT NULL,
+    confidence double precision NOT NULL,
+    span_ids uuid[],
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT requirement_candidate_confidence_check CHECK (((confidence >= (0)::double precision) AND (confidence <= (1)::double precision)))
+);
+
+
+--
+-- Name: TABLE requirement_candidate; Type: COMMENT; Schema: voyager; Owner: -
+--
+
+COMMENT ON TABLE voyager.requirement_candidate IS 'LOSM output — extracted requirements with provenance chain back to entities
+   and spans. Consumed by WRP for work request generation.';
+
+
+--
+-- Name: requirement_candidate_id_seq; Type: SEQUENCE; Schema: voyager; Owner: -
+--
+
+ALTER TABLE voyager.requirement_candidate ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME voyager.requirement_candidate_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: scan_epoch; Type: TABLE; Schema: voyager; Owner: -
+--
+
+CREATE TABLE voyager.scan_epoch (
+    id bigint NOT NULL,
+    epoch_id uuid NOT NULL,
+    root_path text NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    completed_at timestamp with time zone,
+    files_scanned integer DEFAULT 0 NOT NULL,
+    new_files integer DEFAULT 0 NOT NULL,
+    cached_files integer DEFAULT 0 NOT NULL,
+    errors_count integer DEFAULT 0 NOT NULL,
+    status text DEFAULT 'running'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE scan_epoch; Type: COMMENT; Schema: voyager; Owner: -
+--
+
+COMMENT ON TABLE voyager.scan_epoch IS 'Tracks each scanner acquisition cycle. One row per epoch_id.';
+
+
+--
+-- Name: scan_epoch_id_seq; Type: SEQUENCE; Schema: voyager; Owner: -
+--
+
+ALTER TABLE voyager.scan_epoch ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME voyager.scan_epoch_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: topology_signal; Type: TABLE; Schema: voyager; Owner: -
+--
+
+CREATE TABLE voyager.topology_signal (
+    id bigint NOT NULL,
+    signal_id uuid NOT NULL,
+    epoch_id uuid NOT NULL,
+    structure_type text NOT NULL,
+    structure_scope text NOT NULL,
+    geometry jsonb NOT NULL,
+    pattern jsonb,
+    constraints jsonb DEFAULT '{"purely_structural": true}'::jsonb NOT NULL,
+    observation_ids uuid[] NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE topology_signal; Type: COMMENT; Schema: voyager; Owner: -
+--
+
+COMMENT ON TABLE voyager.topology_signal IS 'Structural-only geometry. NO semantic labels allowed. Consumed by Identity Engine.';
+
+
+--
+-- Name: topology_signal_id_seq; Type: SEQUENCE; Schema: voyager; Owner: -
+--
+
+ALTER TABLE voyager.topology_signal ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME voyager.topology_signal_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: event_types; Type: TABLE; Schema: wind; Owner: -
 --
 
@@ -24703,6 +26446,13 @@ ALTER TABLE ONLY duality.session_events ALTER COLUMN seq SET DEFAULT nextval('du
 
 
 --
+-- Name: continuity_queue id; Type: DEFAULT; Schema: operator; Owner: -
+--
+
+ALTER TABLE ONLY operator.continuity_queue ALTER COLUMN id SET DEFAULT nextval('operator.continuity_queue_id_seq'::regclass);
+
+
+--
 -- Name: governance_events id; Type: DEFAULT; Schema: peb; Owner: -
 --
 
@@ -24791,6 +26541,86 @@ ALTER TABLE ONLY vision.canonical_wr_landing_refusals ALTER COLUMN refusal_id SE
 --
 
 ALTER TABLE ONLY vision.work_requests ALTER COLUMN id SET DEFAULT nextval('vision.work_requests_id_seq1'::regclass);
+
+
+--
+-- Name: artifacts artifacts_pkey; Type: CONSTRAINT; Schema: absorb; Owner: -
+--
+
+ALTER TABLE ONLY absorb.artifacts
+    ADD CONSTRAINT artifacts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: documents documents_pkey; Type: CONSTRAINT; Schema: absorb; Owner: -
+--
+
+ALTER TABLE ONLY absorb.documents
+    ADD CONSTRAINT documents_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: documents documents_profile_id_content_hash_key; Type: CONSTRAINT; Schema: absorb; Owner: -
+--
+
+ALTER TABLE ONLY absorb.documents
+    ADD CONSTRAINT documents_profile_id_content_hash_key UNIQUE (profile_id, content_hash);
+
+
+--
+-- Name: profile_versions profile_versions_pkey; Type: CONSTRAINT; Schema: absorb; Owner: -
+--
+
+ALTER TABLE ONLY absorb.profile_versions
+    ADD CONSTRAINT profile_versions_pkey PRIMARY KEY (profile_id, version);
+
+
+--
+-- Name: profiles profiles_pkey; Type: CONSTRAINT; Schema: absorb; Owner: -
+--
+
+ALTER TABLE ONLY absorb.profiles
+    ADD CONSTRAINT profiles_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: run_steps run_steps_pkey; Type: CONSTRAINT; Schema: absorb; Owner: -
+--
+
+ALTER TABLE ONLY absorb.run_steps
+    ADD CONSTRAINT run_steps_pkey PRIMARY KEY (run_id, step_index);
+
+
+--
+-- Name: runs runs_pkey; Type: CONSTRAINT; Schema: absorb; Owner: -
+--
+
+ALTER TABLE ONLY absorb.runs
+    ADD CONSTRAINT runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: segments segments_pkey; Type: CONSTRAINT; Schema: absorb; Owner: -
+--
+
+ALTER TABLE ONLY absorb.segments
+    ADD CONSTRAINT segments_pkey PRIMARY KEY (document_id, seg_index);
+
+
+--
+-- Name: turns turns_pkey; Type: CONSTRAINT; Schema: absorb; Owner: -
+--
+
+ALTER TABLE ONLY absorb.turns
+    ADD CONSTRAINT turns_pkey PRIMARY KEY (document_id, turn_index);
+
+
+--
+-- Name: watermarks watermarks_pkey; Type: CONSTRAINT; Schema: absorb; Owner: -
+--
+
+ALTER TABLE ONLY absorb.watermarks
+    ADD CONSTRAINT watermarks_pkey PRIMARY KEY (profile_id, profile_version, source_fingerprint);
 
 
 --
@@ -25554,6 +27384,38 @@ ALTER TABLE ONLY execution.requests
 
 
 --
+-- Name: builds builds_pkey; Type: CONSTRAINT; Schema: jenkins; Owner: -
+--
+
+ALTER TABLE ONLY jenkins.builds
+    ADD CONSTRAINT builds_pkey PRIMARY KEY (job_name, number);
+
+
+--
+-- Name: jobs jobs_pkey; Type: CONSTRAINT; Schema: jenkins; Owner: -
+--
+
+ALTER TABLE ONLY jenkins.jobs
+    ADD CONSTRAINT jobs_pkey PRIMARY KEY (name);
+
+
+--
+-- Name: stages stages_pkey; Type: CONSTRAINT; Schema: jenkins; Owner: -
+--
+
+ALTER TABLE ONLY jenkins.stages
+    ADD CONSTRAINT stages_pkey PRIMARY KEY (job_name, build_number, stage_name);
+
+
+--
+-- Name: sync_state sync_state_pkey; Type: CONSTRAINT; Schema: jenkins; Owner: -
+--
+
+ALTER TABLE ONLY jenkins.sync_state
+    ADD CONSTRAINT sync_state_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: event_log event_log_pkey; Type: CONSTRAINT; Schema: kernel; Owner: -
 --
 
@@ -25626,6 +27488,86 @@ ALTER TABLE ONLY kernel.transition_event
 
 
 --
+-- Name: graph_cross_references graph_cross_references_pkey; Type: CONSTRAINT; Schema: knowledge; Owner: -
+--
+
+ALTER TABLE ONLY knowledge.graph_cross_references
+    ADD CONSTRAINT graph_cross_references_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: graph_edges graph_edges_pkey; Type: CONSTRAINT; Schema: knowledge; Owner: -
+--
+
+ALTER TABLE ONLY knowledge.graph_edges
+    ADD CONSTRAINT graph_edges_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: graph_entities graph_entities_pkey; Type: CONSTRAINT; Schema: knowledge; Owner: -
+--
+
+ALTER TABLE ONLY knowledge.graph_entities
+    ADD CONSTRAINT graph_entities_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: graph_entities graph_entities_section_entity_id_key; Type: CONSTRAINT; Schema: knowledge; Owner: -
+--
+
+ALTER TABLE ONLY knowledge.graph_entities
+    ADD CONSTRAINT graph_entities_section_entity_id_key UNIQUE (section, entity_id);
+
+
+--
+-- Name: graph_entity_embeddings graph_entity_embeddings_entity_id_key; Type: CONSTRAINT; Schema: knowledge; Owner: -
+--
+
+ALTER TABLE ONLY knowledge.graph_entity_embeddings
+    ADD CONSTRAINT graph_entity_embeddings_entity_id_key UNIQUE (entity_id);
+
+
+--
+-- Name: graph_entity_embeddings graph_entity_embeddings_pkey; Type: CONSTRAINT; Schema: knowledge; Owner: -
+--
+
+ALTER TABLE ONLY knowledge.graph_entity_embeddings
+    ADD CONSTRAINT graph_entity_embeddings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: graph_migrations graph_migrations_pkey; Type: CONSTRAINT; Schema: knowledge; Owner: -
+--
+
+ALTER TABLE ONLY knowledge.graph_migrations
+    ADD CONSTRAINT graph_migrations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: graph_edges uq_graph_edges; Type: CONSTRAINT; Schema: knowledge; Owner: -
+--
+
+ALTER TABLE ONLY knowledge.graph_edges
+    ADD CONSTRAINT uq_graph_edges UNIQUE (source_section, source_id, relation_type, target_section, target_id);
+
+
+--
+-- Name: command_registry command_registry_pkey; Type: CONSTRAINT; Schema: mcp; Owner: -
+--
+
+ALTER TABLE ONLY mcp.command_registry
+    ADD CONSTRAINT command_registry_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: command_registry command_registry_service_command_key; Type: CONSTRAINT; Schema: mcp; Owner: -
+--
+
+ALTER TABLE ONLY mcp.command_registry
+    ADD CONSTRAINT command_registry_service_command_key UNIQUE (service, command);
+
+
+--
 -- Name: adapters adapters_pkey; Type: CONSTRAINT; Schema: nebula; Owner: -
 --
 
@@ -25663,6 +27605,22 @@ ALTER TABLE ONLY nebula.agendas_history
 
 ALTER TABLE ONLY nebula.agent_connections
     ADD CONSTRAINT agent_connections_pkey PRIMARY KEY (conn_id);
+
+
+--
+-- Name: agent_record_embeddings agent_record_embeddings_agent_record_id_key; Type: CONSTRAINT; Schema: nebula; Owner: -
+--
+
+ALTER TABLE ONLY nebula.agent_record_embeddings
+    ADD CONSTRAINT agent_record_embeddings_agent_record_id_key UNIQUE (agent_record_id);
+
+
+--
+-- Name: agent_record_embeddings agent_record_embeddings_pkey; Type: CONSTRAINT; Schema: nebula; Owner: -
+--
+
+ALTER TABLE ONLY nebula.agent_record_embeddings
+    ADD CONSTRAINT agent_record_embeddings_pkey PRIMARY KEY (id);
 
 
 --
@@ -25770,6 +27728,30 @@ ALTER TABLE ONLY nebula.capabilities
 
 
 --
+-- Name: compilation_idempotency compilation_idempotency_pkey; Type: CONSTRAINT; Schema: nebula; Owner: -
+--
+
+ALTER TABLE ONLY nebula.compilation_idempotency
+    ADD CONSTRAINT compilation_idempotency_pkey PRIMARY KEY (idempotency_key);
+
+
+--
+-- Name: compilation_receipts compilation_receipts_idempotency_key_key; Type: CONSTRAINT; Schema: nebula; Owner: -
+--
+
+ALTER TABLE ONLY nebula.compilation_receipts
+    ADD CONSTRAINT compilation_receipts_idempotency_key_key UNIQUE (idempotency_key);
+
+
+--
+-- Name: compilation_receipts compilation_receipts_pkey; Type: CONSTRAINT; Schema: nebula; Owner: -
+--
+
+ALTER TABLE ONLY nebula.compilation_receipts
+    ADD CONSTRAINT compilation_receipts_pkey PRIMARY KEY (receipt_id);
+
+
+--
 -- Name: conversation_blocks_history conversation_blocks_history_pkey; Type: CONSTRAINT; Schema: nebula; Owner: -
 --
 
@@ -25810,11 +27792,35 @@ ALTER TABLE ONLY nebula.deliberation_participants
 
 
 --
+-- Name: executions executions_pkey; Type: CONSTRAINT; Schema: nebula; Owner: -
+--
+
+ALTER TABLE ONLY nebula.executions
+    ADD CONSTRAINT executions_pkey PRIMARY KEY (execution_id);
+
+
+--
 -- Name: features_history features_history_pkey; Type: CONSTRAINT; Schema: nebula; Owner: -
 --
 
 ALTER TABLE ONLY nebula.features_history
     ADD CONSTRAINT features_history_pkey PRIMARY KEY (id, recorded_on_dt);
+
+
+--
+-- Name: harvest_candidate_embeddings_history harvest_candidate_embeddings_harvest_id_candidate_index_key; Type: CONSTRAINT; Schema: nebula; Owner: -
+--
+
+ALTER TABLE ONLY nebula.harvest_candidate_embeddings_history
+    ADD CONSTRAINT harvest_candidate_embeddings_harvest_id_candidate_index_key UNIQUE (harvest_id, candidate_index);
+
+
+--
+-- Name: harvest_candidate_embeddings_history harvest_candidate_embeddings_pkey; Type: CONSTRAINT; Schema: nebula; Owner: -
+--
+
+ALTER TABLE ONLY nebula.harvest_candidate_embeddings_history
+    ADD CONSTRAINT harvest_candidate_embeddings_pkey PRIMARY KEY (id);
 
 
 --
@@ -25914,6 +27920,14 @@ ALTER TABLE ONLY nebula.requirements_history
 
 
 --
+-- Name: role_inbox_pointers role_inbox_pointers_pkey; Type: CONSTRAINT; Schema: nebula; Owner: -
+--
+
+ALTER TABLE ONLY nebula.role_inbox_pointers
+    ADD CONSTRAINT role_inbox_pointers_pkey PRIMARY KEY (role);
+
+
+--
 -- Name: roles_history roles_pkey; Type: CONSTRAINT; Schema: nebula; Owner: -
 --
 
@@ -25986,6 +28000,14 @@ ALTER TABLE ONLY nebula.specifications_history
 
 
 --
+-- Name: trigger_restore_log trigger_restore_log_pkey; Type: CONSTRAINT; Schema: nebula; Owner: -
+--
+
+ALTER TABLE ONLY nebula.trigger_restore_log
+    ADD CONSTRAINT trigger_restore_log_pkey PRIMARY KEY (version);
+
+
+--
 -- Name: artifact_provenance_history uq_artifact_provenance_pair; Type: CONSTRAINT; Schema: nebula; Owner: -
 --
 
@@ -26015,6 +28037,30 @@ ALTER TABLE ONLY nebula.work_requests_history
 
 ALTER TABLE ONLY nebula.work_requests_history
     ADD CONSTRAINT work_requests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: continuity_queue continuity_queue_pkey; Type: CONSTRAINT; Schema: operator; Owner: -
+--
+
+ALTER TABLE ONLY operator.continuity_queue
+    ADD CONSTRAINT continuity_queue_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: prompts_responses prompts_responses_pkey; Type: CONSTRAINT; Schema: operator; Owner: -
+--
+
+ALTER TABLE ONLY operator.prompts_responses
+    ADD CONSTRAINT prompts_responses_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: continuity_queue uq_continuity_queue_session_position; Type: CONSTRAINT; Schema: operator; Owner: -
+--
+
+ALTER TABLE ONLY operator.continuity_queue
+    ADD CONSTRAINT uq_continuity_queue_session_position UNIQUE (session_id, "position");
 
 
 --
@@ -27370,6 +29416,22 @@ ALTER TABLE ONLY semantics.snapshot
 
 
 --
+-- Name: source_observation_embeddings source_observation_embeddings_pkey; Type: CONSTRAINT; Schema: semantics; Owner: -
+--
+
+ALTER TABLE ONLY semantics.source_observation_embeddings
+    ADD CONSTRAINT source_observation_embeddings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: source_observation_embeddings source_observation_embeddings_source_observation_id_key; Type: CONSTRAINT; Schema: semantics; Owner: -
+--
+
+ALTER TABLE ONLY semantics.source_observation_embeddings
+    ADD CONSTRAINT source_observation_embeddings_source_observation_id_key UNIQUE (source_observation_id);
+
+
+--
 -- Name: source_observation source_observation_pkey; Type: CONSTRAINT; Schema: semantics; Owner: -
 --
 
@@ -27574,6 +29636,38 @@ ALTER TABLE ONLY shrapnel.value_timestamp
 
 ALTER TABLE ONLY shrapnel.value_uuid
     ADD CONSTRAINT value_uuid_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: hotspots hotspots_pkey; Type: CONSTRAINT; Schema: sonar; Owner: -
+--
+
+ALTER TABLE ONLY sonar.hotspots
+    ADD CONSTRAINT hotspots_pkey PRIMARY KEY (key);
+
+
+--
+-- Name: issues issues_pkey; Type: CONSTRAINT; Schema: sonar; Owner: -
+--
+
+ALTER TABLE ONLY sonar.issues
+    ADD CONSTRAINT issues_pkey PRIMARY KEY (key);
+
+
+--
+-- Name: measures measures_pkey; Type: CONSTRAINT; Schema: sonar; Owner: -
+--
+
+ALTER TABLE ONLY sonar.measures
+    ADD CONSTRAINT measures_pkey PRIMARY KEY (project_key, metric_key, captured_at);
+
+
+--
+-- Name: sync_state sync_state_pkey; Type: CONSTRAINT; Schema: sonar; Owner: -
+--
+
+ALTER TABLE ONLY sonar.sync_state
+    ADD CONSTRAINT sync_state_pkey PRIMARY KEY (id);
 
 
 --
@@ -27833,6 +29927,14 @@ ALTER TABLE ONLY terrain.service_endpoints
 
 
 --
+-- Name: links links_pkey; Type: CONSTRAINT; Schema: throttler; Owner: -
+--
+
+ALTER TABLE ONLY throttler.links
+    ADD CONSTRAINT links_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: calendar_events calendar_events_pkey; Type: CONSTRAINT; Schema: vision; Owner: -
 --
 
@@ -27910,6 +30012,166 @@ ALTER TABLE ONLY vision.work_request_shape_registry
 
 ALTER TABLE ONLY vision.wr_compile_verdicts
     ADD CONSTRAINT wr_compile_verdicts_pkey PRIMARY KEY (verdict_id);
+
+
+--
+-- Name: directory_observation directory_observation_observation_id_key; Type: CONSTRAINT; Schema: voyager; Owner: -
+--
+
+ALTER TABLE ONLY voyager.directory_observation
+    ADD CONSTRAINT directory_observation_observation_id_key UNIQUE (observation_id);
+
+
+--
+-- Name: directory_observation directory_observation_pkey; Type: CONSTRAINT; Schema: voyager; Owner: -
+--
+
+ALTER TABLE ONLY voyager.directory_observation
+    ADD CONSTRAINT directory_observation_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: entity_drift entity_drift_drift_id_key; Type: CONSTRAINT; Schema: voyager; Owner: -
+--
+
+ALTER TABLE ONLY voyager.entity_drift
+    ADD CONSTRAINT entity_drift_drift_id_key UNIQUE (drift_id);
+
+
+--
+-- Name: entity_drift entity_drift_pkey; Type: CONSTRAINT; Schema: voyager; Owner: -
+--
+
+ALTER TABLE ONLY voyager.entity_drift
+    ADD CONSTRAINT entity_drift_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: entity entity_entity_id_key; Type: CONSTRAINT; Schema: voyager; Owner: -
+--
+
+ALTER TABLE ONLY voyager.entity
+    ADD CONSTRAINT entity_entity_id_key UNIQUE (entity_id);
+
+
+--
+-- Name: entity entity_pkey; Type: CONSTRAINT; Schema: voyager; Owner: -
+--
+
+ALTER TABLE ONLY voyager.entity
+    ADD CONSTRAINT entity_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: file_observation file_observation_observation_id_key; Type: CONSTRAINT; Schema: voyager; Owner: -
+--
+
+ALTER TABLE ONLY voyager.file_observation
+    ADD CONSTRAINT file_observation_observation_id_key UNIQUE (observation_id);
+
+
+--
+-- Name: file_observation file_observation_pkey; Type: CONSTRAINT; Schema: voyager; Owner: -
+--
+
+ALTER TABLE ONLY voyager.file_observation
+    ADD CONSTRAINT file_observation_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: identity_candidate identity_candidate_candidate_id_key; Type: CONSTRAINT; Schema: voyager; Owner: -
+--
+
+ALTER TABLE ONLY voyager.identity_candidate
+    ADD CONSTRAINT identity_candidate_candidate_id_key UNIQUE (candidate_id);
+
+
+--
+-- Name: identity_candidate identity_candidate_pkey; Type: CONSTRAINT; Schema: voyager; Owner: -
+--
+
+ALTER TABLE ONLY voyager.identity_candidate
+    ADD CONSTRAINT identity_candidate_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: metadata_span metadata_span_pkey; Type: CONSTRAINT; Schema: voyager; Owner: -
+--
+
+ALTER TABLE ONLY voyager.metadata_span
+    ADD CONSTRAINT metadata_span_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: metadata_span metadata_span_span_id_key; Type: CONSTRAINT; Schema: voyager; Owner: -
+--
+
+ALTER TABLE ONLY voyager.metadata_span
+    ADD CONSTRAINT metadata_span_span_id_key UNIQUE (span_id);
+
+
+--
+-- Name: observation_edge_hint observation_edge_hint_hint_id_key; Type: CONSTRAINT; Schema: voyager; Owner: -
+--
+
+ALTER TABLE ONLY voyager.observation_edge_hint
+    ADD CONSTRAINT observation_edge_hint_hint_id_key UNIQUE (hint_id);
+
+
+--
+-- Name: observation_edge_hint observation_edge_hint_pkey; Type: CONSTRAINT; Schema: voyager; Owner: -
+--
+
+ALTER TABLE ONLY voyager.observation_edge_hint
+    ADD CONSTRAINT observation_edge_hint_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: requirement_candidate requirement_candidate_pkey; Type: CONSTRAINT; Schema: voyager; Owner: -
+--
+
+ALTER TABLE ONLY voyager.requirement_candidate
+    ADD CONSTRAINT requirement_candidate_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: requirement_candidate requirement_candidate_req_id_key; Type: CONSTRAINT; Schema: voyager; Owner: -
+--
+
+ALTER TABLE ONLY voyager.requirement_candidate
+    ADD CONSTRAINT requirement_candidate_req_id_key UNIQUE (req_id);
+
+
+--
+-- Name: scan_epoch scan_epoch_epoch_id_key; Type: CONSTRAINT; Schema: voyager; Owner: -
+--
+
+ALTER TABLE ONLY voyager.scan_epoch
+    ADD CONSTRAINT scan_epoch_epoch_id_key UNIQUE (epoch_id);
+
+
+--
+-- Name: scan_epoch scan_epoch_pkey; Type: CONSTRAINT; Schema: voyager; Owner: -
+--
+
+ALTER TABLE ONLY voyager.scan_epoch
+    ADD CONSTRAINT scan_epoch_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: topology_signal topology_signal_pkey; Type: CONSTRAINT; Schema: voyager; Owner: -
+--
+
+ALTER TABLE ONLY voyager.topology_signal
+    ADD CONSTRAINT topology_signal_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: topology_signal topology_signal_signal_id_key; Type: CONSTRAINT; Schema: voyager; Owner: -
+--
+
+ALTER TABLE ONLY voyager.topology_signal
+    ADD CONSTRAINT topology_signal_signal_id_key UNIQUE (signal_id);
 
 
 --
@@ -28238,6 +30500,20 @@ ALTER TABLE ONLY wind.workflows
 
 ALTER TABLE ONLY wind.workflows
     ADD CONSTRAINT workflows_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: idx_artifacts_doc; Type: INDEX; Schema: absorb; Owner: -
+--
+
+CREATE INDEX idx_artifacts_doc ON absorb.artifacts USING btree (document_id, artifact_type);
+
+
+--
+-- Name: idx_runs_profile; Type: INDEX; Schema: absorb; Owner: -
+--
+
+CREATE INDEX idx_runs_profile ON absorb.runs USING btree (profile_id, status);
 
 
 --
@@ -28899,6 +31175,48 @@ CREATE INDEX idx_execution_requests_status ON execution.requests USING btree (st
 
 
 --
+-- Name: idx_builds_job_ts; Type: INDEX; Schema: jenkins; Owner: -
+--
+
+CREATE INDEX idx_builds_job_ts ON jenkins.builds USING btree (job_name, "timestamp" DESC);
+
+
+--
+-- Name: idx_builds_result; Type: INDEX; Schema: jenkins; Owner: -
+--
+
+CREATE INDEX idx_builds_result ON jenkins.builds USING btree (result) WHERE (result IS NOT NULL);
+
+
+--
+-- Name: idx_stages_build; Type: INDEX; Schema: jenkins; Owner: -
+--
+
+CREATE INDEX idx_stages_build ON jenkins.stages USING btree (job_name, build_number);
+
+
+--
+-- Name: idx_kg_entity_embeddings_ivfflat; Type: INDEX; Schema: knowledge; Owner: -
+--
+
+CREATE INDEX idx_kg_entity_embeddings_ivfflat ON knowledge.graph_entity_embeddings USING ivfflat (embedding public.vector_cosine_ops) WITH (lists='16');
+
+
+--
+-- Name: idx_command_registry_command; Type: INDEX; Schema: mcp; Owner: -
+--
+
+CREATE INDEX idx_command_registry_command ON mcp.command_registry USING btree (command);
+
+
+--
+-- Name: idx_command_registry_service; Type: INDEX; Schema: mcp; Owner: -
+--
+
+CREATE INDEX idx_command_registry_service ON mcp.command_registry USING btree (service);
+
+
+--
 -- Name: idx_adapters_capability; Type: INDEX; Schema: nebula; Owner: -
 --
 
@@ -29022,6 +31340,48 @@ CREATE INDEX idx_blueprints_history_status ON nebula.blueprints_history USING bt
 --
 
 CREATE INDEX idx_blueprints_history_updated_at_id ON nebula.blueprints_history USING btree (updated_at DESC, id DESC);
+
+
+--
+-- Name: idx_compilation_receipts_requirement; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE INDEX idx_compilation_receipts_requirement ON nebula.compilation_receipts USING btree (requirement_id, occurred_at DESC);
+
+
+--
+-- Name: idx_executions_census_day; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE INDEX idx_executions_census_day ON nebula.executions USING btree (created_at DESC) WHERE census_sampled;
+
+
+--
+-- Name: idx_executions_census_id; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE INDEX idx_executions_census_id ON nebula.executions USING btree (census_id) WHERE (census_id IS NOT NULL);
+
+
+--
+-- Name: idx_executions_created; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE INDEX idx_executions_created ON nebula.executions USING btree (created_at DESC);
+
+
+--
+-- Name: idx_executions_doctrine_snapshot; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE INDEX idx_executions_doctrine_snapshot ON nebula.executions USING btree (doctrine_snapshot_id);
+
+
+--
+-- Name: idx_executions_session; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE INDEX idx_executions_session ON nebula.executions USING btree (session_id) WHERE (session_id IS NOT NULL);
 
 
 --
@@ -29197,6 +31557,13 @@ CREATE INDEX idx_requirements_history_system ON nebula.requirements_history USIN
 --
 
 CREATE INDEX idx_requirements_history_valid ON nebula.requirements_history USING btree (valid_from, valid_until);
+
+
+--
+-- Name: idx_role_inbox_pointers_updated_at; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE INDEX idx_role_inbox_pointers_updated_at ON nebula.role_inbox_pointers USING btree (updated_at);
 
 
 --
@@ -29407,6 +31774,34 @@ CREATE UNIQUE INDEX uq_requirement_segment_sets_current ON nebula.requirement_se
 --
 
 CREATE UNIQUE INDEX uq_segment_set_members_current ON nebula.segment_set_members USING btree (segment_set_id, segment_id) WHERE (valid_until = '9999-12-31 00:00:00+00'::timestamp with time zone);
+
+
+--
+-- Name: idx_continuity_queue_session; Type: INDEX; Schema: operator; Owner: -
+--
+
+CREATE INDEX idx_continuity_queue_session ON operator.continuity_queue USING btree (session_id, "position");
+
+
+--
+-- Name: idx_pr_created_at; Type: INDEX; Schema: operator; Owner: -
+--
+
+CREATE INDEX idx_pr_created_at ON operator.prompts_responses USING btree (created_at);
+
+
+--
+-- Name: idx_pr_role; Type: INDEX; Schema: operator; Owner: -
+--
+
+CREATE INDEX idx_pr_role ON operator.prompts_responses USING btree (role);
+
+
+--
+-- Name: idx_pr_session_id; Type: INDEX; Schema: operator; Owner: -
+--
+
+CREATE INDEX idx_pr_session_id ON operator.prompts_responses USING btree (session_id);
 
 
 --
@@ -29928,6 +32323,55 @@ CREATE INDEX idx_value_type_code ON shrapnel.value USING btree (value_type_code)
 
 
 --
+-- Name: idx_sonar_hotspots_cat; Type: INDEX; Schema: sonar; Owner: -
+--
+
+CREATE INDEX idx_sonar_hotspots_cat ON sonar.hotspots USING btree (security_category);
+
+
+--
+-- Name: idx_sonar_hotspots_project; Type: INDEX; Schema: sonar; Owner: -
+--
+
+CREATE INDEX idx_sonar_hotspots_project ON sonar.hotspots USING btree (project_key);
+
+
+--
+-- Name: idx_sonar_hotspots_status; Type: INDEX; Schema: sonar; Owner: -
+--
+
+CREATE INDEX idx_sonar_hotspots_status ON sonar.hotspots USING btree (status);
+
+
+--
+-- Name: idx_sonar_issues_project; Type: INDEX; Schema: sonar; Owner: -
+--
+
+CREATE INDEX idx_sonar_issues_project ON sonar.issues USING btree (project_key);
+
+
+--
+-- Name: idx_sonar_issues_severity; Type: INDEX; Schema: sonar; Owner: -
+--
+
+CREATE INDEX idx_sonar_issues_severity ON sonar.issues USING btree (severity);
+
+
+--
+-- Name: idx_sonar_issues_status; Type: INDEX; Schema: sonar; Owner: -
+--
+
+CREATE INDEX idx_sonar_issues_status ON sonar.issues USING btree (status);
+
+
+--
+-- Name: idx_sonar_issues_type; Type: INDEX; Schema: sonar; Owner: -
+--
+
+CREATE INDEX idx_sonar_issues_type ON sonar.issues USING btree (sonar_type);
+
+
+--
 -- Name: agent_timeclock_clock_in_idx; Type: INDEX; Schema: tackle; Owner: -
 --
 
@@ -30254,6 +32698,153 @@ CREATE UNIQUE INDEX uq_vision_work_requests_business_key ON vision.work_requests
 --
 
 CREATE UNIQUE INDEX uq_work_requests_wr_id ON vision.work_requests USING btree (wr_id);
+
+
+--
+-- Name: idx_dir_obs_epoch; Type: INDEX; Schema: voyager; Owner: -
+--
+
+CREATE INDEX idx_dir_obs_epoch ON voyager.directory_observation USING btree (epoch_id);
+
+
+--
+-- Name: idx_dir_obs_path; Type: INDEX; Schema: voyager; Owner: -
+--
+
+CREATE INDEX idx_dir_obs_path ON voyager.directory_observation USING btree (path);
+
+
+--
+-- Name: idx_edge_hint_epoch; Type: INDEX; Schema: voyager; Owner: -
+--
+
+CREATE INDEX idx_edge_hint_epoch ON voyager.observation_edge_hint USING btree (epoch_id);
+
+
+--
+-- Name: idx_entity_active; Type: INDEX; Schema: voyager; Owner: -
+--
+
+CREATE INDEX idx_entity_active ON voyager.entity USING btree (is_active) WHERE is_active;
+
+
+--
+-- Name: idx_entity_canonical_path; Type: INDEX; Schema: voyager; Owner: -
+--
+
+CREATE INDEX idx_entity_canonical_path ON voyager.entity USING btree (((state ->> 'canonical_path'::text))) WHERE ((state ->> 'canonical_path'::text) IS NOT NULL);
+
+
+--
+-- Name: idx_entity_drift_entity; Type: INDEX; Schema: voyager; Owner: -
+--
+
+CREATE INDEX idx_entity_drift_entity ON voyager.entity_drift USING btree (entity_id);
+
+
+--
+-- Name: idx_entity_drift_magnitude; Type: INDEX; Schema: voyager; Owner: -
+--
+
+CREATE INDEX idx_entity_drift_magnitude ON voyager.entity_drift USING btree (magnitude);
+
+
+--
+-- Name: idx_entity_stability; Type: INDEX; Schema: voyager; Owner: -
+--
+
+CREATE INDEX idx_entity_stability ON voyager.entity USING btree (stability_score DESC);
+
+
+--
+-- Name: idx_file_obs_device_inode; Type: INDEX; Schema: voyager; Owner: -
+--
+
+CREATE INDEX idx_file_obs_device_inode ON voyager.file_observation USING btree (device_id, inode);
+
+
+--
+-- Name: idx_file_obs_epoch; Type: INDEX; Schema: voyager; Owner: -
+--
+
+CREATE INDEX idx_file_obs_epoch ON voyager.file_observation USING btree (epoch_id);
+
+
+--
+-- Name: idx_file_obs_hash; Type: INDEX; Schema: voyager; Owner: -
+--
+
+CREATE INDEX idx_file_obs_hash ON voyager.file_observation USING btree (content_hash) WHERE (content_hash IS NOT NULL);
+
+
+--
+-- Name: idx_file_obs_path; Type: INDEX; Schema: voyager; Owner: -
+--
+
+CREATE INDEX idx_file_obs_path ON voyager.file_observation USING btree (path);
+
+
+--
+-- Name: idx_identity_cand_conf; Type: INDEX; Schema: voyager; Owner: -
+--
+
+CREATE INDEX idx_identity_cand_conf ON voyager.identity_candidate USING btree (confidence DESC);
+
+
+--
+-- Name: idx_metadata_span_embedding; Type: INDEX; Schema: voyager; Owner: -
+--
+
+CREATE INDEX idx_metadata_span_embedding ON voyager.metadata_span USING ivfflat (embedding public.vector_cosine_ops) WITH (lists='100') WHERE (embedding IS NOT NULL);
+
+
+--
+-- Name: idx_metadata_span_obs; Type: INDEX; Schema: voyager; Owner: -
+--
+
+CREATE INDEX idx_metadata_span_obs ON voyager.metadata_span USING btree (observation_id);
+
+
+--
+-- Name: idx_metadata_span_type; Type: INDEX; Schema: voyager; Owner: -
+--
+
+CREATE INDEX idx_metadata_span_type ON voyager.metadata_span USING btree (span_type);
+
+
+--
+-- Name: idx_req_candidate_conf; Type: INDEX; Schema: voyager; Owner: -
+--
+
+CREATE INDEX idx_req_candidate_conf ON voyager.requirement_candidate USING btree (confidence DESC);
+
+
+--
+-- Name: idx_scan_epoch_started; Type: INDEX; Schema: voyager; Owner: -
+--
+
+CREATE INDEX idx_scan_epoch_started ON voyager.scan_epoch USING btree (started_at DESC);
+
+
+--
+-- Name: idx_scan_epoch_status; Type: INDEX; Schema: voyager; Owner: -
+--
+
+CREATE INDEX idx_scan_epoch_status ON voyager.scan_epoch USING btree (status);
+
+
+--
+-- Name: idx_topology_signal_epoch; Type: INDEX; Schema: voyager; Owner: -
+--
+
+CREATE INDEX idx_topology_signal_epoch ON voyager.topology_signal USING btree (epoch_id);
+
+
+--
+-- Name: idx_topology_signal_type; Type: INDEX; Schema: voyager; Owner: -
+--
+
+CREATE INDEX idx_topology_signal_type ON voyager.topology_signal USING btree (structure_type);
 
 
 --
@@ -30656,6 +33247,48 @@ CREATE TRIGGER trg_policy_rule_updated_at BEFORE UPDATE ON kernel.policy_rule FO
 
 
 --
+-- Name: graph_entities trg_kg_ge_audit_del; Type: TRIGGER; Schema: knowledge; Owner: -
+--
+
+CREATE TRIGGER trg_kg_ge_audit_del AFTER DELETE ON knowledge.graph_entities REFERENCING OLD TABLE AS deleted_rows FOR EACH STATEMENT EXECUTE FUNCTION tackle.fn_audit_ge_del();
+
+
+--
+-- Name: graph_entities trg_kg_ge_audit_ins; Type: TRIGGER; Schema: knowledge; Owner: -
+--
+
+CREATE TRIGGER trg_kg_ge_audit_ins AFTER INSERT ON knowledge.graph_entities REFERENCING NEW TABLE AS inserted_rows FOR EACH STATEMENT EXECUTE FUNCTION tackle.fn_audit_ge_ins();
+
+
+--
+-- Name: graph_entities trg_kg_ge_audit_upd; Type: TRIGGER; Schema: knowledge; Owner: -
+--
+
+CREATE TRIGGER trg_kg_ge_audit_upd AFTER UPDATE ON knowledge.graph_entities REFERENCING NEW TABLE AS updated_rows FOR EACH STATEMENT EXECUTE FUNCTION tackle.fn_audit_ge_upd();
+
+
+--
+-- Name: graph_edges trg_kg_goe_audit_del; Type: TRIGGER; Schema: knowledge; Owner: -
+--
+
+CREATE TRIGGER trg_kg_goe_audit_del AFTER DELETE ON knowledge.graph_edges REFERENCING OLD TABLE AS deleted_rows FOR EACH STATEMENT EXECUTE FUNCTION tackle.fn_audit_goe_del();
+
+
+--
+-- Name: graph_edges trg_kg_goe_audit_ins; Type: TRIGGER; Schema: knowledge; Owner: -
+--
+
+CREATE TRIGGER trg_kg_goe_audit_ins AFTER INSERT ON knowledge.graph_edges REFERENCING NEW TABLE AS inserted_rows FOR EACH STATEMENT EXECUTE FUNCTION tackle.fn_audit_goe_ins();
+
+
+--
+-- Name: graph_edges trg_kg_goe_audit_upd; Type: TRIGGER; Schema: knowledge; Owner: -
+--
+
+CREATE TRIGGER trg_kg_goe_audit_upd AFTER UPDATE ON knowledge.graph_edges REFERENCING NEW TABLE AS updated_rows FOR EACH STATEMENT EXECUTE FUNCTION tackle.fn_audit_goe_upd();
+
+
+--
 -- Name: coordination_checkpoints coordination_checkpoints_role_fk; Type: TRIGGER; Schema: nebula; Owner: -
 --
 
@@ -30768,6 +33401,20 @@ CREATE TRIGGER trg_capabilities_provenance BEFORE INSERT OR UPDATE ON nebula.cap
 
 
 --
+-- Name: compilation_receipts trg_compilation_receipts_immutable; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_compilation_receipts_immutable BEFORE DELETE OR UPDATE ON nebula.compilation_receipts FOR EACH ROW EXECUTE FUNCTION nebula.reject_compilation_receipt_mutation();
+
+
+--
+-- Name: compilation_receipts trg_compilation_receipts_no_truncate; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_compilation_receipts_no_truncate BEFORE TRUNCATE ON nebula.compilation_receipts FOR EACH STATEMENT EXECUTE FUNCTION nebula.reject_compilation_receipt_mutation();
+
+
+--
 -- Name: conversation_blocks trg_conversation_blocks_insert; Type: TRIGGER; Schema: nebula; Owner: -
 --
 
@@ -30789,10 +33436,38 @@ CREATE TRIGGER trg_coordination_checkpoints_touch BEFORE UPDATE ON nebula.coordi
 
 
 --
+-- Name: executions trg_executions_append_only; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_executions_append_only BEFORE DELETE OR UPDATE ON nebula.executions FOR EACH ROW EXECUTE FUNCTION nebula.fn_executions_append_only();
+
+
+--
+-- Name: harvests trg_harvests_delete; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_harvests_delete INSTEAD OF DELETE ON nebula.harvests FOR EACH ROW EXECUTE FUNCTION nebula.harvests_delete_trigger();
+
+
+--
 -- Name: harvests_history trg_harvests_history_auto_segment; Type: TRIGGER; Schema: nebula; Owner: -
 --
 
 CREATE TRIGGER trg_harvests_history_auto_segment AFTER INSERT ON nebula.harvests_history FOR EACH ROW WHEN (((new.docklang IS NOT NULL) AND (new.docklang <> '{}'::jsonb) AND (new.docklang ? 'discourse_units'::text))) EXECUTE FUNCTION nebula.harvests_auto_segment_trigger();
+
+
+--
+-- Name: harvests trg_harvests_insert; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_harvests_insert INSTEAD OF INSERT ON nebula.harvests FOR EACH ROW EXECUTE FUNCTION nebula.harvests_insert_trigger();
+
+
+--
+-- Name: harvests trg_harvests_update; Type: TRIGGER; Schema: nebula; Owner: -
+--
+
+CREATE TRIGGER trg_harvests_update INSTEAD OF UPDATE ON nebula.harvests FOR EACH ROW EXECUTE FUNCTION nebula.harvests_update_trigger();
 
 
 --
@@ -31503,6 +34178,27 @@ CREATE TRIGGER trg_wr_shape_registry_single_ratified BEFORE INSERT OR UPDATE ON 
 
 
 --
+-- Name: entity trg_entity_updated_at; Type: TRIGGER; Schema: voyager; Owner: -
+--
+
+CREATE TRIGGER trg_entity_updated_at BEFORE UPDATE ON voyager.entity FOR EACH ROW EXECUTE FUNCTION voyager.set_updated_at();
+
+
+--
+-- Name: identity_candidate trg_identity_candidate_updated_at; Type: TRIGGER; Schema: voyager; Owner: -
+--
+
+CREATE TRIGGER trg_identity_candidate_updated_at BEFORE UPDATE ON voyager.identity_candidate FOR EACH ROW EXECUTE FUNCTION voyager.set_updated_at();
+
+
+--
+-- Name: requirement_candidate trg_req_candidate_updated_at; Type: TRIGGER; Schema: voyager; Owner: -
+--
+
+CREATE TRIGGER trg_req_candidate_updated_at BEFORE UPDATE ON voyager.requirement_candidate FOR EACH ROW EXECUTE FUNCTION voyager.set_updated_at();
+
+
+--
 -- Name: workflow_instances trg_bridge_instance_to_cascade; Type: TRIGGER; Schema: wind; Owner: -
 --
 
@@ -31591,6 +34287,46 @@ CREATE TRIGGER trg_workflow_nodes_compiled_immutable BEFORE DELETE OR UPDATE ON 
 --
 
 CREATE TRIGGER trg_workflow_versions_compiled_immutable BEFORE DELETE OR UPDATE ON wind.workflow_versions FOR EACH ROW EXECUTE FUNCTION wind.forbid_compiled_artifact_mutation();
+
+
+--
+-- Name: artifacts artifacts_document_id_fkey; Type: FK CONSTRAINT; Schema: absorb; Owner: -
+--
+
+ALTER TABLE ONLY absorb.artifacts
+    ADD CONSTRAINT artifacts_document_id_fkey FOREIGN KEY (document_id) REFERENCES absorb.documents(id);
+
+
+--
+-- Name: run_steps run_steps_run_id_fkey; Type: FK CONSTRAINT; Schema: absorb; Owner: -
+--
+
+ALTER TABLE ONLY absorb.run_steps
+    ADD CONSTRAINT run_steps_run_id_fkey FOREIGN KEY (run_id) REFERENCES absorb.runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runs runs_document_id_fkey; Type: FK CONSTRAINT; Schema: absorb; Owner: -
+--
+
+ALTER TABLE ONLY absorb.runs
+    ADD CONSTRAINT runs_document_id_fkey FOREIGN KEY (document_id) REFERENCES absorb.documents(id);
+
+
+--
+-- Name: segments segments_document_id_fkey; Type: FK CONSTRAINT; Schema: absorb; Owner: -
+--
+
+ALTER TABLE ONLY absorb.segments
+    ADD CONSTRAINT segments_document_id_fkey FOREIGN KEY (document_id) REFERENCES absorb.documents(id) ON DELETE CASCADE;
+
+
+--
+-- Name: turns turns_document_id_fkey; Type: FK CONSTRAINT; Schema: absorb; Owner: -
+--
+
+ALTER TABLE ONLY absorb.turns
+    ADD CONSTRAINT turns_document_id_fkey FOREIGN KEY (document_id) REFERENCES absorb.documents(id) ON DELETE CASCADE;
 
 
 --
@@ -32143,6 +34879,62 @@ ALTER TABLE ONLY execution.receipts
 
 ALTER TABLE ONLY execution.requests
     ADD CONSTRAINT requests_source_wr_id_fkey FOREIGN KEY (source_wr_id) REFERENCES nebula.work_requests_history(id) ON DELETE SET NULL;
+
+
+--
+-- Name: builds builds_job_name_fkey; Type: FK CONSTRAINT; Schema: jenkins; Owner: -
+--
+
+ALTER TABLE ONLY jenkins.builds
+    ADD CONSTRAINT builds_job_name_fkey FOREIGN KEY (job_name) REFERENCES jenkins.jobs(name);
+
+
+--
+-- Name: stages stages_job_name_build_number_fkey; Type: FK CONSTRAINT; Schema: jenkins; Owner: -
+--
+
+ALTER TABLE ONLY jenkins.stages
+    ADD CONSTRAINT stages_job_name_build_number_fkey FOREIGN KEY (job_name, build_number) REFERENCES jenkins.builds(job_name, number);
+
+
+--
+-- Name: graph_cross_references graph_cross_refs_source_fkey; Type: FK CONSTRAINT; Schema: knowledge; Owner: -
+--
+
+ALTER TABLE ONLY knowledge.graph_cross_references
+    ADD CONSTRAINT graph_cross_refs_source_fkey FOREIGN KEY (source_section, source_id) REFERENCES knowledge.graph_entities(section, entity_id) ON DELETE CASCADE;
+
+
+--
+-- Name: graph_cross_references graph_cross_refs_target_fkey; Type: FK CONSTRAINT; Schema: knowledge; Owner: -
+--
+
+ALTER TABLE ONLY knowledge.graph_cross_references
+    ADD CONSTRAINT graph_cross_refs_target_fkey FOREIGN KEY (target_section, target_id) REFERENCES knowledge.graph_entities(section, entity_id) ON DELETE CASCADE;
+
+
+--
+-- Name: graph_edges graph_edges_source_fkey; Type: FK CONSTRAINT; Schema: knowledge; Owner: -
+--
+
+ALTER TABLE ONLY knowledge.graph_edges
+    ADD CONSTRAINT graph_edges_source_fkey FOREIGN KEY (source_section, source_id) REFERENCES knowledge.graph_entities(section, entity_id) ON DELETE CASCADE;
+
+
+--
+-- Name: graph_edges graph_edges_target_fkey; Type: FK CONSTRAINT; Schema: knowledge; Owner: -
+--
+
+ALTER TABLE ONLY knowledge.graph_edges
+    ADD CONSTRAINT graph_edges_target_fkey FOREIGN KEY (target_section, target_id) REFERENCES knowledge.graph_entities(section, entity_id) ON DELETE CASCADE;
+
+
+--
+-- Name: graph_entities graph_entities_asset_id_fkey; Type: FK CONSTRAINT; Schema: knowledge; Owner: -
+--
+
+ALTER TABLE ONLY knowledge.graph_entities
+    ADD CONSTRAINT graph_entities_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES semantics.canonical_asset(id);
 
 
 --
@@ -33402,6 +36194,14 @@ ALTER TABLE ONLY semantics.snapshot
 
 
 --
+-- Name: source_observation_embeddings source_observation_embeddings_source_observation_id_fkey; Type: FK CONSTRAINT; Schema: semantics; Owner: -
+--
+
+ALTER TABLE ONLY semantics.source_observation_embeddings
+    ADD CONSTRAINT source_observation_embeddings_source_observation_id_fkey FOREIGN KEY (source_observation_id) REFERENCES semantics.source_observation(id);
+
+
+--
 -- Name: source_observation source_observation_revision_id_fkey; Type: FK CONSTRAINT; Schema: semantics; Owner: -
 --
 
@@ -33695,6 +36495,30 @@ ALTER TABLE ONLY vision.sessions
 
 ALTER TABLE ONLY vision.work_requests
     ADD CONSTRAINT work_requests_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES semantics.canonical_asset(id);
+
+
+--
+-- Name: entity_drift entity_drift_entity_id_fkey; Type: FK CONSTRAINT; Schema: voyager; Owner: -
+--
+
+ALTER TABLE ONLY voyager.entity_drift
+    ADD CONSTRAINT entity_drift_entity_id_fkey FOREIGN KEY (entity_id) REFERENCES voyager.entity(entity_id);
+
+
+--
+-- Name: identity_candidate identity_candidate_evidence_item_id_fkey; Type: FK CONSTRAINT; Schema: voyager; Owner: -
+--
+
+ALTER TABLE ONLY voyager.identity_candidate
+    ADD CONSTRAINT identity_candidate_evidence_item_id_fkey FOREIGN KEY (evidence_item_id) REFERENCES semantics.evidence_item(id);
+
+
+--
+-- Name: observation_edge_hint observation_edge_hint_evidence_item_id_fkey; Type: FK CONSTRAINT; Schema: voyager; Owner: -
+--
+
+ALTER TABLE ONLY voyager.observation_edge_hint
+    ADD CONSTRAINT observation_edge_hint_evidence_item_id_fkey FOREIGN KEY (evidence_item_id) REFERENCES semantics.evidence_item(id);
 
 
 --
