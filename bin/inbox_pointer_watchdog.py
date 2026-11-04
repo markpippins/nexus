@@ -42,7 +42,7 @@ import json
 import sys
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 DEFAULT_NEBULA_BASE = "http://localhost:3101"
@@ -105,18 +105,39 @@ def _count(
     return len(items or [])
 
 
-def _watermark_upper_bound(since: str) -> str:
-    """Last instant covered by the watermark `since`, at millisecond granularity.
+def _unread_boundary(since: str) -> str:
+    """First instant NOT covered by the watermark `since`, at the writer's precision.
 
-    `/api/agent-records` returns `createdAt` as epoch MILLISECONDS, so a
-    watermark taken from a record is truncated to ms while `created_at` in
-    Postgres carries microseconds. The record the role actually read therefore
-    lives somewhere inside `since`'s millisecond — e.g. `...48.981523` behind a
-    pointer of `...48.981` — so an exact-equality comparison never matches it.
+    Precision is not fixed, and that is the whole difficulty. Three sanctioned
+    paths advance a pointer and they do not agree:
+
+    - MCP `nebula_get_inbox advance:true` -> epoch ms (`toISOString`).
+    - `bin/check-inbox.sh --update-pointer` -> whole seconds
+      (`strftime("%Y-%m-%dT%H:%M:%SZ")`).
+    - `bin/freebuff-boot.py` (`iso_of`) -> whole seconds, same format.
+
+    `/api/inbox-pointers` then formats every pointer as `...000Z`, so a
+    seconds-granular pointer arrives looking exactly like a millisecond one and
+    the original precision cannot be recovered from the wire. The watermark is
+    the `createdAt` of the newest record the role read, and `created_at` carries
+    microseconds, so the record that produced the pointer sits *somewhere* in
+    the window the pointer denotes and an exact-equality boundary can never
+    find it.
+
+    So cover the window the pointer plausibly denotes:
+
+    - sub-second `.000` -> the whole second (a seconds writer truncates 0-999
+      ms away, and the API cannot tell us which writer ran).
+    - any other sub-second value -> the rest of that millisecond (the API
+      reports epoch ms, so an ms pointer truncates < 1 ms of microseconds).
     """
     dt = parse_iso(since)
-    upper = dt.replace(microsecond=(dt.microsecond // 1000) * 1000 + 999)
-    return upper.strftime("%Y-%m-%dT%H:%M:%S") + ".%03d999Z" % (upper.microsecond // 1000)
+    if dt.microsecond == 0:
+        boundary = dt + timedelta(seconds=1)            # whole-second pointer
+    else:
+        boundary = dt.replace(microsecond=(dt.microsecond // 1000) * 1000)
+        boundary += timedelta(milliseconds=1)           # end of its millisecond
+    return boundary.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 def count_backlog(
@@ -136,17 +157,21 @@ def count_backlog(
     clear it. (Caught by tester review of PR #856: role `critic`, zero records
     newer than its pointer, verdict `backlog=1`.)
 
-    Fixed by counting what is covered rather than by nudging the boundary:
-    `createdBefore` is `created_at <= $n`, also inclusive, so subtracting the
-    count at or before the watermark's last covered instant leaves exactly the
-    unread set. That instant is the end of the watermark's millisecond, because
-    the API reports epoch ms (see `_watermark_upper_bound`).
+    Fixed by aligning the query boundary to the pointer instead of nudging it:
+    ask for records at or after the FIRST INSTANT THE POINTER CANNOT COVER (see
+    `_unread_boundary`). The pointer's precision varies by writer — MCP writes
+    epoch ms, `check-inbox.sh --update-pointer` and `freebuff-boot.py` write
+    whole seconds — and `/api/inbox-pointers` flattens all of them to `...000Z`,
+    so precision has to be inferred from the value. Because the boundary is
+    unit-aligned, the server's inclusive `>`= sits exactly on the first unread
+    instant: no subtraction, and no off-by-one to hide in.
 
-    The consequence, stated plainly: records written inside the SAME
-    millisecond as the newest one the role read are treated as read. That is a
-    watermark that is ms-granular by construction, not a guess — and the
-    alternative (a permanent false alarm on a caught-up mailbox) is strictly
-    worse. Anything at or after the next millisecond is counted.
+    The consequence, stated plainly: mail written inside the SAME unit as the
+    newest record the role read counts as read — up to 999us behind a ms
+    pointer, up to 999ms behind a seconds pointer. That window is the pointer's
+    own truncation, not an estimate, and it is orders of magnitude below the
+    relevance of an alarm whose threshold is `--max-age-days`. The alternative
+    — a permanent false alarm on a caught-up mailbox — is strictly worse.
 
     With no pointer the whole mailbox is unread by definition — that is the
     `pointerMissing` case, and it is a real loss rather than an empty inbox
@@ -154,9 +179,7 @@ def count_backlog(
     """
     if not since:
         return _count(base, role, {}, http_get)
-    total = _count(base, role, {}, http_get)
-    covered = _count(base, role, {"createdBefore": _watermark_upper_bound(since)}, http_get)
-    return max(total - covered, 0)
+    return _count(base, role, {"createdAfter": _unread_boundary(since)}, http_get)
 
 
 def assess(

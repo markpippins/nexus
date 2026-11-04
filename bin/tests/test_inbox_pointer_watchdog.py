@@ -250,14 +250,55 @@ def test_caught_up_mailbox_is_quiet_even_with_microsecond_records():
     assert verdict["flagged"] is False
 
 
-def test_count_backlog_sends_tag_on_both_queries():
+def test_count_backlog_queries_the_next_uncovered_instant():
     endpoint = _InclusiveEndpoint(["2026-10-01T05:33:23.844Z"])
     wd.count_backlog("http://example:3101", "tester", "2026-10-01T05:33:23.844Z",
                      http_get=endpoint)
-    assert len(endpoint.urls) == 2
-    for url in endpoint.urls:
-        assert "tag=to%3Atester" in url
-    assert "createdBefore=2026-10-01T05" in endpoint.urls[1]
+    assert len(endpoint.urls) == 1
+    assert "tag=to%3Atester" in endpoint.urls[0]
+    # .844 is a ms-granular pointer, so the boundary is the next millisecond.
+    assert "createdAfter=2026-10-01T05%3A33%3A23.845000Z" in endpoint.urls[0]
+
+
+def test_seconds_granular_pointer_covers_its_whole_second():
+    """The case the tester found live at layout-mechanic on re-review.
+
+    `check-inbox.sh --update-pointer` and `freebuff-boot.py` write whole
+    seconds (`%Y-%m-%dT%H:%M:%SZ`), which `/api/inbox-pointers` then shows as
+    `.000Z`. The record that produced such a pointer can sit anywhere in that
+    second — `.529` here — so covering only the first millisecond left a
+    caught-up mailbox flagged.
+    """
+    pointer = "2026-10-17T14:55:21.000Z"      # seconds writer, flattened by the API
+    endpoint = _InclusiveEndpoint([
+        "2026-10-17T14:55:21.529Z",           # the record the role read
+    ])
+    backlog = wd.count_backlog("http://example:3101", "layout-mechanic", pointer,
+                               http_get=endpoint)
+    assert backlog == 0
+    verdict = wd.assess({"layout-mechanic": pointer}, NOW,
+                        backlog_fn=lambda r, s: backlog)[0]
+    assert verdict["flagged"] is False
+
+
+def test_seconds_granular_pointer_still_counts_the_next_second():
+    # Covering the whole second must not swallow the next one.
+    pointer = "2026-10-17T14:55:21.000Z"
+    endpoint = _InclusiveEndpoint([
+        "2026-10-17T14:55:21.529Z",
+        "2026-10-17T14:55:22.000Z",
+        "2026-10-17T14:55:22.400Z",
+    ])
+    assert wd.count_backlog("http://example:3101", "layout-mechanic", pointer,
+                            http_get=endpoint) == 2
+
+
+def test_bare_seconds_pointer_from_the_tester_repro_counts_zero():
+    # The tester's original repro used the raw seconds string, no fraction.
+    pointer = "2026-10-01T18:09:48Z"
+    endpoint = _InclusiveEndpoint(["2026-10-01T18:09:48.981523Z"])
+    assert wd.count_backlog("http://example:3101", "critic", pointer,
+                            http_get=endpoint) == 0
 
 
 def test_count_backlog_without_pointer_counts_whole_mailbox():
