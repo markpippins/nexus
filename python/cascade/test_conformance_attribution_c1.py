@@ -203,6 +203,34 @@ class PostAssemblyCommentAttributionTests(unittest.TestCase):
         self.assertIn("duality.session_events", events[0][0])
 
 
+class FailureDetailStateTests(unittest.TestCase):
+    """A zero exit status is not a success verdict (harness-srv terminal.ts).
+
+    harness-srv reports `state` separately from `exit_code`: a run can exit 0
+    and still be `failed` (provider-error envelope, or a final step cut off by
+    a token limit). The failure detail must say so, or a genuine failure reads
+    like a success that inexplicably took the failure path.
+    """
+
+    def test_zero_exit_with_failed_state_is_not_reported_as_plain_success(self):
+        detail = its._compose_failure_detail(
+            "", "partial answer", 0, "job-1", "failed")
+        self.assertIn("state=failed", detail)
+        self.assertIn("exit 0", detail)
+
+    def test_timed_out_state_is_named(self):
+        detail = its._compose_failure_detail("", "", 0, None, "timed_out")
+        self.assertIn("state=timed_out", detail)
+
+    def test_nonzero_exit_is_unchanged(self):
+        detail = its._compose_failure_detail("boom", "", 3, "job-2", "failed")
+        self.assertEqual(detail, "boom [job job-2]")
+
+    def test_missing_state_keeps_legacy_detail(self):
+        detail = its._compose_failure_detail("", "", 0, None, None)
+        self.assertEqual(detail, "exit code 0 with no output")
+
+
 class HermeticityTests(unittest.TestCase):
     def test_resolver_does_no_network_io(self):
         with mock.patch.object(its.urllib.request, "urlopen") as no_net:

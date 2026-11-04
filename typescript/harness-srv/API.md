@@ -109,6 +109,18 @@ Active-run visibility for the runaway watchdog. Response — **200**:
 
 ## Notes
 
+- **`state` is not the exit code.** The terminal state is classified from the
+  run's own opencode stream (`src/terminal.ts`), not from the child exit
+  status. `completed` = exit 0 and the final step ended on a natural stop;
+  `failed` = non-zero exit, exit 0 whose LAST stream event was a provider
+  `error` envelope, or a final step cut off by a token limit
+  (`stop_reason: "length"`); plus `timed_out` / `cancelled`. An exit status of
+  `0` can therefore coexist with `state: failed` — read `state`.
+  `stop_reason` exposes the model's own `step_finish.reason` (`stop` /
+  `length` / `tool-calls`), so "the model chose to end its turn" is
+  distinguishable from "the harness ended the run". `completed` means the run
+  reached the end of its turn — it is not a claim that the task was
+  accomplished; that evidence lives in the transcript.
 - Exit codes: `0` success; `124` timeout; `137` killed by signal (watchdog/external).
 - Runs are watched by a 15-minute runaway watchdog: a session producing no
   agent records is SIGTERM'd, its model unloaded, and a `type:runaway-detected`
