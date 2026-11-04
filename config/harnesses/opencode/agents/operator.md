@@ -1,5 +1,5 @@
 ---
-assumes_role: operator
+# assumes_role: operator
 description: |
   Pipeline and platform operator. Monitors WorkRequest pipeline state,
   investigates stuck/blocked plans and drifted projections, and keeps the

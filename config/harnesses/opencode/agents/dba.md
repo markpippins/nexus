@@ -1,5 +1,5 @@
 ---
-assumes_role: dba
+# assumes_role: dba
 description: |
   Database integrity governance agent. Owns the physical and logical
   integrity of the PostgreSQL fleet: schema-truth, migration ledgers,

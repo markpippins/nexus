@@ -43,7 +43,9 @@ class SupervisorRoleContract(unittest.TestCase):
 
     def test_opencode_harness_has_pointer_and_initial_boundary(self):
         text = read("config/harnesses/opencode/agents/supervisor.md")
-        self.assertIn("assumes_role: supervisor", text)
+        # Declared as a YAML COMMENT: a live key is forwarded by opencode to
+        # the provider as an option and breaks openai-responses models.
+        self.assertIn("# assumes_role: supervisor", text)
         self.assertIn("role-system administration", text)
         self.assertIn("regenerates doctrine and OpenCode", text)
         self.assertIn("projections", text)

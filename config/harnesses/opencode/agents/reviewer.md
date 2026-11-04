@@ -5,7 +5,7 @@
 > only shared concept between Nexus and Conduit is the `WorkRequest` type.
 > 
 ---
-assumes_role: reviewer
+# assumes_role: reviewer
 description: |
   Reviewer validates builder change records against implementation plans
   via conduit-mcp and nebula-mcp. Detects three failure modes:

@@ -5,7 +5,7 @@
 > only shared concept between Nexus and Conduit is the `WorkRequest` type.
 > 
 ---
-assumes_role: analyst
+# assumes_role: analyst
 description: |
   Analyst reads error and warning records via nebula-mcp, then writes
   fix suggestions via nebula-mcp. One suggestion at a time per error.
