@@ -489,6 +489,51 @@ def is_attestation_record(record: Dict[str, Any]) -> bool:
     )
 
 
+# ── attestation verdict (record ebb0a911) ───────────────────────────────────
+# Gate 3 read attestation SHAPE, freshness and CI citation, but never the
+# tester's VERDICT: a row saying "Verdict: REJECTED" counted as a passing
+# attestation as long as it cited a CI run. #726 and #823 were refused only
+# for their missing citation, not for the rejection itself — one cited run
+# away from merging code the tester had refused.
+#
+# The scan is LABEL-anchored. Looking for the bare word "rejected" anywhere
+# in the body would fire on prose ("no rejection needed here"), and a false
+# rejection blocks a good PR as wrongly as a missed one merges a bad one —
+# only an explicitly declared `verdict <separator> <word>` is read.
+_VERDICT_LABEL_RE = re.compile(
+    r"\bverdict\b[^A-Za-z0-9]{0,6}?"
+    r"(approved|approve|passed|pass|accepted|accept|"
+    r"rejected|reject|blocked|failed|fail|changes?\s+requested)\b",
+    re.IGNORECASE,
+)
+# Verdict words that refuse the PR. "pass/fail" are included because the
+# tester rows use them as verdicts too ("VERDICT: PASS" / "FAIL").
+_REJECTING_VERDICTS = frozenset({
+    "rejected", "reject", "blocked", "failed", "fail",
+    "change requested", "changes requested",
+})
+
+
+def attestation_verdict(record: Dict[str, Any]) -> Optional[str]:
+    """The last verdict the attestation DECLARES, lowercased, or None.
+
+    Real rows read ``TESTER VERDICT: REJECTED — <reason>`` (0cc7a949 for
+    #726); markdown emphasis (``**Verdict:** REJECTED``) is tolerated. Only
+    the LAST declaration is returned: a body that quotes an earlier verdict
+    and then states its own is read the way a human reads it.
+
+    None means "no verdict was declared" — the legacy shape, which keeps the
+    pre-existing behaviour. Requiring a verdict would retroactively invalidate
+    every row that has none, so that is a policy change, not this fix.
+    """
+    text = f"{record.get('title') or ''}\n{record.get('content') or ''}"
+    verdicts = [
+        re.sub(r"\s+", " ", m.group(1).lower()).strip()
+        for m in _VERDICT_LABEL_RE.finditer(text)
+    ]
+    return verdicts[-1] if verdicts else None
+
+
 def evaluate_attestation(
     records: List[Dict[str, Any]],
     pr_number: int,
@@ -504,7 +549,8 @@ def evaluate_attestation(
     must satisfy :func:`is_attestation_record` — a tester record that merely
     mentions the PR (e.g. an intent row) does not count.    Returns (ok, detail, code) — code is a gate_codes value on failure
     (ATT_MISSING / ATT_SHAPE_UNSEEN / HEAD_DATE_UNKNOWN / ATT_STALE_HEAD /
-    ATT_NO_CI_EVIDENCE / ATT_CI_LOOKUP_FAILED), None on pass.
+    ATT_NO_CI_EVIDENCE / ATT_CI_LOOKUP_FAILED / ATT_VERDICT_REJECTED), None
+    on pass.
 
     Withdrawn rows (status:retired / status:superseded) are removed first, so
     they count neither as an attestation (`matches`) nor as a mention. Dropping
@@ -535,6 +581,22 @@ def evaluate_attestation(
         code = gate_codes.ATT_SHAPE_UNSEEN if mentions else gate_codes.ATT_MISSING
         return (False, detail, code)
     newest = max(matches, key=lambda r: _created_ms_of(r) or 0)
+    # Verdict first: it is the tester's actual decision and it outranks every
+    # mechanical check below. Reporting it ahead of freshness/CI means a
+    # refused PR says "the tester rejected this" instead of whichever lesser
+    # symptom the same row also carries. An ABSENT verdict falls through to
+    # the legacy checks (additive, like the head: binding), so existing rows
+    # keep their meaning; only an EXPLICIT rejection fails closed here.
+    verdict = attestation_verdict(newest)
+    if verdict in _REJECTING_VERDICTS:
+        return (
+            False,
+            f"tester attestation {str(newest.get('id'))[:8]} for PR #{pr_number} "
+            f"declares verdict '{verdict}' — a rejection is not an approval, "
+            "even when it cites verified CI runs; address the rejection, then "
+            "re-attest after the fix",
+            gate_codes.ATT_VERDICT_REJECTED,
+        )
     created_ms = _created_ms_of(newest)
     if created_ms is None:
         # Fail closed with a DEDICATED code. The previous `or 0` coercion

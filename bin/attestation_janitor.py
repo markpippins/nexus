@@ -717,6 +717,17 @@ def _refusal_post_text(num: int, head: str, codes: List[str], fails: str):
         lead = ("The newest attestation predates the head commit (a push after attestation "
                 "invalidated it) — a fresh tester attestation against the current head "
                 "unblocks the gate (or carry-forward, per the f7a09d5a ruling once it lands).")
+    elif gate_codes.ATT_VERDICT_REJECTED in codes:
+        # The gate now reads the verdict (record ebb0a911), so a refused PR
+        # can land here WITH a fully cited CI run. Author action, not a
+        # tester nag: the same head cannot be re-attested into an approval.
+        title = (f"attestation-janitor: TESTER REJECTED — PR #{num} refused "
+                 f"({code_str})")
+        lead = ("The newest attestation DECLARES a rejecting verdict, so the gate "
+                "treats the PR as refused no matter how much CI that row cites. "
+                "This is AUTHOR action: address what the tester rejected and push, "
+                "then request a fresh test — re-attesting the same head cannot "
+                "clear a rejection.")
     elif gate_codes.ATT_NO_CI_EVIDENCE in codes:
         # Routing-table alignment (gate_codes spec d7989f31 family): this code
         # is documented as queue-a-re-attestation but previously fell through

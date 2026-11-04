@@ -224,6 +224,83 @@ def test_is_attestation_record_rejects_missing_recordtype():
     )
 
 
+# ── gate 3: the tester's VERDICT is read (record ebb0a911) ───────────────
+
+def test_rejection_blocks_even_with_verified_ci():
+    """Regression for ebb0a911. #726 (#0cc7a949) says "VERDICT: REJECTED" and
+    was refused only because it cited no run — a rejection that DOES cite a
+    verified run must still never merge."""
+    rejected = rec(
+        rec_id="0cc7a949",
+        content="TESTER VERDICT: REJECTED — sibling majors incoherent.\n" + EVIDENCE_CONTENT,
+    )
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [rejected], 487, NOW_MS - 7200_000, run_json=evidence_run_json)
+    assert not ok
+    assert code == "ATT_VERDICT_REJECTED"
+    assert "'rejected'" in detail
+    assert "rejection is not an approval" in detail
+
+
+def test_changes_requested_verdict_blocks():
+    rejected = rec(content="**Verdict:** changes requested\n" + EVIDENCE_CONTENT)
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [rejected], 487, NOW_MS - 7200_000, run_json=evidence_run_json)
+    assert not ok
+    assert code == "ATT_VERDICT_REJECTED"
+
+
+def test_approved_verdict_still_passes():
+    approved = rec(content="TESTER VERDICT: APPROVED\n" + EVIDENCE_CONTENT)
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [approved], 487, NOW_MS - 7200_000, run_json=evidence_run_json)
+    assert ok
+    assert code is None
+
+
+def test_absent_verdict_keeps_legacy_behaviour():
+    """No verdict line = the pre-existing shape; requiring one would
+    retroactively invalidate every older attestation (policy, not this fix)."""
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [rec()], 487, NOW_MS - 7200_000, run_json=evidence_run_json)
+    assert ok
+
+
+def test_prose_mention_of_rejection_does_not_trip_the_gate():
+    """A false rejection blocks a good PR as wrongly as a missed one merges a
+    bad one, so only a DECLARED verdict counts."""
+    passing = rec(
+        content="No rejection is warranted; siblings are untouched.\n" + EVIDENCE_CONTENT,
+    )
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [passing], 487, NOW_MS - 7200_000, run_json=evidence_run_json)
+    assert ok
+
+
+def test_newest_verdict_wins_over_older_rejection():
+    """A rejection followed by a fresh approval after the fix is the normal
+    unblock path and must pass."""
+    head_ms = NOW_MS - 7200_000
+    records = [
+        rec(rec_id="rej1", created_ms=NOW_MS - 5400_000,
+            content="Verdict: REJECTED\n" + EVIDENCE_CONTENT),
+        rec(rec_id="app1", created_ms=NOW_MS - 3600_000,
+            content="Verdict: APPROVED\n" + EVIDENCE_CONTENT),
+    ]
+    ok, detail, code = merge_pr.evaluate_attestation(
+        records, 487, head_ms, run_json=evidence_run_json)
+    assert ok
+    assert "app1" in detail
+
+
+def test_attestation_verdict_parses_real_row_shape():
+    assert merge_pr.attestation_verdict(
+        {"content": "TESTER VERDICT: REJECTED — reason"}) == "rejected"
+    assert merge_pr.attestation_verdict(
+        {"content": "**Verdict:** APPROVED"}) == "approved"
+    assert merge_pr.attestation_verdict({"content": "no verdict here"}) is None
+
+
 # ── gate 3: withdrawal (Decision 24) beats the shape test ────────────────
 
 def test_empty_indexed_lookup_falls_back_to_the_scan():
