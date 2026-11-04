@@ -84,28 +84,79 @@ def fetch_pointers(
     return {str(role): (ts or None) for role, ts in pointers.items()}
 
 
-def count_backlog(
+def _count(
     base: str,
     role: str,
-    since: Optional[str],
-    http_get: Callable[[str], Any] = _http_get_json,
+    extra: Dict[str, str],
+    http_get: Callable[[str], Any],
 ) -> int:
-    """Records tagged `to:<role>` created after `since`.
+    """Exact count of records tagged `to:<role>` matching `extra`.
 
-    `/api/agent-records` honours `tag` + `createdAfter` and returns an exact
-    `total`, so this is a count, not a sample. With no pointer the whole
-    mailbox is unread by definition — that is the `pointerMissing` case, and it
-    is a real loss rather than an empty inbox (ruling 1fe2049de).
+    `/api/agent-records` returns an exact `total`, so this is a count rather
+    than a sample; `limit=1` keeps the payload small without changing it.
     """
     params: Dict[str, str] = {"tag": f"to:{role}", "limit": "1"}
-    if since:
-        params["createdAfter"] = since
+    params.update(extra)
     url = f"{base.rstrip('/')}/api/agent-records?{urllib.parse.urlencode(params)}"
     payload = http_get(url)
     if isinstance(payload, dict) and isinstance(payload.get("total"), int):
         return payload["total"]
     items = payload.get("items", []) if isinstance(payload, dict) else payload
     return len(items or [])
+
+
+def _watermark_upper_bound(since: str) -> str:
+    """Last instant covered by the watermark `since`, at millisecond granularity.
+
+    `/api/agent-records` returns `createdAt` as epoch MILLISECONDS, so a
+    watermark taken from a record is truncated to ms while `created_at` in
+    Postgres carries microseconds. The record the role actually read therefore
+    lives somewhere inside `since`'s millisecond — e.g. `...48.981523` behind a
+    pointer of `...48.981` — so an exact-equality comparison never matches it.
+    """
+    dt = parse_iso(since)
+    upper = dt.replace(microsecond=(dt.microsecond // 1000) * 1000 + 999)
+    return upper.strftime("%Y-%m-%dT%H:%M:%S") + ".%03d999Z" % (upper.microsecond // 1000)
+
+
+def count_backlog(
+    base: str,
+    role: str,
+    since: Optional[str],
+    http_get: Callable[[str], Any] = _http_get_json,
+) -> int:
+    """Records tagged `to:<role>` created after everything the watermark covers.
+
+    The stored watermark is the `createdAt` of the newest record a role has
+    already read, so that record is READ — but `/api/agent-records` implements
+    `createdAfter` as `created_at >= $n` (inclusive, see routes.ts). Asking it
+    directly for `createdAfter=<pointer>` therefore re-counts the newest
+    already-read record as unread, forever: a mailbox that catches up and then
+    goes dormant stays flagged, and re-advancing to the same timestamp cannot
+    clear it. (Caught by tester review of PR #856: role `critic`, zero records
+    newer than its pointer, verdict `backlog=1`.)
+
+    Fixed by counting what is covered rather than by nudging the boundary:
+    `createdBefore` is `created_at <= $n`, also inclusive, so subtracting the
+    count at or before the watermark's last covered instant leaves exactly the
+    unread set. That instant is the end of the watermark's millisecond, because
+    the API reports epoch ms (see `_watermark_upper_bound`).
+
+    The consequence, stated plainly: records written inside the SAME
+    millisecond as the newest one the role read are treated as read. That is a
+    watermark that is ms-granular by construction, not a guess — and the
+    alternative (a permanent false alarm on a caught-up mailbox) is strictly
+    worse. Anything at or after the next millisecond is counted.
+
+    With no pointer the whole mailbox is unread by definition — that is the
+    `pointerMissing` case, and it is a real loss rather than an empty inbox
+    (ruling 1fe2049de).
+    """
+    if not since:
+        return _count(base, role, {}, http_get)
+    total = _count(base, role, {}, http_get)
+    covered = _count(base, role, {"createdBefore": _watermark_upper_bound(since)}, http_get)
+    return max(total - covered, 0)
 
 
 def assess(

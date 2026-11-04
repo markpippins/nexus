@@ -22,6 +22,7 @@ import importlib.util
 import io
 import json
 import sys
+import urllib.parse
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -164,35 +165,115 @@ def test_fetch_pointers_reads_wrapper_and_null():
     assert seen["url"] == "http://example:3101/api/inbox-pointers"
 
 
-def test_count_backlog_sends_tag_and_created_after():
-    seen = {}
+class _InclusiveEndpoint:
+    """Fakes /api/agent-records with the REAL comparison semantics.
 
-    def get(url):
-        seen["url"] = url
-        return {"items": [], "total": 24}
+    nebula implements `createdAfter` as `created_at >= $n` and `createdBefore`
+    as `created_at <= $n` (routes.ts). Both are inclusive. A fake that ignored
+    this is exactly how the inclusive-boundary defect survived the first test
+    pass, so the regression cases below drive this fake instead of hand-feeding
+    backlog numbers.
+    """
 
-    total = wd.count_backlog("http://example:3101", "tester",
-                             "2026-10-01T05:33:23.844Z", http_get=get)
-    assert total == 24
-    assert "tag=to%3Atester" in seen["url"]
-    assert "createdAfter=2026-10-01T05" in seen["url"]
+    def __init__(self, timestamps):
+        # Compared as INSTANTS, not strings: "...000Z" sorts above "...000900Z"
+        # lexicographically (Z > 9), which would silently invert the boundary.
+        self.timestamps = [wd.parse_iso(t) for t in timestamps]
+        self.urls = []
+
+    def __call__(self, url):
+        self.urls.append(url)
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+        after = query.get("createdAfter", [None])[0]
+        before = query.get("createdBefore", [None])[0]
+        rows = self.timestamps
+        if after:
+            bound = wd.parse_iso(after)
+            rows = [t for t in rows if t >= bound]
+        if before:
+            bound = wd.parse_iso(before)
+            rows = [t for t in rows if t <= bound]
+        return {"items": [{"id": n} for n in range(len(rows))], "total": len(rows)}
+
+
+def test_count_backlog_is_strict_about_the_boundary():
+    # The regression the tester found: pointer == the newest READ record.
+    # With an inclusive createdAfter the mailbox reports 1 unread forever.
+    pointer = "2026-10-01T18:09:48.000Z"
+    endpoint = _InclusiveEndpoint([
+        "2026-09-01T00:00:00.000Z",
+        pointer,                                # already read
+    ])
+    assert wd.count_backlog("http://example:3101", "critic", pointer,
+                            http_get=endpoint) == 0
+
+
+def test_count_backlog_counts_only_strictly_newer_records():
+    pointer = "2026-10-01T18:09:48.000Z"
+    endpoint = _InclusiveEndpoint([
+        "2026-09-01T00:00:00.000Z",
+        pointer,
+        "2026-11-03T00:18:47.000Z",
+        "2026-11-04T00:19:30.000Z",
+    ])
+    assert wd.count_backlog("http://example:3101", "tester", pointer,
+                            http_get=endpoint) == 2
+
+
+def test_count_backlog_covers_the_pointer_millisecond_and_nothing_after():
+    # The watermark is ms-granular (the API reports epoch ms) while created_at is
+    # microsecond-precision, so the record actually read sits INSIDE the
+    # pointer's millisecond: `...48.981523` behind a pointer of `...48.981`.
+    # That record is read; the next millisecond is not.
+    pointer = "2026-10-01T18:09:48.981Z"
+    endpoint = _InclusiveEndpoint([
+        "2026-10-01T18:09:48.981523Z",   # the record the role read — covered
+        "2026-10-01T18:09:48.981900Z",   # same millisecond — covered
+        "2026-10-01T18:09:48.982000Z",   # next millisecond — UNREAD
+    ])
+    assert wd.count_backlog("http://example:3101", "critic", pointer,
+                            http_get=endpoint) == 1
+
+
+def test_caught_up_mailbox_is_quiet_even_with_microsecond_records():
+    """The exact case the tester found on live data (critic, #856).
+
+    Pointer `2026-10-01T18:09:48.981Z`; the only record is the one it read, at
+    microsecond precision. Inclusive `createdAfter` reported backlog=1 forever.
+    """
+    pointer = "2026-10-01T18:09:48.981Z"
+    endpoint = _InclusiveEndpoint(["2026-10-01T18:09:48.981523Z"])
+    backlog = wd.count_backlog("http://example:3101", "critic", pointer,
+                               http_get=endpoint)
+    assert backlog == 0
+    verdict = wd.assess({"critic": pointer}, NOW, backlog_fn=lambda r, s: backlog)[0]
+    assert verdict["flagged"] is False
+
+
+def test_count_backlog_sends_tag_on_both_queries():
+    endpoint = _InclusiveEndpoint(["2026-10-01T05:33:23.844Z"])
+    wd.count_backlog("http://example:3101", "tester", "2026-10-01T05:33:23.844Z",
+                     http_get=endpoint)
+    assert len(endpoint.urls) == 2
+    for url in endpoint.urls:
+        assert "tag=to%3Atester" in url
+    assert "createdBefore=2026-10-01T05" in endpoint.urls[1]
 
 
 def test_count_backlog_without_pointer_counts_whole_mailbox():
-    seen = {}
-
-    def get(url):
-        seen["url"] = url
-        return {"items": [], "total": 7}
-
-    assert wd.count_backlog("http://example:3101", "tester", None, http_get=get) == 7
-    assert "createdAfter" not in seen["url"]
+    endpoint = _InclusiveEndpoint(["2026-09-01T00:00:00.000Z"] * 7)
+    assert wd.count_backlog("http://example:3101", "tester", None, http_get=endpoint) == 7
+    # No watermark means nothing has been reviewed: one query, no date filter.
+    assert len(endpoint.urls) == 1
+    assert "createdBefore" not in endpoint.urls[0]
+    assert "createdAfter" not in endpoint.urls[0]
 
 
 def test_count_backlog_falls_back_to_item_count():
     def get(url):
         return {"items": [{"id": 1}, {"id": 2}]}
 
+    # Two queries, each answering with 2 items and no `total` field.
     assert wd.count_backlog("http://example:3101", "tester", None, http_get=get) == 2
 
 
