@@ -1,0 +1,4 @@
+# Runtime (optional): only MongoKeychainStore touches a driver, and it takes an
+# already-connected client, so callers own the connection and this package
+# imports nothing from pymongo directly.
+pymongo>=4.6,<5
