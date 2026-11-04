@@ -62,6 +62,25 @@ incident() {
 exec 200>"$LOCK_FILE"
 flock -n 200 || { log "SKIP: lock held"; exit 0; }
 
+# Target preflight (bin/lib/pg-target-preflight.sh, PR #849).
+#
+# The drive guard below SKIPs (exit 0) when the removable spool is absent, and
+# that was masking a second, independent condition: on 2026-11-02 the run logged
+# only "drive absent" while vanadium was also off the LAN. Nothing in the log
+# pointed at the host, so the tier looked like one parked backup rather than
+# two broken things. Probe first — it costs ~1s — and report the conditions as
+# the distinct things they are.
+TARGET_STATE="not probed"
+PREFLIGHT=""
+if [ "$DRY_RUN" = 0 ]; then
+  . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pg-target-preflight.sh"
+  if PREFLIGHT="$(REMOTE_HOST="$VD_HOST" pg_target_preflight)"; then
+    TARGET_STATE="reachable"
+  else
+    TARGET_STATE="unreachable"
+  fi
+fi
+
 # Drive guard (audit f74eb976, finding #4 — silent no-op): the spool lives
 # on a removable drive. When the drive is absent the OLD code failed here
 # with the misleading "mkdir: File exists" and, on some paths, could reach
@@ -70,7 +89,29 @@ flock -n 200 || { log "SKIP: lock held"; exit 0; }
 if ! drive_guard_skip_if_absent "$SPOOL_DIR" "spool directory"; then
   log "=== vanadium-ci backup skipped (drive absent) ==="
   log "$DRIVE_GUARD_REASON"
+  case "$TARGET_STATE" in
+    unreachable)
+      log "SEPARATE CONDITION — the target ${VD_HOST} is ALSO unreachable:"
+      while IFS= read -r line; do log "  $line"; done <<< "$PREFLIGHT"
+      log "two independent problems (no drive, no target); restoring the drive alone will not bring this tier back"
+      ;;
+    reachable)
+      log "target ${VD_HOST}: reachable — this skip is the drive alone"
+      ;;
+    *)
+      log "target ${VD_HOST}: not probed (--dry-run is inert)"
+      ;;
+  esac
   exit 0
+fi
+
+# Drive present: an unreachable target is now a real failure, not a fetch error.
+if [ "$TARGET_STATE" = "unreachable" ]; then
+  log "FAIL(preflight): ${VD_HOST} is not reachable — aborting before fetching"
+  while IFS= read -r line; do log "  $line"; done <<< "$PREFLIGHT"
+  incident "vanadium-ci backup FAILED: target unreachable ($TS)" \
+    "${VD_HOST} did not pass the preflight (name/TCP/ssh); no artifact was fetched. Local spool is present, so this is the target and not the drive. See $LOG_FILE on titanium."
+  exit 1
 fi
 mkdir -p "$SPOOL_DIR"
 log "=== vanadium-ci backup start (dry_run=$DRY_RUN) ==="
