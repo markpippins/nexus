@@ -966,6 +966,17 @@ def evaluate_attestation(
         ):
             detail += (f" — attestation cites head {cited_shas[0][:8]}, "
                        f"PR head is {str(head_sha)[:8]}")
+        if not runs_transient:
+            # Measured 2026-11-04 (record 9309bea5, PR #863): the row cited
+            # 41914723987, which 404s — CI was fully green at the head, so the
+            # number was not a workflow run of this repo at all. Without this
+            # hint that reads as "CI hasn't finished", and the tester waits
+            # for a run that will never appear under that id.
+            detail += (
+                " — cite ids from `gh run list --commit <head>`; a 404 usually "
+                "means the number is not a workflow run in this repository "
+                "(a check-run id, or a run from another repo), not that CI is "
+                "still in progress")
         return (False, detail,
                 gate_codes.ATT_CI_LOOKUP_FAILED if runs_transient
                 else gate_codes.ATT_NO_CI_EVIDENCE)
