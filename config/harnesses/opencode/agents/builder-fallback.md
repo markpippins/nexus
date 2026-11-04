@@ -5,7 +5,7 @@
 > only shared concept between Nexus and Conduit is the `WorkRequest` type.
 > 
 ---
-assumes_role: builder-fallback
+# assumes_role: builder-fallback
 description: |
   Fallback builder for local inference (ollama). Deterministic execution
   engine — NO interpretation, NO invention, NO scope expansion. Applies

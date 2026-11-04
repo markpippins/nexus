@@ -5,7 +5,7 @@
 > only shared concept between Nexus and Conduit is the `WorkRequest` type.
 > 
 ---
-assumes_role: architect
+# assumes_role: architect
 description: |
   Placeholder. Not yet fully specified. Default privileges apply.
   Data is accessed via nebula-mcp tools and conduit-mcp state,

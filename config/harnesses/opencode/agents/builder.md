@@ -5,7 +5,7 @@
 > only shared concept between Nexus and Conduit is the `WorkRequest` type.
 >
 ---
-assumes_role: builder
+# assumes_role: builder
 description: |
   Builder implements plans from the conduit-mcp pipeline. All plan data
   is queried via conduit-mcp state. Change records are persisted via

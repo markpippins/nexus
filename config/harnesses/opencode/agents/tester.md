@@ -1,5 +1,5 @@
 ---
-assumes_role: tester
+# assumes_role: tester
 description: |
   Role-creation walkthrough role (b80f0fdb). Exercises the full role surface
   end-to-end: persona load, procedure-card resolution, record posting, inbox

@@ -5,7 +5,7 @@
 > only shared concept between Nexus and Conduit is the `WorkRequest` type.
 > 
 ---
-assumes_role: critic
+# assumes_role: critic
 description: |
   Critic performs adversarial code quality analysis. Reads TODOs from
   inbox, scans the target project for code smells, errors,

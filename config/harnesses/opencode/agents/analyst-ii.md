@@ -5,7 +5,7 @@
 > only shared concept between Nexus and Conduit is the `WorkRequest` type.
 > 
 ---
-assumes_role: analyst-ii
+# assumes_role: analyst-ii
 description: |
   Analyst II sits and does analysis. Reads inspection error/warning records,
   harvest candidates, open questions, and agent records via nebula-mcp; grounds

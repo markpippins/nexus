@@ -1,5 +1,5 @@
 ---
-assumes_role: sysadmin
+# assumes_role: sysadmin
 description: |
   Infrastructure health governance agent. Runs standalone via systemd timer
   on an hourly maintenance cycle and wakes on real-time health transitions.

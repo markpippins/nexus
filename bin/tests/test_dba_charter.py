@@ -133,7 +133,7 @@ class TestCharter:
 
     def test_frontmatter_and_anchor(self, charter):
         assert charter.startswith("---\n")
-        assert "assumes_role: dba" in charter.split("---\n")[1]
+        assert "# assumes_role: dba" in charter.split("---\n")[1]
         body = charter.split("---\n", 2)[2].lstrip("\n")
         assert body.startswith("# Role: DBA")
 
@@ -154,13 +154,13 @@ def loader():
 class TestPersonaLoader:
     def test_load_strips_frontmatter_and_requires_anchor(self, loader, tmp_path):
         good = tmp_path / "persona.md"
-        good.write_text("---\nassumes_role: dba\n---\n\n# Role: DBA\n\nbody here\n")
+        good.write_text("---\n# assumes_role: dba\n---\n\n# Role: DBA\n\nbody here\n")
         body = loader.load_persona_body(good)
         assert body.startswith("# Role: DBA")
         assert "assumes_role" not in body
 
         bad = tmp_path / "bad.md"
-        bad.write_text("---\nassumes_role: dba\n---\n\n# Something Else\n")
+        bad.write_text("---\n# assumes_role: dba\n---\n\n# Something Else\n")
         with pytest.raises(ValueError, match="must start with"):
             loader.load_persona_body(bad)
 

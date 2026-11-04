@@ -760,8 +760,14 @@ const migrations: Migration[] = [
         [
           "opencode-agents",
           "Agent persona files — one .md per role under .opencode/agents/. Template embeds role name, role description, persona body from tackle.prompts, and procedure cards from tackle.role_memory.",
+          // `assumes_role` is emitted as a YAML COMMENT on purpose — opencode
+          // forwards unknown agent-frontmatter keys to the provider as
+          // options and openai-responses providers reject them outright, so a
+          // live key makes the agent unlaunchable on those models. Kept as a
+          // comment it stays greppable for the persona-parity test without
+          // ever being forwarded.
           `---
-assumes_role: {{role}}
+# assumes_role: {{role}}
 description: |
   {{role_description}}
 mode: primary

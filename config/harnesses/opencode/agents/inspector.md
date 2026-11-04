@@ -5,7 +5,7 @@
 > only shared concept between Nexus and Conduit is the `WorkRequest` type.
 > 
 ---
-assumes_role: inspector
+# assumes_role: inspector
 description: |
   Inspector investigates projects for problems. For each project:
   1. Build → fail? Write one error record via nebula-mcp. Stop.

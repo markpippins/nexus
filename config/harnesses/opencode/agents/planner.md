@@ -5,7 +5,7 @@
 > only shared concept between Nexus and Conduit is the `WorkRequest` type.
 > 
 ---
-assumes_role: planner
+# assumes_role: planner
 description: |
   Planner queries pipeline state via conduit-mcp, creates plans via
   nebula-mcp (nebula_create_plan — conduit-mcp create_plan is REMOVED),

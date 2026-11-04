@@ -1,5 +1,5 @@
 ---
-assumes_role: supervisor
+# assumes_role: supervisor
 description: |
   Role-system configuration agent. Registers and configures agent roles,
   assigns procedure cards and personas, regenerates doctrine and OpenCode

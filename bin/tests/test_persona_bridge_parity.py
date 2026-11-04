@@ -23,9 +23,10 @@ What this pins
   P1  Every `prompts/get?name=<role>/<slug>` referenced by an agent .md has
       a matching `tackle.prompts` row.  (requires a database)
 
-  P2  The role an agent file declares (`assumes_role:`) matches the role it
-      asks the bridge for, case-insensitively. Catches an agent file wired
-      to a persona belonging to a differently-named role.  (hermetic)
+  P2  The role an agent file declares (`# assumes_role:`, a YAML comment)
+      matches the role it asks the bridge for, case-insensitively. Catches an
+      agent file wired to a persona belonging to a differently-named role.
+      (hermetic)
 
   P3  Case-exact agreement, with a short, explicit exception list. Empty
       since the D1 role-name canonicalisation landed: agent files declare
@@ -57,7 +58,12 @@ mistake this file exists to prevent:
     have a persona is a design decision, not a defect.
 
 So P1 keys off the request, which is what actually has to resolve at launch.
-P1 needs a database and skips cleanly when none is configured; P2/P3 are
+  P4  No agent file declares `assumes_role` as a LIVE YAML key. opencode
+      forwards unknown agent-frontmatter keys to the model provider, and
+      openai-responses providers reject them: a live key made every such
+      agent unlaunchable on those models.  (hermetic)
+
+P1 needs a database and skips cleanly when none is configured; P2/P3/P4 are
 hermetic.
 """
 from __future__ import annotations
@@ -71,7 +77,17 @@ AGENT_DIR = os.path.join(REPO_ROOT, "config", "harnesses", "opencode", "agents")
 
 # Both the GET form and the documented POST form in the agent files.
 REF_RE = re.compile(r"prompts/get\?name=([A-Za-z0-9_\-]+)/([A-Za-z0-9_\-]+)")
-ASSUMES_RE = re.compile(r"^assumes_role:\s*([A-Za-z0-9_\-]+)\s*$", re.MULTILINE)
+# The declaration is a YAML COMMENT ("# assumes_role: <role>"), not a key.
+# opencode forwards unknown agent-frontmatter keys to the model provider as
+# options, and the openai-responses transport rejects any it cannot represent:
+# with a live key, every strict provider died at launch with
+#   "assumes_role: cannot be represented by openai-responses".
+# As a comment it is invisible to YAML parsers — so never forwarded — while
+# staying greppable for the parity contract below. The uncommented form is
+# pinned against in test_no_agent_file_declares_assumes_role_as_a_key.
+ASSUMES_RE = re.compile(
+    r"^#\s*assumes_role:\s*([A-Za-z0-9_\-]+)\s*$", re.MULTILINE
+)
 
 # (filename, declared role, requested role) triples known to differ in case.
 # See P3 in the module docstring. Keep this list short and justified: every
@@ -135,6 +151,27 @@ class PersonaRefParity(unittest.TestCase):
                     f"{fn}: assumes_role={declared} but requests {sorted(roles)}"
                 )
         self.assertEqual(bad, [], "\n".join(bad))
+
+    def test_no_agent_file_declares_assumes_role_as_a_key(self) -> None:
+        """P4 — hermetic. The declaration must stay a COMMENT.
+
+        A live `assumes_role:` key in an agent .md is forwarded by opencode to
+        the provider as an option; openai-responses providers refuse it
+        outright, so the agent cannot launch at all on those models
+        (2026-11-04: `--agent engineer`/`--agent tester` died on
+        opencode/crouton-alpha-free; the same files ran fine on lenient
+        transports, which is why this hid for so long).
+        """
+        offenders = [
+            fn for fn in agent_files()
+            if re.search(r"^assumes_role:", read(fn), re.MULTILINE)
+        ]
+        self.assertEqual(
+            offenders, [],
+            "agent files declare assumes_role as a live YAML key (opencode "
+            "forwards it to the provider, which breaks openai-responses "
+            "models); prefix it with '# ': " + ", ".join(offenders),
+        )
 
     def test_role_case_drift_is_only_what_we_know_about(self) -> None:
         """P3 — hermetic. Case-exact agreement, minus pinned known drift.
