@@ -5331,14 +5331,22 @@ export function createRoutes(pool: Pool): Router {
   // GET /api/attestations?pr=<N> — indexed, exact attestation lookup.
   //
   // Purpose-built for merge-gate gate 3 (bin/merge_pr.py): returns only
-  // attestation-shaped tester rows carrying the exact pr:<N> tag, newest
-  // first. The server-side shape constraint encodes tester finding
-  // 84ca2388 — canonical rows are record_type=assessment with
-  // type:approval + status:done; legacy rows carry type:attestation.
-  // Intent/status-update/finding records never qualify, so the gate's
-  // match is exact and index-backed (GIN on tags, migration 055) instead
-  // of a bounded newest-N scan. Tester role is hardcoded: attestation is
-  // the tester's binding output (roundtable invariant I2).
+  // attestation-shaped tester rows for one PR, newest first, so the gate does
+  // not need a bounded newest-N scan. The shape rule encodes tester finding
+  // 84ca2388. Two clauses ride on it. Matching accepts pr:<N> or gate:<N>, the
+  // tester's live tag since #842 being gate:<N> + verdict:approve with the PR
+  // number only in the title — a pr:-only filter returned nothing for attested
+  // PRs. And withdrawn rows never match: Decision 24 retirement drops every
+  // status:* tag and adds status:retired | status:superseded while keeping
+  // type:* and pr:*, so a withdrawn attestation stays shape-matching forever
+  // (client-side equivalent: merge_pr.is_withdrawn).
+
+  // Canonical rows are record_type=assessment with type:approval + status:done
+  // and legacy rows carry type:attestation; intent and finding rows never
+  // qualify, and tester role is hardcoded since attestation is the tester's
+  // binding output (roundtable invariant I2). Matching accepts pr:<N> or
+  // gate:<N>; withdrawn rows (status:retired, status:superseded) never match,
+  // because Decision 24 keeps type:* and only swaps the status tag.
   router.get('/attestations', attestationsLimiter, async (req: Request, res: Response) => {
     try {
       const prRaw = req.query.pr;
@@ -5358,7 +5366,12 @@ export function createRoutes(pool: Pool): Router {
                 recorded_on_dt, level, visibility_scope
          FROM nebula.agent_records
          WHERE role = 'tester'
-           AND tags @> ARRAY[$1::text]
+           -- Both live conventions, or the index misses real attestations:
+           -- tester rows from #842 onward tag gate:<N> + verdict:approve and
+           -- name the PR only in the title, while vendor-rule rows tag pr:<N>.
+           -- Matching pr:<N> alone returned items:[] for attested PRs.
+           AND tags && ARRAY['pr:' || $1::text, 'gate:' || $1::text]::text[]
+           AND NOT (tags && ARRAY['status:retired', 'status:superseded']::text[])
            AND (
                  (record_type = 'assessment'
                   AND 'type:approval' = ANY(tags)
@@ -5367,7 +5380,7 @@ export function createRoutes(pool: Pool): Router {
                )
          ORDER BY created_at DESC, id DESC
          LIMIT $2`,
-        [`pr:${pr}`, limit]
+        [String(pr), limit]
       );
       res.json({ items: rows.map(camelCaseRow), total: rows.length, pr });
     } catch (err: any) {

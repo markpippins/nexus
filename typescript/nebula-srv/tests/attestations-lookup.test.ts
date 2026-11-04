@@ -29,6 +29,8 @@ const BASE = process.env.NEBULA_TEST_BASE || "http://localhost:3101";
 const PR_MAIN = "491911";
 const PR_MENTION = "491912";
 const PR_ABSENT = "491913";
+const PR_GATE = "491914";      // gate:<N> convention (tester's live row shape)
+const PR_WITHDRAWN = "491915"; // retired + superseded rows must not resolve
 
 function httpReq(method: string, path: string, body?: any): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
@@ -145,6 +147,51 @@ async function run() {
     Array.isArray(rAbsent.body.items) && rAbsent.body.items.length === 0,
     JSON.stringify(rAbsent.body.items).slice(0, 200));
 
+  // 4b. gate:<N> convention. Tester attestations from #842 onward tag
+  // gate:<N> + verdict:approve and carry the PR number ONLY in the title, so
+  // a pr:<N>-only index misses them. Measured 2026-11-03: the attestation for
+  // #842 existed while /api/attestations?pr=842 returned items:[].
+  const gateTagged = await httpReq("POST", "/api/agent-records", {
+    recordType: "report",
+    role: "tester",
+    title: `attestations-lookup fixture: gate-tag convention (#${PR_GATE})`,
+    content: "Self-seeded gate:<N> fixture — PR number only in the title",
+    tags: [`gate:${PR_GATE}`, "type:attestation", "verdict:approve"],
+    level: 1,
+  });
+  assert("gate-tag fixture created", gateTagged.status === 201, `got ${gateTagged.status}`);
+  const rGate = await httpReq("GET", `/api/attestations?pr=${PR_GATE}`);
+  assert(`pr=${PR_GATE} resolves a gate:<N>-tagged attestation`,
+    rGate.body.items.some((r: any) => String(r.id).startsWith(gateTagged.body.id)),
+    JSON.stringify(rGate.body.items).slice(0, 200));
+
+  // 4c. withdrawn rows never resolve. Decision 24 retirement/supersession drops
+  // status:done and adds status:retired|superseded while KEEPING the shape tags,
+  // so without the status clause the lookup reports "an attestation exists" for
+  // a record that was explicitly withdrawn.
+  const retired = await httpReq("POST", "/api/agent-records", {
+    recordType: "report",
+    role: "tester",
+    title: `attestations-lookup fixture: retired (#${PR_WITHDRAWN})`,
+    content: "Self-seeded RETIRED fixture — must not resolve",
+    tags: [`pr:${PR_WITHDRAWN}`, "type:attestation", "status:retired"],
+    level: 1,
+  });
+  assert("retired fixture created", retired.status === 201, `got ${retired.status}`);
+  const superseded = await httpReq("POST", "/api/agent-records", {
+    recordType: "assessment",
+    role: "tester",
+    title: `attestations-lookup fixture: superseded (#${PR_WITHDRAWN})`,
+    content: "Self-seeded SUPERSEDED fixture — must not resolve",
+    tags: [`pr:${PR_WITHDRAWN}`, "type:approval", "status:superseded", "superseded-by:deadbeef"],
+    level: 1,
+  });
+  assert("superseded fixture created", superseded.status === 201, `got ${superseded.status}`);
+  const rWithdrawn = await httpReq("GET", `/api/attestations?pr=${PR_WITHDRAWN}`);
+  assert(`pr=${PR_WITHDRAWN} excludes withdrawn (retired + superseded) rows`,
+    Array.isArray(rWithdrawn.body.items) && rWithdrawn.body.items.length === 0,
+    JSON.stringify(rWithdrawn.body.items).slice(0, 200));
+
   // 5. validation
   const bad = await httpReq("GET", "/api/attestations");
   assert("missing pr => 400", bad.status === 400, `got ${bad.status}`);
@@ -154,7 +201,8 @@ async function run() {
   assert("negative pr => 400", negative.status === 400, `got ${negative.status}`);
 
   // ── Cleanup ──────────────────────────────────────────────────────
-  for (const id of [canonical.body.id, legacy.body.id, mention.body.id]) {
+  for (const id of [canonical.body.id, legacy.body.id, mention.body.id,
+                    gateTagged.body.id, retired.body.id, superseded.body.id]) {
     await httpReq("DELETE", `/api/agent-records/${id}`);
   }
   console.log("  ✓ fixtures cleaned up");
