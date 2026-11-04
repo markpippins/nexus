@@ -350,6 +350,16 @@ def attestation_body(
         if m and m.group(1) in run_ids and m.group(1) not in by_run:
             by_run[m.group(1)] = str(check.get("name") or "check")
     lines = [
+        # Machine-readable declarations. `policy` is the ATTESTATION contract
+        # (how this row must be read); `vendor rule` is the rule that granted
+        # the approval. They are deliberately separate keys: gate 3 accepts an
+        # `approved_by_rule` verdict only by re-proving the rule against the
+        # live diff and author, and checks that the rule id is recorded here,
+        # so an approval by rule is reproducible rather than a magic string.
+        "policy: attestation/v2",
+        "verdict: approved_by_rule",
+        "vendor rule: vendor-bump/v1",
+        "",
         f"Vendor attestation — PR #{pr.get('number')} (policy vendor-bump/v1).",
         "",
         f"PR: {str(pr.get('title') or '')[:200]}",

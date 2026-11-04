@@ -42,6 +42,22 @@ Consumer routing (attestation_janitor.py, per spec table):
     ATT_CI_LOOKUP_FAILED transient lookup failure (gh 429/5xx/network);
                        retry next cycle, no posts (Decision 15 item D)
     ATT_SHAPE_UNSEEN   route to tester/analyst adjudication; 1 post per key
+    ATT_POLICY_UNSUPPORTED
+                       operator/gate action: the row declares a contract this
+                       gate cannot read; upgrade the gate, do not re-attest
+    ATT_VERDICT_MISSING
+                       queue tester re-attestation: policy v2 requires a
+                       verdict and the row states none (CI success is not a
+                       judgement); 1 post per dedup key
+    ATT_VERDICT_INVALID
+                       route to tester/analyst adjudication: a verdict was
+                       declared but is not in the v2 vocabulary; 1 post per key
+    ATT_VERDICT_HOLD   author action: the tester withheld approval ("hold")
+                       without naming a defect; 1 post per dedup key
+    ATT_VENDOR_RULE_UNVERIFIED
+                       operator/author action: an "approved by rule" claim
+                       whose rule conditions do not hold at this head; 1 post
+                       per dedup key
     MERGE_CONFLICT     NOT an anomaly (author action); 1 post per key
     MERGE_UNKNOWN      transient, retry next cycle, no posts
     CI_PENDING         transient, retry next cycle, no posts
@@ -118,6 +134,38 @@ ATT_CI_LOOKUP_FAILED = "ATT_CI_LOOKUP_FAILED"
 # same head cannot clear a rejection, the work has to change first.
 ATT_VERDICT_REJECTED = "ATT_VERDICT_REJECTED"
 
+# Policy v2 (operator ruling 2026-11-04): an attestation declares the contract
+# it was written under, and under v2 it MUST declare a verdict. Green CI + a
+# fresh head prove the mechanical checks passed at a head; they cannot prove a
+# tester exercised judgement, and the gate had been treating the former as
+# sufficient evidence for the merge doctrine. Legacy rows (no policy line) keep
+# their original reading, so this is not a retroactive judgement of history.
+#
+# MISSING and REJECTED stay separate codes on purpose: they are different
+# operational diagnoses. MISSING means the required judgement never happened
+# (ask the tester for one); REJECTED means it happened and the answer was no
+# (the work has to change). Collapsing them would send both down one path.
+ATT_VERDICT_MISSING = "ATT_VERDICT_MISSING"
+# A verdict WAS declared, but it is outside the v2 vocabulary (e.g. "verdict:
+# deferred"). Distinct from MISSING for the same reason: the tester acted, and
+# the right response is adjudication, not a request to re-attest.
+ATT_VERDICT_INVALID = "ATT_VERDICT_INVALID"
+# The tester answered "hold" — judgement happened, approval withheld, no
+# specific defect asserted (live row acc7f963, #841). Author action, like a
+# rejection, but without a defect to fix until the tester says what blocks.
+ATT_VERDICT_HOLD = "ATT_VERDICT_HOLD"
+# The row declares a policy the gate does not implement (a future v3, say).
+# Reading newer evidence under looser rules could accept exactly what it was
+# written to forbid, so an unknown contract fails closed.
+ATT_POLICY_UNSUPPORTED = "ATT_POLICY_UNSUPPORTED"
+# An "approved by rule" verdict that does not satisfy the vendor rule at gate
+# time. Vendor automation is a different authority from a tester's judgement
+# and must never impersonate one: the tag, the author, the live diff and the
+# recorded rule/version are all re-proved. #860/#861 carry type:vendor-bump
+# while touching bin/ and config/ — a classification label is not evidence of
+# eligibility.
+ATT_VENDOR_RULE_UNVERIFIED = "ATT_VENDOR_RULE_UNVERIFIED"
+
 ALL_CODES = frozenset({
     GH_LOOKUP_FAILED, HEAD_DATE_UNKNOWN,
     PR_NOT_OPEN, PR_DRAFT, MERGE_CONFLICT, MERGE_UNKNOWN,
@@ -125,6 +173,8 @@ ALL_CODES = frozenset({
     ATT_MISSING, ATT_SHAPE_UNSEEN, ATT_STALE_HEAD,
     ATT_LOOKUP_FAILED, ATT_BYPASSED, ATT_NO_CI_EVIDENCE,
     ATT_CI_LOOKUP_FAILED, ATT_TIMESTAMP_MISSING, ATT_VERDICT_REJECTED,
+    ATT_VERDICT_MISSING, ATT_VERDICT_INVALID, ATT_VERDICT_HOLD,
+    ATT_POLICY_UNSUPPORTED, ATT_VENDOR_RULE_UNVERIFIED,
 })
 
 # Codes whose condition may clear on the next cycle without anyone acting:

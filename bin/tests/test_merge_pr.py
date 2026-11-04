@@ -259,11 +259,208 @@ def test_approved_verdict_still_passes():
 
 
 def test_absent_verdict_keeps_legacy_behaviour():
-    """No verdict line = the pre-existing shape; requiring one would
-    retroactively invalidate every older attestation (policy, not this fix)."""
+    """No verdict line AND no declared contract = the pre-existing shape.
+    Those rows were never asked for a verdict; requiring one retroactively
+    would manufacture a historical failure (#860/#861 are exactly this shape:
+    "CI run N: checks verified success; head SHA verified")."""
+    legacy = rec(rec_id="94e304ed", title="Attestation for PR #487",
+                 content="CI run 36000000001: CI checks verified success; "
+                         "head SHA verified for PR #487")
     ok, detail, code = merge_pr.evaluate_attestation(
-        [rec()], 487, NOW_MS - 7200_000, run_json=evidence_run_json)
+        [legacy], 487, NOW_MS - 7200_000, run_json=evidence_run_json)
     assert ok
+    assert code is None
+
+
+# ── gate 3: policy v2 — a verdict is REQUIRED under the declared contract ─
+
+def _v2(content, tags=None, **kw):
+    """An attestation written under policy attestation/v2."""
+    return rec(content="policy: attestation/v2\n" + content, tags=tags, **kw)
+
+
+def test_v2_green_ci_fresh_head_without_verdict_fails_missing():
+    """THE test for this change. Machine checks all pass — fresh head, cited
+    run verified success at that head — and the gate must still refuse, with
+    ATT_VERDICT_MISSING specifically. CI can establish that an observable
+    condition held; it cannot establish that a tester exercised judgement.
+    Any other refusal reason here would hide the conflation this closes."""
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [_v2(EVIDENCE_CONTENT)], 487, NOW_MS - 7200_000,
+        head_sha="a8b1dfc600000000000000000000000000000000",
+        run_json=evidence_run_json)
+    assert not ok
+    assert code == "ATT_VERDICT_MISSING"
+    assert "states NO verdict" in detail
+    assert "not that a tester judged" in detail
+    # and it must not be reported as any of the neighbouring conditions
+    assert code not in {"ATT_VERDICT_REJECTED", "ATT_NO_CI_EVIDENCE",
+                        "ATT_STALE_HEAD", "ATT_VERDICT_INVALID"}
+
+
+def test_v2_approved_verdict_passes():
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [_v2("verdict: approved\n" + EVIDENCE_CONTENT)], 487, NOW_MS - 7200_000,
+        run_json=evidence_run_json)
+    assert ok, detail
+    assert code is None
+
+
+def test_v2_rejected_verdict_blocks():
+    ok, _, code = merge_pr.evaluate_attestation(
+        [_v2("verdict: rejected — misses the migration\n" + EVIDENCE_CONTENT)],
+        487, NOW_MS - 7200_000, run_json=evidence_run_json)
+    assert not ok
+    assert code == "ATT_VERDICT_REJECTED"
+
+
+def test_v2_unknown_verdict_is_invalid_not_missing():
+    """The judgement happened, it just isn't a word the gate reads. Saying
+    MISSING would send the tester to re-attest instead of routing the
+    ambiguity to adjudication."""
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [_v2("verdict: deferred-to-next-week\n" + EVIDENCE_CONTENT)],
+        487, NOW_MS - 7200_000, run_json=evidence_run_json)
+    assert not ok
+    assert code == "ATT_VERDICT_INVALID"
+    assert "deferred" in detail
+
+
+def test_v2_hold_is_its_own_diagnosis():
+    """`verdict: hold` exists in live data (acc7f963, #841): approval withheld,
+    no defect asserted. Not a rejection (nothing to fix), not invalid."""
+    ok, _, code = merge_pr.evaluate_attestation(
+        [_v2("verdict: hold\n" + EVIDENCE_CONTENT)], 487, NOW_MS - 7200_000,
+        run_json=evidence_run_json)
+    assert not ok
+    assert code == "ATT_VERDICT_HOLD"
+
+
+def test_v2_verdict_declared_only_in_tags_counts():
+    """The tester convention puts the verdict in a tag (13 live rows carry
+    verdict:approve). A v2 row declaring it there has declared it."""
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [_v2(EVIDENCE_CONTENT, tags=["type:attestation", "pr:487",
+                                     "status:done", "verdict:approve"])],
+        487, NOW_MS - 7200_000, run_json=evidence_run_json)
+    assert ok, detail
+
+
+def test_v2_body_verdict_wins_over_tag():
+    row = _v2("verdict: rejected — see note\n" + EVIDENCE_CONTENT,
+              tags=["type:attestation", "pr:487", "verdict:approve"])
+    ok, _, code = merge_pr.evaluate_attestation(
+        [row], 487, NOW_MS - 7200_000, run_json=evidence_run_json)
+    assert not ok
+    assert code == "ATT_VERDICT_REJECTED"
+
+
+def test_unknown_contract_fails_closed():
+    """A v3 row must not be read under v2's looser rules."""
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [rec(content="policy: attestation/v3\nverdict: approved\n"
+                     + EVIDENCE_CONTENT)],
+        487, NOW_MS - 7200_000, run_json=evidence_run_json)
+    assert not ok
+    assert code == "ATT_POLICY_UNSUPPORTED"
+
+
+def test_v2_approval_without_cited_ci_still_fails_evidence_rule():
+    """A verdict is required, not sufficient: the CI citation rule is
+    unchanged beneath it."""
+    row = _v2("verdict: approved\nEngine reports 54/54 passing.")
+    row["title"] = "Attestation for PR #487"  # no run id anywhere in the row
+    ok, _, code = merge_pr.evaluate_attestation(
+        [row], 487, NOW_MS - 7200_000, run_json=evidence_run_json)
+    assert not ok
+    assert code == "ATT_NO_CI_EVIDENCE"
+
+
+# ── gate 3: vendor automation is a different authority ───────────────────
+
+def _vendor_pr(author="dependabot[bot]", title="Bump lodash from 4.17.20 to 4.17.21",
+               body="update-type: version-update:semver-patch"):
+    return {"author": {"login": author}, "title": title, "body": body}
+
+
+VENDOR_FILES = ["typescript/package-lock.json"]
+
+
+def test_rule_verdict_verified_passes():
+    row = rec(
+        rec_id="vend0001",
+        tags=["type:attestation", "pr:487", "type:vendor-bump", "status:done"],
+        content=("policy: attestation/v2\nverdict: approved_by_rule\n"
+                 "vendor rule: vendor-bump/v1\n" + EVIDENCE_CONTENT),
+    )
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [row], 487, NOW_MS - 7200_000, run_json=evidence_run_json,
+        pr_state=_vendor_pr(), files_getter=lambda n: VENDOR_FILES)
+    assert ok, detail
+    assert "vendor rule vendor-bump/v1 verified" in detail
+
+
+def test_rule_verdict_on_a_code_pr_is_refused():
+    """#860/#861 carry type:vendor-bump while touching bin/ and config/, so
+    the tag alone must not buy vendor leniency. The live diff decides."""
+    row = rec(
+        rec_id="86000000",
+        tags=["type:attestation", "pr:487", "type:vendor-bump"],
+        content=("policy: attestation/v2\nverdict: approved_by_rule\n"
+                 "vendor rule: vendor-bump/v1\n" + EVIDENCE_CONTENT),
+    )
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [row], 487, NOW_MS - 7200_000, run_json=evidence_run_json,
+        pr_state=_vendor_pr(author="mapippins"),
+        files_getter=lambda n: ["bin/merge_pr.py"])
+    assert not ok
+    assert code == "ATT_VENDOR_RULE_UNVERIFIED"
+
+
+def test_rule_verdict_without_vendor_tag_is_refused():
+    row = rec(content=("policy: attestation/v2\nverdict: approved_by_rule\n"
+                       "vendor rule: vendor-bump/v1\n" + EVIDENCE_CONTENT))
+    ok, _, code = merge_pr.evaluate_attestation(
+        [row], 487, NOW_MS - 7200_000, run_json=evidence_run_json,
+        pr_state=_vendor_pr(), files_getter=lambda n: VENDOR_FILES)
+    assert not ok
+    assert code == "ATT_VENDOR_RULE_UNVERIFIED"
+
+
+def test_rule_verdict_must_record_the_rule():
+    """An approval by rule must be reproducible, not a magic string."""
+    row = rec(tags=["type:attestation", "pr:487", "type:vendor-bump"],
+              content="policy: attestation/v2\nverdict: approved_by_rule\n"
+                      + EVIDENCE_CONTENT)
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [row], 487, NOW_MS - 7200_000, run_json=evidence_run_json,
+        pr_state=_vendor_pr(), files_getter=lambda n: VENDOR_FILES)
+    assert not ok
+    assert code == "ATT_VENDOR_RULE_UNVERIFIED"
+    assert "rule that authorized it" in detail
+
+
+def test_rule_verdict_refuses_semver_major():
+    row = rec(tags=["type:attestation", "pr:487", "type:vendor-bump"],
+              content=("policy: attestation/v2\nverdict: approved_by_rule\n"
+                       "vendor rule: vendor-bump/v1\n" + EVIDENCE_CONTENT))
+    ok, _, code = merge_pr.evaluate_attestation(
+        [row], 487, NOW_MS - 7200_000, run_json=evidence_run_json,
+        pr_state=_vendor_pr(title="Bump lodash from 4.17.20 to 5.0.0",
+                            body="update-type: version-update:semver-major"),
+        files_getter=lambda n: VENDOR_FILES)
+    assert not ok
+    assert code == "ATT_VENDOR_RULE_UNVERIFIED"
+
+
+def test_rule_verdict_without_diff_context_fails_closed():
+    row = rec(tags=["type:attestation", "pr:487", "type:vendor-bump"],
+              content=("policy: attestation/v2\nverdict: approved_by_rule\n"
+                       "vendor rule: vendor-bump/v1\n" + EVIDENCE_CONTENT))
+    ok, _, code = merge_pr.evaluate_attestation(
+        [row], 487, NOW_MS - 7200_000, run_json=evidence_run_json)
+    assert not ok
+    assert code == "ATT_VENDOR_RULE_UNVERIFIED"
 
 
 def test_prose_mention_of_rejection_does_not_trip_the_gate():
@@ -299,6 +496,31 @@ def test_attestation_verdict_parses_real_row_shape():
     assert merge_pr.attestation_verdict(
         {"content": "**Verdict:** APPROVED"}) == "approved"
     assert merge_pr.attestation_verdict({"content": "no verdict here"}) is None
+
+
+def test_attestation_verdict_reads_a_space_separated_row():
+    """Record bcaf01ad (#823) ends "... unverified. Verdict REJECTED." with no
+    colon. Reading that as "no verdict" downgraded a refusal into a
+    re-attestation request, so the space form is read for recognized words
+    only (prose still cannot trip it)."""
+    assert merge_pr.attestation_verdict(
+        {"content": "Pillow major bump safety unverified. Verdict REJECTED."
+         }) == "rejected"
+    assert merge_pr.attestation_verdict(
+        {"content": "The verdict took a week to arrive."}) is None
+
+
+def test_rule_verdict_with_spaces_is_not_a_plain_approval():
+    """`approved by rule` must not slip through as an ordinary approval just
+    because it was written without an underscore."""
+    row = rec(tags=["type:attestation", "pr:487"],
+              content="policy: attestation/v2\nverdict: approved by rule\n"
+                      + EVIDENCE_CONTENT)
+    ok, _, code = merge_pr.evaluate_attestation(
+        [row], 487, NOW_MS - 7200_000, run_json=evidence_run_json,
+        pr_state=_vendor_pr(), files_getter=lambda n: VENDOR_FILES)
+    assert not ok
+    assert code == "ATT_VENDOR_RULE_UNVERIFIED"
 
 
 # ── gate 3: withdrawal (Decision 24) beats the shape test ────────────────
