@@ -13,6 +13,7 @@ import { CrossReferenceType } from './crossref-taxonomy';
 import { normalizeTags } from './tagNormalizer';
 import { attestationsLimiter, requirementCompileLimiter } from './limiter';
 import { routingTagErrorMessage, routingCaseErrorMessage } from './routing-tags';
+import { blankRecordError } from './agent-record-write-guard';
 import {
   camelCaseRow,
   AGENT_RECORD_LIST_COLUMNS,
@@ -5539,6 +5540,16 @@ export function createRoutes(pool: Pool): Router {
 
       if (level !== undefined && (level < 1 || level > 4)) {
         return res.status(400).json({ error: 'level must be between 1 and 4' });
+      }
+
+      // Write-side guard for records with neither a title nor a body: such a row
+      // is unreadable, unroutable and unattributable, and storing it just moves
+      // the failure to every later reader (records 65d01e3f/b1e328c4, 2026-11-04).
+      // Narrow by design — a title-only or body-only record still writes, since
+      // both shapes exist legitimately in the corpus.
+      const blankError = blankRecordError(title, content);
+      if (blankError) {
+        return res.status(400).json({ error: blankError });
       }
 
 // Write-side guard for undeliverable routing tags (Rulings 38I + 38J:
