@@ -688,6 +688,7 @@ def _extract_opencode_error(stdout: str) -> str:
 
 def _compose_failure_detail(
     stderr: str, stdout: str, exit_code: int, job_id: str | None = None,
+    harness_state: str | None = None,
 ) -> str:
     """Build an actionable '[system] Agent … encountered an error:' detail.
 
@@ -710,6 +711,12 @@ def _compose_failure_detail(
         detail = f"(no stderr; exit {exit_code}) last output: {stdout[-400:]}"
     else:
         detail = f"exit code {exit_code} with no output"
+    # harness-srv classifies state from the run's own stream, so a job can be
+    # `failed` under a zero exit status (provider-error envelope, or a final
+    # step cut off by a token limit). Say which, or the detail reads like a
+    # success that somehow took the failure path.
+    if harness_state in ("failed", "timed_out") and exit_code == 0:
+        detail = f"harness reported state={harness_state} with exit 0: {detail}"
     if job_id:
         detail = f"{detail} [job {job_id}]"
     return detail
@@ -761,6 +768,12 @@ def _invoke_agent_harness(
             stderr = f"{opencode_err}\n{stderr}".strip()
         return {
             "exit_code": data.get("exit_code", 0),
+            # The harness's own verdict (completed | failed | timed_out |
+            # cancelled). `exit_code` is the child's status, not a judgement:
+            # a run can exit 0 and still be failed (see harness-srv
+            # src/terminal.ts). None on older harness builds.
+            "state": data.get("state"),
+            "stop_reason": data.get("stop_reason"),
             # opencode --format json emits a JSON-lines event stream;
             # reduce it to the assistant's text so the conversation
             # response is readable rather than raw event envelopes.
@@ -1372,14 +1385,17 @@ async def handle_comment_created(
 
         stdout = result.get("stdout", "") or ""
         exit_code = result.get("exit_code", 1)
+        harness_state = result.get("state")
 
-        if exit_code != 0:
+        # Trust the harness's classification when it gives one: exit 0 alone
+        # means the runner terminated normally, not that the turn succeeded.
+        if exit_code != 0 or harness_state in ("failed", "timed_out"):
             stderr = result.get("stderr", "") or ""
             stdout = result.get("stdout", "") or ""
-            _log("Agent %s failed (exit=%s): %s",
-                 watch_role, exit_code, stderr[:200])
+            _log("Agent %s failed (exit=%s, state=%s): %s",
+                 watch_role, exit_code, harness_state, stderr[:200])
             detail = _compose_failure_detail(
-                stderr, stdout, exit_code, result.get("job_id")
+                stderr, stdout, exit_code, result.get("job_id"), harness_state
             )
             _post_assembly_comment(
                 pg_conn,
@@ -1390,7 +1406,11 @@ async def handle_comment_created(
             # Distinguish a timeout (harness exit 124 / 'timeout after' in
             # stderr) from a plain failure so the envelope carries the
             # honest terminal state.
-            if exit_code == 124 or "timeout" in (stderr or "").lower():
+            if (
+                exit_code == 124
+                or harness_state == "timed_out"
+                or "timeout" in (stderr or "").lower()
+            ):
                 _set_turn_state(pg_conn, turn_id, "timed_out",
                                 failure_detail=detail, job_id=result.get("job_id"),
                                 execution_plan_version=result.get("plan_version"))

@@ -24,6 +24,12 @@
 import express from "express";
 import rateLimit from "express-rate-limit";
 import { resolveContext, resolveRoleModel, emitEvent, pool, redis, checkConfigAdmission, incrementConsumedUnits, emitGovernanceReceipt } from "./db";
+import {
+  classifyTerminal,
+  errorMessagesOf,
+  lastStepReason,
+  scanOpencodeStream,
+} from "./terminal";
 import { ADMISSION_OUTCOME } from "./admission";
 import { execFile, spawn } from "child_process";
 import { promisify } from "util";
@@ -151,6 +157,10 @@ interface HarnessJob {
   pid: number | null;  // child pid for interrupt (set by executeOpencode)
   interrupted: boolean; // set by POST /jobs/:id/interrupt — SIGTERM race guard
   plan: Record<string, unknown> | null; // P1 item 7 — versioned execution plan
+  // Why the model's final step ended (opencode `step_finish.reason`), when
+  // the stream said. `completed` means the process exited 0; this says
+  // whether the model stopped on its own terms or was cut off (terminal.ts).
+  stopReason: string | null;
 }
 
 const jobs = new Map<string, HarnessJob>();
@@ -183,6 +193,7 @@ function registerJob(opts: {
     pid: null,
     interrupted: false,
     plan: opts.plan ?? null,
+    stopReason: null,
   };
   // Evict oldest TERMINAL jobs beyond the cap so the in-memory registry
   // (status/events replay) does not grow unbounded.
@@ -344,6 +355,7 @@ function jobEnvelope(job: HarnessJob): Record<string, unknown> {
     harness_id: job.harnessId,
     plan: job.plan,
     exit_code: job.exitCode,
+    stop_reason: job.stopReason,
     stdout: job.stdout,
     stderr: job.stderr,
     partial: job.state === "accepted" || job.state === "running",
@@ -1219,8 +1231,26 @@ app.post("/run-direct", async (req, res) => {
           exitCode = attemptExit;
 
           if (attemptExit === 0) {
-            modelUsed = attempt.model;
-            break;
+            // A zero exit is not a success on its own: opencode can emit a
+            // provider-error envelope and still exit 0. Read the attempt's
+            // own stream before treating it as the winning attempt, so a
+            // failed attempt rolls to the next model instead of ending the
+            // ladder with a "completed" job that did nothing.
+            const attemptVerdict = classifyTerminal({
+              exitCode: 0,
+              marks: scanOpencodeStream(attemptStdout),
+              timedOut: false,
+              noFirstToken: false,
+              interrupted: false,
+            });
+            if (attemptVerdict.state !== "failed") {
+              modelUsed = attempt.model;
+              break;
+            }
+            await log(
+              "warn",
+              `run-direct job=${jobId} role=${role} ${attempt.source} model=${attempt.model} exit=0 but ${attemptVerdict.detail}`
+            );
           }
 
           // Don't fail over if the user interrupted mid-attempt.
@@ -1246,12 +1276,18 @@ app.post("/run-direct", async (req, res) => {
       // Exit metadata is only written while the job is still pre-terminal:
       // a lost interrupt race (cancelled while the executor was in flight)
       // must keep its cancellation exit code (137), not the executor's.
+      // The run's own stream is the evidence for HOW it ended; the exit
+      // status alone is not (see terminal.ts — job 2b5c34ae exited 0 with a
+      // transcript that stopped mid-task).
+      const marks = scanOpencodeStream(stdout);
+      const stopReason = lastStepReason(marks);
       const job = jobs.get(jobId);
       if (job) {
         job.stdout = stdout;
         job.stderr = stderr;
         job.modelUsed = modelUsed;
         job.attempts = attemptLog;
+        job.stopReason = stopReason;
         if (job.state === "accepted" || job.state === "running") {
           job.exitCode = exitCode;
         }
@@ -1269,13 +1305,23 @@ app.post("/run-direct", async (req, res) => {
         });
         return;
       }
-      let state: HarnessJobState = exitCode === 0 ? "completed" : "failed";
-      if (exitCode === 124 || /timeout after|no first token/i.test(stderr)) state = "timed_out";
+      const verdict = classifyTerminal({
+        exitCode,
+        marks,
+        // A timeout/no-first-token abandon surfaces as exit 124 + a marker in
+        // stderr; both mean the harness ended the run, so the state is
+        // timed_out either way.
+        timedOut: exitCode === 124 || /timeout after|no first token/i.test(stderr),
+        noFirstToken: false,
+        interrupted: false,
+      });
+      const state: HarnessJobState = verdict.state;
       setJobState(jobId, state, { exitCode, stderr });
 
-      // 5. Emit harness.completed/failed event
+      // 5. Emit harness.completed/failed event — completed only when the run
+      // is a success, so a cut-off or erroring run is never logged as one.
       await emitEvent({
-        event_type: exitCode === 0 ? "harness.completed" : "harness.failed",
+        event_type: state === "completed" ? "harness.completed" : "harness.failed",
         source: `harness-srv.run-direct.${channel}`,
         aggregate_type: "harness_job",
         aggregate_id: jobId,
@@ -1283,8 +1329,16 @@ app.post("/run-direct", async (req, res) => {
           role,
           channel,
           exit_code: exitCode,
+          state,
+          stop_reason: stopReason,
+          detail: verdict.detail,
           duration_ms: Date.now() - startTime,
+          // Keep the TAIL as well as the head: the terminal envelope that says
+          // how the run ended lives at the end of the stream, and a durable
+          // event that only keeps the first 500 chars cannot answer "did it
+          // finish?" once the in-memory job is evicted.
           stdout_preview: stdout.slice(0, 500),
+          stdout_tail: stdout.slice(-500),
           stderr_preview: stderr.slice(0, 500),
         },
         actor_type: "system",
@@ -1293,8 +1347,8 @@ app.post("/run-direct", async (req, res) => {
       });
 
       await log(
-        exitCode === 0 ? "info" : "warn",
-        `run-direct job=${jobId} role=${role} exit=${exitCode} duration_ms=${Date.now() - startTime}`
+        state === "completed" ? "info" : "warn",
+        `run-direct job=${jobId} role=${role} exit=${exitCode} state=${state} stop_reason=${stopReason ?? "unknown"} (${verdict.detail}) duration_ms=${Date.now() - startTime}`
       );
     };
 
@@ -1738,7 +1792,6 @@ async function executeOpencode(
     // subscriber) never parse opencode's wire format themselves. Lines can
     // span chunks, so a partial line buffer is kept.
     let lineBuf = '';
-    const errorMsgs: string[] = [];
     const emitParsed = () => {
       const lines = (lineBuf + '').split('\n');
       lineBuf = lines.pop() ?? ''; // last element may be incomplete
@@ -1747,26 +1800,11 @@ async function executeOpencode(
         if (!trimmed.startsWith('{')) continue;
         try {
           const ev = JSON.parse(trimmed) as any;
-          if (ev?.type === 'error') {
-            // opencode surfaces provider failures (e.g. 429 rate-limit) as a
-            // `{"type":"error","error":{"name":..,"data":{"message":..,
-            // "statusCode":..}}}` envelope on stdout — NOT on stderr. Surface
-            // it so callers see the real cause instead of "no text output".
-            const err = ev.error ?? {};
-            const data = err.data ?? err;
-            const msg =
-              typeof data?.message === 'string'
-                ? data.message
-                : typeof err?.message === 'string'
-                  ? err.message
-                  : null;
-            const status = data?.statusCode ?? err?.statusCode ?? err?.status;
-            if (msg) {
-              errorMsgs.push(
-                status ? `opencode error (${status}): ${msg}` : `opencode error: ${msg}`
-              );
-            }
-          }
+          // Provider failures (e.g. 429) arrive as `{"type":"error",...}`
+          // envelopes on stdout — NOT on stderr. They are read off the whole
+          // stream at close (terminal.ts) so the same parse both surfaces the
+          // cause and decides the state; parsing them twice, differently, is
+          // how the exit status came to outrank the error in the first place.
           if (ev?.type === 'text' || ev?.type === 'reasoning') {
             if (!firstTokenSeen) {
               firstTokenSeen = true;
@@ -1851,6 +1889,7 @@ async function executeOpencode(
         exitCode = 137;
         stderrOut = 'opencode killed by signal (watchdog or external kill) — partial output below';
       }
+      const errorMsgs = errorMessagesOf(scanOpencodeStream(stdout));
       if (errorMsgs.length > 0) {
         const errText = errorMsgs.join("\n");
         stderrOut = stderrOut ? `${stderrOut}\n${errText}` : errText;
