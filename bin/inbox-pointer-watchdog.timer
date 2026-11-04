@@ -1,0 +1,28 @@
+# Source of truth for ~/.config/systemd/user/inbox-pointer-watchdog.timer
+#
+# Hourly at :07 UTC. Backlog accumulates over days to weeks (the observed
+# failure was a month of silence), so minutes-resolution would buy nothing and
+# cost journal noise; one tick is 14 GETs against nebula. :07 keeps it off the
+# quarter-hour janitor cadence and off the top of the hour where the other
+# units cluster.
+#
+# Persistent=true catches up after the machine was off, so a laptop that spends
+# the weekend asleep still reports on wake. The service is oneshot and cheap;
+# running the catch-up tick is always preferable to skipping a day silently.
+#
+# Ad hoc run (no waiting for the tick):
+#   systemctl --user start inbox-pointer-watchdog.service
+#   journalctl --user -u inbox-pointer-watchdog -n 30 --no-pager
+# or, without systemd:
+#   python3 bin/inbox_pointer_watchdog.py --max-age-days 7
+
+[Unit]
+Description=Run the inbox-pointer watchdog hourly
+
+[Timer]
+OnCalendar=*-*-* *:07:00 UTC
+Persistent=true
+Unit=inbox-pointer-watchdog.service
+
+[Install]
+WantedBy=timers.target
