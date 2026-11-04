@@ -728,6 +728,46 @@ def _refusal_post_text(num: int, head: str, codes: List[str], fails: str):
                 "This is AUTHOR action: address what the tester rejected and push, "
                 "then request a fresh test — re-attesting the same head cannot "
                 "clear a rejection.")
+    elif gate_codes.ATT_VERDICT_MISSING in codes:
+        # Policy v2: the row declares the v2 contract but never states a
+        # verdict, so green CI + a fresh head were all it offered. Tester
+        # action — the needed judgement simply has not happened yet — and
+        # explicitly NOT a re-run: the head is fine, the verdict is absent.
+        title = (f"attestation-janitor: VERDICT REQUIRED — PR #{num} refused "
+                 f"({code_str})")
+        lead = ("The attestation declares policy attestation/v2 but states no verdict. "
+                "Under v2 the verdict is required: CI success and a fresh head prove "
+                "the checks passed at this head, not that a tester judged the work. "
+                "TESTER action: re-attest at the same head with an explicit "
+                "'verdict: approved' (or rejected / hold) line.")
+    elif gate_codes.ATT_VERDICT_INVALID in codes:
+        title = (f"attestation-janitor: ADJUDICATION REQUESTED — PR #{num} refused "
+                 f"({code_str})")
+        lead = ("A verdict WAS declared under policy attestation/v2, but it is not in "
+                "the readable vocabulary (approved / rejected / hold / approved_by_rule). "
+                "The tester acted, so this is adjudication (did they mean a refusal, or "
+                "a new state the vocabulary should learn?), not a request to re-attest.")
+    elif gate_codes.ATT_VERDICT_HOLD in codes:
+        title = (f"attestation-janitor: TESTER HELD — PR #{num} refused ({code_str})")
+        lead = ("The tester's verdict is 'hold': judgement happened and approval was "
+                "withheld, without a specific defect asserted. AUTHOR action — ask what "
+                "blocks, or wait for the tester's re-verdict; do not merge and do not "
+                "read the hold as a rejection with a fix list.")
+    elif gate_codes.ATT_VENDOR_RULE_UNVERIFIED in codes:
+        title = (f"attestation-janitor: RULE APPROVAL UNPROVEN — PR #{num} refused "
+                 f"({code_str})")
+        lead = ("An attestation claims 'approved by rule', but the vendor rule's own "
+                "conditions do not hold at this head (tag, dependency-bot author, "
+                "manifest/lockfile-only diff, no semver-major, recorded rule id). Vendor "
+                "automation is a different authority from a tester's judgement; OPERATOR/"
+                "AUTHOR action — a mislabelled or out-of-scope bump needs a real tester "
+                "attestation.")
+    elif gate_codes.ATT_POLICY_UNSUPPORTED in codes:
+        title = (f"attestation-janitor: UNSUPPORTED CONTRACT — PR #{num} refused "
+                 f"({code_str})")
+        lead = ("The attestation declares a policy version this gate does not implement. "
+                "OPERATOR action: upgrade the gate. Do NOT ask the tester to re-attest "
+                "under an older contract — that would rewrite the evidence's meaning.")
     elif gate_codes.ATT_NO_CI_EVIDENCE in codes:
         # Routing-table alignment (gate_codes spec d7989f31 family): this code
         # is documented as queue-a-re-attestation but previously fell through

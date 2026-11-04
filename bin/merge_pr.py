@@ -100,7 +100,7 @@ def fetch_pr_state(
     return run_json(
         "pr", "view", str(pr_number), "--json",
         "number,state,isDraft,mergeable,mergeStateStatus,headRefOid,"
-        "headRefName,statusCheckRollup,title",
+        "headRefName,statusCheckRollup,title,author,body",
     )
 
 
@@ -315,6 +315,8 @@ def attestation_check(
     head_date_ms: Optional[int],
     head_sha: Optional[str] = None,
     run_json: Callable[..., Any] = _gh_json,
+    pr_state: Optional[Dict[str, Any]] = None,
+    files_getter: Optional[Callable[[int], Optional[List[str]]]] = None,
 ) -> Tuple[bool, str, Optional[str]]:
     """Gate 3 lookup, exact by preference: the indexed /api/attestations
     endpoint when it returns rows (server-side shape filter + GIN tags index),
@@ -400,6 +402,7 @@ def attestation_check(
         ok, detail, code = evaluate_attestation(
             rows, pr_number, head_date_ms,
             head_sha=head_sha, run_json=run_json,
+            pr_state=pr_state, files_getter=files_getter,
         )
         return ok, detail + " (indexed lookup)", code
     scan_note = (
@@ -411,6 +414,7 @@ def attestation_check(
     ok, detail, code = evaluate_attestation(
         records, pr_number, head_date_ms,
         head_sha=head_sha, run_json=run_json,
+        pr_state=pr_state, files_getter=files_getter,
     )
     return ok, detail + f" (scan fallback: {scan_note})", code
 
@@ -496,42 +500,234 @@ def is_attestation_record(record: Dict[str, Any]) -> bool:
 # for their missing citation, not for the rejection itself — one cited run
 # away from merging code the tester had refused.
 #
-# The scan is LABEL-anchored. Looking for the bare word "rejected" anywhere
-# in the body would fire on prose ("no rejection needed here"), and a false
-# rejection blocks a good PR as wrongly as a missed one merges a bad one —
-# only an explicitly declared `verdict <separator> <word>` is read.
-_VERDICT_LABEL_RE = re.compile(
-    r"\bverdict\b[^A-Za-z0-9]{0,6}?"
-    r"(approved|approve|passed|pass|accepted|accept|"
-    r"rejected|reject|blocked|failed|fail|changes?\s+requested)\b",
-    re.IGNORECASE,
-)
+# The scan is LABEL-anchored: only an explicitly declared `verdict: <word>`
+# is read. Looking for the bare word "rejected" anywhere in the body would
+# fire on prose ("no rejection needed here"), and a false rejection blocks a
+# good PR as wrongly as a missed one merges a bad one.
+#
 # Verdict words that refuse the PR. "pass/fail" are included because the
 # tester rows use them as verdicts too ("VERDICT: PASS" / "FAIL").
 _REJECTING_VERDICTS = frozenset({
     "rejected", "reject", "blocked", "failed", "fail",
     "change requested", "changes requested",
 })
+_APPROVING_VERDICTS = frozenset({
+    "approved", "approve", "passed", "pass", "accepted", "accept",
+})
+# "hold" is a fourth judgement, not a malformed one: the tester looked and
+# answered "not yet" without asserting a defect (row acc7f963, #841). Reading
+# it as INVALID would tell the tester their token is unknown when it is
+# deliberate, so it gets its own diagnosis.
+_HOLD_VERDICTS = frozenset({"hold", "on hold"})
+# An approval granted by the vendor-bump rule rather than by a tester's
+# judgement of the code. It is a different authority, so it never passes as an
+# ordinary approval — the gate re-proves the rule's own conditions first.
+_RULE_VERDICTS = frozenset({"approved by rule"})
+_VENDOR_TAG = "type:vendor-bump"
+
+# ── Attestation contract ─────────────────────────────────────────────────
+# An attestation is read under the contract IT declares, not under whatever
+# this gate happens to enforce on the day it runs (operator ruling
+# 2026-11-04). Evidence written before verdicts were required keeps its
+# original meaning: tightening the rule must not retroactively judge rows
+# that were never asked the question.
+#
+#   policy: attestation/v2
+#   verdict: approved
+#
+# Legacy rows (no policy line) keep the pre-v2 reading: shape + freshness +
+# CI citation, and only an explicit rejection refuses. v2 rows must declare a
+# verdict — otherwise green CI is read as a tester's judgement, which is the
+# conflation this contract closes.
+_POLICY_LINE_RE = re.compile(
+    r"\bpolicy\b[\s*_`]*[:=][\s_*`]*`?(attestation/[A-Za-z0-9._-]+)`?",
+    re.IGNORECASE,
+)
+_SUPPORTED_POLICIES = frozenset({"attestation/v2"})
+# The rule a vendor approval was granted under, e.g. "vendor rule:
+# vendor-bump/v1". Separate from `policy:` so a vendor attestation can declare
+# BOTH its attestation contract and the rule that authorized it.
+_VENDOR_RULE_LINE_RE = re.compile(
+    r"\bvendor[\s_-]*rule\b[\s*_`]*[:=][\s_*`]*`?([A-Za-z0-9._/-]+)`?",
+    re.IGNORECASE,
+)
+# The declared token itself: whatever word follows the label, recognized or
+# not. Reading only a known-word shortlist would report "no verdict" for a
+# tester who wrote `verdict: hold` — the judgement then looks absent when it
+# happened. Recognizing the token separately from classifying it lets MISSING
+# (nothing declared) stay distinct from INVALID (declared, unreadable).
+_VERDICT_DECLARED_RE = re.compile(
+    r"\bverdict\b[\s*_`]*[:=\-–—]{1,2}[\s_*`]*`?"
+    # `changes requested` / `change requested` and `approved by rule` are the
+    # multi-word verdicts; every other tail ("approved with nits") is read by
+    # its first word.
+    r"([A-Za-z][A-Za-z_-]{1,40}(?:\s+requested)?(?:\s+by\s+rule)?)",
+    re.IGNORECASE,
+)
+# Legacy separator: real rows also write the verdict with a SPACE and no
+# punctuation at all ("... unverified. Verdict REJECTED." — record bcaf01ad,
+# #823). Requiring a colon silently downgraded that row from
+# ATT_VERDICT_REJECTED to a re-attestation request, which reads as "cite a CI
+# run" when the tester's answer was simply no. Only RECOGNIZED words are
+# accepted here, so prose ("the verdict took a week") still cannot trip it.
+_VERDICT_SPACE_RE = re.compile(
+    r"\bverdict\b[\s*_`]{1,4}"
+    r"([A-Za-z][A-Za-z_-]{1,40}(?:\s+requested)?(?:\s+by\s+rule)?)",
+    re.IGNORECASE,
+)
+
+
+def _tag_value(record: Dict[str, Any], key: str) -> Optional[str]:
+    """Value of the ``<key>:<value>`` tag, or None.
+
+    The verdict is declared on two surfaces in practice: prose in the body
+    (``VERDICT: APPROVED``) and tool-applied tags (``verdict:approve``, 13
+    live rows). Reading only the body would report ATT_VERDICT_MISSING for a
+    v2 row whose tester declared the verdict in the tag the convention asks
+    for. The body wins when both are present — prose is the human statement,
+    the tag is metadata about it.
+    """
+    want = f"{key.lower()}:"
+    for tag in record.get("tags") or []:
+        s = str(tag or "").strip()
+        if s.lower().startswith(want):
+            return s[len(want):].strip() or None
+    return None
+
+
+def _normalize_verdict(raw: str) -> str:
+    return re.sub(r"[\s_]+", " ", str(raw or "").strip().lower()).strip()
 
 
 def attestation_verdict(record: Dict[str, Any]) -> Optional[str]:
-    """The last verdict the attestation DECLARES, lowercased, or None.
+    """The last verdict the attestation DECLARES, normalized, or None.
 
     Real rows read ``TESTER VERDICT: REJECTED — <reason>`` (0cc7a949 for
-    #726); markdown emphasis (``**Verdict:** REJECTED``) is tolerated. Only
-    the LAST declaration is returned: a body that quotes an earlier verdict
-    and then states its own is read the way a human reads it.
+    #726); markdown emphasis (``**Verdict:** REJECTED``) is tolerated.    Only the LAST declaration is returned: a body that quotes an earlier
+    verdict and then states its own is read the way a human reads it. A body
+    with no declaration falls back to the ``verdict:<token>`` tag.
 
-    None means "no verdict was declared" — the legacy shape, which keeps the
-    pre-existing behaviour. Requiring a verdict would retroactively invalidate
-    every row that has none, so that is a policy change, not this fix.
+    The DECLARED token is returned whether or not this gate recognizes it;
+    classification (approved / rejected / hold / approved by rule / other)
+    happens at the call site so an unreadable verdict is not mistaken for an
+    absent one. None means "no verdict was declared": that is the legacy
+    shape, and whether it is acceptable depends on the contract the row
+    declares (see :func:`attestation_policy`), not on this parser.
     """
     text = f"{record.get('title') or ''}\n{record.get('content') or ''}"
-    verdicts = [
-        re.sub(r"\s+", " ", m.group(1).lower()).strip()
-        for m in _VERDICT_LABEL_RE.finditer(text)
+    found = [_normalize_verdict(m.group(1)) for m in _VERDICT_DECLARED_RE.finditer(text)]
+    if found:
+        return found[-1]
+    known = _APPROVING_VERDICTS | _REJECTING_VERDICTS | _HOLD_VERDICTS | _RULE_VERDICTS
+    spaced = [
+        _normalize_verdict(m.group(1))
+        for m in _VERDICT_SPACE_RE.finditer(text)
     ]
-    return verdicts[-1] if verdicts else None
+    spaced = [v for v in spaced if v in known]
+    if spaced:
+        return spaced[-1]
+    tag = _tag_value(record, "verdict")
+    return _normalize_verdict(tag) if tag else None
+
+
+def attestation_policy(record: Dict[str, Any]) -> Optional[str]:
+    """The attestation contract this row declares, or None (legacy).
+
+    Declared in the evidence itself — a ``policy: attestation/v2`` line in the
+    body, or a ``policy:attestation/v2`` tag — so the row is interpreted
+    under the contract that governed it rather than under today's gate. A
+    future v3 can therefore tighten the rules without rewriting what v1 and
+    v2 evidence meant.
+    """
+    text = f"{record.get('title') or ''}\n{record.get('content') or ''}"
+    m = _POLICY_LINE_RE.search(text)
+    if m:
+        return m.group(1).strip().lower()
+    tag = _tag_value(record, "policy")
+    return tag.strip().lower() if tag else None
+
+
+def verify_vendor_rule(
+    record: Dict[str, Any],
+    pr_state: Optional[Dict[str, Any]],
+    changed_paths: Optional[List[str]],
+) -> Tuple[bool, str]:
+    """Prove an ``approved by rule`` verdict — or refuse it.
+
+    A rule approval is a different authority from a tester's judgement, so
+    the gate accepts it only when all four conditions hold:
+
+    1. the row identifies itself as a vendor-rule attestation (type:vendor-bump)
+    2. the PR is actually classified as a vendor bump (dependency-bot author)
+    3. the diff satisfies the vendor rule (manifests/lockfiles only, no
+       semver-major) — re-checked HERE, at gate time, from the live diff
+    4. the row records the rule/version that authorized acceptance
+
+    Condition 3 is the point: a classification label is not evidence of
+    eligibility. Rows #860/#861 carry type:vendor-bump while touching bin/
+    and config/, which is exactly why the tag alone must not buy leniency.
+    """
+    tags = {str(t or "").strip().lower() for t in record.get("tags") or []}
+    if _VENDOR_TAG not in tags:
+        return (False,
+                "declares 'approved by rule' but carries no type:vendor-bump tag, "
+                "so it is not a vendor-rule attestation")
+    text = f"{record.get('title') or ''}\n{record.get('content') or ''}"
+    m = _VENDOR_RULE_LINE_RE.search(text)
+    if not m:
+        return (False,
+                "an approval by rule must record the rule that authorized it "
+                "(expected a 'vendor rule: <id>' line) so the decision is "
+                "reproducible rather than a magic string")
+    rule = m.group(1).strip().lower()
+    if pr_state is None or changed_paths is None:
+        return (False,
+                f"vendor rule {rule}: PR diff/author unavailable, so the rule's "
+                "conditions cannot be re-verified (fail closed)")
+    try:
+        import vendor_attest as va
+    except Exception as exc:  # pragma: no cover - import guard
+        return (False, f"vendor rule {rule}: vendor_attest unavailable ({exc})")
+    author = str(((pr_state.get("author") or {}).get("login")) or "")
+    if not va.is_vendor_author(author):
+        return (False,
+                f"vendor rule {rule}: PR author '{author or 'unknown'}' is not a "
+                "dependency bot, so this is not a vendor bump")
+    paths_ok, path_detail = va.classify_paths(changed_paths)
+    if not paths_ok:
+        return (False, f"vendor rule {rule}: diff is not vendor-only — {path_detail}")
+    upd_ok, upd_detail, _ = va.classify_update(
+        str(pr_state.get("body") or ""), str(pr_state.get("title") or ""))
+    if not upd_ok:
+        return (False, f"vendor rule {rule}: {upd_detail}")
+    return (True, f"vendor rule {rule} verified ({path_detail}; {upd_detail})")
+
+
+def _fmt_ms(ms: Optional[int]) -> str:
+    """Epoch-ms as an ISO-8601 UTC stamp for gate details ("unknown" if absent)."""
+    if ms is None:
+        return "unknown"
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ")
+
+
+def fetch_pr_files(
+    pr_number: int, run_json: Callable[..., Any] = _gh_json
+) -> Optional[List[str]]:
+    """Changed paths of the PR, or None when GitHub cannot be asked.
+
+    Only consulted for an ``approved by rule`` verdict, so the normal gate
+    path pays nothing for it. The gate re-checks the vendor rule against this
+    live diff instead of trusting the attestation's own claim of eligibility.
+    """
+    try:
+        data = run_json(
+            "api", f"repos/{{owner}}/{{repo}}/pulls/{pr_number}/files", "--paginate")
+    except Exception:
+        return None
+    if not isinstance(data, list):
+        return None
+    return [str(f.get("filename") or "") for f in data if isinstance(f, dict)]
 
 
 def evaluate_attestation(
@@ -540,6 +736,8 @@ def evaluate_attestation(
     head_date_ms: Optional[int],
     head_sha: Optional[str] = None,
     run_json: Callable[..., Any] = _gh_json,
+    pr_state: Optional[Dict[str, Any]] = None,
+    files_getter: Optional[Callable[[int], Optional[List[str]]]] = None,
 ) -> Tuple[bool, str, Optional[str]]:
     """Gate 3: an explicit tester attestation for this PR must postdate the
     head commit (a push after attestation means the attested code is gone)
@@ -549,8 +747,9 @@ def evaluate_attestation(
     must satisfy :func:`is_attestation_record` — a tester record that merely
     mentions the PR (e.g. an intent row) does not count.    Returns (ok, detail, code) — code is a gate_codes value on failure
     (ATT_MISSING / ATT_SHAPE_UNSEEN / HEAD_DATE_UNKNOWN / ATT_STALE_HEAD /
-    ATT_NO_CI_EVIDENCE / ATT_CI_LOOKUP_FAILED / ATT_VERDICT_REJECTED), None
-    on pass.
+    ATT_NO_CI_EVIDENCE / ATT_CI_LOOKUP_FAILED / ATT_POLICY_UNSUPPORTED /
+    ATT_VERDICT_MISSING / ATT_VERDICT_INVALID / ATT_VERDICT_HOLD /
+    ATT_VERDICT_REJECTED / ATT_VENDOR_RULE_UNVERIFIED), None on pass.
 
     Withdrawn rows (status:retired / status:superseded) are removed first, so
     they count neither as an attestation (`matches`) nor as a mention. Dropping
@@ -587,7 +786,19 @@ def evaluate_attestation(
     # symptom the same row also carries. An ABSENT verdict falls through to
     # the legacy checks (additive, like the head: binding), so existing rows
     # keep their meaning; only an EXPLICIT rejection fails closed here.
+    policy = attestation_policy(newest)
     verdict = attestation_verdict(newest)
+    rule_note = ""
+    if policy is not None and policy not in _SUPPORTED_POLICIES:
+        return (
+            False,
+            f"tester attestation {str(newest.get('id'))[:8]} for PR #{pr_number} "
+            f"declares policy '{policy}', which this gate cannot interpret "
+            f"(supported: {', '.join(sorted(_SUPPORTED_POLICIES))}). Reading a "
+            "newer contract under looser v2 rules could accept evidence it was "
+            "written to forbid, so this fails closed: upgrade the gate",
+            gate_codes.ATT_POLICY_UNSUPPORTED,
+        )
     if verdict in _REJECTING_VERDICTS:
         return (
             False,
@@ -597,6 +808,60 @@ def evaluate_attestation(
             "re-attest after the fix",
             gate_codes.ATT_VERDICT_REJECTED,
         )
+    if policy is not None:
+        # v2: the verdict is REQUIRED. Green CI + a fresh head + a cited run
+        # prove the mechanical checks passed at this head; they cannot prove a
+        # tester exercised judgement, and reading them as if they did is the
+        # defect this contract closes. Each way a required verdict can be
+        # absent or unusable gets its own diagnosis, because they call for
+        # different actions: MISSING = the judgement never happened (ask for
+        # it), INVALID = something was declared that the gate cannot read
+        # (adjudicate), HOLD = the judgement happened and the answer was "not
+        # yet" (author action), RULE = automation claiming human authority
+        # (re-prove the rule).
+        if verdict in _APPROVING_VERDICTS:
+            pass
+        elif verdict in _HOLD_VERDICTS:
+            return (
+                False,
+                f"tester attestation {str(newest.get('id'))[:8]} for PR #{pr_number} "
+                f"declares verdict '{verdict}' — the tester withheld approval "
+                "without asserting a specific defect; this is author action "
+                "(ask what is blocking, or wait for the tester's re-verdict), "
+                "not a mergeable approval",
+                gate_codes.ATT_VERDICT_HOLD,
+            )
+        elif verdict in _RULE_VERDICTS:
+            paths = files_getter(pr_number) if files_getter else None
+            rule_ok, rule_detail = verify_vendor_rule(newest, pr_state, paths)
+            if not rule_ok:
+                return (
+                    False,
+                    f"tester attestation {str(newest.get('id'))[:8]} for PR #{pr_number} "
+                    f"claims 'approved by rule': {rule_detail}",
+                    gate_codes.ATT_VENDOR_RULE_UNVERIFIED,
+                )
+            rule_note = f"; {rule_detail}"
+        else:
+            if verdict is None:
+                return (
+                    False,
+                    f"tester attestation {str(newest.get('id'))[:8]} for PR #{pr_number} "
+                    "declares policy attestation/v2 but states NO verdict: green CI "
+                    f"and a fresh head ({_fmt_ms(head_date_ms)}) prove the checks "
+                    "passed at this head, not that a tester judged the work. "
+                    "Re-attest with a 'verdict: approved' line (or rejected/hold) "
+                    "under the same head",
+                    gate_codes.ATT_VERDICT_MISSING,
+                )
+            return (
+                False,
+                f"tester attestation {str(newest.get('id'))[:8]} for PR #{pr_number} "
+                f"declares policy attestation/v2 with verdict '{verdict}', which "
+                "is not a verdict this gate can read (expected approved / "
+                "rejected / hold / approved_by_rule) — tester/analyst "
+                "adjudication requested rather than a guess",                    gate_codes.ATT_VERDICT_INVALID,
+                )
     created_ms = _created_ms_of(newest)
     if created_ms is None:
         # Fail closed with a DEDICATED code. The previous `or 0` coercion
@@ -701,13 +966,24 @@ def evaluate_attestation(
         ):
             detail += (f" — attestation cites head {cited_shas[0][:8]}, "
                        f"PR head is {str(head_sha)[:8]}")
+        if not runs_transient:
+            # Measured 2026-11-04 (record 9309bea5, PR #863): the row cited
+            # 41914723987, which 404s — CI was fully green at the head, so the
+            # number was not a workflow run of this repo at all. Without this
+            # hint that reads as "CI hasn't finished", and the tester waits
+            # for a run that will never appear under that id.
+            detail += (
+                " — cite ids from `gh run list --commit <head>`; a 404 usually "
+                "means the number is not a workflow run in this repository "
+                "(a check-run id, or a run from another repo), not that CI is "
+                "still in progress")
         return (False, detail,
                 gate_codes.ATT_CI_LOOKUP_FAILED if runs_transient
                 else gate_codes.ATT_NO_CI_EVIDENCE)
     return (
         True,
         f"tester attestation {created_iso} (record {str(newest.get('id'))[:8]}) "
-        f"postdates head commit; {runs_detail}",
+        f"postdates head commit; {runs_detail}{rule_note}",
         None,
     )
 
@@ -804,6 +1080,8 @@ def evaluate(
         att_ok, att_detail, att_code = attestation_check(
             http_get, pr_number, head_ms,
             head_sha=pr.get("headRefOid"), run_json=run_json,
+            pr_state=pr,
+            files_getter=lambda n: fetch_pr_files(n, run_json),
         )
     except Exception as exc:  # fail closed on any lookup failure
         att_detail = f"attestation lookup failed: {exc!r} (fail closed)"
