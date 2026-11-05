@@ -11,15 +11,8 @@
     {
       "path": "bin/attestation_janitor.py",
       "digest": "03fcbcd7eb6000b1f2adb5709a9e710cc5f08771255666e4c2fb69dde69d6675",
-      "provenance": "PIN ADVANCE 2026-11-05: PR #866 landed (squash c002f369c) with tester attestation c142899e at head ba20a41c2 — ATT_CI_COVERAGE janitor branch (rollup-coverage refusal wording); previous pinned digest a3c9d3d3b6c2f09a… (digest captured from the origin/main blob, existence checked before hashing)",
-      "queued_prs": [
-        {
-          "pr": 695,
-          "head": "856ccd474a7e50928813fc1c521be8201c910e81",
-          "digest": "15295414a18a03e21c2f266a6da9697a1a5d32516db36bf156c9cfb3e8c6489f",
-          "provenance": "CIR-5 stale-checkrun repair rung (R1 4306214a); head digest captured 2026-10-01 from PR #695 head 856ccd474 — expected to land; pin advance via bin/PIN_ADVANCE_TEMPLATE.md"
-        }
-      ]
+      "provenance": "PIN ADVANCE 2026-11-05: PR #866 landed (squash c002f369c) with tester attestation c142899e at head ba20a41c2 — ATT_CI_COVERAGE janitor branch (rollup-coverage refusal wording); previous pinned digest a3c9d3d3b6c2f09a… (digest captured from the origin/main blob, existence checked before hashing). QUEUE ADJUDICATED 2026-11-05: the PR #695 entry was CLEARED, not consumed by this advance — #695 merged 2026-10-08 at head 856ccd474, and the digest captured for it on 2026-10-01 (15295414…) is exactly that merged blob, so the expectation was already met at merge time and simply never dequeued. The bytes pinned here are later (#866's c002f369c); re-queueing #695 would assert a digest that has been superseded.",
+      "queued_prs": []
     },
     {
       "path": "bin/merge_pr.py",

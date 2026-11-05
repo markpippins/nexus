@@ -328,8 +328,12 @@ def test_repo_registry_wellformed_and_pinned_digests_stable():
     2026-10-01 @ origin/main ead7ff59a (existence positively verified).
     Tier 1 advanced again 2026-11-05 when PR #866 (gate 3 rollup coverage)
     landed c002f369c; digests from that blob.
-    PR #695 (CIR-5 janitor rung) is queued against the janitor pin.
-    Guard reads ALL_MATCH (landed side at pins; queued entry live-verified)."""
+    The queue is empty as of 2026-11-05: the PR #695 entry (CIR-5 janitor
+    rung) was cleared, because #695 MERGED 2026-10-08 and its captured digest
+    was the merged blob — the expectation was met and never dequeued, then
+    superseded by #866. The empty-queue assertion below pins that adjudication
+    so a consumed entry cannot be re-added without a deliberate edit.
+    Guard reads ALL_MATCH."""
     reg = HERE.parent / "landed-tool-pins.json"
     data = json.loads(reg.read_text())
     assert data["version"] == 1 and len(data["pins"]) >= 8
@@ -340,6 +344,9 @@ def test_repo_registry_wellformed_and_pinned_digests_stable():
     # ADVANCED 2026-11-05: PR #866 landed c002f369c (ATT_CI_COVERAGE).
     assert by_path["bin/attestation_janitor.py"]["digest"] == (
         "03fcbcd7eb6000b1f2adb5709a9e710cc5f08771255666e4c2fb69dde69d6675")
+    # Adjudicated 2026-11-05: #695 merged at the queued digest and was never
+    # dequeued; the entry is closed, not pending.
+    assert by_path["bin/attestation_janitor.py"]["queued_prs"] == []
     assert by_path["bin/merge_pr.py"]["digest"] == (
         "e86506bc63c47e086a4c58d7c381dba54f473644178fca7691e601faf088c279")
     assert by_path["bin/gate_codes.py"]["digest"] == (
@@ -354,17 +361,19 @@ def test_repo_registry_wellformed_and_pinned_digests_stable():
         "336f8e1898f4dc21adfa96aef096466788d295a3ea5915fced507541920335f6")
     assert by_path["bin/pgie-evidence.py"]["digest"] == (
         "8713a16a86de08161de6c8fa86b6809caccc64f177d3bd33952f504e18d2a4dc")
-    # Every pin carries provenance; the only open queue entry is #695.
+    # Every pin carries provenance; the queue is EMPTY as of 2026-11-05.
     for p in data["pins"]:
         assert (p.get("provenance") or "").strip(), "every pin documents its capture"
     queued = [(p["path"], q) for p in data["pins"] for q in p.get("queued_prs") or []]
-    assert len(queued) == 1, "exactly one queued pin-advance expected (#695)"
-    qpath, q = queued[0]
-    assert qpath == "bin/attestation_janitor.py"
-    assert q["pr"] == 695
-    assert q["head"] == "856ccd474a7e50928813fc1c521be8201c910e81"
-    assert q["digest"] == "15295414a18a03e21c2f266a6da9697a1a5d32516db36bf156c9cfb3e8c6489f"
-    assert (q.get("provenance") or "").strip(), "queue entry documents its capture"
+    assert queued == [], (
+        "the queue holds expectations that have NOT landed yet, never history: "
+        "PR #695 was cleared on 2026-11-05 because it merged 2026-10-08 "
+        "(see attestation_janitor provenance)"
+    )
+    # A queued entry, when one exists again, must document its capture.
+    for p in data["pins"]:
+        for q in p.get("queued_prs") or []:
+            assert (q.get("provenance") or "").strip(), "queue entry documents its capture"
 
 
 def test_repo_registry_tier2_paths_exist_on_main():

@@ -37,6 +37,16 @@ incident — investigate the squash merge first (see guard DRIFT wording).
      queued digest — <one-line verification evidence>`. Keep the old
      digest's short prefix in the line for lineage.
    - `queued_prs`: remove the landed entry (queue must end empty).
+
+   **A merged entry that nobody consumed is CLEARED, not carried.** Check the
+   entry's PR before you keep it: `gh pr view <n> --json state,mergedAt,headRefOid`.
+   PR #695 sat queued for five weeks after merging (2026-10-08, head
+   `856ccd474`) because the landing was recorded on a pin whose digest then
+   moved twice underneath it. If the PR is `MERGED` or `CLOSED`, the
+   expectation is settled — delete the entry and say so in `provenance`
+   ("QUEUE ADJUDICATED <date>: cleared because <PR> merged <when> at <digest>")
+   so the next reader can tell a decision from an oversight. A queue entry is
+   for work that has not landed yet; it is never history.
 6. **Update the repo-registry test** (`bin/tests/test_landed_digest_guard.py`,
    `test_repo_registry_wellformed_and_pinned_digests_stable`) with the new
    digest so the test pins what the registry claims.
