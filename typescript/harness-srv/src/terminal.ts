@@ -201,9 +201,13 @@ export interface AttemptOutcome {
  * statement about the harness that nothing in the run supported. Nothing had
  * timed out; every model had simply failed.
  *
- * The rule: the last attempt that completed decides `completed`; otherwise the
- * run FAILED, and its detail names every attempt so the ladder's exhaustion is
- * visible instead of being flattened into one misleading state.
+ * The rule: the run takes the LAST attempt's state — its own verdict, never a
+ * reading assembled from the run's exit code and every attempt's stderr — and
+ * when attempts were exhausted the detail carries the whole ladder so the
+ * exhaustion is visible. Collapsing every unsuccessful ladder into `failed`
+ * would trade one lie for another: a single attempt that hits its timeout DID
+ * time out, and downstream callers key on `timed_out` (retry/backoff); calling
+ * that `failed` hides a harness decision behind a model judgement.
  */
 export function classifyLadder(attempts: AttemptOutcome[]): TerminalVerdict {
   if (attempts.length === 0) {
@@ -222,11 +226,15 @@ export function classifyLadder(attempts: AttemptOutcome[]): TerminalVerdict {
   if (attempts.some((a) => a.verdict.state === "cancelled")) {
     return { state: "cancelled", detail: "interrupted by user request" };
   }
+  if (attempts.length === 1) {
+    // Nothing to aggregate: the run is exactly what its one attempt did.
+    return last.verdict;
+  }
   const trail = attempts
     .map((a, i) => `${i + 1}. ${a.source} ${a.model ?? "unset"}: ${a.verdict.state} — ${a.verdict.detail}`)
     .join("; ");
   return {
-    state: "failed",
-    detail: `all ${attempts.length} attempt(s) failed (${trail})`,
+    state: last.verdict.state,
+    detail: `all ${attempts.length} attempt(s) unsuccessful; the ladder ended on ${last.verdict.state} (${trail})`,
   };
 }
