@@ -214,7 +214,25 @@ console.log("\nladder: exhausted attempts are a failure, not a timeout:");
     abandoned,
     { ...errored, verdict: { state: "timed_out", detail: "run exceeded its timeout" } },
   ]);
-  assert("every attempt timing out is still a failed LADDER", bothTimedOut.state === "failed", bothTimedOut.state);
+  assert(
+    "a ladder ending on a timeout reports timed_out, not failed",
+    bothTimedOut.state === "timed_out",
+    bothTimedOut.state,
+  );
+  assert(
+    "...and still names both attempts",
+    /attempt\(s\) unsuccessful/.test(bothTimedOut.detail) && /x-preview-f-free/.test(bothTimedOut.detail),
+    bothTimedOut.detail,
+  );
+
+  const singleTimeout = classifyLadder([
+    { source: "primary", model: "opencode/flint-40b-free", verdict: { state: "timed_out", detail: "no first token before the guard deadline" } },
+  ]);
+  assert(
+    "a single attempt that timed out is timed_out, verbatim",
+    singleTimeout.state === "timed_out" && singleTimeout.detail === "no first token before the guard deadline",
+    `${singleTimeout.state}: ${singleTimeout.detail}`,
+  );
 
   const empty = classifyLadder([]);
   assert("an empty ladder fails rather than completing", empty.state === "failed", empty.state);
