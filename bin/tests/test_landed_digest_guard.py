@@ -326,6 +326,8 @@ def test_repo_registry_wellformed_and_pinned_digests_stable():
     """Tier-1 pins advanced 2026-09-30 when #673/#675 landed (parity
     verified: digest protocol + squash-of-head). Tier-2 pins captured
     2026-10-01 @ origin/main ead7ff59a (existence positively verified).
+    Tier 1 advanced again 2026-11-05 when PR #866 (gate 3 rollup coverage)
+    landed c002f369c; digests from that blob.
     PR #695 (CIR-5 janitor rung) is queued against the janitor pin.
     Guard reads ALL_MATCH (landed side at pins; queued entry live-verified)."""
     reg = HERE.parent / "landed-tool-pins.json"
@@ -335,12 +337,13 @@ def test_repo_registry_wellformed_and_pinned_digests_stable():
     # ADVANCED 2026-10-10 (Ruling 38D D3.1): PR #691 landed 1da39fddb.
     assert by_path["bin/supersede-record.sh"]["digest"] == (
         "0a4b32371587f514d5904829fcf9f2db8da0356bceb120c1d4f0bec3f864a901")
+    # ADVANCED 2026-11-05: PR #866 landed c002f369c (ATT_CI_COVERAGE).
     assert by_path["bin/attestation_janitor.py"]["digest"] == (
-        "a3c9d3d3b6c2f09a3160f48f6cc0f54aba3e3ce7a2b6b68d9f78ec49ba13c7d3")
+        "03fcbcd7eb6000b1f2adb5709a9e710cc5f08771255666e4c2fb69dde69d6675")
     assert by_path["bin/merge_pr.py"]["digest"] == (
-        "bcb4d638b3b1dff6796caf7bd55a438cb0aad5020bef83df08b052285f76d3ca")
+        "e86506bc63c47e086a4c58d7c381dba54f473644178fca7691e601faf088c279")
     assert by_path["bin/gate_codes.py"]["digest"] == (
-        "d4f60f411c45ec1f776d90ed25b2782f285347d003c64daad14c82825b6cbc6f")
+        "b25bdef712a62ac5867d04b61272da6dfb4cd5f31a1c028db8dcdfaa3d080689")
     # Tier-2 (2026-10-01 capture @ ead7ff59a)
     assert by_path["bin/record_hygiene_sweep.py"]["digest"] == (
         "e32e04b79bc833bb65499a0ff290269a46da65dc0d84adb4753ecc8f3b3438cc")
