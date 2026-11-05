@@ -139,6 +139,18 @@ def test_wrong_record_shape_fails():
 
 # ── legacy rows keep their meaning ───────────────────────────────────────
 
+def test_an_approval_only_in_a_tag_is_reported_as_invisible_to_a_reader():
+    """attestation_verdict falls back to the `verdict:` tag. Inheriting that is
+    correct — the gate does accept the row — but the author should learn that the
+    declaration is not in the text anyone reads (tester finding on #875)."""
+    r = ap.build_report(make_row(CLEAN.replace("Verdict: approved.\n\n", "")),
+                        pr_number=873, head=HEAD, checks=76)
+    assert r["verdict"] == "approved"
+    assert levels(r)["declaration"] == "PASS"
+    assert levels(r)["declaration-source"] == "WARN"
+    assert r["result"] == "WARN"
+
+
 def test_a_legacy_row_without_a_declaration_warns_rather_than_fails():
     """The gate reads a row with no `policy:` under the pre-v2 contract, where a
     missing declaration is not a refusal. Reporting FAIL here would tell an author
