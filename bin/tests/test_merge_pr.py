@@ -599,6 +599,36 @@ def test_attestation_verdict_reads_a_space_separated_row():
         {"content": "The verdict took a week to arrive."}) is None
 
 
+def test_prose_after_the_declaration_cannot_shadow_it():
+    """Row f2949cbf (#872) declared `Verdict: approved.` and was then refused
+    ATT_VERDICT_INVALID because a later sentence said the code no longer reads
+    "the run verdict: classifyLadder". The label plus any following word was
+    read as the row's declaration, so a recognized approval lost to prose about
+    the code being reviewed. The same thing happened again to the row attesting
+    the fix itself (#873), which is what makes it a parser defect rather than
+    one careless author."""
+    body = (
+        "Verdict: approved.\n\n"
+        "I confirmed nothing still reads the run verdict: classifyLadder's\n"
+        "signature takes only AttemptOutcome[].\n"
+    )
+    assert merge_pr.attestation_verdict({"content": body}) == "approved"
+    # The last RECOGNIZED declaration still wins over an earlier one.
+    assert merge_pr.attestation_verdict(
+        {"content": "Quoted: Verdict: rejected. Mine: verdict: approved."}
+    ) == "approved"
+
+
+def test_an_unrecognized_token_alone_is_still_declared_not_absent():
+    """Falling back to the tag when the only declaration is unreadable would
+    turn a typo into a silent approval (or a silent pass-through to the legacy
+    checks). INVALID must stay distinguishable from MISSING."""
+    assert merge_pr.attestation_verdict(
+        {"content": "verdict: approvedd"}) == "approvedd"
+    assert merge_pr.attestation_verdict(
+        {"content": "verdict: classifyLadder"}) == "classifyladder"
+
+
 def test_rule_verdict_with_spaces_is_not_a_plain_approval():
     """`approved by rule` must not slip through as an ordinary approval just
     because it was written without an underscore."""
