@@ -347,8 +347,10 @@ def test_repo_registry_wellformed_and_pinned_digests_stable():
     # Adjudicated 2026-11-05: #695 merged at the queued digest and was never
     # dequeued; the entry is closed, not pending.
     assert by_path["bin/attestation_janitor.py"]["queued_prs"] == []
+    # Advanced 2026-11-05 with the verdict-phrase ordering fix (PR #873): a
+    # recognized declaration now outranks unrecognized prose.
     assert by_path["bin/merge_pr.py"]["digest"] == (
-        "e86506bc63c47e086a4c58d7c381dba54f473644178fca7691e601faf088c279")
+        "ff29601e58f86841c8d165e66fc187b9267f79cf37c28c9f8176b50b5e417609")
     assert by_path["bin/gate_codes.py"]["digest"] == (
         "b25bdef712a62ac5867d04b61272da6dfb4cd5f31a1c028db8dcdfaa3d080689")
     # Tier-2 (2026-10-01 capture @ ead7ff59a)

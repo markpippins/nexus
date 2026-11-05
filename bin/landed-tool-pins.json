@@ -16,8 +16,8 @@
     },
     {
       "path": "bin/merge_pr.py",
-      "digest": "e86506bc63c47e086a4c58d7c381dba54f473644178fca7691e601faf088c279",
-      "provenance": "PIN ADVANCE 2026-11-05: PR #866 landed (squash c002f369c) with tester attestation c142899e at head ba20a41c2 — gate 3 rollup-coverage rule + ATT_CI_COVERAGE (record 467962a1 F8); previous pinned digest bcb4d638b3b1dff6… (digest captured from the origin/main blob, existence checked before hashing)",
+      "digest": "ff29601e58f86841c8d165e66fc187b9267f79cf37c28c9f8176b50b5e417609",
+      "provenance": "PIN ADVANCE 2026-11-05: PR #873 landed — attestation_verdict prefers the last RECOGNIZED declaration, so prose after the label cannot shadow a row's own verdict (rows f2949cbf/#872 and 4214d9ca/#873 were both refused ATT_VERDICT_INVALID on a clean `Verdict: approved.`); digest computed from this PR's committed blob on base 31f28a66e, which is the post-squash blob because no other change touched the file; previous pinned digest e86506bc63c47e08… (captured from the origin/main blob, existence checked before hashing)",
       "queued_prs": []
     },
     {

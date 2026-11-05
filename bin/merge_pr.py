@@ -631,12 +631,23 @@ def attestation_verdict(record: Dict[str, Any]) -> Optional[str]:
     absent one. None means "no verdict was declared": that is the legacy
     shape, and whether it is acceptable depends on the contract the row
     declares (see :func:`attestation_policy`), not on this parser.
+
+    A RECOGNIZED declaration outranks an unrecognized one. Prose can mention
+    the label and be followed by any word — "we checked the run verdict:
+    classifyLadder" — and taking the last match of the label regardless of
+    what follows it let that prose shadow a row's own `Verdict: approved.`
+    (row f2949cbf on #872, then a row attesting THIS rule on #873). The last
+    declaration is therefore chosen among RECOGNIZED tokens first; an
+    unrecognized token is still returned when no recognized one exists, so a
+    typo (`verdict: approvedd`) keeps its INVALID diagnosis instead of
+    degrading to an absent verdict.
     """
     text = f"{record.get('title') or ''}\n{record.get('content') or ''}"
+    known = _APPROVING_VERDICTS | _REJECTING_VERDICTS | _HOLD_VERDICTS | _RULE_VERDICTS
     found = [_normalize_verdict(m.group(1)) for m in _VERDICT_DECLARED_RE.finditer(text)]
     if found:
-        return found[-1]
-    known = _APPROVING_VERDICTS | _REJECTING_VERDICTS | _HOLD_VERDICTS | _RULE_VERDICTS
+        recognized = [v for v in found if v in known]
+        return recognized[-1] if recognized else found[-1]
     spaced = [
         _normalize_verdict(m.group(1))
         for m in _VERDICT_SPACE_RE.finditer(text)
