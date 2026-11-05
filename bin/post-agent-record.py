@@ -23,6 +23,11 @@ Options:
                      1=raw/operational, 2=structured, 3=planning/architectural, 4=meta
   --visibility       Visibility scope (default: architect)
   --model            AI model identifier for per-model attribution (optional)
+  --harness-job-id   Harness run id that wrote this record (optional).
+                     Defaults to $HARNESS_JOB_ID, which the harness exports to
+                     every job child, so records written inside a harnessed run
+                     are attributed to that run automatically. Pass an empty
+                     string to opt out.
   --nebula-url       Nebula API base URL (default: http://localhost:3101)
   -h, --help         Show this help
 
@@ -32,9 +37,16 @@ Exit codes: 0 ok, 1 API error, 2 usage error
 import argparse
 import json
 import os
+import re
 import sys
 import urllib.request
 import urllib.error
+
+
+# Mirrors HARNESS_JOB_ID_RE in typescript/nebula-srv/src/agent-record-write-guard.ts.
+# The harness emits uuids (harness-srv) and prompt-file basenames (moleculer);
+# anything else is not a run identifier and is dropped with a warning.
+JOB_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
 
 
 def _writable_roles():
@@ -117,6 +129,11 @@ def parse_args():
     p.add_argument("--level", type=int, default=3)
     p.add_argument("--visibility", default="architect")
     p.add_argument("--model", default=None)
+    p.add_argument("--harness-job-id", default=None,
+                   help="Harness run id that wrote this record. Defaults to "
+                        "$HARNESS_JOB_ID, which harness-srv exports to every "
+                        "job child (V210 run attribution). Pass an empty "
+                        "string to write an unattributed record.")
     p.add_argument("--nebula-url", default="http://localhost:3101")
     p.add_argument("-h", "--help", action="store_true")
     return p.parse_args()
@@ -189,6 +206,24 @@ def main():
         print(f"ERROR: refusing to store malformed tags {bad} — use comma-separated or JSON array form", file=sys.stderr)
         sys.exit(2)
 
+    # Run attribution (V210): inherited from the harness environment, so a
+    # record posted from a shell inside a harnessed run identifies its own run
+    # without the model having to pass anything. Same shape the server
+    # validates (agent-record-write-guard.ts); an unusable value is reported
+    # and dropped rather than allowed to block the write — losing attribution
+    # is a degraded audit trail, losing the record is a missing one.
+    job_id = args.harness_job_id
+    if job_id is None:
+        job_id = os.environ.get("HARNESS_JOB_ID", "")
+    job_id = (job_id or "").strip()
+    if job_id and not JOB_ID_RE.match(job_id):
+        print(
+            f"WARNING: ignoring unusable harness job id {job_id!r} — the record "
+            f"will be stored unattributed (expected 8-128 of [A-Za-z0-9._:-])",
+            file=sys.stderr,
+        )
+        job_id = ""
+
     payload = {
         "recordType": args.record_type,
         "role": args.role,
@@ -199,6 +234,8 @@ def main():
         "visibilityScope": args.visibility,
         "model": args.model,
     }
+    if job_id:
+        payload["harnessJobId"] = job_id
 
     url = f"{args.nebula_url}/api/agent-records"
     req = urllib.request.Request(

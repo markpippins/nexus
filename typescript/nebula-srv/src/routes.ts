@@ -13,7 +13,7 @@ import { CrossReferenceType } from './crossref-taxonomy';
 import { normalizeTags } from './tagNormalizer';
 import { attestationsLimiter, requirementCompileLimiter } from './limiter';
 import { routingTagErrorMessage, routingCaseErrorMessage } from './routing-tags';
-import { blankRecordError } from './agent-record-write-guard';
+import { blankRecordError, normalizeHarnessJobId } from './agent-record-write-guard';
 import {
   camelCaseRow,
   AGENT_RECORD_LIST_COLUMNS,
@@ -5524,7 +5524,15 @@ export function createRoutes(pool: Pool): Router {
   // POST /api/agent-records — create a new agent record (canonical write path)
   router.post('/agent-records', async (req: Request, res: Response) => {
     try {
-      const { recordType, role, title, content, sourcePath, metadata, tags, systemId, subsystemId, featureId, planRef, level, visibilityScope, model } = req.body;
+      const { recordType, role, title, content, sourcePath, metadata, tags, systemId, subsystemId, featureId, planRef, level, visibilityScope, model, harnessJobId } = req.body;
+
+      // Optional run attribution (V210). Validated, not trusted: a job id that
+      // cannot be one would look like attribution while matching nothing, so
+      // it is refused rather than stored (agent-record-write-guard.ts).
+      const runAttribution = normalizeHarnessJobId(harnessJobId);
+      if (runAttribution.error) {
+        return res.status(400).json({ error: runAttribution.error });
+      }
 
       // Write-side tag normalization (ratified tag-grammar card §4): repair
       // and normalize only — no reject here (#693's scope, post-#712).
@@ -5583,13 +5591,14 @@ export function createRoutes(pool: Pool): Router {
         }
 
       const { rows: [row] } = await pool.query(
-        `INSERT INTO nebula.agent_records (record_type, role, title, content, source_path, metadata, tags, system_id, subsystem_id, feature_id, plan_ref, level, visibility_scope, model)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
+        `INSERT INTO nebula.agent_records (record_type, role, title, content, source_path, metadata, tags, system_id, subsystem_id, feature_id, plan_ref, level, visibility_scope, model, harness_job_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
         [
           recordType, role || '', title || '', content || '',
           sourcePath || null, metadata || {}, normalizedTags.tags,
           systemId || null, subsystemId || null, featureId || null, planRef || null,
           level ?? 1, visibilityScope || 'all', model || null,
+          runAttribution.jobId,
         ]
       );
       res.status(201).json(row);

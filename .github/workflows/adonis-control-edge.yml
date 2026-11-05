@@ -70,11 +70,25 @@ jobs:
 
     services:
       postgres:
-        # postgres:17, the house pin since the wr-conf-025 PG17 lesson. The
-        # snapshot needs only btree_gist, pgcrypto and citext — all in the
-        # stock image; vector-backed tables are excluded from the snapshot by
-        # design, so pgvector is not required here.
-        image: postgres:17
+        # PG17, the house pin since the wr-conf-025 PG17 lesson, plus pgvector.
+        #
+        # This service used to pin stock postgres:17 on the premise that "the
+        # snapshot needs only btree_gist, pgcrypto and citext; vector-backed
+        # tables are excluded by design". That premise died with the
+        # 2026-11-03 snapshot change (sql/ci-bootstrap/refresh.sh): the vector
+        # objects are no longer excluded — steward.semantic_search() and the
+        # knowledge graph views need them — so the snapshot opens with an
+        # unconditional `CREATE EXTENSION IF NOT EXISTS vector` and a plain
+        # image fails at provision time with
+        # `ERROR: extension "vector" is not available` before a single test
+        # runs. Every other snapshot-applying workflow (bin-tests, cib-snapshot-
+        # parity, cib-snapshot-semantics, service-test-gates, broker-e2e) was
+        # retargeted then; this one was missed because it only triggers on
+        # changes under sql/ci-bootstrap/**.
+        #
+        # pgvector/pgvector:pg17 is the accepted pin (bin/lint_postgres_pins.py
+        # recognises it).
+        image: pgvector/pgvector:pg17
         env:
           POSTGRES_USER: pguser
           POSTGRES_PASSWORD: pgpass
