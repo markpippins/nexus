@@ -4278,6 +4278,12 @@ BEGIN
         '  worth more than an approval nobody believes; the divergence is the signal.\n'
         '- **Attesting your own work** when you are not the tester role — the row will\n'
         '  not even be seen, and the attempt is itself reviewable evidence.\n'
+        '- **Quoting another row''s run id.** The gate reads EVERY \`CI run <id>\` in your\n'
+        '  body as evidence for *this* head, so a run id carried over from a previous\n'
+        '  attestation fails as \`ATT_NO_CI_EVIDENCE\` ("tested head X, not this PR''s\n'
+        '  head") even when the rest of the row is correct. Describe earlier evidence\n'
+        '  without re-citing its run id — observed on #866, where a sound verification\n'
+        '  was refused for quoting the run of the PR it was comparing against.\n'
         '\n'
         '',
         ARRAY['tester', 'attestation', 'merge-gate', 'policy-v2', 'verification'],
