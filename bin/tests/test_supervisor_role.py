@@ -131,7 +131,18 @@ class SupervisorRoleContract(unittest.TestCase):
         }
         actual = {slug for slug, card in by_slug.items() if "supervisor" in card["roles"]}
         self.assertEqual(actual, expected)
-        self.assertEqual(manifest["role_count"], 580)
+        # The manifest's role_count is bookkeeping, not a fact about the
+        # supervisor: pinning it to an exact total made every legitimate card
+        # addition fail this test for reasons outside its subject (PR #865
+        # added a card with 3 role assignments: 580 -> 583). Assert what the
+        # number is FOR — that it agrees with its own content — and keep a
+        # floor so assignments being LOST still fails.
+        self.assertEqual(
+            manifest["role_count"],
+            sum(len(card["roles"]) for card in manifest["cards"]),
+            "manifest role_count disagrees with the roles actually assigned",
+        )
+        self.assertGreaterEqual(manifest["role_count"], 580)
 
         role_creation = by_slug["role-creation"]["body_md"]
         self.assertIn("**vanadium**", role_creation)
