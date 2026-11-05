@@ -31,6 +31,15 @@ import {
   scanOpencodeStream,
 } from "./terminal";
 import { ADMISSION_OUTCOME } from "./admission";
+// Runaway watchdog rule + constants (T16 guardrail, 1285 remediation slice 2).
+// The decision lives in watchdog.ts so it is testable without timers
+// (tests/watchdog.test.ts); this module keeps the session registry and kill.
+import {
+  RUNAWAY_THRESHOLD_MS,
+  WATCHDOG_INTERVAL_MS,
+  isRunaway,
+} from "./watchdog";
+export { RUNAWAY_THRESHOLD_MS, WATCHDOG_INTERVAL_MS };
 import { execFile, spawn } from "child_process";
 import { promisify } from "util";
 import { createHash } from "crypto";
@@ -64,10 +73,6 @@ export const WORK_DIR = process.env.HARNESS_WORK_DIR || "/home/codex/dev";
 // under this directory, so spawn/pass-through sites resolve against it and
 // verify containment (CodeQL js/path-injection remediation, alert #590).
 export const PROMPT_DIR = resolve(WORK_DIR, ".harness", "prompts");
-
-// ── Runaway watchdog (T16 guardrail, 1285 remediation slice 2) ───
-const RUNAWAY_THRESHOLD_MS = 15 * 60 * 1000; // 15 min
-const WATCHDOG_INTERVAL_MS = 60_000; // check every 60s
 
 // ── First-token failover guard ────────────────────────────────────
 // A model that never emits a text/reasoning token within this window is
@@ -105,6 +110,10 @@ interface TrackedSession {
   promptFile: string;
   wind_task_id?: string; // for governance BLOCK receipt on watchdog kill
   pid?: number; // child process PID (set by executeOpencode for direct SIGTERM)
+  // Stream chunks seen at the previous watchdog tick — the liveness baseline.
+  // A run whose stream is still advancing is working, even when it has written
+  // no agent record yet (see watchdog.ts).
+  lastStreamChunks: number;
 }
 
 const activeSessions = new Map<string, TrackedSession>();
@@ -150,6 +159,10 @@ interface HarnessJob {
   exitCode: number | null;
   stdout: string;      // raw accumulated stream (partial while running)
   stderr: string;
+  // Raw stream chunks seen so far — the runaway watchdog's liveness signal.
+  // Counted live in executeHarness via onActivity; `stdout` only catches up at
+  // exit, so it cannot be used to tell a working run from a hung one.
+  streamChunks: number;
   durationMs: number | null;
   promptFile: string;
   events: HarnessJobEvent[];
@@ -186,6 +199,7 @@ function registerJob(opts: {
     exitCode: null,
     stdout: "",
     stderr: "",
+    streamChunks: 0,
     durationMs: null,
     promptFile: opts.promptFile,
     events: [],
@@ -373,7 +387,22 @@ export function startWatchdog(): void {
       const elapsed = now - session.startedAt;
       if (elapsed < RUNAWAY_THRESHOLD_MS) continue;
 
-      // Check for durable output since launch
+      // Signal 1 — is the job's stream still producing anything? Raw chunks,
+      // not translated text: a model inside a 4-minute test run emits no text
+      // to translate but is still working, and a hung child emits nothing at
+      // all. Until 2026-11-05 only a written record counted as output, so a
+      // tester verifying for 15 minutes before posting its attestation looked
+      // identical to a hung process and was killed mid-run (job 591282d5,
+      // issue 508195a6).
+      const chunks = jobs.get(jobId)?.streamChunks ?? session.lastStreamChunks;
+      if (chunks > session.lastStreamChunks) {
+        session.lastStreamChunks = chunks;
+        continue; // still working — do not even ask nebula
+      }
+
+      // Signal 2 — durable output since launch: has the role written an agent
+      // record? Unreachable nebula is treated as worst case (don't kill), as
+      // before: a governance surface being down must not become a kill order.
       let hasOutput = false;
       try {
         const nebulaUrl = process.env.NEBULA_URL || "http://localhost:3101";
@@ -388,7 +417,13 @@ export function startWatchdog(): void {
         continue;
       }
 
-      if (hasOutput) continue; // agent is producing output, not runaway
+      if (!isRunaway({
+        elapsedMs: elapsed,
+        thresholdMs: RUNAWAY_THRESHOLD_MS,
+        progress: chunks,
+        lastProgress: session.lastStreamChunks,
+        hasDurableRecord: hasOutput,
+      })) continue;
 
       // ── Runaway detected — kill + unload ──────────────────────
       await log("warn", `runaway detected: job=${jobId} role=${session.role} elapsed=${Math.round(elapsed/1000)}s — killing`);
@@ -435,7 +470,9 @@ export function startWatchdog(): void {
 - **Elapsed:** ${Math.round(elapsed / 1000)}s
 - **Threshold:** ${RUNAWAY_THRESHOLD_MS / 1000}s
 
-No agent records were produced since launch. The process was killed and the model unloaded.`,
+Nothing moved for the whole threshold: no event on the job's stream in the
+last tick and no agent record since launch. The process was killed and the
+model unloaded.`,
             ['type:runaway-detected', 'to:architect', 'to:engineer', 'to:engineer-ii', 'to:devops', 'to:topologist', `role:${session.role}`],
             isoNow
           ]
@@ -684,6 +721,7 @@ app.post("/run", async (req, res) => {
         startedAt: startTime,
         promptFile,
         wind_task_id,
+        lastStreamChunks: 0,
       });
 
       // ── Failover ladder (mirrors /run-direct) — primary first, then
@@ -1117,6 +1155,7 @@ app.post("/run-direct", async (req, res) => {
       model: effectiveModel,
       startedAt: startTime,
       promptFile,
+      lastStreamChunks: 0,
     });
     registerJob({
       jobId,
@@ -1156,6 +1195,12 @@ app.post("/run-direct", async (req, res) => {
           type === "reasoning" ? "thinking" : "text.delta",
           { text: payload.text }
         );
+      },
+      // Liveness for the runaway watchdog: every raw stream chunk counts,
+      // including the tool-call traffic onEvent deliberately ignores.
+      onActivity: () => {
+        const job = jobs.get(jobId);
+        if (job) job.streamChunks += 1;
       },
     };
 
@@ -1563,6 +1608,14 @@ interface HarnessExecParams {
    *  into typed envelopes ("text" → text.delta, "reasoning" → thinking).
    *  Called for every parsed stream event as it arrives. */
   onEvent?: (type: "text" | "reasoning", payload: { text: string }) => void;
+  /** Called for every chunk of the child's stream, parsed or not.
+   *
+   *  onEvent is filtered to non-empty text/reasoning, so it goes quiet while
+   *  the model is inside a long tool call — a 4-minute suite run emits nothing
+   *  it would translate. The runaway watchdog needs "is this process still
+   *  emitting anything at all", which is a different question, so it counts
+   *  raw stream chunks here (see watchdog.ts). */
+  onActivity?: () => void;
 }
 
 interface HarnessExecResult {
@@ -1572,7 +1625,7 @@ interface HarnessExecResult {
 }
 
 async function executeHarness(params: HarnessExecParams): Promise<HarnessExecResult> {
-  const { harness_id, prompt_file, work_dir, agent, role, timeout_ms } = params;
+  const { harness_id, prompt_file, work_dir, agent, role, timeout_ms, onActivity } = params;
   // Containment assert — prompt files are service-generated under PROMPT_DIR
   // and work_dir is boundary-checked at the handlers; this guards the
   // executor invariant regardless of caller (CodeQL js/path-injection
@@ -1717,7 +1770,7 @@ async function executeOpencode(
   params: HarnessExecParams,
   promptContent: string
 ): Promise<HarnessExecResult> {
-  const { prompt_file, work_dir, agent, role, model, timeout_ms, onEvent } = params;
+  const { prompt_file, work_dir, agent, role, model, timeout_ms, onEvent, onActivity } = params;
   const opencodeBin = process.env.OPENCODE_BIN || "opencode";
   // Extract jobId from prompt filename (${jobId}.md) for watchdog PID tracking
   const jobId = prompt_file.split("/").pop()?.replace(".md", "") || "";
@@ -1830,6 +1883,7 @@ async function executeOpencode(
       const chunk = data.toString();
       stdout += chunk;
       lineBuf += chunk;
+      onActivity?.();
       emitParsed();
     });
     child.stderr?.on('data', (data: Buffer) => { stderr += data.toString(); });

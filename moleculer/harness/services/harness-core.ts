@@ -96,6 +96,13 @@ interface TrackedSession {
   promptFile: string;
   wind_task_id?: string; // for governance BLOCK receipt on watchdog kill
   pid?: number; // child process PID (set by executeOpencode for direct SIGTERM)
+  // Event count seen at the previous watchdog tick. Twin of
+  // typescript/harness-srv/src/watchdog.ts: a run whose stream is still
+  // advancing is working even when it has written no agent record yet.
+  // DIVERGENCE (deliberate, undeployed fork): this copy uses the translated
+  // event count, which goes quiet while the model sits inside a long tool
+  // call; the deployed harness-srv counts raw stream chunks instead.
+  lastEventCount: number;
 }
 
 const activeSessions = new Map<string, TrackedSession>();
@@ -363,7 +370,17 @@ function startWatchdog(): void {
       const elapsed = now - session.startedAt;
       if (elapsed < RUNAWAY_THRESHOLD_MS) continue;
 
-      // Check for durable output since launch
+      // Signal 1 — is the job's event stream still advancing? A tester
+      // verifying for fifteen minutes and writing its attestation last was
+      // killed mid-run under the record-only rule (job 591282d5, issue
+      // 508195a6). A hung child emits nothing here.
+      const eventCount = jobs.get(jobId)?.events.length ?? session.lastEventCount;
+      if (eventCount > session.lastEventCount) {
+        session.lastEventCount = eventCount;
+        continue; // still working — do not even ask nebula
+      }
+
+      // Signal 2 — durable output since launch
       let hasOutput = false;
       try {
         const nebulaUrl = process.env.NEBULA_URL || "http://localhost:3101";
@@ -668,6 +685,7 @@ app.post("/run", async (req, res) => {
         startedAt: startTime,
         promptFile,
         wind_task_id,
+        lastEventCount: 0,
       });
 
       // ── Failover ladder (mirrors /run-direct) — primary first, then
@@ -1103,6 +1121,7 @@ app.post("/run-direct", async (req, res) => {
       model: effectiveModel,
       startedAt: startTime,
       promptFile,
+      lastEventCount: 0,
     });
     registerJob({
       jobId,
