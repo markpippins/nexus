@@ -764,6 +764,14 @@ app.post("/run", async (req, res) => {
               model: attempt.model,
               model_identifier: attempt.model_identifier,
               timeout_ms: timeoutMs,
+              // Liveness for the runaway watchdog — same as the /run-direct
+              // path. Without this, sessions registered here keep
+              // streamChunks at 0 and fall back to the record-only rule,
+              // which is the bug this change exists to remove.
+              onActivity: () => {
+                const job = jobs.get(jobId);
+                if (job) job.streamChunks += 1;
+              },
             });
             attemptExit = result.exitCode;
             attemptStdout = result.stdout;
