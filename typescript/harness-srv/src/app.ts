@@ -24,6 +24,7 @@
 import express from "express";
 import rateLimit from "express-rate-limit";
 import { resolveContext, resolveRoleModel, emitEvent, pool, redis, checkConfigAdmission, incrementConsumedUnits, emitGovernanceReceipt } from "./db";
+import { cooldownMsFromEnv, noteStall, orderAttempts, type StallMap } from "./rung-cooldown";
 import {
   classifyLadder,
   classifyTerminal,
@@ -82,6 +83,15 @@ export const PROMPT_DIR = resolve(WORK_DIR, ".harness", "prompts");
 // abandoned (exit 124 + marker) so the failover ladder can roll to the next
 // model instead of waiting out the full run timeout on a hung provider.
 const FIRST_TOKEN_TIMEOUT_MS = Number(process.env.FIRST_TOKEN_TIMEOUT_MS || 120_000);
+
+// ── Rung cooldown ─────────────────────────────────────────────────
+// A rung abandoned for producing no first token is tried LAST for
+// RUNG_COOLDOWN_MS, so a burst of jobs does not each re-pay the same dead
+// rungs before reaching the one that works. Nothing is dropped: a cooling
+// rung is still tried when every other rung fails. Set RUNG_COOLDOWN_MS=0 to
+// disable. See rung-cooldown.ts for the measurements behind this.
+const RUNG_COOLDOWN_MS = cooldownMsFromEnv(process.env.RUNG_COOLDOWN_MS);
+const rungStalls: StallMap = new Map();
 
 // Ceiling for user-supplied timeout_ms on the execute routes — the value
 // flows into child-process and abort timers, so it is clamped to 2 hours
@@ -751,9 +761,19 @@ app.post("/run", async (req, res) => {
         })),
       ];
 
+      // Order the ladder for this run: a rung that recently stalled goes to
+      // the back, everything else keeps its configured priority.
+      const orderedAttempts = orderAttempts(attempts, rungStalls, Date.now(), RUNG_COOLDOWN_MS);
+      if (orderedAttempts[0] !== attempts[0]) {
+        await log(
+          "info",
+          `run job=${jobId} role=${resolved.role} rung cooldown: trying ${orderedAttempts[0].model ?? "(unset)"} first (${attempts[0].model ?? "(unset)"} stalled within ${RUNG_COOLDOWN_MS}ms)`
+        );
+      }
+
       try {
-        for (let i = 0; i < attempts.length; i++) {
-          const attempt = attempts[i];
+        for (let i = 0; i < orderedAttempts.length; i++) {
+          const attempt = orderedAttempts[i];
           let attemptExit = 1;
           let attemptStdout = "";
           let attemptStderr = "";
@@ -799,7 +819,11 @@ app.post("/run", async (req, res) => {
             break;
           }
 
-          const next = attempts[i + 1] ?? null;
+          if (/no first token/i.test(attemptStderr || "")) {
+            noteStall(rungStalls, attempt.model, Date.now());
+          }
+
+          const next = orderedAttempts[i + 1] ?? null;
           await log(
             "warn",
             `run job=${jobId} role=${resolved.role} ${attempt.source} model=${attempt.model ?? "(unset)"} exit=${attemptExit} — failing over to ${next ? `${next.source} ${next.model ?? "unset"}` : "none"}`
@@ -1239,6 +1263,16 @@ app.post("/run-direct", async (req, res) => {
       })),
     ];
 
+    // Same cooldown as the /run ladder: a rung that just stalled is tried
+    // last for RUNG_COOLDOWN_MS instead of first on every job.
+    const orderedAttempts = orderAttempts(attempts, rungStalls, Date.now(), RUNG_COOLDOWN_MS);
+    if (orderedAttempts[0] !== attempts[0]) {
+      await log(
+        "info",
+        `run-direct job=${jobId} role=${role} rung cooldown: trying ${orderedAttempts[0].model} first (${attempts[0].model} stalled within ${RUNG_COOLDOWN_MS}ms)`
+      );
+    }
+
     const runJob = async (): Promise<void> => {
       setJobState(jobId, "running");
       const interruptedBeforeStart = jobs.get(jobId)?.interrupted;
@@ -1257,7 +1291,7 @@ app.post("/run-direct", async (req, res) => {
       const outcomes: AttemptOutcome[] = [];
 
       try {
-        for (const attempt of attempts) {
+        for (const attempt of orderedAttempts) {
           // Honour an interrupt that landed between attempts.
           if (jobs.get(jobId)?.interrupted) break;
 
@@ -1298,11 +1332,15 @@ app.post("/run-direct", async (req, res) => {
           // provider-error envelope and still exit 0), and an abandonment is
           // only a timeout for the attempt it happened to — read from that
           // attempt's stderr, never from the accumulated one.
+          const abandonedForNoFirstToken = /no first token/i.test(attemptStderr || "");
+          if (abandonedForNoFirstToken) {
+            noteStall(rungStalls, attempt.model, Date.now());
+          }
           const attemptVerdict = classifyTerminal({
             exitCode: attemptExit,
             marks: scanOpencodeStream(attemptStdout),
             timedOut: harnessEndedAttempt(attemptExit, attemptStderr),
-            noFirstToken: /no first token/i.test(attemptStderr || ""),
+            noFirstToken: abandonedForNoFirstToken,
             interrupted: false,
           });
           outcomes.push({
@@ -1325,7 +1363,7 @@ app.post("/run-direct", async (req, res) => {
           // Don't fail over if the user interrupted mid-attempt.
           if (jobs.get(jobId)?.interrupted) break;
 
-          const next = attempts[attemptLog.length] ?? null;
+          const next = orderedAttempts[attemptLog.length] ?? null;
           await log(
             "warn",
             `run-direct job=${jobId} role=${role} ${attempt.source} model=${attempt.model} exit=${attemptExit} — failing over to ${next ? `${next.source} ${next.model}` : "none"}`
