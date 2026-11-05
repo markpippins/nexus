@@ -318,6 +318,8 @@ export const NebulaClient = {
     sourcePath?: string; metadata?: any; tags?: string[];
     systemId?: string; subsystemId?: string; featureId?: string; planRef?: string;
     level?: number; visibilityScope?: string; model?: string;
+    /** Harness run uuid (HARNESS_JOB_ID) that wrote this record — V210. */
+    harnessJobId?: string;
   }) => httpRequest("POST", "/api/agent-records", body),
   /** PATCH /api/agent-records/:id */
   updateAgentRecord: (id: string, body: {

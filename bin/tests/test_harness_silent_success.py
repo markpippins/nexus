@@ -171,6 +171,94 @@ def test_failed_runs_are_not_this_check_s_business() -> None:
     assert len(findings) == 1 and findings[0]["state"] == "failed"
 
 
+# --- V210: exact run attribution -------------------------------------------
+
+
+def rec(ts: datetime, job_id: str | None = None) -> dict:
+    return {"created_at": ts, "harness_job_id": job_id}
+
+
+def test_record_stamped_with_the_run_id_clears_it() -> None:
+    findings = mod.silent_successes(
+        [run("j1", "tester", 300)],
+        {"tester": [rec(T0 - timedelta(seconds=120), "j1")]},
+    )
+    assert findings == [], findings
+
+
+def test_job_id_matches_even_outside_the_window() -> None:
+    # The id is stronger evidence than the clock: a run whose duration was
+    # mis-measured still owns its own record.
+    findings = mod.silent_successes(
+        [run("j1", "tester", 60)],
+        {"tester": [rec(T0 - timedelta(hours=1), "j1")]},
+    )
+    assert findings == [], findings
+
+
+def test_a_different_runs_record_does_not_clear_this_one() -> None:
+    # THE defect this column exists for: the role+window match was cleared by
+    # any sibling record from the same role, so a silent run stayed invisible.
+    findings = mod.silent_successes(
+        [run("silent", "tester", 771)],
+        {"tester": [rec(T0 - timedelta(seconds=200), "other-run")]},
+    )
+    assert len(findings) == 1, findings
+    assert findings[0]["job_id"] == "silent"
+    # The report says what cleared nothing, so "my record is missing" and
+    # "someone else's record is here" are distinguishable by hand.
+    assert findings[0]["attributed_elsewhere"] == ["other-run"]
+
+
+def test_unattributed_record_in_window_still_clears_legacy_runs() -> None:
+    # Rows written before V210, and MCP rows written without the field, carry
+    # no job id. Counting them is the pre-V210 behaviour and must survive it.
+    findings = mod.silent_successes(
+        [run("j1", "tester", 300)],
+        {"tester": [rec(T0 - timedelta(seconds=90), None), T0 - timedelta(seconds=30)]},
+    )
+    assert findings == [], findings
+
+
+def test_unattributed_record_outside_window_does_not_clear() -> None:
+    findings = mod.silent_successes(
+        [run("j1", "tester", 60)],
+        {"tester": [rec(T0 - timedelta(hours=3), None)]},
+    )
+    assert len(findings) == 1, findings
+    assert "attributed_elsewhere" not in findings[0]
+
+
+def test_attributed_record_clears_even_when_others_are_elsewhere() -> None:
+    findings = mod.silent_successes(
+        [run("j1", "tester", 300)],
+        {
+            "tester": [
+                rec(T0 - timedelta(seconds=100), "sibling"),
+                rec(T0 - timedelta(seconds=80), "j1"),
+            ]
+        },
+    )
+    assert findings == [], findings
+
+
+def test_clearance_counts_say_which_kind_of_clean() -> None:
+    events = [
+        run("by-id", "tester", 100),
+        run("by-window", "reviewer", 100),
+        run("silent", "engineer", 100),
+    ]
+    counts = mod.clearance(
+        events,
+        {
+            "tester": [rec(T0 - timedelta(seconds=10), "by-id")],
+            "reviewer": [rec(T0 - timedelta(seconds=10), None)],
+            "engineer": [],
+        },
+    )
+    assert counts == {"job-id": 1, "window": 1, "none": 1}, counts
+
+
 def test_cli_without_a_database_exits_2() -> None:
     env = {
         "SRCDSN": "postgresql://nobody@127.0.0.1:1/nonexistent",

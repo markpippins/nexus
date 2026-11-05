@@ -4,8 +4,10 @@ import * as path from "path";
 
 import {
   BLANK_RECORD_ERROR,
+  HARNESS_JOB_ID_INVALID,
   blankRecordError,
   isBlank,
+  normalizeHarnessJobId,
 } from "../agent-record-write-guard";
 
 // Contract under test: POST /api/agent-records must refuse a record that has
@@ -78,6 +80,67 @@ describe("blankRecordError", () => {
   });
 });
 
+// Contract under test (V210): the optional harnessJobId on POST
+// /api/agent-records. bin/check_harness_silent_success.py matches records to
+// runs by role+timestamp because nothing identified the run; harness-srv
+// already exports HARNESS_JOB_ID to every job child, so the record can carry
+// it and the checker can compare ids.
+
+const UUID = "1f0b2c3d-4e5f-4a6b-8c9d-0e1f2a3b4c5d";
+
+describe("normalizeHarnessJobId", () => {
+  it("accepts the harness's own job id", () => {
+    expect(normalizeHarnessJobId(UUID)).toEqual({ jobId: UUID, error: null });
+  });
+
+  it("accepts the moleculer harness basename shape", () => {
+    expect(normalizeHarnessJobId("harn-freebuff-2b5c34ae")).toEqual({
+      jobId: "harn-freebuff-2b5c34ae",
+      error: null,
+    });
+  });
+
+  it("trims surrounding whitespace", () => {
+    expect(normalizeHarnessJobId("  " + UUID + "\n")).toEqual({
+      jobId: UUID,
+      error: null,
+    });
+  });
+
+  it("treats absent and empty as 'unattributed', not as an error", () => {
+    // The empty string is what a shell hands over for an UNSET variable, and
+    // unattributed is a legitimate state: records written outside a harness.
+    expect(normalizeHarnessJobId(undefined)).toEqual({ jobId: null, error: null });
+    expect(normalizeHarnessJobId(null)).toEqual({ jobId: null, error: null });
+    expect(normalizeHarnessJobId("")).toEqual({ jobId: null, error: null });
+    expect(normalizeHarnessJobId("   ")).toEqual({ jobId: null, error: null });
+  });
+
+  it("refuses values that cannot be a run identifier", () => {
+    // Storing these would look like attribution while matching nothing — the
+    // defect the column exists to remove, wearing the column's shape.
+    for (const bad of [
+      "short",                    // < 8 chars
+      "has spaces in it",
+      "/tmp/jobs/abc12345.md",    // a path, not an id
+      "-leading-dash-1234",       // must start alphanumeric
+      "a".repeat(129),            // > 128 chars
+      42,
+      {},
+    ]) {
+      expect(normalizeHarnessJobId(bad)).toEqual({
+        jobId: null,
+        error: HARNESS_JOB_ID_INVALID,
+      });
+    }
+  });
+
+  it("names the field and the way out in the refusal", () => {
+    expect(HARNESS_JOB_ID_INVALID).toContain("harnessJobId");
+    expect(HARNESS_JOB_ID_INVALID).toMatch(/omit it/);
+  });
+});
+
 describe("wiring", () => {
   it("the POST /agent-records handler actually calls the guard", () => {
     // A guard that is defined but never invoked protects nothing, which is the
@@ -91,5 +154,18 @@ describe("wiring", () => {
 
     expect(handler).toContain("blankRecordError(title, content)");
     expect(handler).toMatch(/status\(400\)/);
+  });
+
+  it("the POST /agent-records insert actually stores harness_job_id", () => {
+    // Validating the field and then dropping it would pass every unit test
+    // above and still leave every record unattributed.
+    const routes = readFileSync(path.join(__dirname, "..", "routes.ts"), "utf8");
+    const postStart = routes.indexOf("router.post('/agent-records'");
+    const postEnd = routes.indexOf("router.patch('/agent-records/:id'", postStart);
+    const handler = routes.slice(postStart, postEnd);
+
+    expect(handler).toContain("normalizeHarnessJobId(harnessJobId)");
+    expect(handler).toMatch(/INSERT INTO nebula\.agent_records \([^)]*harness_job_id/s);
+    expect(handler).toContain("runAttribution.jobId");
   });
 });

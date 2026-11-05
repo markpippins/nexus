@@ -1194,6 +1194,7 @@ export function registerTools(server: McpServer) {
       level: z.number().optional().describe("Abstraction level 1-4 (default 1)"),
       visibilityScope: z.string().optional().describe("Visibility scope: builder, architect, planner, reviewer, all (default 'all')"),
       model: z.string().optional().describe("AI model identifier (e.g. 'deepseek/deepseek-v4-pro')"),
+      harnessJobId: z.string().optional().describe("Harness run id that wrote this record (the value of $HARNESS_JOB_ID in a harnessed run). Shell writers such as bin/post-agent-record.py pass it automatically; MCP callers must pass it explicitly when they want the run attributed."),
     },
     async (args) => {
       const result = await NebulaClient.createAgentRecord({
@@ -1211,6 +1212,7 @@ export function registerTools(server: McpServer) {
         level: args.level,
         visibilityScope: args.visibilityScope,
         model: args.model,
+        harnessJobId: args.harnessJobId,
       });
       return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
     }

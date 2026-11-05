@@ -49,3 +49,48 @@ export function isBlank(value: unknown): boolean {
 export function blankRecordError(title: unknown, content: unknown): string | null {
   return isBlank(title) && isBlank(content) ? BLANK_RECORD_ERROR : null;
 }
+
+/**
+ * Optional attribution: which harness run wrote this record.
+ *
+ * Why it exists (2026-11-05): `bin/check_harness_silent_success.py` had to
+ * match records to runs by role and timestamp, because a record carried no run
+ * id. That heuristic clears a silent run as soon as ANY record from the same
+ * role lands in the window. harness-srv already exports the job uuid to its
+ * children as `HARNESS_JOB_ID`, so the record can simply say which run it
+ * belongs to and the checker can compare ids instead of guessing.
+ *
+ * The value is validated rather than trusted, and the format is deliberately
+ * loose: this fleet's harnesses emit uuids and prompt-file basenames, and a
+ * job id is opaque to nebula-srv. What is refused is anything that cannot be a
+ * run identifier at all (empty after trim, spaces, path separators, 128+
+ * chars) — storing it would look like attribution while matching nothing,
+ * which is worse than leaving the row unattributed.
+ */
+const HARNESS_JOB_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/;
+
+export const HARNESS_JOB_ID_INVALID =
+  'harnessJobId must be 8-128 characters of [A-Za-z0-9._:-] starting with an ' +
+  'alphanumeric character; omit it to write an unattributed record';
+
+/**
+ * Normalize the optional `harnessJobId` write field.
+ *
+ * `{ jobId: null, error: null }` when the caller omitted it (or sent an empty
+ * string — the shape a shell hands over for an unset variable), `{ jobId }`
+ * when it validated, `{ jobId: null, error }` when it did not.
+ */
+export function normalizeHarnessJobId(
+  value: unknown
+): { jobId: string | null; error: string | null } {
+  if (value === null || value === undefined) return { jobId: null, error: null };
+  if (typeof value !== 'string') {
+    return { jobId: null, error: HARNESS_JOB_ID_INVALID };
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return { jobId: null, error: null };
+  if (!HARNESS_JOB_ID_RE.test(trimmed)) {
+    return { jobId: null, error: HARNESS_JOB_ID_INVALID };
+  }
+  return { jobId: trimmed, error: null };
+}

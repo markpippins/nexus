@@ -16751,6 +16751,7 @@ CREATE TABLE nebula.agent_records_history (
     model text,
     candidate_id uuid,
     requirement_id uuid,
+    harness_job_id text,
     CONSTRAINT agent_records_record_type_check CHECK ((record_type = ANY (ARRAY['report'::text, 'analysis'::text, 'assessment'::text, 'inspection'::text, 'prompt'::text, 'response'::text, 'engineering_log'::text, 'architecture_note'::text, 'decision'::text]))),
     CONSTRAINT agent_records_role_check CHECK (((role = ''::text) OR (role = ANY (ARRAY['architect'::text, 'planner'::text, 'builder'::text, 'reviewer'::text, 'critic'::text, 'analyst'::text, 'inspector'::text, 'engineer'::text, 'engineer-ii'::text, 'engineer-iii'::text, 'devops'::text, 'topologist'::text, 'auditor'::text, 'dba'::text, 'epistemologist'::text, 'operator'::text, 'sysadmin'::text, 'DBA'::text, 'tester'::text, 'analyst-ii'::text, 'design-synthesist'::text, 'layout-mechanic'::text, 'ontologist'::text, 'lead-engineer'::text, 'sound-technician'::text, 'supervisor'::text])))),
     CONSTRAINT chk_agent_records_level CHECK (((level >= 1) AND (level <= 4)))
@@ -16769,6 +16770,13 @@ COMMENT ON COLUMN nebula.agent_records_history.candidate_id IS 'FK to nebula.har
 --
 
 COMMENT ON COLUMN nebula.agent_records_history.requirement_id IS 'FK to nebula.requirements.id — populated when a requirement spawns from a candidate.';
+
+
+--
+-- Name: COLUMN agent_records_history.harness_job_id; Type: COMMENT; Schema: nebula; Owner: -
+--
+
+COMMENT ON COLUMN nebula.agent_records_history.harness_job_id IS 'Harness job uuid that wrote this record (HARNESS_JOB_ID at write time). NULL = written outside a harness run. Consumer: bin/check_harness_silent_success.py exact run-to-record matching.';
 
 
 --
@@ -16797,7 +16805,8 @@ CREATE VIEW nebula.agent_records AS
     recorded_until_dt,
     valid_from,
     valid_until,
-    model
+    model,
+    harness_job_id
    FROM nebula.agent_records_history
   WHERE ((now() >= recorded_on_dt) AND (now() < recorded_until_dt) AND (now() >= valid_from) AND (now() < valid_until));
 
@@ -31263,6 +31272,13 @@ CREATE INDEX idx_agent_records_history_candidate_id ON nebula.agent_records_hist
 --
 
 CREATE INDEX idx_agent_records_history_created_at_id ON nebula.agent_records_history USING btree (created_at DESC, id DESC);
+
+
+--
+-- Name: idx_agent_records_history_harness_job_id; Type: INDEX; Schema: nebula; Owner: -
+--
+
+CREATE INDEX idx_agent_records_history_harness_job_id ON nebula.agent_records_history USING btree (harness_job_id) WHERE (harness_job_id IS NOT NULL);
 
 
 --
