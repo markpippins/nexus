@@ -4152,6 +4152,13 @@ BEGIN
         'The gate reads the **last** declaration in the body, falling back to the\n'
         '\`verdict:\` tag; the body wins when both exist.\n'
         '\n'
+        'A declaration is any \`verdict:\` in the body followed by a word - the same\n'
+        'parser does not care whether it sits in a heading, a table, or prose. So\n'
+        'prose that puts the word before a non-token ("we checked the run verdict:\n'
+        'classifyLadder") declares \`classifyladder\` and is refused with\n'
+        '\`ATT_VERDICT_INVALID\`. Write your one declaration, and use a different noun\n'
+        'for anything else: *terminal state*, *decision*, *outcome*.\n'
+        '\n'
         '| Intent | Accepted tokens (normalized, case-insensitive) |\n'
         '|---|---|\n'
         '| approve | \`approved\`, \`approve\`, \`passed\`, \`pass\`, \`accepted\`, \`accept\` |\n'
@@ -4285,6 +4292,14 @@ BEGIN
         '  without re-citing its run id — observed on #866, where a sound verification\n'
         '  was refused for quoting the run of the PR it was comparing against.\n'
         '\n'
+        '- **The word \`verdict\` in ordinary prose.** Row \`f2949cbf\` on PR #872 was\n'
+        '  refused \`ATT_VERDICT_INVALID\` for the sentence "I confirmed nothing still\n'
+        '  reads the run verdict: classifyLadder''s signature takes only\n'
+        '  AttemptOutcome[]". The gate read \`classifyladder\` as the declared\n'
+        '  verdict: the classification was sound and the wording was not. It cannot be\n'
+        '  edited after posting - supersede the row (Decision 24) and re-attest with\n'
+        '  clean prose. Keep exactly one declaration, \`Verdict: approved.\`, and call the\n'
+        '  terminal state *the terminal state*.\n'
         '',
         ARRAY['tester', 'attestation', 'merge-gate', 'policy-v2', 'verification'],
         ARRAY['attest a pr', 'write an attestation', 'tester verdict', 'policy attestation v2', 'attestation format', 'verdict approved', 're-attest', 'merge gate blocked by attestation', 'attestation rejected'],
