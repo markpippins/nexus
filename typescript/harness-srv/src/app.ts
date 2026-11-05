@@ -25,11 +25,14 @@ import express from "express";
 import rateLimit from "express-rate-limit";
 import { resolveContext, resolveRoleModel, emitEvent, pool, redis, checkConfigAdmission, incrementConsumedUnits, emitGovernanceReceipt } from "./db";
 import {
+  classifyLadder,
   classifyTerminal,
   errorMessagesOf,
+  harnessEndedAttempt,
   lastStepReason,
   scanOpencodeStream,
 } from "./terminal";
+import type { AttemptOutcome } from "./terminal";
 import { ADMISSION_OUTCOME } from "./admission";
 // Runaway watchdog rule + constants (T16 guardrail, 1285 remediation slice 2).
 // The decision lives in watchdog.ts so it is testable without timers
@@ -1245,6 +1248,13 @@ app.post("/run-direct", async (req, res) => {
       let stderr = "";
       let modelUsed: string | null = null;
       const attemptLog: AttemptRecord[] = [];
+      // Each attempt's end, judged on ITS OWN evidence. The run's state is
+      // derived from these (classifyLadder) rather than from the final exit
+      // code plus a regex over stderr accumulated from every attempt: that
+      // combination reported a two-model exhaustion as "run exceeded its
+      // timeout" (jobs 7e2f58e4 / 87ae9ae3, 2026-11-05) when nothing had
+      // timed out at the run level at all.
+      const outcomes: AttemptOutcome[] = [];
 
       try {
         for (const attempt of attempts) {
@@ -1283,23 +1293,29 @@ app.post("/run-direct", async (req, res) => {
             : attemptStderr;
           exitCode = attemptExit;
 
+          // Judge the attempt on its own stream AND its own stderr. A zero
+          // exit is not a success on its own (opencode can emit a
+          // provider-error envelope and still exit 0), and an abandonment is
+          // only a timeout for the attempt it happened to — read from that
+          // attempt's stderr, never from the accumulated one.
+          const attemptVerdict = classifyTerminal({
+            exitCode: attemptExit,
+            marks: scanOpencodeStream(attemptStdout),
+            timedOut: harnessEndedAttempt(attemptExit, attemptStderr),
+            noFirstToken: /no first token/i.test(attemptStderr || ""),
+            interrupted: false,
+          });
+          outcomes.push({
+            source: attempt.source,
+            model: attempt.model ?? null,
+            verdict: attemptVerdict,
+          });
+
+          if (attemptVerdict.state === "completed") {
+            modelUsed = attempt.model ?? null;
+            break;
+          }
           if (attemptExit === 0) {
-            // A zero exit is not a success on its own: opencode can emit a
-            // provider-error envelope and still exit 0. Read the attempt's
-            // own stream before treating it as the winning attempt, so a
-            // failed attempt rolls to the next model instead of ending the
-            // ladder with a "completed" job that did nothing.
-            const attemptVerdict = classifyTerminal({
-              exitCode: 0,
-              marks: scanOpencodeStream(attemptStdout),
-              timedOut: false,
-              noFirstToken: false,
-              interrupted: false,
-            });
-            if (attemptVerdict.state !== "failed") {
-              modelUsed = attempt.model;
-              break;
-            }
             await log(
               "warn",
               `run-direct job=${jobId} role=${role} ${attempt.source} model=${attempt.model} exit=0 but ${attemptVerdict.detail}`
@@ -1348,9 +1364,10 @@ app.post("/run-direct", async (req, res) => {
 
       await unlink(promptFile).catch(() => {});
 
-      // Terminal state — an interrupted job is cancelled, a timeout
-      // (exit 124 / timeout marker) is reported honestly as timed_out,
-      // signal-kills otherwise fail with the marker.
+      // Terminal state — an interrupted job is cancelled; otherwise the
+      // ladder decides from the attempts' own verdicts, so an exhausted
+      // ladder is `failed` (and says which attempts failed) instead of
+      // borrowing the last attempt's exit code to claim a timeout.
       if (jobs.get(jobId)?.interrupted) {
         setJobState(jobId, "cancelled", {
           exitCode: 137,
@@ -1358,16 +1375,7 @@ app.post("/run-direct", async (req, res) => {
         });
         return;
       }
-      const verdict = classifyTerminal({
-        exitCode,
-        marks,
-        // A timeout/no-first-token abandon surfaces as exit 124 + a marker in
-        // stderr; both mean the harness ended the run, so the state is
-        // timed_out either way.
-        timedOut: exitCode === 124 || /timeout after|no first token/i.test(stderr),
-        noFirstToken: false,
-        interrupted: false,
-      });
+      const verdict = classifyLadder(outcomes);
       const state: HarnessJobState = verdict.state;
       setJobState(jobId, state, { exitCode, stderr });
 

@@ -121,6 +121,18 @@ export function errorMessagesOf(marks: StreamMark[]): string[] {
 }
 
 /**
+ * Did the harness end this attempt, rather than the attempt ending itself?
+ *
+ * `executeOpencode` signals its own abandonments through the exit code (124)
+ * and a marker in that attempt's stderr — there is no out-of-band flag. Keep
+ * the test in one place so the per-attempt and whole-run readings cannot drift
+ * apart (they did: see classifyLadder).
+ */
+export function harnessEndedAttempt(exitCode: number | null, stderr: string): boolean {
+  return exitCode === 124 || /timeout after|no first token/i.test(stderr || "");
+}
+
+/**
  * Classify the run. Order matters: an interruption or timeout is a statement
  * about the harness, and outranks anything the stream says (a killed child
  * never gets to write its final step).
@@ -167,5 +179,54 @@ export function classifyTerminal(input: TerminalInput): TerminalVerdict {
   return {
     state: "completed",
     detail: "opencode exited 0 and the final step ended on a natural stop",
+  };
+}
+
+/** One attempt of a failover ladder, already classified on its own evidence. */
+export interface AttemptOutcome {
+  source: string;
+  model: string | null;
+  verdict: TerminalVerdict;
+}
+
+/**
+ * Classify the RUN from its attempts, not from the run's exit code.
+ *
+ * A ladder's exit code belongs to whichever attempt ran LAST, while the
+ * interesting question is whether ANY attempt did the work. Reading the exit
+ * code (plus a regex over stderr accumulated from every attempt) produced a
+ * false `timed_out` for jobs 7e2f58e4 and 87ae9ae3 on 2026-11-05: the primary
+ * was abandoned for producing no first token, the fallback then exited 1 in
+ * three seconds, and the job was reported as "run exceeded its timeout" — a
+ * statement about the harness that nothing in the run supported. Nothing had
+ * timed out; every model had simply failed.
+ *
+ * The rule: the last attempt that completed decides `completed`; otherwise the
+ * run FAILED, and its detail names every attempt so the ladder's exhaustion is
+ * visible instead of being flattened into one misleading state.
+ */
+export function classifyLadder(attempts: AttemptOutcome[]): TerminalVerdict {
+  if (attempts.length === 0) {
+    return { state: "failed", detail: "no attempt was made — the ladder was empty" };
+  }
+  const last = attempts[attempts.length - 1];
+  if (last.verdict.state === "completed") {
+    return {
+      state: "completed",
+      detail:
+        attempts.length === 1
+          ? last.verdict.detail
+          : `completed on attempt ${attempts.length} of ${attempts.length} (${last.source} ${last.model ?? "unset"}) after ${attempts.length - 1} failed attempt(s)`,
+    };
+  }
+  if (attempts.some((a) => a.verdict.state === "cancelled")) {
+    return { state: "cancelled", detail: "interrupted by user request" };
+  }
+  const trail = attempts
+    .map((a, i) => `${i + 1}. ${a.source} ${a.model ?? "unset"}: ${a.verdict.state} — ${a.verdict.detail}`)
+    .join("; ");
+  return {
+    state: "failed",
+    detail: `all ${attempts.length} attempt(s) failed (${trail})`,
   };
 }

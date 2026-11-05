@@ -16,11 +16,14 @@
  */
 
 import {
+  classifyLadder,
   classifyTerminal,
   errorMessagesOf,
+  harnessEndedAttempt,
   lastStepReason,
   scanOpencodeStream,
 } from "../src/terminal";
+import type { AttemptOutcome } from "../src/terminal";
 
 let passed = 0;
 let failed = 0;
@@ -181,6 +184,67 @@ console.log("\nunparseable stream:");
   assert("no marks + exit 0 → completed (unchanged behaviour)", v.state === "completed", v.state);
   assert("no stop reason is invented", lastStepReason(scanOpencodeStream(out)) === null);
   assert("empty stdout is safe", classify("").state === "completed");
+}
+
+// ── The failover ladder decides the RUN's state ───────────────────
+//
+// Regression target (2026-11-05, jobs 7e2f58e4 / 87ae9ae3): the primary was
+// abandoned for emitting no first token, the fallback exited 1 two seconds
+// later, and the job was reported `timed_out` with "run exceeded its timeout".
+// Nothing had timed out; every model had failed. The run's exit code belongs
+// to the LAST attempt, so it cannot answer "did any attempt do the work?".
+console.log("\nladder: exhausted attempts are a failure, not a timeout:");
+{
+  const abandoned: AttemptOutcome = {
+    source: "primary",
+    model: "opencode/x-preview-f-free",
+    verdict: { state: "timed_out", detail: "no first token before the guard deadline" },
+  };
+  const errored: AttemptOutcome = {
+    source: "fallback",
+    model: "openrouter/stealth/ox-alpha",
+    verdict: { state: "failed", detail: "opencode exited 1" },
+  };
+  const v = classifyLadder([abandoned, errored]);
+  assert("abandoned primary + errored fallback → failed (not timed_out)", v.state === "failed", v.state);
+  assert("the detail names both attempts", /opencode\/x-preview-f-free/.test(v.detail) && /ox-alpha/.test(v.detail), v.detail);
+  assert("the detail keeps each attempt's own reading", /no first token/.test(v.detail) && /exited 1/.test(v.detail), v.detail);
+
+  const bothTimedOut = classifyLadder([
+    abandoned,
+    { ...errored, verdict: { state: "timed_out", detail: "run exceeded its timeout" } },
+  ]);
+  assert("every attempt timing out is still a failed LADDER", bothTimedOut.state === "failed", bothTimedOut.state);
+
+  const empty = classifyLadder([]);
+  assert("an empty ladder fails rather than completing", empty.state === "failed", empty.state);
+
+  const recovered = classifyLadder([
+    errored,
+    { source: "fallback", model: "opencode/glm-5.3-flash-free", verdict: { state: "completed", detail: "ok" } },
+  ]);
+  assert("a completing retry decides the run", recovered.state === "completed", recovered.state);
+  assert("a winning retry says so", /attempt 2 of 2/.test(recovered.detail), recovered.detail);
+
+  const single = classifyLadder([
+    { source: "primary", model: "opencode/big-pickle", verdict: { state: "completed", detail: "natural stop" } },
+  ]);
+  assert("a single completing attempt passes its own detail through", single.detail === "natural stop", single.detail);
+
+  const cancelled = classifyLadder([
+    { ...abandoned, verdict: { state: "cancelled", detail: "interrupted" } },
+    errored,
+  ]);
+  assert("an interrupted attempt is not reported as a model failure", cancelled.state === "cancelled", cancelled.state);
+}
+
+// ── harnessEndedAttempt reads one attempt's own stderr ────────────
+console.log("\nharness abandonments are per attempt:");
+{
+  assert("exit 124 is an abandonment", harnessEndedAttempt(124, "") === true);
+  assert("the first-token marker is an abandonment", harnessEndedAttempt(1, "opencode produced no first token within 120000ms — abandoning") === true);
+  assert("a plain exit 1 is not", harnessEndedAttempt(1, "opencode error: Unexpected server error") === false);
+  assert("a provider error is not", harnessEndedAttempt(1, "opencode error (403): model access is disabled") === false);
 }
 
 // ── Summary ───────────────────────────────────────────────────────
