@@ -4178,6 +4178,7 @@ BEGIN
         '- <what you inspected, and what you concluded>\n'
         '\n'
         'CI run 41921578832: conclusion success, head 6f4cae0f64307ead4ae7b0b2bfc40fb5ba2cd204\n'
+        'Rollup at that head: 12 checks, all success (gh pr checks 865)\n'
         '\`\`\`\n'
         '\n'
         'Rules that bite:\n'
@@ -4189,6 +4190,14 @@ BEGIN
         '  *this* PR''s head and to be \`success\`. A \`404\` on the id means you have the\n'
         '  wrong id — it is not "CI still pending". (That misreading once blocked a\n'
         '  PR for claiming a run that never existed.)\n'
+        '- **A green run is not a green PR.** One \`CI run <id>\` proves one workflow\n'
+        '  passed; the PR is every workflow at that head. Before you attest, read the\n'
+        '  complete rollup — \`gh pr checks <n>\` — and confirm *every* conclusion is a\n'
+        '  passing one. \`gh api .../commits/<sha>/check-runs\` returns 30 rows per page\n'
+        '  and will show you an all-green first page while a later job is red\n'
+        '  (PR #865: 30/30 success on page one, the failing "bin/tests guards" job\n'
+        '  beyond it — the attestation cited the one green run and the gate caught\n'
+        '  the rest). Put the rollup count in the body, not just the cited run.\n'
         '- **Queued is not success.** Wait for the checks to finish before attesting;\n'
         '  a run list full of \`queued\` entries is not evidence.\n'
         '- **One verdict per body.** If you quote an earlier verdict and then state\n'
@@ -4259,6 +4268,7 @@ BEGIN
         '  worth more than an approval nobody believes; the divergence is the signal.\n'
         '- **Attesting your own work** when you are not the tester role — the row will\n'
         '  not even be seen, and the attempt is itself reviewable evidence.\n'
+        '\n'
         '',
         ARRAY['tester', 'attestation', 'merge-gate', 'policy-v2', 'verification'],
         ARRAY['attest a pr', 'write an attestation', 'tester verdict', 'policy attestation v2', 'attestation format', 'verdict approved', 're-attest', 'merge gate blocked by attestation', 'attestation rejected'],
