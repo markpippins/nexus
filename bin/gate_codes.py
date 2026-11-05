@@ -58,6 +58,10 @@ Consumer routing (attestation_janitor.py, per spec table):
                        operator/author action: an "approved by rule" claim
                        whose rule conditions do not hold at this head; 1 post
                        per dedup key
+    ATT_CI_COVERAGE    queue tester re-attestation: the row's CI citation
+                       does not cover the head it claims to have inspected
+                       (no stated rollup count, or a count that does not
+                       match the head's); 1 post per dedup key
     MERGE_CONFLICT     NOT an anomaly (author action); 1 post per key
     MERGE_UNKNOWN      transient, retry next cycle, no posts
     CI_PENDING         transient, retry next cycle, no posts
@@ -166,6 +170,21 @@ ATT_POLICY_UNSUPPORTED = "ATT_POLICY_UNSUPPORTED"
 # eligibility.
 ATT_VENDOR_RULE_UNVERIFIED = "ATT_VENDOR_RULE_UNVERIFIED"
 
+# The row declares attestation/v2 but its CI citation does not cover the head
+# it claims to have inspected: no rollup figure stated, or a figure that does
+# not match the head's check count. ATT_NO_CI_EVIDENCE asks "did you verify
+# anything?" and one green run answers it; this asks "did you read the head?"
+# and one green run cannot. #865 nearly merged on exactly that gap — an
+# approval citing a single green run at a 76-check head, stopped by gate 2
+# rather than by the attestation contract itself (record 467962a1, F8).
+#
+# Routed like ATT_NO_CI_EVIDENCE (tester re-attestation clears it): the row
+# was written under a contract it did not satisfy, and no amount of waiting
+# fixes that. A count that drifted because checks were ADDED after attestation
+# lands here too, and re-attesting against the current rollup is the correct
+# response — the same recovery as head drift.
+ATT_CI_COVERAGE = "ATT_CI_COVERAGE"
+
 ALL_CODES = frozenset({
     GH_LOOKUP_FAILED, HEAD_DATE_UNKNOWN,
     PR_NOT_OPEN, PR_DRAFT, MERGE_CONFLICT, MERGE_UNKNOWN,
@@ -174,7 +193,7 @@ ALL_CODES = frozenset({
     ATT_LOOKUP_FAILED, ATT_BYPASSED, ATT_NO_CI_EVIDENCE,
     ATT_CI_LOOKUP_FAILED, ATT_TIMESTAMP_MISSING, ATT_VERDICT_REJECTED,
     ATT_VERDICT_MISSING, ATT_VERDICT_INVALID, ATT_VERDICT_HOLD,
-    ATT_POLICY_UNSUPPORTED, ATT_VENDOR_RULE_UNVERIFIED,
+    ATT_POLICY_UNSUPPORTED, ATT_VENDOR_RULE_UNVERIFIED, ATT_CI_COVERAGE,
 })
 
 # Codes whose condition may clear on the next cycle without anyone acting:
