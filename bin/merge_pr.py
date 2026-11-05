@@ -168,6 +168,11 @@ def fetch_agent_records(
 _CI_RUN_RE = re.compile(r"\bCI runs?\s+((?:#?\d{6,}[^,;.)\n]*(?:,\s*)?)+)", re.IGNORECASE)
 _RUN_ID_RE = re.compile(r"\d{8,}")
 _SHA_RE = re.compile(r"\bhead(?:\s+SHA)?\s+([0-9a-f]{7,40})\b", re.IGNORECASE)
+# The rollup figure a policy-v2 row states it inspected ("76 checks",
+# "(76 checks)", "76 check-runs"). Deliberately narrow: a bare number is not
+# a claim about the rollup, so only a digit carrying the word "check(s)"
+# counts.
+_CHECK_COUNT_RE = re.compile(r"\b(\d{1,4})\s+checks?\b", re.IGNORECASE)
 
 
 def extract_ci_run_ids(text: str) -> List[str]:
@@ -194,6 +199,19 @@ def extract_head_shas(text: str) -> List[str]:
         if s not in shas:
             shas.append(s)
     return shas
+
+
+def extract_check_count(text: str) -> Optional[int]:
+    """The rollup size a policy-v2 attestation states it inspected, or None.
+
+    First match wins: the row's claim is the figure it leads with ("Rollup at
+    <head>: 76 checks, all success"), and picking the first keeps the reading
+    deterministic when a body mentions a count more than once. Both phrasings
+    the card and bin/vendor_attest.py emit match — "76 checks" and "(76
+    checks)" — as does "76 check-runs" (the word boundary falls before the
+    hyphen)."""
+    m = _CHECK_COUNT_RE.search(text or "")
+    return int(m.group(1)) if m else None
 
 
 def _is_definitive_absent(exc: Exception) -> bool:
@@ -749,7 +767,8 @@ def evaluate_attestation(
     (ATT_MISSING / ATT_SHAPE_UNSEEN / HEAD_DATE_UNKNOWN / ATT_STALE_HEAD /
     ATT_NO_CI_EVIDENCE / ATT_CI_LOOKUP_FAILED / ATT_POLICY_UNSUPPORTED /
     ATT_VERDICT_MISSING / ATT_VERDICT_INVALID / ATT_VERDICT_HOLD /
-    ATT_VERDICT_REJECTED / ATT_VENDOR_RULE_UNVERIFIED), None on pass.
+    ATT_VERDICT_REJECTED / ATT_VENDOR_RULE_UNVERIFIED / ATT_CI_COVERAGE),
+    None on pass.
 
     Withdrawn rows (status:retired / status:superseded) are removed first, so
     they count neither as an attestation (`matches`) nor as a mention. Dropping
@@ -980,10 +999,57 @@ def evaluate_attestation(
         return (False, detail,
                 gate_codes.ATT_CI_LOOKUP_FAILED if runs_transient
                 else gate_codes.ATT_NO_CI_EVIDENCE)
+    # Coverage of the head the row claims to have inspected (policy v2). The
+    # run-ID rule above proves the runs a row CITES really passed; it cannot
+    # say how much of the head was cited, so a row citing one green run at a
+    # 76-check head satisfied every check in this function while describing a
+    # head it never read. That is the shape of the approval that nearly merged
+    # PR #865 (record 467962a1, finding F8): gate 2 caught what the
+    # attestation contract claimed to have looked at, which is backwards.
+    # Comparing the stated figure against the gate's own rollup turns "did you
+    # inspect the head?" from an unwitnessed claim into a cross-reference —
+    # the same move the run-ID rule made for "did you verify anything?".
+    #
+    # Scoped to rows DECLARING attestation/v2: that contract introduced the
+    # requirement, so legacy rows keep their original meaning. Skipped when
+    # there is no rollup to compare against — an EMPTY rollup is gate 2's
+    # CI_NO_CHECKS diagnosis, and repeating that absence here would report one
+    # condition twice under two names.
+    rollup = (pr_state or {}).get("statusCheckRollup") or []
+    if policy is not None and rollup:
+        stated = extract_check_count(att_text)
+        head_label = str(head_sha)[:8] if head_sha else "head"
+        if stated is None:
+            return (
+                False,
+                f"tester attestation {created_iso} (record "
+                f"{str(newest.get('id'))[:8]}) declares policy attestation/v2 "
+                "but states no rollup count: the run-ID rule proves the runs a "
+                "row cites passed, not that it read the head. State the rollup "
+                f"it inspected ('Rollup at {head_label}: {len(rollup)} checks, "
+                "all success') — policy v2 requires it, and matching it is how "
+                "the gate can tell a whole-head read from a single green run",
+                gate_codes.ATT_CI_COVERAGE,
+            )
+        if stated != len(rollup):
+            return (
+                False,
+                f"tester attestation {created_iso} (record "
+                f"{str(newest.get('id'))[:8]}) states {stated} checks but head "
+                f"{head_label} has {len(rollup)}: either the row was written "
+                "against a different head/rollup, or a subset was described as "
+                "the whole. Re-attest against the current rollup rather than "
+                "restating the figure — the number is the check that the head "
+                "was actually read",
+                gate_codes.ATT_CI_COVERAGE,
+            )
     return (
         True,
         f"tester attestation {created_iso} (record {str(newest.get('id'))[:8]}) "
-        f"postdates head commit; {runs_detail}{rule_note}",
+        f"postdates head commit; {runs_detail}"
+        + (f"; rollup {len(rollup)} checks stated and matched" if rollup
+           and policy is not None else "")
+        + rule_note,
         None,
     )
 

@@ -376,6 +376,95 @@ def test_v2_approval_without_cited_ci_still_fails_evidence_rule():
     assert code == "ATT_NO_CI_EVIDENCE"
 
 
+# ── gate 3: the row must cover the head it claims to have read ────────
+
+def rollup(n):
+    """A head's check-rollup of n completed, passing checks."""
+    return [check(f"job-{i}") for i in range(n)]
+
+
+def test_extract_check_count_matches_every_emitted_phrasing():
+    """The card's phrasing, the vendor path's parenthetical, and the
+    check-runs vocabulary all count as stating the rollup."""
+    assert merge_pr.extract_check_count(
+        "Rollup at 1b582724b: 76 checks, all success") == 76
+    assert merge_pr.extract_check_count(
+        "- every check at this head completed successfully (76 checks)") == 76
+    assert merge_pr.extract_check_count("all 76 check-runs green") == 76
+    # A bare number is not a claim about the rollup.
+    assert merge_pr.extract_check_count("Engine reports 54/54 passing") is None
+    assert merge_pr.extract_check_count("CI run 36000000001: success") is None
+
+
+def test_v2_stated_rollup_matching_the_head_passes():
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [_v2("verdict: approved\nRollup at a8b1dfc6: 3 checks, all success\n"
+             + EVIDENCE_CONTENT)],
+        487, NOW_MS - 7200_000, run_json=evidence_run_json,
+        pr_state={"statusCheckRollup": rollup(3)})
+    assert ok, detail
+    assert "3 checks stated and matched" in detail
+
+
+def test_v2_stated_rollup_that_does_not_match_fails_coverage():
+    """The row read something other than the whole head. Both figures are in
+    the detail so the tester sees which side is stale."""
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [_v2("verdict: approved\nRollup at a8b1dfc6: 30 checks, all success\n"
+             + EVIDENCE_CONTENT)],
+        487, NOW_MS - 7200_000, run_json=evidence_run_json,
+        pr_state={"statusCheckRollup": rollup(76)})
+    assert not ok
+    assert code == "ATT_CI_COVERAGE"
+    assert "states 30 checks" in detail and "has 76" in detail
+
+
+def test_v2_single_green_run_at_a_76_check_head_fails_coverage():
+    """THE test for this change — the #865 near-miss, replayed.
+
+    A v2 approval citing one verified green run against a 76-check head, with
+    no rollup figure. Every check that existed before this rule passes here:
+    shape, freshness, verdict, cited-run verification. Only coverage refuses
+    it, which is the point: a mechanical signal (one green run) is not
+    evidence that the tester read the head."""
+    row = _v2("verdict: approved\n" + EVIDENCE_CONTENT)
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [row], 487, NOW_MS - 7200_000, run_json=evidence_run_json,
+        head_sha="a8b1dfc600000000000000000000000000000000",
+        pr_state={"statusCheckRollup": rollup(76)})
+    assert not ok
+    assert code == "ATT_CI_COVERAGE"
+    assert "states no rollup count" in detail
+    # and not one of the neighbouring diagnoses
+    assert code not in {"ATT_NO_CI_EVIDENCE", "ATT_VERDICT_MISSING",
+                        "ATT_STALE_HEAD", "ATT_CI_LOOKUP_FAILED"}
+
+
+def test_legacy_row_without_a_rollup_figure_keeps_its_reading():
+    """No declared contract, no new requirement: rows written before v2 are
+    not retroactively failed for a line they were never asked for."""
+    legacy = rec(rec_id="94e304ed", title="Attestation for PR #487",
+                 content="CI run 36000000001: CI checks verified success; "
+                         "head SHA verified for PR #487")
+    ok, detail, code = merge_pr.evaluate_attestation(
+        [legacy], 487, NOW_MS - 7200_000, run_json=evidence_run_json,
+        pr_state={"statusCheckRollup": rollup(76)})
+    assert ok, detail
+    assert code is None
+
+
+def test_coverage_is_skipped_without_a_rollup_to_compare_against():
+    """An empty/absent rollup is gate 2's CI_NO_CHECKS diagnosis. Gate 3 must
+    not report the same absence under a second name, and the callers that
+    evaluate attestations without PR state keep working unchanged."""
+    for pr_state in (None, {}, {"statusCheckRollup": []}):
+        ok, detail, code = merge_pr.evaluate_attestation(
+            [_v2("verdict: approved\n" + EVIDENCE_CONTENT)],
+            487, NOW_MS - 7200_000, run_json=evidence_run_json,
+            pr_state=pr_state)
+        assert ok, (pr_state, detail)
+
+
 # ── gate 3: vendor automation is a different authority ───────────────────
 
 def _vendor_pr(author="dependabot[bot]", title="Bump lodash from 4.17.20 to 4.17.21",

@@ -768,6 +768,20 @@ def _refusal_post_text(num: int, head: str, codes: List[str], fails: str):
         lead = ("The attestation declares a policy version this gate does not implement. "
                 "OPERATOR action: upgrade the gate. Do NOT ask the tester to re-attest "
                 "under an older contract — that would rewrite the evidence's meaning.")
+    elif gate_codes.ATT_CI_COVERAGE in codes:
+        # The row declares v2 but its CI citation does not cover the head it
+        # claims to have read. Tester action like ATT_NO_CI_EVIDENCE, and
+        # deliberately not the generic ANOMALY wording: nothing drifted and
+        # nothing is broken — the row simply cites less head than it claims.
+        title = (f"attestation-janitor: ROLLUP COVERAGE — PR #{num} refused "
+                 f"({code_str})")
+        lead = ("The attestation declares policy attestation/v2 but states no rollup "
+                "count, or states one that does not match the head's check count. The "
+                "CI-run rule proves the runs a row CITES passed; it cannot show that "
+                "the row read the whole head, and one green run at a 76-check head is "
+                "precisely the approval this code refuses. TESTER action: re-attest at "
+                "the same head stating the rollup it inspected ('Rollup at <head>: "
+                "N checks, all success').")
     elif gate_codes.ATT_NO_CI_EVIDENCE in codes:
         # Routing-table alignment (gate_codes spec d7989f31 family): this code
         # is documented as queue-a-re-attestation but previously fell through
