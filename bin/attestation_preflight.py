@@ -13,7 +13,7 @@ author could have seen in advance:
 
 The tool imports the gate's own pure functions (`attestation_verdict`,
 `attestation_policy`, `is_attestation_record`, `extract_ci_run_ids`,
-`extract_head_shas`, `extract_check_count`) rather than re-implementing the
+`extract_check_count`) rather than re-implementing the
 parsing rules, so "the preflight said PASS" and "the gate agrees" cannot drift
 apart. It performs NO network calls and NO writes: freshness (the row's
 createdAt vs the head commit) and the run-id lookups are the gate's own
@@ -176,6 +176,17 @@ def build_report(
         ))
     elif len(hits) == 1:
         add(PASS, "label-in-prose", "exactly one declaration label in title+body")
+    elif verdict is not None:
+        # attestation_verdict falls back to the `verdict:` tag (and to a spaced
+        # "approved by" form) when the body declares nothing. Reading the row
+        # through the gate means inheriting that path — but an approval that
+        # exists only in a tag is invisible to a human reading the record, so
+        # say so instead of reporting a clean pass.
+        add(WARN, "declaration-source", (
+            "no `Verdict:` line in the body — the gate read this token from a tag "
+            "(its own fallback). That is accepted, but a reader of the record "
+            "cannot see the declaration; state it in the body."
+        ))
 
     # 5. CI citation — the gate reads EVEN ONE missing-citation row as absent.
     run_ids = merge_pr.extract_ci_run_ids(text)
