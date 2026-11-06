@@ -4391,6 +4391,95 @@ BEGIN
             VALUES (v_memory_id, v_role, NOW(), NULL);
         END LOOP;
     END IF;
+    -- ──────────────────────────────────────────────────────────
+    -- 59. Completion Announcement (R6)
+    -- ──────────────────────────────────────────────────────────
+    v_memory_id := NULL;
+    INSERT INTO ${SQL}.memory (slug, title, summary, body_md, tags, triggers, mcp_tools)
+    VALUES (
+        'completion-announcement',
+        'Completion Announcement (R6)',
+        'How to speak a completion announcement through address-tts: use /synthesize (tts_synthesize) with play:true, not /speak, and treat mute as normal.',
+        '# Completion Announcement (R6)\n'
+        '\n'
+        'R6 asks every agent to announce a finished work unit aloud through the TTS\n'
+        'stack. This card is the procedure: which service, which endpoint, and the two\n'
+        'traps that make the obvious choice fail.\n'
+        '\n'
+        '**The spoken announcement is a courtesy signal. It is not a record.** The\n'
+        'durable record of the work is the agent record (R2) and, where applicable, the\n'
+        'change-log post (R14). If the speaker is dead, complete the records anyway and\n'
+        'say the announcement was skipped — never treat a silent room as a failed turn,\n'
+        'and never skip records because the announcement worked.\n'
+        '\n'
+        '## Where it lives\n'
+        '\n'
+        '| Piece | Where | Port |\n'
+        '|---|---|---|\n'
+        '| Speech daemon | \`python/address/tts/main.py\` | 8600 (REST) |\n'
+        '| MCP wrapper | \`typescript/address-tts-mcp/\` | 3105 (JSON-RPC on \`POST /\`) |\n'
+        '| Engine | piper (\`en_US-lessac-medium\`), cache \`.tts-audio/\` | — |\n'
+        '\n'
+        'Tools on 3105: \`tts_synthesize\`, \`tts_speak\`, \`tts_health\`.\n'
+        '\n'
+        '## Start and check\n'
+        '\n'
+        '\`\`\`bash\n'
+        'bash bin/start-address-tts.sh start      # starts 8600 + 3105\n'
+        'curl -s http://localhost:8600/health     # {"status":"ok",...,"muted":true}\n'
+        '\`\`\`\n'
+        '\n'
+        '\`"muted": true\` is the **default and not a fault**. Mute suppresses *passive*\n'
+        'announcements (NATS transitions, periodic health blurbs). Explicit requests\n'
+        'still play.\n'
+        '\n'
+        '## Speak your announcement\n'
+        '\n'
+        '\`\`\`bash\n'
+        'curl -s -X POST http://localhost:8600/synthesize \\\n'
+        '  -H ''Content-Type: application/json'' \\\n'
+        '  -d ''{"text":"PR 880 is merged: the tester supervision rules are in the card.","play":true}''\n'
+        '\`\`\`\n'
+        '\n'
+        'MCP equivalent: \`tts_synthesize\` with the same two fields. Success looks like\n'
+        '\`{"audio_path":"...","duration_ms":3211,...,"played":true}\`. \`play\` defaults\n'
+        'to true on \`/synthesize\`; pass \`play:false\` to rehearse without sound.\n'
+        '\n'
+        '## Trap 1 — \`/speak\` is not a text echo\n'
+        '\n'
+        '\`POST /speak\` narrates *a work request''s* current state from\n'
+        '\`conduit.work_request_events\`, so it requires a \`work_request_id\` and answers\n'
+        '\`400 {"error":"work_request_id is required"}\` without one. It is the right call\n'
+        'when the unit of work **is** a WorkRequest; it is the wrong call for "PR merged",\n'
+        'and reaching for it looks like the service is broken. It is not.\n'
+        '\n'
+        '## Trap 2 — the announcement carries no evidence\n'
+        '\n'
+        'Nothing verifies that a sound was produced. Never let an announcement stand in\n'
+        'for a check you did not run, and never quote a number you have not measured —\n'
+        'the announcement is exactly the kind of narration that makes an unverified\n'
+        'claim sound finished.\n'
+        '\n'
+        '## What to say\n'
+        '\n'
+        'One sentence: what was done, and its identifier (PR number, plan number,\n'
+        'record UUID). "PR 879 is merged: a stalled model rung is now tried last." Not a\n'
+        'summary of the diff, not a list of files. If several units finished together,\n'
+        'announce them in one sentence rather than several clips.\n'
+        '',
+        ARRAY['tts', 'announcement', 'r6', 'completion', 'address-tts', 'procedure'],
+        ARRAY['announce completion', 'finish work unit', 'R6', 'speak the result', 'tts announce', 'completion signal'],
+        ARRAY['tts_synthesize', 'tts_health', 'tts_speak']
+    )
+    ON CONFLICT (slug) DO NOTHING
+    RETURNING id INTO v_memory_id;
+    IF v_memory_id IS NOT NULL THEN
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'dba', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'operator', 'planner', 'reviewer', 'sound-technician', 'sysadmin', 'tester', 'topologist'];
+        FOREACH v_role IN ARRAY v_roles LOOP
+            INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
+            VALUES (v_memory_id, v_role, NOW(), NULL);
+        END LOOP;
+    END IF;
     RAISE NOTICE 'Memory procedures seeded.';
 END $mem$;`;
 }

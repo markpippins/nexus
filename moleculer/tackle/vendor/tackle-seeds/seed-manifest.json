@@ -1,5 +1,5 @@
 {
-  "card_count": 58,
+  "card_count": 59,
   "cards": [
     {
       "body_md": "## Agent Config Role Definition\n\nEach agent role .md file (in `.opencode/agents/`) declares the role it activates\nas a YAML **comment**, never as a frontmatter key:\n\n```yaml\n---\n# assumes_role: <role>\ndescription: |\n  <what this role does>\nmode: primary\n---\n```\n\n### Why a comment\n\nopencode forwards unknown agent-frontmatter keys to the model provider as\noptions, and `openai-responses` transports reject any option they cannot\nrepresent:\n\n```\nError: assumes_role: cannot be represented by openai-responses\n```\n\nA live `assumes_role:` key therefore makes the agent unlaunchable on those\nmodels \u2014 it fails before the first token. Lenient transports accept the\nunknown option silently, so the same file works on some models and dies on\nothers. As a YAML comment the declaration is invisible to every parser (so it\nis never forwarded) while staying greppable for the persona-parity tests in\n`bin/tests/test_persona_bridge_parity.py` (P2/P3, with guard P4 against\nreverting to a live key).\n\nKeep frontmatter to keys opencode itself defines: `description`, `mode`,\n`model`, `temperature`, `tools`, `permission`, `options`, `disable`, `hidden`,\n`color`, `prompt`. Any other key carries the same rejection risk.\n\n### Fields\n- `# assumes_role`: the role this agent config activates (engineer, architect,\n  planner, ...). It must match the persona the file requests via\n  `.../opencode-persona`.\n- Inbox behaviour (`inbox_query` tag filters, `record_types`, `auto_present`,\n  `enrich_context`) is **not** declared in frontmatter. It comes from the\n  role's procedure cards and the R17 inbox tooling (`bin/check-inbox.sh`,\n  `nebula_get_inbox`). Do not add a `message:` block \u2014 as an unknown\n  frontmatter key it is forwarded to the provider and rejected exactly like a\n  live `assumes_role`.\n\n### Valid record_type values\nreport, analysis, assessment, inspection, prompt, response, engineering_log, architecture_note, decision",
@@ -152,6 +152,60 @@
         "pending plans",
         "claim ticket",
         "blocker"
+      ]
+    },
+    {
+      "body_md": "# Completion Announcement (R6)\n\nR6 asks every agent to announce a finished work unit aloud through the TTS\nstack. This card is the procedure: which service, which endpoint, and the two\ntraps that make the obvious choice fail.\n\n**The spoken announcement is a courtesy signal. It is not a record.** The\ndurable record of the work is the agent record (R2) and, where applicable, the\nchange-log post (R14). If the speaker is dead, complete the records anyway and\nsay the announcement was skipped \u2014 never treat a silent room as a failed turn,\nand never skip records because the announcement worked.\n\n## Where it lives\n\n| Piece | Where | Port |\n|---|---|---|\n| Speech daemon | `python/address/tts/main.py` | 8600 (REST) |\n| MCP wrapper | `typescript/address-tts-mcp/` | 3105 (JSON-RPC on `POST /`) |\n| Engine | piper (`en_US-lessac-medium`), cache `.tts-audio/` | \u2014 |\n\nTools on 3105: `tts_synthesize`, `tts_speak`, `tts_health`.\n\n## Start and check\n\n```bash\nbash bin/start-address-tts.sh start      # starts 8600 + 3105\ncurl -s http://localhost:8600/health     # {\"status\":\"ok\",...,\"muted\":true}\n```\n\n`\"muted\": true` is the **default and not a fault**. Mute suppresses *passive*\nannouncements (NATS transitions, periodic health blurbs). Explicit requests\nstill play.\n\n## Speak your announcement\n\n```bash\ncurl -s -X POST http://localhost:8600/synthesize \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"text\":\"PR 880 is merged: the tester supervision rules are in the card.\",\"play\":true}'\n```\n\nMCP equivalent: `tts_synthesize` with the same two fields. Success looks like\n`{\"audio_path\":\"...\",\"duration_ms\":3211,...,\"played\":true}`. `play` defaults\nto true on `/synthesize`; pass `play:false` to rehearse without sound.\n\n## Trap 1 \u2014 `/speak` is not a text echo\n\n`POST /speak` narrates *a work request's* current state from\n`conduit.work_request_events`, so it requires a `work_request_id` and answers\n`400 {\"error\":\"work_request_id is required\"}` without one. It is the right call\nwhen the unit of work **is** a WorkRequest; it is the wrong call for \"PR merged\",\nand reaching for it looks like the service is broken. It is not.\n\n## Trap 2 \u2014 the announcement carries no evidence\n\nNothing verifies that a sound was produced. Never let an announcement stand in\nfor a check you did not run, and never quote a number you have not measured \u2014\nthe announcement is exactly the kind of narration that makes an unverified\nclaim sound finished.\n\n## What to say\n\nOne sentence: what was done, and its identifier (PR number, plan number,\nrecord UUID). \"PR 879 is merged: a stalled model rung is now tried last.\" Not a\nsummary of the diff, not a list of files. If several units finished together,\nannounce them in one sentence rather than several clips.\n",
+      "mcp_tools": [
+        "tts_synthesize",
+        "tts_health",
+        "tts_speak"
+      ],
+      "roles": [
+        "analyst",
+        "analyst-ii",
+        "architect",
+        "auditor",
+        "builder",
+        "critic",
+        "dba",
+        "design-synthesist",
+        "devops",
+        "engineer",
+        "engineer-ii",
+        "engineer-iii",
+        "epistemologist",
+        "inspector",
+        "layout-mechanic",
+        "lead-engineer",
+        "ontologist",
+        "operator",
+        "planner",
+        "reviewer",
+        "sound-technician",
+        "sysadmin",
+        "tester",
+        "topologist"
+      ],
+      "sha256": "e9724643ddd0635549d39998e93f3bb5ecc2552afdaaffb9082a9b349d647648",
+      "slug": "completion-announcement",
+      "summary": "How to speak a completion announcement through address-tts: use /synthesize (tts_synthesize) with play:true, not /speak, and treat mute as normal.",
+      "tags": [
+        "tts",
+        "announcement",
+        "r6",
+        "completion",
+        "address-tts",
+        "procedure"
+      ],
+      "title": "Completion Announcement (R6)",
+      "triggers": [
+        "announce completion",
+        "finish work unit",
+        "R6",
+        "speak the result",
+        "tts announce",
+        "completion signal"
       ]
     },
     {
@@ -2107,6 +2161,6 @@
       ]
     }
   ],
-  "role_count": 583,
+  "role_count": 607,
   "schema": "tackle"
 }
