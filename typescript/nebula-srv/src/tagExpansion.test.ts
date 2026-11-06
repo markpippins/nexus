@@ -375,14 +375,19 @@ describe('the REAL shipped registry', () => {
     }
   });
 
-  it('every alias targets-expand entry carries targets EXCEPT declared-unmapped ones', () => {
-    // `admin` ships unmapped by design (Ruling 26 §5). Anything else unmapped
-    // is a regression, so pin the exception by name rather than by count.
+  it('leaves no alias unmapped now that Ruling 27 resolved admin', () => {
+    // History: this pinned `['admin']` — the single declared-unmapped alias
+    // (Ruling 26 §5, "Phase C is NOT blocked on this"). Ruling 27 (3d021bb6)
+    // resolved it to sysadmin and merged on main, so the exception list is now
+    // empty and anything unmapped IS a regression. The assertion stays
+    // name-based: an empty list is only meaningful because we also pin what
+    // `admin` resolved TO, below.
     const reg = loadRegistry(configDir);
     const unmapped = [...reg.aliases]
       .filter(([, e]) => e.mode === 'targets-expand' && e.targets.length === 0)
       .map(([n]) => n);
-    expect(unmapped).toEqual(['admin']);
+    expect(unmapped).toEqual([]);
+    expect(reg.aliases.get('admin')?.targets).toEqual(['sysadmin']);
   });
 
   it('expands the shipped to:all to every role, with no alias left behind', () => {
