@@ -25,6 +25,7 @@ import express from "express";
 import rateLimit from "express-rate-limit";
 import { resolveContext, resolveRoleModel, emitEvent, pool, redis, checkConfigAdmission, incrementConsumedUnits, emitGovernanceReceipt } from "./db";
 import { cooldownMsFromEnv, noteStall, orderAttempts, type StallMap } from "./rung-cooldown";
+import { buildChildEnv } from "./child-env";
 import {
   classifyLadder,
   classifyTerminal,
@@ -1856,11 +1857,12 @@ async function executeOpencode(
   return new Promise((resolve) => {
     const child = spawn(opencodeBin, cmdArgs, {
       cwd: work_dir,
-      env: {
-        ...process.env,
-        HARNESS_ROLE: role,
-        HARNESS_JOB_ID: prompt_file.split("/").pop()?.replace(".md", "") || "",
-      },
+      // NEXUS_AGENT_MODEL belongs here, not in the parent environment: the
+      // resolved `--model` is what the child actually runs on, and a
+      // long-lived server's inherited value can name a different model
+      // entirely (2026-11-06: plan glm-5.3-flash-free, records posted as
+      // glm-4.5). See src/child-env.ts.
+      env: buildChildEnv({ role, jobId, model }),
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 

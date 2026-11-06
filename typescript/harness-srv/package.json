@@ -1,13 +1,13 @@
 {
   "name": "harness-srv",
   "version": "0.1.0",
-  "description": "Generic execution harness — merges Tackle role context with Wind task context, invokes agents",
+  "description": "Generic execution harness \u2014 merges Tackle role context with Wind task context, invokes agents",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
-    "test": "vitest run && tsx tests/terminal.test.ts && tsx tests/timeout-clamp.test.ts && tsx tests/watchdog.test.ts && tsx tests/admission.test.ts && tsx tests/governance-receipt.test.ts && tsx tests/opencode-model-id.test.ts && tsx tests/regex-escape.test.ts && tsx tests/rung-cooldown.test.ts",
+    "test": "vitest run && tsx tests/terminal.test.ts && tsx tests/timeout-clamp.test.ts && tsx tests/watchdog.test.ts && tsx tests/admission.test.ts && tsx tests/governance-receipt.test.ts && tsx tests/opencode-model-id.test.ts && tsx tests/regex-escape.test.ts && tsx tests/rung-cooldown.test.ts && tsx tests/child-env.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
