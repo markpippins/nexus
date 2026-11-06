@@ -175,10 +175,13 @@ class AttestWiringE2E(unittest.TestCase):
             "SELECT max(depth) FROM nebula.attestation_lineage "
             "WHERE depth > 0")
         self.assertEqual(int(depth), 1)
-        # open request count for scan drops when superseded? No — requests
-        # stay open (the chain is a tree); the attestation is the child.
+        # Open-ness is satisfaction-based: the citing attestation now exists,
+        # so the root is cleared and the scan must drop it. (This assertion
+        # previously pinned the opposite — that requests stay open forever —
+        # which was the recorded_until_dt interval reading, refuted in c0a84d91.)
         s2 = att.scan(self.fn, "tester")
-        self.assertEqual(s2["open"][0]["attestation_id"], str(rid))
+        self.assertEqual(s2["open"], [])
+        self.assertEqual(s2["actionable"], 0)
 
     def test_client_gates_fire_before_any_insert(self):
         rid = _request(self.db)

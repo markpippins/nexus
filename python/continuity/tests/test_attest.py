@@ -5,6 +5,8 @@ No database, no network: every DB interaction goes through an injected
 exec_fn (pitfall #15 — inject the dependency boundary). Pins the contract
 from the module docstring and the ratified event-identity rules:
 
+- open-ness: satisfaction-based (nothing cites the root), never the
+  refuted interval reading (recorded_until_dt, which never closes)
 - scan: never raises; table-absence and exec-failure are honest SKIP data
 - scan dispositions: actionable / g1_refused / uninvolved, classified by
   capability + authorship, case-insensitively
@@ -106,6 +108,89 @@ class ScanDispositionTests(unittest.TestCase):
     def test_uninvolved_without_capability(self):
         s = self._scan("f", "critic")
         self.assertEqual({i["disposition"] for i in s["open"]}, {"uninvolved"})
+
+
+def fn_satisfaction_db(roots, citers):
+    """exec_fn that evaluates the emitted open-ness rule over fixtures.
+
+    Models only what the statement says: a root survives when no citer with
+    kind='attestation' points at it. If the statement ever reintroduces the
+    refuted recorded_until_dt test, this fails loudly instead of quietly
+    returning every root (which is how the original defect behaved).
+    """
+    calls = []
+
+    def run(sql):
+        calls.append(sql)
+        if "to_regclass" in sql:
+            return "nebula.attestations"
+        if "nebula.roles" in sql:
+            return "t"
+        if "'verification_request'" in sql:
+            assert "recorded_until_dt" not in sql, "interval predicate restored"
+            assert "NOT EXISTS" in sql, "open-ness must be satisfaction-based"
+            rows = []
+            for rid, work_ref in roots:
+                cited = any(a_kind == "attestation" and a_cite == rid
+                            for a_kind, a_cite in citers)
+                if not cited:
+                    rows.append(f"{rid}|{work_ref}|dba|[]|2026-09-17 15:13")
+            return "\n".join(rows)
+        return ""
+
+    run.calls = calls
+    return run
+
+
+class OpennessPredicateTests(unittest.TestCase):
+    """Open-ness is satisfaction-based; both documented dispositions pinned.
+
+    The rule lives in SQL, so these tests pin the statement's shape and model
+    its semantics over fixtures. Real execution against PostgreSQL is the
+    live acceptance run recorded on the PR, not a unit test.
+    """
+
+    CITED = "11111111-1111-1111-1111-111111111111"
+    UNCITED = "22222222-2222-2222-2222-222222222222"
+
+    def test_statement_is_not_exists_over_attestation_citers(self):
+        f = fn_ok()
+        att.fetch_open_requests(f)
+        sql = f.calls[0]
+        self.assertIn("NOT EXISTS", sql)
+        self.assertIn("a.cites_id = r.attestation_id", sql)
+        self.assertIn("a.kind = 'attestation'", sql)
+        self.assertNotIn("recorded_until_dt", sql)
+
+    def test_cited_root_disappears_uncited_root_survives(self):
+        f = fn_satisfaction_db(
+            [(self.CITED, "agent-record:cited"),
+             (self.UNCITED, "agent-record:uncited")],
+            [("attestation", self.CITED)] * 4)
+        s = att.scan(f, "tester")
+        self.assertTrue(s["scanned"])
+        self.assertEqual([i["attestation_id"] for i in s["open"]], [self.UNCITED])
+        self.assertEqual(s["actionable"], 1)
+
+    def test_greenlight_citer_does_not_satisfy_a_request_root(self):
+        # Pinned disposition: ATP0005 lets greenlight cite attestations only,
+        # so a greenlight row citing a root cannot mean the root was verified.
+        # Ambiguity stays open (fail-closed).
+        f = fn_satisfaction_db([(self.CITED, "agent-record:cited")],
+                               [("greenlight", self.CITED)])
+        s = att.scan(f, "tester")
+        self.assertEqual([i["attestation_id"] for i in s["open"]], [self.CITED])
+
+    def test_nothing_clears_every_root(self):
+        f = fn_satisfaction_db([(self.CITED, "a"), (self.UNCITED, "b")], [])
+        self.assertEqual(len(att.scan(f, "tester")["open"]), 2)
+
+
+class ActionableWordingTests(unittest.TestCase):
+    def test_note_says_citing_attestation_not_recording_closes(self):
+        note = att.classify("tester", {"attestation_id": "abc"}, True)["note"]
+        self.assertIn("cleared by a citing attestation", note)
+        self.assertIn("--attest ", note)
 
 
 class RecordGateTests(unittest.TestCase):
