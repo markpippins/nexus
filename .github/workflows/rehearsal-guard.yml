@@ -27,7 +27,10 @@ on:
       - 'typescript/shrapnel/migrations/**'
       - '.github/workflows/rehearsal-guard.yml'
   pull_request:
-    branches: [ main, master, feature/* ]
+    # No base filter: a pull_request event is filtered by BASE branch, so an
+    # enumerated list silently gives zero CI to any PR stacked on a non-main
+    # base (bin/tests/test_ci_pr_base_branches.py enforces this repo-wide).
+    # The `push:` filter above stays — it costs a stacked PR nothing.
     paths:
       - 'bin/rehearse-migration.py'
       - 'bin/tests/test_rehearse_migration.py'
