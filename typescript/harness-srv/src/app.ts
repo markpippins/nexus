@@ -36,6 +36,8 @@ import {
 } from "./provider-refusal";
 import {
   attemptTimeoutMs,
+  firstTokenAllowanceMs,
+  firstTokenFloorMsFromEnv,
   remainingBudgetMs,
   runDeadlineMs,
   shouldStartAttempt,
@@ -100,6 +102,15 @@ export const PROMPT_DIR = resolve(WORK_DIR, ".harness", "prompts");
 // abandoned (exit 124 + marker) so the failover ladder can roll to the next
 // model instead of waiting out the full run timeout on a hung provider.
 const FIRST_TOKEN_TIMEOUT_MS = Number(process.env.FIRST_TOKEN_TIMEOUT_MS || 120_000);
+
+// ── Silence floor per rung ────────────────────────────────────────
+// A rung may stay silent for the full allowance above only when the run's
+// remaining budget can still leave every rung BEHIND it this floor. Without
+// the reservation a caller whose timeout_ms equals the guard (job 78aaf0d2:
+// 120000ms) hands the whole run to a primary that says nothing at all, and
+// the ladder never reaches rung two. FIRST_TOKEN_FLOOR_MS=0 restores the old
+// behaviour. See run-budget.ts.
+const FIRST_TOKEN_FLOOR_MS = firstTokenFloorMsFromEnv(process.env.FIRST_TOKEN_FLOOR_MS);
 
 // ── Rung cooldown ─────────────────────────────────────────────────
 // A rung abandoned for producing no first token is tried LAST for
@@ -845,6 +856,16 @@ app.post("/run", async (req, res) => {
           // "no first token" outcome can be attributed to the budget or to the
           // provider (see sliceAllowsFirstToken).
           const attemptSliceMs = attemptTimeoutMs(remaining);
+          // The slice above bounds the attempt's WORK; this bounds its
+          // SILENCE. Reserving the floor for each rung still to come is what
+          // stops one dead provider from consuming the whole ladder when the
+          // caller's timeout is close to the guard (see run-budget.ts).
+          const attemptAllowanceMs = firstTokenAllowanceMs(
+            remaining,
+            orderedAttempts.length - i,
+            FIRST_TOKEN_TIMEOUT_MS,
+            FIRST_TOKEN_FLOOR_MS
+          );
           let attemptExit = 1;
           let attemptStdout = "";
           let attemptStderr = "";
@@ -859,6 +880,7 @@ app.post("/run", async (req, res) => {
               model_identifier: attempt.model_identifier,
               // Only what is left of the RUN's budget, never a fresh copy.
               timeout_ms: attemptSliceMs,
+              first_token_ms: attemptAllowanceMs,
               // Liveness for the runaway watchdog — same as the /run-direct
               // path. Without this, sessions registered here keep
               // streamChunks at 0 and fall back to the record-only rule,
@@ -897,12 +919,12 @@ app.post("/run", async (req, res) => {
             // shorter slice the guard fires first by construction, so blaming
             // the rung would also cost it its priority slot for
             // RUNG_COOLDOWN_MS — the run's own budget, punished twice.
-            if (sliceAllowsFirstToken(attemptSliceMs, FIRST_TOKEN_TIMEOUT_MS)) {
+            if (sliceAllowsFirstToken(attemptAllowanceMs, FIRST_TOKEN_TIMEOUT_MS)) {
               noteStall(rungStalls, attempt.model, Date.now());
             } else {
               await log(
                 "info",
-                `run job=${jobId} role=${resolved.role} ${attempt.source} ${attempt.model ?? "(unset)"} produced no first token in ${attemptSliceMs}ms — below the ${FIRST_TOKEN_TIMEOUT_MS}ms allowance, not marked stalled`
+                `run job=${jobId} role=${resolved.role} ${attempt.source} ${attempt.model ?? "(unset)"} produced no first token in ${attemptAllowanceMs}ms — below the ${FIRST_TOKEN_TIMEOUT_MS}ms guard because the ${remaining}ms budget is shared with ${orderedAttempts.length - i} rung(s), not marked stalled`
               );
             }
           }
@@ -1426,6 +1448,15 @@ app.post("/run-direct", async (req, res) => {
           // Only what is left of the RUN's budget, never a fresh copy.
           const attemptSliceMs = attemptTimeoutMs(remaining);
           execParams.timeout_ms = attemptSliceMs;
+          // Bound this rung's SILENCE, so the rungs behind it keep their
+          // floor even when the primary produces nothing at all.
+          const attemptAllowanceMs = firstTokenAllowanceMs(
+            remaining,
+            orderedAttempts.length - attemptLog.length,
+            FIRST_TOKEN_TIMEOUT_MS,
+            FIRST_TOKEN_FLOOR_MS
+          );
+          execParams.first_token_ms = attemptAllowanceMs;
 
           let attemptExit = 1;
           let attemptStdout = "";
@@ -1464,12 +1495,12 @@ app.post("/run-direct", async (req, res) => {
           if (abandonedForNoFirstToken) {
             // See /run: a slice below the allowance makes "no first token"
             // inevitable, so it says nothing about the provider.
-            if (sliceAllowsFirstToken(attemptSliceMs, FIRST_TOKEN_TIMEOUT_MS)) {
+            if (sliceAllowsFirstToken(attemptAllowanceMs, FIRST_TOKEN_TIMEOUT_MS)) {
               noteStall(rungStalls, attempt.model, Date.now());
             } else {
               await log(
                 "info",
-                `run-direct job=${jobId} role=${role} ${attempt.source} ${attempt.model} produced no first token in ${attemptSliceMs}ms — below the ${FIRST_TOKEN_TIMEOUT_MS}ms allowance, not marked stalled`
+                `run-direct job=${jobId} role=${role} ${attempt.source} ${attempt.model} produced no first token in ${attemptAllowanceMs}ms — below the ${FIRST_TOKEN_TIMEOUT_MS}ms guard because the ${remaining}ms budget is shared with ${orderedAttempts.length - attemptLog.length} rung(s), not marked stalled`
               );
             }
           }
@@ -1804,6 +1835,13 @@ interface HarnessExecParams {
   model?: string; // opencode --model value (from tackle config_bundle)
   model_identifier?: string; // bare model_identifier (for binary=ollama)
   timeout_ms: number;
+  /** How long THIS attempt may stay silent before it is abandoned.
+   *
+   *  Defaults to min(timeout_ms, FIRST_TOKEN_TIMEOUT_MS). The ladder passes a
+   *  smaller value when the run's remaining budget has to be shared with the
+   *  rungs behind this one (see firstTokenAllowanceMs) — a silent rung must
+   *  not be able to spend the whole ladder. */
+  first_token_ms?: number;
   /** P1 item 6 — translate the executor's stream once, at the boundary,
    *  into typed envelopes ("text" → text.delta, "reasoning" → thinking).
    *  Called for every parsed stream event as it arrives. */
@@ -1970,7 +2008,15 @@ async function executeOpencode(
   params: HarnessExecParams,
   promptContent: string
 ): Promise<HarnessExecResult> {
-  const { prompt_file, work_dir, agent, role, model, timeout_ms, onEvent, onActivity } = params;
+  const { prompt_file, work_dir, agent, role, model, timeout_ms, first_token_ms, onEvent, onActivity } = params;
+  // The silence allowance for this attempt: the ladder's number when it sent
+  // one, otherwise the guard clamped to this attempt's own timeout.
+  const firstTokenGuardMs = Math.min(
+    timeout_ms,
+    Number.isFinite(first_token_ms) && (first_token_ms as number) > 0
+      ? (first_token_ms as number)
+      : FIRST_TOKEN_TIMEOUT_MS
+  );
   const opencodeBin = process.env.OPENCODE_BIN || "opencode";
   // Extract jobId from prompt filename (${jobId}.md) for watchdog PID tracking
   const jobId = prompt_file.split("/").pop()?.replace(".md", "") || "";
@@ -2110,7 +2156,7 @@ async function executeOpencode(
     // is ever armed (CodeQL js/resource-exhaustion remediation, alerts
     // #753/#754/#758 family — same deadline pattern as the runaway watchdog).
     const deadline = Date.now() + timeout_ms;
-    const firstTokenDeadline = Date.now() + Math.min(timeout_ms, FIRST_TOKEN_TIMEOUT_MS);
+    const firstTokenDeadline = Date.now() + firstTokenGuardMs;
     const timer = setInterval(() => {
       if (Date.now() < deadline) return;
       timedOut = true;
@@ -2167,7 +2213,7 @@ async function executeOpencode(
         stderrOut = refusalAbandonMessage(refusal, Date.now());
       } else if (noFirstToken) {
         exitCode = 124;
-        stderrOut = `opencode produced no first token within ${Math.min(timeout_ms, FIRST_TOKEN_TIMEOUT_MS)}ms — abandoning`;
+        stderrOut = `opencode produced no first token within ${firstTokenGuardMs}ms — abandoning`;
       } else if (timedOut) {
         // A signal-killed child reports code=null, which otherwise surfaces
         // as a misleading '(no stderr; exit 1)'. Mirror the ollama path's

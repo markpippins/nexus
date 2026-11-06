@@ -89,3 +89,71 @@ export function attemptTimeoutMs(remainingMs: number): number {
 export function sliceAllowsFirstToken(sliceMs: number, firstTokenMs: number): boolean {
   return sliceMs >= firstTokenMs;
 }
+
+/**
+ * Default floor for one attempt's silence allowance — the least time a rung is
+ * given to produce a first token when the run budget is too small to grant it
+ * the full guard.
+ *
+ * Deliberately far below FIRST_TOKEN_TIMEOUT_MS: the point of the floor is
+ * that no single rung may spend the run's entire budget in silence. 30s is
+ * roughly 3x the observed first-token latency of the catalog models (8-10s,
+ * see rung-cooldown.ts) and still short enough that a dead provider is cheap.
+ */
+export const DEFAULT_FIRST_TOKEN_FLOOR_MS = 30_000;
+
+/**
+ * The silence floor from the environment.
+ *
+ * `0` restores the pre-2026-11-06 behaviour (one attempt may consume the whole
+ * run budget in silence) and is the supported escape hatch. Absent, blank, or
+ * unparseable values use the default; a negative value is 0 rather than a
+ * silent revert to the default.
+ */
+export function firstTokenFloorMsFromEnv(value: string | undefined): number {
+  if (value === undefined || value.trim() === "") return DEFAULT_FIRST_TOKEN_FLOOR_MS;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_FIRST_TOKEN_FLOOR_MS;
+  return Math.max(0, Math.floor(parsed));
+}
+
+/**
+ * How long ONE attempt may stay silent before the harness abandons it.
+ *
+ * The defect (job 78aaf0d2, 2026-11-06): `executeOpencode` arms its
+ * first-token guard at `min(timeout_ms, FIRST_TOKEN_TIMEOUT_MS)`. That tester
+ * job was posted with `timeout_ms = 120_000` — exactly the guard — so the
+ * primary's silence consumed the WHOLE run budget. The ladder then logged
+ * "run budget of 120000ms exhausted (0ms left) — not starting fallback" and
+ * the run ended `timed_out` after 1 of 6 rungs, for a provider that had
+ * produced nothing at all (verified independently: 0 bytes on stdout, 0 on
+ * stderr). A refusal is not the only way a provider can fail without saying
+ * anything; this is the silent case that provider-refusal.ts cannot read.
+ *
+ * The rule: a rung may have the full guard only when the remaining budget can
+ * still leave every rung BEHIND it the floor allowance. Otherwise its
+ * allowance is what remains after that reservation, never less than the
+ * floor. The attempt's SLICE is unaffected — once a token arrives it keeps the
+ * rest of the run's budget for actual work — so this bounds silence, not work.
+ *
+ * `floorMs = 0` disables the reservation and reproduces the old behaviour.
+ */
+export function firstTokenAllowanceMs(
+  remainingMs: number,
+  rungsLeft: number,
+  guardMs: number,
+  floorMs: number = DEFAULT_FIRST_TOKEN_FLOOR_MS,
+): number {
+  const left = Number.isFinite(remainingMs) ? Math.max(0, Math.floor(remainingMs)) : 0;
+  const rungs = Number.isFinite(rungsLeft) ? Math.max(1, Math.floor(rungsLeft)) : 1;
+  const guard = Number.isFinite(guardMs) ? Math.max(0, Math.floor(guardMs)) : 0;
+  const floor = Number.isFinite(floorMs)
+    ? Math.max(0, Math.floor(floorMs))
+    : DEFAULT_FIRST_TOKEN_FLOOR_MS;
+
+  const reserve = floor * (rungs - 1);
+  // Never above the guard, never below the floor, and never past the budget we
+  // actually have: an allowance longer than the remaining time would outlive
+  // the run it belongs to.
+  return Math.min(left, Math.min(guard, Math.max(floor, left - reserve)));
+}
