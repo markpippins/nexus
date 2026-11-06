@@ -1,0 +1,1472 @@
+{
+  "consumers": [
+    {
+      "evidence": "single adapter used by every stage; direct file writes are the fence target",
+      "id": "C-MAN-01",
+      "identity_use": "candidate_set_identity(); save_manifest(); load_manifests(); open_batch_covering_set(); mark_superseded()",
+      "mode": "writer+reader",
+      "name": "Promotion-flow shared adapter",
+      "notes": "F1 boundary itself. Must gain atomic replace + a writer lease.",
+      "package": "W-C1",
+      "path": "python/promotion-flow/promotion_common.py",
+      "runtime": "live",
+      "surface": "manifest"
+    },
+    {
+      "evidence": "promotion-shortlist.timer is disabled; /tmp/promotion-shortlist.log is empty",
+      "id": "C-MAN-02",
+      "identity_use": "emits a batch only when open_batch_covering_set() finds no open twin",
+      "mode": "writer+reader",
+      "name": "Stage 1 shortlist",
+      "notes": "Dormant writer \u2014 a restart re-introduces a second emitter unless F1 lands first.",
+      "package": "W-C1",
+      "path": "python/promotion-flow/stage1_shortlist.py",
+      "runtime": "dormant",
+      "surface": "manifest"
+    },
+    {
+      "also_touches": [
+        "W-C2",
+        "W-C7"
+      ],
+      "evidence": "promotion-execute.timer last ran 2026-10-26T20:45:55Z, exit 0",
+      "id": "C-MAN-03",
+      "identity_use": "loads manifests, stamps executed flags and per-candidate promoted state",
+      "mode": "writer+reader",
+      "name": "Stage 3 gated executor",
+      "notes": "Primary live manifest writer; also crosses W-C2 (status/requirement).",
+      "package": "W-C1",
+      "path": "python/promotion-flow/stage3_execute.py",
+      "runtime": "live",
+      "surface": "manifest"
+    },
+    {
+      "evidence": "141 of 190 manifests carry superseded_by",
+      "id": "C-MAN-04",
+      "identity_use": "groups by candidate_set_identity and appends supersession markers",
+      "mode": "writer",
+      "name": "Duplicate reconciliation (ST.02)",
+      "notes": "Append-only marker writer; must remain the only supersession writer.",
+      "package": "W-C1",
+      "path": "python/promotion-flow/reconcile_duplicates.py",
+      "runtime": "manual",
+      "surface": "manifest"
+    },
+    {
+      "evidence": "190/190 manifests carry identity_pin",
+      "id": "C-MAN-05",
+      "identity_use": "appends contract/evaluator/law identity_pin to every manifest",
+      "mode": "writer",
+      "name": "Promotion identity pin (W6.04)",
+      "notes": "Append-only pin writer; a second pin implementation would fork identity.",
+      "package": "W-C1",
+      "path": "python/promotion-flow/pin_promotion_identity.py",
+      "runtime": "manual",
+      "surface": "manifest"
+    },
+    {
+      "evidence": "card short id = candidate id[:8] (CARD_SPEC.md)",
+      "id": "C-MAN-06",
+      "identity_use": "renders cards by 8-char candidate id and saves the manifest",
+      "mode": "writer",
+      "name": "Card re-emit",
+      "notes": "Short id is display-only; the fence forbids promoting on a short id.",
+      "package": "W-C1",
+      "path": "python/promotion-flow/reemit_cards.py",
+      "runtime": "manual",
+      "surface": "manifest"
+    },
+    {
+      "evidence": "W-A census: 190 manifests, 0 undecodable",
+      "id": "C-MAN-07",
+      "identity_use": "reads batch-*.json and groups by candidate_set_identity",
+      "mode": "reader",
+      "name": "W-A inventory collector",
+      "notes": "Read-only; must keep reading pre-fence and post-fence shapes.",
+      "package": "W-C1",
+      "path": "python/nebula/collect.py",
+      "runtime": "manual",
+      "surface": "manifest"
+    },
+    {
+      "evidence": "W-A1: 10 duplicate sets / 151 members",
+      "id": "C-MAN-08",
+      "identity_use": "manifest_sets() over the candidate-set identity",
+      "mode": "reader",
+      "name": "W-A duplicate-history detector",
+      "notes": "Read-only; the W-A ledger consumes the same identity.",
+      "package": "W-C1",
+      "path": "python/nebula/duplicate_history.py",
+      "runtime": "manual",
+      "surface": "manifest"
+    },
+    {
+      "evidence": "all 190 carry identity_pin; 141 superseded; 1 executed; 21 promoted flags",
+      "id": "C-MAN-09",
+      "identity_use": "190 files / 3,800 candidate entries / 788 distinct candidates",
+      "mode": "data",
+      "name": "Manifest sediment",
+      "notes": "Preserved append-only; never deleted or rewritten by W-C.",
+      "package": "W-C1",
+      "path": "state/promotion-flow/batch-*.json",
+      "runtime": "live",
+      "surface": "manifest"
+    },
+    {
+      "evidence": "two requests, not one transaction; status PATCH bypasses set_candidate_status",
+      "id": "C-CAN-01",
+      "identity_use": "POST spawn-requirement then PATCH status='promoted'",
+      "mode": "writer",
+      "name": "Stage 3 promote()",
+      "notes": "Atomicity defect WCF-02.",
+      "package": "W-C2",
+      "path": "python/promotion-flow/stage3_execute.py::promote",
+      "runtime": "live",
+      "surface": "candidate_row"
+    },
+    {
+      "evidence": "promotion-map.timer enabled, daily 04:45",
+      "id": "C-CAN-02",
+      "identity_use": "PATCHes system_id/subsystem_id above the 0.80 confidence bar",
+      "mode": "writer",
+      "name": "Stage 0 hierarchy mapper",
+      "notes": "Mapping is part of the identity frame (Gap C); must not change candidate id.",
+      "package": "W-C2",
+      "path": "python/promotion-flow/stage0_map.py",
+      "runtime": "live",
+      "surface": "candidate_row"
+    },
+    {
+      "also_touches": [
+        "W-C7"
+      ],
+      "evidence": "31 rows total, 21 with candidate_id; 0 duplicate candidate links",
+      "id": "C-CAN-03",
+      "identity_use": "links hierarchy and INSERTs requirements.candidate_id in one transaction",
+      "mode": "writer",
+      "name": "Nebula spawn-requirement route",
+      "notes": "Does not transition candidate status \u2014 the split behind WCF-02.",
+      "package": "W-C2",
+      "path": "typescript/nebula-srv/src/routes.ts (POST /api/harvest-candidates/:id/spawn-requirement)",
+      "runtime": "live",
+      "surface": "candidate_row"
+    },
+    {
+      "evidence": "used by stage3 and MCP update tool",
+      "id": "C-CAN-04",
+      "identity_use": "direct UPDATE of status, hierarchy, work_request_id and placement fields",
+      "mode": "writer",
+      "name": "Nebula candidate PATCH route",
+      "notes": "Bypasses nebula.set_candidate_status \u2014 WCF-01.",
+      "package": "W-C2",
+      "path": "typescript/nebula-srv/src/routes.ts (PATCH /api/harvest-candidates/:id)",
+      "runtime": "live",
+      "surface": "candidate_row"
+    },
+    {
+      "evidence": "the only route using the validated transition function",
+      "id": "C-CAN-05",
+      "identity_use": "calls nebula.set_candidate_status(id, status)",
+      "mode": "writer",
+      "name": "Nebula promote route",
+      "notes": "Canonical target for F2; accepts useful|rejected|promoted.",
+      "package": "W-C2",
+      "path": "typescript/nebula-srv/src/routes.ts (POST /api/harvest-candidates/:id/promote)",
+      "runtime": "live",
+      "surface": "candidate_row"
+    },
+    {
+      "evidence": "MCP tools proxy the REST routes above",
+      "id": "C-CAN-06",
+      "identity_use": "nebula_update_harvest_candidate, nebula_spawn_requirement_from_candidate",
+      "mode": "writer",
+      "name": "Nebula MCP candidate tools",
+      "notes": "Must not expose the bypassing PATCH path once F2 lands.",
+      "package": "W-C2",
+      "path": "typescript/nebula-mcp/src/tools/index.ts + api/nebulaClient.ts",
+      "runtime": "live",
+      "surface": "candidate_row"
+    },
+    {
+      "evidence": "no control-edge listener at census time",
+      "id": "C-CAN-07",
+      "identity_use": "promoteCandidate (procedure), cpfPromote (direct UPDATE), updateHarvestCandidate",
+      "mode": "writer",
+      "name": "Control-edge candidate writers",
+      "notes": "Deployable bypass \u2014 must be tombstoned or pass F2 before restart.",
+      "package": "W-C2",
+      "path": "adonisjs/nexus-control-edge/app/controllers/nebula_harvest_controller.ts + nebula_meta_controller.ts",
+      "runtime": "dormant",
+      "surface": "candidate_row"
+    },
+    {
+      "evidence": "moleculer nebula is not listening",
+      "id": "C-CAN-08",
+      "identity_use": "duplicate PATCH/promote/spawn-requirement implementation",
+      "mode": "writer",
+      "name": "Moleculer nebula candidate writers",
+      "notes": "Alternate runtime with a full competing write surface (WCF-09).",
+      "package": "W-C2",
+      "path": "moleculer/nebula/src/routes.ts",
+      "runtime": "dormant",
+      "surface": "candidate_row"
+    },
+    {
+      "evidence": "bypasses the transition function entirely",
+      "id": "C-CAN-09",
+      "identity_use": "direct SQL UPDATE status='promoted' (no procedure)",
+      "mode": "writer",
+      "name": "Tackle candidate promoter",
+      "notes": "WCF-01; also emits candidate.promoted cascade.",
+      "package": "W-C2",
+      "path": "python/tackle/candidate_promote.py",
+      "runtime": "manual",
+      "surface": "candidate_row"
+    },
+    {
+      "evidence": "bypasses the transition function entirely",
+      "id": "C-CAN-10",
+      "identity_use": "direct SQL UPDATE status='promoted' during greenlight",
+      "mode": "writer",
+      "name": "Tackle planner greenlight",
+      "notes": "WCF-01.",
+      "package": "W-C2",
+      "path": "python/tackle/planner.py",
+      "runtime": "manual",
+      "surface": "candidate_row"
+    },
+    {
+      "evidence": "present in the live DB and sql/ci-bootstrap/nexus-ci-bootstrap.sql; no versioned V-migration",
+      "id": "C-CAN-11",
+      "identity_use": "validates pending -> linked|useful|rejected, linked -> useful|rejected, useful -> promoted|rejected",
+      "mode": "writer",
+      "name": "Candidate status transition function",
+      "notes": "Canonical target for F2; WCF-11 (function is unversioned).",
+      "package": "W-C2",
+      "path": "nebula.set_candidate_status(uuid, text)",
+      "runtime": "live",
+      "surface": "candidate_row"
+    },
+    {
+      "evidence": "7,456 candidate assets; 3,372 orphans; 3,370 without canonical_key",
+      "id": "C-AST-01",
+      "identity_use": "mints asset:nexus:nebula_harvest_candidates:<id> + rev:1 and sets asset_id",
+      "mode": "writer",
+      "name": "Candidate asset backfill",
+      "notes": "INSERT ... DO NOTHING mint policy; must become the single mint path or delegate to it.",
+      "package": "W-C3",
+      "path": "bin/candidate-asset-backfill.py",
+      "runtime": "manual",
+      "surface": "asset"
+    },
+    {
+      "evidence": "7,492 agent_record:report assets active",
+      "id": "C-AST-02",
+      "identity_use": "mints agent_record:<kind> assets with their own namespace",
+      "mode": "writer",
+      "name": "Agent-record asset backfill",
+      "notes": "Same table, different namespace; the mint function must be namespace-safe.",
+      "package": "W-C3",
+      "path": "bin/canonical-asset-backfill-agent-records.py",
+      "runtime": "manual",
+      "surface": "asset"
+    },
+    {
+      "evidence": "in-place canonical_key mutation contradicts the revision model",
+      "id": "C-AST-03",
+      "identity_use": "ON CONFLICT DO UPDATE SET canonical_key = EXCLUDED.canonical_key",
+      "mode": "writer",
+      "name": "Voyager adapter mint",
+      "notes": "WCF-06; highest-risk second mint path.",
+      "package": "W-C3",
+      "path": "python/voyager-adapter/db.py",
+      "runtime": "offline",
+      "surface": "asset"
+    },
+    {
+      "evidence": "second in-place upsert implementation",
+      "id": "C-AST-04",
+      "identity_use": "upsert_canonical_asset DO UPDATE key/hashes + validity_start=now()",
+      "mode": "writer",
+      "name": "Voyager semantics adapter mint",
+      "notes": "WCF-06.",
+      "package": "W-C3",
+      "path": "python/voyager/src/voyager_semantics_adapter.py",
+      "runtime": "offline",
+      "surface": "asset"
+    },
+    {
+      "evidence": "7,118 knowledge_entity assets, 2,380 active",
+      "id": "C-AST-05",
+      "identity_use": "mints/updates knowledge_entity assets",
+      "mode": "writer",
+      "name": "Knowledge-graph asset backfill",
+      "notes": "Same table; must share the mint function and expiry discipline.",
+      "package": "W-C3",
+      "path": "bin/import-knowledge-graph.sh + sql/V083__graph_entities_asset_id_backfill.sql",
+      "runtime": "manual",
+      "surface": "asset"
+    },
+    {
+      "evidence": "listener :3160",
+      "id": "C-AST-06",
+      "identity_use": "generic create/append-only replace/expire on canonical_asset",
+      "mode": "writer+reader",
+      "name": "Semantics-srv canonical-asset CRUD",
+      "notes": "Exposes generic writes; F3 must constrain the table allow-list and key shape.",
+      "package": "W-C3",
+      "path": "typescript/semantics-srv/src/routes/semantics.ts",
+      "runtime": "live",
+      "surface": "asset"
+    },
+    {
+      "evidence": "not listening at census time",
+      "id": "C-AST-07",
+      "identity_use": "same canonical-asset CRUD surfaces as semantics-srv",
+      "mode": "writer+reader",
+      "name": "Moleculer semantics CRUD",
+      "notes": "Alternate runtime bypass.",
+      "package": "W-C3",
+      "path": "moleculer/semantics/services/*.ts",
+      "runtime": "dormant",
+      "surface": "asset"
+    },
+    {
+      "evidence": "relations point at canonical asset ids",
+      "id": "C-AST-08",
+      "identity_use": "reads canonical_asset and writes asset_relation external ids",
+      "mode": "writer",
+      "name": "System external-id backfill",
+      "notes": "Must not create assets; relation-only writer.",
+      "package": "W-C3",
+      "path": "bin/populate_system_external_ids.sql",
+      "runtime": "manual",
+      "surface": "asset"
+    },
+    {
+      "evidence": "only pguser holds DML grants",
+      "id": "C-AST-09",
+      "identity_use": "47,987 total / 43,091 active; 7,456 candidate assets",
+      "mode": "data",
+      "name": "Canonical asset table",
+      "notes": "WCF-03 (no app roles), WCF-04 (orphans/keys).",
+      "package": "W-C3",
+      "path": "semantics.canonical_asset",
+      "runtime": "live",
+      "surface": "asset"
+    },
+    {
+      "evidence": "candidate backfill writes <asset_key>:rev:1",
+      "id": "C-AST-10",
+      "identity_use": "revision_id / content_hash / source_hash lineage per asset",
+      "mode": "data",
+      "name": "Asset revision table",
+      "notes": "F3 requires append-only revisions, never an in-place key update.",
+      "package": "W-C3",
+      "path": "semantics.asset_revision",
+      "runtime": "live",
+      "surface": "asset"
+    },
+    {
+      "evidence": "13 rows, 0 with canonical_key (W-A3 unidentified)",
+      "id": "C-RES-01",
+      "identity_use": "reads resolution.canonical_asset.canonical_key",
+      "mode": "reader",
+      "name": "W-A canonical-asset collector",
+      "notes": "Read-only; blocked on W-A3 for any mirror promotion.",
+      "package": "W-C4",
+      "path": "python/nebula/collect.py::collect_canonical_assets",
+      "runtime": "manual",
+      "surface": "resolution"
+    },
+    {
+      "evidence": "W-A3: 1 set / 13 members",
+      "id": "C-RES-02",
+      "identity_use": "groups resolution.canonical_asset by canonical_key",
+      "mode": "reader",
+      "name": "W-A canonical-asset detector",
+      "notes": "Read-only.",
+      "package": "W-C4",
+      "path": "python/nebula/duplicate_history.py::canonical_asset_sets",
+      "runtime": "manual",
+      "surface": "resolution"
+    },
+    {
+      "evidence": "mirror key tail must equal the canonical PK",
+      "id": "C-RES-03",
+      "identity_use": "S3/S4 crosswalk: asset:nexus:vision_work_requests:<id>",
+      "mode": "reader",
+      "name": "WR repoint verifier",
+      "notes": "Read-only verifier; the only executable crosswalk proof today.",
+      "package": "W-C4",
+      "path": "bin/wr-repoint-verify.py",
+      "runtime": "manual",
+      "surface": "resolution"
+    },
+    {
+      "evidence": "FK writer couples invocation history to the mirror",
+      "id": "C-RES-04",
+      "identity_use": "sol_script.invoke_log.entity_id REFERENCES resolution.canonical_asset(id)",
+      "mode": "writer",
+      "name": "Aegis invoke-log FK",
+      "notes": "Mirror retirement cannot drop rows without addressing this FK.",
+      "package": "W-C4",
+      "path": "python/aegis/invocations.sql",
+      "runtime": "manual",
+      "surface": "resolution"
+    },
+    {
+      "evidence": "resolution.promotion_batch 0 rows; zero live consumers",
+      "id": "C-RES-05",
+      "identity_use": "candidate_set_key(), eligibility_hash(), claim_open_batch()",
+      "mode": "writer",
+      "name": "ST.01 batch identity functions",
+      "notes": "Inert-until-used; F4 keeps it the only batch-identity writer.",
+      "package": "W-C4",
+      "path": "sql/V198__st01_promotion_batch_candidate_set_keys.sql",
+      "runtime": "future",
+      "surface": "resolution"
+    },
+    {
+      "evidence": "W-A3 unidentified set",
+      "id": "C-RES-06",
+      "identity_use": "13 rows, all canonical_key NULL",
+      "mode": "data",
+      "name": "Resolution canonical-asset mirror",
+      "notes": "Not authoritative until W-A3 dispositions land.",
+      "package": "W-C4",
+      "path": "resolution.canonical_asset",
+      "runtime": "live",
+      "surface": "resolution"
+    },
+    {
+      "evidence": "listener :3101; four join sites",
+      "id": "C-RD-01",
+      "identity_use": "JOIN semantics.canonical_asset ON ca.id = ar.to_asset_id AND ca.expired_at IS NULL",
+      "mode": "reader",
+      "name": "Nebula-srv asset joins",
+      "notes": "Must pin canonical_asset_id, not the mutable uuid, in projections.",
+      "package": "W-C5",
+      "path": "typescript/nebula-srv/src/routes.ts",
+      "runtime": "live",
+      "surface": "read_model"
+    },
+    {
+      "evidence": "not listening",
+      "id": "C-RD-02",
+      "identity_use": "duplicate of the nebula-srv joins",
+      "mode": "reader",
+      "name": "Moleculer nebula asset joins",
+      "notes": "Alternate read surface; must be repointed or tombstoned.",
+      "package": "W-C5",
+      "path": "moleculer/nebula/src/routes.ts",
+      "runtime": "dormant",
+      "surface": "read_model"
+    },
+    {
+      "evidence": "listener :3160",
+      "id": "C-RD-03",
+      "identity_use": "asset envelope, identity claims, relations, revisions, external ids",
+      "mode": "reader",
+      "name": "Semantics-srv read routes",
+      "notes": "Returns both uuid and canonicalAssetId; callers must prefer the latter.",
+      "package": "W-C5",
+      "path": "typescript/semantics-srv/src/routes/semantics.ts",
+      "runtime": "live",
+      "surface": "read_model"
+    },
+    {
+      "evidence": "not listening",
+      "id": "C-RD-04",
+      "identity_use": "same asset envelopes",
+      "mode": "reader",
+      "name": "Moleculer semantics read handlers",
+      "notes": "Alternate read surface.",
+      "package": "W-C5",
+      "path": "moleculer/semantics/services/handlers.ts",
+      "runtime": "dormant",
+      "surface": "read_model"
+    },
+    {
+      "evidence": "no listener at census time",
+      "id": "C-RD-05",
+      "identity_use": "control-plane asset/meta projections",
+      "mode": "reader",
+      "name": "Control-edge semantics/meta controllers",
+      "notes": "Must not be restarted on legacy read paths.",
+      "package": "W-C5",
+      "path": "adonisjs/nexus-control-edge/app/controllers/semantics_controller.ts + nebula_meta_controller.ts",
+      "runtime": "dormant",
+      "surface": "read_model"
+    },
+    {
+      "evidence": "nebula-mcp-sse :3102 is live",
+      "id": "C-RD-06",
+      "identity_use": "harvest candidate / requirement / system reads",
+      "mode": "reader",
+      "name": "Nebula MCP read tools",
+      "notes": "Contract tests must resolve the same candidate->requirement identity.",
+      "package": "W-C5",
+      "path": "typescript/nebula-mcp/src/tools/index.ts",
+      "runtime": "live",
+      "surface": "read_model"
+    },
+    {
+      "evidence": "conduit-mcp :3100 is live",
+      "id": "C-RD-07",
+      "identity_use": "reads evidence links keyed by nebula_candidate_id",
+      "mode": "reader",
+      "name": "Conduit steward recall",
+      "notes": "Candidate id is the join key; a repoint must preserve it.",
+      "package": "W-C5",
+      "path": "typescript/conduit-mcp/src/steward-recall.ts",
+      "runtime": "live",
+      "surface": "read_model"
+    },
+    {
+      "evidence": "no promotion UI listener checked; cards are read-only",
+      "id": "C-RD-08",
+      "identity_use": "renders manifest cards and candidate status",
+      "mode": "reader",
+      "name": "Vision / duality UI promotion cards",
+      "notes": "Display-only short ids must never be used as write keys.",
+      "package": "W-C5",
+      "path": "angular/vision-ui + angular/duality-ui",
+      "runtime": "dormant",
+      "surface": "read_model"
+    },
+    {
+      "evidence": "4,396 candidate state records",
+      "id": "C-OFF-01",
+      "identity_use": "reads canonical_asset by candidate asset key and writes shrapnel asset_id members",
+      "mode": "writer+reader",
+      "name": "Candidate state record seeder",
+      "notes": "Writes only state records; must not mint assets.",
+      "package": "W-C6",
+      "path": "bin/seed-candidate-state-records.py",
+      "runtime": "manual",
+      "surface": "read_model"
+    },
+    {
+      "evidence": "read-only reconciliation query",
+      "id": "C-OFF-02",
+      "identity_use": "JOIN semantics.canonical_asset for service asset identity",
+      "mode": "reader",
+      "name": "Mesh reconcile",
+      "notes": "Non-promotion but shares the asset table.",
+      "package": "W-C6",
+      "path": "bin/mesh-reconcile.py",
+      "runtime": "manual",
+      "surface": "read_model"
+    },
+    {
+      "evidence": "asset_kind filter for transcripts",
+      "id": "C-OFF-03",
+      "identity_use": "joins source_observation -> asset_revision -> canonical_asset",
+      "mode": "reader",
+      "name": "Epistemologist observation reader",
+      "notes": "Shared-surface regression target for F3.",
+      "package": "W-C6",
+      "path": "python/epistemologist/db.py",
+      "runtime": "offline",
+      "surface": "read_model"
+    },
+    {
+      "evidence": "read-only",
+      "id": "C-OFF-04",
+      "identity_use": "same observation join, asset_kind='transcript'",
+      "mode": "reader",
+      "name": "Auditor observation reader",
+      "notes": "Shared-surface regression target.",
+      "package": "W-C6",
+      "path": "python/auditor/db.py",
+      "runtime": "offline",
+      "surface": "read_model"
+    },
+    {
+      "evidence": "read-only",
+      "id": "C-OFF-05",
+      "identity_use": "joins source_observation -> asset_revision -> canonical_asset",
+      "mode": "reader",
+      "name": "Semantic-layer embedder",
+      "notes": "Shared-surface regression target.",
+      "package": "W-C6",
+      "path": "bin/embed_semantic_layers.py",
+      "runtime": "manual",
+      "surface": "read_model"
+    },
+    {
+      "evidence": "imported by stage3",
+      "id": "C-OFF-06",
+      "identity_use": "reads candidate status, CPF and open planner questions",
+      "mode": "reader",
+      "name": "Promotion readiness gate",
+      "notes": "Must consume the same canonical status vocabulary after W-C2.",
+      "package": "W-C6",
+      "path": "python/promotion-flow/promotion_gate.py",
+      "runtime": "live",
+      "surface": "read_model"
+    },
+    {
+      "evidence": "753 embedding rows; no candidate_id column",
+      "id": "C-OFF-07",
+      "identity_use": "writes harvest_candidate_embeddings keyed by harvest_id + candidate_index",
+      "mode": "writer+reader",
+      "name": "Candidate embedding batch",
+      "notes": "WCF-10: embedding key is not a candidate id.",
+      "package": "W-C6",
+      "path": "bin/batch_embed_and_match.py",
+      "runtime": "manual",
+      "surface": "read_model"
+    },
+    {
+      "evidence": "exposed through knowledge-mcp",
+      "id": "C-OFF-08",
+      "identity_use": "reads harvest_candidate_embeddings as the harvested layer",
+      "mode": "reader",
+      "name": "Unified semantic search",
+      "notes": "Must keep results traceable to candidate id, not just title.",
+      "package": "W-C6",
+      "path": "bin/unified_semantic_search.py",
+      "runtime": "live",
+      "surface": "read_model"
+    },
+    {
+      "evidence": "read-only",
+      "id": "C-OFF-09",
+      "identity_use": "reads candidate embeddings",
+      "mode": "reader",
+      "name": "Cross-schema classifier",
+      "notes": "Non-promotion analytical reader.",
+      "package": "W-C6",
+      "path": "bin/cross_schema_classifier.py",
+      "runtime": "offline",
+      "surface": "read_model"
+    },
+    {
+      "evidence": "read-only",
+      "id": "C-OFF-10",
+      "identity_use": "joins harvest_candidate_embeddings",
+      "mode": "reader",
+      "name": "Cross-schema rematcher",
+      "notes": "Non-promotion analytical reader.",
+      "package": "W-C6",
+      "path": "bin/batch_rematch_cross_schema.py",
+      "runtime": "offline",
+      "surface": "read_model"
+    },
+    {
+      "evidence": "0 duplicate candidate links; 0 promoted candidates without a requirement",
+      "id": "C-DWN-01",
+      "identity_use": "21 requirements carry a candidate_id; 5 requirements are uncoupled",
+      "mode": "data",
+      "name": "Requirements candidate link",
+      "notes": "This is the surviving promotion lineage column.",
+      "package": "W-C7",
+      "path": "nebula.requirements.candidate_id",
+      "runtime": "live",
+      "surface": "downstream"
+    },
+    {
+      "evidence": "5 extra edges are legacy/duplicate lineage (WCF-12)",
+      "id": "C-DWN-02",
+      "identity_use": "26 candidate->plan edges vs 21 promoted candidates",
+      "mode": "data",
+      "name": "Candidate -> plan cross-references",
+      "notes": "The 5 extras need an explicit disposition, not deletion.",
+      "package": "W-C7",
+      "path": "nebula.cross_references (rel_type='ag:spawns_plan')",
+      "runtime": "live",
+      "surface": "downstream"
+    },
+    {
+      "evidence": "stage3 payload hard-codes planRef='0005'",
+      "id": "C-DWN-03",
+      "identity_use": "all 21 promoted-candidate requirements link to plan 0005",
+      "mode": "data",
+      "name": "Requirement -> plan lineage",
+      "notes": "WCF-07: per-candidate lineage is absent, so plan identity is generic.",
+      "package": "W-C7",
+      "path": "nebula.requirements.conduit_plan_id",
+      "runtime": "live",
+      "surface": "downstream"
+    },
+    {
+      "evidence": "plan 0005 is the promotion-flow plan",
+      "id": "C-DWN-04",
+      "identity_use": "consumes requirement lineage; no candidate id in conduit plan identity",
+      "mode": "reader",
+      "name": "Conduit plans / WorkRequests",
+      "notes": "A per-candidate WR link is the lineage target of W-C7.",
+      "package": "W-C7",
+      "path": "conduit plan pipeline",
+      "runtime": "live",
+      "surface": "downstream"
+    },
+    {
+      "evidence": "seeded by bin/seed-candidate-state-records.py",
+      "id": "C-DWN-05",
+      "identity_use": "4,396 records keyed by the canonical asset id",
+      "mode": "data",
+      "name": "Shrapnel candidate state records",
+      "notes": "Downstream identity is already the asset key, not the candidate uuid.",
+      "package": "W-C7",
+      "path": "shrapnel.object_instance (asset_id member)",
+      "runtime": "live",
+      "surface": "downstream"
+    },
+    {
+      "evidence": "no candidate_id column (WCF-10)",
+      "id": "C-DWN-06",
+      "identity_use": "753 rows keyed by harvest_id + candidate_index, not candidate_id",
+      "mode": "data",
+      "name": "Harvest candidate embeddings",
+      "notes": "Needs a candidate-id key or a documented join recipe.",
+      "package": "W-C7",
+      "path": "nebula.harvest_candidate_embeddings",
+      "runtime": "live",
+      "surface": "downstream"
+    },
+    {
+      "evidence": "assembly-srv :3107 live",
+      "id": "C-DWN-07",
+      "identity_use": "batch thread title [promotion-batch <id>] and 8-char card ids",
+      "mode": "reader",
+      "name": "Assembly promotion threads/cards",
+      "notes": "Human-facing projection; display ids are not write keys.",
+      "package": "W-C7",
+      "path": "assembly-srv forums (planning, harvest-candidates)",
+      "runtime": "live",
+      "surface": "downstream"
+    },
+    {
+      "also_touches": [
+        "W-C2"
+      ],
+      "evidence": "checks for an existing requirement before insert",
+      "id": "C-DWN-08",
+      "identity_use": "reads promoted candidates, creates requirements, updates candidate status",
+      "mode": "writer+reader",
+      "name": "Tackle requirement promoter",
+      "notes": "Competing requirement-creation path; must converge on F2 or retire.",
+      "package": "W-C7",
+      "path": "python/tackle/intent_requirement_promote.py",
+      "runtime": "manual",
+      "surface": "downstream"
+    },
+    {
+      "evidence": "enabled/active; last run 2026-10-26T20:45:55Z, exit 0",
+      "id": "C-OPS-01",
+      "identity_use": "hourly stage3 run; the only live promotion executor",
+      "mode": "scheduler",
+      "name": "Promotion executor timer",
+      "notes": "Cutover freeze window target.",
+      "package": "W-C8",
+      "path": "config/systemd/user/promotion-execute.{timer,service}",
+      "runtime": "live",
+      "surface": "manifest"
+    },
+    {
+      "evidence": "enabled/active; daily 04:45",
+      "id": "C-OPS-02",
+      "identity_use": "daily stage0 hierarchy mapping",
+      "mode": "scheduler",
+      "name": "Promotion mapper timer",
+      "notes": "Must be frozen during the W-C2 cutover.",
+      "package": "W-C8",
+      "path": "config/systemd/user/promotion-map.{timer,service}",
+      "runtime": "live",
+      "surface": "candidate_row"
+    },
+    {
+      "evidence": "disabled/inactive",
+      "id": "C-OPS-03",
+      "identity_use": "hourly stage1 batch emission",
+      "mode": "scheduler",
+      "name": "Promotion shortlist timer",
+      "notes": "Explicitly disabled; must stay disabled until F1 lands.",
+      "package": "W-C8",
+      "path": "config/systemd/user/promotion-shortlist.{timer,service}",
+      "runtime": "dormant",
+      "surface": "manifest"
+    },
+    {
+      "evidence": "no process; shares the same state-dir convention",
+      "id": "C-OPS-04",
+      "identity_use": "full second copy of promotion-flow on branch main",
+      "mode": "writer+reader",
+      "name": "Nexus-janitor clone",
+      "notes": "A restart from this tree would be an uncontrolled writer (WCF-09).",
+      "package": "W-C8",
+      "path": "/home/codex/dev/nexus-janitor",
+      "runtime": "dormant",
+      "surface": "manifest"
+    },
+    {
+      "evidence": "pguser holds INSERT/UPDATE/DELETE/TRUNCATE on every target table",
+      "id": "C-OPS-05",
+      "identity_use": "direct DML as pguser",
+      "mode": "writer",
+      "name": "Out-of-band psql / DBA scripts",
+      "notes": "WCF-03: zero direct writers is unprovable until app roles exist.",
+      "package": "W-C8",
+      "path": "manual SQL",
+      "runtime": "manual",
+      "surface": "candidate_row"
+    },
+    {
+      "evidence": "execute log shows hourly skip/no-op passes",
+      "id": "C-OPS-06",
+      "identity_use": "execution evidence and drain proof",
+      "mode": "reader",
+      "name": "Promotion logs",
+      "notes": "Evidence sink; not a control surface.",
+      "package": "W-C8",
+      "path": "/tmp/promotion-{map,shortlist,execute}.log",
+      "runtime": "live",
+      "surface": "manifest"
+    }
+  ],
+  "fences": {
+    "F0": {
+      "enforcement": "read-only DSN (set_session(readonly=True)); no write branch in wc_consumers.py",
+      "rule": "The inventory may SELECT and scan files; it may never INSERT, UPDATE, DELETE or rewrite a manifest.",
+      "title": "Read-only inventory fence"
+    },
+    "F1": {
+      "cutover": "freeze timers -> checksum 190 manifests -> deploy adapter -> dry-run one batch -> verify parse + additive-only diff -> unfreeze",
+      "enforcement": "atomic temp-file + os.replace; one candidate_set_identity function; grep guard forbids direct open(...,'w') in promotion-flow",
+      "rule": "Every manifest write goes through promotion_common.save_manifest(); identity, batch_id and supersession fields are append-only.",
+      "title": "Manifest single-writer adapter"
+    },
+    "F2": {
+      "cutover": "freeze schedulers -> drain in-flight -> install RPC + grants -> replay idempotency and invalid-transition fixtures -> re-enable one writer",
+      "enforcement": "SECURITY DEFINER RPC + column-level grants; alternate routes tombstoned; duplicate promote is an idempotent no-op; invalid transitions refused",
+      "rule": "Status transitions go through nebula.set_candidate_status(); requirement creation goes through one spawn-requirement transaction that also performs the transition.",
+      "title": "Candidate lifecycle single-writer RPC"
+    },
+    "F3": {
+      "cutover": "freeze asset writers -> reconcile candidate key space -> deploy mint function -> dual-write shadow -> parity check -> revoke direct DML -> unfreeze",
+      "enforcement": "single mint function; canonical_asset_id convention enforced by CHECK/trigger; INSERT-only revisions; direct DML revoked from app roles",
+      "rule": "One mint path owns semantics.canonical_asset; canonical_asset_id is identity and canonical_key is versioned content, never mutated in place.",
+      "title": "Canonical-asset mint fence"
+    },
+    "F4": {
+      "cutover": "apply V205 -> write dispositions via the DBA lane -> verify chain -> open the read mirror -> announce",
+      "enforcement": "append-only triggers; no parallel minting into resolution.canonical_asset; W-A3 disposition gates the mirror",
+      "rule": "The W-A reconciliation ledger (V205) is the only writer of duplicate dispositions; V198 functions are the only writers of promotion_batch identity.",
+      "title": "Resolution mirror single-writer fence"
+    },
+    "F5": {
+      "cutover": "snapshot parity -> deploy readers behind a feature flag -> dual-read compare -> flip reads -> retire the old path",
+      "enforcement": "read-only DB role; compatibility views; contract tests that resolve the same identity pre/post; ``expired_at IS NULL`` pin",
+      "rule": "Readers bind to canonical_asset_id and immutable candidate ids; they never bind to a mutable UUID, a mutable canonical_key snapshot, or a retired legacy table.",
+      "title": "Read-compatibility fence"
+    },
+    "F6": {
+      "cutover": "stop timers -> drain -> deploy -> prove zero competing processes -> start one timer -> soak",
+      "enforcement": "systemd single-instance + timer freeze window; flock in the adapter; alternate runtime tombstones; process census before/after",
+      "rule": "Exactly one live executor per promotion boundary; dormant runtimes cannot be restarted against production without passing the same gate.",
+      "title": "Process / lifecycle fence"
+    }
+  },
+  "findings": [
+    {
+      "evidence": "grep census; routes/scripts cited in C-CAN-01..C-CAN-11",
+      "finding": "At least six code paths can mutate candidate promotion status; four bypass nebula.set_candidate_status (stage3 PATCH, tackle candidate_promote, tackle planner, control-edge cpfPromote).",
+      "id": "WCF-01",
+      "package": "W-C2",
+      "severity": "high"
+    },
+    {
+      "evidence": "python/promotion-flow/stage3_execute.py::promote",
+      "finding": "stage3 promotes in two steps: POST spawn-requirement, then PATCH status. A crash between them leaves a requirement without a promoted candidate (or vice versa).",
+      "id": "WCF-02",
+      "package": "W-C2",
+      "severity": "high"
+    },
+    {
+      "evidence": "information_schema.role_table_grants; V146's C1 finding repeats here",
+      "finding": "Every service connects as pguser, which holds INSERT/UPDATE/DELETE/TRUNCATE on nebula.harvest_candidates_history and semantics.canonical_asset. 'Zero direct writers' cannot be certified until distinct app roles exist.",
+      "id": "WCF-03",
+      "package": "W-C3",
+      "severity": "high"
+    },
+    {
+      "evidence": "live census in SNAPSHOT",
+      "finding": "Identity coverage is incomplete: 7,588 of 11,672 candidates have no asset_id; 3,372 active candidate assets are orphans; 3,370 candidate assets carry no canonical_key.",
+      "id": "WCF-04",
+      "package": "W-C3",
+      "severity": "high"
+    },
+    {
+      "evidence": "collect_canonical_assets; W-A \u00a72 W-A3",
+      "finding": "resolution.canonical_asset holds 13 rows with canonical_key = NULL (the W-A3 unidentified set); the mirror cannot be promoted as authoritative until W-A3 dispositions land.",
+      "id": "WCF-05",
+      "package": "W-C4",
+      "severity": "high"
+    },
+    {
+      "evidence": "python/voyager-adapter/db.py; python/voyager/src/voyager_semantics_adapter.py; bin/candidate-asset-backfill.py",
+      "finding": "Voyager mint paths UPDATE canonical_key in place on conflict, while candidate backfill uses DO NOTHING. Two incompatible identity policies on the same table.",
+      "id": "WCF-06",
+      "package": "W-C3",
+      "severity": "high"
+    },
+    {
+      "evidence": "requirements.conduit_plan_id group-by; stage3_execute.py::promote",
+      "finding": "All 21 promoted-candidate requirements link to conduit plan 0005 because stage3 hard-codes planRef='0005'; there is no per-candidate plan/WR lineage.",
+      "id": "WCF-07",
+      "package": "W-C7",
+      "severity": "medium"
+    },
+    {
+      "evidence": "systemctl --user is-enabled promotion-shortlist.timer = disabled",
+      "finding": "The shortlist timer is disabled while stage1 writers remain in the tree; a routine 'start all timers' action would re-introduce a second manifest emitter.",
+      "id": "WCF-08",
+      "package": "W-C8",
+      "severity": "medium"
+    },
+    {
+      "evidence": "process/port census; duplicate route implementations",
+      "finding": "Alternate runtimes (moleculer/nebula, adonisjs control-edge) and the nexus-janitor clone carry full competing write surfaces but are not listening; they are deployable bypasses.",
+      "id": "WCF-09",
+      "package": "W-C8",
+      "severity": "medium"
+    },
+    {
+      "evidence": "nebula.harvest_candidates status group-by",
+      "finding": "Candidate status vocabulary has drifted: 11,624 NULL, 21 promoted, plus active/approved/rejected/superseded/struck values outside the transition function's vocabulary.",
+      "id": "WCF-10",
+      "package": "W-C2",
+      "severity": "medium"
+    },
+    {
+      "evidence": "grep finds only sql/ci-bootstrap/nexus-ci-bootstrap.sql",
+      "finding": "nebula.set_candidate_status exists in the live DB and the CI bootstrap dump, but has no versioned V-migration; the canonical transition function can drift from the repo.",
+      "id": "WCF-11",
+      "package": "W-C2",
+      "severity": "medium"
+    },
+    {
+      "evidence": "nebula.cross_references rel_type='ag:spawns_plan' group-by",
+      "finding": "26 candidate->plan cross-reference edges exist for 21 promoted candidates; five are legacy/extra and have no explicit disposition.",
+      "id": "WCF-12",
+      "package": "W-C7",
+      "severity": "low"
+    },
+    {
+      "evidence": "column census; 753 rows",
+      "finding": "harvest_candidate_embeddings are keyed by harvest_id + candidate_index, not candidate_id, so embeddings cannot be joined to promotion identity without a title/index recipe.",
+      "id": "WCF-13",
+      "package": "W-C7",
+      "severity": "low"
+    }
+  ],
+  "gates": {
+    "WC-D0": {
+      "db_layer": false,
+      "dba_waiver": true,
+      "evidence_slot": "WC0-INVENTORY",
+      "integrity": [
+        "every consumer has exactly one package; inventory is deterministic"
+      ],
+      "package": "W-C0",
+      "read_path": [
+        "inventory reproduction (`--census`) matches every snapshot number"
+      ],
+      "rollback": [
+        "delete the regenerated artifact; no canonical state was touched"
+      ],
+      "signatories": [
+        "operator",
+        "architect"
+      ],
+      "write_path": [
+        "no write branch exists; process runs with a read-only DB session"
+      ]
+    },
+    "WC-D1": {
+      "db_layer": false,
+      "dba_waiver": true,
+      "evidence_slot": "WC1-MANIFEST-FENCE",
+      "integrity": [
+        "checksum parity except additive identity/supersession fields"
+      ],
+      "package": "W-C1",
+      "read_path": [
+        "all 190 manifests parse before and after the fence",
+        "W-A inventory reproduces the same 10 W-A1 sets"
+      ],
+      "rollback": [
+        "redeploy the previous promotion-flow commit; manifests are additive-only",
+        "restore the timer schedule; no manifest was deleted"
+      ],
+      "signatories": [
+        "operator",
+        "architect"
+      ],
+      "write_path": [
+        "one save_manifest() implementation; grep guard shows no direct open(...,'w')",
+        "concurrent writer is refused by the adapter lease",
+        "atomic replace leaves no partial manifest after a kill -9 drill"
+      ]
+    },
+    "WC-D2": {
+      "db_layer": true,
+      "dba_waiver": false,
+      "evidence_slot": "WC2-LIFECYCLE-FENCE",
+      "integrity": [
+        "21/21 promoted <-> requirement parity",
+        "0 promoted candidates without exactly one requirement"
+      ],
+      "package": "W-C2",
+      "read_path": [
+        "GET candidate and GET requirement resolve the same identity for all 21 promoted candidates",
+        "invalid transitions are refused with the same reason before and after"
+      ],
+      "rollback": [
+        "re-grant the app role UPDATE for the drain window and restore the previous route",
+        "no row is deleted; the transition audit remains append-only"
+      ],
+      "signatories": [
+        "operator",
+        "architect",
+        "dba"
+      ],
+      "write_path": [
+        "exactly one status writer; every transition calls nebula.set_candidate_status",
+        "spawn-requirement and status transition commit in one transaction",
+        "duplicate promote is an idempotent no-op",
+        "direct UPDATE from app roles is refused by grant/freeze"
+      ]
+    },
+    "WC-D3": {
+      "db_layer": true,
+      "dba_waiver": false,
+      "evidence_slot": "WC3-ASSET-FENCE",
+      "integrity": [
+        "0 duplicate active canonical_asset_id",
+        "3,372 orphans dispositioned; 7,588 missing links backfilled or explicitly deferred"
+      ],
+      "package": "W-C3",
+      "read_path": [
+        "canonical_asset_id resolves for the 7,456 candidate assets",
+        "asset revisions resolve content for a sampled set"
+      ],
+      "rollback": [
+        "re-grant the previous writer and restore the prior mint function",
+        "new assets are expired, never deleted"
+      ],
+      "signatories": [
+        "operator",
+        "architect",
+        "dba"
+      ],
+      "write_path": [
+        "one mint function; no direct INSERT/UPDATE/DELETE outside it",
+        "canonical_key is INSERT-only per revision, never in-place",
+        "app roles cannot write the table directly"
+      ]
+    },
+    "WC-D4": {
+      "db_layer": true,
+      "dba_waiver": false,
+      "evidence_slot": "WC4-RESOLUTION-FENCE",
+      "integrity": [
+        "13 keyless resolution assets dispositioned",
+        "promotion_batch writers = V198 functions only"
+      ],
+      "package": "W-C4",
+      "read_path": [
+        "wr-repoint S3/S4 crosswalk passes",
+        "no live consumer reads the resolution mirror as authoritative"
+      ],
+      "rollback": [
+        "drop the empty ledger surfaces per the W-A rollback sketch",
+        "canonical history is untouched"
+      ],
+      "signatories": [
+        "operator",
+        "architect",
+        "dba"
+      ],
+      "write_path": [
+        "V205 is the only disposition writer; V198 functions are the only batch writer",
+        "append-only triggers reject UPDATE/DELETE"
+      ]
+    },
+    "WC-D5": {
+      "db_layer": false,
+      "dba_waiver": true,
+      "evidence_slot": "WC5-READ-PARITY",
+      "integrity": [
+        "parity errors = 0; no reader depends on a mutable uuid"
+      ],
+      "package": "W-C5",
+      "read_path": [
+        "dual-read parity on the 21 promoted set plus a random control sample",
+        "every surface returns canonical_asset_id and candidate id together"
+      ],
+      "rollback": [
+        "flip the read feature flag back to the previous path",
+        "no data migration is required to roll back"
+      ],
+      "signatories": [
+        "operator",
+        "architect"
+      ],
+      "write_path": [
+        "no read surface writes an identity table",
+        "read-only role cannot INSERT/UPDATE/DELETE"
+      ]
+    },
+    "WC-D6": {
+      "db_layer": false,
+      "dba_waiver": true,
+      "evidence_slot": "WC6-OFFLINE-PARITY",
+      "integrity": [
+        "0 analytical writes to identity tables; embedding key gap documented"
+      ],
+      "package": "W-C6",
+      "read_path": [
+        "each script resolves identity through canonical_asset_id or is marked non-promotion",
+        "sampled analytical output matches the canonical census"
+      ],
+      "rollback": [
+        "restore the previous script version; no identity surface was modified"
+      ],
+      "signatories": [
+        "operator",
+        "architect"
+      ],
+      "write_path": [
+        "analytical scripts use read-only DSNs",
+        "only the state seeder writes, and only to shrapnel state records"
+      ]
+    },
+    "WC-D7": {
+      "db_layer": false,
+      "dba_waiver": true,
+      "evidence_slot": "WC7-LINEAGE",
+      "integrity": [
+        "26 cross-reference edges dispositioned (21 canonical + 5 legacy)",
+        "per-candidate lineage present or explicitly 'no plan'"
+      ],
+      "package": "W-C7",
+      "read_path": [
+        "candidate -> requirement -> plan/WR resolves for all 21 promoted candidates",
+        "state records and embeddings resolve to the same candidate id"
+      ],
+      "rollback": [
+        "repoint to the prior lineage writer; requirements and links are additive"
+      ],
+      "signatories": [
+        "operator",
+        "architect"
+      ],
+      "write_path": [
+        "requirement creation uses the W-C2 transaction only",
+        "no second requirement-creation path remains writable"
+      ]
+    },
+    "WC-D8": {
+      "db_layer": true,
+      "dba_waiver": false,
+      "evidence_slot": "WC8-OPS-FENCE",
+      "integrity": [
+        "7 green soak days; no competing process observed"
+      ],
+      "package": "W-C8",
+      "read_path": [
+        "timer state and process census match the declared owner"
+      ],
+      "rollback": [
+        "restore the previous unit schedule and grants",
+        "logs and receipts are retained"
+      ],
+      "signatories": [
+        "operator",
+        "architect",
+        "dba"
+      ],
+      "write_path": [
+        "exactly one live executor per boundary",
+        "alternate runtimes are tombstoned or gated",
+        "freeze drill proves direct writes are refused"
+      ]
+    }
+  },
+  "identity_model": {
+    "asset_key": {
+      "authority": "asset:nexus:nebula_harvest_candidates:<candidate_id>; canonical_key is content, never identity",
+      "surface": "semantics.canonical_asset.canonical_asset_id",
+      "writer_fence": "F3"
+    },
+    "candidate_id": {
+      "authority": "immutable uuid, assigned at harvest intake",
+      "surface": "nebula.harvest_candidates.id / nebula.harvest_candidates_history.id",
+      "writer_fence": "F2"
+    },
+    "candidate_set_key": {
+      "authority": "sha256 over the sorted candidate-id set (order-independent, duplicate-tolerant)",
+      "surface": "promotion_common.candidate_set_identity / resolution.candidate_set_key(uuid[], text)",
+      "writer_fence": "F1"
+    },
+    "requirement_id": {
+      "authority": "one requirement per promoted candidate; conduit_plan_id is lineage, not identity",
+      "surface": "nebula.requirements.id via requirements.candidate_id",
+      "writer_fence": "F2"
+    }
+  },
+  "packages": {
+    "W-C0": {
+      "dependencies": [],
+      "evidence_outputs": [
+        "docs/promotion-flow/w-c-consumer-inventory.json",
+        "docs/promotion-flow/w-c-consumer-migration.md (\u00a72 census)",
+        "python/nebula/wc_consumers.py --census (live reproduction)"
+      ],
+      "fence": "F0",
+      "gate": "WC-D0",
+      "inventory_only": true,
+      "owner": "builder",
+      "state": "delivered by plan 8261665 (re-run of 8261655); verification pending",
+      "stop_condition": "Inventory accepted: every consumer of promotion identity is listed once, carries exactly one package id, and no live writer is unclassified. This is a non-authoritative stopping point \u2014 independent verification is the reviewer's, and later packages may add consumers by superseding this artifact, never by silently appending to a merged inventory.",
+      "title": "Consumer inventory freeze + write-path census"
+    },
+    "W-C1": {
+      "dependencies": [
+        "W-A1",
+        "W-C8"
+      ],
+      "evidence_outputs": [
+        "single-writer adapter conformance test",
+        "atomic-write crash test (temp file never leaves a half manifest)",
+        "190-manifest checksum parity report",
+        "grep guard output: no direct open(...,'w') in python/promotion-flow"
+      ],
+      "fence": "F1",
+      "gate": "WC-D1",
+      "owner": "engineer",
+      "state": "not started",
+      "stop_condition": "Exactly one manifest write function exists; all 190 manifests parse; the checksum set is unchanged except for additive supersession/identity fields; and a second concurrent writer is refused by the adapter lease.",
+      "title": "Manifest writer fence (state/promotion-flow)"
+    },
+    "W-C2": {
+      "dependencies": [
+        "W-C8",
+        "DBA roles"
+      ],
+      "evidence_outputs": [
+        "writer census with every candidate-status write path and its fence status",
+        "atomic spawn-requirement + transition test (no orphan requirement, no orphan promotion)",
+        "idempotency test: second promote returns the current state",
+        "invalid-transition refusal test",
+        "21/21 promoted <-> requirement parity query"
+      ],
+      "fence": "F2",
+      "gate": "WC-D2",
+      "owner": "engineer",
+      "state": "not started",
+      "stop_condition": "One write path owns candidate status and requirement creation; every transition passes nebula.set_candidate_status; spawn + status are atomic; each of the 21 promoted candidates resolves to exactly one requirement; duplicate promotes are no-ops.",
+      "title": "Candidate lifecycle writer fence (status + hierarchy + requirement)"
+    },
+    "W-C3": {
+      "dependencies": [
+        "W-C2",
+        "W-A3"
+      ],
+      "evidence_outputs": [
+        "mint-path inventory + grant matrix",
+        "candidate asset reconciliation ledger: 7,456 active assets, 3,372 orphans, 7,588 missing links",
+        "canonical_key policy test (identity vs versioned content)",
+        "duplicate active canonical_asset_id count (must be 0)"
+      ],
+      "fence": "F3",
+      "gate": "WC-D3",
+      "owner": "dba",
+      "state": "not started",
+      "stop_condition": "One mint path exists; canonical_asset_id is the only identity; zero duplicate active keys; every orphan is dispositioned and every missing candidate link is backfilled or explicitly deferred with a reason; direct DML is revoked from app roles.",
+      "title": "Canonical-asset mint fence (semantics.canonical_asset)"
+    },
+    "W-C4": {
+      "dependencies": [
+        "W-A2",
+        "W-A3",
+        "W-A4",
+        "W-A5",
+        "W-A6",
+        "W-A7",
+        "V205",
+        "V198"
+      ],
+      "evidence_outputs": [
+        "resolution.canonical_asset disposition ledger (13 keyless rows)",
+        "wr-repoint S3/S4 crosswalk proof",
+        "V198 claim/concurrency test",
+        "reader census: no live consumer treats the resolution mirror as authoritative"
+      ],
+      "fence": "F4",
+      "gate": "WC-D4",
+      "owner": "dba",
+      "state": "dependency-blocked on W-A ledger apply",
+      "stop_condition": "All 13 keyless resolution assets are dispositioned by W-A3; the mirror has one ledger writer; promotion_batch identity is written only through V198 functions; and every reader is explicitly read-only or repointed.",
+      "title": "Resolution mirror + batch identity fence"
+    },
+    "W-C5": {
+      "dependencies": [
+        "W-C3",
+        "W-B5",
+        "W-B6"
+      ],
+      "evidence_outputs": [
+        "consumer -> query matrix",
+        "contract tests for asset envelope / identity claims / relations / revisions",
+        "dual-read parity snapshot on the 21 promoted candidates plus a random sample",
+        "projection hydration proof for the W-B surfaces"
+      ],
+      "fence": "F5",
+      "gate": "WC-D5",
+      "owner": "engineer",
+      "state": "not started",
+      "stop_condition": "Every read surface resolves promotion identity via canonical_asset_id; no reader depends on a mutable UUID or a retired surface; parity errors are zero on the promoted set and the sampled control set.",
+      "title": "Service read surfaces (semantics-srv, nebula-srv, MCP, control-edge, UI)"
+    },
+    "W-C6": {
+      "dependencies": [
+        "W-C3"
+      ],
+      "evidence_outputs": [
+        "script inventory with read/write mode",
+        "read-only DSN proof for every analytical script",
+        "identity-resolution parity report",
+        "embedding identity plan (candidate_index is not a candidate id)"
+      ],
+      "fence": "F5",
+      "gate": "WC-D6",
+      "owner": "builder",
+      "state": "not started",
+      "stop_condition": "Every offline reader resolves identity through canonical_asset_id or is marked explicitly non-promotion; no script writes an identity surface; the embedding key gap is documented and either fixed or accepted with a reason.",
+      "title": "Offline and analytical readers"
+    },
+    "W-C7": {
+      "dependencies": [
+        "W-C2",
+        "architect lineage ruling"
+      ],
+      "evidence_outputs": [
+        "lineage matrix: candidate -> requirement -> plan/WR -> state record -> embedding",
+        "the 21 requirements all linked to plan 0005 (lineage defect register entry)",
+        "26 candidate->plan cross-references dispositioned",
+        "4,396 candidate state records and 753 embeddings keyed/re-derived"
+      ],
+      "fence": "F2",
+      "gate": "WC-D7",
+      "owner": "engineer",
+      "state": "not started",
+      "stop_condition": "Every promoted candidate resolves to exactly one requirement and a per-candidate plan/WR link or an explicit 'no plan' state; the five extra cross-references are dispositioned; state and embedding keys are documented and reproducible.",
+      "title": "Downstream lineage fence (requirements, plans, WRs, state, embeddings)"
+    },
+    "W-C8": {
+      "dependencies": [
+        "DBA roles"
+      ],
+      "evidence_outputs": [
+        "timer/process inventory (execute live, map live, shortlist disabled)",
+        "freeze/drain transcript",
+        "exactly-one-executor proof",
+        "alternate-runtime tombstone or gate-parity proof",
+        "7-day soak record"
+      ],
+      "fence": "F6",
+      "gate": "WC-D8",
+      "owner": "engineer",
+      "state": "prerequisite for W-C1/W-C2 cutover",
+      "stop_condition": "Exactly one live executor per boundary; shortlist is explicitly disabled or fenced; alternate runtimes cannot write without the same gate; a freeze drill passes and the soak window is green.",
+      "title": "Scheduler and lifecycle ops fence"
+    }
+  },
+  "snapshot": {
+    "captured_at": "2026-10-26T20:55:14Z",
+    "counts": {
+      "candidate_assets_active": 7456,
+      "candidate_assets_orphan": 3372,
+      "candidate_assets_with_canonical_key": 4086,
+      "candidate_assets_without_canonical_key": 3370,
+      "candidate_embeddings": 753,
+      "candidate_state_records": 4396,
+      "candidate_to_plan_crossrefs": 26,
+      "harvest_candidates": 11672,
+      "harvest_candidates_history": 11675,
+      "harvest_candidates_null_status": 11624,
+      "harvest_candidates_promoted": 21,
+      "harvest_candidates_with_asset_id": 4084,
+      "harvest_candidates_without_asset_id": 7588,
+      "manifest_candidate_entries": 3800,
+      "manifest_distinct_candidates": 788,
+      "manifest_executed": 1,
+      "manifest_identity_pins": 190,
+      "manifest_promoted_flags": 21,
+      "manifest_superseded": 141,
+      "manifests": 190,
+      "promotion_batch": 0,
+      "promotion_batch_candidate": 0,
+      "requirements_linked_to_plan_0005": 21,
+      "requirements_total": 26,
+      "requirements_with_candidate_id": 21,
+      "resolution_canonical_asset": 13,
+      "resolution_canonical_asset_with_key": 0,
+      "resolution_receipt": 1891,
+      "resolution_ticket": 0,
+      "semantics_canonical_asset_active": 43091,
+      "semantics_canonical_asset_total": 47987
+    },
+    "database": "nexus@localhost:5432",
+    "manifest_dir": "state/promotion-flow",
+    "reverified_at": "2026-10-31T09:27:06Z",
+    "runtime": {
+      "dormant_write_runtimes": [
+        "moleculer/nebula",
+        "adonisjs/nexus-control-edge",
+        "/home/codex/dev/nexus-janitor"
+      ],
+      "listening_consumers": [
+        "nebula-srv:3101",
+        "semantics-srv:3160",
+        "conduit-mcp:3100",
+        "tackle-mcp:3400",
+        "assembly-srv:3107"
+      ],
+      "live_promotion_processes": 0,
+      "promotion-execute.timer": "enabled/active; hourly at :45; last run 2026-10-26T20:45:55Z exit 0",
+      "promotion-map.timer": "enabled/active; daily at 04:45",
+      "promotion-shortlist.timer": "disabled/inactive"
+    }
+  },
+  "wave": {
+    "dependencies": {
+      "W-A": "8261653 \u2014 completed / REVIEW_PASS; merged PR #780",
+      "W-B": "8261654 \u2014 completed / REVIEW_PASS; merged PR #799"
+    },
+    "docket": "c7c26160-5b22-463f-9ee0-6e4784bae0e8",
+    "open_findings": 13,
+    "plan": "8261665",
+    "rerun_of": "8261655",
+    "scope_class": "M-sized packages; wave total L",
+    "stop_condition": {
+      "non_authoritative": "Each package stops at 'gate satisfied and evidence recorded'. That is not a claim that the runtime is universally correct; it is the named owner's attested stopping point for that boundary.",
+      "rollback": "Each gate names its own restore step. Rollback never deletes canonical history; it re-grants the previous writer and restores the prior code path for the drain window.",
+      "wave_level": "All consumers of promotion identity are migrated to the canonical write paths, read/write parity is verified for every package, and zero data loss is proven by monotonic row counts, preserved ids and an append-only audit trail.",
+      "zero_data_loss": [
+        "source row counts never decrease (expiry/archive rows are retained)",
+        "every claimed candidate_id, candidate_set_key and canonical_asset_id is preserved",
+        "the 21 promoted candidates remain resolvable to exactly one requirement",
+        "all 190 manifests remain readable with additive-only changes",
+        "no DELETE or TRUNCATE is executed by a W-C package"
+      ]
+    },
+    "title": "Consumer migration: writer fencing + Stage D gates",
+    "wave": "W-C"
+  }
+}
