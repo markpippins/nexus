@@ -22,7 +22,11 @@ Options:
   --level            Knowledge level (default: 3)
                      1=raw/operational, 2=structured, 3=planning/architectural, 4=meta
   --visibility       Visibility scope (default: architect)
-  --model            AI model identifier for per-model attribution (optional)
+  --model            AI model identifier for per-model attribution. Defaults
+                     to $NEXUS_AGENT_MODEL, which the harness exports per
+                     attempt, so a record written from a shell inside a run
+                     names its own model without the model passing anything.
+                     Pass an empty string to write an unattributed record.
   --harness-job-id   Harness run id that wrote this record (optional).
                      Defaults to $HARNESS_JOB_ID, which the harness exports to
                      every job child, so records written inside a harnessed run
@@ -47,6 +51,12 @@ import urllib.error
 # The harness emits uuids (harness-srv) and prompt-file basenames (moleculer);
 # anything else is not a run identifier and is dropped with a warning.
 JOB_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
+
+# Model ids in use look like "opencode/big-pickle", "freebuff/gpt-6-luna" and
+# "claude-sonnet-4-5" — slashes, dots, colons and hyphens all appear. This is
+# deliberately looser than JOB_ID_RE (models carry '/'); it exists to drop a
+# pasted path or a stray sentence, not to police vendor naming.
+MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{1,127}$")
 
 
 def _writable_roles():
@@ -128,7 +138,11 @@ def parse_args():
     p.add_argument("--record-type", default="engineering_log")
     p.add_argument("--level", type=int, default=3)
     p.add_argument("--visibility", default="architect")
-    p.add_argument("--model", default=None)
+    p.add_argument("--model", default=None,
+                   help="AI model identifier for per-model attribution. "
+                        "Defaults to $NEXUS_AGENT_MODEL, which the harness "
+                        "exports per attempt. Pass an empty string to write "
+                        "an unattributed record.")
     p.add_argument("--harness-job-id", default=None,
                    help="Harness run id that wrote this record. Defaults to "
                         "$HARNESS_JOB_ID, which harness-srv exports to every "
@@ -224,6 +238,26 @@ def main():
         )
         job_id = ""
 
+    # Model attribution: the same inheritance shape as the run id above. The
+    # harness exports NEXUS_AGENT_MODEL per attempt, so a record written from
+    # inside a run names its own model. Until this default existed the field
+    # was set only by callers who remembered the flag, and on 2026-11-06 363
+    # of the 500 most recent records (72.6%) carried a null model while the
+    # sibling poster scripts filled in a fallback string instead. An unusable
+    # value is dropped rather than refused, for the same reason as job_id:
+    # a null model degrades the audit trail, a refused write loses the record.
+    model = args.model
+    if model is None:
+        model = os.environ.get("NEXUS_AGENT_MODEL", "")
+    model = (model or "").strip()
+    if model and not MODEL_RE.match(model):
+        print(
+            f"WARNING: ignoring unusable model id {model!r} — the record will be "
+            f"stored without model attribution (expected 2-128 of [A-Za-z0-9._:/-])",
+            file=sys.stderr,
+        )
+        model = ""
+
     payload = {
         "recordType": args.record_type,
         "role": args.role,
@@ -232,7 +266,7 @@ def main():
         "tags": tag_list,
         "level": args.level,
         "visibilityScope": args.visibility,
-        "model": args.model,
+        "model": model or None,
     }
     if job_id:
         payload["harnessJobId"] = job_id

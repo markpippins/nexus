@@ -34,8 +34,8 @@
     },
     {
       "path": "bin/post-agent-record.py",
-      "digest": "e548f40532d43c9e59e8d8106fb2b834217368371d69a11a7f1565066732abc9",
-      "provenance": "PIN ADVANCE 2026-10-10 (Ruling 38D D3.1): PR #689 landed (849bf145d) — 'make --tags repeatable so routing tags stop vanishing'. INTENDED post-pin change; prior pin 13ba888f… was captured 2026-10-01 @ ead7ff59a and is now stale. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 (cat-file -e + show | sha256sum), not the working tree. Landing identified at step 1 (git log origin/main -- path). Guard classification: intended drift, runbook branch 1 — no tampering, no unexplained bytes, squash-merge attested.",
+      "digest": "ca404bd487e0336a8f35f4275d53e21d9020cd4cb4eec54ae13ea5c6c9273e6c",
+      "provenance": "PIN ADVANCE 2026-11-06: two changes, one advance. (1) PR #878 landed (squash c96dfb5c0) — 'a record can name the run that wrote it' — and the pin was never advanced, which is open incident 30186d3b; the drift is INTENDED (runbook branch 1), not tampering. (2) this PR gives --model a $NEXUS_AGENT_MODEL default, closing the 72.6% null-model gap (363/500 records at 2026-11-06). Digest computed from this PR's committed blob on base 00fbc98f3 per PIN_ADVANCE_TEMPLATE step 2; previous pinned digest e548f405… (PR #689, 849bf145d), which was itself stale against #878.",
       "queued_prs": []
     },
     {

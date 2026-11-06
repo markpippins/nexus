@@ -356,9 +356,12 @@ def test_repo_registry_wellformed_and_pinned_digests_stable():
     # Tier-2 (2026-10-01 capture @ ead7ff59a)
     assert by_path["bin/record_hygiene_sweep.py"]["digest"] == (
         "e32e04b79bc833bb65499a0ff290269a46da65dc0d84adb4753ecc8f3b3438cc")
-    # ADVANCED 2026-10-10 (Ruling 38D D3.1): PR #689 landed 849bf145d.
+    # ADVANCED 2026-11-06: the pin had gone stale at PR #878 (c96dfb5c0,
+    # run attribution) — the open DRIFT incident 30186d3b — and this PR also
+    # gives --model the $NEXUS_AGENT_MODEL default. Prior pin e548f405… was
+    # PR #689 (849bf145d).
     assert by_path["bin/post-agent-record.py"]["digest"] == (
-        "e548f40532d43c9e59e8d8106fb2b834217368371d69a11a7f1565066732abc9")
+        "ca404bd487e0336a8f35f4275d53e21d9020cd4cb4eec54ae13ea5c6c9273e6c")
     assert by_path["bin/post-change-log.sh"]["digest"] == (
         "336f8e1898f4dc21adfa96aef096466788d295a3ea5915fced507541920335f6")
     assert by_path["bin/pgie-evidence.py"]["digest"] == (
