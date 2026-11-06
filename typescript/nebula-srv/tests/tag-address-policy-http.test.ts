@@ -104,6 +104,12 @@ async function waitHealthy(base: string, timeoutMs = 90_000): Promise<void> {
 }
 
 async function spawnRejectServer(): Promise<{ base: string; child: ChildProcess }> {
+  // The child must reach the SAME database as the live server. It inherits the
+  // caller's PG_* env for that reason; CI exports it on the test step. Without
+  // it the child falls back to the default `nexus` database, which the gate
+  // refuses (pending migrations + NEBULA_MIGRATE_TARGET mismatch) — fail-closed
+  // is the right behaviour, so a local run without a commissioned target stops
+  // instead of migrating a live database.
   const base = `http://127.0.0.1:${REJECT_PORT}`;
   console.log(`starting reject-mode server on ${base}`);
   const child = spawn('npx', ['tsx', 'src/index.ts'], {
