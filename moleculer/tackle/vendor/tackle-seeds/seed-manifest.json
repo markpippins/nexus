@@ -183,7 +183,6 @@
         "planner",
         "reviewer",
         "sound-technician",
-        "supervisor",
         "sysadmin",
         "tester",
         "topologist"
@@ -2162,6 +2161,6 @@
       ]
     }
   ],
-  "role_count": 608,
+  "role_count": 607,
   "schema": "tackle"
 }

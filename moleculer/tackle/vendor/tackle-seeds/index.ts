@@ -4474,7 +4474,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'dba', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'operator', 'planner', 'reviewer', 'sound-technician', 'supervisor', 'sysadmin', 'tester', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'dba', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'operator', 'planner', 'reviewer', 'sound-technician', 'sysadmin', 'tester', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
