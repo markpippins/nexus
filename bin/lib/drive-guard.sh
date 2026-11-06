@@ -4,7 +4,9 @@
 # =============================================================================
 # Background (DBA audit f74eb976, 2026-09-15): backup scripts depended on
 # destinations behind /mnt removable drives — directly (rsync to /mnt/WD14A)
-# or indirectly (backup dirs and spools as symlinks into /mnt/SiP1TB). When a
+# or indirectly (backup dirs and spools as symlinks into some /mnt drive —
+# the vanadium-ci spool moved from /mnt/SiP1TB to /mnt/Samsung500 on
+# 2026-11-06). When a
 # drive is absent, `mkdir -p` on a symlink-to-absent-mount fails with the
 # misleading "File exists", and every redirect fails with raw ENOENT — root
 # cause invisible (the mysql-backup incident, records 0abb6df5 -> cd776865).
@@ -91,7 +93,7 @@ _drive_guard_is_mount() {
 }
 
 # Internal: if <path> points into a removable-drive base, echo the drive root
-# (e.g. /mnt/SiP1TB for /mnt/SiP1TB/home/backups); else return 1.
+# (e.g. /mnt/WD14A for /mnt/WD14A/bak/pgdata); else return 1.
 _drive_guard_expected_mount() {
   local p="$1" base rest first
   local bases="${DRIVE_GUARD_REMOVABLE_BASES:-/mnt /media}"
