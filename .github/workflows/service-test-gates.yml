@@ -474,8 +474,21 @@ jobs:
           echo "::error::nebula-srv never became healthy"; tail -40 /tmp/nebula-srv.log
           exit 1
 
+      # The DB identity is exported, not just inlined on the boot command, so a
+      # test that spawns a second server against the same database (the tag
+      # address policy's reject-mode phase needs a different boot env) inherits
+      # the target instead of falling back to the default `nexus` database —
+      # which exists here but is empty, so the spawn died on 61 pending
+      # migrations and a NEBULA_MIGRATE_TARGET mismatch.
       - name: Test suite (every integration file must exit 0)
         working-directory: typescript/nebula-srv
+        env:
+          PG_HOST: localhost
+          PG_PORT: 5432
+          PG_USER: pguser
+          PG_PASSWORD: pgpass
+          PG_DB_NAME: nebula_gate_ci
+          NEBULA_MIGRATE_TARGET: localhost:5432:nebula_gate_ci
         run: |
           PASS=0; FAIL=0; FAILED=""
           for f in tests/*.test.ts; do
