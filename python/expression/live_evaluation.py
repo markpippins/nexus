@@ -36,6 +36,7 @@ def run_bounded_evaluation(
     context: dict[str, Any] | None = None,
     retention_class: str = "operational_review",
     receipt_writer: ResolutionReceiptWriter | None = None,
+    source_link_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Evaluate one bundle against the loaded interpreter and persist receipts.
 
@@ -58,6 +59,7 @@ def run_bounded_evaluation(
         ontology_revision=ontology_revision,
         authority_owner=authority_owner,
         context=context,
+        source_link_report=source_link_report,
     )
     envelope["e8_revision"] = E8_REVISION
     envelope["source_run_id"] = source_run_id

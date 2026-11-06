@@ -44,6 +44,12 @@ The E3 adapter accepts already-fetched records shaped like `nebula.harvests`, `n
 
 The adapter is deliberately compatible with the consolidated Resolution direction: it reads legacy/source-shaped material but does not recreate a legacy table or claim that harvest storage is canonical. It returns deterministic staging data only.
 
+## E-series live source-link and relation gate
+
+`expression.source_links.LiveGovernedArtifactResolver` resolves extracted UUIDs, plan numbers, PR references, migration versions, GitHub PR URLs, and repository-relative paths read-only against Nebula REST, GitHub CLI, the checked-out repository, and Resolution's active `relation_vocabulary` endpoint. Each reference receives an explicit `resolved`, `unresolved`, `ambiguous`, or `unavailable` result with `resolved_to` only on success; migration collisions are ambiguous, and registry/service failures are not treated as missing artifacts.
+
+The resolver binds the active POC token `mentions_decision_language` to governed relation `mentions` and verifies that the relation is active in Resolution before use. `resolve_source_links(bundle, resolver)` annotates source-reference observations and returns one proposition gate per candidate. Evaluation callers pass this report to `evaluate_bundle(..., source_link_report=report)`; omitted gates or any unresolved relation/reference fail closed as `refused` before the evaluator callback runs. The gate/report are included in request/evaluation fingerprints and result evidence. Resolution's generic read API exposes `relation_vocabulary` as a read-only registry table.
+
 ## Compatibility and storage boundary
 
 Expression is currently declared `converge` with the existing harvest/semantics/KG pipeline. It consumes immutable transcript assets and may use existing observations as inputs, but it does not create a second canonical observation authority. Expression observations are staging/query material: they must be regenerable, disposable, and source-linked. Resolution remains canonical for identity, lineage, disposition, and governed evaluation joins. A graph output is a regenerable projection, not an authority store. Changing this boundary requires an explicit compatibility/supersession record before implementation changes. The adapter does not call APIs or write databases; it consumes already-fetched records and returns a deterministic staging bundle.

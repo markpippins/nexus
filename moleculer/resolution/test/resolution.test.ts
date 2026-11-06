@@ -57,7 +57,7 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-const KNOWN_TABLE = "concept"; // from tables.ts (48 registered)
+const KNOWN_TABLE = "concept"; // from tables.ts (49 registered)
 
 describe("health envelope (DB probe + degraded missing-tables)", () => {
   it("GET /health → 200 {service,status:'ok',database:'connected',missingTables:[]}", async () => {

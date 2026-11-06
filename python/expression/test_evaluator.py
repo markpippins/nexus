@@ -79,6 +79,60 @@ class ExpressionEvaluatorTests(unittest.TestCase):
         self.assertEqual(len(calls), 2 * len(self.bundle["proposition_candidates"]))
         self.assertTrue(all(item["disposition"] == "asserted" for item in first["results"]))
 
+    def test_unresolved_source_link_blocks_evaluator_and_fails_closed(self):
+        proposition = self.bundle["proposition_candidates"][0]
+        report = {
+            "proposition_gates": [{
+                "proposition_id": proposition["proposition_id"],
+                "eligible": False,
+                "reasons": ["source_link_unresolved"],
+            }]
+        }
+        called = []
+        result = evaluate_bundle(
+            self.bundle, read_set=self.read_set,
+            evaluator=lambda *_args: called.append(True) or {"disposition": "asserted"},
+            source_link_report=report, **self.identities,
+        )
+        self.assertTrue(all(item["disposition"] == "refused" for item in result["results"]))
+        self.assertTrue(all(item["reason_code"] == "source_link_unresolved" for item in result["results"]))
+        self.assertEqual(called, [])
+
+    def test_required_source_link_report_cannot_omit_a_proposition_gate(self):
+        result = evaluate_bundle(
+            self.bundle, read_set=self.read_set,
+            evaluator=lambda *_args: {"disposition": "asserted"},
+            source_link_report={"proposition_gates": []}, **self.identities,
+        )
+        self.assertTrue(all(item["reason_code"] == "source_link_gate_missing" for item in result["results"]))
+
+    def test_eligible_flag_without_resolution_evidence_fails_closed(self):
+        proposition = self.bundle["proposition_candidates"][0]
+        report = {"proposition_gates": [{"proposition_id": proposition["proposition_id"], "eligible": True}]}
+        called = []
+        result = evaluate_bundle(
+            self.bundle, read_set=self.read_set,
+            evaluator=lambda *_args: called.append(True) or {"disposition": "asserted"},
+            source_link_report=report, **self.identities,
+        )
+        self.assertTrue(all(item["reason_code"] == "source_link_unresolved" for item in result["results"]))
+        self.assertEqual(called, [])
+
+    def test_resolved_source_link_gate_is_pinned_in_request_and_envelope(self):
+        gates = [
+            {"proposition_id": proposition["proposition_id"], "eligible": True, "relation_name": "mentions", "relation_status": "resolved", "relation_resolution": {"status": "resolved", "resolved_to": {"artifact_kind": "governed_relation", "id": "relation-uuid"}}, "source_observation_ids": proposition["source_observation_ids"], "source_link_observation_ids": ["ref-1"], "source_link_resolutions": [{"observation_id": "ref-1", "status": "resolved", "resolved_to": {"artifact_kind": "pull_request", "id": "acme/nexus#251"}}], "unresolved_source_link_ids": []}
+            for proposition in self.bundle["proposition_candidates"]
+        ]
+        report = {"resolver_revision": "test-v1", "proposition_gates": gates}
+        result = evaluate_bundle(
+            self.bundle, read_set=self.read_set,
+            evaluator=lambda _candidate, request: {"disposition": "asserted", "gate_seen": request["source_link_gate"]},
+            source_link_report=report, **self.identities,
+        )
+        self.assertEqual(result["results"][0]["gate_seen"], gates[0])
+        self.assertEqual(result["results"][0]["source_link_gate"], gates[0])
+        self.assertEqual(result["source_link_report"], report)
+
     def test_missing_observation_refuses_without_evaluation(self):
         bundle = {**self.bundle, "proposition_candidates": [{"proposition_id": "bad-proposition", "subject_ref": "segment:missing", "predicate": "mentions_decision_language", "source_observation_ids": ["missing-observation"], "modality": "reported", "status": "candidate"}]}
         called = []

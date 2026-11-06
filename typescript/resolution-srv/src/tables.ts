@@ -55,6 +55,14 @@ export const TABLES: TableMeta[] = [
     idCol: "id",
   },
   {
+    table: "relation_vocabulary",
+    label: "active governed relationship vocabulary (V182)",
+    group: "registry",
+    idCol: "id",
+    expiryCol: "expired_at",
+    orderCol: "created_at",
+  },
+  {
     table: "concept",
     label: "concept (governed vocabulary)",
     group: "registry",

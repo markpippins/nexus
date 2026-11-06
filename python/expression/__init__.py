@@ -15,6 +15,7 @@ from .evaluator import (
     replay_evaluation,
 )
 from .e5 import build_e5_slice, replay_slice, rollback_slice
+from .source_links import LiveGovernedArtifactResolver, resolve_source_links
 from .persistence import (
     EXPRESSION_KIND,
     ExpressionPersistenceError,
@@ -37,6 +38,8 @@ from .taxonomy import (
 
 __all__ = [
     "EXPLICIT_KINDS",
+    "LiveGovernedArtifactResolver",
+    "resolve_source_links",
     "OBSERVATION_KIND_EXPECTATIONS",
     "artifact_bytes",
     "build_corpus",

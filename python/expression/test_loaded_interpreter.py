@@ -147,6 +147,19 @@ def _load_interpreter():
     return LoadedInterpreter(interp, loader_report=loader.load_report)
 
 
+def _resolved_source_link_report(bundle):
+    from expression.source_links import resolve_source_links
+
+    class Resolver:
+        def resolve_reference(self, *_args):
+            return {"status": "resolved", "resolved_to": {"artifact_kind": "fixture", "id": "fixture-ref"}}
+
+        def resolve_relation(self, *_args):
+            return {"status": "resolved", "resolved_to": {"artifact_kind": "governed_relation", "id": "fixture-relation"}}
+
+    return resolve_source_links(bundle, Resolver())
+
+
 def _expression_bundle_for_fc():
     transcript = {
         "transcript_id": "e8-fixture-001",
@@ -187,7 +200,8 @@ class LoadedInterpreterTests(unittest.TestCase):
 
     def test_unregistered_candidate_is_pending_not_refused(self):
         envelope = self.loaded.evaluate_bundle(
-            self.bundle, read_set=self.read_set, ontology_revision="ontology-e8"
+            self.bundle, read_set=self.read_set, ontology_revision="ontology-e8",
+            source_link_report=_resolved_source_link_report(self.bundle),
         )
         result = envelope["results"][0]
         self.assertEqual(result["disposition"], "pending")
@@ -200,6 +214,7 @@ class LoadedInterpreterTests(unittest.TestCase):
             read_set=self.read_set,
             ontology_revision="ontology-e8",
             context={"migration_phase": "pre_migration", "as_of_version": "v1"},
+            source_link_report=_resolved_source_link_report(self.bundle),
         )
         result = envelope["results"][0]
         # scoped + probe rule (HARD, no expression) fails → REJECTED
@@ -218,7 +233,8 @@ class LoadedInterpreterTests(unittest.TestCase):
         # A candidate ID that is not registered never evaluates as the DB
         # proposition — the seam maps, it does not guess.
         envelope = self.loaded.evaluate_bundle(
-            self.bundle, read_set=self.read_set, ontology_revision="ontology-e8"
+            self.bundle, read_set=self.read_set, ontology_revision="ontology-e8",
+            source_link_report=_resolved_source_link_report(self.bundle),
         )
         self.assertEqual(envelope["results"][0]["reason_code"], "proposition_not_registered")
         # And even a candidate whose ID *equals* the DB UUID goes through the
@@ -228,7 +244,8 @@ class LoadedInterpreterTests(unittest.TestCase):
             {**bundle["proposition_candidates"][0], "proposition_id": _FC_ID}
         ]
         envelope2 = self.loaded.evaluate_bundle(
-            bundle, read_set=self.read_set, ontology_revision="ontology-e8"
+            bundle, read_set=self.read_set, ontology_revision="ontology-e8",
+            source_link_report=_resolved_source_link_report(bundle),
         )
         self.assertEqual(envelope2["results"][0]["reason_code"], "proposition_not_registered")
 
@@ -251,6 +268,7 @@ class LoadedInterpreterTests(unittest.TestCase):
             read_set=self.read_set,
             ontology_revision="ontology-e8",
             context={"migration_phase": "pre_migration"},
+            source_link_report=_resolved_source_link_report(self.bundle),
         )
         self.assertEqual(envelope["results"][0]["disposition"], "rejected")
         # Mismatched supplementary scalar → context_mismatch → refused.
@@ -259,6 +277,7 @@ class LoadedInterpreterTests(unittest.TestCase):
             read_set=self.read_set,
             ontology_revision="ontology-e8",
             context={"migration_phase": "pre_migration", "as_of_version": "v9"},
+            source_link_report=_resolved_source_link_report(self.bundle),
         )
         self.assertEqual(envelope2["results"][0]["disposition"], "refused")
 
