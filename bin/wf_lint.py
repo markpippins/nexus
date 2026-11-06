@@ -1642,6 +1642,161 @@ class NatsPostconditionRule(Rule):
         return findings
 
 
+# --------------------------------------------------------------------------
+# rule: dependabot-config
+# --------------------------------------------------------------------------
+
+DEPENDABOT_RELS = (".github/dependabot.yml", ".github/dependabot.yaml")
+
+# Scalar `directory:` and inline `directories: [a, b]` forms. Dependabot
+# accepts both; only these two appear in the wild across our 164 entries, and
+# handling them by regex keeps the directory check runnable WITHOUT PyYAML —
+# which matters because CI installs pytest only (see scan_file).
+_DB_DIR_RE = re.compile(r"""^\s*directory:\s*['"]?([^'"\s#]+)['"]?\s*(#.*)?$""")
+_DB_DIRS_RE = re.compile(r"^\s*directories:\s*\[(.*?)\]\s*(#.*)?$")
+_DB_DIR_ITEM_RE = re.compile(r"""['"]?([^'"\s,]+)['"]?""")
+
+
+class DependabotConfigRule(Rule):
+    """`.github/dependabot.yml` must parse, and every directory it names must
+    still exist.
+
+    The failure this guards is the CodeQL zero-job class (ruling 38M §E): a
+    config file that is malformed, or that points at directories which have
+    since been renamed or deleted, fails SILENTLY inside GitHub's own
+    Dependabot runner. Nothing in our CI goes red, so a manifest quietly stops
+    receiving security updates and the only symptom is an advisory that never
+    gets proposed — exactly the "green-looking, invisible, structural" shape
+    38M called a governance bug.
+
+    Two independent halves, deliberately split:
+
+      * directory resolution — plain regex + filesystem, NO PyYAML required.
+        This is the high-value half and it ALWAYS runs, in CI included.
+      * parse/structure — needs PyYAML. When PyYAML is absent the rule emits a
+        WARNING naming the missing dep; it never skips silently. A guard that
+        cannot report its own blindness is the very bug class being fixed.
+
+    Severity: a directory that does not resolve is a violation (Dependabot is
+    definitely not covering it). A malformed file is a violation. A missing
+    PyYAML is a warning — the rule is partly blind, not wrong.
+    """
+
+    name = "dependabot-config"
+
+    def __init__(self) -> None:
+        self._target = "."
+
+    def applies(self, rel: str, filename: str, target: str) -> bool:
+        self._target = target
+        return rel.replace(os.sep, "/") in DEPENDABOT_RELS
+
+    def scan_line(self, raw: str, rel: str, lineno: int) -> list[Finding]:
+        return []  # structural rule: whole-file pass via scan_file only
+
+    def _resolve(self, directory: str) -> str | None:
+        """Repo-absolute path for a Dependabot `directory:` value, or None.
+
+        Dependabot writes `/` for the repo root; os.path.join would discard
+        the target prefix and point at the filesystem root, so `/` is mapped
+        back onto the scan target explicitly.
+        """
+        target = os.path.abspath(self._target)
+        if directory == "/":
+            return target
+        return os.path.join(target, directory.lstrip("/"))
+
+    def scan_file(self, rel: str, lines: list[str]) -> list[Finding]:
+        out: list[Finding] = []
+
+        # -- half 1: directory resolution (always runs, no deps) ----------
+        for idx, raw in enumerate(lines, start=1):
+            stripped = raw.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            candidates: list[str] = []
+            m = _DB_DIR_RE.match(raw)
+            if m:
+                candidates.append(m.group(1))
+            else:
+                m = _DB_DIRS_RE.match(raw)
+                if m:
+                    candidates.extend(_DB_DIR_ITEM_RE.findall(m.group(1)))
+            for directory in candidates:
+                resolved = self._resolve(directory)
+                if resolved is None or not os.path.isdir(resolved):
+                    out.append(Finding(
+                        "violation", rel, idx, self.name,
+                        f"directory `{directory}` does not exist in the tree — "
+                        f"Dependabot fails silently on an unresolvable directory, "
+                        f"so that manifest gets no coverage. Fix the path or drop "
+                        f"the entry.",
+                    ))
+
+        # -- half 2: parse + structure (needs PyYAML) ---------------------
+        try:
+            import yaml
+        except ImportError:
+            out.append(Finding(
+                "warning", rel, 1, self.name,
+                "PyYAML unavailable — the parse/structure half of this rule did "
+                "not run (directory resolution still ran). Install pyyaml to arm it.",
+            ))
+            return out
+
+        try:
+            doc = yaml.safe_load("".join(lines))
+        except yaml.YAMLError as exc:
+            out.append(Finding(
+                "violation", rel, 1, self.name,
+                f"does not parse as YAML: {exc}",
+            ))
+            return out
+
+        if not isinstance(doc, dict):
+            out.append(Finding(
+                "violation", rel, 1, self.name,
+                f"top level is {type(doc).__name__}, expected a mapping",
+            ))
+            return out
+
+        if "version" not in doc:
+            out.append(Finding(
+                "violation", rel, 1, self.name, "no top-level `version:` key",
+            ))
+        updates = doc.get("updates")
+        if updates is None:
+            out.append(Finding(
+                "violation", rel, 1, self.name, "no top-level `updates:` list",
+            ))
+            return out
+        if not isinstance(updates, list) or not updates:
+            out.append(Finding(
+                "violation", rel, 1, self.name,
+                "`updates:` is empty or not a list — Dependabot would run zero jobs",
+            ))
+            return out
+
+        for i, entry in enumerate(updates):
+            if not isinstance(entry, dict):
+                out.append(Finding(
+                    "violation", rel, 1, self.name,
+                    f"updates[{i}] is {type(entry).__name__}, expected a mapping",
+                ))
+                continue
+            if not entry.get("package-ecosystem"):
+                out.append(Finding(
+                    "violation", rel, 1, self.name,
+                    f"updates[{i}] has no `package-ecosystem:`",
+                ))
+            if not entry.get("directory") and not entry.get("directories"):
+                out.append(Finding(
+                    "violation", rel, 1, self.name,
+                    f"updates[{i}] has neither `directory:` nor `directories:`",
+                ))
+        return out
+
+
 # allow markers
 # --------------------------------------------------------------------------
 
@@ -1688,6 +1843,7 @@ RULES: list[Rule] = [
     PipCacheRule(),
     CacheDepPathRule(),
     NatsPostconditionRule(),
+    DependabotConfigRule(),
 ]
 
 
