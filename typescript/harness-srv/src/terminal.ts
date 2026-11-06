@@ -62,6 +62,31 @@ export interface TerminalVerdict {
 }
 
 /**
+ * The message carried by one `{"type":"error",...}` envelope, or null when
+ * the envelope names no failure.
+ *
+ * Exported because the stream is read at two different times and both must
+ * agree on what a refusal says: incrementally while the run is alive
+ * (provider-refusal.ts, which abandons a refusal that never recovers), and
+ * over the whole stream at close. Two parsers for one wire format is how the
+ * exit status came to outrank the error in the first place.
+ */
+export function errorMessageFromEvent(ev: any): string | null {
+  if (ev?.type !== "error") return null;
+  const err = ev.error ?? {};
+  const data = err.data ?? err;
+  const msg =
+    typeof data?.message === "string"
+      ? data.message
+      : typeof err?.message === "string"
+        ? err.message
+        : null;
+  if (!msg) return null;
+  const status = data?.statusCode ?? err?.statusCode ?? err?.status;
+  return status ? `opencode error (${status}): ${msg}` : `opencode error: ${msg}`;
+}
+
+/**
  * Parse opencode's JSON-lines stream into the markers that decide the state.
  *
  * Non-JSON lines (opencode can interleave plain text) are ignored, and so are
@@ -81,21 +106,8 @@ export function scanOpencodeStream(stdout: string): StreamMark[] {
       continue;
     }
     if (ev?.type === "error") {
-      const err = ev.error ?? {};
-      const data = err.data ?? err;
-      const msg =
-        typeof data?.message === "string"
-          ? data.message
-          : typeof err?.message === "string"
-            ? err.message
-            : null;
-      if (msg) {
-        const status = data?.statusCode ?? err?.statusCode ?? err?.status;
-        marks.push({
-          kind: "error",
-          message: status ? `opencode error (${status}): ${msg}` : `opencode error: ${msg}`,
-        });
-      }
+      const message = errorMessageFromEvent(ev);
+      if (message) marks.push({ kind: "error", message });
       continue;
     }
     if (ev?.type === "step_finish") {

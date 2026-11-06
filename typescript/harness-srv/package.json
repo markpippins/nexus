@@ -7,7 +7,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
-    "test": "vitest run && tsx tests/terminal.test.ts && tsx tests/timeout-clamp.test.ts && tsx tests/watchdog.test.ts && tsx tests/admission.test.ts && tsx tests/governance-receipt.test.ts && tsx tests/opencode-model-id.test.ts && tsx tests/regex-escape.test.ts && tsx tests/rung-cooldown.test.ts && tsx tests/child-env.test.ts && tsx tests/run-budget.test.ts",
+    "test": "vitest run && tsx tests/terminal.test.ts && tsx tests/timeout-clamp.test.ts && tsx tests/watchdog.test.ts && tsx tests/admission.test.ts && tsx tests/governance-receipt.test.ts && tsx tests/opencode-model-id.test.ts && tsx tests/regex-escape.test.ts && tsx tests/rung-cooldown.test.ts && tsx tests/child-env.test.ts && tsx tests/run-budget.test.ts && tsx tests/ladder.test.ts && tsx tests/provider-refusal.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

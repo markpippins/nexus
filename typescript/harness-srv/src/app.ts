@@ -26,6 +26,14 @@ import rateLimit from "express-rate-limit";
 import { resolveContext, resolveRoleModel, emitEvent, pool, redis, checkConfigAdmission, incrementConsumedUnits, emitGovernanceReceipt } from "./db";
 import { cooldownMsFromEnv, noteStall, orderAttempts, type StallMap } from "./rung-cooldown";
 import { buildChildEnv } from "./child-env";
+import { catalogFromEnv, maxRungsFromEnv, mergeLadder } from "./ladder";
+import {
+  noteRefusal,
+  refusalAbandonMessage,
+  refusalGraceMsFromEnv,
+  refusalIsTerminal,
+  type RefusalWatch,
+} from "./provider-refusal";
 import {
   attemptTimeoutMs,
   remainingBudgetMs,
@@ -36,6 +44,7 @@ import {
 import {
   classifyLadder,
   classifyTerminal,
+  errorMessageFromEvent,
   errorMessagesOf,
   harnessEndedAttempt,
   lastStepReason,
@@ -100,6 +109,22 @@ const FIRST_TOKEN_TIMEOUT_MS = Number(process.env.FIRST_TOKEN_TIMEOUT_MS || 120_
 // disable. See rung-cooldown.ts for the measurements behind this.
 const RUNG_COOLDOWN_MS = cooldownMsFromEnv(process.env.RUNG_COOLDOWN_MS);
 const rungStalls: StallMap = new Map();
+
+// ── Provider refusals ─────────────────────────────────────────────
+// opencode can report a refusal (429, auth, usage limit) as an error
+// envelope on stdout and then keep retrying, producing no token. Without
+// this the run waits out the 120s first-token guard and calls it a stall
+// (record b42b7f64). The refusal is final if nothing follows within the
+// grace window. Set REFUSAL_GRACE_MS=0 to abandon at the next tick.
+const REFUSAL_GRACE_MS = refusalGraceMsFromEnv(process.env.REFUSAL_GRACE_MS);
+
+// ── Ladder catalog ────────────────────────────────────────────────
+// Known-good rungs appended to every ladder, ordered by provider
+// preference (nvidia → opencode → opencode-go → openrouter → ollama).
+// HARNESS_LADDER_CATALOG="" restores config-bundle-only behavior.
+// See src/ladder.ts.
+const LADDER_CATALOG = catalogFromEnv(process.env.HARNESS_LADDER_CATALOG);
+const MAX_LADDER_RUNGS = maxRungsFromEnv(process.env.HARNESS_MAX_LADDER_RUNGS);
 
 // Ceiling for user-supplied timeout_ms on the execute routes — the value
 // flows into child-process and abort timers, so it is clamped to 2 hours
@@ -750,7 +775,7 @@ app.post("/run", async (req, res) => {
       // fallbacks in priority order. Each fallback carries its own opencode
       // wire id + harness so a failed/rate-limited primary rolls to the next
       // provider/binary instead of failing the whole workflow node.
-      const attempts: Array<{
+      const configuredAttempts: Array<{
         model: string | undefined;
         model_identifier: string | undefined;
         harness_id: string;
@@ -769,6 +794,25 @@ app.post("/run", async (req, res) => {
           source: "fallback" as const,
         })),
       ];
+
+      // Widen beyond the role's bundles (src/ladder.ts): configured rungs keep
+      // their order inside a provider, catalog rungs fill the gaps, and the
+      // configured primary is never moved.
+      const attempts = mergeLadder(
+        configuredAttempts,
+        LADDER_CATALOG,
+        (model) => ({
+          model,
+          model_identifier: model,
+          harness_id: effectiveHarnessId,
+          source: "fallback" as const,
+        }),
+        MAX_LADDER_RUNGS
+      );
+      await log(
+        "info",
+        `run job=${jobId} role=${resolved.role} ladder (${attempts.length} rung(s)): ${attempts.map((a) => a.model ?? "(unset)").join(" → ")}`
+      );
 
       // Order the ladder for this run: a rung that recently stalled goes to
       // the back, everything else keeps its configured priority.
@@ -1283,7 +1327,7 @@ app.post("/run-direct", async (req, res) => {
     // resolveRoleModel sorts bundles ascending; each fallback now carries its
     // own opencode_model_id + harness so a failed/rate-limited primary rolls
     // to the next provider or binary instead of leaving the role dead.
-    const attempts: Array<{
+    const configuredAttempts: Array<{
       model: string;
       model_identifier: string;
       harness_id: string;
@@ -1302,6 +1346,24 @@ app.post("/run-direct", async (req, res) => {
         source: "fallback" as const,
       })),
     ];
+
+    // Same widening as /run: catalog rungs ranked against the configured
+    // fallbacks, configured primary untouched.
+    const attempts = mergeLadder(
+      configuredAttempts,
+      LADDER_CATALOG,
+      (model) => ({
+        model,
+        model_identifier: model,
+        harness_id: harnessId,
+        source: "fallback" as const,
+      }),
+      MAX_LADDER_RUNGS
+    );
+    await log(
+      "info",
+      `run-direct job=${jobId} role=${role} ladder (${attempts.length} rung(s)): ${attempts.map((a) => a.model).join(" → ")}`
+    );
 
     // Same cooldown as the /run ladder: a rung that just stalled is tried
     // last for RUNG_COOLDOWN_MS instead of first on every job.
@@ -1976,6 +2038,11 @@ async function executeOpencode(
     let timedOut = false;
     let noFirstToken = false;
     let firstTokenSeen = false;
+    // The provider's refusal, while it may still be answered by output.
+    let refusal: RefusalWatch | null = null;
+    // Set when the grace window elapsed and WE ended the attempt on that
+    // refusal — the close handler reports it as a refusal, not a stall.
+    let refusedAbandon = false;
     let firstTokenTimer: NodeJS.Timeout | null = null;
     // ── Stream translation (P1 item 6) ───────────────────────────
     // opencode --format json emits a JSON-lines stream; translate each
@@ -1997,6 +2064,16 @@ async function executeOpencode(
           // stream at close (terminal.ts) so the same parse both surfaces the
           // cause and decides the state; parsing them twice, differently, is
           // how the exit status came to outrank the error in the first place.
+          // A refusal can arrive and then sit there while opencode retries
+          // (provider-refusal.ts). Watch it now; the supervisor tick below
+          // makes it terminal if nothing follows within the grace window. The
+          // whole stream is still read at close, which stays the deciding
+          // evidence when the process ends on its own.
+          if (ev?.type === 'error' && !firstTokenSeen) {
+            const msg = errorMessageFromEvent(ev);
+            if (msg) refusal = noteRefusal(refusal, msg, Date.now());
+            continue;
+          }
           if (ev?.type === 'text' || ev?.type === 'reasoning') {
             if (!firstTokenSeen) {
               firstTokenSeen = true;
@@ -2050,9 +2127,25 @@ async function executeOpencode(
     // failover ladder rolls to the next model instead of waiting out the full
     // run timeout on a hung provider.
     firstTokenTimer = setInterval(() => {
-      if (Date.now() < firstTokenDeadline) return;
+      if (firstTokenSeen) {
+        if (firstTokenTimer) clearInterval(firstTokenTimer);
+        return;
+      }
+      const now = Date.now();
+      // The provider's own words outrank the guard's deadline: a refusal that
+      // nothing answered is final after the grace window, and the run fails
+      // over in seconds instead of burning the full first-token allowance.
+      if (refusalIsTerminal(refusal, now, REFUSAL_GRACE_MS)) {
+        if (firstTokenTimer) clearInterval(firstTokenTimer);
+        refusedAbandon = true;
+        child.kill('SIGTERM');
+        setTimeout(() => {
+          try { child.kill('SIGKILL'); } catch { /* already dead */ }
+        }, 5000);
+        return;
+      }
+      if (now < firstTokenDeadline) return;
       if (firstTokenTimer) clearInterval(firstTokenTimer);
-      if (firstTokenSeen) return;
       noFirstToken = true;
       child.kill('SIGTERM');
       setTimeout(() => {
@@ -2065,7 +2158,14 @@ async function executeOpencode(
       if (firstTokenTimer) clearInterval(firstTokenTimer);
       let exitCode = code ?? 1;
       let stderrOut = stderr;
-      if (noFirstToken) {
+      if (refusedAbandon && refusal) {
+        // Exit 1, not 124: the harness did not run out of time and the model
+        // did not hang — the provider refused. Saying so keeps this out of
+        // the stall path (no ten-minute cooldown for an honest 429) and gives
+        // the caller the actual cause instead of "no first token".
+        exitCode = 1;
+        stderrOut = refusalAbandonMessage(refusal, Date.now());
+      } else if (noFirstToken) {
         exitCode = 124;
         stderrOut = `opencode produced no first token within ${Math.min(timeout_ms, FIRST_TOKEN_TIMEOUT_MS)}ms — abandoning`;
       } else if (timedOut) {
