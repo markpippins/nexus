@@ -1,11 +1,11 @@
--- V205: Decommission QBE-era empty tables (shrapnel schema)
+-- V211: Decommission QBE-era empty tables (shrapnel schema)
 -- Per architect ruling 4dc4459e: decommission QBE-era empty tables in shrapnel.*
 -- Tables IN RULING SCOPE: data_source, qbe_table, qbe_column, qbe_join,
 --   qbe_join_type, qbe_table_column, value_type
 -- Row-count guard: verify 0 rows before DROP (fail-fast if any data present)
 --
 -- ============================================================================
--- RENUMBERED V194 -> V205, AND SCOPED DOWN TO THE RULING (2026-10-04, DBA)
+-- RENUMBERED V194 -> V211, AND SCOPED DOWN TO THE RULING (2026-10-04, DBA)
 -- ============================================================================
 -- This file was V194__decommission_qbe_empty_tables.sql, colliding with
 -- V194__expression_register_producer.sql (#422). Renumbered per the V039

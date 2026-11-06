@@ -8,7 +8,9 @@ collision audit (DBA R1 793679f8):
   Two migrations sharing one V-number breaks apply-order determinism: which
   file "is" V125 depends on directory sort order, and a fresh environment
   (CI bootstrap, new laptop, vanadium restore) may apply them in a different
-  order than the machine that evolved the schema — silently diverging.The live corpus contained SIX historical duplicate numbers (V039, V040,
+  order than the machine that evolved the schema — silently diverging.
+
+The live corpus contained SIX historical duplicate numbers (V039, V040,
 V045, V046, V051, V125). The 2026-09-18 audit verified by live schema
 introspection that BOTH files of every pair were already applied-live
 history — immutable, unrenumberable — EXCEPT V039__open_question_entities
@@ -20,7 +22,7 @@ permanent ALLOWLIST — and any NEW duplicate fails CI.
 A SEVENTH collision, V194, surfaced later and was resolved by the same
 precedent on 2026-10-04: V194__expression_register_producer (#422) is
 applied-live and keeps V194; V194__decommission_qbe_empty_tables (#424) was
-never applied and was renumbered to V205. It was NOT added to the allowlist —
+never applied and was renumbered to V211. It was NOT added to the allowlist —
 an allowlist entry silences the finding instead of fixing it, which is the
 one thing this guard exists to prevent. Its drop list was also narrowed to
 ruling 4dc4459e's actual scope in that same change; see the file header.
@@ -129,7 +131,7 @@ class TestNumberUniqueness(unittest.TestCase):
         )
 
     def test_v194_collision_resolved_by_renumbering_the_unapplied_member(self):
-        """V194 belonged to the APPLIED member; the unapplied one moved to V205.
+        """V194 belonged to the APPLIED member; the unapplied one moved to V211.
 
         Two files claimed V194 (#422 expression_register_producer, #424
         decommission_qbe_empty_tables). Resolved the same way as V039: the
@@ -147,8 +149,8 @@ class TestNumberUniqueness(unittest.TestCase):
             "the APPLIED V194 member must keep the number",
         )
         self.assertTrue(
-            any(f.startswith("V205__decommission_qbe_empty_tables") for f in names),
-            "the UNAPPLIED member should be renumbered to V205",
+            any(f.startswith("V211__decommission_qbe_empty_tables") for f in names),
+            "the UNAPPLIED member should be renumbered to V211",
         )
         self.assertFalse(
             any(f.startswith("V194__decommission_qbe_empty_tables") for f in names),
