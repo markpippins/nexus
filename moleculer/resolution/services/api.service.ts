@@ -11,7 +11,7 @@ import ApiGateway from "moleculer-web";
  *
  * DECISION 32 (4c9afc09, Option 3): the aliases below are LITERAL — one
  * per concrete table — GENERATED from the twin's verbatim tables.ts copy
- * (48 tables; fixed: /health + /api/meta), NOT a single :table param route. Literal aliases keep the
+ * (49 tables; fixed: /health + /api/meta), NOT a single :table param route. Literal aliases keep the
  * twin's surface enumerable by the existing extractor, avoid param
  * shadowing of /api/meta and /api/health, and make per-table presence
  * first-class. The registry-closure test (fleet guard) pins
@@ -130,6 +130,8 @@ export default class ApiService extends Service {
               "GET /api/proposition_frame_value/:id": "resolution.dispatch",
               "GET /api/receipt": "resolution.dispatch",
               "GET /api/receipt/:id": "resolution.dispatch",
+              "GET /api/relation_vocabulary": "resolution.dispatch",
+              "GET /api/relation_vocabulary/:id": "resolution.dispatch",
               "GET /api/representation": "resolution.dispatch",
               "GET /api/representation/:id": "resolution.dispatch",
               "GET /api/representation_comparison": "resolution.dispatch",
