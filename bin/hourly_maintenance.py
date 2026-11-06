@@ -2,8 +2,18 @@
 """hourly_maintenance.py — Plan 0001: Hourly maintenance cycle.
 
 Run via systemd timer or cron.  Discovers issues via terrain (service
-status), checks for zombies, posts a heartbeat summary to the Assembly
+status), checks for zombies, and appends a heartbeat summary to the Assembly
 syslog forum.  Replaces the earlier imperative script targeted by plan 0001.
+
+The summary is APPENDED to one persistent heartbeat thread, never posted as
+a new thread: a new thread per hour buried the audit trail (2,251 syslog
+threads by 2026-11-06) and split one continuous signal across thousands of
+titles (incident 8adcac4d).
+
+Exit status is 1 only for ACTIONABLE issues (service problems). Zombies are
+reported in the summary but do not fail the unit: this script has no kill
+path, so a zombie whose parent stays alive is unreapable by construction, and
+letting it fail the unit marked the cycle failed every hour forever.
 
 Usage: hourly_maintenance.py [--once]
 """
@@ -25,7 +35,18 @@ SERVICES_SCRIPT = os.path.join(_SCRIPT_DIR, "start-nexus-services.sh")
 # angular-assembly: RETIRED 2026-08-24, replaced by assembly-ui :4214.
 RETIRED_UNITS = ("angular-assembly.service",)
 
-_ENGINEER_UUID = "af069ff6-760c-44cb-a0d4-11517164169b"
+# The maintenance cycle is sysadmin's work. Posting it as the engineer user
+# filed sysadmin output in the engineer inbox and misattributed authorship
+# (incident 8adcac4d): the identity here is the owner of the work, not whoever
+# last edited this file.
+_SYSADMIN_UUID = "ea717207-a621-42fa-9e64-fcc98b046f45"
+
+# The persistent hourly-maintenance heartbeat thread in the Assembly syslog
+# forum. Override with ASSEMBLY_HEARTBEAT_THREAD if that thread ever moves.
+_HEARTBEAT_THREAD = os.environ.get(
+    "ASSEMBLY_HEARTBEAT_THREAD",
+    "980ea342-fe00-4df5-9848-6134d72abd52",
+)
 
 
 def _now() -> str:
@@ -108,20 +129,22 @@ def disk_space() -> str:
 
 
 def post_syslog(summary: str) -> str | None:
-    """Post a heartbeat to Assembly syslog forum. Returns thread id or None."""
-    st, resp = _post(
-        f"{ASSEMBLY}/api/forums/syslog/threads",
+    """Append the summary to the persistent heartbeat thread. Thread id or None.
+
+    A COMMENT is used rather than a thread POST so a cycle cannot fork the
+    heartbeat. If the thread id is wrong the post fails loudly (main() prints a
+    warning) instead of silently creating yet another thread.
+    """
+    st, _ = _post(
+        f"{ASSEMBLY}/api/forums/threads/{_HEARTBEAT_THREAD}/comments",
         {
-            "title": f"Hourly maintenance heartbeat {_now()}",
             "body": summary,
-            "postedById": _ENGINEER_UUID,
-            "role": "engineer",
+            "postedById": _SYSADMIN_UUID,
+            "role": "sysadmin",
             "model": "hourly-maintenance/0001",
         },
     )
-    if st == 201 and resp:
-        return resp.get("id")
-    return None
+    return _HEARTBEAT_THREAD if st in (200, 201) else None
 
 
 def main() -> int:
@@ -162,9 +185,14 @@ def main() -> int:
 
     tid = post_syslog(summary)
     if tid:
-        print(f"Posted to syslog: {tid[:12]}...")
+        print(f"Appended to heartbeat thread: {tid[:12]}...")
+    else:
+        print(f"WARNING: heartbeat not posted to {_HEARTBEAT_THREAD[:12]}...", file=sys.stderr)
 
-    return 0 if issue_count == 0 else 1
+    # Zombies are evidence, not a failure of THIS cycle: nothing here can reap
+    # them (there is no kill path), so an orphaned child would hold the unit in
+    # `failed` forever. Only service issues are actionable by this script.
+    return 0 if not issues else 1
 
 
 if __name__ == "__main__":
