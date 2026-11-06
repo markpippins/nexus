@@ -4403,6 +4403,22 @@ BEGIN
         'one or drop the field and say in the prompt that the value is not observable.\n'
         'A prompt that says "if you cannot observe a value, say so in words rather than\n'
         'leaving a placeholder" is cheap insurance and it works.\n'
+        '\n'
+        '### State the shape you will accept\n'
+        '\n'
+        'Naming the source is half of it; the slot must also say what shape the value\n'
+        'takes. Same day, same session: a prompt asked for \`<step 2 check tally>\` and\n'
+        'gave a command that prints a JSON tally, and the run wrote back\n'
+        '\`[{"success":76}]\` — faithful to the command, unusable to the reader. The\n'
+        'merge gate refused the row (\`ATT_CI_COVERAGE\`: policy v2 wants a rollup\n'
+        'count; record \`7064ac20\`, superseded by \`62052fdc\`). The same run passed once\n'
+        'the slot read \`<integer from step 2>\` and the required line was spelled out:\n'
+        '\`Rollup at 62bc5085: 76 checks, all success\`.\n'
+        '\n'
+        'So: where a consumer parses the value, quote the exact line it expects. A\n'
+        'placeholder that can be satisfied two ways will be satisfied the wrong way\n'
+        'often enough to matter, and the tester is not at fault when it is.\n'
+        '\n'
         '',
         ARRAY['tester', 'attestation', 'merge-gate', 'policy-v2', 'verification'],
         ARRAY['attest a pr', 'write an attestation', 'tester verdict', 'policy attestation v2', 'attestation format', 'verdict approved', 're-attest', 'merge gate blocked by attestation', 'attestation rejected'],
@@ -4500,7 +4516,7 @@ BEGIN
     ON CONFLICT (slug) DO NOTHING
     RETURNING id INTO v_memory_id;
     IF v_memory_id IS NOT NULL THEN
-        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'dba', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'operator', 'planner', 'reviewer', 'sound-technician', 'sysadmin', 'tester', 'topologist'];
+        v_roles := ARRAY['analyst', 'analyst-ii', 'architect', 'auditor', 'builder', 'critic', 'dba', 'design-synthesist', 'devops', 'engineer', 'engineer-ii', 'engineer-iii', 'epistemologist', 'inspector', 'layout-mechanic', 'lead-engineer', 'ontologist', 'operator', 'planner', 'reviewer', 'sound-technician', 'supervisor', 'sysadmin', 'tester', 'topologist'];
         FOREACH v_role IN ARRAY v_roles LOOP
             INSERT INTO ${SQL}.role_memory (memory_id, role, as_of_dt, expiration_dt)
             VALUES (v_memory_id, v_role, NOW(), NULL);
