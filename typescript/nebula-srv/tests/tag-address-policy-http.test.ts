@@ -210,7 +210,6 @@ async function phaseReject(base: string): Promise<void> {
       ['registered alias to:all (kind=alias, never rejects)', ['to:all']],
       ['registered telemetry to:wr-conf-observer (kind=telemetry, never rejects)', ['to:wr-conf-observer']],
       ['Class V value tags incl. uppercase (Ruling 11: never reject)', ['type:change', 'ADR-006', 'blocks:PR-580']],
-      ['case variant of registered address (Ruling 11)', ['to:DBA']],
       ['mixed payload: only the unregistered member is flagged', ['to:dba', 'to:all', 'type:change', 'to:ghost-b']],
     ];
     for (const [label, tags] of acceptSets) {
@@ -228,6 +227,26 @@ async function phaseReject(base: string): Promise<void> {
         created.push(post.body.id);
       }
     }
+
+    // 2b. A case variant of a registered address never reaches the policy.
+    // Main's routing guard (Rulings 38I/38J) rejects non-canonical routing tags
+    // with 400 first, because `to:DBA` addresses a dead mailbox — inbox lookup
+    // matches `to:`+role.toLowerCase() exactly. The policy itself is
+    // case-insensitive by design and would accept it (covered in the unit
+    // tier); the two guards are consistent, just scoped differently: the
+    // routing guard owns deliverability, the policy owns registry membership.
+    //
+    // This assertion expected 201 until 2026-11-06, when it was written against
+    // the branch's pre-38I premise and failed on rebase. The expectation moved;
+    // the policy did not.
+    const caseVariant = await httpReq(base, 'POST', '/api/agent-records', {
+      recordType: 'engineering_log', role: 'dba',
+      title: `${RUN} case variant`,
+      content: `address-policy case fixture ${RUN} — safe to delete`,
+      tags: ['to:DBA'],
+    });
+    ok('routing guard rejects uppercase to:DBA before the policy runs => 400', caseVariant.status === 400, { status: caseVariant.status, body: caseVariant.body });
+    ok('400 names the canonical-lowercase requirement', JSON.stringify(caseVariant.body).toLowerCase().includes('lowercase'), caseVariant.body);
 
     // 3. PATCH enforcement: flipping tags onto an existing record is policed
     const seed = await httpReq(base, 'POST', '/api/agent-records', {
