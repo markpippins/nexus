@@ -27,6 +27,12 @@ import { resolveContext, resolveRoleModel, emitEvent, pool, redis, checkConfigAd
 import { cooldownMsFromEnv, noteStall, orderAttempts, type StallMap } from "./rung-cooldown";
 import { buildChildEnv } from "./child-env";
 import {
+  attemptTimeoutMs,
+  remainingBudgetMs,
+  runDeadlineMs,
+  shouldStartAttempt,
+} from "./run-budget";
+import {
   classifyLadder,
   classifyTerminal,
   errorMessagesOf,
@@ -149,7 +155,8 @@ interface HarnessJobEvent {
   type:
     | "job.accepted" | "job.started" | "text.delta" | "thinking"
     | "job.completed" | "job.failed" | "job.timed_out" | "job.cancelled"
-    | "job.fallback";
+    | "job.fallback"
+  | "job.budget_exhausted";
   ts: number;
   payload: Record<string, unknown>;
 }
@@ -772,9 +779,23 @@ app.post("/run", async (req, res) => {
         );
       }
 
+      // One deadline for the WHOLE ladder, not one per rung. `timeout_ms` is
+      // the caller's wall-clock ceiling for the run; handing every rung its
+      // own copy is how job 07469dca ran 60 minutes on a 30-minute request
+      // (see src/run-budget.ts).
+      const runDeadline = runDeadlineMs(Date.now(), timeoutMs);
+
       try {
         for (let i = 0; i < orderedAttempts.length; i++) {
           const attempt = orderedAttempts[i];
+          const remaining = remainingBudgetMs(runDeadline, Date.now());
+          if (!shouldStartAttempt(remaining)) {
+            await log(
+              "warn",
+              `run job=${jobId} role=${resolved.role} run budget of ${timeoutMs}ms exhausted (${remaining}ms left) — not starting ${attempt.source} ${attempt.model ?? "(unset)"}`
+            );
+            break;
+          }
           let attemptExit = 1;
           let attemptStdout = "";
           let attemptStderr = "";
@@ -787,7 +808,8 @@ app.post("/run", async (req, res) => {
               role: resolved.role,
               model: attempt.model,
               model_identifier: attempt.model_identifier,
-              timeout_ms: timeoutMs,
+              // Only what is left of the RUN's budget, never a fresh copy.
+              timeout_ms: attemptTimeoutMs(remaining),
               // Liveness for the runaway watchdog — same as the /run-direct
               // path. Without this, sessions registered here keep
               // streamChunks at 0 and fall back to the record-only rule,
@@ -1290,15 +1312,40 @@ app.post("/run-direct", async (req, res) => {
       // timeout" (jobs 7e2f58e4 / 87ae9ae3, 2026-11-05) when nothing had
       // timed out at the run level at all.
       const outcomes: AttemptOutcome[] = [];
+      // Set when the ladder is cut short by the run's own deadline rather
+      // than by an attempt's verdict — the two are different statements and
+      // the terminal envelope must say which one happened.
+      let budgetExhausted = false;
+      const runDeadline = runDeadlineMs(Date.now(), timeoutMs);
 
       try {
         for (const attempt of orderedAttempts) {
           // Honour an interrupt that landed between attempts.
           if (jobs.get(jobId)?.interrupted) break;
 
+          // The caller's timeout bounds the RUN. Once the budget is spent
+          // (e.g. the primary consumed all of it before being abandoned),
+          // there is nothing left to give the next rung.
+          const remaining = remainingBudgetMs(runDeadline, Date.now());
+          if (!shouldStartAttempt(remaining)) {
+            budgetExhausted = true;
+            await log(
+              "warn",
+              `run-direct job=${jobId} role=${role} run budget of ${timeoutMs}ms exhausted (${remaining}ms left) — not starting ${attempt.source} ${attempt.model}`
+            );
+            pushJobEvent(jobId, "job.budget_exhausted", {
+              timeout_ms: timeoutMs,
+              remaining_ms: remaining,
+              skipped: { model: attempt.model, source: attempt.source },
+            });
+            break;
+          }
+
           execParams.harness_id = attempt.harness_id;
           execParams.model = attempt.model;
           execParams.model_identifier = attempt.model_identifier;
+          // Only what is left of the RUN's budget, never a fresh copy.
+          execParams.timeout_ms = attemptTimeoutMs(remaining);
 
           let attemptExit = 1;
           let attemptStdout = "";
@@ -1414,7 +1461,16 @@ app.post("/run-direct", async (req, res) => {
         });
         return;
       }
-      const verdict = classifyLadder(outcomes);
+      // A ladder cut short by the run's own budget ends on the budget, not on
+      // whichever rung happened to fail last: the caller asked for N minutes
+      // and got N minutes, and the envelope says so.
+      const ladderVerdict = classifyLadder(outcomes);
+      const verdict = budgetExhausted
+        ? {
+            state: "timed_out" as const,
+            detail: `run budget of ${timeoutMs}ms was exhausted after ${outcomes.length} of ${orderedAttempts.length} attempt(s); ${ladderVerdict.detail}`,
+          }
+        : ladderVerdict;
       const state: HarnessJobState = verdict.state;
       setJobState(jobId, state, { exitCode, stderr });
 
