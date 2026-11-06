@@ -112,17 +112,22 @@ export interface ResolvedFallbackModel {
 }
 
 /**
- * Provider preference rank for fallback ordering — matches the operating
- * ladder: Nvidia first, then free OpenRouter, then free OpenCode Go,
- * then OpenCode (big-pickle), then Ollama (local, last resort), and the
- * known-dead DeepSeek key dead last.
+ * Provider preference rank for fallback ordering — the operating ladder:
+ * Nvidia first, then OpenCode, then OpenCode Go, then OpenRouter's free
+ * models router, then local Ollama, and the known-dead DeepSeek key last.
+ *
+ * OpenCode moved ahead of OpenCode Go on 2026-11-06 (operator direction): the
+ * main OpenCode plan carries the free nemotron rungs, while OpenCode Go is a
+ * separate subscription. Nvidia stays first because it is the reliable
+ * primary here. This is a tiebreak only — config_bundle priority still wins,
+ * and ladder.ts applies the same preference to catalog rungs.
  */
 const PROVIDER_RANK: Record<string, number> = {
   "prov-1783906359513": 0, // Nvidia
-  "prov-1782144397043": 1, // OpenRouter
+  "prov-opencode": 1, // OpenCode (free nemotron rungs, big-pickle)
   "prov-opencode-go": 2, // OpenCode Go
-  "prov-opencode": 3, // OpenCode (big-pickle)
-  "prov-ollama": 4, // Ollama
+  "prov-1782144397043": 3, // OpenRouter (free models router)
+  "prov-ollama": 4, // Ollama (local, last resort)
   "prov-deepseek": 5, // DeepSeek (key currently invalid)
 };
 
