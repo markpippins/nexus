@@ -31,6 +31,7 @@ import {
   remainingBudgetMs,
   runDeadlineMs,
   shouldStartAttempt,
+  sliceAllowsFirstToken,
 } from "./run-budget";
 import {
   classifyLadder,
@@ -796,6 +797,10 @@ app.post("/run", async (req, res) => {
             );
             break;
           }
+          // The slice this attempt actually gets. Needed after the run so a
+          // "no first token" outcome can be attributed to the budget or to the
+          // provider (see sliceAllowsFirstToken).
+          const attemptSliceMs = attemptTimeoutMs(remaining);
           let attemptExit = 1;
           let attemptStdout = "";
           let attemptStderr = "";
@@ -809,7 +814,7 @@ app.post("/run", async (req, res) => {
               model: attempt.model,
               model_identifier: attempt.model_identifier,
               // Only what is left of the RUN's budget, never a fresh copy.
-              timeout_ms: attemptTimeoutMs(remaining),
+              timeout_ms: attemptSliceMs,
               // Liveness for the runaway watchdog — same as the /run-direct
               // path. Without this, sessions registered here keep
               // streamChunks at 0 and fall back to the record-only rule,
@@ -843,7 +848,19 @@ app.post("/run", async (req, res) => {
           }
 
           if (/no first token/i.test(attemptStderr || "")) {
-            noteStall(rungStalls, attempt.model, Date.now());
+            // A stall is evidence about the model only when the attempt was
+            // given at least the harness's first-token allowance. With a
+            // shorter slice the guard fires first by construction, so blaming
+            // the rung would also cost it its priority slot for
+            // RUNG_COOLDOWN_MS — the run's own budget, punished twice.
+            if (sliceAllowsFirstToken(attemptSliceMs, FIRST_TOKEN_TIMEOUT_MS)) {
+              noteStall(rungStalls, attempt.model, Date.now());
+            } else {
+              await log(
+                "info",
+                `run job=${jobId} role=${resolved.role} ${attempt.source} ${attempt.model ?? "(unset)"} produced no first token in ${attemptSliceMs}ms — below the ${FIRST_TOKEN_TIMEOUT_MS}ms allowance, not marked stalled`
+              );
+            }
           }
 
           const next = orderedAttempts[i + 1] ?? null;
@@ -1345,7 +1362,8 @@ app.post("/run-direct", async (req, res) => {
           execParams.model = attempt.model;
           execParams.model_identifier = attempt.model_identifier;
           // Only what is left of the RUN's budget, never a fresh copy.
-          execParams.timeout_ms = attemptTimeoutMs(remaining);
+          const attemptSliceMs = attemptTimeoutMs(remaining);
+          execParams.timeout_ms = attemptSliceMs;
 
           let attemptExit = 1;
           let attemptStdout = "";
@@ -1382,7 +1400,16 @@ app.post("/run-direct", async (req, res) => {
           // attempt's stderr, never from the accumulated one.
           const abandonedForNoFirstToken = /no first token/i.test(attemptStderr || "");
           if (abandonedForNoFirstToken) {
-            noteStall(rungStalls, attempt.model, Date.now());
+            // See /run: a slice below the allowance makes "no first token"
+            // inevitable, so it says nothing about the provider.
+            if (sliceAllowsFirstToken(attemptSliceMs, FIRST_TOKEN_TIMEOUT_MS)) {
+              noteStall(rungStalls, attempt.model, Date.now());
+            } else {
+              await log(
+                "info",
+                `run-direct job=${jobId} role=${role} ${attempt.source} ${attempt.model} produced no first token in ${attemptSliceMs}ms — below the ${FIRST_TOKEN_TIMEOUT_MS}ms allowance, not marked stalled`
+              );
+            }
           }
           const attemptVerdict = classifyTerminal({
             exitCode: attemptExit,
