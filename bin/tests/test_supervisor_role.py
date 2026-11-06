@@ -128,6 +128,11 @@ class SupervisorRoleContract(unittest.TestCase):
             "knowledge-stratification",
             "pr-protocol",
             "worktree-development-workflow",
+            # R6 tells every agent to announce a finished unit, and the
+            # supervisor completes coordination units (digests, sweeps) even
+            # though it holds no WorkRequest execution authority. Added
+            # 2026-11-06 so the binding is visible in review, not implied.
+            "completion-announcement",
         }
         actual = {slug for slug, card in by_slug.items() if "supervisor" in card["roles"]}
         self.assertEqual(actual, expected)
