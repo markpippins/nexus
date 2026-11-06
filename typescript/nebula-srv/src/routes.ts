@@ -5527,9 +5527,13 @@ export function createRoutes(pool: Pool): Router {
     }
   }
 
-  // POST /api/agent-records — create a new agent record (canonical write path)
   // ── Tag address policy (Ruling 13 step 5, PR #693). Registries load
   // lazily once; a missing/unreadable registry file degrades fail-open.
+  //
+  // Declared ABOVE the route comment on purpose: the OpenAPI generator takes
+  // the comment immediately preceding `router.post` as the endpoint summary,
+  // so any code between them silently drops that summary from the committed
+  // spec (caught by the apidocs gate on this PR).
   let addressRegistries: ReturnType<typeof loadAddressRegistry> | null = null;
   const getAddressRegistries = (): ReturnType<typeof loadAddressRegistry> => {
     if (addressRegistries === null) {
@@ -5539,6 +5543,7 @@ export function createRoutes(pool: Pool): Router {
     return addressRegistries;
   };
 
+  // POST /api/agent-records — create a new agent record (canonical write path)
   router.post('/agent-records', async (req: Request, res: Response) => {
     try {
       const { recordType, role, title, content, sourcePath, metadata, tags, systemId, subsystemId, featureId, planRef, level, visibilityScope, model, harnessJobId } = req.body;

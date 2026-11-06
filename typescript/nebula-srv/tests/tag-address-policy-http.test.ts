@@ -1,31 +1,54 @@
 #!/usr/bin/env npx tsx
 /**
- * Integration test: tag address policy two-phase behavior (PR #693 draft).
+ * Integration test: tag address policy two-phase behavior.
  *
- * Phase W (warn): default server accepts unregistered to:-addresses but
- *   logs a [tag-address-policy] WARN — the shipped default; proves the PR
- *   arms nothing by itself (R13 sequencing).
- * Phase R (reject): NEBULA_TAG_ADDRESS_POLICY=reject server answers 422 for
- *   unregistered addresses, and 201 for registered roles, registered
- *   aliases (to:all), registered telemetry (to:wr-conf-observer), Class V
- *   value tags (including uppercase — Ruling 11), and case variants of
- *   registered addresses. Also: PATCH enforcement + no-phantom-write.
+ * Phase W (warn): against the live server the CI job boots (default
+ *   http://localhost:3101 — the same convention as routing-tags-http.test.ts).
+ *   Proves the shipped default arms nothing: an unregistered to:-address is
+ *   accepted and persisted, with a [tag-address-policy] WARN logged.
+ * Phase R (reject): the same handler with NEBULA_TAG_ADDRESS_POLICY=reject.
+ *   A server's policy mode is fixed at boot, so one process cannot serve both
+ *   phases. This phase SPAWNS its own server on an isolated port against the
+ *   same database and tears it down in a finally block.
+ *
+ *   Before 2026-11-06 the whole file defaulted to :3199 and assumed an operator
+ *   had patched a server there by hand. In CI nothing listened on :3199, so the
+ *   gate failed with a bare "Request failed: " (the connection error carried no
+ *   detail) — a test that needs a server must start that server, otherwise the
+ *   port is an undocumented precondition rather than a fixture.
+ *
+ * Covers: 422 for unregistered addresses (POST and PATCH — PATCH must not be
+ * the bypass), 201 for registered roles, aliases, telemetry, Class V value tags
+ * (including uppercase) and case variants of registered addresses, named
+ * offender in the error, and no phantom row on rejection.
  *
  * SELF-SEEDED: unique titles per run, swept on success; a sweep-first pass
  * clears aborted-run residue so a prior failure cannot fail this run.
  *
- * Usage: NEBULA_TEST_BASE=http://localhost:3199 npx tsx tests/tag-address-policy-http.test.ts
+ * Usage: npx tsx tests/tag-address-policy-http.test.ts
+ *   POLICY_PHASE=warn|reject     run a single phase (default: both)
+ *   NEBULA_TEST_BASE=...         override the phase-W base
+ *   POLICY_REJECT_PORT=...       port for the spawned reject server (3199)
  */
 
 import * as http from 'http';
+import { spawn, ChildProcess } from 'child_process';
+import * as path from 'path';
 
-const BASE = process.env.NEBULA_TEST_BASE || 'http://localhost:3199';
 const RUN = `tap-${Date.now()}`;
+const LIVE_BASE = process.env.NEBULA_TEST_BASE || 'http://localhost:3101';
+const REJECT_PORT = Number(process.env.POLICY_REJECT_PORT || 3199);
+const POLICY_ENV = process.env.TAG_ADDRESS_POLICY_ENV_NAME || 'NEBULA_TAG_ADDRESS_POLICY';
 
-function httpReq(method: string, reqPath: string, body?: any): Promise<{ status: number; body: any }> {
+function httpReq(
+  base: string,
+  method: string,
+  reqPath: string,
+  body?: any
+): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
     const bodyStr = body ? JSON.stringify(body) : undefined;
-    const url = new URL(reqPath, BASE);
+    const url = new URL(reqPath, base);
     const options: http.RequestOptions = {
       hostname: url.hostname,
       port: url.port,
@@ -43,7 +66,9 @@ function httpReq(method: string, reqPath: string, body?: any): Promise<{ status:
         catch { resolve({ status: res.statusCode!, body: data }); }
       });
     });
-    req.on('error', (err) => reject(new Error(`Request failed: ${err.message}`)));
+    // Include the base in the message: a bare `err.message` for ECONNREFUSED is
+    // empty, which is what made the old failure unreadable.
+    req.on('error', (err) => reject(new Error(`Request failed (${method} ${base}${reqPath}): ${err.message || (err as any).code || String(err)}`)));
     if (bodyStr) req.write(bodyStr);
     req.end();
   });
@@ -57,19 +82,89 @@ function ok(label: string, condition: boolean, detail?: unknown): void {
   console.log(`  ok: ${label}`);
 }
 
-async function sweep(): Promise<void> {
-  const probe = await httpReq('GET', `/api/agent-records?search=${encodeURIComponent(RUN)}&pageSize=500&includeContent=false`);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function waitHealthy(base: string, timeoutMs = 90_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastErr = 'no attempt made';
+  while (Date.now() < deadline) {
+    try {
+      const r = await httpReq(base, 'GET', '/health');
+      if (r.status === 200) {
+        console.log(`  ok: ${base} is healthy`);
+        return;
+      }
+      lastErr = `health returned ${r.status}`;
+    } catch (e: any) {
+      lastErr = e.message;
+    }
+    await sleep(1000);
+  }
+  throw new Error(`server at ${base} never became healthy within ${timeoutMs}ms (last: ${lastErr})`);
+}
+
+async function spawnRejectServer(): Promise<{ base: string; child: ChildProcess }> {
+  const base = `http://127.0.0.1:${REJECT_PORT}`;
+  console.log(`starting reject-mode server on ${base}`);
+  const child = spawn('npx', ['tsx', 'src/index.ts'], {
+    cwd: path.resolve(__dirname, '..'),
+    env: {
+      ...process.env,
+      PORT: String(REJECT_PORT),
+      BIND_HOST: '127.0.0.1',
+      [POLICY_ENV]: 'reject',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  child.stdout?.on('data', (d) => process.stdout.write(`[reject-srv] ${d}`));
+  child.stderr?.on('data', (d) => process.stderr.write(`[reject-srv] ${d}`));
+
+  let earlyExit: number | null = null;
+  child.on('exit', (code) => { if (earlyExit === null) earlyExit = code ?? -1; });
+
+  try {
+    await waitHealthy(base);
+  } catch (e) {
+    await stopServer(child);
+    throw new Error(
+      `${(e as Error).message}${earlyExit !== null ? ` (server exited early: code ${earlyExit})` : ''}`
+    );
+  }
+  if (earlyExit !== null) {
+    await stopServer(child);
+    throw new Error(`reject-mode server exited (code ${earlyExit}) before serving requests`);
+  }
+  return { base, child };
+}
+
+async function stopServer(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      resolve();
+    }, 10_000);
+    child.once('exit', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    child.kill('SIGTERM');
+  });
+}
+
+async function sweep(base: string): Promise<void> {
+  const probe = await httpReq(base, 'GET', `/api/agent-records?search=${encodeURIComponent(RUN)}&pageSize=500&includeContent=false`);
   for (const row of probe.body?.items ?? []) {
-    await httpReq('DELETE', `/api/agent-records/${row.id}`);
+    await httpReq(base, 'DELETE', `/api/agent-records/${row.id}`);
   }
 }
 
-async function phaseWarn(): Promise<void> {
-  console.log(`phase W (warn) against ${BASE}`);
-  await sweep();
+async function phaseWarn(base: string): Promise<void> {
+  console.log(`phase W (warn) against ${base}`);
+  await sweep(base);
   const created: string[] = [];
   try {
-    const post = await httpReq('POST', '/api/agent-records', {
+    const post = await httpReq(base, 'POST', '/api/agent-records', {
       recordType: 'engineering_log', role: 'dba',
       title: `${RUN} warn-phase unregistered`,
       content: `address-policy warn-phase fixture ${RUN} — safe to delete`,
@@ -78,20 +173,20 @@ async function phaseWarn(): Promise<void> {
     ok('warn mode: unregistered to: address is ACCEPTED (201)', post.status === 201, post.status);
     created.push(post.body.id);
 
-    const reread = await httpReq('GET', `/api/agent-records?id=${post.body.id}`);
+    const reread = await httpReq(base, 'GET', `/api/agent-records?id=${post.body.id}`);
     ok('warn mode: record persisted verbatim', (reread.body?.items ?? []).length === 1);
   } finally {
-    for (const id of created) await httpReq('DELETE', `/api/agent-records/${id}`);
+    for (const id of created) await httpReq(base, 'DELETE', `/api/agent-records/${id}`);
   }
 }
 
-async function phaseReject(): Promise<void> {
-  console.log(`phase R (reject) against ${BASE}`);
-  await sweep();
+async function phaseReject(base: string): Promise<void> {
+  console.log(`phase R (reject) against ${base}`);
+  await sweep(base);
   const created: string[] = [];
   try {
     // 1. unregistered Class R address => 422, not persisted
-    const rej = await httpReq('POST', '/api/agent-records', {
+    const rej = await httpReq(base, 'POST', '/api/agent-records', {
       recordType: 'engineering_log', role: 'dba',
       title: `${RUN} reject-phase unregistered`,
       content: `must not persist ${RUN}`,
@@ -100,7 +195,7 @@ async function phaseReject(): Promise<void> {
     ok('reject mode: unregistered to:ghost-address => 422', rej.status === 422, { status: rej.status, body: rej.body });
     ok('reject mode: 422 names the offender', JSON.stringify(rej.body).includes('to:ghost-address'));
 
-    const probe = await httpReq('GET', `/api/agent-records?search=${encodeURIComponent(RUN)}&pageSize=500&includeContent=false`);
+    const probe = await httpReq(base, 'GET', `/api/agent-records?search=${encodeURIComponent(RUN)}&pageSize=500&includeContent=false`);
     ok('reject mode: rejected record NOT persisted (no phantom row)', (probe.body?.items ?? []).length === 0, probe.body?.items?.length);
 
     // 2. registered role, alias, telemetry, Class V, case variants => 201
@@ -114,7 +209,7 @@ async function phaseReject(): Promise<void> {
     ];
     for (const [label, tags] of acceptSets) {
       const isMixed = label.startsWith('mixed');
-      const post = await httpReq('POST', '/api/agent-records', {
+      const post = await httpReq(base, 'POST', '/api/agent-records', {
         recordType: 'engineering_log', role: 'dba',
         title: `${RUN} accept ${label}`,
         content: `address-policy accept fixture ${RUN} — safe to delete`,
@@ -129,33 +224,41 @@ async function phaseReject(): Promise<void> {
     }
 
     // 3. PATCH enforcement: flipping tags onto an existing record is policed
-    const seed = await httpReq('POST', '/api/agent-records', {
+    const seed = await httpReq(base, 'POST', '/api/agent-records', {
       recordType: 'engineering_log', role: 'dba',
       title: `${RUN} patch seed`,
       content: `address-policy patch fixture ${RUN} — safe to delete`,
       tags: ['to:dba'],
     });
     created.push(seed.body.id);
-    const patchRej = await httpReq('PATCH', `/api/agent-records/${seed.body.id}`, {
+    const patchRej = await httpReq(base, 'PATCH', `/api/agent-records/${seed.body.id}`, {
       tags: ['to:dba', 'to:ghost-c'],
     });
     ok('reject mode: PATCH introducing unregistered address => 422', patchRej.status === 422, { status: patchRej.status, body: patchRej.body });
-    const patchOk = await httpReq('PATCH', `/api/agent-records/${seed.body.id}`, {
+    const patchOk = await httpReq(base, 'PATCH', `/api/agent-records/${seed.body.id}`, {
       tags: ['to:dba', 'to:all'],
     });
     ok('reject mode: PATCH with registered addresses => 200', patchOk.status === 200, { status: patchOk.status, body: patchOk.body });
 
     console.log('PASS: tag address policy two-phase behavior verified');
   } finally {
-    for (const id of created) await httpReq('DELETE', `/api/agent-records/${id}`);
-    await sweep();
+    for (const id of created) await httpReq(base, 'DELETE', `/api/agent-records/${id}`);
+    await sweep(base);
   }
 }
 
 async function main(): Promise<void> {
   const which = process.env.POLICY_PHASE || 'both';
-  if (which === 'warn' || which === 'both') await phaseWarn();
-  if (which === 'reject' || which === 'both') await phaseReject();
+  if (which === 'warn' || which === 'both') await phaseWarn(LIVE_BASE);
+  if (which === 'reject' || which === 'both') {
+    const { base, child } = await spawnRejectServer();
+    try {
+      await phaseReject(base);
+    } finally {
+      await stopServer(child);
+      console.log('reject-mode server stopped');
+    }
+  }
 }
 
 main().catch((e: Error) => {
