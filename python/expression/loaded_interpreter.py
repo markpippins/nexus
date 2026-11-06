@@ -22,7 +22,9 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
-from .solscript_adapter import INTERPRETER_REVISION, evaluate_bundle_with_interpreter
+from .solscript_adapter import INTERPRETER_REVISION, solscript_evaluator
+from .evaluator import _digest, _read_set_fingerprint, _is_resolved_source_link_gate
+from .source_links import resolve_source_links
 
 EXPRESSION_ID_PREFIX = "expression:"
 
@@ -173,28 +175,78 @@ class LoadedInterpreter:
         ontology_revision: str,
         authority_owner: str = "resolution",
         context: dict[str, Any] | None = None,
+        source_link_report: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Run one Expression bundle against the DB-loaded interpreter."""
-        envelope = evaluate_bundle_with_interpreter(
-            bundle,
-            self._interpreter,
-            read_set=read_set,
-            ontology_revision=ontology_revision,
-            authority_owner=authority_owner,
-            context=context,
-        )
-        # Re-run per candidate through the ID seam so unregistered candidates
-        # get the explicit pending outcome instead of interpreter lookups.
+        """Evaluate with a required, pinned source-link gate."""
+        report = source_link_report
+        if report is None:
+            from .source_links import LiveGovernedArtifactResolver
+
+            report = resolve_source_links(bundle, LiveGovernedArtifactResolver())
+
+        gates = {
+            item.get("proposition_id"): item
+            for item in report.get("proposition_gates", [])
+            if isinstance(item, dict)
+        }
         evaluator = self._bound_evaluator(context=context)
         results = []
         for candidate in bundle.get("proposition_candidates", []):
-            result = evaluator(candidate, {"read_set": read_set})
-            result["request_fingerprint"] = _candidate_fingerprint(candidate, read_set)
+            proposition_id = candidate.get("proposition_id")
+            gate = gates.get(proposition_id)
+            if gate is None:
+                result = {
+                    "disposition": "refused",
+                    "reason_code": "source_link_gate_missing",
+                    "reason": "No source-link gate was supplied for this proposition.",
+                    "authority_status": "evaluation_only",
+                    "source_link_gate": None,
+                }
+                request_fingerprint = None
+            elif not _is_resolved_source_link_gate(gate):
+                result = {
+                    "disposition": "refused",
+                    "reason_code": "source_link_unresolved",
+                    "reason": "; ".join(gate.get("reasons", [])) or "Source-link gate did not prove every link and relation resolved.",
+                    "authority_status": "evaluation_only",
+                    "source_link_gate": gate,
+                }
+                request_fingerprint = None
+            else:
+                # Use the regular pinned E4 request fingerprint and pass its
+                # gate to the interpreter callback only after validation.
+                from .evaluator import build_evaluation_request
+
+                request = build_evaluation_request(
+                    bundle, candidate, read_set=read_set,
+                    evaluator_revision=INTERPRETER_REVISION,
+                    ontology_revision=ontology_revision,
+                    authority_owner=authority_owner,
+                    source_link_gate=gate,
+                )
+                result = evaluator(candidate, request)
+                result["source_link_gate"] = gate
+                request_fingerprint = request["request_fingerprint"]
+            result["proposition_id"] = proposition_id
+            result["request_fingerprint"] = request_fingerprint
             results.append(result)
+
         results.sort(key=lambda item: item.get("proposition_id") or "")
-        envelope["results"] = results
-        envelope["loaded_population_fingerprint"] = self.population_fingerprint()
-        envelope["registrations"] = self.registrations()
+        envelope = {
+            "contract_revision": bundle.get("contract_revision", "expression-v0.1"),
+            "source_fingerprint": bundle.get("source_fingerprint"),
+            "evaluator_revision": INTERPRETER_REVISION,
+            "ontology_revision": ontology_revision,
+            "authority_owner": authority_owner,
+            "read_set_fingerprint": _read_set_fingerprint(read_set),
+            "source_link_report": report,
+            "authority_status": "evaluation_only",
+            "mutation_policy": "forbidden",
+            "results": results,
+            "loaded_population_fingerprint": self.population_fingerprint(),
+            "registrations": self.registrations(),
+        }
+        envelope["evaluation_fingerprint"] = _digest(envelope)
         return envelope
 
 

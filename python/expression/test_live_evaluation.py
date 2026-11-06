@@ -194,6 +194,19 @@ def _load():
     return LoadedInterpreter(interp, loader_report=loader.load_report)
 
 
+def _resolved_source_link_report(bundle):
+    from expression.source_links import resolve_source_links
+
+    class Resolver:
+        def resolve_reference(self, *_args):
+            return {"status": "resolved", "resolved_to": {"artifact_kind": "fixture", "id": "fixture-ref"}}
+
+        def resolve_relation(self, *_args):
+            return {"status": "resolved", "resolved_to": {"artifact_kind": "governed_relation", "id": "fixture-relation"}}
+
+    return resolve_source_links(bundle, Resolver())
+
+
 def _bundle():
     transcript = {
         "transcript_id": "e83-fixture-001",
@@ -233,6 +246,7 @@ class BoundedEvaluationTests(unittest.TestCase):
             read_set=self.read_set, source_run_id="run-e83-001",
             ontology_revision="ontology-e83", context=self.context,
             receipt_writer=ResolutionReceiptWriter(_FakePGFactory(conn)),
+            source_link_report=_resolved_source_link_report(self.bundle),
         )
         self.assertEqual(report["e8_revision"], "expression-e8.3-v0.1")
         self.assertEqual(report["results_summary"], {"rejected": 1})
@@ -245,6 +259,7 @@ class BoundedEvaluationTests(unittest.TestCase):
             self.loaded, self.bundle,
             read_set=self.read_set, source_run_id="run-e83-001",
             ontology_revision="ontology-e83", context=self.context,
+            source_link_report=_resolved_source_link_report(self.bundle),
         )
         fp = report["loaded_population_fingerprint"]
         self.assertTrue(fp)
@@ -262,12 +277,14 @@ class BoundedEvaluationTests(unittest.TestCase):
             self.loaded, self.bundle,
             read_set=self.read_set, source_run_id="run-e83-001",
             ontology_revision="ontology-e83", context=self.context,
+            source_link_report=_resolved_source_link_report(self.bundle),
             receipt_writer=writer,
         )
         second = run_bounded_evaluation(
             self.loaded, self.bundle,
             read_set=self.read_set, source_run_id="run-e83-001",
             ontology_revision="ontology-e83", context=self.context,
+            source_link_report=_resolved_source_link_report(self.bundle),
             receipt_writer=writer,
         )
         # Same receipt identity replayed: first pass accepted, second pass
@@ -283,6 +300,7 @@ class BoundedEvaluationTests(unittest.TestCase):
             self.loaded, self.bundle,
             read_set=self.read_set, source_run_id="run-e83-001",
             ontology_revision="ontology-e83", context=self.context,
+            source_link_report=_resolved_source_link_report(self.bundle),
         )
         fp_before = report_before["loaded_population_fingerprint"]
         # Drift: strip the frame values from the loaded proposition.
@@ -291,6 +309,7 @@ class BoundedEvaluationTests(unittest.TestCase):
             self.loaded, self.bundle,
             read_set=self.read_set, source_run_id="run-e83-002",
             ontology_revision="ontology-e83", context=self.context,
+            source_link_report=_resolved_source_link_report(self.bundle),
         )
         self.assertNotEqual(fp_before, report_after["loaded_population_fingerprint"])
 
@@ -299,6 +318,7 @@ class BoundedEvaluationTests(unittest.TestCase):
             self.loaded, self.bundle,
             read_set=self.read_set, source_run_id="run-e83-001",
             ontology_revision="ontology-e83", context=self.context,
+            source_link_report=_resolved_source_link_report(self.bundle),
         )
         self.assertEqual(report["persistence"]["status"], "skipped")
         self.assertEqual(report["results_summary"], {"rejected": 1})
@@ -309,6 +329,7 @@ class BoundedEvaluationTests(unittest.TestCase):
             loaded, self.bundle,
             read_set=self.read_set, source_run_id="run-e83-003",
             ontology_revision="ontology-e83", context=self.context,
+            source_link_report=_resolved_source_link_report(self.bundle),
         )
         self.assertEqual(report["results_summary"], {"pending": 1})
 

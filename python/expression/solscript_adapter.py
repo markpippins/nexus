@@ -146,6 +146,7 @@ def evaluate_bundle_with_interpreter(
     ontology_revision: str,
     authority_owner: str = "resolution",
     context: dict[str, Any] | None = None,
+    source_link_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run one E4 evaluation envelope through the live interpreter."""
     return evaluate_bundle(
@@ -155,6 +156,7 @@ def evaluate_bundle_with_interpreter(
         evaluator_revision=INTERPRETER_REVISION,
         ontology_revision=ontology_revision,
         authority_owner=authority_owner,
+        source_link_report=source_link_report,
     )
 
 
@@ -167,6 +169,7 @@ def replay_bundle_with_interpreter(
     ontology_revision: str,
     authority_owner: str = "resolution",
     context: dict[str, Any] | None = None,
+    source_link_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Deterministic replay through the live interpreter."""
     return replay_evaluation(
@@ -177,4 +180,5 @@ def replay_bundle_with_interpreter(
         evaluator_revision=INTERPRETER_REVISION,
         ontology_revision=ontology_revision,
         authority_owner=authority_owner,
+        source_link_report=source_link_report,
     )
