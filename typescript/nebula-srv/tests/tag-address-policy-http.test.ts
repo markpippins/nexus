@@ -112,6 +112,10 @@ async function spawnRejectServer(): Promise<{ base: string; child: ChildProcess 
   // instead of migrating a live database.
   const base = `http://127.0.0.1:${REJECT_PORT}`;
   console.log(`starting reject-mode server on ${base}`);
+  // `detached: true` makes the child a process-group leader. Without it, `npx`
+  // is the process we signal while `tsx`/node (the actual server) is its child:
+  // SIGTERM reaped only the wrapper, the grandchild kept the pipes open, and the
+  // test process hung after printing PASS until the job timed out (2026-11-06).
   const child = spawn('npx', ['tsx', 'src/index.ts'], {
     cwd: path.resolve(__dirname, '..'),
     env: {
@@ -121,6 +125,7 @@ async function spawnRejectServer(): Promise<{ base: string; child: ChildProcess 
       [POLICY_ENV]: 'reject',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true,
   });
   child.stdout?.on('data', (d) => process.stdout.write(`[reject-srv] ${d}`));
   child.stderr?.on('data', (d) => process.stderr.write(`[reject-srv] ${d}`));
@@ -143,18 +148,28 @@ async function spawnRejectServer(): Promise<{ base: string; child: ChildProcess 
   return { base, child };
 }
 
+/** Signal the whole process group — see the `detached` note in the spawn. */
+function killGroup(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (child.pid === undefined) return;
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    try { child.kill(signal); } catch { /* already gone */ }
+  }
+}
+
 async function stopServer(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return;
+  if (child.pid === undefined) return;
   await new Promise<void>((resolve) => {
     const timer = setTimeout(() => {
-      child.kill('SIGKILL');
+      killGroup(child, 'SIGKILL');
       resolve();
     }, 10_000);
     child.once('exit', () => {
       clearTimeout(timer);
       resolve();
     });
-    child.kill('SIGTERM');
+    killGroup(child, 'SIGTERM');
   });
 }
 
@@ -286,7 +301,13 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((e: Error) => {
-  console.error(e.message);
-  process.exit(1);
-});
+// Exit explicitly on success: assertions are done, and a lingering handle from a
+// spawned sibling must not decide whether this test passes (the hang this file
+// hit was reported as a gate failure two minutes after PASS was printed).
+main().then(
+  () => process.exit(0),
+  (e: Error) => {
+    console.error(e.message);
+    process.exit(1);
+  }
+);
