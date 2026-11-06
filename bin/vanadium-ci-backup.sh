@@ -42,7 +42,10 @@ LOCAL_KEEP_DAYS=2
 NEBULA_URL="${NEBULA_URL:-http://localhost:3101/api/agent-records}"
 
 # Drive guard (audit f74eb976): the spool is scratch space on a removable
-# drive (vdci-spool -> /mnt/SiP1TB/...). See bin/lib/drive-guard.sh.
+# drive. The symlink target follows available hardware — as of 2026-11-06
+# vdci-spool -> /mnt/Samsung500/stacks/vdci-spool (the former /mnt/SiP1TB is
+# not present on this host). The guard keys on what the symlink resolves to,
+# not on a drive name. See bin/lib/drive-guard.sh.
 # shellcheck source=bin/lib/drive-guard.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/drive-guard.sh" \
   || { echo "drive-guard: FATAL: lib load failed" >&2; exit 1; }
