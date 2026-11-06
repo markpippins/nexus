@@ -25,7 +25,14 @@
  * answers "how much time does the run have left".
  */
 
-/** Shortest slice worth starting an attempt with — matches the route floor. */
+/**
+ * Shortest slice worth starting an attempt with — matches the route floor.
+ *
+ * Deliberately NOT raised to the first-token allowance: an attempt of a
+ * minute is a perfectly good attempt, and the allowance itself shrinks with
+ * the slice (see sliceAllowsFirstToken). What a short slice must not do is
+ * get its outcome blamed on the model, which is a separate question.
+ */
 export const MIN_ATTEMPT_MS = 1_000;
 
 /**
@@ -60,4 +67,25 @@ export function shouldStartAttempt(remainingMs: number): boolean {
  */
 export function attemptTimeoutMs(remainingMs: number): number {
   return Math.max(MIN_ATTEMPT_MS, Math.floor(remainingMs));
+}
+
+/**
+ * Whether an attempt's slice reaches the harness's own first-token allowance.
+ *
+ * `executeOpencode` arms its first-token guard at `min(timeout_ms,
+ * FIRST_TOKEN_TIMEOUT_MS)`, so the allowance shrinks with the slice: an
+ * attempt given less than the allowance is abandoned for "no first token" by
+ * construction, because the guard fires before the provider could reasonably
+ * have answered.
+ *
+ * That distinction is not cosmetic. A "no first token" observation also costs
+ * the rung its priority slot for RUNG_COOLDOWN_MS (see rung-cooldown.ts), so
+ * treating a budget-shortened attempt as a stall pushes a healthy model to the
+ * back of every ladder for ten minutes — the run's own budget, twice punished.
+ *
+ * A slice at or above the allowance is the only case where the absence of a
+ * token is evidence about the provider rather than about the slice we gave it.
+ */
+export function sliceAllowsFirstToken(sliceMs: number, firstTokenMs: number): boolean {
+  return sliceMs >= firstTokenMs;
 }

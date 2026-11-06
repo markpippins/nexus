@@ -16,6 +16,7 @@ import {
   remainingBudgetMs,
   runDeadlineMs,
   shouldStartAttempt,
+  sliceAllowsFirstToken,
 } from "../src/run-budget";
 
 let passed = 0;
@@ -146,6 +147,26 @@ console.log("\nTest 8 — an already-expired deadline starts nothing:");
   const left = remainingBudgetMs(deadline, 5 * MIN + 1);
   assertEqual(left, 0, "no budget remains");
   assert(!shouldStartAttempt(left), "no rung is started, so no first-token guard is paid");
+}
+
+// ── Test 9: a budget-shortened attempt says nothing about the model ──
+
+console.log("\nTest 9 — the run budget must not be recorded as a model stall:");
+{
+  const guard = 120_000; // FIRST_TOKEN_TIMEOUT_MS default
+  assertEqual(sliceAllowsFirstToken(1_000, guard), false, "1s slice → the guard fires first, so no verdict on the model");
+  assertEqual(sliceAllowsFirstToken(guard - 1, guard), false, "one millisecond short of the allowance → still the budget's fault");
+  assertEqual(sliceAllowsFirstToken(guard, guard), true, "exactly the allowance → a stall is the provider's");
+  assertEqual(sliceAllowsFirstToken(guard + 1, guard), true, "longer than the allowance → still the provider's");
+
+  // The shape of the live case that started this: POST /run-direct with
+  // timeout_ms=800 was clamped to the 1000ms route floor, so one attempt ran
+  // for a second, produced no token, and was recorded as a stall — demoting a
+  // healthy model in rung-cooldown for ten minutes.
+  const deadline = runDeadlineMs(0, 800);
+  const slice = attemptTimeoutMs(remainingBudgetMs(deadline, 0));
+  assertEqual(slice, 1_000, "the 800ms request became a 1000ms attempt");
+  assert(!sliceAllowsFirstToken(slice, guard), "and it cannot reach the allowance, so no stall is recorded");
 }
 
 // ── Summary ─────────────────────────────────────────────────────────
