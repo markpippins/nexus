@@ -11,8 +11,11 @@
  */
 
 import {
+  DEFAULT_FIRST_TOKEN_FLOOR_MS,
   MIN_ATTEMPT_MS,
   attemptTimeoutMs,
+  firstTokenAllowanceMs,
+  firstTokenFloorMsFromEnv,
   remainingBudgetMs,
   runDeadlineMs,
   shouldStartAttempt,
@@ -167,6 +170,66 @@ console.log("\nTest 9 — the run budget must not be recorded as a model stall:"
   const slice = attemptTimeoutMs(remainingBudgetMs(deadline, 0));
   assertEqual(slice, 1_000, "the 800ms request became a 1000ms attempt");
   assert(!sliceAllowsFirstToken(slice, guard), "and it cannot reach the allowance, so no stall is recorded");
+}
+
+// ── Test 10: a silent rung may not spend the whole run budget ───────
+
+console.log("\nTest 10 — REGRESSION (job 78aaf0d2): one silent rung cannot eat the ladder:");
+{
+  const guard = 120_000; // FIRST_TOKEN_TIMEOUT_MS default
+  const floor = DEFAULT_FIRST_TOKEN_FLOOR_MS; // 30s
+
+  // The live case: POST /run-direct with timeout_ms=120000 and six rungs. The
+  // guard was min(timeout_ms, guard) = 120000 = the entire budget, so the
+  // primary's silence consumed it and rung two was never started.
+  assertEqual(firstTokenAllowanceMs(120_000, 6, guard, floor), 30_000, "120s budget over 6 rungs → 30s of silence for rung one, not 120s");
+
+  // The full guard is preserved whenever the budget can afford a floor for
+  // every rung behind this one: no regression for the slow-but-healthy case.
+  assertEqual(firstTokenAllowanceMs(300_000, 6, guard, floor), guard, "300s budget over 6 rungs → the full 120s guard (150s is enough to reserve floors)");
+  assertEqual(firstTokenAllowanceMs(20 * MIN, 2, guard, floor), guard, "20-minute budget over 2 rungs → the full guard");
+  assertEqual(firstTokenAllowanceMs(180_000, 6, guard, floor), 30_000, "exactly the reserve → only the floor is left for rung one");
+  assertEqual(firstTokenAllowanceMs(179_999, 6, guard, floor), 30_000, "a millisecond under the reserve → still the floor, never less");
+
+  // The last rung needs no reservation: it may use what is left.
+  assertEqual(firstTokenAllowanceMs(60_000, 1, guard, floor), 60_000, "the last rung gets the whole remaining budget");
+  assertEqual(firstTokenAllowanceMs(600_000, 1, guard, floor), guard, "…but never more than the guard");
+
+  // An allowance can never outlive the run it belongs to.
+  assertEqual(firstTokenAllowanceMs(5_000, 3, guard, floor), 5_000, "5s of budget is 5s of allowance, not the 30s floor");
+  assertEqual(firstTokenAllowanceMs(0, 3, guard, floor), 0, "no budget → no allowance");
+
+  // Escape hatch: floor 0 disables the reservation (pre-2026-11-06 behaviour).
+  assertEqual(firstTokenAllowanceMs(120_000, 6, guard, 0), 120_000, "FIRST_TOKEN_FLOOR_MS=0 restores one-rung-consumes-all");
+
+  // Walk the ladder the way /run does when NO rung ever produces a token.
+  const timeout = 120_000;
+  const deadline = runDeadlineMs(0, timeout);
+  let now = 0;
+  let started = 0;
+  for (let rung = 0; rung < 6; rung++) {
+    const left = remainingBudgetMs(deadline, now);
+    if (!shouldStartAttempt(left)) break;
+    const allowance = firstTokenAllowanceMs(left, 6 - rung, guard, floor);
+    assert(allowance <= left, `rung ${rung + 1}: allowance ${allowance}ms never exceeds the ${left}ms left`);
+    started++;
+    now += allowance; // total silence: the attempt ends exactly at its allowance
+  }
+  assertEqual(started, 4, "a 120s budget tries 4 rungs (job 78aaf0d2 tried 1)");
+  assertEqual(now, timeout, "and the ladder still finishes inside the caller's budget");
+}
+
+// ── Test 11: the silence floor from the environment ────────────────
+
+console.log("\nTest 11 — the floor env knob is parsed, not guessed:");
+{
+  assertEqual(firstTokenFloorMsFromEnv(undefined), DEFAULT_FIRST_TOKEN_FLOOR_MS, "unset → 30s default");
+  assertEqual(firstTokenFloorMsFromEnv("  "), DEFAULT_FIRST_TOKEN_FLOOR_MS, "blank → default (a typo must not disable silently)");
+  assertEqual(firstTokenFloorMsFromEnv("nonsense"), DEFAULT_FIRST_TOKEN_FLOOR_MS, "unparseable → default");
+  assertEqual(firstTokenFloorMsFromEnv("45000"), 45_000, "explicit value is respected");
+  assertEqual(firstTokenFloorMsFromEnv("0"), 0, "0 is the documented opt-out");
+  assertEqual(firstTokenFloorMsFromEnv("-5"), 0, "a negative floor is 0, not the default");
+  assertEqual(firstTokenFloorMsFromEnv("1500.9"), 1_500, "fractional values are floored");
 }
 
 // ── Summary ─────────────────────────────────────────────────────────
