@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import shutil
 import subprocess
 import unittest
@@ -34,8 +35,12 @@ class FetchedAssetGuardTests(unittest.TestCase):
         node = shutil.which("node")
         if node is None:
             self.fail("node is required to run the fetched-asset guard suite")
+        # Pin the reporter: node --test silently uses TAP rather than spec when
+        # stdout is a pipe (as it is under CI), and a summary parser that only
+        # knows one format reads the other as "zero tests" - which is how this
+        # guard first reported a green suite as a failure.
         proc = subprocess.run(
-            [node, "--test", str(SUITE)],
+            [node, "--test", "--test-reporter=spec", str(SUITE)],
             cwd=REPO,
             capture_output=True,
             text=True,
@@ -43,8 +48,9 @@ class FetchedAssetGuardTests(unittest.TestCase):
         )
         output = proc.stdout + proc.stderr
         self.assertEqual(proc.returncode, 0, output)
-        passes = self._count(output, "pass")
-        self.assertGreater(passes, 0, f"suite reported no passing tests:\n{output}")
+        counts = self._summary(output)
+        self.assertGreater(counts.get("pass", 0), 0, f"suite reported no passing tests:\n{output}")
+        self.assertEqual(counts.get("fail", 0), 0, f"suite reported failures:\n{output}")
 
     def test_angular_cli_builds_run_the_guard(self):
         """The guard is only a build-time check if the build invokes it."""
@@ -61,12 +67,15 @@ class FetchedAssetGuardTests(unittest.TestCase):
             )
 
     @staticmethod
-    def _count(output: str, label: str) -> int:
+    def _summary(output: str) -> dict[str, int]:
+        """Read `ℹ pass 20` (spec) and `# pass 20` (TAP) summaries alike."""
+        counts: dict[str, int] = {}
         for line in output.splitlines():
-            parts = line.replace("\u2139", "").split()
-            if len(parts) == 2 and parts[0] == label and parts[1].isdigit():
-                return int(parts[1])
-        return 0
+            match = re.match(r"^[\s#\u2139]*\b(tests|pass|fail)\b\s+(\d+)\s*$", line)
+            if match:
+                label, value = match.group(1), int(match.group(2))
+                counts[label] = counts.get(label, 0) + value
+        return counts
 
 
 if __name__ == "__main__":
