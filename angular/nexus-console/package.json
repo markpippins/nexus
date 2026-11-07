@@ -4,7 +4,7 @@
   "scripts": {
     "ng": "./node_modules/@angular/cli/bin/ng.js",
     "start": "./node_modules/@angular/cli/bin/ng.js serve",
-    "build": "./node_modules/@angular/cli/bin/ng.js build",
+    "build": "./node_modules/@angular/cli/bin/ng.js build && node ../tools/check-fetched-assets.mjs",
     "watch": "./node_modules/@angular/cli/bin/ng.js build --watch --configuration development",
     "test": "./node_modules/@angular/cli/bin/ng.js test"
   },
