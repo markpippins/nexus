@@ -4,7 +4,7 @@
   "scripts": {
     "ng": "ng",
     "start": "ng serve --port 4203",
-    "build": "ng build",
+    "build": "ng build && node ../tools/check-fetched-assets.mjs",
     "watch": "ng build --watch --configuration development",
     "test": "ng test"
   },
