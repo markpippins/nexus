@@ -52,11 +52,17 @@ TIMEOUT_MINUTES="${TIMEOUT_MINUTES:-15}"  # max runtime per model attempt
 # port 3410) that tackle-ui writes to. The role's resolved model and its
 # fallback chain come from GET /config/ai/resolve/<role>.
 # SYSMODEL / FALLBACK_MODEL remain available as explicit overrides when a
-# caller sets them, but are no longer baked into the systemd unit.
+# caller sets them, but are no longer baked into the systemd unit. Their values
+# are opencode --model ids, inserted verbatim.
+#
+# CHAIN_BUDGET_MINUTES bounds the WHOLE ladder. A five-rung chain at the
+# 15-minute per-attempt cap would run for over an hour and collide with the next
+# hourly timer, so each attempt is capped at the remaining chain budget.
 TACKLE_SRV_URL="${TACKLE_SRV_URL:-http://localhost:3410}"
 ASSEMBLY_URL="${ASSEMBLY_URL:-http://localhost:3107}"
 SYSMODEL="${SYSMODEL:-}"
 FALLBACK_MODEL="${FALLBACK_MODEL:-}"
+CHAIN_BUDGET_MINUTES="${CHAIN_BUDGET_MINUTES:-30}"
 
 # ── Lock ────────────────────────────────────────────────────────────────
 
@@ -100,40 +106,29 @@ _check_opencode() {
     fi
 }
 
-# opencode_model_for <tackle-model-identifier> → opencode --model value
-# OpenAI-compatible endpoints that namespace their wire model IDs (nvidia/...,
-# z-ai/..., deepseek-ai/...) require the opencode config model KEY to be the
-# full wire ID, so the opencode model ID is `<namespace>/<identifier>`.
-# Bare identifiers map to their opencode provider (opencode/, opencode-go/,
-# ollama/). Unknown identifiers pass through unchanged.
-opencode_model_for() {
-    local id="$1"
-    case "$id" in
-        opencode/*)            echo "$id" ;;
-        */*)                   echo "${id%%/*}/${id}" ;;
-        big-pickle)            echo "opencode/big-pickle" ;;
-        x-preview-f-free)      echo "opencode/x-preview-f-free" ;;
-        gemini-3.5-flash)      echo "opencode-go/gemini-3.5-flash" ;;
-        qwen2.5-coder)         echo "ollama/qwen2.5-coder" ;;
-        *)                     echo "$id" ;;
-    esac
-}
-
 # resolve_models <role> → newline-separated opencode model IDs, primary first.
-# Order: tackle model_identifier, tackle fallback_models (priority order),
-# $FALLBACK_MODEL override if set, opencode/big-pickle as last resort.
+#
+# The ladder lives in bin/sysadmin_model_chain.py (pure functions, unit tested):
+# tackle's primary pinned first, its fallback_models ordered by provider
+# preference (nvidia → opencode → opencode-go → openrouter → ollama), duplicates
+# collapsed, then a catalog tail so the role still has rungs when tackle is
+# unreachable. This replaces the old inline chain, whose only tail was a single
+# hardcoded opencode/big-pickle that then ran to the per-attempt cap.
+#
+# SYSMODEL / FALLBACK_MODEL are opencode --model ids and are inserted verbatim.
 resolve_models() {
     local role="$1"
-    local list=""
-    local primary="" fb_raw=""
+    local data=""
     if [[ -n "$SYSMODEL" ]]; then
-        primary="$SYSMODEL"
         _log "INFO" "SYSMODEL override in effect: $SYSMODEL"
     else
-        local data
         data=$(curl -s --max-time 10 "$TACKLE_SRV_URL/config/ai/resolve/$role" 2>/dev/null) || true
-        primary=$(printf '%s' "$data" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('model_identifier') or '')" 2>/dev/null || true)
-        fb_raw=$(printf '%s' "$data" | python3 -c "
+        if [[ -z "$data" ]]; then
+            _log "WARN" "tackle resolve role=$role unavailable — catalog-only chain"
+        else
+            local primary fb_raw
+            primary=$(printf '%s' "$data" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('model_identifier') or '')" 2>/dev/null || true)
+            fb_raw=$(printf '%s' "$data" | python3 -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
@@ -143,34 +138,14 @@ try:
 except Exception:
     pass
 " 2>/dev/null || true)
-        _log "INFO" "tackle resolve role=$role primary=${primary:-<none>} fallbacks=[$(printf '%s' "$fb_raw" | tr '\n' ',')]"
-    fi
-
-    [[ -n "$primary" ]] && list="$primary"
-    local m
-    while IFS= read -r m; do
-        [[ -n "$m" ]] && list="${list:+$list
-}$m"
-    done <<< "$fb_raw"
-    [[ -n "$FALLBACK_MODEL" ]] && list="${list:+$list
-}$FALLBACK_MODEL"
-    if ! grep -qx 'opencode/big-pickle' <<< "$list"; then
-        list="${list:+$list
-}opencode/big-pickle"
-    fi
-
-    # Transform to opencode model IDs, de-duplicated, preserving order.
-    local out=""
-    while IFS= read -r m; do
-        [[ -n "$m" ]] || continue
-        local om
-        om=$(opencode_model_for "$m")
-        if ! grep -qx "$om" <<< "$out"; then
-            out="${out:+$out
-}$om"
+            _log "INFO" "tackle resolve role=$role primary=${primary:-<none>} fallbacks=[$(printf '%s' "$fb_raw" | tr '\n' ',')]"
         fi
-    done <<< "$list"
-    printf '%s\n' "$out"
+    fi
+
+    printf '%s' "$data" | python3 "$BIN_DIR/sysadmin_model_chain.py" \
+        --role "$role" \
+        --sysmodel "$SYSMODEL" \
+        --fallback-model "$FALLBACK_MODEL"
 }
 
 # resolve_agent_user_id <role> → Assembly user UUID whose alias matches the
@@ -269,11 +244,19 @@ Your identity (injected by the harness — do not re-resolve): role=$NEXUS_AGENT
     local attempt=1
     local model=""
     local last_fail=0
+    local budget_s=$((CHAIN_BUDGET_MINUTES * 60))
     while IFS= read -r model; do
         [[ -n "$model" ]] || continue
-        _log "INFO" "Attempt $attempt: running with model $model (timeout=${TIMEOUT_MINUTES}m)"
+        local remaining=$((budget_s - ($(date +%s) - start_ts)))
+        if [[ "$remaining" -le 0 ]]; then
+            _log "WARN" "chain budget ${CHAIN_BUDGET_MINUTES}m exhausted — skipping $model"
+            continue
+        fi
+        local attempt_s=$((TIMEOUT_MINUTES * 60))
+        [[ "$attempt_s" -gt "$remaining" ]] && attempt_s=$remaining
+        _log "INFO" "Attempt $attempt: running with model $model (timeout=${attempt_s}s, chain budget=${CHAIN_BUDGET_MINUTES}m)"
         export NEXUS_AGENT_MODEL="$model"
-        output=$(timeout "${TIMEOUT_MINUTES}m" "$OPENCODE_BIN" run \
+        output=$(timeout "${attempt_s}s" "$OPENCODE_BIN" run \
             --agent "$OPENCODE_AGENT" \
             --model "$model" \
             --dir "$OPENCODE_PROJECT" \
@@ -335,4 +318,9 @@ except (json.JSONDecodeError, Exception):
     return $exit_code
 }
 
-main "$@"
+# Run a cycle only when executed. Sourcing the file (smoke checks, tests) just
+# defines the helpers — without this, any caller that sourced it launched a real
+# agent cycle.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
