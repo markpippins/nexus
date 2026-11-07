@@ -7,7 +7,8 @@ minting one automatically would be G2 fabrication with extra steps. What the
 shim can lawfully do:
 
 1. **Attest-scan (default-on, read-only).** At session start, list open
-   verification_request roots, classify each against the booting role
+   verification_request roots — open meaning *nothing cites the root*, not
+   *its interval is still running* — classify each against the booting role
    (lawful attestor / work author → G1-refused / uninvolved), and surface
    cites_id + the pre-staged evidence refs. Absence-of-table or absence-of-
    psycopg2 is honest SKIP data, never a boot failure.
@@ -60,14 +61,29 @@ def table_exists(exec_fn) -> bool:
 
 
 def fetch_open_requests(exec_fn) -> List[Dict[str, Any]]:
-    """Open verification_request roots with their pre-staged evidence."""
+    """Open verification_request roots with their pre-staged evidence.
+
+    Open-ness is **satisfaction-based, not interval-based**: a root is open
+    when nothing cites it. A request root's ``recorded_until_dt`` never leaves
+    ``'infinity'`` by design (DBA inspection c0a84d91; do not backfill it), so
+    testing that column reported every root open forever — and since
+    attesting is the only visible way to silence the scan, it invited
+    duplicate events. Attestation is an event, so its effect on a root is a
+    row that cites it.
+
+    Only ``kind = 'attestation'`` satisfies a root. ATP0005 confines
+    ``greenlight`` to citing attestations, never request roots, so anything
+    else that happens to cite a root leaves it open: an ambiguous citer must
+    never clear a request (fail-closed).
+    """
     rows = exec_fn(
-        "SELECT attestation_id, work_ref, requested_by, "
-        "coalesce(evidence::text, '[]'), to_char(recorded_on_dt, 'YYYY-MM-DD HH24:MI') "
-        f"FROM {ATTEST_TABLE} "
-        "WHERE kind = 'verification_request' "
-        "AND recorded_until_dt = 'infinity'::timestamptz "
-        "ORDER BY recorded_on_dt;")
+        "SELECT r.attestation_id, r.work_ref, r.requested_by, "
+        "coalesce(r.evidence::text, '[]'), to_char(r.recorded_on_dt, 'YYYY-MM-DD HH24:MI') "
+        f"FROM {ATTEST_TABLE} r "
+        "WHERE r.kind = 'verification_request' AND NOT EXISTS ("
+        f"SELECT 1 FROM {ATTEST_TABLE} a "
+        "WHERE a.cites_id = r.attestation_id AND a.kind = 'attestation') "
+        "ORDER BY r.recorded_on_dt;")
     out = []
     for line in (rows or "").splitlines():
         parts = line.split("|", 4)
@@ -103,8 +119,13 @@ def classify(role: str, req: Dict[str, Any], can_verify: bool) -> Dict[str, Any]
         return {**req, "disposition": "g1_refused",
                 "note": "you authored this work — G1 forbids self-attestation"}
     if can_verify:
+        # Wording matters: a request is cleared by a *citing attestation*
+        # existing, not by the act of recording one. Do not imply the latter
+        # — it turns the scan into a prompt for duplicate events.
         return {**req, "disposition": "actionable",
-                "note": ("you hold can_verify_work_requests; record with "
+                "note": ("you hold can_verify_work_requests; a request is "
+                         "cleared by a citing attestation, so the scan keeps "
+                         "naming this one until one exists — record with "
                          "boot-shim --attest %s --evidence <run>,<artifact>"
                          % req.get("attestation_id", ""))}
     return {**req, "disposition": "uninvolved",
