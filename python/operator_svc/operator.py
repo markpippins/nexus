@@ -328,7 +328,7 @@ KNOWN_SERVICES = {
     "image-server", "mongodb", "nebula-srv", "nebula-mcp", "nebula-ui",
     "nexus-console", "ollama", "operator-svc", "peb-kernel", "plurality-ui",
     "redis", "role-memory-srv", "service-registry", "tackle-ui", "terrain",
-    "ui-event-bus", "vision-srv-py",
+    "ui-event-bus",
     "wrp-bridge-daemon",
 }
 
