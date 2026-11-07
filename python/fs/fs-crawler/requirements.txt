@@ -4,7 +4,7 @@ uvicorn[standard]==0.24.0
 
 # Database Drivers
 motor==3.3.2  # Async MongoDB
-pymongo==4.6.3  # Compatible version for motor 3.3.2
+pymongo==4.18.3  # Compatible version for motor 3.3.2
 redis==5.0.1
 sqlalchemy>=2.0.36
 aiomysql==0.3.0
@@ -16,7 +16,7 @@ pydantic-settings==2.4.0
 
 # Media Processing Libraries
 mutagen==1.47.0  # Audio metadata
-Pillow==12.3.0   # Image processing
+Pillow==13.0.0   # Image processing
 ExifRead==3.0.0  # EXIF data
 python-magic==0.4.27  # File type detection
 
