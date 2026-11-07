@@ -1,10 +1,14 @@
 /**
- * HTTP client for vision-srv REST API.
- * All vision-mcp tools proxy through this client to vision-srv.
+ * HTTP client for the LOSM work-request API.
+ * All vision-mcp tools proxy through this client to losm-host (:8006), which
+ * absorbed the vision-srv /api surface per decision 5d8e10fd with the wire
+ * contract preserved — the shapes below are unchanged.
  *
  * Configuration (all optional, environment-driven):
- *   - VISION_SRV_URL                     — full base URL of vision-srv-py.
- *                                          Default: http://localhost:8003.
+ *   - VISION_SRV_URL                     — full base URL of losm-host.
+ *                                          Default: http://localhost:8006.
+ *                                          (vision-srv on :8003 is retired;
+ *                                          env var name kept for compatibility.)
  *                                          Both http:// and https:// are
  *                                          supported; the client dispatches
  *                                          to the matching Node transport.
@@ -13,7 +17,7 @@
  *                                          self-signed certificates.
  *
  * Override examples:
- *   VISION_SRV_URL=http://localhost:8003 \
+ *   VISION_SRV_URL=http://localhost:8006 \
  *     npx tsx src/index.ts
  *   VISION_SRV_URL=https://vision.internal:8443 \
  *     VISION_SRV_TLS_REJECT_UNAUTHORIZED=false \
@@ -40,7 +44,7 @@ function parseBaseUrl(raw: string): URL {
 }
 
 const BASE_URL = parseBaseUrl(
-  process.env.VISION_SRV_URL ?? "http://localhost:8003",
+  process.env.VISION_SRV_URL ?? "http://localhost:8006",
 );
 const USE_HTTPS = BASE_URL.protocol === "https:";
 const REJECT_UNAUTHORIZED =
@@ -82,7 +86,7 @@ function httpRequest(method: string, path: string, body?: any): Promise<any> {
       });
     });
     req.on("error", (err: Error) => {
-      reject(new Error(`Cannot reach vision-srv: ${err.message}`));
+      reject(new Error(`Cannot reach losm-host: ${err.message}`));
     });
     if (bodyStr) req.write(bodyStr);
     req.end();

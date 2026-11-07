@@ -13,8 +13,8 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  const visionSrvUrl = process.env.VISION_SRV_URL ?? "http://localhost:8003";
-  console.error(`vision-mcp running on stdio (proxies to vision-srv-py at ${visionSrvUrl})`);
+  const visionSrvUrl = process.env.VISION_SRV_URL ?? "http://localhost:8006";
+  console.error(`vision-mcp running on stdio (proxies to losm-host at ${visionSrvUrl})`);
 }
 
 main().catch((err) => {
