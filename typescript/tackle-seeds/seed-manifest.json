@@ -1,5 +1,5 @@
 {
-  "card_count": 59,
+  "card_count": 61,
   "cards": [
     {
       "body_md": "## Agent Config Role Definition\n\nEach agent role .md file (in `.opencode/agents/`) declares the role it activates\nas a YAML **comment**, never as a frontmatter key:\n\n```yaml\n---\n# assumes_role: <role>\ndescription: |\n  <what this role does>\nmode: primary\n---\n```\n\n### Why a comment\n\nopencode forwards unknown agent-frontmatter keys to the model provider as\noptions, and `openai-responses` transports reject any option they cannot\nrepresent:\n\n```\nError: assumes_role: cannot be represented by openai-responses\n```\n\nA live `assumes_role:` key therefore makes the agent unlaunchable on those\nmodels \u2014 it fails before the first token. Lenient transports accept the\nunknown option silently, so the same file works on some models and dies on\nothers. As a YAML comment the declaration is invisible to every parser (so it\nis never forwarded) while staying greppable for the persona-parity tests in\n`bin/tests/test_persona_bridge_parity.py` (P2/P3, with guard P4 against\nreverting to a live key).\n\nKeep frontmatter to keys opencode itself defines: `description`, `mode`,\n`model`, `temperature`, `tools`, `permission`, `options`, `disable`, `hidden`,\n`color`, `prompt`. Any other key carries the same rejection risk.\n\n### Fields\n- `# assumes_role`: the role this agent config activates (engineer, architect,\n  planner, ...). It must match the persona the file requests via\n  `.../opencode-persona`.\n- Inbox behaviour (`inbox_query` tag filters, `record_types`, `auto_present`,\n  `enrich_context`) is **not** declared in frontmatter. It comes from the\n  role's procedure cards and the R17 inbox tooling (`bin/check-inbox.sh`,\n  `nebula_get_inbox`). Do not add a `message:` block \u2014 as an unknown\n  frontmatter key it is forwarded to the provider and rejected exactly like a\n  live `assumes_role`.\n\n### Valid record_type values\nreport, analysis, assessment, inspection, prompt, response, engineering_log, architecture_note, decision",
@@ -579,6 +579,84 @@
         "before working",
         "backlog",
         "requirement"
+      ]
+    },
+    {
+      "body_md": "## Scope and authority\n\nA harness is the execution adapter (for example, the existing Opencode CLI harness); it is distinct from a provider, model, and role's active config bundle. Reuse an existing compatible harness rather than creating duplicates. This card describes configuration mechanics, not permission to create a role, widen its capabilities, or start user work. Obtain operator authorization for persistent configuration changes and preserve the role's existing authority boundary.\n\n## Procedure\n\n1. **Inspect before writing.** Check Tackle health, list existing providers/harnesses/models/bundles, and run `validate_ai_config`. Reuse canonical IDs and verify the intended provider, binary, model identifier, and invocation channel. Do not print complete provider/config snapshots: they may include credentials.\n\n2. **Create or update a harness only when needed.** Use `upsert_ai_harness` or `POST /config/ai/harness` with its stable ID, display name, and `invocation_semantics` JSON. Match the structure of a known working harness: binary, capabilities, execution mode/subcommand, flag semantics, and role mapping. The supported invocation modes are `CLI`, `HTTP`, `SDK`, `MCP`, and `INTERACTIVE`; do not use legacy dispatch labels. Never switch an interactive/Freebuff role to a CLI harness as a shortcut.\n\n3. **Configure a provider without exposing secrets.** Reuse the provider where possible. When adding one, set its provider type and endpoint accurately; handle API keys only through the approved secret/configuration path. Do not place keys in procedure text, prompts, shell history, logs, reports, source control, or tool output. Avoid full-config and resolved-config dumps because those endpoints may return provider credentials.\n\n4. **Register and verify the model.** Use `upsert_ai_model` or `POST /config/ai/model` with a stable ID, name, harness ID, provider ID, and exact provider model identifier. Run the supported model verification flow (`POST /config/ai/verify`) before activating a CLI bundle; verification performs a real invocation and changes the model's verified state. A failed verification can deactivate bundles for that model. Do not mark a model verified manually or infer it from registry presence.\n\n5. **Create the role bundle only after verification.** Use `upsert_config_bundle` or `POST /config/ai/bundle` with the existing role, model, provider/harness references, invocation mode, and an explicit priority. For active bundles, a lower numeric priority wins. Preserve existing working fallbacks and validity fields; set a bundle active only when its model is verified and its execution mode is authorized. Do not delete the old bundle merely to promote a new one; retire it by deactivating it after the replacement is saved and checked.\n\n6. **Validate the final selection safely.** Run `validate_ai_config`, then list that role's bundles and confirm the intended active bundle has the lowest priority and all references point to existing objects. Do not use `import_ai_config` for a targeted change: import replaces the configuration snapshot. Never copy or print a resolved-config response; it contains secret-bearing provider fields.\n\n7. **Smoke-test before relying on it.** Use the harness-launch procedure with a bounded, non-mutating prompt. A config save or validation response does not prove the provider can return a response. Keep the previous verified primary/fallback available until the new primary passes.\n",
+      "mcp_tools": [
+        "list_ai_providers",
+        "list_ai_harnesses",
+        "list_ai_models",
+        "list_config_bundles",
+        "upsert_ai_provider",
+        "upsert_ai_harness",
+        "upsert_ai_model",
+        "upsert_config_bundle",
+        "validate_ai_config"
+      ],
+      "roles": [
+        "architect",
+        "dba",
+        "devops",
+        "engineer"
+      ],
+      "sha256": "3a4e79274a3b6572a4d113d44fc69ab7848183d58accb03c834fe04c1389f4e8",
+      "slug": "harness-configuration-creation",
+      "summary": "Add or update a Tackle provider, harness, model, and role bundle safely; validate references and verify the primary without exposing credentials or broadening role authority.",
+      "tags": [
+        "harness",
+        "configuration",
+        "tackle",
+        "provider",
+        "model",
+        "operator"
+      ],
+      "title": "Harness Configuration Creation and Validation",
+      "triggers": [
+        "create harness",
+        "configure harness",
+        "add model provider",
+        "change role model",
+        "set harness primary",
+        "validate ai config"
+      ]
+    },
+    {
+      "body_md": "## Choose the launch path\n\n- Use `POST http://localhost:3420/run` with a real `wind_task_id` when executing an authorized pipeline task. The task supplies its scope and acceptance criteria; the harness owns the pipeline receipts.\n- Use `POST /run-direct` only when the caller already assembled the full prompt and has authority for that work. It bypasses Wind task lookup; it does not bypass role admission or authorize extra scope.\n- For a model smoke test, use a short, explicit, non-mutating prompt that forbids tools, file/shell/network/database access, and work-product creation. A smoke test must not masquerade as a task.\n\n## Preflight and submit\n\n1. Check `GET /health` on harness-srv and confirm the role has a valid active Tackle bundle. Confirm the configured invocation mode is not `INTERACTIVE` for this CLI route. Avoid endpoints or logs that print resolved provider configuration.\n2. Preserve the exact requested role. Do not override the model unless explicitly authorized; an override must be provider-qualified (`<provider>/<model>`). Do not bypass an admission refusal by changing role names, validity, credentials, or launching a lower-level executable directly.\n3. Keep the working directory inside an allowed work root. Bound `timeout_ms` to the task's actual need. For direct calls, the async form returns HTTP 202 with `job_id` and `state: accepted`; `async: true` is useful when the caller needs to observe progress.\n4. Treat HTTP 202 as **accepted, not completed**. Record the returned `job_id`, role, configured model/harness, and prompt intent without recording secrets or unnecessary prompt content.\n\nExample bounded direct smoke request:\n\n```json\n{\n  \"role\": \"<authorized-role>\",\n  \"prompt\": \"Non-mutating smoke test: do not use tools or access external state. Return exactly HARNESS_SMOKE_OK.\",\n  \"timeout_ms\": 60000,\n  \"channel\": \"role-harness-smoke-test\",\n  \"async\": true\n}\n```\n\n## Monitor to a terminal result\n\n1. Poll `GET /jobs/<job_id>` until its `state` is terminal: `completed`, `failed`, `timed_out`, or `cancelled`. A successful HTTP submission or an intermediate `running` state is not a pass. Do not rely on an undocumented `/jobs` list endpoint.\n2. Inspect `state`, `exit_code`, `duration_ms`, `model_used`, `attempts`, `stderr`, and the text output. For tool failures, capture only the minimal sanitized error detail. A `completed` job proves the run ended normally; check the actual requested response/token or task acceptance criteria before calling it successful.\n3. When streaming is useful, use `GET /jobs/<job_id>/events?after=<seq>` and retain the last event sequence when reconnecting. Use `POST /jobs/<job_id>/interrupt` only when cancellation is authorized and necessary.\n4. If admission returns HTTP 403, stop: surface the stated reason and request the proper authority/configuration correction. If the primary fails and the configured ladder succeeds, report the primary failure and fallback used; do not claim the primary works. If all attempts fail, preserve the job evidence and report failure rather than editing config during the run.\n5. For authorized substantive work, follow the role's audit/liveness procedure and verify the task-specific outcome. Do not issue pipeline receipts yourself; harness-srv owns them.\n\n## Completion checklist\n\n- [ ] Correct role, authorized scope, and applicable admission path.\n- [ ] Job reached a terminal state and its response was checked against the requested outcome.\n- [ ] Actual `model_used` and all attempted rungs reported; fallback is distinguished from primary success.\n- [ ] No credentials or unnecessary sensitive prompt/output content copied into records.\n",
+      "mcp_tools": [
+        "POST /run",
+        "POST /run-direct",
+        "GET /jobs/:jobId",
+        "GET /jobs/:jobId/events",
+        "POST /jobs/:jobId/interrupt"
+      ],
+      "roles": [
+        "architect",
+        "dba",
+        "devops",
+        "engineer",
+        "planner"
+      ],
+      "sha256": "44892379a2153efcc3b2f0986abe26fb81d4e71355ea472182615a31f32c69d4",
+      "slug": "harness-launch-and-monitoring",
+      "summary": "Choose the authorized Wind-task or direct-run path, respect admission and scope gates, and verify an accepted harness job reaches a terminal state with usable output.",
+      "tags": [
+        "harness",
+        "launch",
+        "harness-srv",
+        "run-direct",
+        "wind-task",
+        "monitoring",
+        "safety"
+      ],
+      "title": "Launch and Monitor Harness Jobs",
+      "triggers": [
+        "launch harness",
+        "run harness",
+        "run-direct",
+        "harness job",
+        "poll harness",
+        "smoke test model"
       ]
     },
     {
@@ -2162,6 +2240,6 @@
       ]
     }
   ],
-  "role_count": 608,
+  "role_count": 617,
   "schema": "tackle"
 }
