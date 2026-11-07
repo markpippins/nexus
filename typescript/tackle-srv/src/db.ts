@@ -2,6 +2,7 @@ import { Pool, PoolClient, types } from "pg";
 import { readFileSync } from "fs";
 import path from "path";
 import { seedMemoryProcedures, loadCanonicalRoleMemoryShape } from "tackle-seeds";
+import { withoutPrimaryBundle } from "./resolved-fallbacks.js";
 
 // ── Keep timestamps as ISO strings ─────────────────────────────────
 // pg parses TIMESTAMPTZ into Date objects by default. Override to keep
@@ -2918,6 +2919,8 @@ export interface ResolvedRoleConfig {
 }
 
 export interface ResolvedFallbackModel {
+  /** Bearing bundle row — lets the primary be excluded from its own fallbacks. */
+  bundle_id?: string;
   priority: number;
   model_identifier: string;
   provider_type: string;
@@ -2935,7 +2938,8 @@ export interface ResolvedFallbackModel {
 
 export async function getResolvedRoleConfig(role: string): Promise<ResolvedRoleConfig | null> {
   const row = await qOne(
-    `SELECT cb.role,
+    `SELECT cb.id            AS bundle_id,
+            cb.role,
             m.model_identifier,
             p.id            AS provider_id,
             p.name          AS provider_name,
@@ -2954,7 +2958,10 @@ export async function getResolvedRoleConfig(role: string): Promise<ResolvedRoleC
   );
   if (!row) return null;
 
-  const fallbacks = await getResolvedFallbackModels(role);
+  // The fallback query selects every active bundle, which includes the row
+  // chosen above as the primary. Handing that row back as its own fallback
+  // makes the caller retry the same provider answer before advancing.
+  const fallbacks = withoutPrimaryBundle(await getResolvedFallbackModels(role), row.bundle_id);
 
   return {
     role: row.role,
@@ -2972,7 +2979,8 @@ export async function getResolvedRoleConfig(role: string): Promise<ResolvedRoleC
 
 export async function getResolvedFallbackModels(role: string): Promise<ResolvedFallbackModel[]> {
   const rows = await qAll(
-    `SELECT cb.priority,
+    `SELECT cb.id            AS bundle_id,
+            cb.priority,
             m.model_identifier,
             p.type          AS provider_type,
             p.name          AS provider_name,
@@ -2995,6 +3003,7 @@ export async function getResolvedFallbackModels(role: string): Promise<ResolvedF
   );
 
   return rows.map((row: any) => ({
+    bundle_id: row.bundle_id ?? undefined,
     priority: row.priority,
     model_identifier: row.model_identifier,
     provider_type: row.provider_type ?? "",
