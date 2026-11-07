@@ -181,19 +181,6 @@ CANDIDATES: tuple[Candidate, ...] = (
         workspace_path="nexus/typescript/nebula-mcp",
     ),
     Candidate(
-        name="vision-srv-py",
-        port=8003,
-        kind="runnable_service",
-        service_type="FastAPI",
-        health_url="http://localhost:8003/health",
-        description=(
-            "Vision Python service (8003) — full CRUD + DAG + edges + "
-            "validation. vision-mcp proxies to this service."
-        ),
-        startup="systemd: systemctl --user start vision-srv-py.service",
-        workspace_path="nexus/python/vision-srv",
-    ),
-    Candidate(
         name="tackle-srv",
         port=3410,
         kind="runnable_service",
@@ -352,19 +339,6 @@ CANDIDATES: tuple[Candidate, ...] = (
         ),
         startup="systemd: systemctl --user start address-tts-mcp.service",
         workspace_path="nexus/typescript/address-tts-mcp",
-    ),
-    Candidate(
-        name="vision-srv-py",
-        port=8003,
-        kind="runnable_service",
-        service_type="Python Service",
-        health_url="http://localhost:8003/health",
-        description=(
-            "Python FastAPI/uvicorn LOSM backend. Provides REST API for "
-            "vision services on port 8003. Systemd-managed."
-        ),
-        startup="systemd: systemctl --user start vision-srv-py.service",
-        workspace_path="nexus/python/vision-srv",
     ),
     Candidate(
         name="role-memory-srv",
@@ -601,7 +575,6 @@ DEPENDENCIES: tuple[tuple[str, str, str, str], ...] = (
     ("mcp_server", "tackle-mcp", "runnable_service", "redis"),
     ("mcp_server", "terrain-mcp", "runnable_service", "terrain"),
     ("runnable_service", "broker-gateway", "runnable_service", "nebula-srv"),
-    ("runnable_service", "vision-srv-py", "runnable_service", "nebula-srv"),
     ("runnable_service", "role-memory-srv", "runnable_service", "redis"),
     ("runnable_service", "wrp-bridge-daemon", "runnable_service", "nebula-srv"),
     ("mcp_server", "timeclock-mcp", "runnable_service", "nebula-srv"),

@@ -16,7 +16,6 @@
     { "key": "ui-event-bus",      "name": "UI Event Bus",       "port": 3200, "healthPath": "/health", "category": "core" },
     { "key": "kernel-srv",        "name": "Kernel Server",      "port": 8100, "healthPath": "/health", "category": "core" },
     { "key": "tackle-srv",        "name": "Tackle Server",      "port": 3410, "healthPath": "/health", "category": "core" },
-    { "key": "vision-srv-py",     "name": "Vision Python",      "port": 8003, "healthPath": "/health", "category": "api" },
     { "key": "image-server",      "name": "Image Server",       "port": 9081, "healthPath": "/health", "category": "api" },
     { "key": "address-tts",       "name": "Address TTS",        "port": 8600, "healthPath": "/health", "category": "tts" },
     { "key": "address-tts-mcp",   "name": "TTS MCP",            "port": 3105, "healthPath": "/health", "category": "tts" },

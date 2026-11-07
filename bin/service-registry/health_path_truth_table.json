@@ -14,7 +14,6 @@
     {"name": "cpf-api", "port": 3108, "verified_health_path": "http://localhost:3108/health", "sr_stored": null, "probe_evidence": "curl 200 /health"},
     {"name": "kernel-srv", "port": 8100, "verified_health_path": "http://localhost:8100/health", "sr_stored": "http://localhost/actuator/health", "probe_evidence": "curl 200 /health"},
     {"name": "peb-kernel", "port": 8098, "verified_health_path": "http://localhost:8098/actuator/health", "sr_stored": "http://localhost/actuator/health", "probe_evidence": "curl 200 /actuator/health on 8098 (stored value lacks port)"},
-    {"name": "vision-srv-py", "port": 8003, "verified_health_path": "http://localhost:8003/health", "sr_stored": "http://localhost/actuator/health", "probe_evidence": "curl 200 /health"},
     {"name": "losm-host", "port": 8006, "verified_health_path": "http://localhost:8006/health", "sr_stored": null, "probe_evidence": "curl 200 /health"},
     {"name": "operator-svc", "port": 3018, "verified_health_path": "http://localhost:3018/chat/health", "sr_stored": null, "probe_evidence": "curl 200 /chat/health"},
     {"name": "conduit-kernel", "port": 3103, "verified_health_path": "http://localhost:3103/healthz", "sr_stored": null, "probe_evidence": "curl 200 /healthz"},

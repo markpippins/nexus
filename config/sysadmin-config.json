@@ -383,22 +383,6 @@
       "notes": "LOSM FastAPI server (Vision)"
     },
     {
-      "id": "vision-srv-py",
-      "displayName": "Vision SRV Python",
-      "category": "api",
-      "host": "localhost",
-      "port": 8003,
-      "checkMethod": "http",
-      "healthEndpoint": "/health",
-      "expectedStatus": 200,
-      "systemdUnit": "vision-srv-py.service",
-      "timeout": 5,
-      "dependencies": [
-        "postgresql"
-      ],
-      "notes": "Vision Python FastAPI backend"
-    },
-    {
       "id": "substance",
       "displayName": "Substance",
       "category": "api",
