@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { configValidationErrors } from "../ai-config-validation.js";
 import {
   getAIConfigSnapshot,
   getAIProviders,
@@ -88,7 +89,10 @@ aiConfigRouter.get("/", async (_req, res) => {
 aiConfigRouter.get("/validate", async (_req, res) => {
   try {
     const warnings = await validateAIConfig();
-    res.json({ valid: warnings.length === 0, warnings });
+    const errors = configValidationErrors(warnings);
+    // valid means "no blocking defect" — advisory warnings and inactive-bundle
+    // residue stay in `warnings` but must not refuse admission.
+    res.json({ valid: errors.length === 0, errors, warnings });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
