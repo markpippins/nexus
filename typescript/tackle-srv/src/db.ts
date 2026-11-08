@@ -2,6 +2,7 @@ import { Pool, PoolClient, types } from "pg";
 import { readFileSync } from "fs";
 import path from "path";
 import { seedMemoryProcedures, loadCanonicalRoleMemoryShape } from "tackle-seeds";
+import { validateAIConfigSnapshot } from "./ai-config-validation.js";
 import { withoutPrimaryBundle } from "./resolved-fallbacks.js";
 
 // ── Keep timestamps as ISO strings ─────────────────────────────────
@@ -1148,7 +1149,7 @@ export interface ConfigValidationWarning {
   role: string;
   field: string;
   message: string;
-  severity: "error" | "warning";
+  severity: "error" | "warning" | "info";
 }
 
 // ── Providers ─────────────────────────────────────────────────────
@@ -2800,103 +2801,10 @@ export async function importAIConfig(
 }
 
 export async function validateAIConfig(): Promise<ConfigValidationWarning[]> {
-  const cfg = await getAIConfigSnapshot();
-  const warnings: ConfigValidationWarning[] = [];
-
-  const harnessMap = new Map(cfg.harnesses.map(h => [h.id, h]));
-  const modelMap = new Map(cfg.models.map(m => [m.id, m]));
-  const providerMap = new Map(cfg.providers.map(p => [p.id, p]));
-  const bundleMap = new Map<string, ConfigBundleRow[]>();
-  for (const b of cfg.bundles) {
-    const list = bundleMap.get(b.role) || [];
-    list.push(b);
-    bundleMap.set(b.role, list);
-  }
-
-  for (const rc of cfg.roles) {
-    if (!modelMap.has(rc.model_id)) {
-      warnings.push({
-        role: rc.role, field: "model_id",
-        message: `Primary model '${rc.model_id}' not found in models table.`,
-        severity: "error",
-      });
-    } else {
-      const model = modelMap.get(rc.model_id)!;
-      const harness = harnessMap.get(model.harness_id);
-      if (!harness) {
-        warnings.push({
-          role: rc.role, field: "harness_id",
-          message: `Primary model '${rc.model_id}' references harness '${model.harness_id}' which does not exist.`,
-          severity: "error",
-        });
-      } else {
-        const sem = parseJsonSafe(harness.invocation_semantics, {});
-        if (!sem?.binary) {
-          warnings.push({
-            role: rc.role, field: "invocation_semantics.binary",
-            message: `Harness '${harness.name}' for primary model '${model.name}' has no 'binary' in invocation_semantics.`,
-            severity: "error",
-          });
-        }
-      }
-      if (model.provider_id && !providerMap.has(model.provider_id)) {
-        warnings.push({
-          role: rc.role, field: "provider_id",
-          message: `Primary model '${rc.model_id}' references provider '${model.provider_id}' which does not exist.`,
-          severity: "warning",
-        });
-      }
-    }
-
-    const bundles = bundleMap.get(rc.role) || [];
-    for (const b of bundles) {
-      if (!modelMap.has(b.model_id)) {
-        warnings.push({
-          role: rc.role, field: "model_id",
-          message: `Bundle model '${b.model_id}' not found in models table.`,
-          severity: "error",
-        });
-        continue;
-      }
-      const model = modelMap.get(b.model_id)!;
-      const harnessId = b.harness_id || model.harness_id;
-      const harness = harnessMap.get(harnessId);
-      if (!harness) {
-        warnings.push({
-          role: rc.role, field: "harness_id",
-          message: `Bundle model '${b.model_id}' references harness '${harnessId}' which does not exist.`,
-          severity: "error",
-        });
-      } else {
-        const sem = parseJsonSafe(harness.invocation_semantics, {});
-        if (!sem?.binary) {
-          warnings.push({
-            role: rc.role, field: "invocation_semantics.binary",
-            message: `Harness '${harness.name}' for bundle model '${model.name}' has no 'binary' in invocation_semantics.`,
-            severity: "warning",
-          });
-        }
-      }
-      const providerId = b.provider_id || model.provider_id;
-      if (providerId && !providerMap.has(providerId)) {
-        warnings.push({
-          role: rc.role, field: "provider_id",
-          message: `Bundle model '${b.model_id}' references provider '${providerId}' which does not exist.`,
-          severity: "warning",
-        });
-      }
-    }
-
-    if (bundles.length === 0) {
-      warnings.push({
-        role: rc.role, field: "bundles",
-        message: `Role '${rc.role}' has no config bundles configured. If the primary model fails, execution will halt.`,
-        severity: "warning",
-      });
-    }
-  }
-
-  return warnings;
+  // Severity semantics live in ai-config-validation.ts: `error` means a
+  // role that can receive work now cannot resolve, and only errors make
+  // GET /config/ai/validate report valid:false.
+  return validateAIConfigSnapshot(await getAIConfigSnapshot());
 }
 
 function parseJsonSafe(text: string, fallback: any): any {
