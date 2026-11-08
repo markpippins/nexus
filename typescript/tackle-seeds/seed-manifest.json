@@ -1,5 +1,5 @@
 {
-  "card_count": 59,
+  "card_count": 62,
   "cards": [
     {
       "body_md": "## Agent Config Role Definition\n\nEach agent role .md file (in `.opencode/agents/`) declares the role it activates\nas a YAML **comment**, never as a frontmatter key:\n\n```yaml\n---\n# assumes_role: <role>\ndescription: |\n  <what this role does>\nmode: primary\n---\n```\n\n### Why a comment\n\nopencode forwards unknown agent-frontmatter keys to the model provider as\noptions, and `openai-responses` transports reject any option they cannot\nrepresent:\n\n```\nError: assumes_role: cannot be represented by openai-responses\n```\n\nA live `assumes_role:` key therefore makes the agent unlaunchable on those\nmodels \u2014 it fails before the first token. Lenient transports accept the\nunknown option silently, so the same file works on some models and dies on\nothers. As a YAML comment the declaration is invisible to every parser (so it\nis never forwarded) while staying greppable for the persona-parity tests in\n`bin/tests/test_persona_bridge_parity.py` (P2/P3, with guard P4 against\nreverting to a live key).\n\nKeep frontmatter to keys opencode itself defines: `description`, `mode`,\n`model`, `temperature`, `tools`, `permission`, `options`, `disable`, `hidden`,\n`color`, `prompt`. Any other key carries the same rejection risk.\n\n### Fields\n- `# assumes_role`: the role this agent config activates (engineer, architect,\n  planner, ...). It must match the persona the file requests via\n  `.../opencode-persona`.\n- Inbox behaviour (`inbox_query` tag filters, `record_types`, `auto_present`,\n  `enrich_context`) is **not** declared in frontmatter. It comes from the\n  role's procedure cards and the R17 inbox tooling (`bin/check-inbox.sh`,\n  `nebula_get_inbox`). Do not add a `message:` block \u2014 as an unknown\n  frontmatter key it is forwarded to the provider and rejected exactly like a\n  live `assumes_role`.\n\n### Valid record_type values\nreport, analysis, assessment, inspection, prompt, response, engineering_log, architecture_note, decision",
@@ -579,6 +579,126 @@
         "before working",
         "backlog",
         "requirement"
+      ]
+    },
+    {
+      "body_md": "## Scope and authority\n\nA harness is the execution adapter (for example, the existing Opencode CLI harness); it is distinct from a provider, model, and role's active config bundle. Reuse an existing compatible harness rather than creating duplicates. This card describes configuration mechanics, not permission to create a role, widen its capabilities, or start user work. Obtain operator authorization for persistent configuration changes and preserve the role's existing authority boundary.\n\n## Procedure\n\n1. **Inspect before writing.** Check Tackle health, list existing providers/harnesses/models/bundles, and run `validate_ai_config`. Reuse canonical IDs and verify the intended provider, binary, model identifier, and invocation channel. Do not print complete provider/config snapshots: they may include credentials.\n\n2. **Create or update a harness only when needed.** Use `upsert_ai_harness` or `POST /config/ai/harness` with its stable ID, display name, and `invocation_semantics` JSON. Match the structure of a known working harness: binary, capabilities, execution mode/subcommand, flag semantics, and role mapping. The supported invocation modes are `CLI`, `HTTP`, `SDK`, `MCP`, and `INTERACTIVE`; do not use legacy dispatch labels. Never switch an interactive/Freebuff role to a CLI harness as a shortcut.\n\n3. **Configure a provider without exposing secrets.** Reuse the provider where possible. When adding one, set its provider type and endpoint accurately; handle API keys only through the approved secret/configuration path. Do not place keys in procedure text, prompts, shell history, logs, reports, source control, or tool output. Avoid full-config and resolved-config dumps because those endpoints may return provider credentials.\n\n4. **Register and verify the model.** Use `upsert_ai_model` or `POST /config/ai/model` with a stable ID, name, harness ID, provider ID, and exact provider model identifier. Run the supported model verification flow (`POST /config/ai/verify`) before activating a CLI bundle; verification performs a real invocation and changes the model's verified state. A failed verification can deactivate bundles for that model. Do not mark a model verified manually or infer it from registry presence.\n\n5. **Create the role bundle only after verification.** Use `upsert_config_bundle` or `POST /config/ai/bundle` with the existing role, model, provider/harness references, invocation mode, and an explicit priority. For active bundles, a lower numeric priority wins. Preserve existing working fallbacks and validity fields; set a bundle active only when its model is verified and its execution mode is authorized. Do not delete the old bundle merely to promote a new one; retire it by deactivating it after the replacement is saved and checked.\n\n6. **Validate the final selection safely.** Run `validate_ai_config`, then list that role's bundles and confirm the intended active bundle has the lowest priority and all references point to existing objects. Do not use `import_ai_config` for a targeted change: import replaces the configuration snapshot. Never copy or print a resolved-config response; it contains secret-bearing provider fields.\n\n7. **Smoke-test before relying on it.** Use the harness-launch procedure with a bounded, non-mutating prompt. A config save or validation response does not prove the provider can return a response. Keep the previous verified primary/fallback available until the new primary passes.\n",
+      "mcp_tools": [
+        "list_ai_providers",
+        "list_ai_harnesses",
+        "list_ai_models",
+        "list_config_bundles",
+        "upsert_ai_provider",
+        "upsert_ai_harness",
+        "upsert_ai_model",
+        "upsert_config_bundle",
+        "validate_ai_config"
+      ],
+      "roles": [
+        "architect",
+        "dba",
+        "devops",
+        "engineer"
+      ],
+      "sha256": "3a4e79274a3b6572a4d113d44fc69ab7848183d58accb03c834fe04c1389f4e8",
+      "slug": "harness-configuration-creation",
+      "summary": "Add or update a Tackle provider, harness, model, and role bundle safely; validate references and verify the primary without exposing credentials or broadening role authority.",
+      "tags": [
+        "harness",
+        "configuration",
+        "tackle",
+        "provider",
+        "model",
+        "operator"
+      ],
+      "title": "Harness Configuration Creation and Validation",
+      "triggers": [
+        "create harness",
+        "configure harness",
+        "add model provider",
+        "change role model",
+        "set harness primary",
+        "validate ai config"
+      ]
+    },
+    {
+      "body_md": "## Choose the launch path\n\n- Use `POST http://localhost:3420/run` only for an authorized Wind task with its real `wind_task_id`. `/run` executes work and emits pipeline/governance receipts; it is not a smoke-test endpoint.\n- Use `POST /run-direct` only when the caller has authority for the supplied prompt. It bypasses Wind task lookup, not role admission. The current Opencode executor includes `--dangerously-skip-permissions`; a prompt asking the model not to use tools is **not** a safety boundary, and `work_dir` is only a path-containment check, not a filesystem sandbox.\n- For a control-plane check, follow `harness-smoke-testing` first. Do not label a health check or resolved context as an inference test. Do not run an end-to-end smoke prompt against a live role unless the executor itself is confined in a disposable, externally enforced sandbox with no valuable host files or credentials.\n\n## Preflight and submit\n\n1. Check `GET /health` on harness-srv and Tackle. Inspect `GET /config/ai/validate`, and inspect only non-secret role bundle/model metadata. A validator warning/error or an inactive/expired bundle is a stop condition to report, not something to work around.\n2. Preserve the exact authorized role and configured model. Do not override the model unless explicitly authorized; an override must be provider-qualified (`<provider>/<model>`). Never call `/config/ai/resolve/:role` or dump the full config snapshot into logs or records: resolved provider configuration can contain credentials.\n3. Keep `work_dir` under an allowed work root and `timeout_ms` bounded, but do not mistake either for an execution sandbox. Do not use a production Wind task for a smoke test. An async direct run returns HTTP 202 with `job_id` and `state: accepted`; acceptance is not completion.\n4. If (and only if) an external sandbox has been independently verified, use the exact dedicated test role, dedicated verified model, no secrets, and an exact-response prompt from `harness-smoke-testing`. Submit `async: true` only when you intend to poll the job. Without that sandbox, stop after read-only preflight or model verification and report that end-to-end launch is not safely testable here.\n\n## Monitor an authorized asynchronous job\n\n1. Poll `GET /jobs/<job_id>` until `state` is terminal: `completed`, `failed`, `timed_out`, or `cancelled`. `accepted` and `running` are not passes. The registry is in memory and terminal jobs may be evicted, so retain the job ID and poll promptly.\n2. Check the requested token/output as well as `state`, `model_used`, `attempts`, `exit_code`, `stop_reason`, `stderr`, and `duration_ms`. `completed` means the model turn ended normally; it does not prove the requested outcome. A fallback success is not primary-model success.\n3. For streaming, `GET /jobs/<job_id>/events?after=<seq>` replays events after the cursor; persist the last `seq` across reconnects. Use `POST /jobs/<job_id>/interrupt` only when cancellation is authorized and the job remains active.\n4. If admission returns HTTP 403, stop and report its reason. Do not rename the role, change its validity, or start a lower-level executable to bypass admission. Do not issue pipeline receipts yourself; harness-srv owns receipts for task runs.\n\n## Completion checklist\n\n- [ ] The check is correctly described as read-only preflight, Tackle model verification, or sandboxed end-to-end execution.\n- [ ] No live-role `/run-direct` inference was launched under the assumption that prompt wording or `work_dir` prevents side effects.\n- [ ] Any authorized async job reached a terminal state and its actual response and model/fallback attempts were checked.\n- [ ] No credentials or unnecessary sensitive prompt/output content were recorded.\n",
+      "mcp_tools": [
+        "POST /run",
+        "POST /run-direct",
+        "GET /jobs/:jobId",
+        "GET /jobs/:jobId/events",
+        "POST /jobs/:jobId/interrupt"
+      ],
+      "roles": [
+        "architect",
+        "dba",
+        "devops",
+        "engineer",
+        "planner"
+      ],
+      "sha256": "b004d50a10b3afa2ddcb5a7069942d8fa283e3aac9aed5895333e6a6118d8e32",
+      "slug": "harness-launch-and-monitoring",
+      "summary": "Choose the authorized Wind-task or direct-run path, respect admission and scope gates, and verify an accepted harness job reaches a terminal state with usable output.",
+      "tags": [
+        "harness",
+        "launch",
+        "harness-srv",
+        "run-direct",
+        "wind-task",
+        "monitoring",
+        "safety"
+      ],
+      "title": "Launch and Monitor Harness Jobs",
+      "triggers": [
+        "launch harness",
+        "run harness",
+        "run-direct",
+        "harness job",
+        "poll harness",
+        "smoke test model"
+      ]
+    },
+    {
+      "body_md": "## Purpose and safety boundary\n\nUse this card to distinguish three different checks: service/configuration preflight (read-only), Tackle's provider/model verification (real inference with database side effects), and a full harness job (agent execution with filesystem/tool risk). A passing health endpoint proves neither model inference nor a safe job runner.\n\n**Current harness constraint:** harness-srv's Opencode executor includes `--dangerously-skip-permissions`. `/run-direct` accepts a prompt, role, model, work directory, and timeout, but has no sandbox or tool-disable parameter. The prompt is not a policy boundary; `work_dir` only checks that the path is inside an allowed root. Do not launch a live-role smoke job on the host just to see whether the harness responds. A full end-to-end launch smoke is permissible only in a separately verified disposable environment with OS-level isolation, no sensitive host files/credentials, and a dedicated test identity/config. If that environment is unavailable, stop after safe preflight/model verification and report the limitation.\n\n## 1. Read-only service and role preflight\n\n1. Check `GET http://localhost:3420/health` and `GET http://localhost:3410/health`. Require a healthy response from both services.\n2. Read `GET /config/ai/validate`. Review warnings/errors; do not change config just to make a smoke request pass. The validator may report unrelated existing errors, which should be named as a blocker.\n3. Read `GET /config/ai/bundles/<role>` and `GET /config/ai/models`. Confirm the intended model, invocation mode, bundle status/validity window, and any other roles that reference the model. These are metadata checks; do not fetch or print resolved provider config (`/config/ai/resolve/:role`) or a complete secret-bearing snapshot.\n4. For a real Wind task, `/resolve-context` is a context-only operation, not an inference test. Call it only with an already-authorized task ID; its response includes a prompt preview, so do not echo/store that preview unnecessarily. Never create or repurpose a production task just to smoke-test.\n5. If needed, read `GET /sessions` to see current harness work. Do not treat a pre-existing run as the smoke test or interrupt it without authorization.\n\nThese checks are read-only and do not start a model. Report them as service/config preflight only.\n\n## 2. Verify one model through Tackle (real inference)\n\nTackle offers the supported model verifier:\n\n```http\nPOST http://localhost:3410/config/ai/verify\nContent-Type: application/json\n\n{\"model_id\":\"<model-id>\"}\n```\n\nOptional `test_prompt` replaces the default `Reply with the single word OK and nothing else.` prompt. This starts a real detached harness invocation (Opencode, Codex, or Ollama based on the model harness); it is not read-only and can run up to the 20-minute verifier watchdog. Check the host's Opencode/tool configuration before using it: this verifier does not supply an explicit deny-all tool list or an OS sandbox either.\n\n**Critical shared-model side effects \u2014 inspect before POSTing:** on successful verification, Tackle marks the model verified and reactivates *every inactive config bundle referencing that model*, across roles, including bundles that may have been intentionally disabled. On failure it marks the model unverified; the verified-model gate can deactivate its active bundles across roles. Therefore:\n\n- Prefer a newly registered dedicated test model with no `config_bundle` rows, in an approved isolated test environment.\n- If any bundle already references the model, enumerate all affected roles and active/inactive rows and obtain explicit operator approval for the consequences before verification. Do not reverify a shared production model just for a smoke test.\n- Never use the bulk `/verify/purge-unverified` endpoint as cleanup; it deactivates bundles across roles.\n\nThe start response includes `sessionId` and `logPath`. Poll:\n\n```http\nGET http://localhost:3410/config/ai/verify/<sessionId>\n```\n\nWait until `running:false`; inspect the exit status and, where permitted, the returned log endpoint for model-not-found/auth errors. Also re-read `GET /config/ai/model/<model-id>` and the relevant `/config/ai/bundles/<role>` lists to confirm the actual persisted model verification and bundle states. **Do not trust only the poll response's `verified` field:** it is derived from exit code, while the verifier separately scans logs for provider/model failures even when a process exits zero. Do not copy raw provider diagnostics or secrets into records.\n\nA successful Tackle verification establishes that its test invocation returned cleanly; it does not test harness-srv `/run-direct`, role admission, role prompt assembly, async job polling, or task acceptance criteria.\n\n## 3. Full harness launch test \u2014 isolated environment only\n\nThere is no safe prompt-only end-to-end smoke mode in the current harness. Only when the independent disposable sandbox described above is already in place:\n\n1. Use a dedicated test role/model/config and sandbox-local work root. First verify that the sandbox blocks writes outside its disposable root and that the launched agent's effective tool set is restricted. A `channel` label, agent prompt, role name, or allowed `work_dir` alone does not provide this guarantee.\n2. Make an authorized direct request to `POST http://localhost:3420/run-direct` with the exact test role, a short output-only test prompt, `timeout_ms` at or above the route's 1000 ms floor, the sandbox work directory, and `async:true`. Do not provide an ordinary project Wind task to `/run` for a smoke test; `/run` executes pipeline work and receipts.\n3. Record the returned job ID and poll `GET /jobs/<job_id>` until terminal. Check exact output, `state`, `model_used`, `attempts`, and timeout/error detail. If the environment is not proven isolated or the role/model would affect shared configuration, do not submit the request.\n\n## Report the result honestly\n\nReport separately: health/config preflight; whether Tackle model inference was run (and any bundle side effects); and whether an isolated end-to-end launch was tested. If only preflight ran, say **no model or harness job was launched**. A model response is not proof of sandbox safety; a terminal `completed` job is not proof the intended task succeeded.\n",
+      "mcp_tools": [
+        "GET /health",
+        "GET /config/ai/validate",
+        "GET /config/ai/bundles/:role",
+        "GET /config/ai/models",
+        "POST /config/ai/verify",
+        "GET /config/ai/verify/:sessionId",
+        "GET /config/ai/model/:id",
+        "POST /run-direct",
+        "GET /jobs/:jobId",
+        "GET /jobs/:jobId/events",
+        "POST /jobs/:jobId/interrupt"
+      ],
+      "roles": [
+        "architect",
+        "dba",
+        "devops",
+        "engineer"
+      ],
+      "sha256": "a722f1a22d1b46c52bc9012725dd3950da9493f7800fd189952207e83d4ab297",
+      "slug": "harness-smoke-testing",
+      "summary": "Distinguish read-only health/config checks, Tackle model inference, and end-to-end harness runs; document shared-model side effects and the current lack of a safe prompt-only launch sandbox.",
+      "tags": [
+        "harness",
+        "smoke-test",
+        "verification",
+        "safety",
+        "tackle",
+        "harness-srv"
+      ],
+      "title": "Harness Smoke Testing and Safe Model Verification",
+      "triggers": [
+        "smoke test harness",
+        "test harness safely",
+        "verify harness model",
+        "harness preflight",
+        "model smoke test",
+        "test run-direct safely"
       ]
     },
     {
@@ -2162,6 +2282,6 @@
       ]
     }
   ],
-  "role_count": 608,
+  "role_count": 621,
   "schema": "tackle"
 }
