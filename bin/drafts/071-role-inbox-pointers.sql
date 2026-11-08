@@ -42,6 +42,13 @@ COMMENT ON COLUMN nebula.role_inbox_pointers.pointer IS
 COMMENT ON COLUMN nebula.role_inbox_pointers.updated_at IS
     'Last write time; dates the loss if one ever occurs again.';
 
+-- WARNING — this file is restored as a DRAFT after the repo-wide read strip.
+-- It has NOT been verified readable in full after that strip, and it is NOT
+-- executable from bin/drafts/ until it passes the same gates as everything else
+-- here (DBA sign-off, ordering check, production-target confirmation). Do not
+-- run it from here. It is retained so the DDL can be rebuilt from its container,
+-- not invented from memory.
+
 -- Targeted index for "which roles have not advanced recently" — the query that would have
 -- made the 2026-10-01 loss visible per role instead of only bounded by a restart time.
 CREATE INDEX IF NOT EXISTS idx_role_inbox_pointers_updated_at
