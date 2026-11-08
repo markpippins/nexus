@@ -175,10 +175,10 @@ describe('single-proposition inquiry across SOLScript, Wind HTTP and Vision rece
         expect(observed.evaluation_calls).toBe(1);
         expect(observed.result).toEqual({
           proposition_id: 'prop-expression-001', disposition, all_passed: allPassed,
-          // Current interpreter treats the empty required-dimension set as
-          // scoped (empty-set subset branch). Preserve observed evidence;
-          // do not normalize it to the earlier design's not_scoped label.
-          context_status: 'scoped', read_set_digest: prepared.read_set_digest,
+          // The fixture type declares no required dimensions, so E8.4
+          // evaluates it not_scoped (the empty-set subset branch must not
+          // select scoped). Keep this aligned with the interpreter.
+          context_status: 'not_scoped', read_set_digest: prepared.read_set_digest,
           evaluator_contract_digest: prepared.evaluator_contract_digest,
           authority_status: 'evaluation_only', mutation_policy: 'forbidden',
         });

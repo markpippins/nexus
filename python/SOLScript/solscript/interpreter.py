@@ -473,16 +473,21 @@ class ResolutionInterpreter:
         ) if prop.semantic_type_id else set()
         instance_dimensions = {frame.dimension_id for frame in prop.frame_values}
 
-        # A required type with incomplete instance commitments is not
-        # unframed-on-merits. This removes the v32 free pass where declaring
-        # no frame rows made an incomplete proposition look not_scoped.
-        if not required_dimensions.issubset(instance_dimensions):
-            if required_dimensions:
+        if required_dimensions:
+            # A required type with incomplete instance commitments is not
+            # unframed-on-merits. This removes the v32 free pass where
+            # declaring no frame rows made an incomplete proposition look
+            # not_scoped.
+            if not required_dimensions.issubset(instance_dimensions):
                 return (None, False, "unframed_required")  # type: ignore[return-value]
-            # No required dimensions: instance frame values are supplementary.
-            context_status = "not_scoped"
-        else:
             context_status = "scoped"
+        else:
+            # Zero type-level requirements: there is nothing to scope. Frame
+            # values are supplementary and must not become 'scoped' merely
+            # because a caller also supplied a matching context. (The empty
+            # set is always a subset, so this branch must be explicit rather
+            # than inferred from the subset test.)
+            context_status = "not_scoped"
 
         if context is not None and not isinstance(context, dict):
             raise ValueError(
@@ -540,11 +545,6 @@ class ResolutionInterpreter:
                         f"evaluate_proposition: dimension {dim.name} has "
                         f"unrecognized value_kind {dim.value_kind}"
                     )
-
-            # A supplied context matching a supplementary commitment is still
-            # a scoped evaluation; a required type was scoped above.
-            if context_status == "not_scoped" and prop.frame_values:
-                context_status = "scoped"
 
         elif required_dimensions:
             # Required dimensions exist and the instance is complete, but no

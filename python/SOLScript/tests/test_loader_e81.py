@@ -279,6 +279,13 @@ class LoaderPropositionTests(unittest.TestCase):
         asyncio.get_event_loop().run_until_complete(loader.load_propositions())
         prop = interp.propositions["fc000000-0000-4000-8000-0000000000c1"]
         # Register the frame dimension + value so the gate can match context.
+        # The fixture tables also declare this dimension as a type-level
+        # requirement, but that lives in load_frame_dimensions() and this test
+        # only calls load_propositions(); register it explicitly so the
+        # proposition is genuinely framed (E8.4 scoped), not zero-required.
+        interp.register_semantic_type_required_dimension(
+            str(prop.semantic_type_id), dim_id
+        )
         interp.frame_dimensions[dim_id] = FrameDimension(
             id=dim_id, name="migration_phase", description=None, value_kind="governed_reference"
         )
