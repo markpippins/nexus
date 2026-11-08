@@ -193,3 +193,13 @@ etc/
 # path of the same name. Added 2026-10-13 after a stale verifier worktree
 # (tester-originmain-verify) surfaced as untracked noise in `git status`.
 /nexus-worktrees/
+
+# ImageMagick capture debris — NOT source. `/usr/bin/import` is ImageMagick's
+# screen-capture tool, not a bash builtin: typing a bare Python import list at
+# a shell prompt captures the root window once per argument and writes each
+# capture to a file named after that word (seen 2026-11-03: argparse, json,
+# os, sys, urllib.request — 12 MB each, plus an empty `project`). PostScript
+# captures are never legitimate tracked artifacts in this repo (verified: zero
+# tracked *.ps/*.eps when this rule was added).
+*.ps
+*.eps
