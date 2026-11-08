@@ -16,10 +16,16 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 
 import pytest
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Import the shared hashing helper from THIS checkout. bin/run_bin_tests.py
+# scrubs PYTHONPATH (a CI runner has none), so relying on the ambient path
+# imports either nothing or, worse, a different checkout's copy.
+sys.path.insert(0, os.path.join(REPO, "python"))
 
 SEED_DIR = os.path.join(REPO, "typescript", "tackle-seeds")
 SEED_INDEX = os.path.join(SEED_DIR, "index.ts")
@@ -74,7 +80,7 @@ def test_card_is_present_and_defined_once_in_seed(slug: str) -> None:
 
 @pytest.mark.parametrize("slug", HARNESS_SLUGS)
 def test_card_content_is_complete_and_hash_matches(slug: str) -> None:
-    from nexus_core.wrp.seed_manifest import card_sha256
+    from nexus_core.wrp.seed_manifest import card_sha256  # noqa: PLC0415
 
     card = _cards_by_slug()[slug]
     assert card["title"].strip()
