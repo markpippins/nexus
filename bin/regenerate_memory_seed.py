@@ -75,7 +75,35 @@ import tempfile
 
 DSN = os.environ.get("CONDUIT_PG_DSN", "postgresql://pguser:pgpass@localhost:5432/nexus")
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # nexus/
+def _resolve_repo_root() -> str:
+    """The checkout to regenerate, which is the INVOKING one where possible.
+
+    Resolving from __file__ alone means running the main checkout's copy from a
+    linked worktree rewrites the main checkout's seed and manifest — the
+    opposite of what a worktree run intends, and an easy way to smuggle
+    uncommitted seed changes onto main. Prefer an explicit NEXUS_REPO_ROOT,
+    then the cwd's git toplevel when it looks like this repo, and fall back to
+    this file's own checkout (cron, `git` absent, cwd outside any repo).
+    """
+    explicit = os.environ.get("NEXUS_REPO_ROOT")
+    if explicit:
+        return os.path.abspath(explicit)
+    root = ""
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=os.getcwd(), capture_output=True, text=True, timeout=5,
+        )
+        if proc.returncode == 0:
+            root = proc.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        root = ""
+    if root and os.path.isdir(os.path.join(root, "typescript", "tackle-seeds")):
+        return root
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+REPO = _resolve_repo_root()  # nexus/ (or the invoking worktree)
 SEED_PACKAGE_DIR = os.path.join(REPO, "typescript", "tackle-seeds")
 SEED_FILES = [
     os.path.join(SEED_PACKAGE_DIR, "index.ts"),
@@ -597,6 +625,7 @@ def main() -> int:
         if args.dry_run:
             print("--verify is ignored with --dry-run")
         else:
+            print(f"  [repo] {REPO}")
             for path in SEED_FILES:
                 tag = path.split(os.sep)[-2]  # e.g. "tackle-seeds"
                 verify_file(path, tag)
