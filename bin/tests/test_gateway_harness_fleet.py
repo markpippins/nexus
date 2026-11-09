@@ -44,7 +44,7 @@ pytestmark = pytest.mark.skipif(
     bool(_MISSING_TOOLS),
     reason="missing host tools for this suite: "
     + ", ".join(_MISSING_TOOLS)
-    + " (these tests build throwaway git repositories)",
+    + " (these tests read tracked paths with git ls-files)",
 )
 
 REPO = Path(__file__).resolve().parents[2]

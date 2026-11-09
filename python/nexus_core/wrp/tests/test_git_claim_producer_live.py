@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import uuid
@@ -112,22 +113,37 @@ def _kernel_up() -> bool:
         return False
 
 
+def _git_up() -> bool:
+    return shutil.which("git") is not None
+
+
 pytestmark = pytest.mark.skipif(
-    not (_pg_up() and _kernel_up()),
-    reason="live PG + PEB kernel (PEB_BASE_URL, default :8099) not both reachable",
+    not (_git_up() and _pg_up() and _kernel_up()),
+    reason="live PG + PEB kernel (PEB_BASE_URL, default :8099) not both reachable, "
+    "and git on PATH (this test derives HEAD and the branch ref)",
 )
 
-_HEAD_COMMIT = subprocess.run(
-    ["git", "rev-parse", "HEAD"], cwd=_REPO_ROOT, capture_output=True, text=True, check=True
-).stdout.strip()
+# Import-time probes, so they must tolerate a gitless host themselves: a
+# pytestmark skip cannot prevent a crash during module import.
+_HEAD_COMMIT = (
+    subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=_REPO_ROOT, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    if _git_up()
+    else ""
+)
 
 # The verifier requires a FULL branch ref for the claim (short names and HEAD
 # are rejected). Base and claim point at the same branch ref, so the verified
 # diff is empty — deterministic regardless of branch content. The verifier's
 # own semantics are unit-tested elsewhere; this test proves the wiring.
-_BRANCH = subprocess.run(
-    ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=_REPO_ROOT, capture_output=True, text=True, check=True
-).stdout.strip()
+_BRANCH = (
+    subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=_REPO_ROOT, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    if _git_up()
+    else ""
+)
 _BRANCH_REF = f"refs/heads/{_BRANCH}"
 
 
