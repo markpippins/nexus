@@ -1,4 +1,3 @@
-import pathlib
 #!/usr/bin/env python3
 """Unit tests for bin/pgie-evidence.py — the shared TAP guard + evidence
 emitter used by BOTH bin/run-pg-integration-e2e.sh (local) and the CI
@@ -28,6 +27,7 @@ import sys
 import tempfile
 import unittest
 
+import pathlib
 _GUARD_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 if str(_GUARD_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_GUARD_REPO_ROOT))

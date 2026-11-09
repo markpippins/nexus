@@ -177,14 +177,13 @@ EXEMPT_TOOL_SKIPS = {
     "bin/tests/test_canonical_shape_parity.py": "skips on missing psycopg2 (Python package)",
     "bin/tests/test_on_conflict_arbiter.py": "skips on missing psycopg2 (Python package)",
     "bin/tests/test_persona_bridge_parity.py": "skips on missing psycopg2 (Python package)",
-    "bin/tests/test_role_vocab_parity_live.py": "skips when the live role probe has no state",
     "bin/tests/test_jetstream_unconsumed_monitor.py": "skips on missing nats-py (Python package)",
     "python/absorb/tests/test_emitter.py": "skips on missing nats-py or unreachable NATS",
     "python/SOLScript/tests/test_resolution_shrapnel_bridge_sql.py": "skips on missing psycopg2 or unreachable database",
     "python/SOLScript/tests/test_shrapnel_field_metadata_sync_sql.py": "skips on missing psycopg2 or unreachable database",
     "python/nebula/tests/test_v205_w_a_reconciliation_e2e.py": "skips on a missing migration file",
-    "python/nexus_core/wrp/tests/test_conformance_ccnf_identity.py": "skips on a missing checked-in Go/Rust binary",
-    "python/nexus_core/wrp/tests/test_conformance_ccnf_compile.py": "skips on a missing checked-in Rust binary",
+    "python/nexus_core/wrp/tests/test_conformance_ccnf_identity.py": "skips on missing built reference binaries (submodule Go bin, gitignored Rust target/release)",
+    "python/nexus_core/wrp/tests/test_conformance_ccnf_compile.py": "skips on the missing built Rust verifier (gitignored target/release)",
     "python/nexus_core/wrp/tests/test_conformance_failure_matrix.py": "skips when no interactive lease is available",
     "python/nexus_core/sol/tests/test_t24_projection_conformance.py": "skips on an unimplemented feature, not a tool",
 }
@@ -218,12 +217,13 @@ def _skips_for_a_missing_thing(tree):
             continue
         fn = node.func
         name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", None)
-        if name not in {"skipTest", "SkipTest", "skip"} or not node.args:
+        if name not in {"skipTest", "SkipTest", "skip", "skipUnless", "skipIf", "skipif", "importorskip"}:
             continue
-        arg = node.args[0]
-        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-            if _TOOL_SKIP_HINT.search(arg.value):
-                return node.lineno
+        args = [a for a in node.args] + [k.value for k in node.keywords]
+        for arg in args:
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                if _TOOL_SKIP_HINT.search(arg.value):
+                    return node.lineno
     return None
 
 
@@ -240,13 +240,16 @@ def test_host_tool_skips_go_through_the_helper() -> None:
     for path in _test_modules():
         rel = str(path.relative_to(REPO_ROOT))
         text = path.read_text(encoding="utf-8")
-        if "host_tool_guard" in text:
-            continue
+        imports_helper = "host_tool_guard" in text
         try:
             tree = ast.parse(text)
         except SyntaxError:
             continue
-        line = _probes_path(tree) or _skips_for_a_missing_thing(tree)
+        # A raw probe is only suspicious when the module has not adopted the
+        # helper's checks: a converted module may still resolve the path it
+        # invokes, but its skip decision must come from missing_tools().
+        uses_checks = any(tok in text for tok in ("missing_tools(", "skip_unless_host_tools(", "skip_reason("))
+        line = (None if uses_checks else _probes_path(tree)) or _skips_for_a_missing_thing(tree)
         if line is None or rel in EXEMPT_TOOL_SKIPS:
             continue
         offenders.append(f"{rel}:{line}")
@@ -260,9 +263,13 @@ def test_host_tool_skips_go_through_the_helper() -> None:
 def test_every_exemption_is_current_and_explained() -> None:
     """An exemption without a live file or a reason is stale documentation."""
     problems = []
+    surfaces = ("which(", "skipTest", "SkipTest", "skip(", "skipIf", "skipUnless", "skipif", "importorskip")
     for rel, reason in EXEMPT_TOOL_SKIPS.items():
-        if not (REPO_ROOT / rel).is_file():
+        path = REPO_ROOT / rel
+        if not path.is_file():
             problems.append(f"{rel}: file no longer exists")
+        elif not any(s in path.read_text(encoding="utf-8") for s in surfaces):
+            problems.append(f"{rel}: no skip or probe construct left to exempt")
         if not reason.strip():
             problems.append(f"{rel}: empty reason")
     assert problems == []

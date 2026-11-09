@@ -13,7 +13,6 @@ Run with::
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -559,8 +558,6 @@ def test_run_guard_update_pins_refreshes_and_reverifies(
 
 # ── End-to-end (hermetic) run ──────────────────────────────────────────────
 def _sql_reachable() -> bool:
-    if not shutil.which("psql"):
-        return False
     try:
         completed = sql_runtime._psql(("-d", "postgres", "-tAc", "SELECT 1"))
     except Exception:  # pragma: no cover - connection probe
@@ -569,12 +566,15 @@ def _sql_reachable() -> bool:
 
 
 _MISSING_STACK = missing_tools("node", "tsc")
+_MISSING_PSQL = missing_tools("psql")
 
 requires_full_stack = pytest.mark.skipif(
-    bool(_MISSING_STACK) or not _sql_reachable(),
+    bool(_MISSING_STACK) or bool(_MISSING_PSQL) or not _sql_reachable(),
     reason=(
         skip_reason(_MISSING_STACK, "the full parity guard needs the JS toolchain")
         if _MISSING_STACK
+        else skip_reason(_MISSING_PSQL, "the full parity guard probes PostgreSQL through psql")
+        if _MISSING_PSQL
         else "PostgreSQL unavailable — full parity guard cannot run"
     ),
 )

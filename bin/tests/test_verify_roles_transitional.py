@@ -1,4 +1,3 @@
-import pathlib
 #!/usr/bin/env python3
 """Guard: #712's transitional verify-roles divergence is NAMED, OWNED, and CLOSED.
 
@@ -85,6 +84,7 @@ import subprocess
 import unittest
 
 import sys
+import pathlib
 _GUARD_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 if str(_GUARD_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_GUARD_REPO_ROOT))
