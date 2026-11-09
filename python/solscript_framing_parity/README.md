@@ -29,8 +29,12 @@ Useful flags: `--json` (machine-readable report), `--update-pins` (refresh the
 version pins after re-verifying a runtime change), `--keep-sql-database` /
 `--keep-ts-temp` (debugging only, breaks hermeticity).
 
-Exit codes: `0` contract holds · `1` parity failure or a runtime could not run ·
-`2` version drift (pinned interpreter/migration file changed).
+Exit codes: `0` contract holds · `1` parity failure (a runtime crashed or a case
+drifted) · `2` version drift (a pinned interpreter/migration file changed, or a
+migration after v32 redefines the gate) · `3` a runtime could not run at all
+(`psql`/`node`/`tsc` missing, or the server unreachable), so its rows are
+unattested. `3` is deliberately separate from `1`: "cannot attest" is not "the
+contract is violated", and a CI job must not read one as the other.
 
 Tests:
 
@@ -39,7 +43,10 @@ PGPASSWORD=pgpass PYTHONPATH=python python3 -m pytest python/solscript_framing_p
 ```
 
 The end-to-end tests skip themselves when `node`, `tsc` or PostgreSQL is
-unavailable; the contract/pin/Python-runtime tests always run.
+unavailable; the contract/pin/Python-runtime tests always run, and cover the
+unavailable-runtime exit (`3`), drift inside a pinned divergence, gate
+redefinition discovery, verbatim gate extraction, pin refresh and a failed
+database drop.
 
 ## The shared matrix
 
@@ -101,9 +108,20 @@ any of those and the guard refuses to run (`exit 2`) with the pinned and
 observed hashes, because the previous proof no longer covers the new
 revision. Re-verify, then refresh deliberately with `--update-pins`.
 
+The static pin list cannot see a *future* migration redefining the gate, so the
+guard also scans every migration numbered after v32 and reports one that
+(re)defines `resolution.evaluate_proposition` as drift. A migration that merely
+mentions the function — a `GRANT`, a comment — is not a definition. The same
+check runs inside `run_guard()`, not only in the CLI, so a programmatic caller
+cannot skip the version binding.
+
 The TypeScript side is compiled from `src/` at run time into a temp directory;
 the committed `dist/` is never used, so a stale build cannot mask a source
 change.
+
+The throwaway SQL database is dropped in a `finally` path and the drop is
+verified: if `DROP DATABASE` fails, the run names the leftover database instead
+of claiming a clean teardown (an in-flight exception is never masked by it).
 
 ## What this guard does *not* do
 

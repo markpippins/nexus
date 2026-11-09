@@ -1,9 +1,9 @@
 """Tests for the Ruling 32 §4 cross-runtime framing parity guard.
 
 Fast tests are pure Python (matrix/contract invariants, canonicalisation,
-version pins, the Python runtime). One end-to-end test runs the full guard
-(Python + TypeScript + throwaway SQL) and is skipped when ``node``, ``tsc`` or
-a reachable PostgreSQL is unavailable.
+version pins and gate discovery, the Python runtime, failure-mode wiring). One
+end-to-end test runs the full guard (Python + TypeScript + throwaway SQL) and is
+skipped when ``node``, ``tsc`` or a reachable PostgreSQL is unavailable.
 
 Run with::
 
@@ -14,13 +14,15 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 
-from solscript_framing_parity import guard, matrix as matrix_module
+from solscript_framing_parity import guard, matrix as matrix_module, version_pins
 from solscript_framing_parity.canonical import (
     Outcome,
+    RuntimeUnavailable,
     UNKNOWN_FRAME_DIMENSION,
     UNCLASSIFIED,
     classify_error,
@@ -47,6 +49,14 @@ PLAN_CLAUSES = {
     "matching context",
     "mismatching context",
 }
+
+
+def _completed(
+    returncode: int, *, stdout: str = "", stderr: str = ""
+) -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess(
+        args=["psql"], returncode=returncode, stdout=stdout, stderr=stderr
+    )
 
 
 # ── Matrix / contract invariants ────────────────────────────────────────────
@@ -167,6 +177,91 @@ def test_compare_fails_when_a_divergence_case_silently_agrees() -> None:
     assert any("pinned as divergence" in problem for problem in verdict.problems)
 
 
+def test_compare_catches_drift_within_a_pinned_divergence() -> None:
+    """A row can drift and still diverge: only the per-runtime expectation sees it."""
+    observations = _observations_from_contract()
+    case = next(c for c in MATRIX if c.id == "supplementary_absent_context")
+    observations["sql"][case.id] = Outcome("Rejected", False, "context_required")
+
+    verdicts = next(v for v in compare(observations) if v.case.id == case.id)
+    # Still three distinct outcomes, so the divergence check alone stays quiet.
+    assert len(
+        {observations[runtime][case.id].comparison_key() for runtime in RUNTIMES}
+    ) == 3
+    assert not verdicts.ok
+    assert verdicts.problems == [
+        "sql: expected null/fail/context_required, observed Rejected/fail/context_required"
+    ]
+
+
+# ── Unavailable vs failed runtimes ─────────────────────────────────────────
+def _stub_runtimes(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    unavailable: tuple = (),
+    broken: tuple = (),
+) -> None:
+    """Replace all three runtimes so guard wiring can be tested without them."""
+
+    def contract_outcomes(runtime: str) -> dict:
+        return {case.id: case.expected_for(runtime) for case in MATRIX}
+
+    for runtime, module in (
+        ("python", python_runtime),
+        ("typescript", ts_runtime),
+        ("sql", sql_runtime),
+    ):
+        if runtime in unavailable:
+            def raise_unavailable(*args, _runtime=runtime, **kwargs):
+                raise RuntimeUnavailable(f"{_runtime} toolchain missing")
+
+            monkeypatch.setattr(module, "run_matrix", raise_unavailable)
+        elif runtime in broken:
+            def raise_broken(*args, _runtime=runtime, **kwargs):
+                raise ValueError(f"{_runtime} harness exploded")
+
+            monkeypatch.setattr(module, "run_matrix", raise_broken)
+        else:
+            monkeypatch.setattr(
+                module,
+                "run_matrix",
+                lambda *args, _runtime=runtime, **kwargs: contract_outcomes(_runtime),
+            )
+
+
+def test_unavailable_runtime_is_not_attested_and_exits_3(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_runtimes(monkeypatch, unavailable=("sql",))
+
+    report = guard.run_guard(REPO_ROOT, pins_path=PINS_PATH)
+
+    assert set(report.runtime_errors) == {"sql"}
+    assert report.unavailable_runtimes == ["sql"]
+    assert report.failures == 0
+    assert report.not_attested_cases == len(MATRIX)
+    assert all(verdict.verdict == "NOT_ATTESTED" for verdict in report.cases)
+    assert report.exit_code == guard.EXIT_RUNTIME_UNAVAILABLE
+
+    payload = report.to_json()
+    assert payload["ok"] is False
+    assert payload["exit_code"] == 3
+    assert payload["unavailable_runtimes"] == ["sql"]
+    assert payload["summary"]["not_attested_cases"] == len(MATRIX)
+
+
+def test_a_crashed_runtime_is_a_parity_failure_not_unavailability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_runtimes(monkeypatch, broken=("python",))
+
+    report = guard.run_guard(REPO_ROOT, pins_path=PINS_PATH)
+
+    assert report.unavailable_runtimes == []
+    assert report.failures >= 1
+    assert report.exit_code == guard.EXIT_PARITY_FAILURE
+
+
 # ── Python runtime ─────────────────────────────────────────────────────────
 def test_python_runtime_matches_pinned_contract() -> None:
     observed = python_runtime.run_matrix(MATRIX, REPO_ROOT)
@@ -230,6 +325,190 @@ def test_pins_file_is_tracked_next_to_the_package() -> None:
     assert PINS_PATH.parent.name == "solscript_framing_parity"
 
 
+# ── Gate discovery: a future migration must not silently redefine the gate ──
+_GATE_TEXT = """CREATE OR REPLACE FUNCTION resolution.evaluate_proposition(
+    p_proposition_id uuid,
+    p_trigger_reason text DEFAULT 'manual'::text,
+    p_context jsonb DEFAULT NULL::jsonb
+) RETURNS TABLE(disposition text, all_passed boolean, context_status text)
+LANGUAGE plpgsql
+AS $function$
+BEGIN
+    RETURN;
+END;
+$function$;
+"""
+
+
+def test_migration_version_parsing() -> None:
+    assert version_pins.migration_version(Path("resolution_migration_v32.sql")) == 32
+    assert (
+        version_pins.migration_version(
+            Path("resolution_migration_v33_sweep_overload_defaults.sql")
+        )
+        == 33
+    )
+    assert version_pins.migration_version(Path("resolution_migration_v24b.sql")) == 24
+    assert (
+        version_pins.migration_version(Path("resolution_schema_consolidated.sql")) is None
+    )
+
+
+def test_current_checkout_has_no_post_v32_gate_redefinition() -> None:
+    assert version_pins.discover_later_gate_definitions(REPO_ROOT) == []
+
+
+def _fake_repo(tmp_path: Path, later_file: str, later_text: str) -> Path:
+    """Minimal checkout with a pinned gate and one later migration."""
+    root = tmp_path / "repo"
+    migrations = root / "schemas" / "migrations" / "resolution"
+    migrations.mkdir(parents=True)
+    (migrations / "resolution_migration_v32.sql").write_text(_GATE_TEXT)
+    (migrations / later_file).write_text(later_text)
+    (root / "gate.py").write_text("gate\n")
+    return root
+
+
+def _fake_pins(root: Path, pins_path: Path) -> None:
+    payload = version_pins.current_pin_values(root)
+    pins_path.write_text(json.dumps(payload))
+
+
+def test_verify_pins_reports_a_post_v32_gate_redefinition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _fake_repo(
+        tmp_path,
+        "resolution_migration_v38_gate_tweak.sql",
+        _GATE_TEXT,
+    )
+    monkeypatch.setattr(version_pins, "PINNED_FILES", {"gate.py": "test gate"})
+    pins_path = tmp_path / "pins.json"
+    _fake_pins(root, pins_path)
+
+    drifts = verify_pins(root, pins_path)
+
+    assert [drift.path for drift in drifts] == [
+        "schemas/migrations/resolution/resolution_migration_v38_gate_tweak.sql"
+    ]
+    assert "redefines" in drifts[0].role
+
+
+def test_verify_pins_allows_a_later_migration_that_only_mentions_the_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _fake_repo(
+        tmp_path,
+        "resolution_migration_v37_grant.sql",
+        "GRANT EXECUTE ON FUNCTION resolution.evaluate_proposition(uuid, text, jsonb) "
+        "TO pguser;\n",
+    )
+    monkeypatch.setattr(version_pins, "PINNED_FILES", {"gate.py": "test gate"})
+    pins_path = tmp_path / "pins.json"
+    _fake_pins(root, pins_path)
+
+    assert verify_pins(root, pins_path) == []
+
+
+# ── Extraction and teardown ────────────────────────────────────────────────
+def test_extract_gate_sql_returns_the_verbatim_definition() -> None:
+    migration = REPO_ROOT / sql_runtime.GATE_MIGRATION
+    text = migration.read_text(encoding="utf-8")
+    gate = sql_runtime.extract_gate_sql(text)
+
+    assert gate in text
+    assert gate.startswith(
+        "CREATE OR REPLACE FUNCTION resolution.evaluate_proposition("
+    )
+    assert gate.rstrip().endswith("$function$;")
+
+
+def test_extract_gate_sql_rejects_missing_or_duplicate_definitions() -> None:
+    with pytest.raises(sql_runtime.SqlHarnessError):
+        sql_runtime.extract_gate_sql("SELECT 1;")
+    with pytest.raises(sql_runtime.SqlHarnessError):
+        sql_runtime.extract_gate_sql(_GATE_TEXT + _GATE_TEXT)
+
+
+def test_throwaway_database_reports_a_failed_drop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_psql(args, stdin_text=None, timeout=120):
+        joined = " ".join(args)
+        if "DROP DATABASE" in joined:
+            return _completed(
+                1, stderr="FATAL: database is being accessed by other users"
+            )
+        return _completed(0)
+
+    monkeypatch.setattr(sql_runtime, "_psql", fake_psql)
+    database = sql_runtime.ThrowawayDatabase("SELECT 1;")
+
+    with pytest.raises(sql_runtime.SqlHarnessError) as raised:
+        with database:
+            pass
+    assert "could not drop throwaway parity database" in str(raised.value)
+
+
+def test_failed_drop_does_not_mask_an_in_flight_exception(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    def fake_psql(args, stdin_text=None, timeout=120):
+        if "DROP DATABASE" in " ".join(args):
+            return _completed(1, stderr="FATAL: still in use")
+        return _completed(0)
+
+    monkeypatch.setattr(sql_runtime, "_psql", fake_psql)
+    database = sql_runtime.ThrowawayDatabase("SELECT 1;")
+
+    with pytest.raises(ValueError, match="boom"):
+        with database:
+            raise ValueError("boom")
+
+    assert "could not drop throwaway parity database" in capsys.readouterr().err
+
+
+# ── run_guard owns the version binding ────────────────────────────────────
+def test_run_guard_refuses_version_drift_without_update(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_runtimes(monkeypatch)
+    pins = load_pins()
+    pins["sql_gate_sha256"] = "f" * 64
+    tampered = tmp_path / "version_pins.json"
+    tampered.write_text(json.dumps(pins))
+
+    report = guard.run_guard(REPO_ROOT, pins_path=tampered)
+
+    assert [drift.path for drift in report.drifts] == [
+        f"{sql_runtime.GATE_MIGRATION}#evaluate_proposition"
+    ]
+    assert report.exit_code == guard.EXIT_VERSION_DRIFT
+
+
+def test_run_guard_update_pins_refreshes_and_reverifies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_runtimes(monkeypatch)
+    original = load_pins()
+    pins = json.loads(json.dumps(original))
+    pins["sql_gate_sha256"] = "f" * 64
+    tampered = tmp_path / "version_pins.json"
+    tampered.write_text(json.dumps(pins))
+
+    report = guard.run_guard(REPO_ROOT, update_pins=True, pins_path=tampered)
+
+    assert report.drifts == []
+    assert report.exit_code == guard.EXIT_OK
+    refreshed = load_pins(tampered)
+    observed = current_pin_values(REPO_ROOT)
+    assert refreshed["sql_gate_sha256"] == observed["sql_gate_sha256"]
+    assert refreshed["pinned_files"] == observed["pinned_files"]
+    # Descriptive metadata is preserved; only the hash payload is refreshed.
+    assert refreshed["runtimes"] == original["runtimes"]
+    assert refreshed["guard_schema_version"] == original["guard_schema_version"]
+
+
 # ── End-to-end (hermetic) run ──────────────────────────────────────────────
 def _sql_reachable() -> bool:
     if not shutil.which("psql"):
@@ -251,6 +530,8 @@ requires_full_stack = pytest.mark.skipif(
 def test_full_guard_runs_hermetically_and_holds_the_contract() -> None:
     report = guard.run_guard(REPO_ROOT)
     assert report.runtime_errors == {}
+    assert report.drifts == []
+    assert report.unavailable_runtimes == []
     assert report.failures == 0
     assert report.exit_code == guard.EXIT_OK
     assert len(report.cases) == len(MATRIX)
@@ -277,6 +558,7 @@ def test_full_guard_leaves_no_throwaway_database() -> None:
 def test_json_report_declares_hermeticity_and_follow_ups() -> None:
     report = guard.run_guard(REPO_ROOT).to_json()
     assert report["ok"] is True
+    assert report["version_drift"] == []
     assert report["hermetic"]["live_database_touched"] is False
     assert report["hermetic"]["migrations_applied"] is False
     assert report["hermetic"]["admission_or_production_change"] is False
@@ -285,5 +567,6 @@ def test_json_report_declares_hermeticity_and_follow_ups() -> None:
         "cases": len(MATRIX),
         "agreement_cases": 6,
         "divergence_cases": 5,
+        "not_attested_cases": 0,
         "failures": 0,
     }
