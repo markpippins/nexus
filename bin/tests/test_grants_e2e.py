@@ -27,17 +27,11 @@ import subprocess
 import uuid
 
 import pytest
-import shutil
 
-# Skip (naming what is missing) rather than crashing with FileNotFoundError on a
-# host that lacks the external tool this suite drives.
-_REQUIRED_TOOLS = ("createdb", "dropdb")
-_MISSING_TOOLS = [tool for tool in _REQUIRED_TOOLS if shutil.which(tool) is None]
-pytestmark = pytest.mark.skipif(
-    bool(_MISSING_TOOLS),
-    reason="missing host tools for this suite: "
-    + ", ".join(_MISSING_TOOLS)
-    + " (these tests create a throwaway database)",
+from host_tool_guard import skip_unless_host_tools
+
+pytestmark = skip_unless_host_tools(
+    "createdb", "dropdb", doing="these tests create a throwaway database"
 )
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))

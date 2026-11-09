@@ -11,6 +11,9 @@ Inert unless CI is set and such a skip actually happened. The collected state
 lives on the pytest config, not in module globals, so this hook can be loaded
 twice in one session (the root conftest plus the python/nexus_core bridge)
 and still report and fail exactly once.
+
+The reason prefix comes from host_tool_guard.py, which also owns the check
+that produces it, so the two cannot drift apart.
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ import os
 
 import pytest
 
-SKIP_MARKER = "missing host tools for this suite:"
+from host_tool_guard import SKIP_MARKER
 
 _STATE_ATTR = "_nexus_host_tool_skip_state"
 

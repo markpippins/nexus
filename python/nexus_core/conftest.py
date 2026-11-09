@@ -14,9 +14,18 @@ loads both this bridge and the root conftest still reports and fails once.
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
-_ROOT_CONFTEST = Path(__file__).resolve().parents[2] / "conftest.py"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+# The hook imports the shared host-tool helper from the repository root, and
+# this pinned rootdir does not put that directory on sys.path the way a
+# repo-rooted run does. Make it importable before loading the hook.
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+_ROOT_CONFTEST = _REPO_ROOT / "conftest.py"
 
 _spec = importlib.util.spec_from_file_location("nexus_root_conftest", _ROOT_CONFTEST)
 _root = importlib.util.module_from_spec(_spec)

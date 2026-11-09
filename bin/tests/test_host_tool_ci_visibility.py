@@ -15,13 +15,14 @@ from pathlib import Path
 
 import pytest
 
+from host_tool_guard import SKIP_MARKER
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFTEST = REPO_ROOT / "conftest.py"
 CORE_CONFTEST = REPO_ROOT / "python" / "nexus_core" / "conftest.py"
+HELPER = REPO_ROOT / "host_tool_guard.py"
 
-MARKED_SKIP = (
-    'pytest.skip("missing host tools for this suite: bash (test fixture)")'
-)
+MARKED_SKIP = f'pytest.skip("{SKIP_MARKER} bash (test fixture)")'
 OTHER_SKIP = 'pytest.skip("unrelated: live service not reachable")'
 
 pytestmark = pytest.mark.skipif(
@@ -56,6 +57,10 @@ def _session(tmp_path: Path, body: str, ci: bool) -> subprocess.CompletedProcess
     """Run one sample test file under the real conftest."""
     (tmp_path / "conftest.py").write_text(
         CONFTEST.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    # The conftest imports the shared guard; the throwaway tree needs it too.
+    (tmp_path / HELPER.name).write_text(
+        HELPER.read_text(encoding="utf-8"), encoding="utf-8"
     )
     (tmp_path / "test_sample.py").write_text(body, encoding="utf-8")
     return _run(tmp_path, "test_sample.py", ci)
@@ -104,6 +109,9 @@ def test_root_and_bridge_together_report_only_once(tmp_path: Path) -> None:
     (root / "conftest.py").write_text(
         CONFTEST.read_text(encoding="utf-8"), encoding="utf-8"
     )
+    (root / HELPER.name).write_text(
+        HELPER.read_text(encoding="utf-8"), encoding="utf-8"
+    )
     (nested / "conftest.py").write_text(
         CORE_CONFTEST.read_text(encoding="utf-8"), encoding="utf-8"
     )
@@ -125,3 +133,22 @@ def test_nexus_core_bridge_exposes_the_hooks() -> None:
 
     for hook in ("pytest_sessionstart", "pytest_runtest_logreport", "pytest_sessionfinish"):
         assert callable(getattr(module, hook)), hook
+
+
+def test_the_host_tool_guard_has_a_single_home() -> None:
+    """Guarded suites import the shared helper; none may re-grow a copy.
+
+    The duplication this replaced drifted (26 copies of the reason text), and
+    a copy re-introduced here would silently stop matching the CI hook.
+    """
+    offenders = []
+    candidates = list((REPO_ROOT / "bin" / "tests").glob("test_*.py"))
+    candidates += list((REPO_ROOT / "python").rglob("test_*.py"))
+    here = Path(__file__).resolve()
+    for path in candidates:
+        if path.resolve() == here:
+            continue  # this file names the markers in order to police them
+        text = path.read_text(encoding="utf-8")
+        if "_REQUIRED_TOOLS" in text or "_MISSING_TOOLS" in text:
+            offenders.append(str(path.relative_to(REPO_ROOT)))
+    assert offenders == []

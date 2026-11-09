@@ -11,17 +11,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
-import shutil
 
-# Skip (naming what is missing) rather than crashing with FileNotFoundError on a
-# host that lacks the external tool this suite drives.
-_REQUIRED_TOOLS = ("bash",)
-_MISSING_TOOLS = [tool for tool in _REQUIRED_TOOLS if shutil.which(tool) is None]
-pytestmark = pytest.mark.skipif(
-    bool(_MISSING_TOOLS),
-    reason="missing host tools for this suite: "
-    + ", ".join(_MISSING_TOOLS)
-    + " (these tests execute the bin/ shell scripts)",
+from host_tool_guard import skip_unless_host_tools
+
+pytestmark = skip_unless_host_tools(
+    "bash", doing="these tests execute the bin/ shell scripts"
 )
 
 SCRIPT = Path(__file__).resolve().parents[1] / "assert_moleculer_ports.sh"
