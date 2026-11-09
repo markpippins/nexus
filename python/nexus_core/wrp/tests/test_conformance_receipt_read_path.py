@@ -34,6 +34,19 @@ import unittest
 import urllib.error
 import urllib.request
 import uuid
+import shutil
+import pytest
+
+# Skip (naming what is missing) rather than crashing with FileNotFoundError on a
+# host that lacks the external tool this suite drives.
+_REQUIRED_TOOLS = ("psql",)
+_MISSING_TOOLS = [tool for tool in _REQUIRED_TOOLS if shutil.which(tool) is None]
+pytestmark = pytest.mark.skipif(
+    bool(_MISSING_TOOLS),
+    reason="missing host tools for this suite: "
+    + ", ".join(_MISSING_TOOLS)
+    + " (these tests query PostgreSQL through psql)",
+)
 
 DSN = os.environ.get("CONDUIT_PG_DSN", "postgres://pguser:pgpass@localhost:5432/nexus")
 CONDUIT_MCP_URL = os.environ.get("CONDUIT_MCP_URL", "http://localhost:3100")

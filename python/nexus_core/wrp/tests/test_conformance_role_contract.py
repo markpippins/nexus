@@ -26,6 +26,19 @@ import subprocess
 import unittest
 import urllib.error
 import urllib.request
+import shutil
+import pytest
+
+# Skip (naming what is missing) rather than crashing with FileNotFoundError on a
+# host that lacks the external tool this suite drives.
+_REQUIRED_TOOLS = ("psql", "redis-cli")
+_MISSING_TOOLS = [tool for tool in _REQUIRED_TOOLS if shutil.which(tool) is None]
+pytestmark = pytest.mark.skipif(
+    bool(_MISSING_TOOLS),
+    reason="missing host tools for this suite: "
+    + ", ".join(_MISSING_TOOLS)
+    + " (these tests drive PostgreSQL and Redis from the shell)",
+)
 
 NEBULA_URL = os.environ.get("NEBULA_URL", "http://localhost:3101")
 TEST_ROLE = "wr-conf-009"

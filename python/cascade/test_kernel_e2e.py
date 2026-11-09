@@ -30,6 +30,19 @@ import subprocess
 import sys
 import time
 import uuid
+import shutil
+import pytest
+
+# Skip (naming what is missing) rather than crashing with FileNotFoundError on a
+# host that lacks the external tool this suite drives.
+_REQUIRED_TOOLS = ("docker",)
+_MISSING_TOOLS = [tool for tool in _REQUIRED_TOOLS if shutil.which(tool) is None]
+pytestmark = pytest.mark.skipif(
+    bool(_MISSING_TOOLS),
+    reason="missing host tools for this suite: "
+    + ", ".join(_MISSING_TOOLS)
+    + " (these tests run PostgreSQL inside a Docker container)",
+)
 
 # ── Configuration ───────────────────────────────────────────────────
 CASCADE_DIR = os.path.dirname(os.path.abspath(__file__))

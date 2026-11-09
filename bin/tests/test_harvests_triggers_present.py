@@ -28,6 +28,19 @@ Mirrors bin/tests conventions: unittest, REPO-relative, executed with
 import pathlib
 import subprocess
 import unittest
+import shutil
+import pytest
+
+# Skip (naming what is missing) rather than crashing with FileNotFoundError on a
+# host that lacks the external tool this suite drives.
+_REQUIRED_TOOLS = ("psql",)
+_MISSING_TOOLS = [tool for tool in _REQUIRED_TOOLS if shutil.which(tool) is None]
+pytestmark = pytest.mark.skipif(
+    bool(_MISSING_TOOLS),
+    reason="missing host tools for this suite: "
+    + ", ".join(_MISSING_TOOLS)
+    + " (these tests query PostgreSQL through psql)",
+)
 
 REPO = pathlib.Path(__file__).resolve().parent.parent.parent
 

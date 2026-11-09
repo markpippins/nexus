@@ -25,6 +25,18 @@ import subprocess
 import sys
 
 import pytest
+import shutil
+
+# Skip (naming what is missing) rather than crashing with FileNotFoundError on a
+# host that lacks the external tool this suite drives.
+_REQUIRED_TOOLS = ("bash",)
+_MISSING_TOOLS = [tool for tool in _REQUIRED_TOOLS if shutil.which(tool) is None]
+pytestmark = pytest.mark.skipif(
+    bool(_MISSING_TOOLS),
+    reason="missing host tools for this suite: "
+    + ", ".join(_MISSING_TOOLS)
+    + " (these tests execute the bin/ shell scripts)",
+)
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SCRIPT = os.path.join(REPO, "bin", "memory-cache-refresh.sh")
