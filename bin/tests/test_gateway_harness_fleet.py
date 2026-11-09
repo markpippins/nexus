@@ -33,18 +33,17 @@ import os
 import re
 import subprocess
 from pathlib import Path
-import shutil
-import pytest
 
-# Skip (naming what is missing) rather than crashing with FileNotFoundError on a
-# host that lacks the external tool this suite drives.
-_REQUIRED_TOOLS = ("git",)
-_MISSING_TOOLS = [tool for tool in _REQUIRED_TOOLS if shutil.which(tool) is None]
-pytestmark = pytest.mark.skipif(
-    bool(_MISSING_TOOLS),
-    reason="missing host tools for this suite: "
-    + ", ".join(_MISSING_TOOLS)
-    + " (these tests read tracked paths with git ls-files)",
+import sys
+
+_GUARD_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_GUARD_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GUARD_REPO_ROOT))
+
+from host_tool_guard import skip_unless_host_tools  # noqa: E402
+
+pytestmark = skip_unless_host_tools(
+    "git", doing="these tests read tracked paths with git ls-files"
 )
 
 REPO = Path(__file__).resolve().parents[2]

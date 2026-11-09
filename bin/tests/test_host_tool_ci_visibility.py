@@ -1,12 +1,13 @@
 """CI must not silently skip suites whose host tool is missing.
 
-The repo-root conftest.py escalates a skip whose reason carries
-"missing host tools for this suite:" into a failed session when CI is set.
+The repo-root conftest.py escalates a skip whose reason carries the
+shared host-tool marker into a failed session when CI is set.
 That behaviour only exists at session level, so these tests drive pytest in a
 throwaway directory with the real conftest copied in, instead of reimplementing
 the hook's logic.
 """
 
+import ast
 import importlib.util
 import os
 import subprocess
@@ -15,13 +16,14 @@ from pathlib import Path
 
 import pytest
 
+from host_tool_guard import SKIP_MARKER
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFTEST = REPO_ROOT / "conftest.py"
 CORE_CONFTEST = REPO_ROOT / "python" / "nexus_core" / "conftest.py"
+HELPER = REPO_ROOT / "host_tool_guard.py"
 
-MARKED_SKIP = (
-    'pytest.skip("missing host tools for this suite: bash (test fixture)")'
-)
+MARKED_SKIP = f'pytest.skip("{SKIP_MARKER} bash (test fixture)")'
 OTHER_SKIP = 'pytest.skip("unrelated: live service not reachable")'
 
 pytestmark = pytest.mark.skipif(
@@ -57,6 +59,10 @@ def _session(tmp_path: Path, body: str, ci: bool) -> subprocess.CompletedProcess
     (tmp_path / "conftest.py").write_text(
         CONFTEST.read_text(encoding="utf-8"), encoding="utf-8"
     )
+    # The conftest imports the shared guard; the throwaway tree needs it too.
+    (tmp_path / HELPER.name).write_text(
+        HELPER.read_text(encoding="utf-8"), encoding="utf-8"
+    )
     (tmp_path / "test_sample.py").write_text(body, encoding="utf-8")
     return _run(tmp_path, "test_sample.py", ci)
 
@@ -66,7 +72,7 @@ def test_marked_skip_fails_the_session_on_ci(tmp_path: Path) -> None:
 
     assert result.returncode == 1, result.stdout + result.stderr
     assert "host tools missing on CI" in result.stdout
-    assert "missing host tools for this suite: bash" in result.stdout
+    assert f"{SKIP_MARKER} bash" in result.stdout
     assert "install them instead of letting the suite skip" in result.stdout
     # Pin the rendered tail: the reason's own closing paren, then end of line.
     # A stray quote or an added paren from unwrapping the (file, line, reason)
@@ -104,6 +110,9 @@ def test_root_and_bridge_together_report_only_once(tmp_path: Path) -> None:
     (root / "conftest.py").write_text(
         CONFTEST.read_text(encoding="utf-8"), encoding="utf-8"
     )
+    (root / HELPER.name).write_text(
+        HELPER.read_text(encoding="utf-8"), encoding="utf-8"
+    )
     (nested / "conftest.py").write_text(
         CORE_CONFTEST.read_text(encoding="utf-8"), encoding="utf-8"
     )
@@ -113,7 +122,7 @@ def test_root_and_bridge_together_report_only_once(tmp_path: Path) -> None:
 
     assert result.returncode == 1, result.stdout + result.stderr
     assert result.stdout.count("host tools missing on CI") == 1
-    assert result.stdout.count("missing host tools for this suite: bash") == 1
+    assert result.stdout.count(f"{SKIP_MARKER} bash") == 1
 
 
 def test_nexus_core_bridge_exposes_the_hooks() -> None:
@@ -125,3 +134,33 @@ def test_nexus_core_bridge_exposes_the_hooks() -> None:
 
     for hook in ("pytest_sessionstart", "pytest_runtest_logreport", "pytest_sessionfinish"):
         assert callable(getattr(module, hook)), hook
+
+
+def test_the_host_tool_guard_has_a_single_home() -> None:
+    """The reason literal may only come from the shared helper.
+
+    A copy that re-inlines the reason — even with different variable names —
+    would silently stop matching the marker the CI hook escalates, so this
+    scans every Python file in the repo, not just the two roots that hold the
+    converted suites today.
+    """
+    here = Path(__file__).resolve()
+    helper = (REPO_ROOT / "host_tool_guard.py").resolve()
+    skip_dirs = {".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache"}
+    offenders = []
+    for dirpath, dirnames, filenames in os.walk(REPO_ROOT):
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+        for name in filenames:
+            if not name.endswith(".py"):
+                continue
+            path = Path(dirpath) / name
+            if path.resolve() in (here, helper):
+                continue  # the helper produces the literal; this file names it
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except (SyntaxError, UnicodeDecodeError):
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Constant) and isinstance(node.value, str) and SKIP_MARKER in node.value:
+                    offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}")
+    assert offenders == []

@@ -1,8 +1,7 @@
 """Fail CI when a suite skips because a host tool is missing.
 
 Several suites drive an external tool (bash, git, psql, createdb/dropdb,
-node, docker) and skip with "missing host tools for this suite: <tools>"
-when it is absent. Off CI that is the right answer: the suite cannot run on
+node, docker) and skip with the shared host-tool marker when it is absent. Off CI that is the right answer: the suite cannot run on
 that machine. On a CI runner the tool is expected to be provisioned, so the
 same skip means the suite covered nothing — this hook turns it into a failed
 session and names the suites involved.
@@ -11,6 +10,9 @@ Inert unless CI is set and such a skip actually happened. The collected state
 lives on the pytest config, not in module globals, so this hook can be loaded
 twice in one session (the root conftest plus the python/nexus_core bridge)
 and still report and fail exactly once.
+
+The reason prefix comes from host_tool_guard.py, which also owns the check
+that produces it, so the two cannot drift apart.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ import os
 
 import pytest
 
-SKIP_MARKER = "missing host tools for this suite:"
+from host_tool_guard import SKIP_MARKER
 
 _STATE_ATTR = "_nexus_host_tool_skip_state"
 
