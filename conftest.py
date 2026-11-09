@@ -37,7 +37,7 @@ def pytest_runtest_logreport(report):
     # rendered text closes with the reason's own paren plus the tuple's quote.
     for suffix in ("')", '")'):
         if reason.endswith(suffix):
-            reason = reason[: -len(suffix)] + reason[-2]
+            reason = reason[: -len(suffix)] + suffix[1]
             break
     _skipped[report.nodeid] = reason
 

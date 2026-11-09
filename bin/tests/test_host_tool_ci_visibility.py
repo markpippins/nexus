@@ -62,6 +62,9 @@ def test_marked_skip_fails_the_session_on_ci(tmp_path: Path) -> None:
     assert "host tools missing on CI" in result.stdout
     assert "missing host tools for this suite: bash" in result.stdout
     assert "install them instead of letting the suite skip" in result.stdout
+    # The reason is unwrapped from the (file, line, reason) tuple: keep its own
+    # closing paren and drop the tuple's quote.
+    assert "(test fixture)" in result.stdout
 
 
 def test_marked_skip_stays_a_skip_off_ci(tmp_path: Path) -> None:
