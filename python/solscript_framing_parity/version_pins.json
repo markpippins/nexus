@@ -1,0 +1,38 @@
+{
+  "guard_schema_version": 1,
+  "pinned_files": {
+    "python/SOLScript/solscript/interpreter.py": "6ba2dadb3400b1827e4485d09f9318652e338706b430c4f1d1e44b9ede31a2d6",
+    "python/SOLScript/solscript/models.py": "968d4283d0350e10c33014a058007d7957d2c7ab066fed8f74957a56fe7cffd4",
+    "schemas/migrations/resolution/resolution_migration_v32.sql": "83037dbf9e0bfdc5394eeac9fb237f31802e408942d0e8cb10babdd964b250d1",
+    "schemas/migrations/resolution/resolution_migration_v33_sweep_overload_defaults.sql": "c64dbf180e4ba385bb01fee76b795c06bbca35da1425d3753f9fc1e272aad373",
+    "schemas/migrations/resolution/resolution_migration_v34.sql": "54342b76f5fa9e541458aa5b3a0974d1c031b1d3322837ea43e281e8d22dbb54",
+    "schemas/migrations/resolution/resolution_migration_v35_frame_semantics.sql": "58920476bf04ee874acf2bbd7808910005822a7c4e8ba0495c65c4a095ed3036",
+    "schemas/migrations/resolution/resolution_migration_v36_shrapnel_bridge.sql": "05daad470875d6a702ad4b27cf8b213c8adfc1aa682c547b44d8a6c6d6134a7c",
+    "schemas/migrations/resolution/resolution_migration_v37_shrapnel_field_metadata_sync.sql": "1485e10910ab0fe04abd4d251a411993d529df4dd3b65c48890613787ec06625",
+    "typescript/solscript/src/events.ts": "268d8e621ef216c8bd1008a5fc5e89299fdb10f48ec9d0c4bc3d1eefd5ca3917",
+    "typescript/solscript/src/expression-compiler.ts": "899bcdc7f2b4e4e9b196de74caa3b2dbabf197c84c8b932aacd30182d40db342",
+    "typescript/solscript/src/interpreter.ts": "070dda5a453020c64d3419dc9bbaffa3e97948a74de628c6e1042ffddb80689b",
+    "typescript/solscript/src/models.ts": "9da30e40f24e07662ba3b41010c9ad38486893feac99782e7e2967fdd11ae360"
+  },
+  "runtimes": {
+    "python": {
+      "label": "python/SOLScript ResolutionInterpreter.evaluate_proposition (E8.4 type-level gate, post-#916)"
+    },
+    "sql": {
+      "gate_migration": "schemas/migrations/resolution/resolution_migration_v32.sql",
+      "label": "resolution.evaluate_proposition(uuid, text, jsonb) as created by migration v32",
+      "later_migrations_verified_through": [
+        "v33",
+        "v34",
+        "v35",
+        "v36",
+        "v37"
+      ]
+    },
+    "typescript": {
+      "label": "typescript/solscript ResolutionInterpreter.evaluateProposition (instance frame-count gate)",
+      "package_version": "0.1.0"
+    }
+  },
+  "sql_gate_sha256": "1cf21d14c84d9a51e93906a812946f337d792fe58727378dbd0054532f1ee651"
+}
