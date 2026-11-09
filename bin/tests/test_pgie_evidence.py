@@ -21,12 +21,18 @@ artifact with if: always(); the local runner must delegate likewise.
 """
 import json
 import os
-import shutil
 import subprocess
 import time
 import sys
 import tempfile
 import unittest
+
+import pathlib
+_GUARD_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_GUARD_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GUARD_REPO_ROOT))
+
+from host_tool_guard import missing_tools, skip_reason  # noqa: E402
 
 PGIE = str(__import__("pathlib").Path(__file__).resolve().parents[1] / "pgie-evidence.py")
 
@@ -217,9 +223,11 @@ class MintHead(unittest.TestCase):
     def test_pr_635_head_binds_to_live_remote(self):
         """Live: minted sha must equal the PR's headRefOid prefix. Skipped
         when gh/network is unavailable (CI without token, offline laptop)."""
-        gh = shutil.which("gh")
-        if not gh:
-            self.skipTest("gh not available")
+        missing = missing_tools("gh")
+        if missing:
+            self.skipTest(
+                skip_reason(missing, "this test reads the live PR head through gh")
+            )
         probe = subprocess.run(
             ["gh", "pr", "view", "635", "--json", "headRefOid", "--jq", ".headRefOid"],
             capture_output=True, text=True, timeout=30)

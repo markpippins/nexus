@@ -34,6 +34,15 @@ import os
 import subprocess
 import unittest
 
+import pathlib
+import sys
+
+_GUARD_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_GUARD_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GUARD_REPO_ROOT))
+
+from host_tool_guard import missing_tools, skip_reason  # noqa: E402
+
 PROBE_TIMEOUT = 15
 
 CONSTRAINT_SQL = """
@@ -65,8 +74,13 @@ def psql_env():
     }
 
 
+_MISSING_PSQL = missing_tools("psql")
+
+
 def probe_constraint_state():
     """One psql round-trip -> dict, or None when the DB is unreachable."""
+    if _MISSING_PSQL:
+        return None
     try:
         proc = subprocess.run(
             ["psql", "-X", "-A", "-t", "-F", "\x1f", "-v", "ON_ERROR_STOP=1",
@@ -155,7 +169,9 @@ class LiveParityTest(unittest.TestCase):
         state = probe_constraint_state()
         if state is None:
             cls.skip_reason = (
-                "explicit skip: no reachable postgres with the seeded nexus "
+                skip_reason(_MISSING_PSQL, "R5 reads the constraint definitions through psql")
+                if _MISSING_PSQL
+                else "explicit skip: no reachable postgres with the seeded nexus "
                 "DB (hermetic context) — R5 applies to seeded/operator "
                 "stacks; run it against the throwaway stack or titanium")
             cls.state = None
@@ -173,7 +189,7 @@ class LiveParityTest(unittest.TestCase):
         if self.skip_reason:
             self.skipTest(self.skip_reason)
         if self.state is None:
-            self.skipTest("probe state unavailable")
+            self.skipTest("probe state not collected by setUpClass")
 
     def test_nebula_constraint_present(self):
         self._guard()

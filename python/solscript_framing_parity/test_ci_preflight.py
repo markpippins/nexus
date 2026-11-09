@@ -25,6 +25,13 @@ from typing import Dict, List, Optional
 
 import pytest
 
+import sys
+_GUARD_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_GUARD_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GUARD_REPO_ROOT))
+
+from host_tool_guard import missing_tools, skip_reason  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "framing-parity-guard.yml"
 STEP_NAME = "- name: Verify the guard toolchain"
@@ -48,11 +55,13 @@ def missing_bash_reason() -> Optional[str]:
     without one. Reporting the reason keeps a machine-specific gap visible in
     the pytest summary instead of surfacing as a traceback.
     """
-    if shutil.which("bash") is not None:
+    missing = missing_tools("bash")
+    if not missing:
         return None
-    return (
-        "bash is not installed; the workflow's run: block is shell and cannot "
-        "be executed here (install bash or run on a POSIX host)"
+    return skip_reason(
+        missing,
+        "the workflow's run: block is shell and cannot be executed here "
+        "(install bash or run on a POSIX host)",
     )
 
 
