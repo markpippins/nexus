@@ -33,6 +33,19 @@ import os
 import re
 import subprocess
 from pathlib import Path
+import shutil
+import pytest
+
+# Skip (naming what is missing) rather than crashing with FileNotFoundError on a
+# host that lacks the external tool this suite drives.
+_REQUIRED_TOOLS = ("git",)
+_MISSING_TOOLS = [tool for tool in _REQUIRED_TOOLS if shutil.which(tool) is None]
+pytestmark = pytest.mark.skipif(
+    bool(_MISSING_TOOLS),
+    reason="missing host tools for this suite: "
+    + ", ".join(_MISSING_TOOLS)
+    + " (these tests build throwaway git repositories)",
+)
 
 REPO = Path(__file__).resolve().parents[2]
 MARKER = "LIVE-GATEWAY HARNESS (hermetic)"

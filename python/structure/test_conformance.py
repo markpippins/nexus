@@ -18,6 +18,19 @@ import json
 import pathlib
 import subprocess
 import sys
+import shutil
+import pytest
+
+# Skip (naming what is missing) rather than crashing with FileNotFoundError on a
+# host that lacks the external tool this suite drives.
+_REQUIRED_TOOLS = ("node",)
+_MISSING_TOOLS = [tool for tool in _REQUIRED_TOOLS if shutil.which(tool) is None]
+pytestmark = pytest.mark.skipif(
+    bool(_MISSING_TOOLS),
+    reason="missing host tools for this suite: "
+    + ", ".join(_MISSING_TOOLS)
+    + " (these tests run the JavaScript verifier CLI)",
+)
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
