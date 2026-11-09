@@ -52,7 +52,7 @@ jobs:
       # guards fail (rather than skip) when the toolchain is absent.
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
       - name: Install the TypeSpec toolchain
         run: npm install --prefix typespec/v1
       - name: Run mesh-register probe tests
