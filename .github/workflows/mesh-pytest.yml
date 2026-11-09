@@ -24,7 +24,7 @@ jobs:
   probe-tests:
     name: "mesh-register probe tests (Python ${{ matrix.python-version }})"
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -47,5 +47,13 @@ jobs:
         run: python3 -m pip install -r requirements-dev.txt
       - name: Record resolved pytest version in the run log
         run: python3 -m pytest --version
+      # The TypeSpec compile guards need typespec/v1/node_modules, which is
+      # git-ignored. A CI runner is expected to provision its tools, so these
+      # guards fail (rather than skip) when the toolchain is absent.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install the TypeSpec toolchain
+        run: npm install --prefix typespec/v1
       - name: Run mesh-register probe tests
         run: make mesh-test
