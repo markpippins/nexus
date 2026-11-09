@@ -84,10 +84,16 @@ jobs:
           psql --version
           node --version
           version=$(tsc --version | sed 's/^Version //')
+          echo "tsc ${version:-<no version reported>}"
+          # Fail closed: with no parsable version the numeric tests below error,
+          # the `if` reads that as false, and the step would pass silently.
+          if ! printf '%s' "$version" | grep -Eqx '[0-9]+\.[0-9]+(\.[0-9]+)?([-+][0-9A-Za-z.-]+)?'; then
+            echo "::error::tsc did not report a usable version (got '${version}')";
+            exit 1;
+          fi
           major=${version%%.*}
           minor=$(printf '%s' "$version" | cut -d. -f2)
           minor=${minor%%[!0-9]*}
-          echo "tsc $version"
           # A major-only test accepts 4.0-4.8 while the guard's floor is 4.9.
           # Compare minor too, so 4.10 passes and 4.8 does not.
           if [ "$major" -lt 4 ] || { [ "$major" -eq 4 ] && [ "${minor:-0}" -lt 9 ]; }; then
