@@ -189,7 +189,7 @@ class LiveParityTest(unittest.TestCase):
         if self.skip_reason:
             self.skipTest(self.skip_reason)
         if self.state is None:
-            self.skipTest("probe state unavailable")
+            self.skipTest("probe state not collected by setUpClass")
 
     def test_nebula_constraint_present(self):
         self._guard()

@@ -177,6 +177,8 @@ EXEMPT_TOOL_SKIPS = {
     "bin/tests/test_canonical_shape_parity.py": "skips on missing psycopg2 (Python package)",
     "bin/tests/test_on_conflict_arbiter.py": "skips on missing psycopg2 (Python package)",
     "bin/tests/test_persona_bridge_parity.py": "skips on missing psycopg2 (Python package)",
+    "bin/tests/test_landed_digest_guard.py": "skips when origin/main is absent outside a full nexus checkout",
+    "bin/tests/test_adapter_health_probe.py": "skips on missing psycopg2 (Python package)",
     "bin/tests/test_jetstream_unconsumed_monitor.py": "skips on missing nats-py (Python package)",
     "python/absorb/tests/test_emitter.py": "skips on missing nats-py or unreachable NATS",
     "python/SOLScript/tests/test_resolution_shrapnel_bridge_sql.py": "skips on missing psycopg2 or unreachable database",
@@ -240,7 +242,6 @@ def test_host_tool_skips_go_through_the_helper() -> None:
     for path in _test_modules():
         rel = str(path.relative_to(REPO_ROOT))
         text = path.read_text(encoding="utf-8")
-        imports_helper = "host_tool_guard" in text
         try:
             tree = ast.parse(text)
         except SyntaxError:
