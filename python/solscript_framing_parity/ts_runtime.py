@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
 
-from .canonical import Outcome, classify_error
+from .canonical import Outcome, RuntimeUnavailable, classify_error
 from .matrix import MATRIX, matrix_payload
 
 RUNTIME = "typescript"
@@ -28,7 +28,7 @@ _COMPILE_TIMEOUT_S = 180
 _RUN_TIMEOUT_S = 120
 
 
-class TypeScriptToolingUnavailable(RuntimeError):
+class TypeScriptToolingUnavailable(RuntimeUnavailable):
     """``node``/``tsc``/driver missing — the guard cannot attest the TS side."""
 
 

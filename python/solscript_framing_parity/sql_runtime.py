@@ -27,11 +27,12 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import uuid
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
-from .canonical import Outcome, classify_error
+from .canonical import Outcome, RuntimeUnavailable, classify_error
 from .matrix import DIMENSIONS, FIXTURE, MATRIX, Case
 
 RUNTIME = "sql"
@@ -131,7 +132,7 @@ class SqlHarnessError(RuntimeError):
     """The SQL harness could not be set up or produced an unexpected failure."""
 
 
-class SqlToolingUnavailable(SqlHarnessError):
+class SqlToolingUnavailable(SqlHarnessError, RuntimeUnavailable):
     """``psql`` missing or the server unreachable — SQL cannot be attested."""
 
 
@@ -257,7 +258,20 @@ class ThrowawayDatabase:
             return
         if self._keep:
             return
-        _psql(("-d", "postgres", "-q", "-c", f'DROP DATABASE IF EXISTS "{self.name}"'))
+        completed = _psql(
+            ("-d", "postgres", "-q", "-c", f'DROP DATABASE IF EXISTS "{self.name}"')
+        )
+        if completed.returncode != 0:
+            # The drop failed, so the database is still there. Report it instead
+            # of claiming a clean teardown; never mask an in-flight exception.
+            message = (
+                f"could not drop throwaway parity database {self.name!r}; it may "
+                f"still exist. psql said: {completed.stderr.strip()}"
+            )
+            if exc_type is None:
+                raise SqlHarnessError(message)
+            print(message, file=sys.stderr)
+            return
         self._created = False
 
     # -- setup -------------------------------------------------------------

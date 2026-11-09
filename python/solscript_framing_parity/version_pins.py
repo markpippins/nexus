@@ -10,12 +10,18 @@ Pinned files fall into two groups:
 * the SQL migration chain (v32 creates the gate; v33-v37 were verified not to
   redefine it). Editing any of them invalidates the proof and forces a human to
   re-run the guard and refresh the pins deliberately.
+
+The static pin list alone cannot see a *future* migration redefining the gate,
+so :func:`verify_pins` also scans every migration numbered after v32 and reports
+one that (re)defines ``resolution.evaluate_proposition``. A migration that
+merely mentions the function — a ``GRANT``, a comment — is not a definition.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional
@@ -23,6 +29,20 @@ from typing import Dict, List, Mapping, Optional
 from .sql_runtime import GATE_MIGRATION, extract_gate_sql
 
 PINS_PATH = Path(__file__).with_name("version_pins.json")
+
+#: Migration that owns the pinned gate definition.
+GATE_MIGRATION_VERSION = 32
+
+MIGRATIONS_DIR = "schemas/migrations"
+
+_MIGRATION_VERSION = re.compile(r"_v(\d+)", re.IGNORECASE)
+
+#: A *definition* of the gate — not a GRANT, a call, or a comment about it.
+_GATE_DEFINITION = re.compile(
+    r"\b(?:CREATE\s+(?:OR\s+REPLACE\s+)?|ALTER\s+|DROP\s+)"
+    r"(?:FUNCTION|PROCEDURE)\s+(?:IF\s+EXISTS\s+)?resolution\.evaluate_proposition\b",
+    re.IGNORECASE,
+)
 
 #: Files whose content proves the gate. ``role`` is reported with any drift.
 PINNED_FILES: Mapping[str, str] = {
@@ -67,6 +87,49 @@ def sha256_bytes(data: bytes) -> str:
 
 def sha256_file(path: Path) -> str:
     return sha256_bytes(path.read_bytes())
+
+
+@dataclass(frozen=True)
+class GateDefinition:
+    """A migration after the pinned gate that (re)defines it."""
+
+    path: str
+    version: int
+    statement: str
+
+
+def migration_version(path: Path) -> Optional[int]:
+    """Migration number from a filename (``..._v38_...sql`` -> 38), if any."""
+    match = _MIGRATION_VERSION.search(path.stem)
+    return int(match.group(1)) if match else None
+
+
+def discover_later_gate_definitions(repo_root: Path) -> List[GateDefinition]:
+    """Migrations numbered after the gate that redefine it.
+
+    Unnumbered files (consolidation snapshots, ad-hoc scripts) are skipped:
+    they are not part of the sequential chain that produced the live schema.
+    """
+    base = repo_root / MIGRATIONS_DIR
+    if not base.is_dir():
+        return []
+
+    found: List[GateDefinition] = []
+    for path in sorted(base.rglob("*.sql")):
+        version = migration_version(path)
+        if version is None or version <= GATE_MIGRATION_VERSION:
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        match = _GATE_DEFINITION.search(text)
+        if match:
+            found.append(
+                GateDefinition(
+                    path=str(path.relative_to(repo_root)),
+                    version=version,
+                    statement=match.group(0),
+                )
+            )
+    return found
 
 
 def load_pins(path: Path = PINS_PATH) -> dict:
@@ -132,6 +195,21 @@ def verify_pins(repo_root: Path, pins_path: Path = PINS_PATH) -> List[PinDrift]:
                     actual=actual_gate,
                 )
             )
+
+    # The static pin list cannot notice a migration that did not exist when the
+    # pins were written. A post-gate redefinition always invalidates the proof.
+    for definition in discover_later_gate_definitions(repo_root):
+        drifts.append(
+            PinDrift(
+                path=definition.path,
+                role=(
+                    f"migration after v{GATE_MIGRATION_VERSION} that redefines "
+                    "the pinned framing gate"
+                ),
+                expected=f"<no gate definition after v{GATE_MIGRATION_VERSION}>",
+                actual=f"v{definition.version}: {definition.statement}",
+            )
+        )
 
     return drifts
 

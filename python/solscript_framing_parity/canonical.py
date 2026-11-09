@@ -18,13 +18,22 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional
+from typing import Any, Optional
 
 # Error classes shared by all three runtimes.
 UNKNOWN_FRAME_DIMENSION = "unknown_frame_dimension"
 CONTEXT_NOT_OBJECT = "context_not_object"
 UNRECOGNIZED_VALUE_KIND = "unrecognized_value_kind"
 UNCLASSIFIED = "unclassified_error"
+
+
+class RuntimeUnavailable(RuntimeError):
+    """A runtime adapter cannot attest its rows because its toolchain is absent.
+
+    Distinct from a parity failure: nothing was proven wrong, the proof simply
+    could not be produced. The guard maps this to its own exit code so that a
+    CI job never reads "cannot attest" as "the contract is violated".
+    """
 
 #: Substrings that identify each error class in the three implementations.
 #: Python raises ``ValueError``, TypeScript raises ``Error`` and PL/pgSQL
@@ -84,16 +93,6 @@ class Outcome:
         disposition = self.disposition if self.disposition is not None else "null"
         passed = "pass" if self.all_passed else "fail"
         return f"{disposition}/{passed}/{self.context_status}"
-
-    @classmethod
-    def from_json(cls, data: Mapping[str, Any]) -> "Outcome":
-        if data.get("kind") == "error":
-            return cls(error=str(data["error"]), detail=data.get("detail"))
-        return cls(
-            disposition=data.get("disposition"),
-            all_passed=bool(data.get("all_passed")),
-            context_status=data.get("context_status"),
-        )
 
 
 def outcome_from_python(result: tuple) -> Outcome:

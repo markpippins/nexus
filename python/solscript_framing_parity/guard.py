@@ -4,8 +4,13 @@ Exit codes
 ----------
 0  the parity contract holds for every case in every runtime
 1  a runtime failed, or a case drifted from its pinned expectation
-2  version drift — a pinned interpreter/migration file changed, so the
-   recorded proof no longer applies (re-verify and refresh the pins)
+2  version drift — a pinned interpreter/migration file changed, or a migration
+   after v32 redefines the gate, so the recorded proof no longer applies
+   (re-verify and refresh the pins)
+3  a runtime could not run at all (missing ``psql``/``node``/``tsc`` or an
+   unreachable server), so its rows are unattested. Deliberately distinct from
+   1: "cannot attest" is not "contract violated", and a CI gate must not
+   conflate the two.
 
 The guard never writes to the repository and never touches the live nexus
 database. Python and TypeScript are in-memory; SQL runs in a throwaway
@@ -19,13 +24,14 @@ import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional
+from typing import Dict, Iterable, List, Mapping, Optional
 
 from . import matrix as matrix_module
-from .canonical import Outcome
+from .canonical import Outcome, RuntimeUnavailable
 from .matrix import MATRIX, RUNTIMES, RUNTIME_LABELS, Case
 from .version_pins import (
     PINS_PATH,
+    PinDrift,
     load_pins,
     pin_summary,
     verify_pins,
@@ -37,6 +43,7 @@ DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[2]
 EXIT_OK = 0
 EXIT_PARITY_FAILURE = 1
 EXIT_VERSION_DRIFT = 2
+EXIT_RUNTIME_UNAVAILABLE = 3
 
 
 @dataclass
@@ -44,6 +51,7 @@ class CaseVerdict:
     case: Case
     observed: Dict[str, Outcome]
     problems: List[str] = field(default_factory=list)
+    unavailable: List[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -53,6 +61,8 @@ class CaseVerdict:
     def verdict(self) -> str:
         if not self.ok:
             return "FAIL"
+        if self.unavailable:
+            return "NOT_ATTESTED"
         if self.case.expectation.kind == "agree":
             return "AGREE"
         return f"DIVERGE({self.case.expectation.follow_up})"
@@ -68,6 +78,7 @@ class CaseVerdict:
                 runtime: outcome.to_json()
                 for runtime, outcome in self.observed.items()
             },
+            "unavailable": list(self.unavailable),
             "problems": list(self.problems),
             "verdict": self.verdict,
         }
@@ -80,15 +91,39 @@ class GuardReport:
     cases: List[CaseVerdict]
     runtime_errors: Dict[str, str]
     versions: Mapping
+    drifts: List[PinDrift] = field(default_factory=list)
+    unavailable_runtimes: List[str] = field(default_factory=list)
     keep_sql_database: bool = False
 
     @property
     def failures(self) -> int:
-        return len(self.runtime_errors) + sum(1 for verdict in self.cases if not verdict.ok)
+        """Count case failures plus runtimes that failed for a real reason.
+
+        An unavailable runtime is not a failure: nothing was proven wrong, the
+        row simply could not be attested. It gets its own exit code.
+        """
+        case_failures = sum(1 for verdict in self.cases if verdict.problems)
+        hard_errors = sum(
+            1
+            for runtime in self.runtime_errors
+            if runtime not in self.unavailable_runtimes
+        )
+        return case_failures + hard_errors
+
+    @property
+    def not_attested_cases(self) -> int:
+        return sum(1 for verdict in self.cases if verdict.unavailable)
 
     @property
     def exit_code(self) -> int:
-        return EXIT_OK if self.failures == 0 and not self.runtime_errors else EXIT_PARITY_FAILURE
+        # Drift first: a stale proof outranks anything observed against it.
+        if self.drifts:
+            return EXIT_VERSION_DRIFT
+        if self.failures:
+            return EXIT_PARITY_FAILURE
+        if self.unavailable_runtimes:
+            return EXIT_RUNTIME_UNAVAILABLE
+        return EXIT_OK
 
     @property
     def agreement_count(self) -> int:
@@ -106,13 +141,24 @@ class GuardReport:
             "exit_code": self.exit_code,
             "repo_root": str(self.repo_root),
             "version_bindings": pin_summary(self.pins).splitlines(),
+            "version_drift": [
+                {
+                    "path": drift.path,
+                    "role": drift.role,
+                    "pinned": drift.expected,
+                    "observed": drift.actual,
+                }
+                for drift in self.drifts
+            ],
             "versions": dict(self.versions),
             "runtime_errors": dict(self.runtime_errors),
+            "unavailable_runtimes": list(self.unavailable_runtimes),
             "cases": [verdict.to_json() for verdict in self.cases],
             "summary": {
                 "cases": len(self.cases),
                 "agreement_cases": self.agreement_count,
                 "divergence_cases": self.divergence_count,
+                "not_attested_cases": self.not_attested_cases,
                 "failures": self.failures,
             },
             "follow_ups": {
@@ -130,8 +176,12 @@ class GuardReport:
         }
 
 
-def compare(runtime_outcomes: Dict[str, Dict[str, Outcome]]) -> List[CaseVerdict]:
+def compare(
+    runtime_outcomes: Dict[str, Dict[str, Outcome]],
+    unavailable: Iterable[str] = (),
+) -> List[CaseVerdict]:
     """Compare observed outcomes to the pinned parity contract."""
+    unavailable_set = set(unavailable)
     verdicts: List[CaseVerdict] = []
     for case in MATRIX:
         observed = {
@@ -140,10 +190,15 @@ def compare(runtime_outcomes: Dict[str, Dict[str, Outcome]]) -> List[CaseVerdict
             if case.id in runtime_outcomes.get(runtime, {})
         }
         problems: List[str] = []
+        missing: List[str] = []
 
         for runtime in RUNTIMES:
             if runtime not in observed:
-                problems.append(f"{runtime}: no result (runtime did not run)")
+                if runtime in unavailable_set:
+                    # Not a contract violation: the runtime never ran.
+                    missing.append(runtime)
+                else:
+                    problems.append(f"{runtime}: no result (runtime did not run)")
                 continue
             expected = case.expected_for(runtime)
             if observed[runtime].comparison_key() != expected.comparison_key():
@@ -165,7 +220,14 @@ def compare(runtime_outcomes: Dict[str, Dict[str, Outcome]]) -> List[CaseVerdict
                     "re-verify the parity contract"
                 )
 
-        verdicts.append(CaseVerdict(case=case, observed=observed, problems=problems))
+        verdicts.append(
+            CaseVerdict(
+                case=case,
+                observed=observed,
+                problems=problems,
+                unavailable=missing,
+            )
+        )
     return verdicts
 
 
@@ -173,19 +235,31 @@ def run_guard(
     repo_root: Optional[Path] = None,
     *,
     update_pins: bool = False,
-    pins_path: Path = PINS_PATH,
+    pins_path: Optional[Path] = None,
     keep_sql_database: bool = False,
     keep_ts_temp: bool = False,
 ) -> GuardReport:
     """Run the whole guard and return a structured report (no printing)."""
     root = Path(repo_root) if repo_root is not None else DEFAULT_REPO_ROOT
-    pins = load_pins(pins_path)
+    pins_file = Path(pins_path) if pins_path is not None else PINS_PATH
 
+    pins = load_pins(pins_file)
     if update_pins:
-        pins = write_pins(root, pins_path)
+        pins = write_pins(root, pins_file)
+
+    # Version binding is part of the guard, not a CLI-only courtesy: a caller
+    # that goes through this function must not be able to run against a
+    # revision the proof does not cover.
+    drifts = verify_pins(root, pins_file)
 
     runtime_errors: Dict[str, str] = {}
+    unavailable: List[str] = []
     versions: Dict[str, object] = {}
+
+    def record_failure(runtime: str, exc: Exception) -> None:
+        runtime_errors[runtime] = f"{type(exc).__name__}: {exc}"
+        if isinstance(exc, RuntimeUnavailable):
+            unavailable.append(runtime)
 
     from . import python_runtime, sql_runtime, ts_runtime
 
@@ -200,7 +274,7 @@ def run_guard(
             "mode": "in-memory",
         }
     except Exception as exc:  # noqa: BLE001 - reported, never swallowed
-        runtime_errors["python"] = f"{type(exc).__name__}: {exc}"
+        record_failure("python", exc)
 
     try:
         typescript_outcomes = ts_runtime.run_matrix(
@@ -208,7 +282,7 @@ def run_guard(
         )
         versions["typescript"] = ts_runtime.runtime_fingerprint(root) or {}
     except Exception as exc:  # noqa: BLE001 - reported, never swallowed
-        runtime_errors["typescript"] = f"{type(exc).__name__}: {exc}"
+        record_failure("typescript", exc)
 
     try:
         sql_outcomes = sql_runtime.run_matrix(
@@ -219,7 +293,7 @@ def run_guard(
             "mode": "throwaway database",
         }
     except Exception as exc:  # noqa: BLE001 - reported, never swallowed
-        runtime_errors["sql"] = f"{type(exc).__name__}: {exc}"
+        record_failure("sql", exc)
 
     runtime_outcomes = {
         "python": python_outcomes,
@@ -232,13 +306,15 @@ def run_guard(
         for runtime in runtime_errors:
             runtime_outcomes[runtime] = {}
 
-    verdicts = compare(runtime_outcomes)
+    verdicts = compare(runtime_outcomes, unavailable)
     return GuardReport(
         repo_root=root,
         pins=pins,
         cases=verdicts,
         runtime_errors=runtime_errors,
         versions=versions,
+        drifts=drifts,
+        unavailable_runtimes=sorted(unavailable),
         keep_sql_database=keep_sql_database,
     )
 
@@ -284,18 +360,38 @@ def render_report(report: GuardReport) -> str:
         "Ruling 32 §4 — cross-runtime framing parity guard (shadow-only)",
         pin_summary(report.pins),
         "",
-        _format_table(report),
-        "",
     ]
-    if report.runtime_errors:
+    if report.drifts:
+        lines.extend([_drift_block(report.drifts), ""])
+    lines.extend([_format_table(report), ""])
+
+    if report.unavailable_runtimes:
+        lines.append("Runtime unavailable — rows not attested:")
+        for runtime in report.unavailable_runtimes:
+            lines.append(f"  {runtime}: {report.runtime_errors.get(runtime, 'unavailable')}")
+        lines.append("")
+
+    hard_errors = {
+        runtime: error
+        for runtime, error in report.runtime_errors.items()
+        if runtime not in report.unavailable_runtimes
+    }
+    if hard_errors:
         lines.append("Runtime errors:")
-        for runtime, error in report.runtime_errors.items():
+        for runtime, error in hard_errors.items():
             lines.append(f"  {runtime}: {error}")
         lines.append("")
+
     lines.append(
         f"Summary: {len(report.cases)} cases, {report.agreement_count} agreement, "
         f"{report.divergence_count} pinned divergence, {report.failures} failure(s)"
     )
+    if report.not_attested_cases:
+        lines.append(
+            f"Not attested: {report.not_attested_cases} case(s) — exit "
+            f"{EXIT_RUNTIME_UNAVAILABLE} means 'cannot attest', not 'the contract "
+            "is violated'."
+        )
     lines.append("")
     lines.append(_format_follow_ups())
     lines.append("")
@@ -375,6 +471,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     report = run_guard(
         args.repo_root,
         update_pins=args.update_pins,
+        pins_path=PINS_PATH,
         keep_sql_database=args.keep_sql_database,
         keep_ts_temp=args.keep_ts_temp,
     )
@@ -383,6 +480,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(json.dumps(report.to_json(), indent=2, sort_keys=True))
     else:
         print(render_report(report))
+
+    if report.exit_code == EXIT_RUNTIME_UNAVAILABLE:
+        print(
+            "Runtime unavailable: the guard could not attest every runtime, so "
+            "this run proves nothing either way. Provide the missing toolchain "
+            "and re-run.",
+            file=sys.stderr,
+        )
 
     return report.exit_code
 
