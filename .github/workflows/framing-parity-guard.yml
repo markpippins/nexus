@@ -77,19 +77,23 @@ jobs:
 
       # psql is the SQL runtime's client. Fail here with a clear message
       # rather than letting a missing tool surface as the guard's exit 3.
-      # The tsc check only rejects a compiler older than the guard supports;
-      # it deliberately does not pin a major version.
+      # The tsc floor is 4.9, the oldest compiler the guard was proven
+      # against; it deliberately does not pin a major version.
       - name: Verify the guard toolchain
         run: |
           psql --version
           node --version
           version=$(tsc --version | sed 's/^Version //')
           major=${version%%.*}
+          minor=$(printf '%s' "$version" | cut -d. -f2)
+          minor=${minor%%[!0-9]*}
           echo "tsc $version"
-          [ "$major" -ge 4 ] || {
+          # A major-only test accepts 4.0-4.8 while the guard's floor is 4.9.
+          # Compare minor too, so 4.10 passes and 4.8 does not.
+          if [ "$major" -lt 4 ] || { [ "$major" -eq 4 ] && [ "${minor:-0}" -lt 9 ]; }; then
             echo "::error::tsc $version is older than the guard supports (need >= 4.9)";
             exit 1;
-          }
+          fi
           pg_isready -h localhost -p 5432 -U pguser
 
       - name: Run the guard suite
