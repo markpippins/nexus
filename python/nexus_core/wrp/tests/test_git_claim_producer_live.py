@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 import uuid
@@ -63,6 +62,12 @@ from nexus_core.wrp.git_claim_producer import (  # noqa: E402
     produce,
 )
 from nexus_core.wrp.git_verifier import GitVerificationAdapter  # noqa: E402
+
+_GUARD_REPO_ROOT = Path(__file__).resolve().parents[4]
+if str(_GUARD_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GUARD_REPO_ROOT))
+
+from host_tool_guard import missing_tools, skip_reason  # noqa: E402
 
 try:
     import psycopg2
@@ -113,14 +118,16 @@ def _kernel_up() -> bool:
         return False
 
 
-def _git_up() -> bool:
-    return shutil.which("git") is not None
+_MISSING_GIT = missing_tools("git")
 
 
 pytestmark = pytest.mark.skipif(
-    not (_git_up() and _pg_up() and _kernel_up()),
-    reason="live PG + PEB kernel (PEB_BASE_URL, default :8099) not both reachable, "
-    "and git on PATH (this test derives HEAD and the branch ref)",
+    bool(_MISSING_GIT) or not (_pg_up() and _kernel_up()),
+    reason=(
+        skip_reason(_MISSING_GIT, "this test derives HEAD and the branch ref with git")
+        if _MISSING_GIT
+        else "live PG + PEB kernel (PEB_BASE_URL, default :8099) not both reachable"
+    ),
 )
 
 # Import-time probes, so they must tolerate a gitless host themselves: a
@@ -129,7 +136,7 @@ _HEAD_COMMIT = (
     subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=_REPO_ROOT, capture_output=True, text=True, check=True
     ).stdout.strip()
-    if _git_up()
+    if not _MISSING_GIT
     else ""
 )
 
@@ -141,7 +148,7 @@ _BRANCH = (
     subprocess.run(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=_REPO_ROOT, capture_output=True, text=True, check=True
     ).stdout.strip()
-    if _git_up()
+    if not _MISSING_GIT
     else ""
 )
 _BRANCH_REF = f"refs/heads/{_BRANCH}"

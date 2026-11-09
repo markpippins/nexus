@@ -19,9 +19,15 @@ from __future__ import annotations
 
 import os
 import pathlib
-import shutil
 import subprocess
 import unittest
+
+import sys
+_GUARD_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_GUARD_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GUARD_REPO_ROOT))
+
+from host_tool_guard import skip_unless_host_tools  # noqa: E402
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 BIN = REPO_ROOT / "bin"
@@ -148,8 +154,10 @@ class ServiceUnitTest(unittest.TestCase):
                         "in-tree drainer missing from bin/")
 
 
-@unittest.skipIf(shutil.which("systemd-analyze") is None,
-                 "systemd-analyze not available")
+@skip_unless_host_tools(
+    "systemd-analyze",
+    doing="these tests run systemd-analyze verify against the unit files",
+)
 class SystemdVerifyTest(unittest.TestCase):
     def test_units_pass_systemd_analyze_verify(self):
         for unit in (SERVICE, TIMER):

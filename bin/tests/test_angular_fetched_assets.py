@@ -16,9 +16,15 @@ from __future__ import annotations
 import json
 import pathlib
 import re
-import shutil
 import subprocess
 import unittest
+
+import sys
+_GUARD_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_GUARD_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GUARD_REPO_ROOT))
+
+from host_tool_guard import missing_tools  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parent.parent.parent
 TOOLS = REPO / "angular" / "tools"
@@ -32,9 +38,9 @@ class FetchedAssetGuardTests(unittest.TestCase):
         self.assertTrue(SUITE.is_file(), f"missing guard suite: {SUITE}")
 
     def test_node_suite_passes(self):
-        node = shutil.which("node")
-        if node is None:
+        if missing_tools("node"):
             self.fail("node is required to run the fetched-asset guard suite")
+        node = "node"
         # Pin the reporter: node --test silently uses TAP rather than spec when
         # stdout is a pipe (as it is under CI), and a summary parser that only
         # knows one format reads the other as "zero tests" - which is how this

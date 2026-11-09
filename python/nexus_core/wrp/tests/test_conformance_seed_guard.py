@@ -59,7 +59,6 @@ Usage:
 
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -84,6 +83,12 @@ from nexus_core.wrp.seed_manifest import (  # noqa: E402
 DSN = os.environ.get("CONDUIT_PG_DSN", "postgresql://pguser:pgpass@localhost:5432/nexus")
 # Canonical shape fragment (single source of truth, V178-ratified).
 from pathlib import Path as _Path
+
+_GUARD_REPO_ROOT = _Path(__file__).resolve().parents[4]
+if str(_GUARD_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GUARD_REPO_ROOT))
+
+from host_tool_guard import missing_tools, skip_reason  # noqa: E402
 _CANONICAL_SHAPE_PATH = (_Path(__file__).resolve().parents[4]
                         / 'sql' / 'canonical'
                         / 'tackle_role_memory_shape.sql')
@@ -160,8 +165,11 @@ def _render_seed(path: str = SEED_SOURCE) -> str:
     """Render seedMemoryProcedures() from a .ts/.js seed file (cached per path)."""
     if path in _RENDER_CACHE:
         return _RENDER_CACHE[path]
-    if shutil.which("node") is None:
-        raise unittest.SkipTest("node is required to render the seed template")
+    missing = missing_tools("node")
+    if missing:
+        raise unittest.SkipTest(
+            skip_reason(missing, "rendering the seed template requires node")
+        )
     if not os.path.exists(path):
         raise AssertionError(f"seed source missing: {path}")
     # .cjs so node runs it as CommonJS (require() works); .mjs would be ESM.

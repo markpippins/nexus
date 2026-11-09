@@ -1,3 +1,4 @@
+import pathlib
 #!/usr/bin/env python3
 """Guard: #712's transitional verify-roles divergence is NAMED, OWNED, and CLOSED.
 
@@ -80,9 +81,15 @@ Run: python3 -m pytest bin/tests/test_verify_roles_transitional.py
 import json
 import os
 import re
-import shutil
 import subprocess
 import unittest
+
+import sys
+_GUARD_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_GUARD_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GUARD_REPO_ROOT))
+
+from host_tool_guard import missing_tools  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 VERIFY_ROLES = os.path.join(REPO, "bin", "verify-roles.py")
@@ -116,7 +123,7 @@ DELTA_MISSING_FROM_DB: list[str] = []
 
 def _verify_roles_json():
     """Run bin/verify-roles.py --json; return (parsed, available)."""
-    if shutil.which("psql") is None:
+    if missing_tools("psql"):
         return None, False
     try:
         proc = subprocess.run(

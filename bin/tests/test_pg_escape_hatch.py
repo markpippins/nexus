@@ -33,6 +33,15 @@ import tempfile
 import time
 import unittest
 
+import pathlib
+import sys
+
+_GUARD_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_GUARD_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GUARD_REPO_ROOT))
+
+from host_tool_guard import missing_tools, skip_reason  # noqa: E402
+
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SCRIPT = os.path.join(REPO_ROOT, "bin", "pg-escape-hatch.sh")
 
@@ -286,8 +295,11 @@ class DockerE2ETest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        if shutil.which("docker") is None:
-            raise unittest.SkipTest("docker not available")
+        missing = missing_tools("docker")
+        if missing:
+            raise unittest.SkipTest(
+                skip_reason(missing, "these tests run a throwaway PostgreSQL container")
+            )
         img = subprocess.run(
             ["docker", "image", "inspect", cls.IMAGE, "--format", "ok"],
             capture_output=True, text=True,

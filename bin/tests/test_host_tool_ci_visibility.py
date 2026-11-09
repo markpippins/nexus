@@ -10,6 +10,8 @@ the hook's logic.
 import ast
 import importlib.util
 import os
+import re
+import warnings
 import subprocess
 import sys
 from pathlib import Path
@@ -157,10 +159,138 @@ def test_the_host_tool_guard_has_a_single_home() -> None:
             if path.resolve() in (here, helper):
                 continue  # the helper produces the literal; this file names it
             try:
-                tree = ast.parse(path.read_text(encoding="utf-8"))
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", SyntaxWarning)
+                    tree = ast.parse(path.read_text(encoding="utf-8"))
             except (SyntaxError, UnicodeDecodeError):
                 continue
             for node in ast.walk(tree):
                 if isinstance(node, ast.Constant) and isinstance(node.value, str) and SKIP_MARKER in node.value:
                     offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}")
     assert offenders == []
+
+
+#: Test modules that skip for something other than a missing host tool. A
+#: missing Python package, a service or database, or a checked-in artifact is
+#: not a tool a CI runner provisions, so those keep their own wording.
+EXEMPT_TOOL_SKIPS = {
+    "bin/tests/test_canonical_shape_parity.py": "skips on missing psycopg2 (Python package)",
+    "bin/tests/test_on_conflict_arbiter.py": "skips on missing psycopg2 (Python package)",
+    "bin/tests/test_persona_bridge_parity.py": "skips on missing psycopg2 (Python package)",
+    "bin/tests/test_role_vocab_parity_live.py": "skips when the live role probe has no state",
+    "bin/tests/test_jetstream_unconsumed_monitor.py": "skips on missing nats-py (Python package)",
+    "python/absorb/tests/test_emitter.py": "skips on missing nats-py or unreachable NATS",
+    "python/SOLScript/tests/test_resolution_shrapnel_bridge_sql.py": "skips on missing psycopg2 or unreachable database",
+    "python/SOLScript/tests/test_shrapnel_field_metadata_sync_sql.py": "skips on missing psycopg2 or unreachable database",
+    "python/nebula/tests/test_v205_w_a_reconciliation_e2e.py": "skips on a missing migration file",
+    "python/nexus_core/wrp/tests/test_conformance_ccnf_identity.py": "skips on a missing checked-in Go/Rust binary",
+    "python/nexus_core/wrp/tests/test_conformance_ccnf_compile.py": "skips on a missing checked-in Rust binary",
+    "python/nexus_core/wrp/tests/test_conformance_failure_matrix.py": "skips when no interactive lease is available",
+    "python/nexus_core/sol/tests/test_t24_projection_conformance.py": "skips on an unimplemented feature, not a tool",
+}
+
+_TOOL_SKIP_HINT = re.compile(
+    r"not installed|not available|not found|unavailable|missing|not on PATH",
+    re.IGNORECASE,
+)
+
+
+def _test_modules():
+    for root in (REPO_ROOT / "bin" / "tests", REPO_ROOT / "python", REPO_ROOT / "tests", REPO_ROOT / "tools"):
+        if root.is_dir():
+            yield from root.rglob("test_*.py")
+
+
+def _probes_path(tree):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            fn = node.func
+            if isinstance(fn, ast.Attribute) and fn.attr == "which":
+                return node.lineno
+            if isinstance(fn, ast.Name) and fn.id == "which":
+                return node.lineno
+    return None
+
+
+def _skips_for_a_missing_thing(tree):
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", None)
+        if name not in {"skipTest", "SkipTest", "skip"} or not node.args:
+            continue
+        arg = node.args[0]
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            if _TOOL_SKIP_HINT.search(arg.value):
+                return node.lineno
+    return None
+
+
+def test_host_tool_skips_go_through_the_helper() -> None:
+    """A module that skips for a host tool must use host_tool_guard.
+
+    Two shapes count: probing PATH with shutil.which, and skipping with a
+    "missing/unavailable" reason. Either way the module must import the
+    helper, so CI escalation sees the marker; anything that legitimately
+    skips for a package, service, or repo artifact must be recorded in
+    EXEMPT_TOOL_SKIPS with its reason.
+    """
+    offenders = []
+    for path in _test_modules():
+        rel = str(path.relative_to(REPO_ROOT))
+        text = path.read_text(encoding="utf-8")
+        if "host_tool_guard" in text:
+            continue
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue
+        line = _probes_path(tree) or _skips_for_a_missing_thing(tree)
+        if line is None or rel in EXEMPT_TOOL_SKIPS:
+            continue
+        offenders.append(f"{rel}:{line}")
+    assert offenders == [], (
+        "these test modules skip on something missing without the shared guard: "
+        f"{offenders}. Use host_tool_guard for host tools, or record the exemption "
+        "in EXEMPT_TOOL_SKIPS with its reason."
+    )
+
+
+def test_every_exemption_is_current_and_explained() -> None:
+    """An exemption without a live file or a reason is stale documentation."""
+    problems = []
+    for rel, reason in EXEMPT_TOOL_SKIPS.items():
+        if not (REPO_ROOT / rel).is_file():
+            problems.append(f"{rel}: file no longer exists")
+        if not reason.strip():
+            problems.append(f"{rel}: empty reason")
+    assert problems == []
+
+
+def test_marked_unittest_setupclass_skip_is_escalated_on_ci(tmp_path: Path) -> None:
+    """The unittest setUpClass shape the converted suites use must escalate.
+
+    convert-or-exempt work moved several suites from unittest.skipUnless to
+    raising SkipTest(skip_reason(...)); that reason has to reach the same CI
+    escalation as a pytest mark, or the conversion would hide coverage.
+    """
+    body = (
+        "import unittest\n\n"
+        "from host_tool_guard import missing_tools, skip_reason\n\n\n"
+        "class Suite(unittest.TestCase):\n"
+        "    @classmethod\n"
+        "    def setUpClass(cls):\n"
+        "        missing = missing_tools(\"definitely-not-installed-tool\")\n"
+        "        if missing:\n"
+        "            raise unittest.SkipTest(\n"
+        "                skip_reason(missing, \"these tests need a host tool\")\n"
+        "            )\n\n"
+        "    def test_one(self):\n"
+        "        self.assertTrue(True)\n"
+    )
+    result = _session(tmp_path, body, ci=True)
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "host tools missing on CI" in result.stdout
+    assert "definitely-not-installed-tool" in result.stdout

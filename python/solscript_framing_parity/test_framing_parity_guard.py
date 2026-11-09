@@ -37,6 +37,13 @@ from solscript_framing_parity.version_pins import (
     verify_pins,
 )
 
+import sys
+_GUARD_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_GUARD_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GUARD_REPO_ROOT))
+
+from host_tool_guard import skip_unless_host_tools, missing_tools, skip_reason  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 PLAN_CLAUSES = {
@@ -300,7 +307,9 @@ def test_compile_command_passes_no_module_resolution_flag() -> None:
     )
 
 
-@pytest.mark.skipif(not shutil.which("tsc"), reason="tsc unavailable")
+@skip_unless_host_tools(
+    "tsc", doing="these tests compile the interpreter with the installed compiler"
+)
 def test_compile_from_source_compiles_with_the_installed_compiler(
     tmp_path: Path,
 ) -> None:
@@ -559,9 +568,15 @@ def _sql_reachable() -> bool:
     return completed.returncode == 0
 
 
+_MISSING_STACK = missing_tools("node", "tsc")
+
 requires_full_stack = pytest.mark.skipif(
-    not (shutil.which("node") and shutil.which("tsc") and _sql_reachable()),
-    reason="node/tsc/PostgreSQL unavailable — full parity guard cannot run",
+    bool(_MISSING_STACK) or not _sql_reachable(),
+    reason=(
+        skip_reason(_MISSING_STACK, "the full parity guard needs the JS toolchain")
+        if _MISSING_STACK
+        else "PostgreSQL unavailable — full parity guard cannot run"
+    ),
 )
 
 

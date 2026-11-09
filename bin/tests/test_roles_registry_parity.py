@@ -45,10 +45,16 @@ Run: python3 -m pytest bin/tests/test_roles_registry_parity.py
 
 import json
 import os
-import shutil
 import subprocess
 import unittest
 from pathlib import Path
+
+import sys
+_GUARD_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_GUARD_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GUARD_REPO_ROOT))
+
+from host_tool_guard import missing_tools  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 ROLES_FILE = REPO / "config" / "roles" / "roles.json"
@@ -117,7 +123,7 @@ def _psql(sql):
 
 
 def _tables():
-    if shutil.which("psql") is None:
+    if missing_tools("psql"):
         return None, None
     try:
         return _psql(TACKLE_ROLES_SQL), _psql(NEBULA_ROLES_SQL)

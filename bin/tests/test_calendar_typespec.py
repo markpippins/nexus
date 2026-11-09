@@ -20,6 +20,13 @@ import subprocess
 import unittest
 from pathlib import Path
 
+import sys
+_GUARD_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_GUARD_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GUARD_REPO_ROOT))
+
+from host_tool_guard import missing_tools, skip_reason  # noqa: E402
+
 _SELF = Path(__file__).resolve().parent
 _REPO = _SELF.parent.parent
 _TSP_V1 = _REPO / "typespec" / "v1"
@@ -30,6 +37,17 @@ _ROOT_MAIN = _TSP_V1 / "main.tsp"
 
 def _read(p: Path) -> str:
     return p.read_text(encoding="utf-8")
+
+
+def _skip_without_toolchain() -> None:
+    """The TypeSpec compiler is either in node_modules or on PATH; neither here."""
+    raise unittest.SkipTest(
+        skip_reason(
+            missing_tools("tsp"),
+            "the TypeSpec toolchain is not locatable (node_modules is "
+            "git-ignored; run npm install in typespec/v1)",
+        )
+    )
 
 
 class StructureTests(unittest.TestCase):
@@ -155,11 +173,7 @@ class CompileTests(unittest.TestCase):
 
     def test_compile_calendar_contract(self):
         if not self.tsp_bin:
-            self.skipTest(
-                "TypeSpec toolchain not locatable (node_modules is git-ignored; "
-                "install with `cd typespec/v1 && npm install` to run the "
-                "compile check)"
-            )
+            _skip_without_toolchain()
         r = subprocess.run(
             [self.tsp_bin, "compile", "calendar/main.tsp", "--no-emit"],
             cwd=str(self.tsp_dir), capture_output=True, text=True, timeout=240,
@@ -169,11 +183,7 @@ class CompileTests(unittest.TestCase):
 
     def test_compile_root_umbrella_includes_calendar(self):
         if not self.tsp_bin:
-            self.skipTest(
-                "TypeSpec toolchain not locatable (node_modules is git-ignored; "
-                "install with `cd typespec/v1 && npm install` to run the "
-                "compile check)"
-            )
+            _skip_without_toolchain()
         r = subprocess.run(
             [self.tsp_bin, "compile", "main.tsp", "--no-emit"],
             cwd=str(self.tsp_dir), capture_output=True, text=True, timeout=240,
