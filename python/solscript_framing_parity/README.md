@@ -25,6 +25,13 @@ PGPASSWORD=pgpass PYTHONPATH=python python3 -m solscript_framing_parity
 `PGPORT` and `PGUSER` default to the repo's local development endpoint
 (`localhost:5432`, `pguser`). `node` and `tsc` must be on `PATH`.
 
+The TypeScript leg does **not** pin a compiler and passes no
+`--moduleResolution` flag: `node` was removed in TypeScript 7 and `bundler`
+was added in 5.0, so naming either excludes a supported toolchain. Every import
+in `typescript/solscript/src` carries an explicit `.js` specifier, which makes
+the compiler's default resolution correct from 4.9 through 7. `test_compile_command_passes_no_module_resolution_flag`
+keeps it that way.
+
 Useful flags: `--json` (machine-readable report), `--update-pins` (refresh the
 version pins after re-verifying a runtime change), `--keep-sql-database` /
 `--keep-ts-temp` (debugging only, breaks hermeticity).
