@@ -278,6 +278,45 @@ def test_python_runtime_is_isolated_per_case() -> None:
     }
 
 
+# ── TypeScript compile command ─────────────────────────────────────────────
+def test_compile_command_passes_no_module_resolution_flag() -> None:
+    """Naming a resolution mode excludes a supported compiler.
+
+    ``node`` (node10) was removed in TypeScript 7; ``bundler`` does not exist
+    before 5.0. The sources import each other with explicit ``.js``
+    specifiers, so the compiler default is correct on 4.9 through 7.
+    """
+    command = ts_runtime.compile_command(
+        "tsc", Path("/tmp/src/interpreter.ts"), Path("/tmp/out")
+    )
+
+    assert "--moduleResolution" not in command
+    assert command[:5] == ("tsc", "--target", "ES2022", "--module", "ESNext")
+    assert "--skipLibCheck" in command
+    assert command[-1] == "/tmp/src/interpreter.ts"
+    assert command[command.index("--outDir") : command.index("--outDir") + 2] == (
+        "--outDir",
+        "/tmp/out",
+    )
+
+
+@pytest.mark.skipif(not shutil.which("tsc"), reason="tsc unavailable")
+def test_compile_from_source_compiles_with_the_installed_compiler(
+    tmp_path: Path,
+) -> None:
+    """Whatever ``tsc`` is on PATH must build the interpreter unaided.
+
+    Regression for the CI failure this replaced: a resolution flag baked into
+    the command broke the whole TS leg under the runner's TypeScript 7.
+    """
+    bundle = ts_runtime.compile_from_source(REPO_ROOT, tmp_path)
+
+    assert bundle.interpreter_module.is_file()
+    emitted = bundle.interpreter_module.read_text(encoding="utf-8")
+    # Explicit specifiers are what make the compiler default sufficient.
+    assert "./models.js" in emitted
+
+
 # ── Version binding ────────────────────────────────────────────────────────
 def test_version_pins_match_the_working_tree() -> None:
     assert verify_pins(REPO_ROOT) == []

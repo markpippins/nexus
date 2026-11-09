@@ -64,27 +64,30 @@ jobs:
           node-version: "22"
 
       # The TypeScript runtime shells out to `node` and `tsc` on PATH and
-      # installs nothing itself. setup-node provides node but NOT the
-      # compiler, and the runner image's own tsc is TypeScript 7 — which
-      # removed the `--moduleResolution node` flag compile_from_source()
-      # passes. Pin a 5.x compiler (house range: 5.7/5.8 across the UIs).
+      # installs nothing itself. The compiler is deliberately NOT pinned: the
+      # compile step passes no --moduleResolution flag, so it runs on 4.9
+      # through 7 (TS 7 removed `node`; `bundler` does not exist before 5.0),
+      # and unambiguously on the `.js` specifiers the sources already use.
+      # This job therefore exercises whatever compiler is current, which is
+      # the compatibility claim it exists to prove.
       - name: Install dependencies
         run: |
           python3 -m pip install --quiet pytest psycopg2-binary
-          npm install --global typescript@5.8.3
+          npm install --global typescript
 
       # psql is the SQL runtime's client. Fail here with a clear message
       # rather than letting a missing tool surface as the guard's exit 3.
-      # The tsc assertion catches a pinned install losing PATH precedence
-      # to an image-provided TS 7, which would otherwise fail as TS5108
-      # inside the suite.
+      # The tsc check only rejects a compiler older than the guard supports;
+      # it deliberately does not pin a major version.
       - name: Verify the guard toolchain
         run: |
           psql --version
           node --version
-          tsc --version
-          tsc --version | grep -q '^Version 5\.' || {
-            echo "::error::tsc is not the pinned 5.x toolchain (TypeScript 7 removed moduleResolution=node)";
+          version=$(tsc --version | sed 's/^Version //')
+          major=${version%%.*}
+          echo "tsc $version"
+          [ "$major" -ge 4 ] || {
+            echo "::error::tsc $version is older than the guard supports (need >= 4.9)";
             exit 1;
           }
           pg_isready -h localhost -p 5432 -U pguser

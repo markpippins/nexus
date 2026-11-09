@@ -7,6 +7,12 @@ the shared matrix against the resulting in-memory interpreter via
 
 Requirements: ``node`` and ``tsc`` on ``PATH``. Nothing is installed and
 nothing is written inside the repository.
+
+The compile step passes no ``--moduleResolution`` flag on purpose: the
+sources import each other with explicit ``.js`` specifiers, so the compiler's
+own default resolution is correct across TypeScript 4.9 through 7 — while any
+pinned value is not (``node`` was removed in 7, ``bundler`` does not exist
+before 5.0).
 """
 
 from __future__ import annotations
@@ -26,6 +32,13 @@ RUNTIME = "typescript"
 
 _COMPILE_TIMEOUT_S = 180
 _RUN_TIMEOUT_S = 120
+
+# No `--moduleResolution` here, deliberately. `node` (node10) was removed in
+# TypeScript 7 (TS5108), and `bundler` was added in 5.0, so naming either one
+# excludes a supported compiler. Every relative import in `src/` is written
+# with an explicit `.js` specifier, so the compiler default resolves correctly
+# on 4.9 through 7.
+_COMPILE_FLAGS = ("--target", "ES2022", "--module", "ESNext", "--skipLibCheck")
 
 
 class TypeScriptToolingUnavailable(RuntimeUnavailable):
@@ -55,6 +68,22 @@ def _require(tool: str) -> str:
     return path
 
 
+def compile_command(tsc: str, source: Path, out_dir: Path) -> tuple:
+    """The exact ``tsc`` invocation used to build the interpreter.
+
+    Kept as its own function so the flag set can be asserted without invoking
+    a compiler: the absence of ``--moduleResolution`` is a compatibility
+    requirement, not an incidental detail.
+    """
+    return (
+        tsc,
+        *_COMPILE_FLAGS,
+        "--outDir",
+        str(out_dir),
+        str(source),
+    )
+
+
 def compile_from_source(repo_root: Path, workdir: Path) -> CompiledBundle:
     """Copy the TypeScript sources into ``workdir`` and compile the interpreter."""
     tsc = _require("tsc")
@@ -71,19 +100,7 @@ def compile_from_source(repo_root: Path, workdir: Path) -> CompiledBundle:
         sources.append(source)
 
     out_dir = workdir / "out"
-    command = (
-        tsc,
-        "--target",
-        "ES2022",
-        "--module",
-        "ESNext",
-        "--moduleResolution",
-        "node",
-        "--skipLibCheck",
-        "--outDir",
-        str(out_dir),
-        str(src_dir / "interpreter.ts"),
-    )
+    command = compile_command(tsc, src_dir / "interpreter.ts", out_dir)
     completed = subprocess.run(
         command,
         cwd=workdir,
