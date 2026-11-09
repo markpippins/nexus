@@ -55,7 +55,10 @@ from __future__ import annotations
 
 import pathlib
 import re
+import sys
+import tempfile
 import unittest
+from unittest import mock
 
 REPO = pathlib.Path(__file__).resolve().parent.parent.parent
 REFRESH = REPO / "sql" / "ci-bootstrap" / "refresh.sh"
@@ -66,12 +69,27 @@ SNAPSHOT = REPO / "sql" / "ci-bootstrap" / "nexus-ci-bootstrap.sql"
 SOURCE_ROOTS = ("typescript", "python", "bin", "adonisjs", "angular")
 SOURCE_SUFFIXES = (".ts", ".js", ".mjs", ".py", ".adonisjs", ".java")
 
-# Never runtime code: build output, vendored deps, test files (tests may poke at
-# fixtures this guard is not describing).
+# Never runtime code: build output, vendored deps, virtualenvs, interpreter
+# caches, and test files (tests may poke at fixtures this guard is not
+# describing).
+#
+# Virtualenvs matter because they sit INSIDE a scanned root: a developer's
+# `python/<service>/.venv` contains third-party dialects (SQLAlchemy's MySQL and
+# MSSQL backends, asyncpg's introspection) whose SQL names `INFORMATION_SCHEMA`,
+# `pg_catalog`, `sys` and `public`. Those are not application schemas, so without
+# this exclusion the guard passes in CI (no venv) and fails on any checkout with
+# an environment installed — the inverse of useful.
 SKIP_PATH = re.compile(
-    r"(node_modules|/dist/|/build/|/\.git/|__pycache__|/\.angular/)"
+    r"(node_modules|/dist/|/build/|/\.git/|__pycache__|/\.angular/"
+    r"|site-packages|/\.venv/|/venv/|/\.tox/|/\.nox/|/\.eggs/|\.egg-info/"
+    r"|/__pypackages__/|/\.mypy_cache/|/\.pytest_cache/|/\.ruff_cache/)"
 )
 SKIP_FILE = re.compile(r"(\.test\.|_test\.|/tests/)")
+
+
+def is_runtime_source(rel: str) -> bool:
+    """True when a '/'-prefixed repo-relative path is runtime code to scan."""
+    return not (SKIP_PATH.search(rel) or SKIP_FILE.search(rel))
 
 # A schema-qualified reference introduces the schema name in one of these
 # positions. `update x.` is included because UPDATE targets are tabular.
@@ -121,7 +139,7 @@ def scan_references() -> dict[str, list[str]]:
             if path.suffix not in SOURCE_SUFFIXES:
                 continue
             rel = "/" + str(path.relative_to(REPO)).replace("\\", "/")
-            if SKIP_PATH.search(rel) or SKIP_FILE.search(rel):
+            if not is_runtime_source(rel):
                 continue
             try:
                 lines = path.read_text(errors="ignore").splitlines()
@@ -140,6 +158,55 @@ def scan_references() -> dict[str, list[str]]:
                         f"{path.relative_to(REPO)}:{lineno}"
                     )
     return found
+
+
+class ScanPathFilterTests(unittest.TestCase):
+    """Installed dependencies are not runtime code this guard describes."""
+
+    THIRD_PARTY = (
+        "/python/timeclock/.venv/lib/python3.13/site-packages/sqlalchemy/dialects/mysql/base.py",
+        "/python/SOLScript/.venv/lib/python3.13/site-packages/asyncpg/introspection.py",
+        "/python/service/venv/lib/python3.11/site-packages/asyncpg/introspection.py",
+        "/python/service/.tox/py311/lib/python3.11/site-packages/pkg/mod.py",
+        "/python/service/__pypackages__/3.11/lib/pkg/mod.py",
+        "/python/service/pkg.egg-info/SOURCES.py",
+        "/typescript/ui/node_modules/@scope/pkg/dist/index.js",
+        "/python/service/build/lib/mod.py",
+    )
+    RUNTIME = (
+        "/python/nexus_core/wrp/store.py",
+        "/typescript/conduit-mcp/src/steward-recall.ts",
+        "/angular/cascade-ui/src/app/service.ts",
+        # A directory that merely starts with "venv" is still runtime code.
+        "/python/service/venvless/module.py",
+        "/python/service/environment/settings.py",
+    )
+
+    def test_third_party_trees_are_not_scanned(self):
+        for rel in self.THIRD_PARTY:
+            self.assertFalse(is_runtime_source(rel), f"{rel} would be scanned as runtime code")
+
+    def test_runtime_code_is_still_scanned(self):
+        for rel in self.RUNTIME:
+            self.assertTrue(is_runtime_source(rel), f"{rel} would be skipped")
+
+    def test_scan_ignores_virtualenv_but_keeps_source(self):
+        # End to end through rglob: a driver naming `sys.tables` inside a venv
+        # must not become a schema the snapshot is asked to create.
+        module = sys.modules[__name__]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            installed = root / "python" / "svc" / ".venv" / "lib" / "site-packages" / "driver.py"
+            installed.parent.mkdir(parents=True)
+            installed.write_text("cursor.execute('SELECT * FROM sys.tables')\n")
+            source = root / "python" / "svc" / "store.py"
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_text("cursor.execute('SELECT * FROM app.things')\n")
+            with mock.patch.object(module, "REPO", root), \
+                 mock.patch.object(module, "SOURCE_ROOTS", ("python",)):
+                references = scan_references()
+        self.assertIn("app", references)
+        self.assertNotIn("sys", references, "a virtualenv leaked into the schema scan")
 
 
 class CiSnapshotSchemaCoverage(unittest.TestCase):
