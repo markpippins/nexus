@@ -24,7 +24,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from host_tool_guard import skip_unless_host_tools
+_GUARD_REPO_ROOT = Path(__file__).resolve().parents[4]
+if str(_GUARD_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GUARD_REPO_ROOT))
+
+from host_tool_guard import skip_unless_host_tools  # noqa: E402
 
 pytestmark = skip_unless_host_tools(
     "git", doing="these tests build throwaway git repositories"

@@ -35,7 +35,15 @@ import urllib.error
 import urllib.request
 import uuid
 
-from host_tool_guard import skip_unless_host_tools
+import pathlib
+
+import sys
+
+_GUARD_REPO_ROOT = pathlib.Path(__file__).resolve().parents[4]
+if str(_GUARD_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GUARD_REPO_ROOT))
+
+from host_tool_guard import skip_unless_host_tools  # noqa: E402
 
 pytestmark = skip_unless_host_tools(
     "psql", doing="these tests query PostgreSQL through psql"

@@ -18,7 +18,11 @@ import stat
 import subprocess
 import sys
 
-from host_tool_guard import skip_unless_host_tools
+_GUARD_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(_GUARD_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GUARD_REPO_ROOT))
+
+from host_tool_guard import skip_unless_host_tools  # noqa: E402
 
 pytestmark = skip_unless_host_tools(
     "bash", doing="these tests execute the bin/ shell scripts"
