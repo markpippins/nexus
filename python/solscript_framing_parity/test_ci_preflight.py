@@ -9,14 +9,19 @@ for a ``run:`` block) against stubbed tool binaries.
 Two behaviours are pinned here because both regressed silently once already:
 the 4.9 floor must reject 4.0-4.8 while accepting 4.10, and an unreadable
 version must fail the step rather than fall through to a pass.
+
+Executing the step needs a POSIX shell. Where ``bash`` is absent the module
+skips with that reason instead of erroring, so a Windows checkout without Git
+Bash reports "not applicable here" rather than a broken suite.
 """
 
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import pytest
 
@@ -35,6 +40,26 @@ TOO_OLD = ["4.0.5", "4.8.4", "4.8.9"]
 #: bare numeric tests on these error out, and bash reads an erroring test as
 #: false, which would let the step pass without checking anything.
 UNUSABLE = ["", "garbage", "4", "4a.9.5", "v4.9.5"]
+
+def missing_bash_reason() -> Optional[str]:
+    """Why this module cannot run here, or ``None`` when ``bash`` is present.
+
+    The workflow's ``run:`` block is shell, so there is nothing to execute
+    without one. Reporting the reason keeps a machine-specific gap visible in
+    the pytest summary instead of surfacing as a traceback.
+    """
+    if shutil.which("bash") is not None:
+        return None
+    return (
+        "bash is not installed; the workflow's run: block is shell and cannot "
+        "be executed here (install bash or run on a POSIX host)"
+    )
+
+
+_SKIP_REASON = missing_bash_reason()
+
+pytestmark = pytest.mark.skipif(_SKIP_REASON is not None, reason=_SKIP_REASON or "")
+
 
 STUB_BODIES: Dict[str, str] = {
     "tsc": '#!/bin/sh\nprintf "Version %s\\n" "$FAKE_TSC_VERSION"\n',
@@ -94,6 +119,23 @@ def run_preflight(version: str, tmp_path: Path) -> "subprocess.CompletedProcess[
         env=env,
         timeout=120,
     )
+
+
+def test_missing_bash_is_reported_as_a_skip_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No bash must yield a reason, so the module skips instead of erroring."""
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+
+    reason = missing_bash_reason()
+
+    assert reason is not None
+    assert "bash" in reason
+    assert "install" in reason.lower()
+
+
+def test_present_bash_yields_no_skip_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/bash")
+
+    assert missing_bash_reason() is None
 
 
 @pytest.mark.parametrize("version", SUPPORTED)
