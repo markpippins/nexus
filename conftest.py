@@ -7,7 +7,10 @@ that machine. On a CI runner the tool is expected to be provisioned, so the
 same skip means the suite covered nothing — this hook turns it into a failed
 session and names the suites involved.
 
-Inert unless CI is set and such a skip actually happened.
+Inert unless CI is set and such a skip actually happened. The collected state
+lives on the pytest config, not in module globals, so this hook can be loaded
+twice in one session (the root conftest plus the python/nexus_core bridge)
+and still report and fail exactly once.
 """
 
 from __future__ import annotations
@@ -18,39 +21,57 @@ import pytest
 
 SKIP_MARKER = "missing host tools for this suite:"
 
-_skipped = {}
+_STATE_ATTR = "_nexus_host_tool_skip_state"
+
+_config = None
+
+
+def _state(config):
+    state = getattr(config, _STATE_ATTR, None)
+    if state is None:
+        state = {"skipped": {}, "reported": False}
+        setattr(config, _STATE_ATTR, state)
+    return state
 
 
 def pytest_sessionstart(session):
-    _skipped.clear()
+    global _config
+    _config = session.config
 
 
 def pytest_runtest_logreport(report):
-    if not report.skipped:
+    if not report.skipped or _config is None:
         return
     text = str(report.longrepr)
     start = text.find(SKIP_MARKER)
     if start == -1:
         return
+
     reason = text[start:]
-    # report.longrepr for a skip is a (file, line, reason) tuple, so the
-    # rendered text closes with the reason's own paren plus the tuple's quote.
+    # A skipped report's longrepr is a (file, line, reason) tuple, so the
+    # rendered text ends with the reason's own closing paren plus the tuple's
+    # quote. Dropping that suffix leaves the reason as it was written.
     for suffix in ("')", '")'):
         if reason.endswith(suffix):
-            reason = reason[: -len(suffix)] + suffix[1]
+            reason = reason[: -len(suffix)]
             break
-    _skipped[report.nodeid] = reason
+    _state(_config)["skipped"][report.nodeid] = reason
 
 
 def pytest_sessionfinish(session, exitstatus):
-    if not _skipped or not os.environ.get("CI"):
+    if _config is None or not os.environ.get("CI"):
         return
 
+    state = _state(_config)
+    if state["reported"] or not state["skipped"]:
+        return
+    state["reported"] = True
+
     lines = [
-        f"{len(_skipped)} test(s) skipped because a host tool is missing on "
+        f"{len(state['skipped'])} test(s) skipped because a host tool is missing on "
         "this CI runner:"
     ]
-    for nodeid, reason in sorted(_skipped.items()):
+    for nodeid, reason in sorted(state["skipped"].items()):
         lines.append(f"  {nodeid}: {reason}")
     lines.append(
         "CI runners are expected to provision these tools; install them "
@@ -65,5 +86,7 @@ def pytest_sessionfinish(session, exitstatus):
     else:  # pragma: no cover - non-terminal runs (e.g. -p no:terminal)
         print("\n".join(lines))
 
+    # Only a would-be success is promoted; a genuine failure or interruption
+    # keeps its own (non-zero) status.
     if exitstatus == pytest.ExitCode.OK:
         session.exitstatus = pytest.ExitCode.TESTS_FAILED

@@ -30,29 +30,35 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _session(tmp_path: Path, body: str, ci: bool) -> subprocess.CompletedProcess:
-    """Run one sample test file under the real conftest."""
-    (tmp_path / "conftest.py").write_text(
-        CONFTEST.read_text(encoding="utf-8"), encoding="utf-8"
-    )
-    (tmp_path / "test_sample.py").write_text(body, encoding="utf-8")
-
+def _env(ci: bool) -> dict:
     env = {k: v for k, v in os.environ.items() if k != "CI"}
     if ci:
         env["CI"] = "true"
+    return env
 
+
+def _run(directory: Path, target: str, ci: bool) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, "-m", "pytest", "test_sample.py", "-q", "-p", "no:cacheprovider"],
-        cwd=str(tmp_path),
+        [sys.executable, "-m", "pytest", target, "-q", "-p", "no:cacheprovider"],
+        cwd=str(directory),
         capture_output=True,
         text=True,
-        env=env,
+        env=_env(ci),
         timeout=120,
     )
 
 
 def _sample(skip_call: str) -> str:
     return f"import pytest\n\n\ndef test_one():\n    {skip_call}\n"
+
+
+def _session(tmp_path: Path, body: str, ci: bool) -> subprocess.CompletedProcess:
+    """Run one sample test file under the real conftest."""
+    (tmp_path / "conftest.py").write_text(
+        CONFTEST.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    (tmp_path / "test_sample.py").write_text(body, encoding="utf-8")
+    return _run(tmp_path, "test_sample.py", ci)
 
 
 def test_marked_skip_fails_the_session_on_ci(tmp_path: Path) -> None:
@@ -62,9 +68,12 @@ def test_marked_skip_fails_the_session_on_ci(tmp_path: Path) -> None:
     assert "host tools missing on CI" in result.stdout
     assert "missing host tools for this suite: bash" in result.stdout
     assert "install them instead of letting the suite skip" in result.stdout
-    # The reason is unwrapped from the (file, line, reason) tuple: keep its own
-    # closing paren and drop the tuple's quote.
-    assert "(test fixture)" in result.stdout
+    # Pin the rendered tail: the reason's own closing paren, then end of line.
+    # A stray quote or an added paren from unwrapping the (file, line, reason)
+    # tuple must fail here.
+    assert "(test fixture)\n" in result.stdout
+    assert "(test fixture))" not in result.stdout
+    assert "(test fixture)'" not in result.stdout
 
 
 def test_marked_skip_stays_a_skip_off_ci(tmp_path: Path) -> None:
@@ -81,6 +90,30 @@ def test_unrelated_skip_is_not_escalated_on_ci(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     assert "1 skipped" in result.stdout
     assert "host tools missing on CI" not in result.stdout
+
+
+def test_root_and_bridge_together_report_only_once(tmp_path: Path) -> None:
+    """A single-rootdir run loads both conftests; the summary must not repeat.
+
+    Layout mirrors the repo: a root conftest plus the nexus_core bridge two
+    directories down, which loads the root hook by path (parents[2]).
+    """
+    root = tmp_path / "repo"
+    nested = root / "x" / "y"
+    nested.mkdir(parents=True)
+    (root / "conftest.py").write_text(
+        CONFTEST.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    (nested / "conftest.py").write_text(
+        CORE_CONFTEST.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    (nested / "test_sample.py").write_text(_sample(MARKED_SKIP), encoding="utf-8")
+
+    result = _run(root, "x/y/test_sample.py", ci=True)
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert result.stdout.count("host tools missing on CI") == 1
+    assert result.stdout.count("missing host tools for this suite: bash") == 1
 
 
 def test_nexus_core_bridge_exposes_the_hooks() -> None:

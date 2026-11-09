@@ -6,7 +6,9 @@ does not apply to the tests under here (including wrp/tests). This loads that
 same implementation by path rather than keeping a second copy of the hook.
 
 pytest collects hooks from the conftest module's attributes, so binding the
-three hook functions here is equivalent to defining them.
+three hook functions here is equivalent to defining them. The collected skips
+live on the pytest config rather than in module globals, so a session that
+loads both this bridge and the root conftest still reports and fails once.
 """
 
 from __future__ import annotations
