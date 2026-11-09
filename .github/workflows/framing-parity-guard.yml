@@ -1,0 +1,109 @@
+name: Framing Parity Guard
+
+# Ruling 32 §4 requires proof that the E8.4 framing gate agrees across its
+# three independent implementations (Python, SQL v32, TypeScript) before any
+# parity refactor. The guard landed in #923; #924 gave it the exit-code
+# semantics this job depends on:
+#
+#   0  attested — every runtime ran and the contract holds
+#   1  parity failure — the gate disagrees across runtimes
+#   2  version drift — a pinned interpreter/migration file changed
+#   3  runtime unavailable — the toolchain could not run at all
+#
+# Exit 3 fails the job as well: "cannot attest" is not a pass, and a green
+# run must mean the proof actually executed.
+
+on:
+  push:
+    branches: [main, master, feature/*, dev]
+  pull_request:
+    # every base, incl. stacked-PR bases — a base filter silently skips CI
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  framing-parity:
+    name: "framing parity: python + sql + typescript"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: pguser
+          POSTGRES_PASSWORD: pgpass
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >
+          --health-cmd "pg_isready -U pguser"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Same PG* contract the guard documents; the service container takes
+      # POSTGRES_* but the psql client and the throwaway-database harness read
+      # these.
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: pguser
+      PGPASSWORD: pgpass
+      PYTHONPATH: python
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # The TypeScript runtime shells out to `node` and `tsc` on PATH and
+      # installs nothing itself. setup-node provides node but NOT the
+      # compiler, and the runner image's own tsc is TypeScript 7 — which
+      # removed the `--moduleResolution node` flag compile_from_source()
+      # passes. Pin a 5.x compiler (house range: 5.7/5.8 across the UIs).
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --quiet pytest psycopg2-binary
+          npm install --global typescript@5.8.3
+
+      # psql is the SQL runtime's client. Fail here with a clear message
+      # rather than letting a missing tool surface as the guard's exit 3.
+      # The tsc assertion catches a pinned install losing PATH precedence
+      # to an image-provided TS 7, which would otherwise fail as TS5108
+      # inside the suite.
+      - name: Verify the guard toolchain
+        run: |
+          psql --version
+          node --version
+          tsc --version
+          tsc --version | grep -q '^Version 5\.' || {
+            echo "::error::tsc is not the pinned 5.x toolchain (TypeScript 7 removed moduleResolution=node)";
+            exit 1;
+          }
+          pg_isready -h localhost -p 5432 -U pguser
+
+      - name: Run the guard suite
+        run: python3 -m pytest python/solscript_framing_parity -q
+
+      - name: Run the guard
+        run: |
+          set +e
+          python3 -m solscript_framing_parity --json > framing-parity.json 2> framing-parity.err
+          code=$?
+          set -e
+          cat framing-parity.json
+          cat framing-parity.err
+          case "$code" in
+            0) echo "framing parity: attested across python, sql and typescript" ;;
+            1) echo "::error::framing parity failure — the framing gate disagrees across runtimes (exit 1)"; exit 1 ;;
+            2) echo "::error::framing parity version drift — a pinned file changed; re-verify, then --update-pins (exit 2)"; exit 1 ;;
+            3) echo "::error::framing parity could not attest a runtime (exit 3) — infrastructure failure, not a pass"; exit 1 ;;
+            *) echo "::error::framing parity exited unexpectedly ($code)"; exit 1 ;;
+          esac
