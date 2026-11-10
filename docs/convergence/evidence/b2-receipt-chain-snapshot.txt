@@ -1,7 +1,7 @@
 # B2 receipt-chain snapshot and rollback proof — plan 8261645 (track B)
 # Non-authoritative rehearsal store; no live receipt was written.
-# isolated_db=nexus_ns_rehearsal_3423998_20261110T230355Z
-# isolated_port=44477
+# isolated_db=nexus_ns_rehearsal_3445992_20261110T231641Z
+# isolated_port=36601
 # transition_law=typescript/conduit-mcp/src/receipts.ts (ALLOWED)
 __SNAPSHOT__
 rehearsal-R1|1|PLAN_CREATE|planner

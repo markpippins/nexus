@@ -1,6 +1,6 @@
 # D3 seed-gate run — plan 8261645 (KG projection contract freeze)
 # Read-only: hashes, the freeze package's own contract test, vocabulary comparison.
-# run_by=bin/convergence_seed_gate.py at 2026-11-10T23:03:56+00:00
+# run_by=bin/convergence_seed_gate.py at 2026-11-10T23:16:42+00:00
 # KG projection seed gate (plan 8261645, package D3)
 # freeze: typespec/convergence/kg-projection-contract-freeze.v1.json
 # result: not_run_by_the_decomposition; run now by bin/convergence_seed_gate.py

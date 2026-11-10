@@ -323,8 +323,9 @@ def main():
             "\\echo __ROLLBACK__",
             "ROLLBACK;",
             "\\echo __AFTER_ROLLBACK__",
-            "SELECT 'rehearsal_tables_remaining=' || count(*) FROM information_schema.tables "
-            "WHERE table_name LIKE 'rehearsal%';",
+            "SELECT 'rehearsal_tables_remaining=' || (CASE WHEN "
+            "to_regclass('rehearsal_receipts') IS NULL AND to_regclass('rehearsal_tickets') IS NULL "
+            "THEN 0 ELSE 1 END);",
         ])
         out = psql(db, script)
         snapshot_text = out.stdout
