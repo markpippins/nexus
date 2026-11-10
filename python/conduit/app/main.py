@@ -39,6 +39,7 @@ from app.api.routes_admin import router as admin_router
 from app.api.routes_sessions import router as sessions_router
 from app.api.routes_breaker import router as breaker_router
 from app.api.routes_receipts import router as receipts_router
+from app.api.routes_consolidated import router as consolidated_router
 
 # ── Logging ──────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -206,6 +207,10 @@ app.include_router(admin_router, prefix="/admin", tags=["admin"])
 app.include_router(sessions_router, prefix="/api/sessions", tags=["sessions"])
 app.include_router(breaker_router, prefix="/api/breaker", tags=["breaker"])
 app.include_router(receipts_router, prefix="/api/receipts", tags=["receipts"])
+# Consolidated bare-/api surface (typespec/v1/conduit-kernel/python/operations.tsp).
+# Legacy routers above stay mounted so rollback is checkout + restart. Static
+# consolidated paths are registered before /api/{identifier} inside the module.
+app.include_router(consolidated_router)
 
 
 # ── Exception handlers ──────────────────────────────────────────────
