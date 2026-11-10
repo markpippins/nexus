@@ -67,7 +67,16 @@ jobs:
           # prometheus_client is the same case once more: app.main imports it at
           # module scope to build the metrics counters, and the middleware
           # regression test drives that app over ASGI.
-          pip install pytest psycopg2-binary tiktoken pydantic fastapi prometheus_client
+          #
+          # sqlalchemy lands here for the same reason and through the same door:
+          # app.main -> app.api.routes_delta -> app.services.reducer_service ->
+          # app.storage.delta_store imports Column/String/Text at module scope,
+          # so `from app.main import app` needs it even with no connection. It is
+          # an import-time dep of the app package, not a database. (It is also
+          # undeclared in pyproject, which lists only tiktoken -- that packaging
+          # gap is separate from this gate and is not papered over here: the job
+          # installs what the app imports, and the DB tier is still excluded.)
+          pip install pytest psycopg2-binary tiktoken pydantic fastapi prometheus_client sqlalchemy
 
       - name: Record resolved tools in the run log
         run: |
