@@ -1,0 +1,196 @@
+{
+  "$comment": [
+    "KG projection contract freeze v1 (plan 8261645, Track D / package D3).",
+    "Freezes, BEFORE any seeding: (a) which authority owns which section,",
+    "(b) the relation vocabulary, (c) the provenance every node and edge must",
+    "carry. Seeding is explicitly out of scope for this decomposition; this file",
+    "is the gate a later seeding plan must pass.",
+    "Contract-of-record surfaces are the typespec/v1 contracts; the freeze does",
+    "not create a new contract, it pins the existing ones."
+  ],
+  "freeze_id": "nexus.kg-projection-contract",
+  "freeze_version": "1.0.0",
+  "frozen_at": "2026-11-10",
+  "plan_ref": "8261645",
+  "state": "frozen_pending_seed",
+  "seeding_performed": false,
+  "source_of_truth": {
+    "projection_tables": [
+      "graph_entities (section, entity_id, name, entity_type, status, description, properties, source_file)",
+      "graph_edges (source_section, source_id, relation_type, target_section, target_id, properties, resolution)"
+    ],
+    "projection_owner": "typescript/knowledge-srv",
+    "projection_api": "typescript/knowledge-srv/src/routes/knowledge.ts",
+    "graph_ontology": "schemas/ontology/core/knowledge-graph.jsonld",
+    "relation_vocabulary": "schemas/decision-b-freeze/relation-vocabulary-map.json",
+    "envelope_contract": "schemas/decision-b-freeze/jsonb_contract_test.py",
+    "decision_b_freeze_manifest": "schemas/decision-b-freeze/FREEZE-MANIFEST.json"
+  },
+  "ownership": {
+    "$rule": "One owner per section. A section without an owner may not be seeded. Revised ownership is a new freeze_version.",
+    "resolution": {
+      "owns": ["resolution.* authority rows", "valid/recorded temporal columns", "canonical_asset identity keys"],
+      "contract": "typespec/v1/resolution-srv",
+      "seeds_sections": ["facts", "state_machines"],
+      "may_not": "let a projection read be treated as authority"
+    },
+    "shrapnel": {
+      "owns": ["shrapnel.* EAV catalog", "field_type 6 (JSONB) values"],
+      "contract": "typespec/v1/shrapnel",
+      "seeds_sections": ["entities"],
+      "may_not": "promote an EAV value to authority, or claim Resolution identity"
+    },
+    "aegis": {
+      "owns": ["aegis.* state-machine registry", "states/transitions/invariants/properties"],
+      "contract": "typespec/v1/aegis-srv",
+      "seeds_sections": ["state_machines"],
+      "may_not": "let an Aegis invariant become a Conduit gate"
+    },
+    "semantics": {
+      "owns": ["semantics.canonical_asset (asset identity spine)", "topology legend"],
+      "contract": "typespec/v1/semantics-srv (see moleculer/PORT-MAP.md row 4160)",
+      "seeds_sections": ["actors", "types"],
+      "may_not": "reassign a canonical_asset_id"
+    },
+    "keychains": {
+      "owns": ["resolution.keychain_event_outbox (source of triggers)", "Mongo keychain projection (non-authoritative)"],
+      "contract": "moleculer/nexus-broker/services/keychain-snapshot.service.ts (nexus-broker 4080) + python/keychains/trigger.py",
+      "seeds_sections": ["decisions"],
+      "may_not": "be read back as operational authority; may not seed graph rows itself"
+    },
+    "peb": {
+      "owns": ["peb.* admission/decision ledger", "activation"],
+      "contract": "typespec/v1/peb-kernel",
+      "seeds_sections": [],
+      "may_not": "be changed by this decomposition — activation is frozen (0 changes allowed)"
+    },
+    "conduit": {
+      "owns": ["implementation_plans", "tickets", "receipt chains"],
+      "contract": "typespec/v1/conduit-kernel",
+      "seeds_sections": [],
+      "may_not": "issue receipts from a projection"
+    },
+    "wind": {
+      "owns": ["wind.* workflows/instances/execution-requests"],
+      "contract": "typespec/v1/wind-srv",
+      "seeds_sections": [],
+      "may_not": "order a Conduit state change"
+    },
+    "vision": {
+      "owns": ["vision.* LOSM satellite state"],
+      "contract": "typespec/v1/vision-srv",
+      "seeds_sections": [],
+      "may_not": "be authoritative for work_request state"
+    },
+    "operator": {
+      "owns": ["human ratifications"],
+      "contract": "none (authority of record)",
+      "seeds_sections": [],
+      "may_not": "be inferred from any automated artifact"
+    }
+  },
+  "sections": {
+    "$rule": "Canonical sections are seeded by the rebuild. Non-canonical sections (work_requests, plans) are cache/eviction surfaces and must NOT be seeded as authority — knowledge-mcp purge_section is their canonical eviction path.",
+    "canonical": [
+      {"section": "types", "owner": "semantics"},
+      {"section": "actors", "owner": "semantics"},
+      {"section": "concepts", "owner": "resolution"},
+      {"section": "entities", "owner": "shrapnel"},
+      {"section": "facts", "owner": "resolution"},
+      {"section": "rules", "owner": "resolution"},
+      {"section": "invariants", "owner": "aegis"},
+      {"section": "state_machines", "owner": "aegis"},
+      {"section": "decisions", "owner": "keychains"}
+    ],
+    "non_canonical": [
+      {"section": "work_requests", "reason": "live cache of resolution/work_request; never seeded as authority"},
+      {"section": "plans", "reason": "live cache of conduit plans; never seeded as authority"}
+    ]
+  },
+  "relations": {
+    "$rule": "A relation_type outside this vocabulary is a hard seed failure. The vocabulary is copied from schemas/decision-b-freeze/relation-vocabulary-map.json and must stay byte-equal to its canonical_vocabulary keys.",
+    "frozen_backbone": [
+      {"relation_type": "describes", "meaning": "Fact asserts content about a subject."},
+      {"relation_type": "evaluated", "meaning": "Proposition evaluated against evidence/subject."},
+      {"relation_type": "instantiates", "meaning": "Instance member of a concept/type."},
+      {"relation_type": "identified_by", "meaning": "Entity anchored to canonical identity."},
+      {"relation_type": "governed_by", "meaning": "Subject under an authority binding."},
+      {"relation_type": "evidences", "meaning": "Node provides evidence for a claim."}
+    ],
+    "governed_general": [
+      {"relation_type": "references", "meaning": "Cross-entity pointer with no stronger claim; default for field refs. Never implies hierarchy, membership or generation."},
+      {"relation_type": "contains", "meaning": "Collection membership."},
+      {"relation_type": "defines", "meaning": "Source specifies the schema/contract of target."},
+      {"relation_type": "produces", "meaning": "Source generatively yields target; only with subject/object evidence."}
+    ],
+    "precedence": "frozen_backbone > governed_general; never use a general term where a backbone term is evidenced"
+  },
+  "provenance": {
+    "$rule": "Every seeded node and edge must carry all required fields. Missing provenance is a seed failure, not a warning.",
+    "required_node_fields": [
+      "section",
+      "entity_id",
+      "source_file",
+      "source_authority (closed set)",
+      "source_record_id",
+      "recorded_at (ISO-8601)",
+      "valid_from (ISO-8601)"
+    ],
+    "required_edge_fields": [
+      "source_section",
+      "source_id",
+      "relation_type (vocabulary member)",
+      "target_section",
+      "target_id",
+      "source_authority (closed set)",
+      "recorded_at (ISO-8601)"
+    ],
+    "authority_set": [
+      "resolution",
+      "shrapnel",
+      "aegis",
+      "semantics",
+      "keychains",
+      "peb",
+      "operator",
+      "conduit",
+      "wind",
+      "vision"
+    ],
+    "temporal_rule": "valid_from/valid_until (valid time) and recorded_at (record time) are separate. A projection that collapses them into one timestamp is invalid.",
+    "fingerprint_rule": "the seeded node set must be reproducible: same sources + same freeze_version => same rows (modulo recorded_at)."
+  },
+  "seed_gate": {
+    "$rule": "All checks must pass before any seeding plan runs. This decomposition does not run them.",
+    "checks": [
+      {
+        "id": "freeze_manifest_intact",
+        "check": "sha256 of each artifact listed in schemas/decision-b-freeze/FREEZE-MANIFEST.json matches",
+        "expected_manifest_fingerprint": "9a073a105050d7e2a8c7e618265fbb6fad92fdccecbc042a8fa12ad6374685d8"
+      },
+      {
+        "id": "envelope_contract",
+        "check": "python3 schemas/decision-b-freeze/jsonb_contract_test.py exits 0 (envelope identity/lineage/authority/payload validation)"
+      },
+      {
+        "id": "relation_vocabulary_equal",
+        "check": "relations.frozen_backbone + relations.governed_general keys == canonical_vocabulary keys in schemas/decision-b-freeze/relation-vocabulary-map.json"
+      },
+      {
+        "id": "section_owner_complete",
+        "check": "every canonical section resolves to exactly one owner in this file"
+      },
+      {
+        "id": "no_non_canonical_seed",
+        "check": "no row targets section in sections.non_canonical"
+      },
+      {
+        "id": "jsonb_classification_present",
+        "check": "every JSONB column feeding a seeded node/edge has a class in schemas/convergence/resolution-jsonb-classification.v1.json"
+      }
+    ],
+    "result": "not_run"
+  },
+  "peb_activation_impact": "none",
+  "stop_condition": "Freeze published. No seeding, no graph writes, no ownership reassignment. A seeding plan must cite this freeze_version and pass seed_gate before writing a row."
+}
