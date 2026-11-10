@@ -283,3 +283,17 @@ from this host**; no conclusion about Vanadium the machine is drawn.
 6. vision-srv-py terrain entry: confirm whether `activeFlag=true`/missing unit
    was retired after #908, or whether the 2026-11-08T13:38Z sysadmin report is
    the last word on a service that is still half-decommissioned.
+
+## Plan and draft housekeeping (2026-11-10)
+
+- Ghost plans 8261653, 8261654, 8261665 reconciled to `completed` via `nebula.blueprints_history` (guarded, with `payload.reconciliation`). No receipts forged. 8261665 still differs from the receipt-derived `nebula.plan_status`.
+- Stale probe 8261638 reconciled to `completed`.
+- Stale plan 8261647 (assembly comment attribution) reconciled to `completed`. The fix shipped in #350 (`c42053414`); `test_conformance_attribution_c1.py` passes 16/16 on `origin/main`.
+- 15 W-C duplicate `resolution.work_request` drafts set DRAFT→CANCELLED (audit row in `tackle.system_logs`).
+- Four plans closed as `completed` on merged evidence (each merge commit verified an ancestor of `refs/remotes/origin/main`): 8261663 (#810 `815a959aa`, REVIEW_PASS + tester attestation), 8261664 (#824 `9d1e0ec49`, supersedes closed #812), 8261662 (#826 `f36569438`, #748 closed superseded), 8261666 (#924 `dddaa3417`, plus #923/#925).
+- Three tester attestation to-dos advanced to Accepted (4) with the tester record plus merged commit as evidence: PR #913 (`8390f303`), PR #909 (`647c7175`), PR #908 (`4edea33c`).
+- WorkRequest 8261651 stays `pending` and re-scoped to run after the consolidated kernel deploy (proposal record `caf36174`); the live kernel still serves only legacy routes, so repointing callers now would break routing.
+- Still pending, each with an expired builder ticket and no disposable evidence: 8261646, 8261649, 8261650, 8261655 (REVIEW_REJECT), 8261656, 8261660, 8261661. These are real work awaiting a re-armed ticket, not ghost plans.
+- Role dispatch is blocked: no ACTIVE lease for engineer, tester or reviewer, and `POST /run` with `resolve_only` returns `ADMISSION_DENIED / ROLE_EXPIRED`. Lease renewal is an operator action (request record `c32ea7f8`).
+- 21 other DRAFT work requests remain undecided.
+- The main checkout's untracked pre-#936 copies of the checklist script, its test, the run capture and the older system-pulse text were moved to `/tmp/stale-same-lan-20261110T062106Z/`; `origin/main` carries the newer tracked versions.
