@@ -3,8 +3,10 @@
 **Track:** B — Night Shift
 **Package:** B1 (rehearsal harness + bound) · B2 (receipt + rollback proof)
 **Owner:** builder (B1) · reviewer (B2)
-**State:** specification only. **The rehearsal has not been run.** Evidence slots
-below are declared and, where they need a run, explicitly marked *unfilled*.
+**State:** rehearsal **run 2026-11-10** against a throwaway PostgreSQL database
+and an ephemeral loopback gateway (`bin/convergence_rehearsal.py`). Evidence slots
+below are filled by that run. The result remains non-authoritative: no live receipt,
+no merge, no attestation, no PEB or activation change.
 
 > Continuity, not a wave. Night shift already has an approved doctrine
 > (`docs/night-shift-doctrine.md`, 2026-09-05) and an executing pipeline. This
@@ -63,11 +65,12 @@ Vocabulary ids for these states/transitions:
 
 | Slot | Required content | State |
 |---|---|---|
-| `consumer` | transcript of Planner→Conduit→Builder→Critic for one batched item, with the isolated DSN visible | **unfilled** |
-| `state_machine` | receipt chain excerpt (`PLAN_CREATE`, `IMPLEMENTATION`, `REVIEW_PASS`) plus one negative-path receipt, all from the isolated store | **unfilled** |
-| `receipt` | proof the receipts landed in the test DB and **not** the live conduit DB (e.g. row counts in both, with timestamps) | **unfilled** |
-| `rollback` | the observed rollback action and its result: either `unblock_plan`/ticket release on the rehearsal plan, or branch revert + worktree removal | **unfilled** |
+| `consumer` | transcript of Planner→Conduit→Builder→Critic for one batched item, with the isolated DSN visible | filled: `docs/convergence/evidence/b1-rehearsal-transcript.md` |
+| `state_machine` | receipt chain excerpt (`PLAN_CREATE`, `IMPLEMENTATION`, `REVIEW_PASS`) plus one negative-path receipt, all from the isolated store | filled: `docs/convergence/evidence/b2-receipt-chain-snapshot.txt` |
+| `receipt` | proof the receipts landed in the test DB and **not** the live conduit DB (e.g. row counts in both, with timestamps) | filled: `docs/convergence/evidence/b2-receipt-chain-snapshot.txt` (`rehearsal_store_receipts=15`, `live_conduit_receipts_for_rehearsal_ids=0`) |
+| `rollback` | the observed rollback action and its result: either `unblock_plan`/ticket release on the rehearsal plan, or branch revert + worktree removal | filled: `docs/convergence/evidence/b2-receipt-chain-snapshot.txt` (ticket `claimed->stale->open`, receipt `BLOCK->REQUEUED`, transaction `ROLLBACK`, `rehearsal_tables_remaining=0`, throwaway DB removed) |
 | `artifact` | this specification | filled: `python/conduit/convergence/track-b-night-shift-rehearsal.md` |
+| `seed_gate` | package D3's six seed-gate checks, run read-only | filled: `docs/convergence/evidence/d3-seed-gate-output.txt` (`6/6 checks pass`) |
 | `verification_owner` | reviewer | — |
 
 ## 5. Stop conditions

@@ -114,14 +114,20 @@ class TestWorkPackages(unittest.TestCase):
                     with self.subTest(pkg=pkg["id"], dep=dep):
                         self.assertIn(dep, ids)
 
-    def test_unfilled_evidence_points_at_real_packages(self):
-        slots = self.doc["unfilled_evidence"]
-        self.assertTrue(slots, "a blueprint with no unfilled evidence would be overclaiming")
+    def test_evidence_slots_resolve_to_real_packages(self):
+        # Every declared slot — unfilled or filled — must belong to a real package.
         ids = {p["id"] for p in self.packages}
+        slots = list(self.doc["unfilled_evidence"]) + [e["slot"] for e in self.doc.get("evidence", [])]
         for slot in slots:
             with self.subTest(slot=slot):
                 pkg_id = slot.split(".", 1)[0]
-                self.assertIn(pkg_id, ids, f"unfilled evidence {slot} has no package")
+                self.assertIn(pkg_id, ids, f"evidence slot {slot} has no package")
+
+    def test_filled_evidence_covers_the_packages_that_needed_a_run(self):
+        if self.doc["unfilled_evidence"]:
+            self.skipTest("rehearsal evidence not filled yet; see unfilled_evidence")
+        slots = {e["slot"] for e in self.doc["evidence"]}
+        self.assertTrue({"B1.transcript", "B2.receipt_chain_snapshot", "D3.seed_gate_run"} <= slots)
 
 
 class TestInteractionVocabulary(unittest.TestCase):
@@ -233,13 +239,18 @@ class TestTrackDocs(unittest.TestCase):
                 self.assertTrue(path.is_file(), path)
                 self.assertIn(PLAN, path.read_text())
 
-    def test_track_b_does_not_claim_a_rehearsal_it_did_not_run(self):
+    def test_track_b_claim_matches_the_registry(self):
+        """Track B must not claim a run the registry still lists as unfilled."""
         text = (ROOT / "python" / "conduit" / "convergence"
                 / "track-b-night-shift-rehearsal.md").read_text()
-        self.assertIn("rehearsal has not been run", text)
-        # The blueprint must keep its evidence slots visibly unfilled rather than
-        # asserting a transcript/receipt chain that no run produced.
-        self.assertIn("unfilled", text.lower())
+        registry = load(SCHEMAS / "work-packages.v1.json")
+        if registry["unfilled_evidence"]:
+            self.assertIn("rehearsal has not been run", text)
+            self.assertIn("unfilled", text.lower())
+        else:
+            self.assertNotIn("rehearsal has not been run", text)
+            self.assertIn("docs/convergence/evidence/b1-rehearsal-transcript.md", text)
+            self.assertIn("docs/convergence/evidence/b2-receipt-chain-snapshot.txt", text)
 
 
 if __name__ == "__main__":

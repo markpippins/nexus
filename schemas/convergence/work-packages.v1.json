@@ -264,13 +264,39 @@
       "peb_impact": "none"
     }
   ],
-  "unfilled_evidence": [
-    "B1.transcript",
-    "B2.receipt_chain_snapshot",
-    "D3.seed_gate_run"
+  "unfilled_evidence": [],
+  "evidence": [
+    {
+      "slot": "B1.transcript",
+      "path": "docs/convergence/evidence/b1-rehearsal-transcript.md",
+      "produced_by": "bin/convergence_rehearsal.py",
+      "environment": "isolated gateway on an ephemeral loopback port; throwaway PostgreSQL database; live :3100/:3103 untouched",
+      "authority": "non-authoritative rehearsal transcript"
+    },
+    {
+      "slot": "B2.receipt_chain_snapshot",
+      "path": "docs/convergence/evidence/b2-receipt-chain-snapshot.txt",
+      "produced_by": "bin/convergence_rehearsal.py",
+      "environment": "same run; receipts materialised in the throwaway store inside a rolled-back transaction",
+      "authority": "non-authoritative; live conduit receipt rows for rehearsal ids = 0"
+    },
+    {
+      "slot": "B2.rollback",
+      "path": "docs/convergence/evidence/b2-receipt-chain-snapshot.txt",
+      "produced_by": "bin/convergence_rehearsal.py",
+      "environment": "same run; ticket takeover claimed->stale->open plus REQUEUED, then transaction rollback",
+      "authority": "non-authoritative; rehearsal tables remaining = 0, throwaway database removed"
+    },
+    {
+      "slot": "D3.seed_gate_run",
+      "path": "docs/convergence/evidence/d3-seed-gate-output.txt",
+      "produced_by": "bin/convergence_seed_gate.py",
+      "environment": "read-only: artifact hashes, freeze contract test, vocabulary comparison",
+      "authority": "no seeding performed; gate result recorded, no graph rows written"
+    }
   ],
   "notes": [
-    "Unfilled slots are reported, not back-filled. Closing them is child execution work.",
+    "Evidence slots are produced by the cited commands; regenerate rather than edit.",
     "Package IDs are stable; renames require a registry version bump."
   ]
 }
