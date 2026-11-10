@@ -11,6 +11,10 @@ the lifecycle is exercised end-to-end:
     - view carries the granted clone-of-engineer spec
     - replay is refused as GRANT-APPLIED (no redundant grant event)
     - re-grant path: different open spec -> close + re-insert, exact handoff
+  builder (re-open variant — the role is retired, only closed snapshots):
+    - grant opens the successor from the newest closed snapshot
+    - Decision 7 values pinned (implementation / no greenlight / no verify)
+    - replay is refused as GRANT-APPLIED (no third row)
   supervisor (clone template already on main):
     - initial role_administration grant opens
     - replay is a quiet no-op (no second row)
@@ -45,6 +49,7 @@ pytestmark = skip_unless_host_tools(
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 E3 = os.path.join(REPO, "sql", "grants", "engineer-iii-grant-v0.1.sql")
 SUP = os.path.join(REPO, "sql", "grants", "supervisor-grant-v0.1.sql")
+BLD = os.path.join(REPO, "sql", "grants", "builder-grant-v0.1.sql")
 
 SKELETON = r"""
 CREATE SCHEMA nebula;
@@ -214,6 +219,38 @@ def test_regrant_path_closes_and_reopens_with_exact_handoff(e2edb):
                     " WHERE o.name='engineer-iii' AND o.valid_until='9999-12-31 00:00:00+00'::timestamptz))"
                     " from nebula.roles_history where name='engineer-iii';")
     assert n == "2/1"
+
+
+def test_builder_grant_reopens_retired_role_with_decision7_values(e2edb):
+    """builder is RETIRED live (only closed snapshots) — exercise the re-open edge."""
+    psql(e2edb, "INSERT INTO nebula.roles_history (id, name, display_name, description,"
+                " owns_domains, can_greenlight, can_create_questions, can_create_agendas,"
+                " can_resolve_questions, can_verify_work_requests, max_open_questions,"
+                " requires_approval_from, cron_enabled, cron_expression, cron_description,"
+                " escalates_to, escalation_triggers, level_filter_primary, level_filter_allowed,"
+                " visibility_scope, created_at, updated_at, valid_from, valid_until,"
+                " recorded_on_dt, recorded_until_dt)"
+                " VALUES (gen_random_uuid(),'builder','Builder','retired snapshot',"
+                " ARRAY['implementation'],false,false,false,false,false,NULL,NULL,"
+                " false,NULL,NULL,ARRAY['architect'],ARRAY['design_concern'],'<=1','<=2',"
+                " ARRAY['builder','all'], now(), now(), '2026-01-01 00:00:00+00',"
+                " '2026-09-18 00:00:00+00', '2026-01-01 00:00:00+00', '2026-09-18 00:00:00+00'),"
+                " (gen_random_uuid(),'builder','Builder','retired snapshot',"
+                " ARRAY['implementation'],false,false,false,false,false,NULL,NULL,"
+                " false,NULL,NULL,ARRAY['architect'],ARRAY['design_concern'],'<=1','<=2',"
+                " ARRAY['builder','all'], now(), now(), '2026-09-18 00:00:00+00',"
+                " '2026-09-27 00:00:00+00', '2026-09-18 00:00:00+00', '2026-09-27 00:00:00+00');")
+    out = run_file(e2edb, BLD)
+    assert "opened with the Decision 7 capability set" in out
+    assert "GRANT verify: builder chain open=1 closed=2" in out
+    row = psql(e2edb, "select owns_domains::text||'|'||can_greenlight::text||'|'||"
+                      "can_verify_work_requests::text||'|'||level_filter_primary||'|'||"
+                      "level_filter_allowed||'|'||visibility_scope::text"
+                      " from nebula.roles where name='builder';")
+    assert row == "{implementation}|false|false|<=1|<=2|{builder,all}"
+    r = run_file_raw(e2edb, BLD)
+    assert r.returncode != 0 and "GRANT-APPLIED" in r.stderr
+    assert psql(e2edb, "select count(*) from nebula.roles_history where name='builder';") == "3"
 
 
 def test_supervisor_grant_opens_then_replay_is_quiet_noop(e2edb):
