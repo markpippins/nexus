@@ -216,8 +216,22 @@ class TestIdentifierCollision:
 class TestAppWiring:
     @pytest.fixture(scope="class")
     def spec(self):
-        from app.main import app
+        """Mount the same routers the app mounts, without importing app.main.
 
+        app.main pulls prometheus_client, which the hermetic CI job does not
+        install; assembling the routers here keeps this file importable there
+        while still proving the consolidated paths and the legacy paths can
+        coexist on one app.
+        """
+        from fastapi import FastAPI
+
+        from app.api import routes_breaker, routes_receipts, routes_sessions
+
+        app = FastAPI()
+        app.include_router(routes_receipts.router, prefix="/api/receipts")
+        app.include_router(routes_sessions.router, prefix="/api/sessions")
+        app.include_router(routes_breaker.router, prefix="/api/breaker")
+        app.include_router(rc.router)
         return app.openapi()
 
     def test_app_exposes_consolidated_paths(self, spec):
