@@ -44,6 +44,66 @@ import * as api from "./conduit-client";
 import { receiptProvenanceMetadata } from "./receipts";
 import { breakerRowToStatus } from "./watchers/cb-watcher";
 
+/** Row shape used to build per-plan, per-role ticket status cards. */
+export interface TicketRowForStatus {
+  plan_id: string;
+  role: string;
+  status: string;
+  id: string;
+  created_at: string;
+  expires_at: string | null;
+  objective: string | null;
+  claimed_at: string | null;
+  session_id: string | null;
+}
+
+export interface TicketStatusCard {
+  status: string;
+  id: string;
+  created_at: string;
+  expires_at?: string;
+  objective?: string;
+  claimedAt?: string;
+  claimedSession?: string;
+}
+
+/**
+ * Collapse ticket rows into one card per (plan, role).
+ *
+ * A plan can carry several generations of a role's ticket (e.g. an expired
+ * 2026-09 ticket plus the fresh open ticket minted by a re-arm). The previous
+ * implementation let the last row in the result set win, so an older expired
+ * ticket overwrote the fresh open one and /state reported the plan as
+ * undispatched. Keep the NEWEST row per role instead.
+ *
+ * Input is expected newest-first (the SQL orders created_at DESC); ties on
+ * created_at fall back to the lexicographically greatest ticket id, matching
+ * the SQL tiebreaker. Exported for hermetic tests.
+ */
+export function newestTicketPerRole(
+  rows: TicketRowForStatus[],
+): Map<string, Record<string, TicketStatusCard>> {
+  const map = new Map<string, Record<string, TicketStatusCard>>();
+  for (const t of rows) {
+    let roleMap = map.get(t.plan_id);
+    if (!roleMap) {
+      roleMap = {};
+      map.set(t.plan_id, roleMap);
+    }
+    if (roleMap[t.role]) continue; // newer row already recorded for this role
+    roleMap[t.role] = {
+      status: t.status,
+      id: t.id,
+      created_at: t.created_at,
+      expires_at: t.expires_at || undefined,
+      objective: t.objective || undefined,
+      claimedAt: t.claimed_at || undefined,
+      claimedSession: t.session_id || undefined,
+    };
+  }
+  return map;
+}
+
 export class PipelineWatcher {
   private listeners: Array<(event: any) => void> = [];
   private planWatcher: PlanWatcher;
@@ -184,24 +244,12 @@ export class PipelineWatcher {
         `SELECT plan_id, role, status, id, created_at, expires_at, objective, claimed_at, session_id FROM vision.tickets
          WHERE plan_id = ANY(@planIds)
          AND status IN ('open','claimed','completed','failed','expired','stale','cancelled','abandoned')
-         ORDER BY plan_id, role`,
+         ORDER BY plan_id, role, created_at::timestamptz DESC, id DESC`,
         { planIds: allPlanIds }
-      ) as Array<{ plan_id: string; role: string; status: string; id: string; created_at: string; expires_at: string | null; objective: string | null; claimed_at: string | null; session_id: string | null }>;
+      ) as TicketRowForStatus[];
 
       // Build map: plan_id → { role: { status, id, created_at, expires_at, objective, claimedAt?, claimedSession? } }
-      const ticketMap = new Map<string, Record<string, { status: string; id: string; created_at: string; expires_at?: string; objective?: string; claimedAt?: string; claimedSession?: string }>>();
-      for (const t of ticketRows) {
-        if (!ticketMap.has(t.plan_id)) ticketMap.set(t.plan_id, {});
-        ticketMap.get(t.plan_id)![t.role] = {
-          status: t.status,
-          id: t.id,
-          created_at: t.created_at,
-          expires_at: t.expires_at || undefined,
-          objective: t.objective || undefined,
-          claimedAt: t.claimed_at || undefined,
-          claimedSession: t.session_id || undefined,
-        };
-      }
+      const ticketMap = newestTicketPerRole(ticketRows);
 
       // Merge into all plan arrays
       for (const dir of fsDirs) {
