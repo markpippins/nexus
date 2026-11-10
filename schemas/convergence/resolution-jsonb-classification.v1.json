@@ -1,0 +1,276 @@
+{
+  "$comment": [
+    "Resolution JSONB classification v1 (plan 8261645, Track D / package D2).",
+    "Purpose: when the KG projection is rebuilt, every governed JSONB column in",
+    "the resolution schema must have a declared class, so that JSONB storage",
+    "cannot silently erase governed keys or temporal semantics.",
+    "Class precedence (highest first): authority > queryable_identity > lineage",
+    "> projection > payload_only. A column takes the HIGHEST class any of its",
+    "contents require.",
+    "No migration is applied by this file. It is a classification, not a DDL."
+  ],
+  "classification_id": "nexus.convergence.resolution-jsonb-classification",
+  "classification_version": "1.0.0",
+  "frozen_at": "2026-11-10",
+  "plan_ref": "8261645",
+  "scope": {
+    "schema": "resolution",
+    "source_of_truth": "schemas/migrations/resolution/resolution_schema_consolidated.sql",
+    "temporal_columns_are_first_class": [
+      "valid_from",
+      "valid_until",
+      "recorded_on_dt",
+      "recorded_until_dt"
+    ],
+    "authority_set": [
+      "resolution",
+      "shrapnel",
+      "aegis",
+      "semantics",
+      "keychains",
+      "peb",
+      "operator",
+      "conduit",
+      "wind",
+      "vision"
+    ]
+  },
+  "classes": {
+    "payload_only": {
+      "definition": "Free-form content carried for humans/consumers; never queried as identity, never authoritative.",
+      "projection_rule": "may be projected verbatim as payload; must not be indexed as a governed key",
+      "promotion_rule": "promotion to a higher class requires an architect ruling and a migration"
+    },
+    "queryable_identity": {
+      "definition": "Contains keys used to identify or join an entity (canonical keys, subject/object refs).",
+      "projection_rule": "every governed key must be reachable as a typed projection column; JSONB-only storage is not sufficient",
+      "promotion_rule": "adding a governed key requires declaring it in this file before first use"
+    },
+    "lineage": {
+      "definition": "Points at the origin of a claim (source records, evidence refs, verification summaries).",
+      "projection_rule": "project as edges with provenance (source_authority, source_record_id, fingerprint); never flatten into text"
+    },
+    "authority": {
+      "definition": "Carries or binds an authority decision (acknowledgements, constraints, dispositions).",
+      "projection_rule": "project as a governed node; JSONB is storage only — the authoritative record stays in its owning schema",
+      "promotion_rule": "never inferred from payload shape; requires an authority_ref"
+    },
+    "projection": {
+      "definition": "Materialized view/snapshot data produced by another owner.",
+      "projection_rule": "recomputable and disposable; must carry the projection generation and recorded_at, and must never be read back as authority"
+    }
+  },
+  "columns": [
+    {
+      "table": "resolution.assessment",
+      "column": "impact_scope",
+      "class": "lineage",
+      "rationale": "Scope references bound an assessment to the assets it touched; projected as edges.",
+      "governed_keys": [],
+      "temporal_semantics": "none in-column; validity carried by assessment row columns"
+    },
+    {
+      "table": "resolution.assessment",
+      "column": "rationale",
+      "class": "payload_only",
+      "rationale": "Human-readable reasoning; not a join key and not an authority record.",
+      "governed_keys": [],
+      "temporal_semantics": "none"
+    },
+    {
+      "table": "resolution.candidate",
+      "column": "implementation_notes",
+      "class": "payload_only",
+      "rationale": "Free-form array for implementers.",
+      "governed_keys": [],
+      "temporal_semantics": "none"
+    },
+    {
+      "table": "resolution.candidate",
+      "column": "code_snippets",
+      "class": "payload_only",
+      "rationale": "Illustrative code; explicitly not a contract of record.",
+      "governed_keys": [],
+      "temporal_semantics": "none"
+    },
+    {
+      "table": "resolution.candidate",
+      "column": "design_rationale",
+      "class": "payload_only",
+      "rationale": "Narrative design notes.",
+      "governed_keys": [],
+      "temporal_semantics": "none"
+    },
+    {
+      "table": "resolution.canonical_asset",
+      "column": "canonical_key",
+      "class": "queryable_identity",
+      "rationale": "GOVERNED KEYS: identity attributes used to recognise the asset. JSONB must not be the only home of a governed key.",
+      "governed_keys": ["asset identity keys as declared by semantics canonical_asset_id"],
+      "temporal_semantics": "identity is time-independent; asset validity/supersession is expressed by columns/edges, not by JSONB"
+    },
+    {
+      "table": "resolution.execution_claim",
+      "column": "subject_ref",
+      "class": "queryable_identity",
+      "rationale": "Identifies the claim subject; used to join claims to assets.",
+      "governed_keys": ["subject_ref.id", "subject_ref.kind"],
+      "temporal_semantics": "none"
+    },
+    {
+      "table": "resolution.execution_claim",
+      "column": "object_value",
+      "class": "queryable_identity",
+      "rationale": "Identifies/characterises the claim object; part of the claim identity when it carries an id.",
+      "governed_keys": ["object_value.id (when present)"],
+      "temporal_semantics": "none; claim timing is carried by the row"
+    },
+    {
+      "table": "resolution.execution_claim",
+      "column": "verification_summary",
+      "class": "lineage",
+      "rationale": "Summarises which evidence verified a claim; lineage for the projection.",
+      "governed_keys": [],
+      "temporal_semantics": "verification instant must be a column, not a JSONB field"
+    },
+    {
+      "table": "resolution.execution_evidence",
+      "column": "source_ref",
+      "class": "lineage",
+      "rationale": "Origin pointer for evidence; becomes a provenance edge.",
+      "governed_keys": ["source_ref.authority", "source_ref.record_id"],
+      "temporal_semantics": "valid_from/valid_until/recorded_on_dt on the evidence row; never inside source_ref"
+    },
+    {
+      "table": "resolution.execution_evidence",
+      "column": "payload",
+      "class": "payload_only",
+      "rationale": "Evidence body as produced by the caller.",
+      "governed_keys": [],
+      "temporal_semantics": "none inside payload"
+    },
+    {
+      "table": "resolution.execution_evidence",
+      "column": "metadata",
+      "class": "payload_only",
+      "rationale": "Caller metadata; not queried as identity.",
+      "governed_keys": [],
+      "temporal_semantics": "none"
+    },
+    {
+      "table": "resolution.harvest",
+      "column": "docklang",
+      "class": "projection",
+      "rationale": "Derived harvest representation.",
+      "governed_keys": [],
+      "temporal_semantics": "harvest window is carried by row/columns"
+    },
+    {
+      "table": "resolution.harvest",
+      "column": "run_metadata",
+      "class": "lineage",
+      "rationale": "Describes the producing run (model, batch); lineage for the harvest.",
+      "governed_keys": ["run_metadata.run_id (when present)"],
+      "temporal_semantics": "run start/end must be columns if they are governed"
+    },
+    {
+      "table": "resolution.harvest",
+      "column": "metadata",
+      "class": "payload_only",
+      "rationale": "Free-form metadata.",
+      "governed_keys": [],
+      "temporal_semantics": "none"
+    },
+    {
+      "table": "resolution.implementation_plan",
+      "column": "acceptance_criteria",
+      "class": "projection",
+      "rationale": "Criteria rendered for consumers; the authoritative plan text stays with the plan owner (conduit).",
+      "governed_keys": [],
+      "temporal_semantics": "none"
+    },
+    {
+      "table": "resolution.implementation_plan",
+      "column": "metadata",
+      "class": "payload_only",
+      "rationale": "Free-form plan metadata.",
+      "governed_keys": [],
+      "temporal_semantics": "none"
+    },
+    {
+      "table": "resolution.observation",
+      "column": "payload",
+      "class": "payload_only",
+      "rationale": "Observation body. Note: some rows carry decision-relevant facts; those become governed only by promoting a governed key, never by reading payload ad hoc.",
+      "governed_keys": [],
+      "temporal_semantics": "carried by observation.valid_from/valid_until/recorded_on_dt/recorded_until_dt"
+    },
+    {
+      "table": "resolution.representation",
+      "column": "raw_metadata",
+      "class": "projection",
+      "rationale": "Captured representation metadata used to recompute disagreement projections.",
+      "governed_keys": ["raw_metadata.repr (representation identity)"],
+      "temporal_semantics": "representation capture time must remain a column"
+    },
+    {
+      "table": "resolution.requirement",
+      "column": "acceptance_criteria",
+      "class": "projection",
+      "rationale": "Rendered criteria; authoritative requirement content lives with the requirement owner.",
+      "governed_keys": [],
+      "temporal_semantics": "none"
+    },
+    {
+      "table": "resolution.specification",
+      "column": "item_snapshot",
+      "class": "projection",
+      "rationale": "Snapshot of specification items; recomputable and disposable.",
+      "governed_keys": [],
+      "temporal_semantics": "snapshot generation + recorded_at must be present"
+    },
+    {
+      "table": "resolution.t24_graph_edge_evidence",
+      "column": "edge_properties",
+      "class": "lineage",
+      "rationale": "Properties attached to a graph edge as evidence for a relation.",
+      "governed_keys": [],
+      "temporal_semantics": "edge validity windows remain columns"
+    },
+    {
+      "table": "resolution.work_request",
+      "column": "context",
+      "class": "authority",
+      "rationale": "Carries the governing context under which the WR was admitted; treated as authority-bearing metadata, not free text.",
+      "governed_keys": ["context.correlation_id (when it binds a decision)", "context.authority_ref"],
+      "temporal_semantics": "as-of/effective instants must remain columns where they govern"
+    },
+    {
+      "table": "resolution.work_request",
+      "column": "constraints",
+      "class": "authority",
+      "rationale": "Admission constraints are binding; a constraint that only exists inside JSONB is unenforceable.",
+      "governed_keys": ["constraints.deterministic", "constraints.maxRetries", "constraints.timeoutPolicy"],
+      "temporal_semantics": "none"
+    },
+    {
+      "table": "resolution.work_request_edge",
+      "column": "metadata",
+      "class": "payload_only",
+      "rationale": "Edge decorations; relation identity is carried by the edge columns.",
+      "governed_keys": [],
+      "temporal_semantics": "none"
+    }
+  ],
+  "invariants": [
+    "No governed key may exist ONLY inside a JSONB column: every key listed under governed_keys must be reachable from a typed column or a declared projection rule.",
+    "JSONB storage never relocates temporal semantics: valid_from/valid_until/recorded_on_dt/recorded_until_dt stay first-class columns.",
+    "A JSONB value that references another authority must name a member of the closed authority set; unknown authorities are rejected (see schemas/decision-b-freeze/jsonb_contract_test.py).",
+    "Class assignment is conservative: where two classes are defensible, the higher class wins.",
+    "Reclassification is a new classification_version, never an in-place edit."
+  ],
+  "open_questions": [
+    "resolution.observation.payload contains decision-relevant facts in seeded rows (e.g. candidate_compile_failure, representation_disagreement). If the projection needs those as graph claims, promote named keys under queryable_identity rather than parsing payload generically.",
+    "resolution.work_request.context/constraints are classified authority here; if the owning service treats them as advisory, an architect ruling should downgrade them explicitly rather than leaving the classification ambiguous."
+  ]
+}

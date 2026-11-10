@@ -1,0 +1,116 @@
+{
+  "$comment": [
+    "Brainfood slice contract v1 (plan 8261645, Track C / package C2).",
+    "A Brainfood slice is a BOUNDED, derived JSON artifact: a small, auditable",
+    "bundle of references plus a fingerprint, never a governed data store.",
+    "Bounded means both size and quantity are capped; a slice that exceeds a",
+    "cap is split, not truncated in place.",
+    "Identity is stable and content-addressed so a slice can be cited by id,",
+    "recomputed, and compared without reading its sources again."
+  ],
+  "contract_id": "nexus.brainfood.slice",
+  "contract_version": "1.0.0",
+  "frozen_at": "2026-11-10",
+  "plan_ref": "8261645",
+  "authority": {
+    "source_authority": "derived",
+    "is_authoritative": false,
+    "may_be_written_to_governed_tables": false,
+    "note": "A slice cites authorities; it never becomes one. Authority membership is the closed set in schemas/decision-b-freeze/jsonb_contract_test.py."
+  },
+  "bounds": {
+    "max_bytes": 262144,
+    "max_source_refs": 64,
+    "max_interactions": 128,
+    "max_embedding_refs": 32,
+    "split_policy": "when a cap is exceeded, emit slice.part N/M with parent_slice_id set; never drop refs silently"
+  },
+  "fingerprint": {
+    "algorithm": "sha256",
+    "canonicalization": "RFC8785-style canonical JSON of the slice body WITHOUT the `fingerprint` field",
+    "fields": ["fingerprint", "source_digest", "vocabulary_version"],
+    "rule": "a slice whose recomputed fingerprint differs from the stored value is `invalid` and must not be consumed"
+  },
+  "status_enum": [
+    {
+      "value": "draft",
+      "meaning": "assembled, not yet fingerprinted/verified; not consumable"
+    },
+    {
+      "value": "recorded",
+      "meaning": "fingerprint present and recomputable; consumable as evidence"
+    },
+    {
+      "value": "superseded",
+      "meaning": "replaced by a newer slice id; retained for lineage only"
+    },
+    {
+      "value": "withdrawn",
+      "meaning": "retracted by its owner; not consumable, retained for audit"
+    },
+    {
+      "value": "rejected",
+      "meaning": "failed fingerprint or bound validation; never consumable"
+    }
+  ],
+  "required_fields": [
+    "slice_id",
+    "slice_version",
+    "status",
+    "valid_from",
+    "recorded_at",
+    "source_refs",
+    "source_digest",
+    "fingerprint",
+    "vocabulary_version",
+    "bounds_applied"
+  ],
+  "field_contract": {
+    "slice_id": "stable id: 'brainfood:' + sha256(slice_version + ':' + fingerprint)",
+    "slice_version": "monotonic integer per logical slice family",
+    "valid_from": "ISO-8601 valid-time start (the world-time the slice describes)",
+    "valid_until": "ISO-8601 valid-time end or null for open",
+    "recorded_at": "ISO-8601 record-time (when this artifact was assembled)",
+    "source_refs": "array of {authority, namespace, record_id, content_hash?} — identity only, no copied source content",
+    "source_digest": "sha256 over the ordered list of source_refs (identity-level)",
+    "fingerprint": "sha256 over the canonical slice body (see fingerprint.canonicalization)",
+    "vocabulary_version": "must match a frozen schemas/convergence/interaction-vocabulary.v1.json version",
+    "interactions": "array of vocabulary ids (actors/roles/states/transitions) this slice is about — citation, not assertion",
+    "bounds_applied": "{max_bytes, max_source_refs, max_interactions, max_embedding_refs} actually enforced at assembly time",
+    "parent_slice_id": "present only for split parts"
+  },
+  "invariants": [
+    "A slice never stores source content, only identities and hashes (mirrors resolution.keychain_event_outbox.read_set).",
+    "valid_from/recorded_at are both mandatory: a slice without both is `rejected`.",
+    "A slice's status is explicit at rest; absence of a status is a defect, not an implied `recorded`.",
+    "Reassembling the same sources with the same vocabulary_version yields the same fingerprint (deterministic).",
+    "A slice may cite an authority id; it may not claim authority."
+  ],
+  "example": {
+    "slice_id": "brainfood:0000000000000000000000000000000000000000000000000000000000000000",
+    "slice_version": 1,
+    "status": "draft",
+    "valid_from": "2026-11-10T00:00:00Z",
+    "valid_until": null,
+    "recorded_at": "2026-11-10T00:00:00Z",
+    "source_refs": [
+      {
+        "authority": "conduit",
+        "namespace": "conduit.plan",
+        "record_id": "8261645",
+        "content_hash": null
+      }
+    ],
+    "source_digest": "<sha256 of ordered source_refs>",
+    "fingerprint": "<sha256 of canonical body>",
+    "vocabulary_version": "1.0.0",
+    "interactions": ["transition.plan.receipt"],
+    "bounds_applied": {
+      "max_bytes": 262144,
+      "max_source_refs": 64,
+      "max_interactions": 128,
+      "max_embedding_refs": 32
+    },
+    "note": "Illustrative shape only. No production slice is emitted by this decomposition."
+  }
+}
