@@ -62,10 +62,23 @@ DB = dict(
 )
 
 # ── the three health checks (mirrors pipeline-health-check card v2) ────
-QUERY_BLOCKED = """
+#
+# Receipt surface. Receipts left `vision.receipts` at the 2026-09-13
+# write-boundary cutover: that table's newest row is 2026-09-13 21:19Z and it
+# has taken nothing since, while every plan touched in the last 30 days has
+# receipts only in the unified projection. Reading the retired table made
+# checks 1 and 2 return an empty "latest" set for every newer plan — the
+# sweep reported "None" while conduit (:3100) correctly listed plan 8261650
+# as BLOCKED on a builder receipt that existed only in the projection.
+# `nebula.receipts_unified` is the live projection conduit's own
+# get_plan_receipts serves, and it is a strict superset of the retired table
+# (zero plans present in vision.receipts are missing from it).
+RECEIPT_SURFACE = "nebula.receipts_unified"
+
+QUERY_BLOCKED = f"""
 WITH latest AS (
   SELECT DISTINCT ON (plan_id) plan_id, type, created_at
-  FROM vision.receipts WHERE plan_id ~ '^[0-9]+$'
+  FROM {RECEIPT_SURFACE} WHERE plan_id ~ '^[0-9]+$'
   ORDER BY plan_id, created_at DESC)
 SELECT plan_id, type, to_char(created_at, 'YYYY-MM-DD') AS since
 FROM latest WHERE type IN ('BLOCK','HOLD') ORDER BY created_at
@@ -75,14 +88,25 @@ FROM latest WHERE type IN ('BLOCK','HOLD') ORDER BY created_at
 # flagged when ALL THREE hold: latest receipt PLAN_CREATE >24h AND a builder
 # ticket unclaimed >24h AND external completion evidence exists
 # (IMPLEMENTATION/REVIEW_PASS receipts OR inspection/record evidence).
-QUERY_DRIFT = """
+QUERY_DRIFT = f"""
 WITH latest AS (
   SELECT DISTINCT ON (plan_id) plan_id, type, created_at
-  FROM vision.receipts WHERE plan_id ~ '^[0-9]+$'
+  FROM {RECEIPT_SURFACE} WHERE plan_id ~ '^[0-9]+$'
   ORDER BY plan_id, created_at DESC),
+terminal AS (
+  -- Plans already closed in the canonical plan row cannot be "stuck pending";
+  -- their receipt chain merely stops at PLAN_CREATE (drift in the chain, not
+  -- in the lifecycle). Without this, six archived plans (0003, 0006, 0008,
+  -- 0015, 1290, 8261652) were reported as implemented-but-pending on the
+  -- unified surface. Plans with no plan row are still reported: unknown is
+  -- not the same as closed.
+  SELECT plan_number::text AS plan_id
+  FROM nebula.implementation_plans
+  WHERE status IN ('completed','archived','closed')),
 stuck AS (
   SELECT plan_id, created_at FROM latest
-  WHERE type = 'PLAN_CREATE' AND created_at < NOW() - INTERVAL '24 hours'),
+  WHERE type = 'PLAN_CREATE' AND created_at < NOW() - INTERVAL '24 hours'
+    AND plan_id NOT IN (SELECT plan_id FROM terminal)),
 ticks AS (
   SELECT plan_id,
     count(*) FILTER (WHERE role = 'builder' AND status = 'open'
@@ -95,7 +119,7 @@ ticks AS (
   FROM vision.tickets GROUP BY plan_id),
 receipt_ev AS (
   SELECT plan_id, count(*) AS n
-  FROM vision.receipts
+  FROM {RECEIPT_SURFACE}
   WHERE type IN ('IMPLEMENTATION','REVIEW_PASS') AND plan_id ~ '^[0-9]+$'
   GROUP BY plan_id),
 rec_ev AS (
@@ -377,15 +401,20 @@ def build_report(findings, role, model):
             "| plan_id | last_plan_create | expired | unclaimed>24h | cancelled | evidence | FLAG |",
             "|---|---|---|---|---|---|---|",
         ]
-        flagged = []
+        # NOTE: do not reuse the outer `flagged` name here. `flagged` is the
+        # §3 flagged-changes result and is consumed below as 4-tuples;
+        # shadowing it with these 5-tuples crashed build_report with
+        # "too many values to unpack" whenever a drift row carried the FLAG —
+        # which is exactly when a report is most needed.
+        drift_flagged = []
         for pid, since, exp, canc, ev, unclaimed, flag in drift:
             mark = "🚩" if flag else ""
             lines.append(f"| {pid} | {since} | {exp} | {unclaimed} | {canc} | {ev} | {mark} |")
             if flag:
-                flagged.append((pid, since, exp, unclaimed, ev))
+                drift_flagged.append((pid, since, exp, unclaimed, ev))
         lines.append("")
         lines.append(
-            f"**{len(flagged)} flagged** (🚩 = stuck PLAN_CREATE >24h AND expired/unclaimed builder ticket AND external completion evidence — implemented-but-pending, report-only, never auto-closed; finding records tagged `to:architect`+`to:watchdog` are emitted for these)."
+            f"**{len(drift_flagged)} flagged** (🚩 = stuck PLAN_CREATE >24h AND expired/unclaimed builder ticket AND external completion evidence — implemented-but-pending, report-only, never auto-closed; finding records tagged `to:architect`+`to:watchdog` are emitted for these)."
         )
         lines.append("")
         lines.append("**Remediation:** evidence>0 → implemented-but-pending: close via IMPLEMENTATION + REVIEW_PASS. expired/unclaimed>0 with no evidence → abandoned: close via CANCELLED receipt (`POST /api/receipts/`), or re-arm ticket if genuinely wanted. Heuristic — confirm each manually.")
