@@ -488,6 +488,13 @@ r9-verify-test:
 r9-verify-live:
 	@echo "[r9-verify-live] R9 replication checklist against LIVE hosts (read-only; V4 checksums vanadium — allow minutes)..."
 	@python3 bin/r9-replication-verify.py $(ARGS)
+same-lan-test:
+	@echo "[same-lan-test] same-LAN §6 checklist suite (hermetic; injected runners, no sockets/systemd/journal)..."
+	@python3 -m pytest bin/tests/test_verify_same_lan_checklist.py -q
+
+same-lan-live:
+	@echo "[same-lan-live] same-LAN §6 checklist against LIVE fleet (read-only; fleet/vanadium/twin/JVM probes)..."
+	@python3 bin/verify-same-lan-checklist.py $(ARGS)
 attest-wiring-test:
 	@echo "[attest-wiring-test] boot-shim attestation wiring (hermetic + real-DB E2E, wr-conf-034)..."
 	@python3 -m pytest python/continuity/tests/test_attest.py python/nexus_core/wrp/tests/test_attest_wiring_e2e.py -v
