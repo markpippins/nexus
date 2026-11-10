@@ -30,7 +30,7 @@ ancestors of `refs/remotes/origin/main` unless noted):
 
 Cost, unchanged from the prior summation: the architectural roadmap froze
 mid-stride while the team fought harness exits, watchdog kills, dependency
-drift, and attestation-gate rejections. The frozen items are §2–§4 below.
+drift, and attestation-gate rejections. The frozen items are §2–§4c below.
 
 **Correction (this revision):** PR #935 (`5f517965e`) **is landed** — it is the tip of
 `refs/remotes/origin/main`. An earlier draft called it unverified because the
@@ -191,23 +191,63 @@ proposal and is not re-argued here.
   `PYTHONPATH=python python3 -m pytest python/structure -q` → **116 passed**
   (run on this host, 2026-11-10). No consumer imports the contract outside
   `python/structure` (verified by grep in a prior session).
-- **Moleculer twins: code present, runtime NOT VERIFIABLE.**
-  The `moleculer/` tree lists ~25 service dirs (aegis, assembly, cascade,
-  conduit, execution, harness, kernel, knowledge, nebula, nexus-broker, peb,
-  resolution, semantics, solscript, …) with `PORT-MAP.md`/`ports.yaml`, but
-  `ss -ltn` on this host shows **no `41xx` listeners and no `:8092`**.
-  Whether twins run anywhere is a same-LAN question.
+- **Moleculer twins: code present, posture enforced, runtime NOT VERIFIABLE.**
+  `moleculer/` holds **23 directories with `package.json`** (aegis, assembly,
+  cascade, conduit, draft, execution, harness, kernel, knowledge, nebula,
+  nexus-broker, peb, prompt-sync, resolution, role-memory, search, semantics,
+  solscript, substance, tackle, voyager, wind — the untruncated text's "18"
+  depends on which set counts as a service). `ports.yaml` declares 19 ports and
+  `ss -ltn` shows **0 bound** (checklist T1 PASS, 0/19, 2026-11-10).
+  `bin/assert_moleculer_ports.sh` is the enforcement: the operator directive of
+  2026-09-22 says moleculer does **not** run locally, and the gate fails if any
+  declared port is bound. Whether twins run anywhere else is a same-LAN question.
 - **JVM conformance: artifacts present, runtime NOT VERIFIABLE.**
-  `jvm/{spring,quarkus,helidon,shared}` exist and three `-SNAPSHOT.jar`
-  files exist under `*/target/`. Thallium (`:8092`) conformance results
-  cannot be checked from here.
+  `jvm/{spring,quarkus,helidon,shared}` exist; the **main checkout** carries
+  at least **10** untracked `*-SNAPSHOT.jar` artifacts under `*/target/`
+  (none tracked, none present in this clean worktree) — the untruncated "three"
+  undercounts. Thallium (`:8092`) conformance results cannot be checked from
+  here, and no local log mentions the claimed probe route.
 - **Aspects / Expression: library-only, local proof of existence.**
   `python/aspects` (`binding_port.py`, `contract.py`, tests) and
   `python/expression` (`boundary.py`) are present in the tree. Wiring to
-  Structure is unwritten.
+  Structure is unwritten. The untruncated dates hold: `python/aspects` was last
+  touched by `9d0c4f53d` (2026-09-23, #505), and `python/expression` by
+  `2e96e8568` (#886, 2026-11-06).
 - **Helium: NOT VERIFIABLE.** No reachability claim is made; the earlier
   "No route to host" observation is withdrawn as an off-network artifact.
 - **Vanadium: pipeline verdict below; host state NOT VERIFIABLE.**
+
+## 4b. The untruncated §3 inventory — claim by claim
+
+The truncated text cut off inside §3, so the first revision never assessed the
+five sub-project narratives. Each is now checked against local evidence:
+
+| Claim (untruncated §3) | Verdict | Local evidence |
+|---|---|---|
+| Moleculer: 18 twins scaffolded, gated/disabled-by-default on titanium (`7b66c196`), canary verification halted | **posture VERIFIED, handle UNVERIFIED** | 23 dirs with `package.json`; `ports.yaml` 19 ports, **0 bound** (T1 PASS 0/19, run 2026-11-10); `bin/assert_moleculer_ports.sh` enforces no-local-moleculer. `7b66c196` is **not a commit object** in the local store — a record-style handle, so the specific gating citation is not verifiable here. |
+| JVM: fat-jar rollout abandoned; thallium `:8092` nexus-core probe failing on `/api/workers/execution/health` | **artifacts VERIFIED, failure NOT VERIFIABLE** | `jvm/{spring,quarkus,helidon,shared}` exist; ≥10 untracked `-SNAPSHOT.jar` files in the main checkout. No local log under `/home/codex/dev/pgsql` or `nexus/logs` mentions `workers/execution/health`, so the probe failure remains a same-LAN claim. |
+| Aspects untouched since 2026-09-23 | **CONFIRMED** | last commit touching `python/aspects` on origin/main: `9d0c4f53d` (2026-09-23, #505). |
+| Expression resumed Nov 6 via PR #886 | **CONFIRMED** | `2e96e8568` (#886, 2026-11-06) is an ancestor of origin/main and is `python/expression`'s last change. Integration as semantic evaluator is still unwritten (§4). |
+| CDLC: PR #700 (22 files) closed without merging, leaving execution emission semantics fragmented | **closure CONFIRMED, loss REFUTED** | #700 closed, unmerged, 22 files, +2,805/-18 — but `git cherry` finds **0** unique commits; twins are ancestors and the inbox-pointer feature serves live traffic (§2b). What remains is a design/ownership gap, not stranded code. |
+| Continuity: `attest.py` patched by #906; blackboard↔keychain integration (`5c5f65ed`) unresolved | **#906 CONFIRMED, integration claim UNVERIFIED** | `9385ef353` (#906, 2026-11-06) is an ancestor. `5c5f65ed` is not a commit object, so the integration state cannot be settled from that handle. |
+
+## 4c. The untruncated §4 friction list — what is still true
+
+| Item (untruncated §4) | Status on 2026-11-10 | Evidence |
+|---|---|---|
+| #908, #909, #913 "waiting on tester" | **STALE — all three merged** | #909 `441b81fe6` 2026-11-07T13:15Z; #908 `c6afed3d4` 2026-11-07T14:00Z; #913 `13f8c73bc` 2026-11-08T00:45Z. All ancestors of `refs/remotes/origin/main`. |
+| vision-srv-py alert cascade continues because #908 is stuck | **CAUSE FALSE, symptom PARTLY TRUE** | #908 merged and removed the service from the *monitored plane*, but the newest issues-forum thread is still `2026-11-08T13:38Z` "vision-srv-py down on :8003 — no systemd unit" (sysadmin, `replyCount: 0`), reporting terrain `OFFLINE` with `activeFlag=true`. The residual issue is terrain/unit decommissioning, not attestation. |
+| Thallium JVM probe failing, no incident | **NOT VERIFIABLE off-network** | `.82:8092` is unreachable from here and no local log references the probe route. No incident (or all-clear) claim is made. |
+| Dashboard/queues do not reflect git | **CONFIRMED** | §2: three true ghosts among seven claimed-landed plans. §3: 36/37 WorkRequests DRAFT, `plan_id` NULL on all. |
+
+**Revised Phase 1.** "Attest and merge #908/#909/#913" is already done — the
+only remaining Phase-1 work is (a) dataset reconciliation: mark the three ghost
+plans complete and dispose of the 36 WR drafts against the existing ledger, and
+(b) retire or restore vision-srv-py's terrain entry/unit so the sysadmin cycle
+stops re-reporting a service that #908 removed from monitoring. **Phase 2 is
+unchanged**, with one ordering constraint: Moleculer/JVM runtime state must be
+resolved on-LAN first, because every claim about their liveness is
+unverifiable from this host.
 
 ## 5. Standing Vanadium pipeline verdict — timestamped local logs only
 
@@ -237,3 +277,9 @@ from this host**; no conclusion about Vanadium the machine is drawn.
    reasons and comments for #700 and #798, and #782's own title/body. Local git
    settles what landed; only the GitHub-side record is missing off-network.
 4. Re-run of the Moleculer twin and JVM conformance checks against live ports.
+5. Thallium probe: read the nexus-core probe logs / hit
+   `/api/workers/execution/health` from `.82:8092` or titanium; no local log
+   records this failure, so the untruncated §4 claim is still open.
+6. vision-srv-py terrain entry: confirm whether `activeFlag=true`/missing unit
+   was retired after #908, or whether the 2026-11-08T13:38Z sysadmin report is
+   the last word on a service that is still half-decommissioned.
