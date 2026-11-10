@@ -175,10 +175,15 @@ async def metrics_auth_middleware(request: Request, call_next):
     if auth_response is not None:
         return auth_response
 
-    # Metrics timing
+    # Metrics timing. `status` defaults to 500 because a raising endpoint never
+    # yields a response — reading `response` here (the old shape) raised
+    # UnboundLocalError inside the finally block, which replaced the endpoint's
+    # own exception before the error handler could build the JSON envelope.
     start = time.monotonic()
+    status = 500
     try:
         response = await call_next(request)
+        status = response.status_code
         return response
     finally:
         duration = time.monotonic() - start
@@ -190,7 +195,7 @@ async def metrics_auth_middleware(request: Request, call_next):
         REQUEST_COUNT.labels(
             method=request.method,
             path=route_path,
-            status=response.status_code,
+            status=status,
         ).inc()
         REQUEST_DURATION.labels(
             method=request.method,
