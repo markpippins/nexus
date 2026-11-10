@@ -63,7 +63,11 @@ jobs:
           # ModuleNotFoundError, so the gate reported the runner's install list
           # rather than the commit. The suite is still DB-free -- these are
           # import-time deps of the app package, not a connection.
-          pip install pytest psycopg2-binary tiktoken pydantic fastapi
+          #
+          # prometheus_client is the same case once more: app.main imports it at
+          # module scope to build the metrics counters, and the middleware
+          # regression test drives that app over ASGI.
+          pip install pytest psycopg2-binary tiktoken pydantic fastapi prometheus_client
 
       - name: Record resolved tools in the run log
         run: |
