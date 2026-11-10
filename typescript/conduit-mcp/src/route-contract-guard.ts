@@ -3,14 +3,20 @@
  *
  * History (PR #448, 2026-09-22): the client drifted from the deployed
  * server's route contract — it called bare `/api/{plan_id}/latest-type`
- * while the deployed Python conduit serves `/api/receipts/...` (same for
+ * while the deployed Python conduit served `/api/receipts/...` (same for
  * sessions/breaker). Because the HTTP helpers swallow 404s as null, the
  * drift surfaced not as an error but as `"current state is none"` from
  * validateReceipt — silently freezing the entire builder backlog.
  *
+ * 2026-11-10 (plan 8261651): the consolidated router (PR #938) is deployed
+ * on :3103, so the contract moved the other way — the client now calls the
+ * bare forms and this guard requires them. Legacy prefixed routers remain
+ * mounted during the transition, so an old server still answering does NOT
+ * satisfy this guard: the requirement is the consolidated surface.
+ *
  * This module re-verifies the contract at conduit-mcp boot against the
- * server's live openapi.json, so the same class of drift fails loudly at
- * startup instead of silently at first receipt.
+ * server's live openapi.json, so drift fails loudly at startup instead of
+ * silently at first receipt.
  *
  * Failure semantics:
  *   - server UNREACHABLE  → warn loudly, continue (tools will throw real
@@ -29,27 +35,27 @@ export interface RequiredRoute {
 
 export const REQUIRED_ROUTES: RequiredRoute[] = [
   // receipts (validateReceipt / issue_receipt / get_plan_receipts)
-  { method: "GET", path: "/api/receipts/{plan_id}/latest-type", why: "validateReceipt state resolution — the PR #448 freeze" },
-  { method: "GET", path: "/api/receipts/{plan_id}/raw", why: "receipt chain (position-aware fan-out)" },
-  { method: "GET", path: "/api/receipts/{plan_id}", why: "get_plan_receipts tool" },
-  { method: "POST", path: "/api/receipts/", why: "issue_receipt persistence" },
-  { method: "DELETE", path: "/api/receipts/{plan_id}", why: "unblock/revise receipt cleanup" },
+  { method: "GET", path: "/api/{plan_id}/latest-type", why: "validateReceipt state resolution — the PR #448 freeze" },
+  { method: "GET", path: "/api/{plan_id}/raw", why: "receipt chain (position-aware fan-out)" },
+  { method: "GET", path: "/api/{plan_id}", why: "get_plan_receipts tool" },
+  { method: "POST", path: "/api", why: "issue_receipt persistence" },
+  { method: "DELETE", path: "/api/{plan_id}", why: "unblock/revise receipt cleanup" },
   // sessions
-  { method: "GET", path: "/api/sessions/", why: "getAllSessions" },
-  { method: "GET", path: "/api/sessions/{session_id}", why: "getSession" },
-  { method: "GET", path: "/api/sessions/running", why: "getRunningSessions" },
-  { method: "GET", path: "/api/sessions/stale", why: "getStaleSessions" },
-  { method: "PATCH", path: "/api/sessions/{session_id}/cost", why: "updateSessionCost" },
-  { method: "POST", path: "/api/sessions/{session_id}/heartbeat", why: "updateSessionHeartbeat" },
-  { method: "POST", path: "/api/sessions/{session_id}/kill", why: "killSession" },
+  { method: "GET", path: "/api", why: "getAllSessions" },
+  { method: "GET", path: "/api/{session_id}", why: "getSession" },
+  { method: "GET", path: "/api/running", why: "getRunningSessions" },
+  { method: "GET", path: "/api/stale", why: "getStaleSessions" },
+  { method: "PATCH", path: "/api/{session_id}/cost", why: "updateSessionCost" },
+  { method: "POST", path: "/api/{session_id}/heartbeat", why: "updateSessionHeartbeat" },
+  { method: "POST", path: "/api/{session_id}/kill", why: "killSession" },
   // circuit breaker
-  { method: "GET", path: "/api/breaker/", why: "isConduitPaused" },
-  { method: "POST", path: "/api/breaker/trip", why: "tripBreaker" },
-  { method: "POST", path: "/api/breaker/reset", why: "clearBreaker" },
-  { method: "POST", path: "/api/breaker/pause", why: "setConduitPaused(true)" },
-  { method: "POST", path: "/api/breaker/resume", why: "setConduitPaused(false)" },
-  { method: "GET", path: "/api/breaker/failure-recovery", why: "getFailureRecoveryConfig" },
-  { method: "POST", path: "/api/breaker/failure-recovery", why: "saveFailureRecoveryConfig" },
+  { method: "GET", path: "/api/breaker", why: "isConduitPaused" },
+  { method: "POST", path: "/api/trip", why: "tripBreaker" },
+  { method: "POST", path: "/api/reset", why: "clearBreaker" },
+  { method: "POST", path: "/api/pause", why: "setConduitPaused(true)" },
+  { method: "POST", path: "/api/resume", why: "setConduitPaused(false)" },
+  { method: "GET", path: "/api/failure-recovery", why: "getFailureRecoveryConfig" },
+  { method: "POST", path: "/api/failure-recovery", why: "saveFailureRecoveryConfig" },
   { method: "GET", path: "/healthz", why: "checkHealth" },
 ];
 
