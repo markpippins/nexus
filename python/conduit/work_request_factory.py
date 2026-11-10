@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 from executor_registry import ModelConfig
@@ -107,19 +108,59 @@ def _build_completion_conditions(
     return conditions
 
 
-def _build_files_affected(plan: Dict[str, Any]) -> List[ProducedFile]:
+_PROSE_QUALIFIER_RE = re.compile(r"\s*\([^)]*\)\s*$")
+
+
+def _normalise_declared_path(raw: Any, working_path: str = "") -> Optional[str]:
+    """Turn one plan `files_affected` entry into a repo-relative path, or None.
+
+    Plan 8261639 stored prose area descriptions ("nexus/resolution schema
+    migrations", "nexus/typescript/lilac-srv (new service boundary)") in the
+    same field other plans use for paths. Treated as paths they are
+    unsatisfiable: the directory never exists, and the `nexus/` repo-name
+    prefix collapses against a repo-root working path into `nexus/nexus/...`.
+    The dispatch layer is the wrong place to guess at prose, so an entry that
+    is not path-shaped is dropped from the evidence contract instead of being
+    demanded of the builder.
+    """
+    text = str(raw or "").strip().strip('"').strip()
+    if not text:
+        return None
+    text = _PROSE_QUALIFIER_RE.sub("", text).strip()
+    if not text or any(ch.isspace() for ch in text):
+        return None
+    if "/" not in text and "." not in text:
+        return None
+    while text.startswith("./"):
+        text = text[2:]
+    if text.startswith("/"):
+        return None
+    if any(part == ".." for part in text.split("/")):
+        return None
+    base = os.path.basename(os.path.normpath(working_path)) if working_path else ""
+    if base and text.startswith(base + "/"):
+        text = text[len(base) + 1:]
+    return text or None
+
+
+def _build_files_affected(plan: Dict[str, Any], working_path: str = "") -> List[ProducedFile]:
     files = _parse_path_list(plan.get("files_affected"))
     if not files:
         _log.debug("_build_files_affected: no files affected for plan %s", plan.get("id", "?"))
         return []
-    result = [
-        ProducedFile(
-            path=str(f),
-            type="code",
-            origin_step="step_1",
-        )
-        for f in files
-    ]
+    result: List[ProducedFile] = []
+    seen: set[str] = set()
+    for raw in files:
+        path = _normalise_declared_path(raw, working_path)
+        if not path or path in seen:
+            if path is None:
+                _log.info(
+                    "_build_files_affected: plan=%s drops non-path entry %r",
+                    plan.get("id", "?"), raw,
+                )
+            continue
+        seen.add(path)
+        result.append(ProducedFile(path=path, type="code", origin_step="step_1"))
     _log.debug("_build_files_affected: plan=%s files=%d", plan.get("id", "?"), len(result))
     return result
 
@@ -156,7 +197,7 @@ class WorkRequestFactory:
             acceptance_criteria.append(
                 f"Reviewer ticket completion criterion: {ticket_completion_criteria.strip()}"
             )
-        files_affected = _build_files_affected(plan)
+        files_affected = _build_files_affected(plan, working_path)
 
         # ── intent ────────────────────────────────────────────────────
         intent = WorkRequestIntent(
