@@ -10385,6 +10385,20 @@ COMMENT ON FUNCTION shrapnel.forbid_stereotype_field_mutation() IS 'Freezes ster
 
 
 --
+-- Name: forbid_stereotype_lifecycle_mutation(); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.forbid_stereotype_lifecycle_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  RAISE EXCEPTION 'stereotype_lifecycle_event % is append-only; % rejected',
+    COALESCE(OLD.event_id, NEW.event_id), TG_OP USING ERRCODE = '23514';
+END;
+$$;
+
+
+--
 -- Name: forbid_stereotype_revision_mutation(); Type: FUNCTION; Schema: shrapnel; Owner: -
 --
 
@@ -10408,6 +10422,7 @@ CREATE FUNCTION shrapnel.object_classify(p_object_id bigint, p_revision_id bigin
 DECLARE
   v_stereotype_id bigint;
   v_stereotype    text;
+  v_lifecycle     text;
   v_field_conf    bigint;
   v_field_disp    bigint;
   v_value_id      bigint;
@@ -10423,6 +10438,16 @@ BEGIN
   WHERE r.id = p_revision_id;
   IF v_stereotype_id IS NULL THEN
     RAISE EXCEPTION 'object_classify: revision % not found', p_revision_id;
+  END IF;
+
+  v_lifecycle := shrapnel.stereotype_current_state(v_stereotype_id);
+
+  -- Retirement is the forward gate that makes retirement mean anything: no
+  -- NEW instance may enter a retired stereotype. Existing instances keep
+  -- their classification forever (no retroactive un-classification).
+  IF v_lifecycle = 'retired' THEN
+    RAISE EXCEPTION 'object_classify: stereotype % is retired; classification into a retired stereotype is refused', v_stereotype
+      USING ERRCODE = '23514';
   END IF;
 
   -- Pre-check the EFFECTIVE contract (inherited + own requirements).
@@ -10500,11 +10525,12 @@ BEGIN
    WHERE id = p_object_id;
 
   RETURN jsonb_build_object(
-    'object_id',   p_object_id,
-    'stereotype',  v_stereotype,
-    'revision_id', p_revision_id,
-    'disposition', p_disposition,
-    'classified',  true
+    'object_id',       p_object_id,
+    'stereotype',      v_stereotype,
+    'revision_id',     p_revision_id,
+    'disposition',     p_disposition,
+    'classified',      true,
+    'lifecycle_state', v_lifecycle
   );
 END;
 $$;
@@ -10624,6 +10650,51 @@ $$;
 
 
 --
+-- Name: stereotype_claim_ownership(text, text); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_claim_ownership(p_source text, p_name text) RETURNS bigint
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_stereotype_id bigint;
+  v_owner         text;
+BEGIN
+  IF p_source IS NULL OR btrim(p_source) = '' THEN
+    RAISE EXCEPTION 'stereotype_claim_ownership: source is required';
+  END IF;
+
+  SELECT id INTO v_stereotype_id FROM shrapnel.stereotype WHERE name = p_name;
+  IF v_stereotype_id IS NULL THEN
+    RAISE EXCEPTION 'stereotype_claim_ownership: stereotype % not found; reconcile it before claiming ownership', p_name;
+  END IF;
+
+  INSERT INTO shrapnel.stereotype_source_owner (source, stereotype_id)
+  VALUES (p_source, v_stereotype_id)
+  ON CONFLICT (stereotype_id) DO NOTHING;
+
+  SELECT source INTO v_owner
+    FROM shrapnel.stereotype_source_owner
+   WHERE stereotype_id = v_stereotype_id;
+
+  IF v_owner IS DISTINCT FROM p_source THEN
+    RAISE EXCEPTION 'stereotype_claim_ownership: stereotype % is already owned by source %; ownership cannot be transferred',
+      p_name, v_owner USING ERRCODE = '23514';
+  END IF;
+
+  RETURN v_stereotype_id;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION stereotype_claim_ownership(p_source text, p_name text); Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON FUNCTION shrapnel.stereotype_claim_ownership(p_source text, p_name text) IS 'Idempotently claim a stereotype for an emitter source. First claim wins; a second source is refused. Ownership gates every lifecycle transition.';
+
+
+--
 -- Name: stereotype_create_revision(text, bigint, text, text[], text[]); Type: FUNCTION; Schema: shrapnel; Owner: -
 --
 
@@ -10692,6 +10763,31 @@ BEGIN
   RETURN v_revision;
 END;
 $$;
+
+
+--
+-- Name: stereotype_current_state(bigint); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_current_state(p_stereotype_id bigint) RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
+  -- A stereotype with no event has never left the default state.
+  SELECT coalesce(
+    (SELECT e.to_state
+       FROM shrapnel.stereotype_lifecycle_event e
+      WHERE e.stereotype_id = p_stereotype_id
+      ORDER BY e.event_id DESC
+      LIMIT 1),
+    'active');
+$$;
+
+
+--
+-- Name: FUNCTION stereotype_current_state(p_stereotype_id bigint); Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON FUNCTION shrapnel.stereotype_current_state(p_stereotype_id bigint) IS 'Current lifecycle state of a stereotype: the newest event''s to_state, or ''active'' when no lifecycle event exists.';
 
 
 --
@@ -10831,6 +10927,401 @@ COMMENT ON FUNCTION shrapnel.stereotype_fields_document_for(p_required_fields te
 
 
 --
+-- Name: stereotype_lifecycle_apply(text, text, text[], text[], text[], jsonb); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_lifecycle_apply(p_source text, p_plan_token text, p_declared text[], p_retired text[] DEFAULT ARRAY[]::text[], p_deprecated text[] DEFAULT ARRAY[]::text[], p_reasons jsonb DEFAULT '{}'::jsonb) RETURNS TABLE(name text, from_state text, to_state text)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_expected text;
+  v_blocked  text;
+  r          record;
+  v_sid      bigint;
+  v_current  text;
+  v_head     bigint;
+  v_reason   text;
+BEGIN
+  IF p_plan_token IS NULL OR btrim(p_plan_token) = '' THEN
+    RAISE EXCEPTION 'stereotype_lifecycle_apply: p_plan_token is required (two-phase apply)';
+  END IF;
+
+  -- Recompute against the CURRENT catalog. Any movement in a head revision,
+  -- a fingerprint, an ownership row or a lifecycle state changes the token.
+  SELECT p.plan_token INTO v_expected
+    FROM shrapnel.stereotype_lifecycle_plan(
+           p_source, p_declared, p_retired, p_deprecated, p_reasons) p
+   LIMIT 1;
+
+  IF v_expected IS DISTINCT FROM p_plan_token THEN
+    RAISE EXCEPTION 'stereotype_lifecycle_apply: plan token is stale — the catalog changed after phase 1; re-run the report and review the new plan'
+      USING ERRCODE = '40001';
+  END IF;
+
+  -- All-or-nothing: a blocked row means the plan is not safe to apply. This
+  -- is deliberately stricter than skipping the blocked rows — a partially
+  -- applied destructive plan is not a plan anyone reviewed.
+  SELECT string_agg(p.name || ' (' || coalesce(p.blocked_by, 'blocked') || ')',
+                    ', ' ORDER BY p.name)
+    INTO v_blocked
+    FROM shrapnel.stereotype_lifecycle_plan(
+           p_source, p_declared, p_retired, p_deprecated, p_reasons) p
+   WHERE p.action = 'blocked';
+
+  IF v_blocked IS NOT NULL THEN
+    RAISE EXCEPTION 'stereotype_lifecycle_apply: plan contains blocked actions: %', v_blocked;
+  END IF;
+
+  FOR r IN
+    SELECT p.name, p.action
+      FROM shrapnel.stereotype_lifecycle_plan(
+             p_source, p_declared, p_retired, p_deprecated, p_reasons) p
+     WHERE p.action IN ('deprecate', 'retire', 'activate')
+     ORDER BY
+       -- Retirements first, children before parents. The trigger re-checks
+       -- live children, so this ordering is a convenience the DB verifies,
+       -- not an assumption it trusts.
+       CASE WHEN p.action = 'retire' THEN 0 ELSE 1 END,
+       (SELECT rv.depth
+          FROM shrapnel.stereotype_resolve(p.name) sr
+          JOIN shrapnel.stereotype_revision rv ON rv.id = sr.head_revision_id)
+         DESC NULLS LAST,
+       p.name
+  LOOP
+    SELECT s.id INTO v_sid FROM shrapnel.stereotype s WHERE s.name = r.name;
+    SELECT sr.head_revision_id INTO v_head
+      FROM shrapnel.stereotype_resolve(r.name) sr;
+
+    v_current := shrapnel.stereotype_current_state(v_sid);
+
+    v_reason := nullif(btrim(coalesce(p_reasons -> r.name ->> 'reason', '')), '');
+    IF v_reason IS NULL THEN
+      -- Retirement and deprecation are destructive-ish forward gates: a
+      -- tombstone or a stop-authoring decision without a reason is not
+      -- auditable. Reactivation is a reversal that restores the declared
+      -- state, so it gets a deterministic reason instead of blocking the
+      -- whole plan over a name the caller did not annotate.
+      IF r.action = 'activate' THEN
+        v_reason := 'reactivated: declared active by source ' || p_source;
+      ELSE
+        RAISE EXCEPTION 'stereotype_lifecycle_apply: % requires a non-empty reason for action %',
+          r.name, r.action;
+      END IF;
+    END IF;
+
+    IF r.action = 'retire' THEN
+      -- active -> retired is two events, because active -> retired is not a
+      -- legal transition. The intermediate deprecation is real history, not
+      -- a formality: it records that the name stopped being authored before
+      -- it was tombstoned.
+      IF v_current = 'active' THEN
+        INSERT INTO shrapnel.stereotype_lifecycle_event
+          (stereotype_id, from_state, to_state, reason, source, at_revision_id)
+        VALUES (v_sid, 'active', 'deprecated', v_reason, p_source, v_head);
+        name := r.name; from_state := 'active'; to_state := 'deprecated';
+        RETURN NEXT;
+        v_current := 'deprecated';
+      END IF;
+
+      IF v_current = 'deprecated' THEN
+        INSERT INTO shrapnel.stereotype_lifecycle_event
+          (stereotype_id, from_state, to_state, reason, source, at_revision_id)
+        VALUES (v_sid, 'deprecated', 'retired', v_reason, p_source, v_head);
+        name := r.name; from_state := 'deprecated'; to_state := 'retired';
+        RETURN NEXT;
+      END IF;
+
+    ELSIF r.action = 'deprecate' THEN
+      IF v_current = 'active' THEN
+        INSERT INTO shrapnel.stereotype_lifecycle_event
+          (stereotype_id, from_state, to_state, reason, source, at_revision_id)
+        VALUES (v_sid, 'active', 'deprecated', v_reason, p_source, v_head);
+        name := r.name; from_state := 'active'; to_state := 'deprecated';
+        RETURN NEXT;
+      END IF;
+
+    ELSIF r.action = 'activate' THEN
+      IF v_current IN ('deprecated', 'retired') THEN
+        INSERT INTO shrapnel.stereotype_lifecycle_event
+          (stereotype_id, from_state, to_state, reason, source, at_revision_id)
+        VALUES (v_sid, v_current, 'active', v_reason, p_source, v_head);
+        name := r.name; from_state := v_current; to_state := 'active';
+        RETURN NEXT;
+      END IF;
+    END IF;
+  END LOOP;
+
+  RETURN;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION stereotype_lifecycle_apply(p_source text, p_plan_token text, p_declared text[], p_retired text[], p_deprecated text[], p_reasons jsonb); Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON FUNCTION shrapnel.stereotype_lifecycle_apply(p_source text, p_plan_token text, p_declared text[], p_retired text[], p_deprecated text[], p_reasons jsonb) IS 'Phase 2 of the retire/tombstone verb. Refuses a stale plan token and any blocked row, then writes lifecycle events in reverse-topological order. Never deletes a stereotype, never cascades, never touches an instance.';
+
+
+--
+-- Name: stereotype_lifecycle_plan(text, text[], text[], text[], jsonb); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_lifecycle_plan(p_source text, p_declared text[], p_retired text[] DEFAULT ARRAY[]::text[], p_deprecated text[] DEFAULT ARRAY[]::text[], p_reasons jsonb DEFAULT '{}'::jsonb) RETURNS TABLE(name text, current_state text, action text, reason text, blocked_by text, head_revision_id bigint, plan_token text)
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE
+  v_declared   text[];
+  v_retired    text[];
+  v_deprecated text[];
+BEGIN
+  IF p_source IS NULL OR btrim(p_source) = '' THEN
+    RAISE EXCEPTION 'stereotype_lifecycle_plan: source is required';
+  END IF;
+  IF p_reasons IS NOT NULL AND jsonb_typeof(p_reasons) <> 'object' THEN
+    RAISE EXCEPTION 'stereotype_lifecycle_plan: p_reasons must be a JSON object keyed by stereotype name';
+  END IF;
+
+  -- Deduplicate and sort, so the token is stable under argument reordering.
+  v_declared := ARRAY(
+    SELECT DISTINCT n FROM unnest(coalesce(p_declared, ARRAY[]::text[])) AS u(n) ORDER BY n
+  );
+  v_retired := ARRAY(
+    SELECT DISTINCT n FROM unnest(coalesce(p_retired, ARRAY[]::text[])) AS u(n) ORDER BY n
+  );
+  v_deprecated := ARRAY(
+    SELECT DISTINCT n FROM unnest(coalesce(p_deprecated, ARRAY[]::text[])) AS u(n) ORDER BY n
+  );
+
+  -- An annotation on an absent name is not a retirement instruction. Absence
+  -- is never sufficient; requiring the name to also be declared keeps that
+  -- rule true at the API boundary as well as in the docs.
+  IF EXISTS (
+    SELECT 1 FROM unnest(v_retired) AS u(n) WHERE NOT (u.n = ANY (v_declared))
+  ) THEN
+    RAISE EXCEPTION 'stereotype_lifecycle_plan: every @retired name must also be declared (absent names are never retired)';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM unnest(v_deprecated) AS u(n) WHERE NOT (u.n = ANY (v_declared))
+  ) THEN
+    RAISE EXCEPTION 'stereotype_lifecycle_plan: every @deprecated name must also be declared';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM unnest(v_retired) AS u(n) WHERE u.n = ANY (v_deprecated)
+  ) THEN
+    RAISE EXCEPTION 'stereotype_lifecycle_plan: a stereotype cannot be annotated both @retired and @deprecated';
+  END IF;
+
+  RETURN QUERY
+  WITH names AS (
+    -- Every name the source declares, plus every name the source already owns
+    -- (the latter is how an orphan is discovered — from ownership, not from
+    -- scanning the whole catalog, which would expose hand-authored entries).
+    SELECT u.n AS name
+      FROM unnest(v_declared) AS u(n)
+    UNION
+    SELECT s.name
+      FROM shrapnel.stereotype_source_owner o
+      JOIN shrapnel.stereotype s ON s.id = o.stereotype_id
+     WHERE o.source = p_source
+       AND NOT (s.name = ANY (v_declared))
+       AND shrapnel.stereotype_current_state(s.id) <> 'retired'
+  ),
+  info AS (
+    SELECT
+      nm.name,
+      s.id                               AS stereotype_id,
+      r.head_revision_id,
+      r.version                          AS head_version,
+      hr.contract_fingerprint            AS head_fingerprint,
+      shrapnel.stereotype_current_state(s.id) AS current_state,
+      o.source                           AS owner_source,
+      (nm.name = ANY (v_retired))        AS want_retired,
+      (nm.name = ANY (v_deprecated))     AS want_deprecated,
+      (nm.name = ANY (v_declared))       AS is_declared,
+      nullif(btrim(coalesce(p_reasons -> nm.name ->> 'reason', '')), '')    AS ann_reason,
+      nullif(btrim(coalesce(p_reasons -> nm.name ->> 'reference', '')), '') AS ann_reference,
+      (
+        -- Live children that are NOT themselves scheduled for retirement by
+        -- this same source in this same plan. A whole subtree can therefore
+        -- be retired in one reviewed plan; a child left live blocks the
+        -- parent, and apply refuses the whole plan if any row is blocked.
+        SELECT array_agg(cs.name ORDER BY cs.name)
+          FROM shrapnel.stereotype cs
+          JOIN LATERAL shrapnel.stereotype_resolve(cs.name) cr ON true
+         WHERE s.id IS NOT NULL
+           AND cs.id <> s.id
+           AND shrapnel.stereotype_current_state(cs.id) <> 'retired'
+           AND shrapnel.stereotype_extends(cr.head_revision_id, nm.name)
+           AND NOT (
+             cs.name = ANY (v_retired)
+             AND EXISTS (
+               SELECT 1 FROM shrapnel.stereotype_source_owner co
+                WHERE co.stereotype_id = cs.id AND co.source = p_source
+             )
+           )
+      ) AS live_children
+    FROM names nm
+    LEFT JOIN shrapnel.stereotype s
+           ON s.name = nm.name
+    LEFT JOIN LATERAL shrapnel.stereotype_resolve(nm.name) r ON true
+    LEFT JOIN shrapnel.stereotype_revision hr ON hr.id = r.head_revision_id
+    LEFT JOIN shrapnel.stereotype_source_owner o ON o.stereotype_id = s.id
+  ),
+  decided AS (
+    SELECT
+      i.*,
+      CASE
+        WHEN NOT i.is_declared THEN 'orphan_candidate'
+        WHEN i.want_retired THEN
+          CASE
+            WHEN i.stereotype_id IS NULL                              THEN 'blocked'
+            WHEN i.owner_source IS DISTINCT FROM p_source            THEN 'blocked'
+            WHEN i.current_state = 'retired'                         THEN 'retire'
+            WHEN i.ann_reason IS NULL                                THEN 'blocked'
+            WHEN i.live_children IS NOT NULL                         THEN 'blocked'
+            ELSE 'retire'
+          END
+        WHEN i.want_deprecated THEN
+          CASE
+            WHEN i.stereotype_id IS NULL                              THEN 'blocked'
+            WHEN i.owner_source IS DISTINCT FROM p_source            THEN 'blocked'
+            WHEN i.current_state = 'retired'                         THEN 'blocked'
+            WHEN i.ann_reason IS NULL                                THEN 'blocked'
+            ELSE 'deprecate'
+          END
+        WHEN i.stereotype_id IS NULL                                 THEN 'create'
+        WHEN i.current_state IN ('deprecated', 'retired') THEN
+          CASE
+            WHEN i.owner_source IS DISTINCT FROM p_source            THEN 'blocked'
+            ELSE 'activate'
+          END
+        ELSE 'reconcile'
+      END AS action,
+      CASE
+        WHEN NOT i.is_declared THEN
+          'owned by ' || p_source || ' but absent from the declared catalog; absence never retires'
+        WHEN i.want_retired AND i.stereotype_id IS NULL THEN
+          'annotated @retired but not present in the catalog'
+        WHEN i.want_retired AND i.owner_source IS DISTINCT FROM p_source THEN
+          'not owned by source ' || p_source
+        WHEN i.want_retired AND i.current_state = 'retired' THEN
+          'already retired; no transition'
+        WHEN i.want_retired AND i.ann_reason IS NULL THEN
+          '@retired requires a non-empty reason'
+        WHEN i.want_retired AND i.live_children IS NOT NULL THEN
+          'live children must be retired first'
+        WHEN i.want_retired THEN
+          i.ann_reason
+        WHEN i.want_deprecated AND i.stereotype_id IS NULL THEN
+          'annotated @deprecated but not present in the catalog'
+        WHEN i.want_deprecated AND i.owner_source IS DISTINCT FROM p_source THEN
+          'not owned by source ' || p_source
+        WHEN i.want_deprecated AND i.current_state = 'retired' THEN
+          'a retired stereotype cannot be deprecated'
+        WHEN i.want_deprecated AND i.ann_reason IS NULL THEN
+          '@deprecated requires a non-empty reason'
+        WHEN i.want_deprecated THEN
+          i.ann_reason
+        WHEN i.stereotype_id IS NULL THEN
+          'declared but not in the catalog; reconcile will create it'
+        WHEN i.current_state IN ('deprecated', 'retired')
+             AND i.owner_source IS DISTINCT FROM p_source THEN
+          'not owned by source ' || p_source
+        WHEN i.current_state IN ('deprecated', 'retired') THEN
+          'declared active; reactivation restores the name'
+        ELSE
+          'declared state matches'
+      END AS reason,
+      CASE
+        WHEN NOT i.is_declared THEN NULL
+        WHEN i.want_retired AND i.stereotype_id IS NULL THEN 'not_in_catalog'
+        WHEN i.want_retired AND i.owner_source IS DISTINCT FROM p_source THEN 'not_owned'
+        WHEN i.want_retired AND i.ann_reason IS NULL THEN 'missing_reason'
+        WHEN i.want_retired AND i.live_children IS NOT NULL
+          THEN 'live_children:' || array_to_string(i.live_children, ',')
+        WHEN i.want_deprecated AND i.stereotype_id IS NULL THEN 'not_in_catalog'
+        WHEN i.want_deprecated AND i.owner_source IS DISTINCT FROM p_source THEN 'not_owned'
+        WHEN i.want_deprecated AND i.current_state = 'retired' THEN 'retired'
+        WHEN i.want_deprecated AND i.ann_reason IS NULL THEN 'missing_reason'
+        WHEN NOT i.want_retired AND NOT i.want_deprecated
+             AND i.stereotype_id IS NOT NULL
+             AND i.current_state IN ('deprecated', 'retired')
+             AND i.owner_source IS DISTINCT FROM p_source THEN 'not_owned'
+        ELSE NULL
+      END AS blocked_by
+    FROM info i
+  ),
+  tokenized AS (
+    SELECT
+      'sha256:' || encode(
+        sha256(
+          convert_to(
+            jsonb_build_object(
+              'source',     p_source,
+              'declared',   to_jsonb(v_declared),
+              'retired',    to_jsonb(v_retired),
+              'deprecated', to_jsonb(v_deprecated),
+              'reasons',    coalesce(p_reasons, '{}'::jsonb),
+              'rows', (
+                SELECT jsonb_agg(
+                         jsonb_build_object(
+                           'name',             d.name,
+                           'current_state',    d.current_state,
+                           'action',           d.action,
+                           'reason',           d.reason,
+                           'blocked_by',       d.blocked_by,
+                           'stereotype_id',    d.stereotype_id,
+                           'head_revision_id', d.head_revision_id,
+                           'head_version',     d.head_version,
+                           'head_fingerprint', d.head_fingerprint
+                         ) ORDER BY d.name)
+                  FROM decided d
+              )
+            )::text,
+            'UTF8'
+          )
+        ),
+        'hex'
+      ) AS plan_token
+  )
+  SELECT d.name, d.current_state, d.action, d.reason, d.blocked_by,
+         d.head_revision_id, t.plan_token
+    FROM decided d
+    CROSS JOIN tokenized t
+   ORDER BY d.name;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION stereotype_lifecycle_plan(p_source text, p_declared text[], p_retired text[], p_deprecated text[], p_reasons jsonb); Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON FUNCTION shrapnel.stereotype_lifecycle_plan(p_source text, p_declared text[], p_retired text[], p_deprecated text[], p_reasons jsonb) IS 'Phase 1 of the retire/tombstone verb: a pure read that classifies every declared and owned stereotype and returns a plan_token bound to the observed head revisions. Absent names are orphan_candidate and are never acted on.';
+
+
+--
+-- Name: stereotype_lifecycle_report(text, text[], text[], text[], jsonb); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_lifecycle_report(p_source text, p_declared text[], p_retired text[] DEFAULT ARRAY[]::text[], p_deprecated text[] DEFAULT ARRAY[]::text[], p_reasons jsonb DEFAULT '{}'::jsonb) RETURNS TABLE(name text, current_state text, action text, reason text, blocked_by text, head_revision_id bigint, plan_token text)
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT *
+    FROM shrapnel.stereotype_lifecycle_plan(
+           p_source, p_declared, p_retired, p_deprecated, p_reasons);
+$$;
+
+
+--
+-- Name: FUNCTION stereotype_lifecycle_report(p_source text, p_declared text[], p_retired text[], p_deprecated text[], p_reasons jsonb); Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON FUNCTION shrapnel.stereotype_lifecycle_report(p_source text, p_declared text[], p_retired text[], p_deprecated text[], p_reasons jsonb) IS 'Read-only alias of stereotype_lifecycle_plan, matching the design record''s report/apply naming. Safe for CI: it writes nothing and an unannotated orphan_candidate can fail a build without destroying anything.';
+
+
+--
 -- Name: stereotype_reconcile(text, bigint, text, text[], text[]); Type: FUNCTION; Schema: shrapnel; Owner: -
 --
 
@@ -10851,6 +11342,14 @@ BEGIN
   END IF;
 
   SELECT id INTO v_stereotype_id FROM shrapnel.stereotype WHERE name = p_name;
+
+  -- Retirement is a forward gate: reconcile never silently resurrects a
+  -- retired name and never silently no-ops on it. Reactivate first.
+  IF v_stereotype_id IS NOT NULL
+     AND shrapnel.stereotype_current_state(v_stereotype_id) = 'retired' THEN
+    RAISE EXCEPTION 'stereotype_reconcile: stereotype % is retired; reactivate it before reconciling (retirement is lifecycle, not contract)', p_name
+      USING ERRCODE = '23514';
+  END IF;
 
   -- C1 guard, applied before any write decision so a malformed call cannot
   -- reach the fingerprint comparison.
@@ -10909,6 +11408,36 @@ $$;
 --
 
 COMMENT ON FUNCTION shrapnel.stereotype_reconcile(p_name text, p_extends_revision bigint, p_rationale text, p_required_fields text[], p_optional_fields text[]) IS 'Idempotent catalog reconciliation. Returns (revision_id, created): created is false when the declared state already matches the head revision and nothing was written. Never removes a stereotype; there is no retire verb.';
+
+
+--
+-- Name: stereotype_reconcile_owned(text, text, bigint, text, text[], text[]); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.stereotype_reconcile_owned(p_source text, p_name text, p_extends_revision bigint, p_rationale text, p_required_fields text[], p_optional_fields text[] DEFAULT NULL::text[]) RETURNS TABLE(revision_id bigint, created boolean)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_revision bigint;
+  v_created  boolean;
+BEGIN
+  SELECT r.revision_id, r.created INTO v_revision, v_created
+    FROM shrapnel.stereotype_reconcile(
+           p_name, p_extends_revision, p_rationale,
+           p_required_fields, p_optional_fields) r;
+
+  PERFORM shrapnel.stereotype_claim_ownership(p_source, p_name);
+
+  RETURN QUERY SELECT v_revision, v_created;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION stereotype_reconcile_owned(p_source text, p_name text, p_extends_revision bigint, p_rationale text, p_required_fields text[], p_optional_fields text[]); Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON FUNCTION shrapnel.stereotype_reconcile_owned(p_source text, p_name text, p_extends_revision bigint, p_rationale text, p_required_fields text[], p_optional_fields text[]) IS 'Source-aware reconcile: 0008 reconciliation followed by an idempotent ownership claim. The first source to reconcile a name owns it thereafter.';
 
 
 --
@@ -10974,6 +11503,78 @@ CREATE FUNCTION shrapnel.sync_field_metadata_to_resolution() RETURNS trigger
 BEGIN
     PERFORM resolution.sync_shrapnel_field(NEW.id);
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: validate_stereotype_lifecycle_event(); Type: FUNCTION; Schema: shrapnel; Owner: -
+--
+
+CREATE FUNCTION shrapnel.validate_stereotype_lifecycle_event() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_current       text;
+  v_owner         text;
+  v_parent_name   text;
+  v_live_children text[];
+BEGIN
+  -- The event must start from the state the catalog is actually in. This is
+  -- what makes a forged or stale event impossible, not merely impolite.
+  v_current := shrapnel.stereotype_current_state(NEW.stereotype_id);
+  IF NEW.from_state <> v_current THEN
+    RAISE EXCEPTION 'stereotype_lifecycle_event: from_state % does not match current state % for stereotype %',
+      NEW.from_state, v_current, NEW.stereotype_id USING ERRCODE = '23514';
+  END IF;
+
+  -- Lifecycle transitions are owner-scoped. This is the structural reason the
+  -- verb can never touch a hand-authored entry or 0007's WorkRequest: they
+  -- have no owner row.
+  SELECT o.source INTO v_owner
+    FROM shrapnel.stereotype_source_owner o
+   WHERE o.stereotype_id = NEW.stereotype_id;
+  IF v_owner IS NULL THEN
+    RAISE EXCEPTION 'stereotype_lifecycle_event: stereotype % has no registered owner; lifecycle transitions are owner-scoped',
+      NEW.stereotype_id USING ERRCODE = '23514';
+  END IF;
+  IF v_owner <> NEW.source THEN
+    RAISE EXCEPTION 'stereotype_lifecycle_event: stereotype % is owned by source %, not %',
+      NEW.stereotype_id, v_owner, NEW.source USING ERRCODE = '23514';
+  END IF;
+
+  IF NEW.to_state = 'retired' THEN
+    -- A tombstone without a reason is a tombstone nobody can justify later.
+    IF NEW.reason IS NULL OR btrim(NEW.reason) = '' THEN
+      RAISE EXCEPTION 'stereotype_lifecycle_event: retirement of stereotype % requires a non-empty reason',
+        NEW.stereotype_id USING ERRCODE = '23514';
+    END IF;
+
+    -- Pin the decision to the observed head.
+    IF NEW.at_revision_id IS NULL THEN
+      RAISE EXCEPTION 'stereotype_lifecycle_event: retirement of stereotype % must pin at_revision_id (the observed head)',
+        NEW.stereotype_id USING ERRCODE = '23514';
+    END IF;
+
+    SELECT s.name INTO v_parent_name FROM shrapnel.stereotype s WHERE s.id = NEW.stereotype_id;
+
+    -- Refuse retiring a live parent. Apply emits children first, but the DB
+    -- enforces reverse-topological order rather than trusting the caller.
+    SELECT array_agg(cs.name ORDER BY cs.name)
+      INTO v_live_children
+      FROM shrapnel.stereotype cs
+      JOIN LATERAL shrapnel.stereotype_resolve(cs.name) cr ON true
+     WHERE cs.id <> NEW.stereotype_id
+       AND shrapnel.stereotype_current_state(cs.id) <> 'retired'
+       AND shrapnel.stereotype_extends(cr.head_revision_id, v_parent_name);
+
+    IF v_live_children IS NOT NULL THEN
+      RAISE EXCEPTION 'stereotype_lifecycle_event: cannot retire % while live children % still extend it (retire children first)',
+        v_parent_name, v_live_children USING ERRCODE = '23514';
+    END IF;
+  END IF;
+
+  RETURN NEW;
 END;
 $$;
 
@@ -14077,7 +14678,7 @@ CREATE TABLE aegis.concept_mapping (
     mapping_expression text,
     cardinality character varying(50) DEFAULT 'one_to_one'::character varying NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT concept_mapping_cardinality_check CHECK (((cardinality)::text = ANY ((ARRAY['one_to_one'::character varying, 'one_to_many'::character varying, 'many_to_one'::character varying])::text[])))
+    CONSTRAINT concept_mapping_cardinality_check CHECK (((cardinality)::text = ANY (ARRAY[('one_to_one'::character varying)::text, ('one_to_many'::character varying)::text, ('many_to_one'::character varying)::text])))
 );
 
 
@@ -14195,7 +14796,7 @@ CREATE TABLE aegis.model_check_result (
     CONSTRAINT model_check_result_result_digest_check CHECK (((result_digest IS NULL) OR (result_digest ~ '^sha256:[0-9a-f]{64}$'::text))),
     CONSTRAINT model_check_result_safety_status_check CHECK ((safety_status = ANY (ARRAY['verified'::text, 'violated'::text, 'unknown'::text, 'stale'::text, 'invalid'::text, 'unavailable'::text]))),
     CONSTRAINT model_check_result_source_digest_check CHECK (((source_digest IS NULL) OR (source_digest ~ '^sha256:[0-9a-f]{64}$'::text))),
-    CONSTRAINT model_check_result_status_check CHECK (((status)::text = ANY ((ARRAY['verified'::character varying, 'violated'::character varying, 'unknown'::character varying, 'stale'::character varying, 'invalid'::character varying, 'unavailable'::character varying])::text[]))),
+    CONSTRAINT model_check_result_status_check CHECK (((status)::text = ANY (ARRAY[('verified'::character varying)::text, ('violated'::character varying)::text, ('unknown'::character varying)::text, ('stale'::character varying)::text, ('invalid'::character varying)::text, ('unavailable'::character varying)::text]))),
     CONSTRAINT model_check_result_verified_safety_check CHECK ((((status)::text <> 'verified'::text) OR (safety_status = 'verified'::text)))
 );
 
@@ -14222,7 +14823,7 @@ CREATE TABLE aegis.property (
     verified_at timestamp with time zone,
     verified_by uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT property_type_check CHECK (((type)::text = ANY ((ARRAY['safety'::character varying, 'liveness'::character varying, 'fairness'::character varying])::text[])))
+    CONSTRAINT property_type_check CHECK (((type)::text = ANY (ARRAY[('safety'::character varying)::text, ('liveness'::character varying)::text, ('fairness'::character varying)::text])))
 );
 
 
@@ -14348,7 +14949,7 @@ CREATE TABLE aegis.temporal_property (
     expression text NOT NULL,
     description text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT temporal_property_operator_check CHECK (((operator)::text = ANY ((ARRAY['[]'::character varying, '<>'::character varying, '->'::character varying, '~>'::character varying, '=>'::character varying])::text[])))
+    CONSTRAINT temporal_property_operator_check CHECK (((operator)::text = ANY (ARRAY[('[]'::character varying)::text, ('<>'::character varying)::text, ('->'::character varying)::text, ('~>'::character varying)::text, ('=>'::character varying)::text])))
 );
 
 
@@ -21292,7 +21893,7 @@ CREATE TABLE registry.service_backends (
     service_deployment_id bigint NOT NULL,
     updated_at timestamp(6) without time zone,
     weight integer,
-    CONSTRAINT service_backends_role_check CHECK (((role)::text = ANY ((ARRAY['PRIMARY'::character varying, 'BACKUP'::character varying, 'ARCHIVE'::character varying, 'CACHE'::character varying, 'SHARD'::character varying, 'READ_REPLICA'::character varying])::text[])))
+    CONSTRAINT service_backends_role_check CHECK (((role)::text = ANY (ARRAY[('PRIMARY'::character varying)::text, ('BACKUP'::character varying)::text, ('ARCHIVE'::character varying)::text, ('CACHE'::character varying)::text, ('SHARD'::character varying)::text, ('READ_REPLICA'::character varying)::text])))
 );
 
 
@@ -23541,6 +24142,46 @@ CREATE TABLE shrapnel.stereotype_field (
 
 
 --
+-- Name: stereotype_lifecycle_event_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
+--
+
+CREATE SEQUENCE shrapnel.stereotype_lifecycle_event_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: stereotype_lifecycle_event; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.stereotype_lifecycle_event (
+    event_id bigint DEFAULT nextval('shrapnel.stereotype_lifecycle_event_seq'::regclass) NOT NULL,
+    stereotype_id bigint NOT NULL,
+    from_state text NOT NULL,
+    to_state text NOT NULL,
+    reason text NOT NULL,
+    source text NOT NULL,
+    at_revision_id bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT ck_sterev_lifecycle_reason CHECK ((btrim(reason) <> ''::text)),
+    CONSTRAINT ck_sterev_lifecycle_retired_head CHECK (((to_state <> 'retired'::text) OR (at_revision_id IS NOT NULL))),
+    CONSTRAINT ck_sterev_lifecycle_source CHECK ((btrim(source) <> ''::text)),
+    CONSTRAINT ck_sterev_lifecycle_states CHECK (((from_state = ANY (ARRAY['active'::text, 'deprecated'::text, 'retired'::text])) AND (to_state = ANY (ARRAY['active'::text, 'deprecated'::text, 'retired'::text])))),
+    CONSTRAINT ck_sterev_lifecycle_transition CHECK ((((((from_state = 'active'::text) AND (to_state = 'deprecated'::text)) OR ((from_state = 'deprecated'::text) AND (to_state = 'active'::text))) OR ((from_state = 'deprecated'::text) AND (to_state = 'retired'::text))) OR ((from_state = 'retired'::text) AND (to_state = 'active'::text))))
+);
+
+
+--
+-- Name: TABLE stereotype_lifecycle_event; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.stereotype_lifecycle_event IS 'Append-only lifecycle log for shrapnel stereotypes. Current state is the newest event; reversal is another insert, never an erase. Touches no revision and no contract fingerprint.';
+
+
+--
 -- Name: stereotype_revision_seq; Type: SEQUENCE; Schema: shrapnel; Owner: -
 --
 
@@ -23570,6 +24211,25 @@ CREATE TABLE shrapnel.stereotype_revision (
     CONSTRAINT ck_sterev_fingerprint_format CHECK ((contract_fingerprint ~ '^sha256:[0-9a-f]{64}$'::text)),
     CONSTRAINT ck_sterev_parent_rationale CHECK (((parent_revision_id IS NULL) OR ((extends_rationale IS NOT NULL) AND (btrim(extends_rationale) <> ''::text))))
 );
+
+
+--
+-- Name: stereotype_source_owner; Type: TABLE; Schema: shrapnel; Owner: -
+--
+
+CREATE TABLE shrapnel.stereotype_source_owner (
+    source text NOT NULL,
+    stereotype_id bigint NOT NULL,
+    registered_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT ck_stereotype_owner_source CHECK ((btrim(source) <> ''::text))
+);
+
+
+--
+-- Name: TABLE stereotype_source_owner; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON TABLE shrapnel.stereotype_source_owner IS 'Which emitter source created a stereotype. First claim wins; a second source can never claim the same stereotype. Scopes the retire verb so it cannot touch hand-authored entries or 0007 WorkRequest.';
 
 
 --
@@ -23604,6 +24264,44 @@ CREATE VIEW shrapnel.v_stereotype_contract AS
      JOIN shrapnel.stereotype s ON ((s.id = r.stereotype_id)))
      JOIN shrapnel.stereotype_field sf ON ((sf.stereotype_revision_id = r.id)))
      JOIN shrapnel.field f ON ((f.id = sf.field_id)));
+
+
+--
+-- Name: v_stereotype_lifecycle; Type: VIEW; Schema: shrapnel; Owner: -
+--
+
+CREATE VIEW shrapnel.v_stereotype_lifecycle AS
+ SELECT s.id AS stereotype_id,
+    s.name,
+    shrapnel.stereotype_current_state(s.id) AS current_state,
+    o.source AS owner_source,
+    e.event_id AS last_event_id,
+    e.from_state AS last_from_state,
+    e.to_state AS last_to_state,
+    e.reason AS last_reason,
+    e.at_revision_id AS last_at_revision_id,
+    e.created_at AS last_changed_at
+   FROM ((shrapnel.stereotype s
+     LEFT JOIN shrapnel.stereotype_source_owner o ON ((o.stereotype_id = s.id)))
+     LEFT JOIN LATERAL ( SELECT ev.event_id,
+            ev.stereotype_id,
+            ev.from_state,
+            ev.to_state,
+            ev.reason,
+            ev.source,
+            ev.at_revision_id,
+            ev.created_at
+           FROM shrapnel.stereotype_lifecycle_event ev
+          WHERE (ev.stereotype_id = s.id)
+          ORDER BY ev.event_id DESC
+         LIMIT 1) e ON (true));
+
+
+--
+-- Name: VIEW v_stereotype_lifecycle; Type: COMMENT; Schema: shrapnel; Owner: -
+--
+
+COMMENT ON VIEW shrapnel.v_stereotype_lifecycle IS 'Current lifecycle state, owner and last transition for every stereotype.';
 
 
 --
@@ -25376,7 +26074,7 @@ CREATE VIEW vision.work_requests_losm AS
     priority,
     context,
         CASE
-            WHEN ((status)::text = ANY ((ARRAY['NEW'::character varying, 'INTAKE'::character varying, 'PLAN_GENERATION'::character varying, 'PLAN_REVIEW'::character varying, 'PLAN_APPROVAL_GATE'::character varying, 'SPEC_GENERATION'::character varying, 'EXECUTION'::character varying, 'VALIDATION'::character varying, 'COMPLETION'::character varying, 'BLOCKED'::character varying, 'FAILED'::character varying])::text[])) THEN status
+            WHEN ((status)::text = ANY (ARRAY[('NEW'::character varying)::text, ('INTAKE'::character varying)::text, ('PLAN_GENERATION'::character varying)::text, ('PLAN_REVIEW'::character varying)::text, ('PLAN_APPROVAL_GATE'::character varying)::text, ('SPEC_GENERATION'::character varying)::text, ('EXECUTION'::character varying)::text, ('VALIDATION'::character varying)::text, ('COMPLETION'::character varying)::text, ('BLOCKED'::character varying)::text, ('FAILED'::character varying)::text])) THEN status
             WHEN ((status)::text = 'pending'::text) THEN 'NEW'::character varying
             WHEN ((status)::text = 'completed'::text) THEN 'COMPLETION'::character varying
             WHEN ((status)::text = 'cancelled'::text) THEN 'FAILED'::character varying
@@ -26201,7 +26899,7 @@ CREATE TABLE wind.tickets (
     input_artifact_id uuid NOT NULL,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT chk_ticket_status CHECK (((status)::text = ANY ((ARRAY['PENDING'::character varying, 'IN_PROGRESS'::character varying, 'COMPLETED'::character varying, 'CANCELLED'::character varying])::text[])))
+    CONSTRAINT chk_ticket_status CHECK (((status)::text = ANY (ARRAY[('PENDING'::character varying)::text, ('IN_PROGRESS'::character varying)::text, ('COMPLETED'::character varying)::text, ('CANCELLED'::character varying)::text])))
 );
 
 
@@ -26376,7 +27074,7 @@ CREATE TABLE wind.workflow_instances (
     updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     dedup_key text,
     event_id uuid,
-    CONSTRAINT chk_instance_status CHECK (((status)::text = ANY ((ARRAY['ACTIVE'::character varying, 'COMPLETED'::character varying, 'FAILED'::character varying, 'PAUSED'::character varying])::text[])))
+    CONSTRAINT chk_instance_status CHECK (((status)::text = ANY (ARRAY[('ACTIVE'::character varying)::text, ('COMPLETED'::character varying)::text, ('FAILED'::character varying)::text, ('PAUSED'::character varying)::text])))
 );
 
 
@@ -29521,11 +30219,27 @@ ALTER TABLE ONLY shrapnel.value_string
 
 
 --
+-- Name: stereotype_source_owner pk_stereotype_source_owner; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype_source_owner
+    ADD CONSTRAINT pk_stereotype_source_owner PRIMARY KEY (source, stereotype_id);
+
+
+--
 -- Name: stereotype_field stereotype_field_pkey; Type: CONSTRAINT; Schema: shrapnel; Owner: -
 --
 
 ALTER TABLE ONLY shrapnel.stereotype_field
     ADD CONSTRAINT stereotype_field_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: stereotype_lifecycle_event stereotype_lifecycle_event_pkey; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype_lifecycle_event
+    ADD CONSTRAINT stereotype_lifecycle_event_pkey PRIMARY KEY (event_id);
 
 
 --
@@ -29581,6 +30295,14 @@ COMMENT ON CONSTRAINT uq_oav_object_field ON shrapnel.object_attribute_value IS 
 
 ALTER TABLE ONLY shrapnel.stereotype
     ADD CONSTRAINT uq_stereotype_name UNIQUE (name);
+
+
+--
+-- Name: stereotype_source_owner uq_stereotype_single_owner; Type: CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype_source_owner
+    ADD CONSTRAINT uq_stereotype_single_owner UNIQUE (stereotype_id);
 
 
 --
@@ -32325,6 +33047,13 @@ CREATE INDEX idx_stereofield_field ON shrapnel.stereotype_field USING btree (fie
 
 
 --
+-- Name: idx_sterev_lifecycle_current; Type: INDEX; Schema: shrapnel; Owner: -
+--
+
+CREATE INDEX idx_sterev_lifecycle_current ON shrapnel.stereotype_lifecycle_event USING btree (stereotype_id, event_id DESC);
+
+
+--
 -- Name: idx_sterev_parent; Type: INDEX; Schema: shrapnel; Owner: -
 --
 
@@ -33725,6 +34454,27 @@ CREATE TRIGGER trg_stereotype_field_freeze BEFORE INSERT OR DELETE OR UPDATE ON 
 
 
 --
+-- Name: stereotype_lifecycle_event trg_stereotype_lifecycle_no_delete; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_stereotype_lifecycle_no_delete BEFORE DELETE ON shrapnel.stereotype_lifecycle_event FOR EACH ROW EXECUTE FUNCTION shrapnel.forbid_stereotype_lifecycle_mutation();
+
+
+--
+-- Name: stereotype_lifecycle_event trg_stereotype_lifecycle_no_update; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_stereotype_lifecycle_no_update BEFORE UPDATE ON shrapnel.stereotype_lifecycle_event FOR EACH ROW EXECUTE FUNCTION shrapnel.forbid_stereotype_lifecycle_mutation();
+
+
+--
+-- Name: stereotype_lifecycle_event trg_stereotype_lifecycle_validate; Type: TRIGGER; Schema: shrapnel; Owner: -
+--
+
+CREATE TRIGGER trg_stereotype_lifecycle_validate BEFORE INSERT ON shrapnel.stereotype_lifecycle_event FOR EACH ROW EXECUTE FUNCTION shrapnel.validate_stereotype_lifecycle_event();
+
+
+--
 -- Name: stereotype_revision trg_stereotype_revision_acyclic; Type: TRIGGER; Schema: shrapnel; Owner: -
 --
 
@@ -34218,14 +34968,14 @@ CREATE TRIGGER trg_req_candidate_updated_at BEFORE UPDATE ON voyager.requirement
 -- Name: workflow_instances trg_bridge_instance_to_cascade; Type: TRIGGER; Schema: wind; Owner: -
 --
 
-CREATE TRIGGER trg_bridge_instance_to_cascade AFTER UPDATE OF status ON wind.workflow_instances FOR EACH ROW WHEN ((((old.status)::text = 'ACTIVE'::text) AND ((new.status)::text = ANY ((ARRAY['COMPLETED'::character varying, 'FAILED'::character varying])::text[])))) EXECUTE FUNCTION wind.bridge_instance_to_cascade();
+CREATE TRIGGER trg_bridge_instance_to_cascade AFTER UPDATE OF status ON wind.workflow_instances FOR EACH ROW WHEN ((((old.status)::text = 'ACTIVE'::text) AND ((new.status)::text = ANY (ARRAY[('COMPLETED'::character varying)::text, ('FAILED'::character varying)::text])))) EXECUTE FUNCTION wind.bridge_instance_to_cascade();
 
 
 --
 -- Name: tickets trg_bridge_ticket_to_cascade; Type: TRIGGER; Schema: wind; Owner: -
 --
 
-CREATE TRIGGER trg_bridge_ticket_to_cascade AFTER UPDATE OF status ON wind.tickets FOR EACH ROW WHEN ((((old.status)::text IS DISTINCT FROM (new.status)::text) AND ((new.status)::text = ANY ((ARRAY['COMPLETED'::character varying, 'CANCELLED'::character varying])::text[])))) EXECUTE FUNCTION wind.bridge_ticket_to_cascade();
+CREATE TRIGGER trg_bridge_ticket_to_cascade AFTER UPDATE OF status ON wind.tickets FOR EACH ROW WHEN ((((old.status)::text IS DISTINCT FROM (new.status)::text) AND ((new.status)::text = ANY (ARRAY[('COMPLETED'::character varying)::text, ('CANCELLED'::character varying)::text])))) EXECUTE FUNCTION wind.bridge_ticket_to_cascade();
 
 
 --
@@ -36322,11 +37072,35 @@ ALTER TABLE ONLY shrapnel.stereotype_field
 
 
 --
+-- Name: stereotype_lifecycle_event stereotype_lifecycle_event_at_revision_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype_lifecycle_event
+    ADD CONSTRAINT stereotype_lifecycle_event_at_revision_id_fkey FOREIGN KEY (at_revision_id) REFERENCES shrapnel.stereotype_revision(id);
+
+
+--
+-- Name: stereotype_lifecycle_event stereotype_lifecycle_event_stereotype_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype_lifecycle_event
+    ADD CONSTRAINT stereotype_lifecycle_event_stereotype_id_fkey FOREIGN KEY (stereotype_id) REFERENCES shrapnel.stereotype(id);
+
+
+--
 -- Name: stereotype_revision stereotype_revision_stereotype_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
 --
 
 ALTER TABLE ONLY shrapnel.stereotype_revision
     ADD CONSTRAINT stereotype_revision_stereotype_id_fkey FOREIGN KEY (stereotype_id) REFERENCES shrapnel.stereotype(id);
+
+
+--
+-- Name: stereotype_source_owner stereotype_source_owner_stereotype_id_fkey; Type: FK CONSTRAINT; Schema: shrapnel; Owner: -
+--
+
+ALTER TABLE ONLY shrapnel.stereotype_source_owner
+    ADD CONSTRAINT stereotype_source_owner_stereotype_id_fkey FOREIGN KEY (stereotype_id) REFERENCES shrapnel.stereotype(id);
 
 
 --
