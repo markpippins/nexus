@@ -1,0 +1,38 @@
+# same-LAN checklist — real run from titanium at 2026-11-09T21:03:02-05:00
+# branch: same-lan-checklist (base refs/remotes/origin/main 5f517965e)
+# network posture: 192.168.1.209 dev wlp3s0 src 192.168.1.18 uid 1000 
+# name resolution: no answers for vanadium/thallium/helium (off-network)
+
+## full checklist — bin/verify-same-lan-checklist.py --timeout 2
+UNREACHABLE  F1  reach:vanadium(.209)            tcp/192.168.1.209:22 no route — off-network or host down
+UNREACHABLE  F2  reach:thallium(.82)             tcp/192.168.1.82:22 no route — off-network or host down
+UNREACHABLE  F3  reach:helium(.229)              tcp/192.168.1.229:22 no route — off-network or host down
+UNREACHABLE  V1  vanadium:sync-pg-to-vanadium    off-network: last trigger 18.1h > 1h; last run failed; log stale (18.1h); log reports an error | sync-pg-to-vanadium.timer (10 min): trigger=2026-11-09 02:59:40, run=Nov 09 02:59:40 titanium systemd[1
+UNREACHABLE  V2  vanadium:backup-pg-to-vanadium  off-network: last run failed | backup-pg-to-vanadium.timer (daily 03:30): trigger=2026-11-09 03:30:19, run=Nov 09 03:30:19 titanium systemd[1552]: Failed to start backup-pg-to-vanadium.se, log=[2026-1
+SKIP         V3  vanadium:backup-vanadium-ci     drive-absent guard honoured (nothing fetched, remote untouched); target also unreachable | backup-vanadium-ci.timer (daily 04:21): trigger=2026-11-09 04:21:16, run=Nov 09 04:21:16 titanium systemd[155
+SKIP         G1  github:pr-metadata              16 cited PRs (§2c) need GitHub: #700/#798 close comments, #782 title/body — unavailable off-network
+PASS         T1  twins:41xx                      0/19 canary ports bound — matches PORT-MAP (not deployed)
+UNREACHABLE  J1  jvm:thallium:8092               tcp/192.168.1.82:22 absent — cannot probe the lane
+UNREACHABLE  J2  jvm:helium:8092                 tcp/192.168.1.229:22 absent — cannot probe the retired lane
+
+verdict: off-network-inconclusive (1 pass, 0 fail, 7 unreachable, 2 skip)
+{"schema_version": 1, "tool": "verify-same-lan-checklist", "verdict": "off-network-inconclusive", "checks": [{"id": "F1", "name": "reach:vanadium(.209)", "status": "UNREACHABLE", "evidence": "tcp/192.168.1.209:22 no route \u2014 off-network or host down"}, {"id": "F2", "name": "reach:thallium(.82)", "status": "UNREACHABLE", "evidence": "tcp/192.168.1.82:22 no route \u2014 off-network or host down"}, {"id": "F3", "name": "reach:helium(.229)", "status": "UNREACHABLE", "evidence": "tcp/192.168.1.229:22 no route \u2014 off-network or host down"}, {"id": "V1", "name": "vanadium:sync-pg-to-vanadium", "status": "UNREACHABLE", "evidence": "off-network: last trigger 18.1h > 1h; last run failed; log stale (18.1h); log reports an error | sync-pg-to-vanadium.timer (10 min): trigger=2026-11-09 02:59:40, run=Nov 09 02:59:40 titanium systemd[1"}, {"id": "V2", "name": "vanadium:backup-pg-to-vanadium", "status": "UNREACHABLE", "evidence": "off-network: last run failed | backup-pg-to-vanadium.timer (daily 03:30): trigger=2026-11-09 03:30:19, run=Nov 09 03:30:19 titanium systemd[1552]: Failed to start backup-pg-to-vanadium.se, log=[2026-1"}, {"id": "V3", "name": "vanadium:backup-vanadium-ci", "status": "SKIP", "evidence": "drive-absent guard honoured (nothing fetched, remote untouched); target also unreachable | backup-vanadium-ci.timer (daily 04:21): trigger=2026-11-09 04:21:16, run=Nov 09 04:21:16 titanium systemd[155"}, {"id": "G1", "name": "github:pr-metadata", "status": "SKIP", "evidence": "16 cited PRs (\u00a72c) need GitHub: #700/#798 close comments, #782 title/body \u2014 unavailable off-network"}, {"id": "T1", "name": "twins:41xx", "status": "PASS", "evidence": "0/19 canary ports bound \u2014 matches PORT-MAP (not deployed)"}, {"id": "J1", "name": "jvm:thallium:8092", "status": "UNREACHABLE", "evidence": "tcp/192.168.1.82:22 absent \u2014 cannot probe the lane"}, {"id": "J2", "name": "jvm:helium:8092", "status": "UNREACHABLE", "evidence": "tcp/192.168.1.229:22 absent \u2014 cannot probe the retired lane"}]}
+
+exit=0
+
+## local-only — bin/verify-same-lan-checklist.py --skip-remote
+SKIP         F1  reach:vanadium(.209)            --skip-remote given
+SKIP         F2  reach:thallium(.82)             --skip-remote given
+SKIP         F3  reach:helium(.229)              --skip-remote given
+SKIP         V1  vanadium:sync-pg-to-vanadium    --skip-remote given; local evidence: last trigger 18.1h > 1h; last run failed; log stale (18.1h); log reports an error | sync-pg-to-vanadium.timer (10 min): trigger=2026-11-09 02:59:40, run=Nov 09 02:
+SKIP         V2  vanadium:backup-pg-to-vanadium  --skip-remote given; local evidence: last run failed | backup-pg-to-vanadium.timer (daily 03:30): trigger=2026-11-09 03:30:19, run=Nov 09 03:30:19 titanium systemd[1552]: Failed to start backup-pg-to-
+SKIP         V3  vanadium:backup-vanadium-ci     drive-absent guard honoured (nothing fetched, remote untouched); target also unreachable | backup-vanadium-ci.timer (daily 04:21): trigger=2026-11-09 04:21:16, run=Nov 09 04:21:16 titanium systemd[155
+SKIP         G1  github:pr-metadata              16 cited PRs (§2c) need GitHub: #700/#798 close comments, #782 title/body — unavailable off-network
+SKIP         T1  twins:41xx                      --skip-remote given
+SKIP         J1  jvm:thallium:8092               --skip-remote given
+SKIP         J2  jvm:helium:8092                 --skip-remote given
+
+verdict: green-with-honest-skips (0 pass, 0 fail, 0 unreachable, 10 skip)
+{"schema_version": 1, "tool": "verify-same-lan-checklist", "verdict": "green-with-honest-skips", "checks": [{"id": "F1", "name": "reach:vanadium(.209)", "status": "SKIP", "evidence": "--skip-remote given"}, {"id": "F2", "name": "reach:thallium(.82)", "status": "SKIP", "evidence": "--skip-remote given"}, {"id": "F3", "name": "reach:helium(.229)", "status": "SKIP", "evidence": "--skip-remote given"}, {"id": "V1", "name": "vanadium:sync-pg-to-vanadium", "status": "SKIP", "evidence": "--skip-remote given; local evidence: last trigger 18.1h > 1h; last run failed; log stale (18.1h); log reports an error | sync-pg-to-vanadium.timer (10 min): trigger=2026-11-09 02:59:40, run=Nov 09 02:"}, {"id": "V2", "name": "vanadium:backup-pg-to-vanadium", "status": "SKIP", "evidence": "--skip-remote given; local evidence: last run failed | backup-pg-to-vanadium.timer (daily 03:30): trigger=2026-11-09 03:30:19, run=Nov 09 03:30:19 titanium systemd[1552]: Failed to start backup-pg-to-"}, {"id": "V3", "name": "vanadium:backup-vanadium-ci", "status": "SKIP", "evidence": "drive-absent guard honoured (nothing fetched, remote untouched); target also unreachable | backup-vanadium-ci.timer (daily 04:21): trigger=2026-11-09 04:21:16, run=Nov 09 04:21:16 titanium systemd[155"}, {"id": "G1", "name": "github:pr-metadata", "status": "SKIP", "evidence": "16 cited PRs (\u00a72c) need GitHub: #700/#798 close comments, #782 title/body \u2014 unavailable off-network"}, {"id": "T1", "name": "twins:41xx", "status": "SKIP", "evidence": "--skip-remote given"}, {"id": "J1", "name": "jvm:thallium:8092", "status": "SKIP", "evidence": "--skip-remote given"}, {"id": "J2", "name": "jvm:helium:8092", "status": "SKIP", "evidence": "--skip-remote given"}]}
+
+exit=0
