@@ -15,14 +15,41 @@ instead of silently turning the blocker detector into a no-op.
 """
 import importlib.util
 import pathlib
+import sys
+import types
 
 import pytest
 
 SWEEP = pathlib.Path(__file__).resolve().parent.parent / "pipeline-health-sweep.py"
 
 
+def _stub_psycopg2():
+    """Make the DB driver importable when the hermetic runner has no psycopg2.
+
+    The sweep is a db-tier script, but everything this guard checks is static:
+    the SQL text and the report renderer. Stubbing the driver keeps the guard
+    in the hermetic tier instead of forcing a database onto it — the stub fails
+    loudly if anything ever tries to open a connection here.
+    """
+    if "psycopg2" in sys.modules:
+        return
+    try:
+        import psycopg2  # noqa: F401
+        return
+    except ImportError:  # ModuleNotFoundError on the hermetic runner; ImportError if a stub blocks it
+        pass
+
+    def _no_connect(*_args, **_kwargs):
+        raise RuntimeError("this guard is read-only and must not open a DB connection")
+
+    stub = types.ModuleType("psycopg2")
+    stub.connect = _no_connect
+    sys.modules["psycopg2"] = stub
+
+
 def _load_sweep():
     """Import the sweep as a module without running main()."""
+    _stub_psycopg2()
     spec = importlib.util.spec_from_file_location("pipeline_health_sweep", SWEEP)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
