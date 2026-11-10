@@ -444,7 +444,12 @@ def build_inventory(
             lifecycle = "unknown"
         out["lifecycle"] = lifecycle
         out["disposition"] = DISPOSITIONS.get(rel)
-        out["working_tree"] = str(root)
+        # Portable by design: the code entry belongs to the tree being
+        # inventoried, and an absolute path here would make the committed
+        # artifact stale on every other checkout (CI, another worktree).
+        # Absolute working trees are recorded for live services, which are
+        # host observations.
+        out["working_tree"] = "self"
         # A library module is reached in-process, not over the network: `route`
         # is recorded as null WITH a reason rather than omitted, so a reader can
         # tell "no route" apart from "route not probed".
@@ -579,17 +584,10 @@ def stable_projection(
     if not services or not include_services:
         projected["services"] = []
     else:
+        # Compare the served topology (which unit on which port), not where the
+        # checkout happens to live or which pid served it.
         projected["services"] = sorted(
-            (
-                {
-                    "unit": s.get("unit"),
-                    "port": s.get("port"),
-                    "language": s.get("language"),
-                    "working_tree": s.get("working_tree"),
-                    "lifecycle": s.get("lifecycle"),
-                }
-                for s in services
-            ),
+            ({"unit": s.get("unit"), "port": s.get("port")} for s in services),
             key=lambda s: (s["unit"] or "", s["port"] or 0),
         )
     return projected
