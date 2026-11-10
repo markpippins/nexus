@@ -183,6 +183,218 @@ const TRANSITION_TABLE: Record<WorkRequestStatus, TransitionEntry[]> = {
   DEFERRED: [],
 };
 
+// ── Canonical storage vocabulary (WRP event-vocabulary cutover) ────
+//
+// `conduit.work_request_events.event_type` accepts EXACTLY these values
+// (migration 034). The runtime kernel keeps speaking WR_* internally; the
+// write boundary (db.ts / python event_store.py) transcodes WR_* → canonical
+// and the read boundary (`dbEventsToRuntimeEvents`) maps canonical rows back.
+// Stray WR_* inserts therefore fail loudly at the DB CHECK — there is no
+// DB-side shim.
+
+export const CANONICAL_EVENT_TYPES = [
+  "WORKREQUEST.CREATED",
+  "VISION.IR_PRODUCED",
+  "STATE.TRANSITION_PROPOSED",
+  "STATE.TRANSITION_APPROVED",
+  "STATE.TRANSITION_COMMITTED",
+  "EXECUTION.STARTED",
+  "EXECUTION.COMPLETED",
+  "EXECUTION.FAILED",
+  "SYSTEM.CRON_TRIGGERED",
+] as const;
+
+export type CanonicalEventType = (typeof CANONICAL_EVENT_TYPES)[number];
+
+/** Ledger-state axis (conduit.work_request_state.current_state). */
+export const LEDGER_STATES = [
+  "PROPOSED",
+  "PLANNING",
+  "PENDING",
+  "IMPLEMENTING",
+  "REVIEW",
+  "COMPLETED",
+  "FAILED",
+  "CANCELLED",
+] as const;
+
+export type LedgerState = (typeof LEDGER_STATES)[number];
+
+/** Runtime status → ledger-state axis (one fold, one meaning). */
+const RUNTIME_STATUS_TO_LEDGER_STATE: Record<WorkRequestStatus, LedgerState> = {
+  DRAFT: "PROPOSED",
+  VALIDATED: "PLANNING",
+  QUEUED: "PENDING",
+  CLAIMED: "IMPLEMENTING",
+  ACKED: "REVIEW",
+  SETTLED: "COMPLETED",
+  REJECTED: "CANCELLED",
+  FAILED: "FAILED",
+  NOOP: "CANCELLED",
+  DEFERRED: "CANCELLED",
+};
+
+/**
+ * Owned ledger state graph, DERIVED from `TRANSITION_TABLE` — never written
+ * independently. Migration 034 persists exactly these edges in
+ * `conduit.work_request_state_graph` and verifies them against this constant;
+ * db.ts createSchema seeds the same graph for fresh schemas, so the DB helper
+ * and the kernel cannot drift into two authorities.
+ */
+export const LEDGER_STATE_GRAPH: Readonly<Record<LedgerState, readonly LedgerState[]>> =
+  (() => {
+    const graph = Object.fromEntries(
+      LEDGER_STATES.map((s) => [s, new Set<LedgerState>()]),
+    ) as Record<LedgerState, Set<LedgerState>>;
+    for (const status of Object.keys(TRANSITION_TABLE) as WorkRequestStatus[]) {
+      for (const { nextStatus } of TRANSITION_TABLE[status]) {
+        graph[RUNTIME_STATUS_TO_LEDGER_STATE[status]].add(
+          RUNTIME_STATUS_TO_LEDGER_STATE[nextStatus],
+        );
+      }
+    }
+    return Object.fromEntries(
+      LEDGER_STATES.map((s) => [s, [...graph[s]].sort() as LedgerState[]]),
+    ) as unknown as Record<LedgerState, readonly LedgerState[]>;
+  })();
+
+/**
+ * Ledger state each runtime event commits.
+ *
+ * Declared explicitly rather than re-derived from `TRANSITION_TABLE`: the two
+ * axes only line up by construction, and the derivation is ambiguous at the
+ * edges. `WORKREQUEST.CREATED` seeds the projection at PROPOSED, and the
+ * ledger chain then advances one stage per verb —
+ * PROPOSED → PLANNING → PENDING → IMPLEMENTING → REVIEW → COMPLETED — while
+ * terminal verbs land on their terminal state. `WR_ACKED` therefore records
+ * REVIEW (the stage it completes) rather than SETTLED's COMPLETED, which the
+ * `WR_SETTLED` verb records; deriving from the target status instead would
+ * jump IMPLEMENTING → COMPLETED and the projector rejects that edge.
+ *
+ * Python's write boundary (python/cascade/event_store.py) declares the same
+ * table; bin/tests/test_wrp_event_vocabulary_parity.py pins them together and
+ * checks every step against `LEDGER_STATE_GRAPH`, so an edit to one without
+ * the other — or a value no edge allows — fails in CI.
+ */
+export const RUNTIME_EVENT_LEDGER_STATE: Readonly<Record<RuntimeEventType, LedgerState>> = {
+  WR_SUBMITTED: "PROPOSED",
+  WR_VALIDATED: "PLANNING",
+  WR_QUEUED: "PENDING",
+  WR_CLAIMED: "IMPLEMENTING",
+  WR_ACKED: "REVIEW",
+  WR_SETTLED: "COMPLETED",
+  WR_REJECTED: "CANCELLED",
+  WR_FAILED: "FAILED",
+  WR_NOOP: "CANCELLED",
+  WR_DEFERRED: "CANCELLED",
+};
+
+export const RUNTIME_TO_CANONICAL_EVENT: Readonly<
+  Record<RuntimeEventType, CanonicalEventType>
+> = {
+  WR_SUBMITTED: "WORKREQUEST.CREATED",
+  WR_VALIDATED: "STATE.TRANSITION_COMMITTED",
+  WR_QUEUED: "STATE.TRANSITION_COMMITTED",
+  WR_CLAIMED: "STATE.TRANSITION_COMMITTED",
+  WR_ACKED: "STATE.TRANSITION_COMMITTED",
+  WR_SETTLED: "STATE.TRANSITION_COMMITTED",
+  WR_REJECTED: "STATE.TRANSITION_COMMITTED",
+  WR_FAILED: "STATE.TRANSITION_COMMITTED",
+  WR_NOOP: "STATE.TRANSITION_COMMITTED",
+  WR_DEFERRED: "STATE.TRANSITION_COMMITTED",
+};
+
+export function isRuntimeEventType(value: string): value is RuntimeEventType {
+  return (RUNTIME_EVENT_TYPES as readonly string[]).includes(value);
+}
+
+/** Transcode a kernel-internal event type to its canonical storage value. */
+export function toCanonicalEventType(eventType: string): string {
+  return isRuntimeEventType(eventType)
+    ? RUNTIME_TO_CANONICAL_EVENT[eventType]
+    : eventType;
+}
+
+/**
+ * Transcode a kernel payload at the write boundary. The exact runtime verb is
+ * preserved in `payload.runtime_event_type` (so the read path can map back
+ * losslessly), and the transition event carries the ledger `new_state` the
+ * projector requires.
+ */
+export function canonicalizeEventPayload(
+  eventType: string,
+  payload: Record<string, unknown> = {},
+): Record<string, unknown> {
+  if (!isRuntimeEventType(eventType)) return payload;
+  const canonical = toCanonicalEventType(eventType);
+  const next: Record<string, unknown> = {
+    ...payload,
+    runtime_event_type: eventType,
+  };
+  if (canonical === "STATE.TRANSITION_COMMITTED") {
+    next.new_state = RUNTIME_EVENT_LEDGER_STATE[eventType];
+  }
+  return next;
+}
+
+/** Map a ledger state back onto the runtime event that reaches it. */
+export function ledgerStateToRuntimeEventType(
+  state: string | undefined | null,
+): RuntimeEventType | null {
+  switch (state) {
+    case "PLANNING":
+      return "WR_VALIDATED";
+    case "PENDING":
+      return "WR_QUEUED";
+    case "IMPLEMENTING":
+      return "WR_CLAIMED";
+    case "REVIEW":
+      return "WR_ACKED";
+    case "COMPLETED":
+      return "WR_SETTLED";
+    case "FAILED":
+      return "WR_FAILED";
+    case "CANCELLED":
+      return "WR_REJECTED";
+    case "PROPOSED":
+      return "WR_SUBMITTED";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Map a stored row's event type back to the kernel vocabulary. Rows written
+ * before the cutover already carry WR_*; canonical rows carry the exact runtime
+ * verb in `payload.runtime_event_type`, else the ledger state disambiguates.
+ * Ledger-only events (IR / cron / proposed / approved) have no runtime
+ * counterpart and return null (the plural helper skips them).
+ */
+export function canonicalToRuntimeEventType(
+  eventType: string,
+  payload?: any,
+): RuntimeEventType | null {
+  if (isRuntimeEventType(eventType)) return eventType;
+  const explicit = payload?.runtime_event_type;
+  if (typeof explicit === "string" && isRuntimeEventType(explicit)) {
+    return explicit;
+  }
+  switch (eventType) {
+    case "WORKREQUEST.CREATED":
+      return "WR_SUBMITTED";
+    case "STATE.TRANSITION_COMMITTED":
+      return ledgerStateToRuntimeEventType(payload?.new_state);
+    case "EXECUTION.STARTED":
+      return "WR_CLAIMED";
+    case "EXECUTION.COMPLETED":
+      return "WR_SETTLED";
+    case "EXECUTION.FAILED":
+      return "WR_FAILED";
+    default:
+      return null;
+  }
+}
+
 // ── Status → event mapping for `decide()` ─────────────────────────
 //
 // ADR-006: Vision boundary at VALIDATED.
@@ -666,11 +878,18 @@ export function dbEventToRuntimeEvent(row: {
   sequence_number?: number | string;
   event_id?: string;
 }): RuntimeEvent {
+  const payload = typeof row.payload === "object" && row.payload !== null ? row.payload : {};
+  const type = canonicalToRuntimeEventType(row.event_type, payload);
+  if (!type) {
+    throw new Error(
+      `NOT_A_RUNTIME_EVENT: ${row.event_type} has no kernel-vocabulary counterpart`,
+    );
+  }
   return {
-    type: row.event_type as RuntimeEventType,
+    type,
     wrId: row.work_request_id,
     timestamp: row.occurred_at,
-    payload: typeof row.payload === "object" ? row.payload : {},
+    payload,
     sequenceNumber:
       row.sequence_number === undefined || row.sequence_number === null
         ? undefined
@@ -679,8 +898,16 @@ export function dbEventToRuntimeEvent(row: {
   };
 }
 
+/**
+ * Read boundary: map stored rows (canonical dot-namespaced or legacy WR_*)
+ * back to the kernel vocabulary. Ledger-only rows (IR / cron / proposed /
+ * approved without a preserved runtime verb) are not lifecycle transitions and
+ * are skipped so they cannot corrupt the fold.
+ */
 export function dbEventsToRuntimeEvents(rows: any[]): RuntimeEvent[] {
-  return rows.map(dbEventToRuntimeEvent);
+  return rows
+    .filter((row) => canonicalToRuntimeEventType(row.event_type, row.payload) !== null)
+    .map(dbEventToRuntimeEvent);
 }
 
 /**

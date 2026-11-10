@@ -1677,6 +1677,24 @@ CREATE FUNCTION conduit.replay_work_request_events(p_wr_id uuid) RETURNS TABLE(e
 
 
 --
+-- Name: allowed_transitions(text); Type: FUNCTION; Schema: conduit; Owner: -
+--
+
+CREATE FUNCTION conduit.allowed_transitions(from_state text) RETURNS text[]
+    LANGUAGE plpgsql STABLE
+    AS $$
+BEGIN
+  RETURN COALESCE(
+    (SELECT array_agg(to_state ORDER BY to_state)
+     FROM conduit.work_request_state_graph
+     WHERE work_request_state_graph.from_state = allowed_transitions.from_state),
+    ARRAY[]::TEXT[]
+  );
+END;
+$$;
+
+
+--
 -- Name: update_work_request_state(); Type: FUNCTION; Schema: conduit; Owner: -
 --
 
@@ -13790,28 +13808,57 @@ DECLARE
   v_subject TEXT;
   v_payload JSONB;
   v_notify_payload TEXT;
+  v_runtime_event_type TEXT;
 BEGIN
-  -- Only bridge recognized WRP runtime events
-  IF NEW.event_type NOT IN (
-    'WR_SUBMITTED', 'WR_VALIDATED', 'WR_QUEUED',
-    'WR_CLAIMED', 'WR_ACKED', 'WR_SETTLED',
-    'WR_REJECTED', 'WR_FAILED', 'WR_NOOP', 'WR_DEFERRED'
+  v_runtime_event_type := NEW.payload->>'runtime_event_type';
+
+  IF v_runtime_event_type IS NOT NULL THEN
+    -- Transcoded row: preserve the proven WR_* → wr.<verb> mapping.
+    IF v_runtime_event_type NOT IN (
+      'WR_SUBMITTED','WR_VALIDATED','WR_QUEUED','WR_CLAIMED','WR_ACKED',
+      'WR_SETTLED','WR_REJECTED','WR_FAILED','WR_NOOP','WR_DEFERRED'
+    ) THEN
+      RETURN NEW;
+    END IF;
+    v_wind_event_type := 'wr.' || lower(replace(v_runtime_event_type, 'WR_', ''));
+  ELSIF NEW.event_type IN (
+    'WR_SUBMITTED','WR_VALIDATED','WR_QUEUED','WR_CLAIMED','WR_ACKED',
+    'WR_SETTLED','WR_REJECTED','WR_FAILED','WR_NOOP','WR_DEFERRED'
   ) THEN
-    RETURN NEW;
+    -- Pre-cutover rows still present in the ledger.
+    v_wind_event_type := 'wr.' || lower(replace(NEW.event_type, 'WR_', ''));
+  ELSE
+    v_wind_event_type := CASE NEW.event_type
+      WHEN 'WORKREQUEST.CREATED' THEN 'wr.submitted'
+      WHEN 'STATE.TRANSITION_PROPOSED' THEN 'wr.deferred'
+      WHEN 'STATE.TRANSITION_APPROVED' THEN 'wr.validated'
+      WHEN 'STATE.TRANSITION_COMMITTED' THEN
+        CASE NEW.payload->>'new_state'
+          WHEN 'PLANNING' THEN 'wr.validated'
+          WHEN 'PENDING' THEN 'wr.queued'
+          WHEN 'IMPLEMENTING' THEN 'wr.claimed'
+          WHEN 'REVIEW' THEN 'wr.acked'
+          WHEN 'COMPLETED' THEN 'wr.settled'
+          WHEN 'FAILED' THEN 'wr.failed'
+          WHEN 'CANCELLED' THEN 'wr.rejected'
+          ELSE 'wr.acked'
+        END
+      WHEN 'EXECUTION.STARTED' THEN 'wr.claimed'
+      WHEN 'EXECUTION.COMPLETED' THEN 'wr.settled'
+      WHEN 'EXECUTION.FAILED' THEN 'wr.failed'
+      ELSE NULL
+    END;
+    IF v_wind_event_type IS NULL THEN
+      RETURN NEW;
+    END IF;
   END IF;
 
-  -- Convert WR_UPPERCASE to wr.lowercase (strip WR_ prefix)
-  v_wind_event_type := 'wr.' || lower(replace(NEW.event_type, 'WR_', ''));
-
-  -- Get the work request identifier and title from vision schema
   SELECT wr.wr_id, wr.title INTO v_wr_id, v_wr_title
   FROM vision.work_requests wr
   WHERE wr.work_request_uuid = NEW.work_request_id::text;
 
-  -- Build subject
   v_subject := 'nexus.wind.v1.events.' || v_wind_event_type;
 
-  -- Build event payload
   v_payload := jsonb_build_object(
     'wr_id', COALESCE(v_wr_id, NEW.work_request_id::text),
     'title', v_wr_title,
@@ -13821,7 +13868,6 @@ BEGIN
     'actor_id', NEW.actor_id
   ) || COALESCE(NEW.payload, '{}'::jsonb);
 
-  -- Insert into wind.events
   INSERT INTO wind.events (event_type, subject, payload, source, metadata)
   VALUES (
     v_wind_event_type,
@@ -13836,7 +13882,6 @@ BEGIN
   )
   RETURNING id::text INTO v_event_id;
 
-  -- Notify wind-srv so it can publish to NATS in real-time
   v_notify_payload := jsonb_build_object(
     'event_id', v_event_id,
     'event_type', v_wind_event_type,
@@ -15423,7 +15468,7 @@ CREATE TABLE conduit.work_request_events (
     actor_type text DEFAULT 'system'::text NOT NULL,
     actor_id text DEFAULT ''::text NOT NULL,
     sequence_number bigint NOT NULL,
-    CONSTRAINT work_request_events_event_type_check CHECK ((event_type = ANY (ARRAY['WORKREQUEST.CREATED'::text, 'VISION.IR_PRODUCED'::text, 'STATE.TRANSITION_PROPOSED'::text, 'STATE.TRANSITION_APPROVED'::text, 'STATE.TRANSITION_COMMITTED'::text, 'EXECUTION.STARTED'::text, 'EXECUTION.COMPLETED'::text, 'EXECUTION.FAILED'::text, 'SYSTEM.CRON_TRIGGERED'::text, 'WR_SUBMITTED'::text, 'WR_VALIDATED'::text, 'WR_QUEUED'::text, 'WR_CLAIMED'::text, 'WR_ACKED'::text, 'WR_SETTLED'::text, 'WR_REJECTED'::text, 'WR_FAILED'::text, 'WR_NOOP'::text, 'WR_DEFERRED'::text])))
+    CONSTRAINT work_request_events_event_type_check CHECK ((event_type = ANY (ARRAY['WORKREQUEST.CREATED'::text, 'VISION.IR_PRODUCED'::text, 'STATE.TRANSITION_PROPOSED'::text, 'STATE.TRANSITION_APPROVED'::text, 'STATE.TRANSITION_COMMITTED'::text, 'EXECUTION.STARTED'::text, 'EXECUTION.COMPLETED'::text, 'EXECUTION.FAILED'::text, 'SYSTEM.CRON_TRIGGERED'::text])))
 );
 
 
@@ -15460,6 +15505,27 @@ CREATE TABLE conduit.work_request_state (
     CONSTRAINT work_request_state_current_state_check CHECK ((current_state = ANY (ARRAY['PROPOSED'::text, 'PLANNING'::text, 'PENDING'::text, 'IMPLEMENTING'::text, 'REVIEW'::text, 'COMPLETED'::text, 'FAILED'::text, 'CANCELLED'::text]))),
     CONSTRAINT work_request_state_vision_stage_check CHECK ((vision_stage = ANY (ARRAY['PLAN_IR'::text, 'SPEC_IR'::text, 'EXECUTION_IR'::text, 'VALIDATION_IR'::text])))
 );
+
+-- Migration 034: owned ledger state graph, generated from the kernel
+-- TRANSITION_TABLE (LEDGER_STATE_GRAPH in runtime-kernel.ts).
+CREATE TABLE conduit.work_request_state_graph (
+    from_state text NOT NULL,
+    to_state text NOT NULL,
+    CONSTRAINT work_request_state_graph_pkey PRIMARY KEY (from_state, to_state)
+);
+
+INSERT INTO conduit.work_request_state_graph (from_state, to_state) VALUES
+  ('PROPOSED', 'PLANNING'),
+  ('PROPOSED', 'CANCELLED'),
+  ('PLANNING', 'PENDING'),
+  ('PLANNING', 'CANCELLED'),
+  ('PENDING', 'IMPLEMENTING'),
+  ('PENDING', 'CANCELLED'),
+  ('IMPLEMENTING', 'REVIEW'),
+  ('IMPLEMENTING', 'FAILED'),
+  ('REVIEW', 'COMPLETED'),
+  ('REVIEW', 'FAILED'),
+  ('REVIEW', 'CANCELLED');
 
 
 --
@@ -27296,6 +27362,7 @@ ALTER TABLE ONLY conduit.work_request_events
     ADD CONSTRAINT work_request_events_pkey PRIMARY KEY (event_id);
 
 
+
 --
 -- Name: work_request_state work_request_state_pkey; Type: CONSTRAINT; Schema: conduit; Owner: -
 --
@@ -29326,6 +29393,14 @@ ALTER TABLE ONLY resolution.work_request_edge
 
 ALTER TABLE ONLY resolution.work_request
     ADD CONSTRAINT work_request_pkey PRIMARY KEY (id);
+
+--
+-- Name: work_request_events work_request_events_work_request_id_fkey; Type: FK CONSTRAINT; Schema: conduit; Owner: -
+--
+
+ALTER TABLE ONLY conduit.work_request_events
+    ADD CONSTRAINT work_request_events_work_request_id_fkey FOREIGN KEY (work_request_id) REFERENCES resolution.work_request(id) NOT VALID;
+
 
 
 --
