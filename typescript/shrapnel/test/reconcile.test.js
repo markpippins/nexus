@@ -89,7 +89,15 @@ describe('0008 stereotype_reconcile (real database)', { skip: skipReason ?? fals
       migrationFiles.includes('0008_stereotype_reconcile.sql'),
       '0008_stereotype_reconcile.sql must be present in migrations/'
     );
-    assert.equal(migrationFiles.length, 8, `expected 8 migrations, found ${migrationFiles.length}`);
+    // 0009 (the freeze prerequisite) and later migrations may follow 0008;
+    // this suite asserts the 0008 verb still applies on top of the whole
+    // current chain, not that the chain stops at 8. Pinning an exact count
+    // here made the suite fail the moment 0009 landed, which said nothing
+    // about 0008's correctness.
+    assert.ok(
+      migrationFiles.length >= 8,
+      `expected at least 8 migrations, found ${migrationFiles.length}`
+    );
   });
 
   it('exposes stereotype_reconcile and the shared field-document helper', () => {
