@@ -40,6 +40,75 @@ class LedgerEventType(str, Enum):
     SYSTEM_CRON_TRIGGERED = "SYSTEM.CRON_TRIGGERED"
 
 
+# ── Canonical storage vocabulary (WRP event-vocabulary cutover) ─────
+#
+# conduit.work_request_events.event_type accepts EXACTLY these values
+# (migration 034). The WRP kernel domain keeps speaking WR_*; this store is the
+# write boundary, so it transcodes WR_* → canonical. The exact runtime verb is
+# preserved in payload["runtime_event_type"] so readers can map back, and
+# transition events carry the ledger new_state the DB projector requires.
+# A stray WR_* insert fails loudly at the CHECK — there is no DB-side shim.
+
+CANONICAL_EVENT_TYPES = frozenset(
+    {
+        "WORKREQUEST.CREATED",
+        "VISION.IR_PRODUCED",
+        "STATE.TRANSITION_PROPOSED",
+        "STATE.TRANSITION_APPROVED",
+        "STATE.TRANSITION_COMMITTED",
+        "EXECUTION.STARTED",
+        "EXECUTION.COMPLETED",
+        "EXECUTION.FAILED",
+        "SYSTEM.CRON_TRIGGERED",
+    }
+)
+
+RUNTIME_TO_CANONICAL_EVENT: dict[str, str] = {
+    "WR_SUBMITTED": "WORKREQUEST.CREATED",
+    "WR_VALIDATED": "STATE.TRANSITION_COMMITTED",
+    "WR_QUEUED": "STATE.TRANSITION_COMMITTED",
+    "WR_CLAIMED": "STATE.TRANSITION_COMMITTED",
+    "WR_ACKED": "STATE.TRANSITION_COMMITTED",
+    "WR_SETTLED": "STATE.TRANSITION_COMMITTED",
+    "WR_REJECTED": "STATE.TRANSITION_COMMITTED",
+    "WR_FAILED": "STATE.TRANSITION_COMMITTED",
+    "WR_NOOP": "STATE.TRANSITION_COMMITTED",
+    "WR_DEFERRED": "STATE.TRANSITION_COMMITTED",
+}
+
+# Ledger state each runtime event commits (mirrors runtime-kernel.ts, which is
+# itself derived from the kernel TRANSITION_TABLE).
+RUNTIME_EVENT_LEDGER_STATE: dict[str, str] = {
+    "WR_SUBMITTED": "PROPOSED",
+    "WR_VALIDATED": "PLANNING",
+    "WR_QUEUED": "PENDING",
+    "WR_CLAIMED": "IMPLEMENTING",
+    "WR_ACKED": "REVIEW",
+    "WR_SETTLED": "COMPLETED",
+    "WR_REJECTED": "CANCELLED",
+    "WR_FAILED": "FAILED",
+    "WR_NOOP": "CANCELLED",
+    "WR_DEFERRED": "CANCELLED",
+}
+
+
+def to_canonical_event_type(event_type: str) -> str:
+    """Transcode a kernel WR_* verb to the canonical storage vocabulary."""
+    return RUNTIME_TO_CANONICAL_EVENT.get(event_type, event_type)
+
+
+def canonicalize_event_payload(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Preserve the runtime verb and add the ledger new_state at the boundary."""
+    canonical = to_canonical_event_type(event_type)
+    if canonical == event_type:
+        return payload
+    stored = dict(payload)
+    stored["runtime_event_type"] = event_type
+    if canonical == "STATE.TRANSITION_COMMITTED":
+        stored["new_state"] = RUNTIME_EVENT_LEDGER_STATE[event_type]
+    return stored
+
+
 class WorkRequestState(str, Enum):
     PROPOSED = "PROPOSED"
     PLANNING = "PLANNING"
@@ -219,7 +288,8 @@ class EventStore:
             event_type = event_type.value
 
         event_id = str(uuid.uuid4())
-        payload = payload or {}
+        payload = canonicalize_event_payload(event_type, payload or {})
+        event_type = to_canonical_event_type(event_type)
 
         with self._conn.cursor() as cur:
             cur.execute(
