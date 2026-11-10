@@ -64,9 +64,14 @@ def test_builder_prompt_carries_correlation_ids_and_marker():
         assert parsed[field] == value
 
 
-def test_prompt_marker_declares_every_target_file():
+def test_prompt_marker_reports_changed_files_with_hashes():
     req = _req()
     prompt = executor_cloud._build_opencode_prompt(req, "/home/codex/dev")
+
+    # Target paths constrain the task, but the evidence marker must list only
+    # files actually changed and their hashes—not echo target directories/files.
+    for item in req["artifacts"]["produced_files"]:
+        assert item["path"] in prompt
 
     marker_line = next(
         line.strip()
@@ -74,8 +79,11 @@ def test_prompt_marker_declares_every_target_file():
         if line.strip().startswith(WORK_EVIDENCE_MARKER)
     )
     parsed = _parse_work_evidence(marker_line)
-    assert [item["path"] if isinstance(item, dict) else item for item in parsed["artifacts"]] == [
-        item["path"] for item in req["artifacts"]["produced_files"]
+    assert parsed["artifacts"] == [
+        {
+            "path": "<repo-relative path of a file you changed>",
+            "sha256": "<sha256sum of that file>",
+        }
     ]
 
 
