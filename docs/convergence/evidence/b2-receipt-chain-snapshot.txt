@@ -1,0 +1,34 @@
+# B2 receipt-chain snapshot and rollback proof — plan 8261645 (track B)
+# Non-authoritative rehearsal store; no live receipt was written.
+# isolated_db=nexus_ns_rehearsal_3423998_20261110T230355Z
+# isolated_port=44477
+# transition_law=typescript/conduit-mcp/src/receipts.ts (ALLOWED)
+__SNAPSHOT__
+rehearsal-R1|1|PLAN_CREATE|planner
+rehearsal-R1|2|IMPLEMENTATION|builder
+rehearsal-R1|3|CRITIQUE|critic
+rehearsal-R1|4|CRITIQUE_PASS|critic
+rehearsal-R1|5|REVIEW|reviewer
+rehearsal-R1|6|REVIEW_PASS|reviewer
+rehearsal-R2|1|PLAN_CREATE|planner
+rehearsal-R2|2|IMPLEMENTATION|builder
+rehearsal-R2|3|CRITIQUE|critic
+rehearsal-R2|4|CRITIQUE_PASS|critic
+rehearsal-R2|5|REVIEW|reviewer
+rehearsal-R2|6|REVIEW_PASS|reviewer
+rehearsal-R3|1|PLAN_CREATE|planner
+rehearsal-R3|2|BLOCK|critic
+rehearsal-R3|3|REQUEUED|planner
+__TICKETS__
+ticket-rehearsal-R1-builder|completed|open->claimed,claimed->completed
+ticket-rehearsal-R2-builder|completed|open->claimed,claimed->completed
+ticket-rehearsal-R3-builder|open|open->claimed,claimed->stale,stale->open
+__COUNTS__
+rehearsal_store_receipts=15
+rehearsal_store_tickets=3
+__ROLLBACK__
+__AFTER_ROLLBACK__
+rehearsal_tables_remaining=0
+
+live_conduit_receipts_for_rehearsal_ids=0
+rehearsal_db_present=0
