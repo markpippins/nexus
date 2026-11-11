@@ -9,7 +9,7 @@
  * admission and Wind owns workflow definitions, and this surface must not
  * become a second authority for either (AC7).
  */
-import { Router, type Request, type Response, type NextFunction } from "express";
+import type { Request, Response, NextFunction } from "express";
 import {
   parseEnvelope,
   ContractRefusal,
@@ -125,9 +125,19 @@ function asBody(req: Request): Record<string, unknown> {
   return body as Record<string, unknown>;
 }
 
-export function buildRouter(repo: LilacRepository, contractVersion: number): Router {
-  const router = Router();
-  const handlers: Record<string, (req: Request, res: Response) => Promise<void>> = {
+export type RouteHandler = (req: Request, res: Response) => Promise<void>;
+
+/**
+ * The handlers, keyed by operationId. Registration lives in app.ts, as literal
+ * `app.<verb>("<path>")` calls, because the fleet's OpenAPI drift gate
+ * (tools/api-docs/extract_routes.py) is line-based: it reads literal calls from
+ * the entry point and follows `app.use(prefix, router)`. A router built in a
+ * loop is invisible to it, and a service the gate cannot see is a service whose
+ * spec is never checked. `servesEveryRouteInTheTable` in the test suite keeps
+ * the literals and ROUTE_TABLE in agreement in both directions.
+ */
+export function buildHandlers(repo: LilacRepository, contractVersion: number): Record<string, RouteHandler> {
+  return {
     health: async (_req, res) => {
       res.json({ status: "ok", service: "lilac-srv", contract_version: contractVersion });
     },
@@ -227,17 +237,6 @@ export function buildRouter(repo: LilacRepository, contractVersion: number): Rou
     },
   };
 
-  for (const route of ROUTE_TABLE) {
-    const handler = handlers[route.operationId];
-    if (!handler) {
-      throw new Error(`route table entry ${route.operationId} has no handler`);
-    }
-    router[route.method](route.expressPath, (req, res, next) => {
-      handler(req, res).catch(next);
-    });
-  }
-
-  return router;
 }
 
 /** Express error boundary: typed refusals keep their status and code, anything

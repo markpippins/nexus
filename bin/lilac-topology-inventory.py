@@ -54,8 +54,18 @@ GENERATOR = "bin/lilac-topology-inventory.py"
 CANONICAL_SCHEMA = "resolution"
 LEGACY_SCHEMAS = ("vision", "execution", "wind", "kernel")
 
-# The one module allowed to hold the canonical implementation (parent AC1).
+# The module that holds the canonical implementation TODAY (parent AC1).
 CANONICAL_OWNER = "python/conduit/lilac.py"
+
+# The staged successor (plan 8261669). lilac-srv is the typed, idempotent
+# surface the canonical implementation is moving to: it writes the same four
+# surfaces with the same idempotency keys and is deliberately NOT on any live
+# caller's path yet. Declaring it here is not a waiver — it is the transition
+# being recorded. When the surface is activated, lilac.py becomes the
+# compatibility seam and the two entries swap roles; until then a THIRD writer
+# still lands in `violations`, which is what keeps this list meaningful.
+CANONICAL_SURFACE_OWNER = "typescript/lilac-srv/src/repository.ts"
+CANONICAL_OWNERS = (CANONICAL_OWNER, CANONICAL_SURFACE_OWNER)
 
 SURFACES = ("receipt", "ticket", "ticket_transition", "fanout_transition")
 SURFACE_LABELS = {
@@ -173,13 +183,43 @@ OVERLAP_CLASSIFICATION: Dict[str, Dict[str, str]] = {
                   "stores; canonical ticket persistence is the Lilac adapter. "
                   "Redirect is carried by plan 8261669 (L3).",
     },
+    # ticket_transition and fanout_transition became two-language overlaps only
+    # when lilac-srv landed (plan 8261669). This is NOT the legacy-store case
+    # above: both implementations write the SAME canonical resolution table with
+    # the same idempotency keys, which is what makes the cutover safe to stage.
+    # conduit reaches the TypeScript surface through its proxy adapter, so the
+    # disposition is `adapter` rather than `redirect` — nothing has to be
+    # rewritten for the staged channel to hold.
+    "ticket_transition": {
+        "classification": "intentional-channel",
+        "disposition": "adapter",
+        "replaces": "typescript/lilac-srv/src/repository.ts",
+        "reason": "Both python/conduit/lilac.py (live) and the staged lilac-srv "
+                  "repository write resolution.ticket_transition under the same "
+                  "natural key (ticket_id, from, to, input_receipt, policy), so a "
+                  "replay classifies identically on either path. Intentional "
+                  "during the cutover; the surface becomes the writer when "
+                  "8261669's activation gate is opened.",
+    },
+    "fanout_transition": {
+        "classification": "intentional-channel",
+        "disposition": "adapter",
+        "replaces": "typescript/lilac-srv/src/repository.ts",
+        "reason": "Both writers record the receipt-to-ticket ledger under "
+                  "(input_receipt_id, kind, policy_version); the ledger is the "
+                  "single fan-out record either way, so having two "
+                  "implementations of one ledger is a cutover channel, not a "
+                  "second authority.",
+    },
 }
 
 CANONICAL_OWNERSHIP_STATEMENT = (
     "Lilac owns ticket, receipt, execution-claim and fan-out behavior. The one "
-    "canonical implementation lives in python/conduit/lilac.py; every other "
-    "module that mutates those surfaces is either a declared compatibility "
-    "seam, a legacy writer pending redirect, or a violation recorded below."
+    "canonical implementation lives in python/conduit/lilac.py; the typed "
+    "surface it is moving to is typescript/lilac-srv (staged-inert, plan "
+    "8261669). Every other module that mutates those surfaces is either a "
+    "declared compatibility seam, a legacy writer pending redirect, or a "
+    "violation recorded below."
 )
 
 
@@ -480,7 +520,7 @@ def build_inventory(
         }
         for w in writers
         if w["role"] == "canonical"
-        and w["path"] != CANONICAL_OWNER
+        and w["path"] not in CANONICAL_OWNERS
         and not w["test_path"]
     ]
 
@@ -543,6 +583,7 @@ def build_inventory(
             "parent_plan": PARENT_PLAN,
             "canonical_schema": CANONICAL_SCHEMA,
             "canonical_owner": CANONICAL_OWNER,
+            "canonical_surface_owner_staged": CANONICAL_SURFACE_OWNER,
             "generated_at": generated_at,
             "runtime_probe": "available" if live.get("available") else "unavailable",
             "drift_contract": (
@@ -556,6 +597,13 @@ def build_inventory(
         "canonical_ownership": {
             "statement": CANONICAL_OWNERSHIP_STATEMENT,
             "owner": CANONICAL_OWNER,
+            "staged_surface_owner": CANONICAL_SURFACE_OWNER,
+            "staged_note": (
+                "lilac-srv (plan 8261669) is the typed idempotent surface the "
+                "canonical implementation is moving to. It is staged-inert: no "
+                "live caller is repointed at it. Declared here so the transition "
+                "is recorded rather than appearing as an undeclared writer."
+            ),
         },
         "surfaces": surfaces,
         "coverage": coverage,

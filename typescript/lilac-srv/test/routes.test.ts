@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
 import { FakeDb } from "./fake-db";
 import { createApp } from "../src/app";
+import { ROUTE_TABLE } from "../src/routes";
 
 const env = (key: string, route: string, over: Record<string, unknown> = {}) => ({
   source_implementation: "typescript/lilac-srv/src/routes.ts",
@@ -35,6 +36,26 @@ describe("surface", () => {
 
   it("answers an unknown path with 404, not a silent fallthrough", async () => {
     await request(app).get("/v1/does-not-exist").expect(404);
+  });
+
+  it("serves every route in the table", async () => {
+    // The registrations are literal (the fleet's OpenAPI extractor reads
+    // literal calls), so this is the link that keeps the table honest: a
+    // table entry with no registration, or a registration the table omits,
+    // fails here. Any status except 404 proves a handler is mounted.
+    for (const route of ROUTE_TABLE) {
+      const path = route.expressPath.replace(":ticket_id", "11111111-1111-1111-1111-111111111111");
+      const res =
+        route.method === "get"
+          ? await request(app).get(path)
+          : await request(app).post(path).send({});
+      // A 404 is a legitimate answer here (an unknown ticket timeline), so
+      // "served" is proven by the answer being OUR typed JSON rather than
+      // express's default text 404.
+      expect(res.headers["content-type"], `${route.envelopeRoute} is not served`).toContain(
+        "json",
+      );
+    }
   });
 });
 

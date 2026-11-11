@@ -2,8 +2,9 @@
   "_meta": {
     "canonical_owner": "python/conduit/lilac.py",
     "canonical_schema": "resolution",
+    "canonical_surface_owner_staged": "typescript/lilac-srv/src/repository.ts",
     "drift_contract": "`--check` compares the code-derived topology (surfaces, writers, readers, violations, overlaps, retired surfaces, coverage) and, only when the runtime probe is available, the service unit/port set. Per-service pid and invocation_id are observations and are never compared.",
-    "generated_at": "2026-11-11T00:26:38+00:00",
+    "generated_at": "2026-11-11T01:53:34+00:00",
     "generator": "bin/lilac-topology-inventory.py",
     "parent_plan": "8261639",
     "plan": "8261667",
@@ -11,31 +12,33 @@
   },
   "canonical_ownership": {
     "owner": "python/conduit/lilac.py",
-    "statement": "Lilac owns ticket, receipt, execution-claim and fan-out behavior. The one canonical implementation lives in python/conduit/lilac.py; every other module that mutates those surfaces is either a declared compatibility seam, a legacy writer pending redirect, or a violation recorded below."
+    "staged_note": "lilac-srv (plan 8261669) is the typed idempotent surface the canonical implementation is moving to. It is staged-inert: no live caller is repointed at it. Declared here so the transition is recorded rather than appearing as an undeclared writer.",
+    "staged_surface_owner": "typescript/lilac-srv/src/repository.ts",
+    "statement": "Lilac owns ticket, receipt, execution-claim and fan-out behavior. The one canonical implementation lives in python/conduit/lilac.py; the typed surface it is moving to is typescript/lilac-srv (staged-inert, plan 8261669). Every other module that mutates those surfaces is either a declared compatibility seam, a legacy writer pending redirect, or a violation recorded below."
   },
   "coverage": {
     "fanout_transition": {
-      "canonical_writers": 1,
+      "canonical_writers": 2,
       "ok": true,
-      "production_writers": 1,
+      "production_writers": 2,
       "undeclared_unknown_writers": 0
     },
     "receipt": {
-      "canonical_writers": 3,
+      "canonical_writers": 4,
       "ok": true,
-      "production_writers": 14,
+      "production_writers": 15,
       "undeclared_unknown_writers": 0
     },
     "ticket": {
-      "canonical_writers": 1,
+      "canonical_writers": 2,
       "ok": true,
-      "production_writers": 6,
+      "production_writers": 7,
       "undeclared_unknown_writers": 0
     },
     "ticket_transition": {
-      "canonical_writers": 1,
+      "canonical_writers": 2,
       "ok": true,
-      "production_writers": 1,
+      "production_writers": 2,
       "undeclared_unknown_writers": 0
     }
   },
@@ -54,6 +57,7 @@
       "typescript_writers": [
         "typescript/conduit-mcp/migrations/cleanup-stuck-pending-plans.js",
         "typescript/conduit-mcp/src/db.ts",
+        "typescript/lilac-srv/src/repository.ts",
         "typescript/nebula-srv/src/routes.ts",
         "typescript/wind-srv/src/routes/instances.js"
       ]
@@ -69,8 +73,35 @@
       "surface": "ticket",
       "typescript_writers": [
         "typescript/conduit-mcp/src/db.ts",
+        "typescript/lilac-srv/src/repository.ts",
         "typescript/wind-srv/src/event-processor.js",
         "typescript/wind-srv/src/routes/instances.js"
+      ]
+    },
+    {
+      "classification": "intentional-channel",
+      "disposition": "adapter",
+      "python_writers": [
+        "python/conduit/lilac.py"
+      ],
+      "reason": "Both python/conduit/lilac.py (live) and the staged lilac-srv repository write resolution.ticket_transition under the same natural key (ticket_id, from, to, input_receipt, policy), so a replay classifies identically on either path. Intentional during the cutover; the surface becomes the writer when 8261669's activation gate is opened.",
+      "replaces": "typescript/lilac-srv/src/repository.ts",
+      "surface": "ticket_transition",
+      "typescript_writers": [
+        "typescript/lilac-srv/src/repository.ts"
+      ]
+    },
+    {
+      "classification": "intentional-channel",
+      "disposition": "adapter",
+      "python_writers": [
+        "python/conduit/lilac.py"
+      ],
+      "reason": "Both writers record the receipt-to-ticket ledger under (input_receipt_id, kind, policy_version); the ledger is the single fan-out record either way, so having two implementations of one ledger is a cutover channel, not a second authority.",
+      "replaces": "typescript/lilac-srv/src/repository.ts",
+      "surface": "fanout_transition",
+      "typescript_writers": [
+        "typescript/lilac-srv/src/repository.ts"
       ]
     }
   ],
@@ -1029,6 +1060,66 @@
           "target_schema": "resolution",
           "test_path": false,
           "working_tree": "self"
+        },
+        {
+          "disposition": null,
+          "language": "typescript",
+          "lifecycle": "live",
+          "line": 458,
+          "path": "typescript/lilac-srv/src/repository.ts",
+          "role": "canonical",
+          "route": null,
+          "route_note": "library module \u2014 invoked in-process, no network route",
+          "surface": "fanout_transition",
+          "table": "fanout_transition",
+          "target_schema": "resolution",
+          "test_path": false,
+          "working_tree": "self"
+        },
+        {
+          "disposition": null,
+          "language": "typescript",
+          "lifecycle": "live",
+          "line": 520,
+          "path": "typescript/lilac-srv/src/repository.ts",
+          "role": "canonical",
+          "route": null,
+          "route_note": "library module \u2014 invoked in-process, no network route",
+          "surface": "fanout_transition",
+          "table": "fanout_transition",
+          "target_schema": "resolution",
+          "test_path": false,
+          "working_tree": "self"
+        },
+        {
+          "disposition": null,
+          "language": "typescript",
+          "lifecycle": "test/worktree",
+          "line": 248,
+          "path": "typescript/lilac-srv/test/fake-db.ts",
+          "role": "canonical",
+          "route": null,
+          "route_note": "library module \u2014 invoked in-process, no network route",
+          "surface": "fanout_transition",
+          "table": "fanout_transition",
+          "target_schema": "resolution",
+          "test_path": true,
+          "working_tree": "self"
+        },
+        {
+          "disposition": null,
+          "language": "typescript",
+          "lifecycle": "test/worktree",
+          "line": 265,
+          "path": "typescript/lilac-srv/test/fake-db.ts",
+          "role": "canonical",
+          "route": null,
+          "route_note": "library module \u2014 invoked in-process, no network route",
+          "surface": "fanout_transition",
+          "table": "fanout_transition",
+          "target_schema": "resolution",
+          "test_path": true,
+          "working_tree": "self"
         }
       ],
       "writers": [
@@ -1045,6 +1136,36 @@
           "table": "fanout_transition",
           "target_schema": "resolution",
           "test_path": false,
+          "working_tree": "self"
+        },
+        {
+          "disposition": null,
+          "language": "typescript",
+          "lifecycle": "live",
+          "line": 500,
+          "path": "typescript/lilac-srv/src/repository.ts",
+          "role": "canonical",
+          "route": null,
+          "route_note": "library module \u2014 invoked in-process, no network route",
+          "surface": "fanout_transition",
+          "table": "fanout_transition",
+          "target_schema": "resolution",
+          "test_path": false,
+          "working_tree": "self"
+        },
+        {
+          "disposition": null,
+          "language": "typescript",
+          "lifecycle": "test/worktree",
+          "line": 284,
+          "path": "typescript/lilac-srv/test/fake-db.ts",
+          "role": "canonical",
+          "route": null,
+          "route_note": "library module \u2014 invoked in-process, no network route",
+          "surface": "fanout_transition",
+          "table": "fanout_transition",
+          "target_schema": "resolution",
+          "test_path": true,
           "working_tree": "self"
         }
       ]
@@ -2541,6 +2662,66 @@
           "disposition": null,
           "language": "typescript",
           "lifecycle": "live",
+          "line": 196,
+          "path": "typescript/lilac-srv/src/repository.ts",
+          "role": "canonical",
+          "route": null,
+          "route_note": "library module \u2014 invoked in-process, no network route",
+          "surface": "receipt",
+          "table": "receipt",
+          "target_schema": "resolution",
+          "test_path": false,
+          "working_tree": "self"
+        },
+        {
+          "disposition": null,
+          "language": "typescript",
+          "lifecycle": "live",
+          "line": 240,
+          "path": "typescript/lilac-srv/src/repository.ts",
+          "role": "canonical",
+          "route": null,
+          "route_note": "library module \u2014 invoked in-process, no network route",
+          "surface": "receipt",
+          "table": "receipt",
+          "target_schema": "resolution",
+          "test_path": false,
+          "working_tree": "self"
+        },
+        {
+          "disposition": null,
+          "language": "typescript",
+          "lifecycle": "live",
+          "line": 585,
+          "path": "typescript/lilac-srv/src/repository.ts",
+          "role": "canonical",
+          "route": null,
+          "route_note": "library module \u2014 invoked in-process, no network route",
+          "surface": "receipt",
+          "table": "receipt",
+          "target_schema": "resolution",
+          "test_path": false,
+          "working_tree": "self"
+        },
+        {
+          "disposition": null,
+          "language": "typescript",
+          "lifecycle": "test/worktree",
+          "line": 115,
+          "path": "typescript/lilac-srv/test/fake-db.ts",
+          "role": "canonical",
+          "route": null,
+          "route_note": "library module \u2014 invoked in-process, no network route",
+          "surface": "receipt",
+          "table": "receipt",
+          "target_schema": "resolution",
+          "test_path": true,
+          "working_tree": "self"
+        },
+        {
+          "disposition": null,
+          "language": "typescript",
+          "lifecycle": "live",
           "line": 75,
           "path": "typescript/nebula-mcp/src/conduit-wrp-contract.ts",
           "role": "legacy",
@@ -2957,6 +3138,51 @@
           "table": "receipts",
           "target_schema": "vision",
           "test_path": false,
+          "working_tree": "self"
+        },
+        {
+          "disposition": null,
+          "language": "typescript",
+          "lifecycle": "live",
+          "line": 214,
+          "path": "typescript/lilac-srv/src/repository.ts",
+          "role": "canonical",
+          "route": null,
+          "route_note": "library module \u2014 invoked in-process, no network route",
+          "surface": "receipt",
+          "table": "receipt",
+          "target_schema": "resolution",
+          "test_path": false,
+          "working_tree": "self"
+        },
+        {
+          "disposition": null,
+          "language": "typescript",
+          "lifecycle": "test/worktree",
+          "line": 123,
+          "path": "typescript/lilac-srv/test/fake-db.ts",
+          "role": "canonical",
+          "route": null,
+          "route_note": "library module \u2014 invoked in-process, no network route",
+          "surface": "receipt",
+          "table": "receipt",
+          "target_schema": "resolution",
+          "test_path": true,
+          "working_tree": "self"
+        },
+        {
+          "disposition": null,
+          "language": "typescript",
+          "lifecycle": "test/worktree",
+          "line": 76,
+          "path": "typescript/lilac-srv/test/routes.test.ts",
+          "role": "canonical",
+          "route": null,
+          "route_note": "library module \u2014 invoked in-process, no network route",
+          "surface": "receipt",
+          "table": "receipt",
+          "target_schema": "resolution",
+          "test_path": true,
           "working_tree": "self"
         },
         {
@@ -3808,6 +4034,66 @@
           "disposition": null,
           "language": "typescript",
           "lifecycle": "live",
+          "line": 274,
+          "path": "typescript/lilac-srv/src/repository.ts",
+          "role": "canonical",
+          "route": null,
+          "route_note": "library module \u2014 invoked in-process, no network route",
+          "surface": "ticket",
+          "table": "ticket",
+          "target_schema": "resolution",
+          "test_path": false,
+          "working_tree": "self"
+        },
+        {
+          "disposition": null,
+          "language": "typescript",
+          "lifecycle": "live",
+          "line": 317,
+          "path": "typescript/lilac-srv/src/repository.ts",
+          "role": "canonical",
+          "route": null,
+          "route_note": "library module \u2014 invoked in-process, no network route",
+          "surface": "ticket",
+          "table": "ticket",
+          "target_schema": "resolution",
+          "test_path": false,
+          "working_tree": "self"
+        },
+        {
+          "disposition": null,
+          "language": "typescript",
+          "lifecycle": "live",
+          "line": 574,
+          "path": "typescript/lilac-srv/src/repository.ts",
+          "role": "canonical",
+          "route": null,
+          "route_note": "library module \u2014 invoked in-process, no network route",
+          "surface": "ticket",
+          "table": "ticket",
+          "target_schema": "resolution",
+          "test_path": false,
+          "working_tree": "self"
+        },
+        {
+          "disposition": null,
+          "language": "typescript",
+          "lifecycle": "test/worktree",
+          "line": 144,
+          "path": "typescript/lilac-srv/test/fake-db.ts",
+          "role": "canonical",
+          "route": null,
+          "route_note": "library module \u2014 invoked in-process, no network route",
+          "surface": "ticket",
+          "table": "ticket",
+          "target_schema": "resolution",
+          "test_path": true,
+          "working_tree": "self"
+        },
+        {
+          "disposition": null,
+          "language": "typescript",
+          "lifecycle": "live",
           "line": 7223,
           "path": "typescript/nebula-srv/src/routes.ts",
           "role": "legacy",
@@ -4035,6 +4321,36 @@
           "disposition": null,
           "language": "typescript",
           "lifecycle": "live",
+          "line": 294,
+          "path": "typescript/lilac-srv/src/repository.ts",
+          "role": "canonical",
+          "route": null,
+          "route_note": "library module \u2014 invoked in-process, no network route",
+          "surface": "ticket",
+          "table": "ticket",
+          "target_schema": "resolution",
+          "test_path": false,
+          "working_tree": "self"
+        },
+        {
+          "disposition": null,
+          "language": "typescript",
+          "lifecycle": "test/worktree",
+          "line": 160,
+          "path": "typescript/lilac-srv/test/fake-db.ts",
+          "role": "canonical",
+          "route": null,
+          "route_note": "library module \u2014 invoked in-process, no network route",
+          "surface": "ticket",
+          "table": "ticket",
+          "target_schema": "resolution",
+          "test_path": true,
+          "working_tree": "self"
+        },
+        {
+          "disposition": null,
+          "language": "typescript",
+          "lifecycle": "live",
           "line": 153,
           "path": "typescript/wind-srv/src/event-processor.js",
           "role": "legacy",
@@ -4110,6 +4426,66 @@
           "target_schema": "resolution",
           "test_path": false,
           "working_tree": "self"
+        },
+        {
+          "disposition": null,
+          "language": "typescript",
+          "lifecycle": "live",
+          "line": 353,
+          "path": "typescript/lilac-srv/src/repository.ts",
+          "role": "canonical",
+          "route": null,
+          "route_note": "library module \u2014 invoked in-process, no network route",
+          "surface": "ticket_transition",
+          "table": "ticket_transition",
+          "target_schema": "resolution",
+          "test_path": false,
+          "working_tree": "self"
+        },
+        {
+          "disposition": null,
+          "language": "typescript",
+          "lifecycle": "live",
+          "line": 408,
+          "path": "typescript/lilac-srv/src/repository.ts",
+          "role": "canonical",
+          "route": null,
+          "route_note": "library module \u2014 invoked in-process, no network route",
+          "surface": "ticket_transition",
+          "table": "ticket_transition",
+          "target_schema": "resolution",
+          "test_path": false,
+          "working_tree": "self"
+        },
+        {
+          "disposition": null,
+          "language": "typescript",
+          "lifecycle": "live",
+          "line": 584,
+          "path": "typescript/lilac-srv/src/repository.ts",
+          "role": "canonical",
+          "route": null,
+          "route_note": "library module \u2014 invoked in-process, no network route",
+          "surface": "ticket_transition",
+          "table": "ticket_transition",
+          "target_schema": "resolution",
+          "test_path": false,
+          "working_tree": "self"
+        },
+        {
+          "disposition": null,
+          "language": "typescript",
+          "lifecycle": "test/worktree",
+          "line": 188,
+          "path": "typescript/lilac-srv/test/fake-db.ts",
+          "role": "canonical",
+          "route": null,
+          "route_note": "library module \u2014 invoked in-process, no network route",
+          "surface": "ticket_transition",
+          "table": "ticket_transition",
+          "target_schema": "resolution",
+          "test_path": true,
+          "working_tree": "self"
         }
       ],
       "writers": [
@@ -4126,6 +4502,36 @@
           "table": "ticket_transition",
           "target_schema": "resolution",
           "test_path": false,
+          "working_tree": "self"
+        },
+        {
+          "disposition": null,
+          "language": "typescript",
+          "lifecycle": "live",
+          "line": 384,
+          "path": "typescript/lilac-srv/src/repository.ts",
+          "role": "canonical",
+          "route": null,
+          "route_note": "library module \u2014 invoked in-process, no network route",
+          "surface": "ticket_transition",
+          "table": "ticket_transition",
+          "target_schema": "resolution",
+          "test_path": false,
+          "working_tree": "self"
+        },
+        {
+          "disposition": null,
+          "language": "typescript",
+          "lifecycle": "test/worktree",
+          "line": 203,
+          "path": "typescript/lilac-srv/test/fake-db.ts",
+          "role": "canonical",
+          "route": null,
+          "route_note": "library module \u2014 invoked in-process, no network route",
+          "surface": "ticket_transition",
+          "table": "ticket_transition",
+          "target_schema": "resolution",
+          "test_path": true,
           "working_tree": "self"
         }
       ]
