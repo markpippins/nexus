@@ -1,0 +1,23 @@
+[Unit]
+# Nightly MongoDB backup: mongodump -> gzip archive, integrity gates
+# (gzip -t + mongorestore --dryRun), sha256 manifest, retention, stamp.
+# Closes architect handoff c9540d99 §3.1 — "3.4M keychain records exist with
+# zero recoverable copy" — and gives the 4.4 -> 8.0 migration a recurring
+# rollback net. Per architect decision 13600407: systemd user timers are the
+# single OS-level substrate; cron stays retired.
+Description=MongoDB nightly backup (verified, local disk)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/codex/dev/nexus/bin/mongo-backup.sh
+User=codex
+Group=codex
+TimeoutStartSec=1h
+
+# The dump streams through `docker exec`; keep the unit quiet on success but
+# never hide a failure (systemd records it either way).
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

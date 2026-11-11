@@ -1,0 +1,14 @@
+[Unit]
+Description=Daily MongoDB backup to /home/codex/backups/mongo (04:05)
+
+[Timer]
+# 04:05 — after the local PG tier (03:10), the off-machine PG tier (03:42),
+# MySQL (03:45) and the vanadium CI backup (04:15 window). A ~8 minute dump
+# must not overlap the PG or MySQL runs: they share the same disk.
+# Persistent=true catches up after boot/outage (decision 13600407).
+OnCalendar=*-*-* 04:05:00
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target
