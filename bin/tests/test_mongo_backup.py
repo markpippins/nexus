@@ -83,7 +83,12 @@ if [ "$1" = exec ]; then
     *mongodump*)
       # The namespace lines mongodump writes to stderr, one per collection.
       for _db in ${{DUMP_DBS-nexus keychains}}; do
-        printf '2026-01-01T00:00:00.000+0000\\twriting %s.coll to archive on stdout\\n' "$_db" >&2
+        if [ "${{DUMP_BACKTICKS:-0}}" = 1 ]; then
+          # mongo 6.0+ quotes identifiers: writing `db.coll` to `archive on stdout`
+          printf '2026-01-01T00:00:00.000+0000\\twriting `%s.coll` to `archive on stdout`\\n' "$_db" >&2
+        else
+          printf '2026-01-01T00:00:00.000+0000\\twriting %s.coll to archive on stdout\\n' "$_db" >&2
+        fi
       done
       printf 'payload' | gzip -n
       exit ${{DUMP_RC:-0}} ;;
@@ -198,6 +203,26 @@ esac
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertEqual(self.archives(), [],
                          "an archive missing a live database is not a backup")
+        self.assertIn("keychains", pathlib.Path(self.log_file).read_text())
+
+    def test_coverage_gate_parses_backticked_namespaces_from_6x_and_later(self):
+        # mongo 6.0+ changed the namespace log to quote identifiers:
+        #   writing `nexus.docklang` to `archive on stdout`
+        # Parsing only "writing X to archive" made the gate see no databases at
+        # all on 8.0 and reject a good archive. Same estate, new format, must pass.
+        r = self.run_script({"DUMP_BACKTICKS": "1",
+                             "DUMP_DBS": "nexus keychains legacy-audit",
+                             "LIVE_DBS": "keychains legacy-audit nexus"})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("coverage: all", pathlib.Path(self.log_file).read_text())
+
+    def test_backticked_log_still_rejects_a_partial_archive(self):
+        # The new format must not weaken the gate.
+        r = self.run_script({"DUMP_BACKTICKS": "1",
+                             "DUMP_DBS": "nexus",
+                             "LIVE_DBS": "nexus keychains"})
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(self.archives(), [])
         self.assertIn("keychains", pathlib.Path(self.log_file).read_text())
 
     def test_coverage_gate_works_when_only_mongosh_exists(self):
