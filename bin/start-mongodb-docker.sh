@@ -109,7 +109,10 @@ if [ -n "$DATA_VERSION" ] && printf '%s' "$REQUESTED_VERSION" | grep -qE '^[0-9]
             echo "[mongodb]   data volume     : $MONGO_VOLUME remembers $DATA_VERSION ($VOLUME_VERSION_FILE)" >&2
             echo "[mongodb] A newer mongod upgraded this volume; older binaries cannot open it." >&2
             echo "[mongodb] Fix: start a matching-or-newer image, e.g." >&2
-            echo "[mongodb]       MONGO_VERSION=mongo:${DATA_VERSION%%%.*}.${DATA_VERSION#*.} bin/start-mongodb-docker.sh" >&2
+            # The volume remembers the full version (e.g. 8.0.38) and that is
+            # exactly the image tag; the previous two-part reconstruction
+            # produced "8.0.38.0.38", an unusable tag, at the worst moment.
+            echo "[mongodb]       MONGO_VERSION=mongo:${DATA_VERSION} bin/start-mongodb-docker.sh" >&2
             echo "[mongodb] Do NOT delete or re-initialise the volume to work around this: that is data loss," >&2
             echo "[mongodb] not a repair (architect handoff c9540d99 §3.3)." >&2
             exit 2

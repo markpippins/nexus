@@ -242,6 +242,15 @@ esac
         self.assertIn("WARNING", r.stderr)
         self.assertIn("PINNED", r.stderr)
 
+    def test_downgrade_refusal_suggests_a_real_image_tag(self):
+        # The refusal is read while someone is recovering; it must not hand
+        # them a malformed tag ("8.0.38.0.38").
+        self.set_volume_version("8.0.38")
+        r = self.run_script({"MONGO_VERSION": "mongo:4.4.18"})
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("MONGO_VERSION=mongo:8.0.38 bin/start-mongodb-docker.sh", r.stderr)
+        self.assertNotIn("8.0.38.0.38", r.stderr)
+
     def test_dry_run_reports_the_plan_and_touches_nothing(self):
         self.set_volume_version("8.0.38")
         r = self.run_script({"MONGO_VERSION": "mongo:8.0.38", "MONGO_DRY_RUN": "1"})
