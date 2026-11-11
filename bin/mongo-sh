@@ -50,16 +50,36 @@ CONTAINER="${MONGO_CONTAINER:-atomic-mongodb}"
 
 [ -f "$ENV_FILE" ] || { echo "mongo-sh: $ENV_FILE not found" >&2; exit 3; }
 
-URI="$(grep -E '^SPRING_DATA_MONGODB_URI=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
+URI="$(grep -E '^SPRING_DATA_MONGODB_URI=' "$ENV_FILE" | head -1 | cut -d= -f2- || true)"
 [ -n "$URI" ] || { echo "mongo-sh: SPRING_DATA_MONGODB_URI not set in $ENV_FILE" >&2; exit 3; }
 
+case "$URI" in
+    mongodb://*|mongodb+srv://*) ;;
+    *) echo "mongo-sh: SPRING_DATA_MONGODB_URI is not a mongodb:// URI" >&2; exit 3 ;;
+esac
+
 # Credentials are only needed by the legacy shell; mongosh takes the URI as-is
-# (which also keeps percent-encoding intact).
-decoded="$(printf '%b' "${URI//%/\\x}")"
-creds="$(printf '%s' "$decoded" | sed -E 's#^mongodb(\+srv)?://##; s#@.*##')"
-user="$(printf '%s' "$creds" | cut -d: -f1)"
-pass="$(printf '%s' "$creds" | cut -d: -f2-)"
-db="$(printf '%s' "$decoded" | sed -E 's#.*/([^/?]+)(\?.*)?$#\1#')"
+# (which also keeps percent-encoding intact). Parse the *encoded* URI and decode
+# the user and password separately: decoding first would let a percent-encoded
+# '@' or ':' inside the password be mistaken for a delimiter and silently
+# truncate it.
+decode() { printf '%b' "${1//%/\\x}"; }
+
+authority="${URI#*://}"
+authority="${authority%%/*}"
+if [[ "$authority" == *@* ]]; then userinfo="${authority%@*}"; else userinfo=""; fi
+user_enc="${userinfo%%:*}"
+if [[ "$userinfo" == *:* ]]; then pass_enc="${userinfo#*:}"; else pass_enc=""; fi
+user="$(decode "$user_enc")"
+pass="$(decode "$pass_enc")"
+
+rest="${URI#*://}"
+if [[ "$rest" == */* ]]; then
+    path_part="${rest#*/}"
+    db="${path_part%%[?#]*}"
+else
+    db=""
+fi
 
 legacy_ready() { [ -n "$user" ] && [ -n "$pass" ] && [ -n "$db" ]; }
 
