@@ -27,6 +27,9 @@ Every client call passes `-w` and DEVNULL stdin: a password prompt would hang
 a CI runner instead of failing it (the defect test_grants_e2e records).
 
 DB tier: bin/tests-ci-manifest.json -> tiers.db
+
+topology-inventory: ignore-file — the INSERTs below are fixture data written
+into a throwaway database, not producers of the canonical surfaces.
 """
 from __future__ import annotations
 
