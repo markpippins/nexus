@@ -188,7 +188,16 @@ _mongo_eval() {
 EXPECTED_DBS="$(_mongo_eval \
   'print(db.adminCommand({listDatabases:1}).databases.map(d=>d.name).filter(n=>["admin","config","local"].indexOf(n)<0).sort().join(" "))' \
   || true)"
-DUMPED_DBS="$(grep -oE 'writing [A-Za-z0-9_.-]+ to archive' "$NSLOG" 2>/dev/null \
+# The namespace log format changed at 6.0: 4.4 prints
+#   writing keychains.entries to archive on stdout
+# while 8.0 quotes the identifiers:
+#   writing `nexus.docklang` to `archive on stdout`
+# Parsing only the older form made the coverage gate see NOTHING on 8.0 and
+# reject a perfectly good archive ("missing databases: keychains legacy-audit
+# nexus (dump covered: nothing)"). Strip backticks before matching so one
+# parser covers both.
+DUMPED_DBS="$(sed 's/`//g' "$NSLOG" 2>/dev/null \
+  | grep -oE 'writing [A-Za-z0-9_.-]+ to archive' \
   | awk '{print $2}' | cut -d. -f1 | sort -u | tr '\n' ' ' | sed -E 's/ +$//' || true)"
 if [ -n "$EXPECTED_DBS" ]; then
   MISSING=""
