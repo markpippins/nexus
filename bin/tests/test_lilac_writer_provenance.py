@@ -24,6 +24,8 @@ sys.path.insert(0, str(REPO_ROOT / "python" / "conduit"))
 sys.path.insert(0, str(REPO_ROOT / "python" / "cascade"))
 sys.path.insert(0, str(REPO_ROOT / "python" / "vision" / "losm-store" / "src"))
 sys.path.insert(0, str(REPO_ROOT / "python" / "vision" / "losm-ir" / "src"))
+_LOSM_IR_SRC = str(REPO_ROOT / "python" / "vision" / "losm-ir" / "src" / "losm_ir")
+_LOSM_STORE_SRC = str(REPO_ROOT / "python" / "vision" / "losm-store" / "src" / "losm_store")
 
 # Hermetic import shims: the helpers under test are pure functions, but
 # their modules import live drivers at top level (psycopg2, sqlalchemy).
@@ -81,16 +83,25 @@ if "sqlalchemy" not in sys.modules:
         sys.modules["sqlalchemy.orm"] = _orm
         sys.modules["sqlalchemy.exc"] = _exc
 
-if "losm_ir" not in sys.modules:
-    try:
-        import losm_ir  # noqa: F401
-    except ImportError:
+for _pkg_name, _pkg_dir in (("losm_ir", _LOSM_IR_SRC), ("losm_store", _LOSM_STORE_SRC)):
+    _shell = _types.ModuleType(_pkg_name)
+    _shell.__path__ = [_pkg_dir]
+    sys.modules[_pkg_name] = _shell
+
+try:
+    import losm_ir.states  # noqa: F401
+    import losm_store.models  # noqa: F401
+    _REAL_SUBMODULES_OK = True
+except ImportError:
+    _REAL_SUBMODULES_OK = False
+
+if not _REAL_SUBMODULES_OK:
         # Faithful fallback mirror of losm_ir.states.WorkStatus
         # (python/vision/losm-ir/src/losm_ir/states.py) for checkouts
         # where losm-ir is genuinely absent. models.py evaluates
         # WorkStatus.NEW at class-body time, so every member must exist.
         from enum import Enum as _StdEnum
-        _ir = _types.ModuleType("losm_ir")
+        _ir = sys.modules["losm_ir"]
         _states = _types.ModuleType("losm_ir.states")
 
         class _WorkStatus(str, _StdEnum):
@@ -107,7 +118,6 @@ if "losm_ir" not in sys.modules:
             FAILED = "FAILED"
         _states.WorkStatus = _WorkStatus
         _ir.states = _states
-        sys.modules["losm_ir"] = _ir
         sys.modules["losm_ir.states"] = _states
 
 from db_adapter import DBAdapter  # noqa: E402
