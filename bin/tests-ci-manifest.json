@@ -5,6 +5,7 @@
     "db": [
       "test_drift_intake.py",
       "test_grants_e2e.py",
+      "test_lilac_wave1_v215_migration.py",
       "test_roles_registry_parity.py",
       "test_verify_roles_transitional.py"
     ],
