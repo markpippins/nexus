@@ -88,6 +88,11 @@ esac
         with open(self.log) as fh:
             return [line.strip() for line in fh if line.strip()]
 
+    def set_pin(self, path, text):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            fh.write(text + "\n")
+
     def set_volume_version(self, version):
         os.makedirs(os.path.dirname(self.verfile), exist_ok=True)
         with open(self.verfile, "w") as fh:
@@ -177,6 +182,81 @@ esac
         self.assertEqual(self.volume_version(), "4.4.18",
                          "a failed start must not claim the volume is upgraded")
         self.assertIn("Not falling back to an older image", r.stderr)
+
+    # -- volume targeting (post-8.0 cutover) ------------------------------
+    def test_default_volume_is_the_live_v8_volume(self):
+        # Production moved to mongodb_data_v8 at the cutover. A default of the
+        # old volume would recreate the hazard on the next bare run.
+        self.set_volume_version("8.0.38")
+        r = self.run_script({"MONGO_VERSION": "mongo:8.0.38"})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        runs = [c for c in self.calls() if c.startswith("run")]
+        self.assertTrue(runs, "expected a docker run")
+        self.assertIn("mongodb_data_v8:/data/db", runs[0],
+                      "the script must open the live volume by default")
+
+    def test_version_file_is_keyed_by_volume(self):
+        # A single global stamp let an 8.0 image through against the 4.4
+        # rollback volume, because the stamp said 8.0.38 for every volume.
+        self.set_volume_version("")
+        r = self.run_script({"MONGO_VERSION": "mongo:8.0.38",
+                             "MONGO_VOLUME": "mongodb_data",
+                             "MONGO_VOLUME_VERSION_FILE": ""})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        per_volume = os.path.join(self.tmp, ".local", "state", "nexus",
+                                  "mongodb-volume-version-mongodb_data")
+        self.assertTrue(os.path.exists(per_volume),
+                        f"expected a per-volume stamp at {per_volume}")
+        with open(per_volume) as fh:
+            self.assertEqual(fh.read().strip(), "8.0.38")
+
+    def test_guard_refuses_an_8x_image_on_the_44_rollback_volume(self):
+        # The version guard cannot catch this case: 8.0.38 >= 4.4.18 is an
+        # "upgrade" by its rules, yet opening the 4.4 rollback volume with 8.0
+        # would upgrade it in place and destroy the rollback. A pin refuses
+        # every image, whatever the direction.
+        self.set_volume_version("4.4.18")
+        pin = os.path.join(self.tmp, "state", "mongodb-volume-mongodb_data.pin")
+        self.set_pin(pin, "4.4.18 rollback copy — do not upgrade")
+        r = self.run_script({"MONGO_VERSION": "mongo:8.0.38",
+                             "MONGO_VOLUME": "mongodb_data",
+                             "MONGO_VOLUME_PIN_FILE": pin})
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("pinned rollback volume", r.stderr)
+        self.assertEqual(self.volume_version(), "4.4.18",
+                         "the pinned copy's stamp must not change")
+        dangerous = [c for c in self.calls()
+                     if c.startswith("stop") or c.startswith("rm") or c.startswith("run")]
+        self.assertEqual(dangerous, [],
+                         "the rollback volume must not be touched at all")
+
+    def test_pin_can_be_overridden_only_explicitly(self):
+        self.set_volume_version("4.4.18")
+        pin = os.path.join(self.tmp, "state", "mongodb-volume-mongodb_data.pin")
+        self.set_pin(pin, "rollback")
+        r = self.run_script({"MONGO_VERSION": "mongo:8.0.38",
+                             "MONGO_VOLUME": "mongodb_data",
+                             "MONGO_VOLUME_PIN_FILE": pin,
+                             "MONGO_ALLOW_PINNED_VOLUME": "1"})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("WARNING", r.stderr)
+        self.assertIn("PINNED", r.stderr)
+
+    def test_dry_run_reports_the_plan_and_touches_nothing(self):
+        self.set_volume_version("8.0.38")
+        r = self.run_script({"MONGO_VERSION": "mongo:8.0.38", "MONGO_DRY_RUN": "1"})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("DRY RUN", r.stdout)
+        self.assertIn("mongodb_data_v8", r.stdout)
+        self.assertIn("mongo:8.0.38", r.stdout)
+        self.assertEqual(self.calls(), [],
+                         "a dry run must not invoke docker at all")
+
+    def test_dry_run_still_enforces_the_guard(self):
+        # dry-run must not become a way to skip the downgrade guard
+        self.set_volume_version("8.0.38")
+        r = self.run_script({"MONGO_VERSION": "mongo:4.4.18", "MONGO_DRY_RUN": "1"})
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
 
     # -- explicit, loud bypass ---------------------------------------------
     def test_override_is_explicit_and_loud(self):
