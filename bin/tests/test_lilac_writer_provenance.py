@@ -23,6 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "python" / "conduit"))
 sys.path.insert(0, str(REPO_ROOT / "python" / "cascade"))
 sys.path.insert(0, str(REPO_ROOT / "python" / "vision" / "losm-store" / "src"))
+sys.path.insert(0, str(REPO_ROOT / "python" / "vision" / "losm-ir" / "src"))
 
 # Hermetic import shims: the helpers under test are pure functions, but
 # their modules import live drivers at top level (psycopg2, sqlalchemy).
@@ -84,11 +85,26 @@ if "losm_ir" not in sys.modules:
     try:
         import losm_ir  # noqa: F401
     except ImportError:
+        # Faithful fallback mirror of losm_ir.states.WorkStatus
+        # (python/vision/losm-ir/src/losm_ir/states.py) for checkouts
+        # where losm-ir is genuinely absent. models.py evaluates
+        # WorkStatus.NEW at class-body time, so every member must exist.
+        from enum import Enum as _StdEnum
         _ir = _types.ModuleType("losm_ir")
         _states = _types.ModuleType("losm_ir.states")
 
-        class _WorkStatus:
-            pass
+        class _WorkStatus(str, _StdEnum):
+            NEW = "NEW"
+            INTAKE = "INTAKE"
+            PLAN_GENERATION = "PLAN_GENERATION"
+            PLAN_REVIEW = "PLAN_REVIEW"
+            PLAN_APPROVAL_GATE = "PLAN_APPROVAL_GATE"
+            SPEC_GENERATION = "SPEC_GENERATION"
+            EXECUTION = "EXECUTION"
+            VALIDATION = "VALIDATION"
+            COMPLETION = "COMPLETION"
+            BLOCKED = "BLOCKED"
+            FAILED = "FAILED"
         _states.WorkStatus = _WorkStatus
         _ir.states = _states
         sys.modules["losm_ir"] = _ir
