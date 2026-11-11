@@ -90,7 +90,12 @@ if [ "$1" = exec ]; then
     *mongorestore*)
       cat >/dev/null
       exit ${{RESTORE_RC:-0}} ;;
+    *" mongosh "*)
+      [ "${{NO_MONGOSH:-0}}" = 1 ] && {{ echo 'exec: "mongosh": executable file not found in $PATH' >&2; exit 127; }}
+      printf '%s\\n' "${{LIVE_DBS-nexus keychains}}"
+      exit 0 ;;
     *" mongo "*)
+      [ "${{NO_LEGACY_SHELL:-0}}" = 1 ] && {{ echo 'exec: "mongo": executable file not found in $PATH' >&2; exit 127; }}
       printf '%s\\n' "${{LIVE_DBS-nexus keychains}}"
       exit 0 ;;
   esac
@@ -194,6 +199,28 @@ esac
         self.assertEqual(self.archives(), [],
                          "an archive missing a live database is not a backup")
         self.assertIn("keychains", pathlib.Path(self.log_file).read_text())
+
+    def test_coverage_gate_works_when_only_mongosh_exists(self):
+        # mongo:6.0+ ships mongosh and no legacy `mongo`. Assuming the legacy
+        # shell silently disabled this gate after the 8.0 cutover: the script
+        # logged "coverage gate skipped" and would have promoted a partial
+        # archive. The gate must run under either shell.
+        r = self.run_script({"NO_LEGACY_SHELL": "1",
+                             "DUMP_DBS": "nexus",
+                             "LIVE_DBS": "nexus keychains"})
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(self.archives(), [],
+                         "with mongosh available the partial archive must still be rejected")
+        self.assertIn("keychains", pathlib.Path(self.log_file).read_text())
+        self.assertNotIn("coverage gate skipped", pathlib.Path(self.log_file).read_text())
+
+    def test_coverage_gate_falls_back_to_legacy_shell(self):
+        # 4.4/5.0 have no mongosh; the job must keep working there too.
+        r = self.run_script({"NO_MONGOSH": "1",
+                             "DUMP_DBS": "nexus keychains legacy-audit",
+                             "LIVE_DBS": "keychains legacy-audit nexus"})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("coverage: all", pathlib.Path(self.log_file).read_text())
 
     def test_coverage_gate_passes_when_every_database_is_present(self):
         r = self.run_script({"DUMP_DBS": "nexus keychains legacy-audit",
