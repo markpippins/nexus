@@ -3,7 +3,7 @@
     "canonical_owner": "python/conduit/lilac.py",
     "canonical_schema": "resolution",
     "drift_contract": "`--check` compares the code-derived topology (surfaces, writers, readers, violations, overlaps, retired surfaces, coverage) and, only when the runtime probe is available, the service unit/port set. Per-service pid and invocation_id are observations and are never compared.",
-    "generated_at": "2026-11-10T23:55:10+00:00",
+    "generated_at": "2026-11-11T00:26:38+00:00",
     "generator": "bin/lilac-topology-inventory.py",
     "parent_plan": "8261639",
     "plan": "8261667",

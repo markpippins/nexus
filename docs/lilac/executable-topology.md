@@ -54,8 +54,10 @@ Each entry was authority once and is now historical. Nothing here may be treated
 
 ```bash
 bin/lilac-topology-inventory.py           # rewrite JSON + this document
-bin/lilac-topology-inventory.py --check   # exit 1 if either artifact is stale
+bin/lilac-topology-inventory.py --check   # exit 1 if stale, 3 if fail-open
 ```
 
 `--check` is enforced by `bin/tests/test_lilac_topology_inventory.py` in the `bin/tests guards` CI job, so a writer added without regenerating the inventory fails the build rather than silently widening the blind spot.
+
+Exit 3 is the other half: `--check` refuses a document that *records* a fail-open state (a surface with no production writer, an `unknown` writer with no disposition, or an overlap without a classification, disposition or replacing path), even when a fresh scan agrees with it. Regenerating cannot clear that — only declaring the missing decision can.
 

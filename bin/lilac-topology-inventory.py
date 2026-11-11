@@ -146,6 +146,12 @@ OVERLAP_CLASSES = (
     "test-only",
 )
 OVERLAP_DISPOSITIONS = ("redirect", "adapter", "retirement")
+OVERLAP_CLASSIFICATIONS = (
+    "intentional-channel",
+    "semantic-duplicate",
+    "stale-or-deprecated",
+    "test-only",
+)
 
 # Declared classification for a surface written from BOTH languages. Keyed by
 # surface; anything missing is reported as `unknown` and fails the guard, so a
@@ -624,6 +630,63 @@ def render(inventory: Dict[str, Any]) -> str:
     return json.dumps(inventory, indent=2, sort_keys=True) + "\n"
 
 
+def integrity_problems(inventory: Dict[str, Any]) -> List[str]:
+    """Fail-closed properties of the document ITSELF (parent AC2/AC3).
+
+    Drift and integrity are different questions, and conflating them left a
+    hole a reviewer reproduced: `--check` compared committed against fresh,
+    so an artifact that faithfully recorded a fail-open state — a surface with
+    no writer, an `unknown` writer nobody dispositioned, an overlap nobody
+    classified — was drift-clean and passed green. Regenerating only made the
+    committed copy agree with the bad state faster.
+
+    This gate answers the other question: is what the document records
+    acceptable at all? It runs on the committed artifact before any
+    comparison, so a hand-crafted or regenerated fail-open artifact cannot be
+    merged, and again on the fresh scan so generation cannot quietly produce
+    one that the next `--check` would bless.
+    """
+    problems: List[str] = []
+    coverage = inventory.get("coverage") or {}
+    surfaces = inventory.get("surfaces") or {}
+
+    for surface in SURFACES:
+        cov = coverage.get(surface)
+        if not cov:
+            problems.append(f"$coverage.{surface}: surface is absent from the coverage table")
+            continue
+        if not cov.get("production_writers"):
+            problems.append(f"$coverage.{surface}: no production writer (coverage is fail-closed)")
+        elif not cov.get("ok"):
+            problems.append(
+                f"$coverage.{surface}: {cov.get('undeclared_unknown_writers', 0)} "
+                "writer(s) with lifecycle `unknown` and no recorded disposition"
+            )
+        for index, writer in enumerate((surfaces.get(surface) or {}).get("writers") or []):
+            if writer.get("lifecycle") == "unknown" and not writer.get("disposition"):
+                problems.append(
+                    f"$surfaces.{surface}.writers[{index}] ({writer.get('path')}): "
+                    "lifecycle `unknown` with no disposition"
+                )
+
+    for index, overlap in enumerate(inventory.get("overlaps") or []):
+        label = overlap.get("surface") or f"[{index}]"
+        if overlap.get("classification") not in OVERLAP_CLASSIFICATIONS:
+            problems.append(
+                f"$overlaps.{label}.classification: {overlap.get('classification')!r} "
+                f"is not one of {list(OVERLAP_CLASSIFICATIONS)}"
+            )
+        if overlap.get("disposition") not in OVERLAP_DISPOSITIONS:
+            problems.append(
+                f"$overlaps.{label}.disposition: {overlap.get('disposition')!r} "
+                f"is not one of {list(OVERLAP_DISPOSITIONS)}"
+            )
+        if not overlap.get("replaces"):
+            problems.append(f"$overlaps.{label}.replaces: no replacing path named")
+
+    return problems
+
+
 def retired_authority_problems(inventory: Dict[str, Any], markdown: str) -> List[str]:
     """Parent AC5 guard: a retired surface may never read as live authority.
 
@@ -757,12 +820,18 @@ def render_markdown(inventory: Dict[str, Any]) -> str:
         "",
         "```bash",
         "bin/lilac-topology-inventory.py           # rewrite JSON + this document",
-        "bin/lilac-topology-inventory.py --check   # exit 1 if either artifact is stale",
+        "bin/lilac-topology-inventory.py --check   # exit 1 if stale, 3 if fail-open",
         "```",
         "",
         "`--check` is enforced by `bin/tests/test_lilac_topology_inventory.py` in the "
         "`bin/tests guards` CI job, so a writer added without regenerating the "
         "inventory fails the build rather than silently widening the blind spot.",
+        "",
+        "Exit 3 is the other half: `--check` refuses a document that *records* a "
+        "fail-open state (a surface with no production writer, an `unknown` writer "
+        "with no disposition, or an overlap without a classification, disposition "
+        "or replacing path), even when a fresh scan agrees with it. Regenerating "
+        "cannot clear that — only declaring the missing decision can.",
         "",
     ]
     return "\n".join(lines) + "\n"
@@ -812,6 +881,24 @@ def main(argv: Optional[List[str]] = None, probe: Optional[LiveProbe] = None) ->
         except json.JSONDecodeError as exc:
             print(f"topology artifact is not valid JSON: {exc}", file=sys.stderr)
             return 2
+        # Integrity first: a fail-open artifact can be perfectly drift-clean,
+        # and regenerating it is what makes it so. Refuse the recorded state
+        # before asking whether it matches a fresh scan.
+        fail_open = integrity_problems(committed) or integrity_problems(inventory)
+        if fail_open:
+            print(
+                f"topology artifact records a fail-open state ({len(fail_open)} problem(s)):",
+                file=sys.stderr,
+            )
+            for path in fail_open[:40]:
+                print(f"  - {path}", file=sys.stderr)
+            print(
+                "fix the recorded state (declare a disposition, classify the "
+                "overlap, or restore a writer); regenerating alone will not clear this",
+                file=sys.stderr,
+            )
+            return 3
+
         probed = bool(inventory.get("services"))
         problems = diff_projection(
             stable_projection(committed, include_services=probed),
