@@ -24,6 +24,71 @@ sys.path.insert(0, str(REPO_ROOT / "python" / "conduit"))
 sys.path.insert(0, str(REPO_ROOT / "python" / "cascade"))
 sys.path.insert(0, str(REPO_ROOT / "python" / "vision" / "losm-store" / "src"))
 
+# Hermetic import shims: the helpers under test are pure functions, but
+# their modules import live drivers at top level (psycopg2, sqlalchemy).
+# The CI hermetic job only installs pyyaml/pytest/setuptools, so stub the
+# drivers here instead of requiring them. Nothing under test opens a
+# connection, so the stubs are never touched beyond import time.
+import types as _types
+
+if "psycopg2" not in sys.modules:
+    try:
+        import psycopg2  # noqa: F401
+    except ImportError:
+        _pg = _types.ModuleType("psycopg2")
+        _pg_pool = _types.ModuleType("psycopg2.pool")
+        _pg_pool.ThreadedConnectionPool = object
+        _pg.pool = _pg_pool
+        sys.modules["psycopg2"] = _pg
+        sys.modules["psycopg2.pool"] = _pg_pool
+
+if "sqlalchemy" not in sys.modules:
+    try:
+        import sqlalchemy  # noqa: F401
+    except ImportError:
+        _sa = _types.ModuleType("sqlalchemy")
+        _sa.text = lambda *a, **k: None
+        for _name in ("Column", "DateTime", "Integer", "String",
+                      "Text", "Float", "JSON"):
+            setattr(_sa, _name, type(_name, (),
+                                    {"__init__": lambda self, *a, **k: None}))
+
+        class _SAEnum:
+            def __init__(self, *a, **k):
+                pass
+        _sa.Enum = _SAEnum
+        _orm = _types.ModuleType("sqlalchemy.orm")
+
+        class _Session:
+            pass
+        _orm.Session = _Session
+        _orm.declarative_base = lambda *a, **k: type(
+            "Base", (), {"__init__": lambda self, *a, **k: None})
+        _exc = _types.ModuleType("sqlalchemy.exc")
+
+        class _NoResultFound(Exception):
+            pass
+        _exc.NoResultFound = _NoResultFound
+        _sa.orm = _orm
+        _sa.exc = _exc
+        sys.modules["sqlalchemy"] = _sa
+        sys.modules["sqlalchemy.orm"] = _orm
+        sys.modules["sqlalchemy.exc"] = _exc
+
+if "losm_ir" not in sys.modules:
+    try:
+        import losm_ir  # noqa: F401
+    except ImportError:
+        _ir = _types.ModuleType("losm_ir")
+        _states = _types.ModuleType("losm_ir.states")
+
+        class _WorkStatus:
+            pass
+        _states.WorkStatus = _WorkStatus
+        _ir.states = _states
+        sys.modules["losm_ir"] = _ir
+        sys.modules["losm_ir.states"] = _states
+
 from db_adapter import DBAdapter  # noqa: E402
 from admission_subscriber import (  # noqa: E402
     _stamp_provenance_into_metadata,
@@ -151,27 +216,35 @@ def test_ac4_disposition_rerun_identical_and_append_only(tmp_path):
         ["r1", "r2"]
 
 
+def _code_lines_of(*rel_paths):
+    # Yield upper-cased code lines (no blanks, full-line comments, or
+    # docstring fences) from working-tree files. Scanning file contents
+    # instead of `git diff origin/main...HEAD` keeps the guard independent
+    # of which git refs a checkout has (CI uses shallow/PR checkouts where
+    # origin/main may not exist). These implementation files contain no
+    # DROP/legacy-rewrite statements at all, so file scope is equivalent
+    # to diff scope for this change.
+    lines = []
+    for rel in rel_paths:
+        for raw in (REPO_ROOT / rel).read_text(encoding="utf-8").splitlines():
+            body = raw.strip()
+            if not body or body.startswith(("#", '"""', "'''", "*")):
+                continue  # comments/docstrings are prose, not statements
+            lines.append(body.upper())
+    return lines
+
+
 def test_ac5_no_drop_or_history_rewrite_in_this_change():
     # NOTE: only implementation files are scanned. This guard file itself
     # is excluded on purpose — its docstrings/assertions mention DROP and
     # UPDATE/DELETE as ordinary words, which a naive substring match would
     # flag as a false positive (observed in tester reproduction).
-    diff = subprocess.run(
-        ["git", "diff", "origin/main...HEAD", "--",
-         "python/conduit/db_adapter.py",
-         "python/conduit/lilac_disposition.py",
-         "python/cascade/admission_subscriber.py",
-         "python/vision/losm-store/src/losm_store/repository.py"],
-        cwd=str(REPO_ROOT), capture_output=True, text=True, check=True,
-    ).stdout
-    code_lines = []
-    for ln in diff.splitlines():
-        if not ln.startswith("+") or ln.startswith("+++"):
-            continue
-        body = ln[1:].strip()
-        if not body or body.startswith(("#", '"""', "'''", "*")):
-            continue  # comments/docstrings are prose, not statements
-        code_lines.append(body.upper())
+    code_lines = _code_lines_of(
+        "python/conduit/db_adapter.py",
+        "python/conduit/lilac_disposition.py",
+        "python/cascade/admission_subscriber.py",
+        "python/vision/losm-store/src/losm_store/repository.py",
+    )
     assert not any(re.match(r"DROP\s+(TABLE|INDEX|VIEW)", ln)
                    for ln in code_lines), \
         "this plan drops no legacy table"
