@@ -292,10 +292,16 @@ def ollama_chat(model: str, chunk_text: str, timeout: int = 900) -> list[dict]:
     return [n for n in (normalize_candidate(c) for c in parsed.get("candidates", [])) if n]
 
 
+# Model the opencode backend requests. This must be an id that `opencode models`
+# actually lists: a retired id does not fail validation, it comes back from the
+# provider as "Unexpected server error" with rc=1, which reads like an outage.
+OPENCODE_MODEL = "opencode/big-pickle"
+
+
 def opencode_extract(model_full: str, chunk_text: str,
                      timeout: int = 300) -> list[dict]:
     """Harness-mediated extraction: shells out to `opencode run` under the
-    named model (default opencode/x-preview-f-free). This is the low-rate-
+    named model (default OPENCODE_MODEL). This is the low-rate-
     limit route for ox-alpha-family models — they have no raw OpenAI API
     route (prov-opencode resolves to conduit :3100), so the harness IS the
     transport. stdout carries the response; logs go to stderr."""
@@ -304,7 +310,11 @@ def opencode_extract(model_full: str, chunk_text: str,
            f"\n\n<transcript_chunk>\n{chunk_text}\n</transcript_chunk>")
     res = subprocess.run(
         ["opencode", "run", "-m", model_full, "--pure", msg],
-        capture_output=True, text=True, timeout=timeout)
+        capture_output=True, text=True, timeout=timeout,
+        # opencode blocks at init when stdin is an inherited pipe that nobody
+        # writes to, printing nothing while it waits. Pin /dev/null so a
+        # harness-launched run cannot stall silently for the whole timeout.
+        stdin=subprocess.DEVNULL)
     if res.returncode != 0:
         raise AbsorbError("E_TRANSIENT_LLM_UNAVAILABLE",
                           f"opencode rc={res.returncode}: {res.stderr[-160:]}")
@@ -439,7 +449,7 @@ def main(argv=None) -> int:
                    help="batch size; hourly cadence uses 5 most-recent")
     c.add_argument("--backend", choices=["opencode", "tackle", "ollama"],
                    default="opencode",
-                   help="opencode = harness-mediated x-preview-f-free (low rate limits, "
+                   help=f"opencode = harness-mediated {OPENCODE_MODEL} (low rate limits, "
                         "default per operator); tackle = Rover/Nemotron configbundle; "
                         "ollama = local fallback")
     c.add_argument("--model", default="qwen2.5-coder:latest",
@@ -474,7 +484,7 @@ def main(argv=None) -> int:
             target = None
             if args.backend == "tackle":
                 target = resolve_llm_target(args.role_config)
-            oc_model = "opencode/x-preview-f-free"
+            oc_model = OPENCODE_MODEL
             for i, ch in enumerate(chunks):
                 if args.backend == "opencode":
                     found.extend(opencode_extract(oc_model, ch))
