@@ -360,41 +360,61 @@ def _load_from_json(path: str) -> Dict[str, Any]:
     return doc
 
 
-def _live_parity(dsn: str, schema: str, window_hours: Optional[float]) -> Dict[str, Any]:
+def _live_parity(dsn: str, schema: str) -> Dict[str, Any]:
+    """Live mode: delegate the receipt read to the ratified drift module.
+
+    ``python/conduit/lilac_drift.check_legacy_surface`` already owns the
+    legacy->canonical comparison for the cutover (contract v1 fixture, decision
+    1b02c07c). Re-implementing that SELECT here would put a second copy of the
+    canonical read in the tree and inflate the executable-topology inventory
+    with a consumer that is really that module. So this function is an adapter:
+    it maps the drift classes onto the gate vocabulary and adds the write audit.
+    """
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                     "..", "python", "conduit"))
     try:
-        from lilac_drift import KIND_BY_TYPE  # type: ignore
+        import lilac_drift  # type: ignore
     except Exception as exc:
-        raise SystemExit("cannot import lilac_drift.KIND_BY_TYPE: %s" % exc)
+        raise SystemExit("cannot import python/conduit/lilac_drift.py: %s" % exc)
 
     conn = _connect(dsn)
     try:
+        scanned = lilac_drift.check_legacy_surface(conn, schema=schema)
+        counts = {c: 0 for c in ALL_CLASSES}
+        extra: Dict[str, int] = {}
+        for klass, n in (scanned.get("classes") or {}).items():
+            if klass in counts:
+                counts[klass] += n
+            else:
+                extra[klass] = extra.get(klass, 0) + n
+        unexplained = sum(counts[c] for c in UNEXPLAINED_CLASSES) + sum(extra.values())
+
         cur = conn.cursor()
-        cur.execute("SELECT id, type, plan_id, agent_role, session_id, ticket_id, "
-                    "summary, created_at FROM vision.receipts")
-        legacy = [dict(zip(("id", "type", "plan_id", "agent_role", "session_id",
-                            "ticket_id", "summary", "created_at"), r))
-                  for r in cur.fetchall()]
-
-        def read_twin(row):
-            c = conn.cursor()
-            c.execute("SELECT kind, payload, contract_version FROM %s.receipt "
-                      "WHERE source_receipt_id=%%s ORDER BY created_at LIMIT 1" % schema,
-                      (row["id"],))
-            hit = c.fetchone()
-            if not hit:
-                return None
-            payload = hit[1] if isinstance(hit[1], dict) else json.loads(hit[1] or "{}")
-            return {"kind": hit[0], "payload": payload, "contract_version": hit[2]}
-
-        report = parity_report(legacy, read_twin, KIND_BY_TYPE.get, window_hours)
         cur.execute(WRITE_AUDIT_SQL)
         cols = [d[0] for d in cur.description]
-        after = [dict(zip(cols, r)) for r in cur.fetchall()]
-        report["write_audit_snapshot"] = after
-        report["legacy_tables"] = ["%s.%s" % t for t in LEGACY_TABLES]
-        return report
+        snapshot = [dict(zip(cols, r)) for r in cur.fetchall()]
+
+        return {
+            "measured": scanned.get("scanned", 0),
+            "counts": counts,
+            "extra_counts": extra,
+            "matched": counts[PARITY],
+            "mismatched": unexplained,
+            "unreadable": counts[UNREADABLE],
+            "unexplained_findings": [
+                r for r in (scanned.get("rows") or [])
+                if r.get("class") in UNEXPLAINED_CLASSES
+            ],
+            "fail_closed": unexplained > 0,
+            "window_hours": None,
+            "window_start_ms": None,
+            "classes": list(ALL_CLASSES),
+            "write_audit_snapshot": snapshot,
+            "legacy_tables": ["%s.%s" % t for t in LEGACY_TABLES],
+            "note": "live mode classifies the whole legacy surface via "
+                    "lilac_drift.check_legacy_surface; windowing applies to "
+                    "--from-json captures and to the write-audit delta",
+        }
     finally:
         conn.rollback()
         conn.close()
@@ -436,7 +456,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             sys.stderr.write(
                 "no input: pass --from-json for a hermetic run or provide a DSN\n")
             return 2
-        report = _live_parity(args.dsn, args.schema, args.window_hours)
+        report = _live_parity(args.dsn, args.schema)
         report["source"] = "live"
 
     if args.as_json:

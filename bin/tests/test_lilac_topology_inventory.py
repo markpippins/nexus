@@ -484,6 +484,37 @@ def test_generator_executes_no_mutating_sql() -> None:
         )
 
 
+def _added_files() -> set[str]:
+    """Files ADDED by this change set (git status A against origin/main)."""
+    out = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "diff", "--name-status", "origin/main...HEAD"],
+        capture_output=True, text=True, check=False,
+    )
+    if out.returncode != 0:
+        return set()
+    added = set()
+    for line in out.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 2 and parts[0].startswith("A"):
+            added.add(parts[1])
+    return added
+
+
+def _artifact_paths() -> set[str]:
+    """Every file the committed artifact records as a reader or writer."""
+    try:
+        doc = json.loads(ARTIFACT_JSON.read_text())
+    except Exception:
+        return set()
+    paths = set()
+    for body in (doc.get("surfaces") or {}).values():
+        for role in ("readers", "writers"):
+            for row in body.get(role) or []:
+                if row.get("path"):
+                    paths.add(row["path"])
+    return paths
+
+
 def test_change_set_does_not_modify_the_inventory_artifact_by_hand() -> None:
     """The committed artifact may only change together with the generator.
 
@@ -514,9 +545,37 @@ def test_change_set_does_not_modify_the_inventory_artifact_by_hand() -> None:
         "bin/lilac-topology-inventory.py",
         "bin/tests/test_lilac_topology_inventory.py",
     }
-    assert artifacts and companions & set(changed), (
-        f"generated artifacts changed without the generator: {sorted(artifacts)}"
+    if companions & set(changed):
+        return
+    # The counts are derived from the TREE, not only from the generator: adding
+    # a new consumer or producer anywhere moves them. That is the generator
+    # working correctly, so the companion rule must not call it a hand edit.
+    # It is accepted only when an ADDED file is itself recorded in the artifact
+    # and `test_committed_artifact_is_current` still proves a faithful
+    # regeneration — a hand edit never arrives with matching new code.
+    added = _added_files()
+    if added & _artifact_paths():
+        return
+    raise AssertionError(
+        f"generated artifacts changed without the generator and without new "
+        f"scanned code: {sorted(artifacts)}"
     )
+
+
+def test_an_unexplained_artifact_change_is_still_refused(monkeypatch) -> None:
+    """The new branch must not turn the guard into a no-op.
+
+    An artifact-only change with no generator edit and no ADDED file that the
+    artifact records is still a hand edit by construction, so it must raise.
+    """
+    monkeypatch.setattr(
+        sys.modules[__name__], "_added_files",
+        lambda: {"docs/lilac/executable-topology.json"})
+    monkeypatch.setattr(
+        sys.modules[__name__], "_artifact_paths",
+        lambda: {"python/conduit/lilac.py"})
+    with pytest.raises(AssertionError):
+        test_change_set_does_not_modify_the_inventory_artifact_by_hand()
 
 
 # ---------------------------------------------------------------------------

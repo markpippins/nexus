@@ -24,6 +24,10 @@ The AC4 half needs a real PostgreSQL and runs in the `guards-db` tier. The other
 five are hermetic and run anywhere.
 
 DB tier: bin/tests-ci-manifest.json -> tiers.db
+
+topology-inventory: ignore-file — every INSERT/SELECT below runs against a
+database this suite creates and drops. They are rehearsal fixtures, not
+producers or consumers of a canonical surface.
 """
 
 from __future__ import annotations
