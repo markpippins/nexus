@@ -5,10 +5,11 @@
     "db": [
       "test_drift_intake.py",
       "test_grants_e2e.py",
+      "test_lilac_parity_gate.py",
+      "test_lilac_srv_schema_contract.py",
       "test_lilac_wave1_v215_migration.py",
       "test_roles_registry_parity.py",
-      "test_verify_roles_transitional.py",
-      "test_lilac_srv_schema_contract.py"
+      "test_verify_roles_transitional.py"
     ],
     "_why": "Membership lists for guards whose dependency the default job does not provide. A tiered guard runs in EXACTLY ONE job - the one that provides its dependency - and is skipped by the default job automatically. A tier is a membership list, not an exclusion: listed here means the guard RUNS. Only list-valued, non-underscore keys are tiers."
   },
