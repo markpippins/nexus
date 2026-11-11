@@ -170,9 +170,24 @@ log "dumped $(numfmt --to=iec "$SIZE_BYTES" 2>/dev/null || echo "${SIZE_BYTES}B"
 # ----------------------------------------------------------- coverage gate --
 # "The file is big enough" is not "the data is in it". Compare the namespaces
 # mongodump reports against the databases that actually exist.
-EXPECTED_DBS="$(docker exec "$CONTAINER" mongo --quiet "$ADMIN_URI" --eval \
-  'db.adminCommand({listDatabases:1}).databases.map(d=>d.name).filter(n=>["admin","config","local"].indexOf(n)<0).sort().join(" ")' \
-  2>/dev/null | tr -d '\r' | tail -1 || true)"
+# The server shell differs by image: 4.4/5.0 ship `mongo`, 6.0+ ship `mongosh`.
+# This job must keep working across the 4.4 -> 8.0 migration, and assuming one
+# of them silently disables the gate on the other (measured: on mongo:8.0,
+# `exec: "mongo": executable file not found in $PATH` -> "coverage gate
+# skipped" -> a partial archive could be promoted as a backup). Probe instead.
+_mongo_eval() {
+  local sh out
+  for sh in mongosh mongo; do
+    if out="$(docker exec "$CONTAINER" "$sh" --quiet "$ADMIN_URI" --eval "$1" 2>/dev/null)"; then
+      printf '%s' "$out" | tr -d '\r' | tail -1
+      return 0
+    fi
+  done
+  return 1
+}
+EXPECTED_DBS="$(_mongo_eval \
+  'print(db.adminCommand({listDatabases:1}).databases.map(d=>d.name).filter(n=>["admin","config","local"].indexOf(n)<0).sort().join(" "))' \
+  || true)"
 DUMPED_DBS="$(grep -oE 'writing [A-Za-z0-9_.-]+ to archive' "$NSLOG" 2>/dev/null \
   | awk '{print $2}' | cut -d. -f1 | sort -u | tr '\n' ' ' | sed -E 's/ +$//' || true)"
 if [ -n "$EXPECTED_DBS" ]; then
