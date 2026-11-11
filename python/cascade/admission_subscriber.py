@@ -58,6 +58,9 @@ import urllib.request
 import uuid as uuid_mod
 from typing import Any
 
+# ── Invocation identity (shared with db_adapter.py C1 gate) ────────────
+_INVOCATION_ID = os.environ.get("INVOCATION_ID", "unsupervised") or "unsupervised"
+
 # ── Path setup ──────────────────────────────────────────────────────
 _PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PARENT not in sys.path:
@@ -181,6 +184,77 @@ def emit_wr_validated(wr_uuid: str) -> str:
 #  execution.requests mirror
 # ═══════════════════════════════════════════════════════════════════════
 
+# C1 gate 1 (Lilac plan 8261670): five-field provenance envelope stamped
+# on every ticket/receipt mutation. The five fields are:
+# producer_id, source_channel, source_system, process_id, invocation_id.
+_PROVENANCE_FIELDS = (
+    "producer_id",
+    "source_channel",
+    "source_system",
+    "process_id",
+    "invocation_id",
+)
+
+
+def _stamp_provenance_into_metadata(metadata: dict[str, str]) -> dict[str, str]:
+    """Ensure the five-field provenance envelope is present in metadata.
+
+    Called by write-side paths so every ticket/receipt mutation carries
+    deterministic source identity. Falls back to process-identity defaults
+    when caller-supplied values are absent.
+    """
+    provenance = {
+        "producer_id": metadata.get("producer_id", "nexus-conduit-python"),
+        "source_channel": metadata.get("source_channel", "conduit-python"),
+        "source_system": metadata.get("source_system", "conduit"),
+        "process_id": metadata.get("process_id", str(os.getpid())),
+        "invocation_id": metadata.get("invocation_id", _INVOCATION_ID),
+    }
+    metadata.update(provenance)
+    return metadata
+
+
+# C1 gate 1 (Lilac plan 8261670): fail-closed provenance enforcement.
+# Stamps the five-field envelope via _stamp_provenance_into_metadata, then
+# refuses (PermissionError) when source identity is missing or conflicting.
+# The refusal is raised BEFORE any write, so it is provably non-mutating.
+def _enforce_provenance_identity(metadata: dict[str, str]) -> dict[str, str]:
+    """Fail-closed provenance envelope with conflict detection.
+
+    Returns the stamped five-field provenance dict. Raises PermissionError
+    when:
+      * no recognisable source identity can be established (producer_id or
+        invocation_id empty after stamping), or
+      * caller-supplied fields conflict with process-identity defaults.
+    """
+    stamped = _stamp_provenance_into_metadata(dict(metadata))
+
+    # Conflict detection: caller-supplied values that override process
+    # defaults indicate a conflicting/ambiguous source identity.
+    _process_defaults = {
+        "producer_id": "nexus-conduit-python",
+        "source_channel": "conduit-python",
+        "source_system": "conduit",
+        "process_id": str(os.getpid()),
+        "invocation_id": _INVOCATION_ID,
+    }
+    for field in _PROVENANCE_FIELDS:
+        caller_val = metadata.get(field)
+        if caller_val is not None and caller_val != _process_defaults[field]:
+            raise PermissionError(
+                "provenance conflict on %s: caller=%r conflicts with "
+                "process identity %r" % (field, caller_val, _process_defaults[field])
+            )
+
+    # Fail-closed: no recognisable source identity.
+    if not stamped.get("producer_id") or not stamped.get("invocation_id"):
+        raise PermissionError(
+            "no recognisable source identity — refusing provenance write"
+        )
+
+    return stamped
+
+
 def _derive_entity_key(dco_json: str | None, wr_id: str) -> str | None:
     """Derive the deterministic WR entity_key at birth (T26 Item B).
 
@@ -288,6 +362,10 @@ def ensure_nebula_work_request(
         if entity_key:
             context["entity_key"] = entity_key
         context["work_request_uuid"] = wr_uuid
+        # C1 gate 1 (Lilac plan 8261670): stamp the five-field provenance
+        # envelope on the canonical ticket write. Fail-closed — a missing or
+        # conflicting source identity raises before any INSERT.
+        context["provenance"] = _enforce_provenance_identity({})
 
         cur.execute(
             """INSERT INTO resolution.work_request
