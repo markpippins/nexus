@@ -47,6 +47,9 @@ MONGODB_DEPENDENT_SERVICES=(
 # cannot substitute for.
 MONGO_CONTAINER="atomic-mongodb"
 MONGO_APP_DB="nexus"
+# Port used by the liveness-only fallback. Overridable so a test can point at a
+# closed port instead of the live server.
+MONGO_PORT="${MONGO_PORT:-27017}"
 # Parse (do not source) .env — avoids executing arbitrary lines as shell.
 _mongo_env() {
     local key="$1"
@@ -62,20 +65,29 @@ MONGO_ROOT_PASS="$(_mongo_env MONGO_ROOT_PASS)"; MONGO_ROOT_PASS="${MONGO_ROOT_P
 _mongodb_ready() {
     command -v docker &>/dev/null || return 1
     docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$MONGO_CONTAINER" || return 1
-    local out
-    out=$(timeout 8 docker exec "$MONGO_CONTAINER" mongo --quiet \
-            -u "$MONGO_ROOT_USER" -p "$MONGO_ROOT_PASS" \
-            --authenticationDatabase admin \
-            --eval "db.getSiblingDB('${MONGO_APP_DB}').runCommand({listCollections:1}).ok" \
-            2>/dev/null | tr -d '\r')
-    [[ "$out" == *1* ]]
+    local sh out
+    # The image's client differs by server version: 4.4/5.0 ship `mongo`,
+    # 6.0+ ship `mongosh` only. Probing one name made this authoritative check
+    # fail on 8.0 with `exec: "mongo": executable file not found`, silently
+    # demoting every cycle to the degraded port-only path.
+    for sh in mongosh mongo; do
+        out=$(timeout 8 docker exec "$MONGO_CONTAINER" "$sh" --quiet \
+                -u "$MONGO_ROOT_USER" -p "$MONGO_ROOT_PASS" \
+                --authenticationDatabase admin \
+                --eval "db.getSiblingDB('${MONGO_APP_DB}').runCommand({listCollections:1}).ok" \
+                2>/dev/null | tr -d '\r')
+        if [[ "$out" == *1* ]]; then
+            return 0
+        fi
+    done
+    return 1
 }
 
 # Liveness only — port is open. Says NOTHING about auth or data reachability;
 # used only as a labelled degraded fallback, never as the health verdict.
 _mongodb_port_open() {
-    ss -tlnp 2>/dev/null | grep -q ':27017 ' 2>/dev/null && return 0
-    timeout 2 bash -c 'echo > /dev/tcp/localhost/27017' 2>/dev/null && return 0
+    ss -tlnp 2>/dev/null | grep -q ":${MONGO_PORT} " 2>/dev/null && return 0
+    timeout 2 bash -c "echo > /dev/tcp/localhost/${MONGO_PORT}" 2>/dev/null && return 0
     return 1
 }
 
