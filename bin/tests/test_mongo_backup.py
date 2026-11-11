@@ -251,16 +251,66 @@ esac
 
 
 class Units(unittest.TestCase):
-    def test_service_runs_this_script(self):
+    def test_execstart_is_an_installed_path_not_a_checkout_path(self):
+        # A checkout path does not exist until the change is merged, so the unit
+        # failed at start with "Command ... is not executable: No such file or
+        # directory" — and would have failed nightly at 04:05.
         body = SERVICE.read_text()
-        self.assertIn("ExecStart=/home/codex/dev/nexus/bin/mongo-backup.sh", body)
+        self.assertIn("ExecStart=%h/.local/lib/nexus/mongo-backup/mongo-backup.sh", body)
+        self.assertNotIn("ExecStart=/home/codex/dev/nexus/bin/", body)
         self.assertIn("Type=oneshot", body)
+
+    def test_user_unit_does_not_set_user(self):
+        # User=/Group= are not supported in user units; leaving them in produces
+        # a warning on every start for no benefit.
+        body = SERVICE.read_text()
+        self.assertNotIn("\nUser=", body)
+        self.assertNotIn("\nGroup=", body)
 
     def test_timer_is_daily_and_persistent(self):
         body = TIMER.read_text()
         self.assertIn("OnCalendar=", body)
         self.assertIn("Persistent=true", body)
         self.assertIn("WantedBy=timers.target", body)
+
+    def test_installer_deploys_a_self_contained_layout(self):
+        installer = REPO / "bin" / "install-mongo-backup.sh"
+        self.assertTrue(installer.exists(), "installer missing")
+        tmp = tempfile.mkdtemp(prefix="mongoinstall-")
+        try:
+            libdir = os.path.join(tmp, "lib")
+            cfg = os.path.join(tmp, "cfg")
+            env = dict(os.environ, HOME=tmp, XDG_CONFIG_HOME=cfg,
+                       MONGO_BACKUP_LIBDIR=libdir)
+            r = subprocess.run(["bash", str(installer), "--no-reload"],
+                               capture_output=True, text=True, env=env, timeout=60)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+            script = os.path.join(libdir, "mongo-backup.sh")
+            guard = os.path.join(libdir, "lib", "drive-guard.sh")
+            self.assertTrue(os.path.isfile(script))
+            self.assertTrue(os.access(script, os.X_OK))
+            self.assertTrue(os.path.isfile(guard),
+                            "the script sources lib/drive-guard.sh from its own dir")
+            for unit in ("mongo-backup.service", "mongo-backup.timer"):
+                self.assertTrue(os.path.isfile(os.path.join(cfg, "systemd", "user", unit)), unit)
+
+            # The installed layout must actually run from where it was installed.
+            bdir = os.path.join(tmp, "backups")
+            os.makedirs(bdir)
+            envfile = os.path.join(tmp, "env")
+            with open(envfile, "w") as fh:
+                fh.write("SPRING_DATA_MONGODB_URI=mongodb://u:p@localhost:27017/nexus?authSource=admin\n")
+            run_env = dict(os.environ,
+                           MONGO_ENV_FILE=envfile, BACKUP_DIR=bdir,
+                           LOG_FILE=os.path.join(tmp, "log"),
+                           LOCK_FILE=os.path.join(tmp, "lock"), MIN_FREE_GIB="0")
+            r2 = subprocess.run(["bash", script, "--dry-run"],
+                                capture_output=True, text=True, env=run_env, timeout=60)
+            self.assertEqual(r2.returncode, 0, r2.stdout + r2.stderr)
+            self.assertIn("[dry]", r2.stdout)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
     def test_dump_never_attempts_oplog_on_a_standalone(self):
         body = SCRIPT_SRC.read_text()
