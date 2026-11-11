@@ -12,6 +12,13 @@ export default defineConfig(() => {
       },
     },
     server: {
+      // Host-header allowlist for LAN access. Vite rejects unknown Host values
+      // (DNS-rebinding guard) even when bound to 0.0.0.0, so the hosts are read
+      // from the environment rather than baked into the repo.
+      allowedHosts: (process.env.NEXUS_UI_ALLOWED_HOSTS ?? '')
+        .split(',')
+        .map((h) => h.trim())
+        .filter(Boolean),
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
