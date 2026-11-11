@@ -6,42 +6,124 @@
 # integration to-do 7b0d775d): give agents a deterministic exec path into
 # the MongoDB container without hardcoding credentials in command history.
 #
+# REOPENED 2026-11-11: the original acceptance was "mongosh available to
+# agents"; it was closed on a wrapper around the *legacy* `mongo` shell, which
+# the 4.4 -> 8.0 upgrade path removes at 6.0 (to-do b3909d09, G0 evidence
+# record 9b33a740). mongosh is now preferred, installed on the host, and the
+# legacy shell is only a fallback.
+#
 # Credentials come from SPRING_DATA_MONGODB_URI in nexus/.env (single source
-# of record — see architect record ea9167c6). The container ships the legacy
-# `mongo` shell (MongoDB 4.4); mongosh is not installed anywhere.
+# of record — see architect record ea9167c6). They are never echoed here.
+#
+# Client resolution (first available wins)
+# ---------------------------------------
+#   1. $MONGO_SHELL_BIN          explicit override (host binary, else container)
+#   2. host   mongosh            preferred — takes the URI directly
+#   3. host   mongo              legacy shell
+#   4. container mongosh         via docker exec
+#   5. container mongo           via docker exec (4.4-era images only)
 #
 # Usage
 # -----
-#     bin/mongo-sh                     # interactive shell against nexus db
-#     bin/mongo-sh --eval 'db.stats()' # one-off command (passed through)
+#     bin/mongo-sh                          # interactive shell against nexus db
+#     bin/mongo-sh --eval 'db.stats()'      # one-off command (passed through)
+#     MONGO_SHELL_BIN=mongo bin/mongo-sh    # force the legacy shell
+#
+# Environment
+# -----------
+#     MONGO_CONTAINER   container name        (default atomic-mongodb)
+#     MONGO_SHELL_BIN   force a client        (mongosh | mongo | absolute path)
+#     MONGO_ENV_FILE    path to the env file  (default <nexus>/.env)
 #
 # Exit codes
 # ----------
-#   0/1/2 — mongoreplica of the mongo shell exit code
+#   0/1/2 — exit code of the underlying shell, passed through
 #   3     — configuration error (.env missing or URI unparseable)
+#   4     — no MongoDB client available in any location
 
 set -euo pipefail
 
 BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NEXUS_ROOT="$(cd "$BIN_DIR/.." && pwd)"
-ENV_FILE="$NEXUS_ROOT/.env"
+ENV_FILE="${MONGO_ENV_FILE:-$NEXUS_ROOT/.env}"
 CONTAINER="${MONGO_CONTAINER:-atomic-mongodb}"
-SHELL_BIN="${MONGO_SHELL_BIN:-mongo}"
 
 [ -f "$ENV_FILE" ] || { echo "mongo-sh: $ENV_FILE not found" >&2; exit 3; }
 
 URI="$(grep -E '^SPRING_DATA_MONGODB_URI=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
 [ -n "$URI" ] || { echo "mongo-sh: SPRING_DATA_MONGODB_URI not set in $ENV_FILE" >&2; exit 3; }
 
-# Parse mongodb://user:pass@host[:port]/db?...  (URL-decode %XX minimalities)
+# Credentials are only needed by the legacy shell; mongosh takes the URI as-is
+# (which also keeps percent-encoding intact).
 decoded="$(printf '%b' "${URI//%/\\x}")"
-creds="$(printf '%s' "$decoded" | sed -E 's#^mongodb(\\+srv)?://##; s#@.*##')"
+creds="$(printf '%s' "$decoded" | sed -E 's#^mongodb(\+srv)?://##; s#@.*##')"
 user="$(printf '%s' "$creds" | cut -d: -f1)"
 pass="$(printf '%s' "$creds" | cut -d: -f2-)"
 db="$(printf '%s' "$decoded" | sed -E 's#.*/([^/?]+)(\?.*)?$#\1#')"
 
-[ -n "$user" ] && [ -n "$pass" ] && [ -n "$db" ] \
-    || { echo "mongo-sh: could not parse user/pass/db from URI" >&2; exit 3; }
+legacy_ready() { [ -n "$user" ] && [ -n "$pass" ] && [ -n "$db" ]; }
 
-exec docker exec -i "$CONTAINER" "$SHELL_BIN" \
-    -u "$user" -p "$pass" --authenticationDatabase admin "$db" "$@"
+have_host() { command -v "$1" >/dev/null 2>&1; }
+
+have_in_container() {
+    docker exec "$CONTAINER" sh -c "command -v '$1' >/dev/null 2>&1" >/dev/null 2>&1
+}
+
+run_host_mongosh() { exec mongosh "$URI" "$@"; }
+run_container_mongosh() { exec docker exec -i "$CONTAINER" mongosh "$URI" "$@"; }
+
+run_host_mongo() {
+    legacy_ready || { echo "mongo-sh: could not parse user/pass/db from URI for the legacy shell" >&2; exit 3; }
+    exec mongo -u "$user" -p "$pass" --authenticationDatabase admin "$db" "$@"
+}
+
+run_container_mongo() {
+    legacy_ready || { echo "mongo-sh: could not parse user/pass/db from URI for the legacy shell" >&2; exit 3; }
+    exec docker exec -i "$CONTAINER" mongo -u "$user" -p "$pass" --authenticationDatabase admin "$db" "$@"
+}
+
+# 1. Explicit override
+if [ -n "${MONGO_SHELL_BIN:-}" ]; then
+    case "$MONGO_SHELL_BIN" in
+        mongosh)
+            if have_host mongosh;   then run_host_mongosh "$@"; fi
+            if have_in_container mongosh; then run_container_mongosh "$@"; fi
+            ;;
+        mongo)
+            if have_host mongo;     then run_host_mongo "$@"; fi
+            if have_in_container mongo;   then run_container_mongo "$@"; fi
+            ;;
+        *)
+            if have_host "$MONGO_SHELL_BIN"; then exec "$MONGO_SHELL_BIN" "$URI" "$@"; fi
+            if have_in_container "$MONGO_SHELL_BIN"; then
+                exec docker exec -i "$CONTAINER" "$MONGO_SHELL_BIN" "$URI" "$@"
+            fi
+            ;;
+    esac
+    echo "mongo-sh: MONGO_SHELL_BIN=$MONGO_SHELL_BIN not found on the host or in container '$CONTAINER'" >&2
+    exit 4
+fi
+
+# 2-5. Auto-detect, preferring mongosh everywhere.
+if have_host mongosh;          then run_host_mongosh "$@"; fi
+if have_host mongo;            then run_host_mongo "$@"; fi
+if have_in_container mongosh;  then run_container_mongosh "$@"; fi
+if have_in_container mongo;    then run_container_mongo "$@"; fi
+
+cat >&2 <<EOF
+mongo-sh: no MongoDB client available.
+
+  tried: host 'mongosh', host 'mongo', 'mongosh' in container '$CONTAINER',
+         'mongo' in container '$CONTAINER'
+
+  Install mongosh on the host (no root required):
+
+    mkdir -p ~/.local/opt ~/.local/bin
+    curl -fsSL https://downloads.mongodb.com/compass/mongosh-<ver>-linux-x64.tgz \\
+      | tar -xz -C ~/.local/opt
+    ln -sfn ~/.local/opt/mongosh-<ver>-linux-x64/bin/mongosh ~/.local/bin/mongosh
+
+  Then re-run this command. To force a specific client:
+    MONGO_SHELL_BIN=mongosh bin/mongo-sh
+EOF
+exit 4
