@@ -222,6 +222,71 @@ def test_check_exits_nonzero_on_drift(tmp_path: Path) -> None:
     assert TOPOLOGY.main(["--check", "--root", str(root), "--out", str(out), "--md-out", str(md), "--no-probe"]) == 2
 
 
+def test_check_refuses_a_fail_open_artifact_even_when_it_is_current(tmp_path: Path) -> None:
+    """A regenerated artifact that records a fail-open state must not pass.
+
+    This is the reviewer's reproduced hole (record 51488d35): drift compares
+    committed against fresh, so an artifact that faithfully recorded a red
+    coverage table was drift-clean and green. Exit 3 is the separate answer.
+    """
+    root = _build_tree(tmp_path)
+    out = tmp_path / "topology.json"
+    md = tmp_path / "topology.md"
+    assert TOPOLOGY.main(["--root", str(root), "--out", str(out), "--md-out", str(md), "--no-probe"]) == 0
+
+    # CASE C — a surface with no production writer, regenerated so the file
+    # agrees with the tree and drift can see nothing.
+    payload = json.loads(out.read_text())
+    payload["coverage"]["fanout_transition"] = {
+        "production_writers": 0,
+        "canonical_writers": 0,
+        "undeclared_unknown_writers": 0,
+        "ok": False,
+    }
+    out.write_text(TOPOLOGY.render(payload), encoding="utf-8")
+    assert TOPOLOGY.integrity_problems(payload)
+    assert TOPOLOGY.main(["--check", "--root", str(root), "--out", str(out), "--md-out", str(md), "--no-probe"]) == 3
+
+
+# ---------------------------------------------------------------------------
+# AC2/AC3 — the recorded state itself must be valid (exit 3)
+# ---------------------------------------------------------------------------
+
+
+def test_integrity_problems_flags_zero_writer_surface(tmp_path: Path) -> None:
+    _write(tmp_path / "python" / "conduit" / "receipts_only.py", RECEIPT_ONLY_PY)
+    inventory = TOPOLOGY.build_inventory(root=tmp_path, live={"available": False, "services": []})
+    problems = TOPOLOGY.integrity_problems(inventory)
+    assert any("$coverage.ticket" in p and "no production writer" in p for p in problems), problems
+    assert any("$coverage.fanout_transition" in p for p in problems), problems
+    assert not any("$coverage.receipt" in p for p in problems), problems
+
+
+def test_integrity_problems_flags_undeclared_unknown_writer(tmp_path: Path) -> None:
+    _write(tmp_path / "python" / "mystery" / "writer.py", UNRESOLVED_PY)
+    inventory = TOPOLOGY.build_inventory(root=tmp_path, live={"available": False, "services": []})
+    problems = TOPOLOGY.integrity_problems(inventory)
+    assert any("writers[0]" in p and "no disposition" in p for p in problems), problems
+
+
+def test_integrity_problems_flags_unclassified_overlap(tmp_path: Path) -> None:
+    inventory = TOPOLOGY.build_inventory(root=_build_tree(tmp_path), live={"available": False, "services": []})
+    assert inventory["overlaps"]
+    for overlap in inventory["overlaps"]:
+        overlap["classification"] = "unknown"
+        overlap["disposition"] = "unknown"
+        overlap["replaces"] = None
+    problems = TOPOLOGY.integrity_problems(inventory)
+    assert any("classification" in p for p in problems), problems
+    assert any("disposition" in p for p in problems), problems
+    assert any("replaces" in p for p in problems), problems
+
+
+def test_integrity_problems_accepts_the_committed_state(tmp_path: Path) -> None:
+    inventory = TOPOLOGY.build_inventory(root=_build_tree(tmp_path), live={"available": False, "services": []})
+    assert TOPOLOGY.integrity_problems(inventory) == []
+
+
 def test_check_exits_nonzero_when_markdown_drifts(tmp_path: Path) -> None:
     root = _build_tree(tmp_path)
     out = tmp_path / "topology.json"
