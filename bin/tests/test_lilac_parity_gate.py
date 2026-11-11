@@ -169,7 +169,11 @@ class TestParityMeasurement:
                                      "kinds": KINDS}))
         assert pc.main(["--from-json", str(dirty), "--check"]) == 1
 
-    def test_no_input_is_a_config_error_not_a_pass(self):
+    def test_no_input_is_a_config_error_not_a_pass(self, monkeypatch):
+        # The guards-db tier exports CONDUIT_PG_DSN, so "no input" has to mean
+        # no input: without this the test silently measured the CI database and
+        # passed for the wrong reason (caught by the db tier in CI, 2026-11-11).
+        monkeypatch.delenv("CONDUIT_PG_DSN", raising=False)
         assert pc.main([]) == 2
 
 
