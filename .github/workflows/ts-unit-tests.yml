@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [ tackle-srv, conduit-srv, execution-srv, harness-srv, nebula-mcp, nebula-srv, tsp-eav-emitter ]
+        service: [ tackle-srv, conduit-srv, execution-srv, harness-srv, nebula-mcp, nebula-srv, tsp-eav-emitter, lilac-srv ]
     name: unit tests (${{ matrix.service }})
     steps:
       - uses: actions/checkout@v4

@@ -40,6 +40,11 @@ from app.api.routes_sessions import router as sessions_router
 from app.api.routes_breaker import router as breaker_router
 from app.api.routes_receipts import router as receipts_router
 from app.api.routes_consolidated import router as consolidated_router
+from app.api.routes_lilac import (
+    lilac_enabled_from_env,
+    router as lilac_router,
+)
+from lilac_client import LilacClient
 
 # ── Logging ──────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -216,6 +221,20 @@ app.include_router(receipts_router, prefix="/api/receipts", tags=["receipts"])
 # Legacy routers above stay mounted so rollback is checkout + restart. Static
 # consolidated paths are registered before /api/{identifier} inside the module.
 app.include_router(consolidated_router)
+
+
+# ── Lilac proxy surface (plan 8261669) — STAGED-INERT ────────────────
+#
+# Mounted ONLY when CONDUIT_LILAC_URL is set. With the variable absent these
+# paths do not exist at all, so the default write path is byte-identical to
+# before this surface was added (AC6). The routes delegate to lilac-srv and
+# hold no SQL of their own; a guard in tests/test_lilac_service_contract.py
+# pins both properties.
+if lilac_enabled_from_env():
+    _lilac_client = LilacClient.from_env()
+    if _lilac_client is not None:
+        app.state.lilac_client = _lilac_client
+        app.include_router(lilac_router, prefix="/lilac", tags=["lilac"])
 
 
 # ── Exception handlers ──────────────────────────────────────────────
