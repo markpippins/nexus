@@ -33,6 +33,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import time
 import uuid
 
 import pytest
@@ -121,12 +122,47 @@ def code_of(text: str) -> str:
 
 DESTRUCTIVE = re.compile(r"\b(DROP|TRUNCATE|DELETE)\b", re.IGNORECASE)
 ALTER_STMT = re.compile(r"ALTER\s+TABLE\b[^;]*;", re.IGNORECASE | re.DOTALL)
-BENIGN_ALTER = re.compile(
-    r"^\s*ALTER\s+TABLE\s+[A-Za-z_][\w.]*\s+"
-    r"(?:ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+\w+\s+[\w()\s\[\]]+"
-    r"(?:,\s*)?)+\s*;?\s*$",
-    re.IGNORECASE | re.DOTALL,
+ALTER_HEAD = re.compile(
+    r"^ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?[A-Za-z_\"][\w.\"]*\s+", re.IGNORECASE
 )
+ADDITIVE_CLAUSE = re.compile(
+    r"^ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+[A-Za-z_]\w*\s+\S", re.IGNORECASE
+)
+
+
+def _split_clauses(body: str) -> list[str]:
+    """Split an ALTER TABLE body on commas that are not inside parentheses.
+
+    A hand-written scanner rather than a regex: the first version of this
+    guard used a nested-quantifier pattern and CodeQL correctly flagged it as
+    exponentially backtracking, which would let a crafted migration wedge CI
+    instead of failing it.
+    """
+    clauses: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for char in body:
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        if char == "," and depth == 0:
+            clauses.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+    clauses.append("".join(current))
+    return clauses
+
+
+def _alter_is_additive(statement: str) -> bool:
+    """True only when every clause is `ADD COLUMN IF NOT EXISTS <name> <type>`."""
+    flattened = re.sub(r"\s+", " ", statement).strip().rstrip(";").strip()
+    head = ALTER_HEAD.match(flattened)
+    if not head:
+        return False
+    clauses = _split_clauses(flattened[head.end():])
+    return bool(clauses) and all(ADDITIVE_CLAUSE.match(c.strip()) for c in clauses)
 
 
 def destructive_statements(text: str) -> list[str]:
@@ -140,8 +176,8 @@ def destructive_statements(text: str) -> list[str]:
     code = code_of(text)
     offenders = [m.group(0) for m in DESTRUCTIVE.finditer(code)]
     for statement in ALTER_STMT.findall(code):
-        if not BENIGN_ALTER.match(statement):
-            offenders.append(statement.strip().splitlines()[0])
+        if not _alter_is_additive(statement):
+            offenders.append(statement.strip().splitlines()[0][:120])
     return offenders
 
 
@@ -181,6 +217,24 @@ def test_ac1_guard_bites_on_a_destructive_fixture():
         "ALTER TABLE resolution.receipt ADD COLUMN IF NOT EXISTS idempotency_key text"
     )
     assert destructive_statements(benign) == []
+
+
+def test_ac1_scan_is_linear_on_adversarial_input():
+    """A crafted migration must fail fast, not wedge the runner.
+
+    The first version of this guard used a nested-quantifier regex and CodeQL
+    flagged it as exponentially backtracking. The mitigation is structural (a
+    hand-written clause splitter), so this bounds the behaviour rather than
+    trusting that no one reintroduces the pattern.
+    """
+    adversarial = "BEGIN;\nALTER TABLE resolution.receipt " + (
+        "ADD COLUMN IF NOT EXISTS column_name text, " * 4000
+    ) + "ADD COLUMN IF NOT EXISTS tail text;\nCOMMIT;\n"
+    started = time.monotonic()
+    offenders = destructive_statements(adversarial)
+    elapsed = time.monotonic() - started
+    assert offenders == []
+    assert elapsed < 5.0, f"additive scan took {elapsed:.1f}s on {len(adversarial)} chars"
 
 
 # ── DB helpers ──────────────────────────────────────────────────────────────
