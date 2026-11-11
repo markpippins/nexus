@@ -293,6 +293,68 @@ class LilacAdapter:
                 return "duplicate-equivalent", str(row2[0])
             raise
 
+    def derive_next_position(
+        self, conn, *, workflow_ref: str, role: str
+    ) -> int:
+        """Ledger-derived next position for (workflow_ref, role).
+
+        Plan 8261671 AC4: fan-out spawn positions come from the ledger
+        (MAX(existing position) + 1, or 0 for an empty lineage) — never
+        from caller input. Read-only: one SELECT, no mutation.
+        """
+        cur = conn.cursor()
+        cur.execute(
+            self._q(
+                """SELECT COALESCE(MAX(position), -1) FROM %SCHEMA%.ticket
+                   WHERE workflow_ref=%s AND role=%s"""
+            ),
+            (workflow_ref, role),
+        )
+        row = cur.fetchone()
+        return int(row[0]) + 1 if row else 0
+
+    def _validate_spawn_specs(self, conn, spawn_specs):
+        """Bind every spawn spec to ledger-derived position/generation.
+
+        Returns copies with position filled from derive_next_position.
+        Raises LilacPersistenceError BEFORE any write when a spec is
+        missing workflow_ref/role, carries a forged (non-derived)
+        position, or carries a nonzero generation (fresh fan-out spawns
+        always start generation 0). Within one call, successive specs
+        for the same (workflow_ref, role) take successive positions.
+        """
+        validated = []
+        claimed = {}
+        for spec in spawn_specs:
+            spec = dict(spec)
+            ref = spec.get("workflow_ref")
+            role = spec.get("role")
+            if not ref or not role:
+                raise LilacPersistenceError(
+                    "refused: spawn spec missing workflow_ref/role: %r" % (spec,)
+                )
+            base = self.derive_next_position(conn, workflow_ref=ref, role=role)
+            expected = base + claimed.get((ref, role), 0)
+            claimed[(ref, role)] = claimed.get((ref, role), 0) + 1
+            if "position" in spec and spec["position"] is not None:
+                if spec["position"] != expected:
+                    raise LilacPersistenceError(
+                        "refused: forged fan-out position %r for (%s, %s): "
+                        "ledger-derived next position is %r"
+                        % (spec["position"], ref, role, expected)
+                    )
+            else:
+                spec["position"] = expected
+            if spec.get("generation", 0) != 0:
+                raise LilacPersistenceError(
+                    "refused: forged fan-out generation %r for (%s, %s): "
+                    "fresh spawns start at generation 0"
+                    % (spec.get("generation"), ref, role)
+                )
+            spec["generation"] = 0
+            validated.append(spec)
+        return validated
+
     # ── transitions + THE fan-out ledger ─────────────────────────────
 
     def record_transition(
@@ -341,6 +403,25 @@ class LilacAdapter:
                 return "duplicate-equivalent", str(row2[0])
             raise
 
+    def _find_fanout(self, conn, *, input_receipt_id, kind,
+                   fan_out_policy_version):
+        """Return (outcome, produced_refs) for an existing ledger row."""
+        cur = conn.cursor()
+        cur.execute(
+            self._q(
+                """SELECT outcome, produced FROM %SCHEMA%.fanout_transition
+                   WHERE input_receipt_id=%s AND kind=%s AND fan_out_policy_version=%s"""
+            ),
+            (input_receipt_id, kind, fan_out_policy_version),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        produced_json = row[1]
+        if isinstance(produced_json, str):
+            produced_json = json.loads(produced_json)
+        return row[0], [r["ticket_id"] for r in produced_json or []]
+
     def apply_fanout(
         self,
         conn,
@@ -362,7 +443,18 @@ class LilacAdapter:
         row is the idempotency contract, R4).
 
         Returns (outcome, produced_ticket_ids).
+
+        AC4 gate: spawn positions/generations are bound to the ledger by
+        _validate_spawn_specs BEFORE any write — a forged position or
+        generation raises here and nothing is mutated.
         """
+        prior = self._find_fanout(
+            conn, input_receipt_id=input_receipt_id, kind=kind,
+            fan_out_policy_version=fan_out_policy_version,
+        )
+        if prior is not None:
+            return "duplicate-equivalent", prior[1]
+        specs = self._validate_spawn_specs(conn, spawn_specs)
         cur = conn.cursor()
         try:
             produced_ids: List[str] = []
@@ -383,7 +475,7 @@ class LilacAdapter:
                          "from_status": from_status, "to_status": to_status}
                     )
 
-            for spec in spawn_specs:
+            for spec in specs:
                 outcome, tid = self.issue_ticket(
                     conn,
                     workflow_ref=spec["workflow_ref"],
@@ -418,23 +510,15 @@ class LilacAdapter:
             cur.fetchone()
             conn.commit()
             return ("spawned" if produced_ids else "no-op"), produced_ids
-        except Exception as exc:
+        except Exception:
             conn.rollback()
-            cur2 = conn.cursor()
-            cur2.execute(
-                self._q(
-                    """SELECT outcome, produced FROM %SCHEMA%.fanout_transition
-                       WHERE input_receipt_id=%s AND kind=%s AND fan_out_policy_version=%s"""
-                ),
-                (input_receipt_id, kind, fan_out_policy_version),
+            prior = self._find_fanout(
+                conn, input_receipt_id=input_receipt_id, kind=kind,
+                fan_out_policy_version=fan_out_policy_version,
             )
-            row2 = cur2.fetchone()
             conn.commit()
-            if row2:
-                produced_json = row2[1]
-                if isinstance(produced_json, str):
-                    produced_json = json.loads(produced_json)
-                return "duplicate-equivalent", [r["ticket_id"] for r in produced_json or []]
+            if prior is not None:
+                return "duplicate-equivalent", prior[1]
             raise
 
 
