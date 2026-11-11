@@ -484,6 +484,26 @@ def test_generator_executes_no_mutating_sql() -> None:
         )
 
 
+def _change_set() -> tuple[bool, list[str]]:
+    """(origin_main_available, changed_paths) for this branch.
+
+    Factored out of the guard so a test can present a synthetic change set:
+    the guard has to be provable against a case its own commit cannot provide.
+    """
+    probe = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "--verify", "--quiet", "origin/main"],
+        capture_output=True, text=True, check=False,
+    )
+    if probe.returncode != 0:
+        return False, []
+    diff = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "diff", "--name-only", "origin/main...HEAD"],
+        capture_output=True, text=True, check=False,
+    )
+    assert diff.returncode == 0, diff.stderr
+    return True, [line for line in diff.stdout.splitlines() if line.strip()]
+
+
 def _added_files() -> set[str]:
     """Files ADDED by this change set (git status A against origin/main)."""
     out = subprocess.run(
@@ -524,18 +544,9 @@ def test_change_set_does_not_modify_the_inventory_artifact_by_hand() -> None:
     its guard. A hand-edited artifact cannot pass `--check` anyway, but this
     makes the intent explicit where the AC6 section lives.
     """
-    probe = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "rev-parse", "--verify", "--quiet", "origin/main"],
-        capture_output=True, text=True, check=False,
-    )
-    if probe.returncode != 0:
+    available, changed = _change_set()
+    if not available:
         pytest.skip("origin/main is unavailable (shallow checkout); change-set guard needs the base ref")
-    diff = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "diff", "--name-only", "origin/main...HEAD"],
-        capture_output=True, text=True, check=False,
-    )
-    assert diff.returncode == 0, diff.stderr
-    changed = [line for line in diff.stdout.splitlines() if line.strip()]
     if not changed:
         pytest.skip("HEAD has no committed changes against origin/main yet; nothing to inspect")
     artifacts = {path for path in changed if path.startswith("docs/lilac/")}
@@ -562,20 +573,36 @@ def test_change_set_does_not_modify_the_inventory_artifact_by_hand() -> None:
     )
 
 
-def test_an_unexplained_artifact_change_is_still_refused(monkeypatch) -> None:
-    """The new branch must not turn the guard into a no-op.
+ARTIFACT = "docs/lilac/executable-topology.json"
 
-    An artifact-only change with no generator edit and no ADDED file that the
-    artifact records is still a hand edit by construction, so it must raise.
+
+def test_an_unexplained_artifact_change_is_still_refused(monkeypatch) -> None:
+    """The lenient branch must not turn the guard into a no-op.
+
+    The change set is synthetic on purpose: a real run of the guard always
+    contains this very file (it is the guard), which short-circuits on the
+    companion rule before the lenient branch is reached. Presenting the change
+    set directly is the only way to prove the refusal still exists.
     """
-    monkeypatch.setattr(
-        sys.modules[__name__], "_added_files",
-        lambda: {"docs/lilac/executable-topology.json"})
-    monkeypatch.setattr(
-        sys.modules[__name__], "_artifact_paths",
-        lambda: {"python/conduit/lilac.py"})
-    with pytest.raises(AssertionError):
+    monkeypatch.setattr(sys.modules[__name__], "_change_set",
+                        lambda: (True, [ARTIFACT]))
+    monkeypatch.setattr(sys.modules[__name__], "_added_files",
+                        lambda: {ARTIFACT})
+    monkeypatch.setattr(sys.modules[__name__], "_artifact_paths",
+                        lambda: {"python/conduit/lilac.py"})
+    with pytest.raises(AssertionError, match="without new"):
         test_change_set_does_not_modify_the_inventory_artifact_by_hand()
+
+
+def test_an_artifact_change_explained_by_new_scanned_code_is_allowed(monkeypatch) -> None:
+    """...and the lenient branch it exists for is reachable and accepted."""
+    monkeypatch.setattr(sys.modules[__name__], "_change_set",
+                        lambda: (True, [ARTIFACT, "bin/lilac-parity-check.py"]))
+    monkeypatch.setattr(sys.modules[__name__], "_added_files",
+                        lambda: {"bin/lilac-parity-check.py"})
+    monkeypatch.setattr(sys.modules[__name__], "_artifact_paths",
+                        lambda: {"bin/lilac-parity-check.py"})
+    test_change_set_does_not_modify_the_inventory_artifact_by_hand()
 
 
 # ---------------------------------------------------------------------------
