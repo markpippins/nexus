@@ -484,6 +484,57 @@ def test_generator_executes_no_mutating_sql() -> None:
         )
 
 
+def _change_set() -> tuple[bool, list[str]]:
+    """(origin_main_available, changed_paths) for this branch.
+
+    Factored out of the guard so a test can present a synthetic change set:
+    the guard has to be provable against a case its own commit cannot provide.
+    """
+    probe = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "--verify", "--quiet", "origin/main"],
+        capture_output=True, text=True, check=False,
+    )
+    if probe.returncode != 0:
+        return False, []
+    diff = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "diff", "--name-only", "origin/main...HEAD"],
+        capture_output=True, text=True, check=False,
+    )
+    assert diff.returncode == 0, diff.stderr
+    return True, [line for line in diff.stdout.splitlines() if line.strip()]
+
+
+def _added_files() -> set[str]:
+    """Files ADDED by this change set (git status A against origin/main)."""
+    out = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "diff", "--name-status", "origin/main...HEAD"],
+        capture_output=True, text=True, check=False,
+    )
+    if out.returncode != 0:
+        return set()
+    added = set()
+    for line in out.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 2 and parts[0].startswith("A"):
+            added.add(parts[1])
+    return added
+
+
+def _artifact_paths() -> set[str]:
+    """Every file the committed artifact records as a reader or writer."""
+    try:
+        doc = json.loads(ARTIFACT_JSON.read_text())
+    except Exception:
+        return set()
+    paths = set()
+    for body in (doc.get("surfaces") or {}).values():
+        for role in ("readers", "writers"):
+            for row in body.get(role) or []:
+                if row.get("path"):
+                    paths.add(row["path"])
+    return paths
+
+
 def test_change_set_does_not_modify_the_inventory_artifact_by_hand() -> None:
     """The committed artifact may only change together with the generator.
 
@@ -493,18 +544,9 @@ def test_change_set_does_not_modify_the_inventory_artifact_by_hand() -> None:
     its guard. A hand-edited artifact cannot pass `--check` anyway, but this
     makes the intent explicit where the AC6 section lives.
     """
-    probe = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "rev-parse", "--verify", "--quiet", "origin/main"],
-        capture_output=True, text=True, check=False,
-    )
-    if probe.returncode != 0:
+    available, changed = _change_set()
+    if not available:
         pytest.skip("origin/main is unavailable (shallow checkout); change-set guard needs the base ref")
-    diff = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "diff", "--name-only", "origin/main...HEAD"],
-        capture_output=True, text=True, check=False,
-    )
-    assert diff.returncode == 0, diff.stderr
-    changed = [line for line in diff.stdout.splitlines() if line.strip()]
     if not changed:
         pytest.skip("HEAD has no committed changes against origin/main yet; nothing to inspect")
     artifacts = {path for path in changed if path.startswith("docs/lilac/")}
@@ -514,9 +556,53 @@ def test_change_set_does_not_modify_the_inventory_artifact_by_hand() -> None:
         "bin/lilac-topology-inventory.py",
         "bin/tests/test_lilac_topology_inventory.py",
     }
-    assert artifacts and companions & set(changed), (
-        f"generated artifacts changed without the generator: {sorted(artifacts)}"
+    if companions & set(changed):
+        return
+    # The counts are derived from the TREE, not only from the generator: adding
+    # a new consumer or producer anywhere moves them. That is the generator
+    # working correctly, so the companion rule must not call it a hand edit.
+    # It is accepted only when an ADDED file is itself recorded in the artifact
+    # and `test_committed_artifact_is_current` still proves a faithful
+    # regeneration — a hand edit never arrives with matching new code.
+    added = _added_files()
+    if added & _artifact_paths():
+        return
+    raise AssertionError(
+        f"generated artifacts changed without the generator and without new "
+        f"scanned code: {sorted(artifacts)}"
     )
+
+
+ARTIFACT = "docs/lilac/executable-topology.json"
+
+
+def test_an_unexplained_artifact_change_is_still_refused(monkeypatch) -> None:
+    """The lenient branch must not turn the guard into a no-op.
+
+    The change set is synthetic on purpose: a real run of the guard always
+    contains this very file (it is the guard), which short-circuits on the
+    companion rule before the lenient branch is reached. Presenting the change
+    set directly is the only way to prove the refusal still exists.
+    """
+    monkeypatch.setattr(sys.modules[__name__], "_change_set",
+                        lambda: (True, [ARTIFACT]))
+    monkeypatch.setattr(sys.modules[__name__], "_added_files",
+                        lambda: {ARTIFACT})
+    monkeypatch.setattr(sys.modules[__name__], "_artifact_paths",
+                        lambda: {"python/conduit/lilac.py"})
+    with pytest.raises(AssertionError, match="without new"):
+        test_change_set_does_not_modify_the_inventory_artifact_by_hand()
+
+
+def test_an_artifact_change_explained_by_new_scanned_code_is_allowed(monkeypatch) -> None:
+    """...and the lenient branch it exists for is reachable and accepted."""
+    monkeypatch.setattr(sys.modules[__name__], "_change_set",
+                        lambda: (True, [ARTIFACT, "bin/lilac-parity-check.py"]))
+    monkeypatch.setattr(sys.modules[__name__], "_added_files",
+                        lambda: {"bin/lilac-parity-check.py"})
+    monkeypatch.setattr(sys.modules[__name__], "_artifact_paths",
+                        lambda: {"bin/lilac-parity-check.py"})
+    test_change_set_does_not_modify_the_inventory_artifact_by_hand()
 
 
 # ---------------------------------------------------------------------------
