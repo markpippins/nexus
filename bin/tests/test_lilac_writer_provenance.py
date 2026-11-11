@@ -64,6 +64,11 @@ if "sqlalchemy" not in sys.modules:
         _orm.Session = _Session
         _orm.declarative_base = lambda *a, **k: type(
             "Base", (), {"__init__": lambda self, *a, **k: None})
+        # losm_store/session.py runs create_engine + sessionmaker at
+        # module import time; dummies suffice (never used by these guards).
+        _sa.create_engine = lambda *a, **k: object()
+        _orm.sessionmaker = lambda *a, **k: type(
+            "SessionLocal", (), {"__init__": lambda self, *a, **k: None})
         _exc = _types.ModuleType("sqlalchemy.exc")
 
         class _NoResultFound(Exception):
