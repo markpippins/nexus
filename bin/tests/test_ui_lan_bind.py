@@ -3,9 +3,11 @@
 `nexus-console.service` runs `npm start`, i.e. `ng serve`. The serve target in
 `angular.json` set only `port`, so Angular's dev-server fell back to its
 `localhost` default -- which resolves to `::1` on this fleet. The console was
-therefore reachable only from the machine running it, while siblings that do
-declare a host (`conduit-ui` on 4201, `atlas-ui`, `application-host`) answered
-on 0.0.0.0.
+therefore reachable only from the machine running it, while the console's
+intended same-LAN access requires an explicit all-interface bind. The tracked
+conduit-ui is a Vite app and does not declare a host; the gitignored
+atlas-ui/application-host checkouts are standalone repos, not tracked in-repo
+precedent.
 
 The unit file lives outside the repo (`~/.config/systemd/user/`), so
 `angular.json` is the only tracked lever. Without this gate the bind can
