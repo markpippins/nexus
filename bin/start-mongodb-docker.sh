@@ -65,14 +65,40 @@ fi
 MONGO_ROOT_USER="${MONGO_ROOT_USER:-mongoUser}"
 MONGO_ROOT_PASS="${MONGO_ROOT_PASS:-somePassword}"
 
-# Bind address for the published port. Default preserves the historical
-# 0.0.0.0 exposure for compatibility; set MONGO_BIND_ADDR to narrow it.
-# NOTE: a plain 127.0.0.1 bind BREAKS the containerized consumers
-# (cand-broker and the vanadium tier reach mongod via
-# host.docker.internal, which resolves to the docker bridge gateway, not
-# loopback). To drop LAN exposure without breaking them, bind the bridge:
-#   MONGO_BIND_ADDR=172.17.0.1
+# Publish addresses for the mongod port (To Do 7b0d775d Phase 4.4).
+# Accepts ONE OR MORE addresses, separated by spaces or commas. Each becomes its
+# own `-p <addr>:<port>:27017`, because the consumers are split:
+#
+#   host java (broker-gateway)      -> 127.0.0.1  (measured: 3 established
+#                                                   sockets on loopback)
+#   containers (cand-broker, stack) -> the docker bridge gateway, because
+#                                     host.docker.internal is NOT loopback
+#                                     (measured: docker0 = 172.17.0.1)
+#
+# So the single-address advice "bind 172.17.0.1" would break the host
+# consumers, and "bind 127.0.0.1" would break the containerized ones. Both are
+# required to drop LAN exposure safely:
+#
+#   MONGO_BIND_ADDR="127.0.0.1 172.17.0.1"
+#
+# Default stays 0.0.0.0 for compatibility with an unmodified deployment; the
+# narrowed pair above is the recommended value.
 MONGO_BIND_ADDR="${MONGO_BIND_ADDR:-0.0.0.0}"
+
+# Turn the address list into docker publish arguments. Kept as an array so
+# quoting survives addresses with IPv6 brackets.
+PUBLISH_ARGS=()
+while IFS= read -r _addr; do
+    [ -n "$_addr" ] || continue
+    PUBLISH_ARGS+=(-p "${_addr}:${MONGO_PORT}:27017")
+# Note the trailing newline: `read` returns non-zero on a final line without
+# one, so `printf '%s'` silently dropped the LAST address (127.0.0.1 172.17.0.1
+# became a single publish).
+done < <(printf '%s\n' "$MONGO_BIND_ADDR" | tr ',' '\n' | tr ' ' '\n')
+if [ "${#PUBLISH_ARGS[@]}" -eq 0 ]; then
+    echo "[mongodb] ERROR: MONGO_BIND_ADDR is empty; refusing to start without a publish address." >&2
+    exit 3
+fi
 
 # NOTE: this script previously ran `docker system prune -f` on every start,
 # which deletes dangling images / stopped containers / unused networks
@@ -142,7 +168,12 @@ if [ "$MONGO_DRY_RUN" = "1" ]; then
     echo "[mongodb] DRY RUN — no docker state will change"
     echo "[mongodb]   image  : $MONGO_VERSION"
     echo "[mongodb]   volume : $MONGO_VOLUME -> /data/db"
-    echo "[mongodb]   bind   : ${MONGO_BIND_ADDR}:${MONGO_PORT}->27017"
+    for _arg in "${PUBLISH_ARGS[@]}"; do
+        case "$_arg" in
+            -p) ;;
+            *)  echo "[mongodb]   bind   : ${_arg} -> 27017" ;;
+        esac
+    done
     echo "[mongodb]   guard  : requested=$REQUESTED_VERSION data=${DATA_VERSION:-unknown}"
     echo "[mongodb]   pin    : $( [ -f "$VOLUME_PIN_FILE" ] && echo pinned || echo none )"
     exit 0
@@ -160,7 +191,7 @@ if [ "$(docker ps -a -q -f name=${CONTAINER_NAME})" ]; then
 fi
 
 echo "[mongodb] Starting MongoDB container ($MONGO_VERSION)..."
-if ! docker run -d --name ${CONTAINER_NAME} -p "${MONGO_BIND_ADDR}:${MONGO_PORT}:27017" \
+if ! docker run -d --name ${CONTAINER_NAME} "${PUBLISH_ARGS[@]}" \
     -e MONGO_INITDB_ROOT_USERNAME="$MONGO_ROOT_USER" \
     -e MONGO_INITDB_ROOT_PASSWORD="$MONGO_ROOT_PASS" \
     -v "${MONGO_VOLUME}:/data/db" "$MONGO_VERSION"; then

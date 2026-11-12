@@ -251,6 +251,55 @@ esac
         self.assertIn("MONGO_VERSION=mongo:8.0.38 bin/start-mongodb-docker.sh", r.stderr)
         self.assertNotIn("8.0.38.0.38", r.stderr)
 
+    # -- publish addresses (bind narrowing, To Do 7b0d775d 4.4) ----------
+    # Host consumers reach mongod on loopback; containers reach it through the
+    # docker bridge because host.docker.internal is not loopback. Narrowing to
+    # either one alone breaks the other, so the script must support both.
+    def test_two_addresses_become_two_publishes(self):
+        self.set_volume_version("8.0.38")
+        r = self.run_script({"MONGO_VERSION": "mongo:8.0.38",
+                             "MONGO_BIND_ADDR": "127.0.0.1 172.17.0.1"})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        run = next(c for c in self.calls() if c.startswith("run"))
+        self.assertIn("-p 127.0.0.1:27017:27017", run)
+        self.assertIn("-p 172.17.0.1:27017:27017", run)
+        self.assertNotIn("0.0.0.0", run,
+                         "a narrowed deployment must not keep the wildcard publish")
+
+    def test_comma_separated_addresses_are_accepted(self):
+        self.set_volume_version("8.0.38")
+        r = self.run_script({"MONGO_VERSION": "mongo:8.0.38",
+                             "MONGO_BIND_ADDR": "127.0.0.1,172.17.0.1"})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        run = next(c for c in self.calls() if c.startswith("run"))
+        self.assertIn("-p 127.0.0.1:27017:27017", run)
+        self.assertIn("-p 172.17.0.1:27017:27017", run)
+
+    def test_default_publish_is_unchanged_for_existing_deployments(self):
+        self.set_volume_version("8.0.38")
+        r = self.run_script({"MONGO_VERSION": "mongo:8.0.38"})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        run = next(c for c in self.calls() if c.startswith("run"))
+        self.assertIn("-p 0.0.0.0:27017:27017", run)
+
+    def test_blank_address_list_is_refused(self):
+        self.set_volume_version("8.0.38")
+        r = self.run_script({"MONGO_VERSION": "mongo:8.0.38", "MONGO_BIND_ADDR": " , "})
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        self.assertIn("MONGO_BIND_ADDR is empty", r.stderr)
+        self.assertEqual([c for c in self.calls() if c.startswith("run")], [],
+                         "nothing may start without a publish address")
+
+    def test_dry_run_lists_every_publish(self):
+        self.set_volume_version("8.0.38")
+        r = self.run_script({"MONGO_VERSION": "mongo:8.0.38",
+                             "MONGO_BIND_ADDR": "127.0.0.1 172.17.0.1",
+                             "MONGO_DRY_RUN": "1"})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("127.0.0.1:27017:27017", r.stdout)
+        self.assertIn("172.17.0.1:27017:27017", r.stdout)
+        self.assertEqual(self.calls(), [], "a dry run must not invoke docker at all")
+
     def test_dry_run_reports_the_plan_and_touches_nothing(self):
         self.set_volume_version("8.0.38")
         r = self.run_script({"MONGO_VERSION": "mongo:8.0.38", "MONGO_DRY_RUN": "1"})

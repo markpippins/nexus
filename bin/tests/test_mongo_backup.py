@@ -63,8 +63,9 @@ class BackupRun(unittest.TestCase):
         os.makedirs(os.path.join(self.bin, "lib"))
         shutil.copy(SCRIPT_SRC, os.path.join(self.bin, "mongo-backup.sh"))
         shutil.copy(LIB_SRC, os.path.join(self.bin, "lib", "drive-guard.sh"))
-        with open(os.path.join(self.tmp, ".env"), "w") as fh:
-            fh.write("SPRING_DATA_MONGODB_URI=mongodb://u:p@localhost:27017/nexus?authSource=admin\n")
+        self.env_file = os.path.join(self.tmp, ".env")
+        with open(self.env_file, "w") as fh:
+            fh.write("SPRING_DATA_MONGODB_URI=mongodb://u:p@spring-host:27017/nexus?authSource=admin\n")
 
         self.backup_dir = os.path.join(self.tmp, "backups")
         os.makedirs(self.backup_dir)
@@ -300,6 +301,104 @@ esac
         self.assertEqual(self.archives(), [],
                          "an archive that cannot be read back is not a backup")
         self.assertIn("dryRun", (r.stdout + r.stderr) + pathlib.Path(self.log_file).read_text())
+
+
+class KeyResolution(unittest.TestCase):
+    """The backup must find the credential the same way every other caller does.
+
+    A rotation updates the .env values; if this script read only the Spring key
+    while the wrapper and consumers moved to MONGO_URI, the nightly backup would
+    keep using a stale password and fail at 04:05 instead of at rotation time.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="mongokey-")
+        self.bin = os.path.join(self.tmp, "bin")
+        os.makedirs(os.path.join(self.bin, "lib"))
+        shutil.copy(SCRIPT_SRC, os.path.join(self.bin, "mongo-backup.sh"))
+        shutil.copy(LIB_SRC, os.path.join(self.bin, "lib", "drive-guard.sh"))
+        self.env_file = os.path.join(self.tmp, ".env")
+        self.backup_dir = os.path.join(self.tmp, "backups")
+        os.makedirs(self.backup_dir)
+        self.calls = os.path.join(self.tmp, "docker.calls")
+
+        self.stub = os.path.join(self.tmp, "stub")
+        os.makedirs(self.stub)
+        docker = os.path.join(self.stub, "docker")
+        with open(docker, "w") as fh:
+            fh.write(f"""#!/bin/sh
+printf '%s\\n' "$*" >> "{self.calls}"
+if [ "$1" = exec ]; then
+  case "$*" in
+    *mongodump*) printf '2026-01-01T00:00:00.000+0000\\twriting `nexus.coll` to `archive on stdout`\\n' >&2
+                 printf 'payload' | gzip -n; exit 0 ;;
+    *mongorestore*) cat >/dev/null; exit 0 ;;
+    *) printf 'nexus\\n'; exit 0 ;;
+  esac
+fi
+case "$1" in inspect) printf 'mongo:8.0\\n'; exit 0 ;; *) exit 0 ;; esac
+""")
+        os.chmod(docker, 0o755)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def write_env(self, body):
+        with open(self.env_file, "w") as fh:
+            fh.write(body)
+
+    def run_backup(self, extra_env=None):
+        env = {
+            "PATH": self.stub + ":" + os.environ.get("PATH", "/usr/bin:/bin"),
+            "HOME": self.tmp,
+            "BACKUP_DIR": self.backup_dir,
+            "LOG_FILE": os.path.join(self.tmp, "run.log"),
+            "LOCK_FILE": os.path.join(self.tmp, "run.lock"),
+            "MIN_FREE_GIB": "0",
+            "MIN_BYTES": "1",
+            "NEBULA_URL": "http://127.0.0.1:9/api/agent-records",
+        }
+        env.update(extra_env or {})
+        return subprocess.run(["bash", os.path.join(self.bin, "mongo-backup.sh")],
+                              capture_output=True, text=True, env=env, timeout=120)
+
+    def dump_uri(self):
+        with open(self.calls) as fh:
+            for line in fh:
+                if "mongodump" in line:
+                    parts = line.split()
+                    return parts[parts.index("--uri") + 1]
+        return None
+
+    def test_prefers_mongo_uri_alias_over_spring_key(self):
+        self.write_env(
+            "MONGO_URI=mongodb://u:p@alias-host:27017/nexus?authSource=admin\n"
+            "SPRING_DATA_MONGODB_URI=mongodb://u:p@spring-host:27017/nexus?authSource=admin\n"
+        )
+        r = self.run_backup()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        uri = self.dump_uri()
+        self.assertIn("alias-host", uri)
+        self.assertNotIn("spring-host", uri,
+                         "the alias must win, or a rotation moves only one caller")
+
+    def test_spring_key_still_works_when_alias_absent(self):
+        self.write_env("SPRING_DATA_MONGODB_URI=mongodb://u:p@spring-host:27017/nexus?authSource=admin\n")
+        r = self.run_backup()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("spring-host", self.dump_uri())
+
+    def test_process_env_overrides_the_file(self):
+        self.write_env("MONGO_URI=mongodb://u:p@alias-host:27017/nexus?authSource=admin\n")
+        r = self.run_backup({"MONGO_URI": "mongodb://u:p@process-host:27017/nexus?authSource=admin"})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("process-host", self.dump_uri())
+
+    def test_missing_uri_names_both_keys(self):
+        self.write_env("SOMETHING_ELSE=1\n")
+        r = self.run_backup()
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        self.assertIn("MONGO_URI or SPRING_DATA_MONGODB_URI not set", r.stdout + r.stderr)
 
 
 class Units(unittest.TestCase):

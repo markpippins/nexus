@@ -89,8 +89,20 @@ incident() {  # best-effort; a notification failure must never turn a run into a
 
 # --------------------------------------------------------------- config ----
 [ -f "$ENV_FILE" ] || { log "FAIL: $ENV_FILE not found"; exit 3; }
-MONGO_URI="$(grep -E '^SPRING_DATA_MONGODB_URI=' "$ENV_FILE" | head -1 | cut -d= -f2- || true)"
-[ -n "$MONGO_URI" ] || { log "FAIL: SPRING_DATA_MONGODB_URI not set in $ENV_FILE"; exit 3; }
+# Resolve the connection string the same way bin/mongo-sh does: an explicit
+# process MONGO_URI, then the agent-discoverable alias in .env, then the
+# Spring-specific key. Keeping ONE resolution order across the wrapper and the
+# backup matters because a credential rotation updates the .env values: if this
+# script read only the Spring key while everything else moved to MONGO_URI, the
+# nightly backup would keep using a stale password and fail silently at 04:05.
+MONGO_URI="${MONGO_URI:-}"
+if [ -z "$MONGO_URI" ]; then
+  MONGO_URI="$(grep -E '^MONGO_URI=' "$ENV_FILE" | head -1 | cut -d= -f2- || true)"
+fi
+if [ -z "$MONGO_URI" ]; then
+  MONGO_URI="$(grep -E '^SPRING_DATA_MONGODB_URI=' "$ENV_FILE" | head -1 | cut -d= -f2- || true)"
+fi
+[ -n "$MONGO_URI" ] || { log "FAIL: MONGO_URI or SPRING_DATA_MONGODB_URI not set in $ENV_FILE"; exit 3; }
 
 # The application URI carries a database path (/nexus). `mongodump --uri` with a
 # path dumps THAT DATABASE ONLY — measured on this host: 52 MiB instead of the
