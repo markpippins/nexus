@@ -12,8 +12,10 @@
 # record 9b33a740). mongosh is now preferred, installed on the host, and the
 # legacy shell is only a fallback.
 #
-# Credentials come from SPRING_DATA_MONGODB_URI in nexus/.env (single source
-# of record — see architect record ea9167c6). They are never echoed here.
+# Credentials come from MONGO_URI (the agent-discoverable alias) or, for
+# backward compatibility, SPRING_DATA_MONGODB_URI in nexus/.env (single source
+# of record — see architect record ea9167c6). MONGO_URI wins when both exist.
+# Credentials are never echoed here.
 #
 # Client resolution (first available wins)
 # ---------------------------------------
@@ -34,6 +36,7 @@
 #     MONGO_CONTAINER   container name        (default atomic-mongodb)
 #     MONGO_SHELL_BIN   force a client        (mongosh | mongo | absolute path)
 #     MONGO_ENV_FILE    path to the env file  (default <nexus>/.env)
+#     MONGO_URI         connection URI override / discoverable env key
 #
 # Exit codes
 # ----------
@@ -48,14 +51,27 @@ NEXUS_ROOT="$(cd "$BIN_DIR/.." && pwd)"
 ENV_FILE="${MONGO_ENV_FILE:-$NEXUS_ROOT/.env}"
 CONTAINER="${MONGO_CONTAINER:-atomic-mongodb}"
 
-[ -f "$ENV_FILE" ] || { echo "mongo-sh: $ENV_FILE not found" >&2; exit 3; }
-
-URI="$(grep -E '^SPRING_DATA_MONGODB_URI=' "$ENV_FILE" | head -1 | cut -d= -f2- || true)"
-[ -n "$URI" ] || { echo "mongo-sh: SPRING_DATA_MONGODB_URI not set in $ENV_FILE" >&2; exit 3; }
+# Prefer an explicit process override, then the new env-file alias, then the
+# existing Spring key. The URI value stays in memory/argv only; never log it.
+URI="${MONGO_URI:-}"
+if [ -z "$URI" ] && [ -f "$ENV_FILE" ]; then
+    URI="$(grep -E '^MONGO_URI=' "$ENV_FILE" | head -1 | cut -d= -f2- || true)"
+fi
+if [ -z "$URI" ] && [ -f "$ENV_FILE" ]; then
+    URI="$(grep -E '^SPRING_DATA_MONGODB_URI=' "$ENV_FILE" | head -1 | cut -d= -f2- || true)"
+fi
+[ -n "$URI" ] || {
+    if [ ! -f "$ENV_FILE" ] && [ -z "${MONGO_URI:-}" ]; then
+        echo "mongo-sh: $ENV_FILE not found (set MONGO_URI or provide the env file)" >&2
+    else
+        echo "mongo-sh: MONGO_URI or SPRING_DATA_MONGODB_URI not set in $ENV_FILE" >&2
+    fi
+    exit 3
+}
 
 case "$URI" in
     mongodb://*|mongodb+srv://*) ;;
-    *) echo "mongo-sh: SPRING_DATA_MONGODB_URI is not a mongodb:// URI" >&2; exit 3 ;;
+    *) echo "mongo-sh: MONGO_URI is not a mongodb:// URI" >&2; exit 3 ;;
 esac
 
 # Credentials are only needed by the legacy shell; mongosh takes the URI as-is
