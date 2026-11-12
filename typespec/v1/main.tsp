@@ -60,3 +60,8 @@ import "./calendar/main.tsp";
 // nebula.agenda_items (docs/nebula-sol-absorption.md, phase 6). Model-only:
 // distinct from assembly.forum_agendas, which is only UI grouping.
 import "./agenda/main.tsp";
+
+// WorkRequest — canonical domain contract for resolution.work_request (its
+// temporary home) and the deferred nebula.work_requests payload shape
+// (docs/nebula-sol-absorption.md, phase 7). Model-only; not a wire DTO.
+import "./workrequest/main.tsp";
