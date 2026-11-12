@@ -14,7 +14,7 @@ import { normalizeTags } from './tagNormalizer';
 import { expandTags } from './tagExpansion';
 import { attestationsLimiter, requirementCompileLimiter } from './limiter';
 import { routingTagErrorMessage, routingCaseErrorMessage } from './routing-tags';
-import { blankRecordError, normalizeHarnessJobId } from './agent-record-write-guard';
+import { blankRecordError, bodyRequiredError, normalizeHarnessJobId } from './agent-record-write-guard';
 import {
   enforceTagAddressPolicy,
   addressPolicyErrorMessage,
@@ -5600,6 +5600,14 @@ export function createRoutes(pool: Pool): Router {
       const blankError = blankRecordError(title, content);
       if (blankError) {
         return res.status(400).json({ error: blankError });
+      }
+
+      // Body-required types (analysis): a title-only row silently loses the
+      // work, so refuse it at write time instead of storing an unreadable
+      // record. Scoped narrowly — see BODY_REQUIRED_RECORD_TYPES.
+      const bodyError = bodyRequiredError(recordType, content);
+      if (bodyError) {
+        return res.status(400).json({ error: bodyError });
       }
 
 // Write-side guard for undeliverable routing tags (Rulings 38I + 38J:
