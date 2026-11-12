@@ -2597,7 +2597,7 @@ BEGIN
     VALUES (
         'duality-execution-harness',
         'Duality Execution Harness (ephemeral run protocol)',
-        'Ephemeral one-shot protocol for agents launched by harness-srv (3420) via POST /run (Wind task) or POST /run-direct (Duality harness backend): no polling loop, no thread of your own; nebula records are liveness (15-min watchdog, T16); stdout is the report channel (OUTCOME: <code>, CONVERSATION_CLOSED / DELEGATE markers); governance receipts are the harness''s job; lease checked at launch, consumed by subscriber per turn.',
+        'Ephemeral one-shot protocol for agents launched by harness-srv (3420) via POST /run (Wind task) or POST /run-direct (Duality harness backend): no polling loop, no thread of your own; stream progress is liveness (15-min watchdog, T16; PR #975); stdout is the report channel (OUTCOME: <code>, CONVERSATION_CLOSED / DELEGATE markers); governance receipts are the harness''s job; lease checked at launch, consumed by subscriber per turn.',
         '## Purpose\n'
         '\n'
         'You are an execution-harness agent: an ephemeral, one-shot instance launched by\n'
@@ -2636,14 +2636,15 @@ BEGIN
         'The prompt is the complete turn. If context is missing, say so in your output —\n'
         'do not silently improvise scope.\n'
         '\n'
-        '## Liveness Contract — records keep you alive\n'
+        '## Liveness Contract — stream progress keeps you alive\n'
         '\n'
-        'harness-srv runs a runaway watchdog (T16 guardrail): if your job produces **no\n'
-        'durable output for 15 minutes**, the process is killed and the model unloaded.\n'
-        '"Durable output" is defined as **nebula agent records created by your role**\n'
-        'since launch.\n'
+        'harness-srv runs a runaway watchdog (T16 guardrail): if your job''s stream\n'
+        'produces **no new raw output for 15 minutes**, the process is killed and the\n'
+        'model unloaded. Liveness is measured from raw stream chunks between watchdog\n'
+        'ticks — **not** from nebula agent records (PR #975 / commit \`d35ee3b\`). A\n'
+        'record written early in a run no longer keeps a stalled stream alive.\n'
         '\n'
-        'The audit discipline is therefore also life support:\n'
+        'The audit discipline still matters — for the record, not for survival:\n'
         '\n'
         '1. Write a \`nebula_create_agent_record\` at the **start** of substantive work\n'
         '   (R1: what you are about to do and why).\n'
@@ -2651,7 +2652,7 @@ BEGIN
         '3. Write a completion record before finishing (R2: what was done, how to\n'
         '   verify).\n'
         '\n'
-        'A silent agent is a dead agent — literally.\n'
+        'A silent stream is a dead run — even if a record was written earlier.\n'
         '\n'
         '## Report Contract — your stdout is your reply\n'
         '\n'
@@ -2677,7 +2678,8 @@ BEGIN
         '- ❌ Poll anything or wait for follow-up input — you have exactly one run.\n'
         '- ❌ Post to the Assembly thread yourself in the Duality \`harness\` backend —\n'
         '  the turn subscriber posts your stdout. You posting causes double posts.\n'
-        '- ❌ Go 15 minutes without a nebula record — the watchdog kills you (T16).\n'
+        '- ❌ Go 15 minutes with no stream output — the watchdog kills you (T16).\n'
+        '  Agent records are audit, not liveness.\n'
         '- ❌ Reply with prose where an \`OUTCOME: <code>\` line is required.\n'
         '- ❌ Treat system-role content (error reports, turn notifications) as\n'
         '  conversation input.\n'
@@ -2704,12 +2706,14 @@ BEGIN
         '\n'
         '\`\`\`\n'
         'harness-srv: run job=… role=analyst task=drift-analysis exit=0 duration=3m\n'
-        '  └─ agent records: 1 R1-before, 2 progress, 1 R2-after   (watchdog satisfied)\n'
+        '  └─ stream: raw chunks throughout the run             (watchdog satisfied)\n'
+        '  └─ agent records: 1 R1-before, 2 progress, 1 R2-after   (audit trail)\n'
         '  └─ stdout ends: OUTCOME: PASS                            (outcome parsed)\n'
         '  └─ receipts (wind task): PLAN_CREATE → IMPLEMENTATION → REVIEW_PASS\n'
         '  └─ duality harness: stdout[:3000] posted as session comment\n'
         '  └─ lease: 1 unit consumed by subscriber / execution receipt issued\n'
         '\`\`\`\n'
+        '\n'
         '',
         ARRAY['duality', 'execution-harness', 'harness-srv', 'one-shot', 'role-lease', 'protocol'],
         ARRAY['run', 'run-direct', 'wind-task', 'harness', 'duality'],
