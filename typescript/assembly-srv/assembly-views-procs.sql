@@ -538,3 +538,40 @@ AS $$
 $$;
 
 COMMENT ON FUNCTION assembly.search_comments IS 'Search comments by body text with ILIKE. Replaces search.js comments query.';
+
+-- ── Forum scope (2026-11-12) ──────────────────────────────────────────────
+-- `assembly.posts.forum_id` (bigint) is NULL on every row: forums are
+-- identified by uuid and there is no numeric id to populate it from. A triage
+-- query that joins on forum_id therefore returns ZERO ROWS SILENTLY while
+-- 15,434 posts carry real forum membership in `posts.forum_uuid`.
+--
+-- The live key is `posts.forum_uuid`. This view makes membership explicit for
+-- every post, and keeps two classes visible that thread_list_v hides:
+--   * forum_resolved = false  → orphan posts (forum_uuid NULL)
+--   * is_live = false         → expired threads (excluded from thread_list_v)
+-- Triage reads this view; nothing needs to join the legacy column.
+CREATE OR REPLACE VIEW assembly.forum_scope_v AS
+SELECT
+    p.id                              AS post_id,
+    p.title,
+    p.created,
+    p.rating,
+    p.role,
+    p.model,
+    p.forum_uuid,
+    f.slug                            AS forum_slug,
+    f.name                            AS forum_name,
+    (f.id IS NOT NULL)                AS forum_resolved,
+    (p.expiration_dt = 'infinity'::timestamptz OR p.expiration_dt > now())
+                                      AS is_live,
+    p.posted_by_id,
+    u.alias                           AS author_alias
+FROM assembly.posts p
+LEFT JOIN assembly.forums f ON f.id = p.forum_uuid
+LEFT JOIN assembly.users u  ON u.id = p.posted_by_id;
+
+COMMENT ON VIEW assembly.forum_scope_v IS
+    'Forum membership for every post via forum_uuid (the live key). Includes orphan posts (forum_resolved=false) and expired threads (is_live=false) so forum-scoped triage never silently reads zero rows. Use this instead of joining the legacy assembly.posts.forum_id.';
+
+COMMENT ON COLUMN assembly.posts.forum_id IS
+    'DEPRECATED (2026-11-12) and NULL on every row. Forums are identified by uuid; the live membership key is assembly.posts.forum_uuid. Joining on forum_id returns zero rows silently — use assembly.forum_scope_v (or thread_list_v for live threads only).';
