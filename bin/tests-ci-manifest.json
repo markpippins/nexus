@@ -8,6 +8,7 @@
       "test_lilac_parity_gate.py",
       "test_lilac_srv_schema_contract.py",
       "test_lilac_wave1_v215_migration.py",
+      "test_nebula_sol_concept_registry.py",
       "test_roles_registry_parity.py",
       "test_verify_roles_transitional.py"
     ],

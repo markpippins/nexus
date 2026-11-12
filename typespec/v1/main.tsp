@@ -55,3 +55,8 @@ import "./write-queue/main.tsp";
 // Calendar/CalendarEvent/Session/AgentRef shared vocabulary; storage,
 // emitters, and routes wait on roundtable Q1/Q3/Q5.
 import "./calendar/main.tsp";
+
+// Agenda — deliberation surface represented by nebula.agendas and
+// nebula.agenda_items (docs/nebula-sol-absorption.md, phase 6). Model-only:
+// distinct from assembly.forum_agendas, which is only UI grouping.
+import "./agenda/main.tsp";
