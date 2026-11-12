@@ -1183,7 +1183,7 @@ export function registerTools(server: McpServer) {
       ]).describe("Type of record"),
       role: z.string().optional().describe("Agent role (architect, planner, builder, reviewer, critic, analyst, inspector, engineer)"),
       title: z.string().optional().describe("Record title"),
-      content: z.string().optional().describe("Markdown content body"),
+      content: z.string().optional().describe("Markdown content body (required for recordType=analysis)"),
       sourcePath: z.string().optional().describe("Original filesystem path if migrating from audit/"),
       metadata: z.any().optional().describe("Flexible JSON metadata"),
       tags: z.array(z.string()).optional().describe("Tags for filtering"),
@@ -1197,6 +1197,19 @@ export function registerTools(server: McpServer) {
       harnessJobId: z.string().optional().describe("Harness run id that wrote this record (the value of $HARNESS_JOB_ID in a harnessed run). Shell writers such as bin/post-agent-record.py pass it automatically; MCP callers must pass it explicitly when they want the run attributed."),
     },
     async (args) => {
+      // Fail at the MCP boundary as well as in nebula-srv: analysis rows are
+      // meaningless without their prose, and the REST guard cannot help callers
+      // if this tool silently omits the body. Other record types intentionally
+      // retain their title-only shapes.
+      if (args.recordType === "analysis" && !args.content?.trim()) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: "analysis records require non-blank content; refusing to submit a title-only analysis",
+          }],
+          isError: true,
+        };
+      }
       const result = await NebulaClient.createAgentRecord({
         recordType: args.recordType,
         role: args.role,
