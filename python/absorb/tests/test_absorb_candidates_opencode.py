@@ -64,3 +64,82 @@ def test_opencode_extract_raises_on_nonzero_exit(monkeypatch):
     with pytest.raises(consumer.AbsorbError) as exc:
         consumer.opencode_extract("opencode/big-pickle", "chunk text")
     assert exc.value.error_code == "E_TRANSIENT_LLM_UNAVAILABLE"
+
+
+# ── timeout handling ──────────────────────────────────────────────────
+# Third defect: `opencode run` exceeding its budget raised TimeoutExpired,
+# which escaped `opencode_extract`. The batch's catch-all then read
+# `error_class` off it, raised AttributeError, and killed the whole run --
+# after already marking the document consumed, so its content was dropped.
+
+def test_opencode_timeout_becomes_a_classified_error(monkeypatch):
+    def fake_run(argv, **kwargs):
+        raise consumer.subprocess.TimeoutExpired(cmd="opencode", timeout=300)
+
+    monkeypatch.setattr(consumer.subprocess, "run", fake_run)
+    with pytest.raises(consumer.AbsorbError) as exc:
+        consumer.opencode_extract("opencode/big-pickle", "chunk text")
+    assert exc.value.error_code == "E_TRANSIENT_LLM_TIMEOUT"
+
+
+def _one_doc(monkeypatch):
+    monkeypatch.setattr(
+        consumer, "pending_documents",
+        lambda limit: [{"id": "doc-1", "title": "huge doc", "harvest_id": "h-1"}])
+
+
+def test_unexpected_error_does_not_consume_the_document(monkeypatch):
+    consumed = []
+    _one_doc(monkeypatch)
+
+    def boom(document_id, max_chars):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(consumer, "document_chunks", boom)
+    monkeypatch.setattr(consumer, "mark_consumed", consumed.append)
+
+    rc = consumer.main(["consume", "--limit", "1"])
+
+    assert consumed == [], "a crash must not watermark the document away"
+    assert rc == 1
+
+
+def test_timeout_under_the_ceiling_stays_queued(monkeypatch):
+    consumed = []
+    _one_doc(monkeypatch)
+    monkeypatch.setattr(consumer, "document_chunks", lambda i, m: ["chunk"])
+
+    def slow(*args, **kwargs):
+        raise consumer.AbsorbError("E_TRANSIENT_LLM_TIMEOUT", "too slow")
+
+    monkeypatch.setattr(consumer, "opencode_extract", slow)
+    monkeypatch.setattr(consumer, "note_extraction_timeout", lambda doc: 1)
+    monkeypatch.setattr(consumer, "mark_consumed", consumed.append)
+
+    consumer.main(["consume", "--limit", "1", "--backend", "opencode"])
+
+    assert consumed == [], "retries below the ceiling must keep the document"
+
+
+def test_timeout_at_the_ceiling_advances_the_queue(monkeypatch):
+    consumed = []
+    _one_doc(monkeypatch)
+    monkeypatch.setattr(consumer, "document_chunks", lambda i, m: ["chunk"])
+
+    def slow(*args, **kwargs):
+        raise consumer.AbsorbError("E_TRANSIENT_LLM_TIMEOUT", "too slow")
+
+    monkeypatch.setattr(consumer, "opencode_extract", slow)
+    monkeypatch.setattr(consumer, "MAX_EXTRACTION_TIMEOUTS", 3)
+    monkeypatch.setattr(consumer, "note_extraction_timeout", lambda doc: 3)
+    monkeypatch.setattr(consumer, "mark_consumed", consumed.append)
+
+    consumer.main(["consume", "--limit", "1", "--backend", "opencode"])
+
+    assert consumed == ["doc-1"], "a permanently oversized chunk must not pin the queue"
+
+
+def test_documents_are_never_retired_by_default(monkeypatch):
+    """A provider outage looks like a slow chunk; retiring on timeout would
+    silently discard the backlog. Retirement must be operator opt-in."""
+    assert consumer.MAX_EXTRACTION_TIMEOUTS == 0
