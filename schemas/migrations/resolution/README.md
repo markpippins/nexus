@@ -17,7 +17,7 @@ This is the tracked copy that gets applied to the `nexus` database's
 |---|---|
 | `resolution_schema_consolidated.sql` | Base full schema dump (pg_dump); apply the post-dump v28-v33 chain below to reach the current live contract |
 | `resolution_data_consolidated.sql` | Full data dump (pg_dump) — **current canonical seed data** |
-| `resolution_migration_v{3,4,5,6,7,11,12,13,17,18,19,20,21,22,23,23b,24b,28,29,30,31,32,33,34,35,36,37}.sql` | Incremental migrations (v3 → v37) |
+| `resolution_migration_v{3,4,5,6,7,11,12,13,17,18,19,20,21,22,23,23b,24b,28,29,30,31,32,33,34,35,36,37,38,39}.sql` | Incremental migrations (v3 → v39) |
 | `resolution_evaluate_proposition_v1.sql` | Proposition evaluation function (disposition fast path) |
 | `resolution_comparator_v1.sql` | Cross-representation disagreement detection (`detect_disagreement`) |
 | `resolution_authority_resolution_v1.sql` | Authority resolution via verified statement |
@@ -59,7 +59,11 @@ Notes:
   overloads, v34 verified_statement immutability trigger (adopted from the
   /claude experimental branch), v35 frame semantics (meaning of frame
   dimensions as first-class proposition vocabulary), v36 read-only Shrapnel
-  state bridge, and v37 Shrapnel field metadata synchronization. v28-v37 are
+  state bridge,   and v37 Shrapnel field metadata synchronization. V38 adds Lilac Wave 1
+  provenance/topology; V39 is a staged guarded cleanup for the orphaned
+  illustrative `escalates_to` expression (apply only after plan 8261673's
+  Drafts/admin gate and explicit user approval). V28-V39 are
+
   incremental migrations on top of v24b. v37 requires the authoritative
   `shrapnel.field` and `resolution` schemas to coexist in the target database;
   apply it to each database independently only after its Resolution schema is
