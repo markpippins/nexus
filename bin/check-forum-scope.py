@@ -66,7 +66,7 @@ def psql(sql: str, dsn: str | None) -> list[list[str]]:
     user=pguser, db=nexus) so the checker works without a libpq socket; pass
     --dsn or the usual PG* env vars to point elsewhere.
     """
-    cmd = ["psql", "-At", "-F", "|", "-v", "ON_ERROR_STOP=1", "-c", sql]
+    cmd = ["psql", "-At", "-F", "|", "-v", "ON_ERROR_STOP=1"]
     if dsn:
         cmd += ["-d", dsn]
     else:
@@ -75,6 +75,9 @@ def psql(sql: str, dsn: str | None) -> list[list[str]]:
             "-U", os.environ.get("PGUSER", "pguser"),
             "-d", os.environ.get("PGDATABASE", "nexus"),
         ]
+    # Keep SQL last: the fake-psql regression harness reads argv[-1], and this
+    # ordering is accepted by libpq regardless of connection-option selection.
+    cmd += ["-c", sql]
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     except FileNotFoundError:
