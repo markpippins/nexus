@@ -94,3 +94,45 @@ export function normalizeHarnessJobId(
   }
   return { jobId: trimmed, error: null };
 }
+
+/**
+ * Record types whose entire value IS their prose.
+ *
+ * Why this exists (2026-11-12): five analyst runs on 2026-11-10/11 wrote
+ * `recordType: 'analysis'` rows with a title and tags but NO body — 30 rows in
+ * two days, every analyst analysis from 10 Nov onward. Nothing in the chain
+ * strips the body (verified: the MCP tool forwards `content`, the route inserts
+ * `content || ''`, and a probe with a body round-trips byte for byte). What
+ * happened is that the caller omitted it and this service accepted the row
+ * anyway: `blankRecordError` only fires when BOTH title and body are missing,
+ * which is deliberately narrow so that title-only status projections keep
+ * working. The cost of that narrowness is visible here: the conclusions and
+ * recommendations of five analysis runs are gone, and the rows that remain
+ * cannot be read, searched or acted on.
+ *
+ * So the rule is scoped to the one type where a bodyless row is a guaranteed
+ * loss, not "every record must have prose". Every other type keeps writing
+ * title-only rows exactly as before.
+ */
+export const BODY_REQUIRED_RECORD_TYPES = ["analysis"] as const;
+
+/** Recorded so the 400 body and the tests cannot drift apart. */
+export const BODYLESS_ANALYSIS_ERROR =
+  "analysis records require content: the body IS the analysis, so a title-only " +
+  "row stores a report that cannot be read (refusing the write rather than " +
+  "losing the work — 30 analyst analysis rows from 2026-11-10/11 were written " +
+  "this way and their text is unrecoverable)";
+
+/**
+ * Returns a 400-ready message when the record type requires a body and there is
+ * none, or `null` when the write may proceed.
+ *
+ * Only `analysis` is body-required. A non-analysis type returns null regardless
+ * of content, so this guard can never become a general prose requirement by
+ * accident.
+ */
+export function bodyRequiredError(recordType: unknown, content: unknown): string | null {
+  if (typeof recordType !== "string") return null;
+  if (!(BODY_REQUIRED_RECORD_TYPES as readonly string[]).includes(recordType)) return null;
+  return isBlank(content) ? BODYLESS_ANALYSIS_ERROR : null;
+}

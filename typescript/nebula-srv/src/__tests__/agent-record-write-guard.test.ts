@@ -4,8 +4,11 @@ import * as path from "path";
 
 import {
   BLANK_RECORD_ERROR,
+  BODYLESS_ANALYSIS_ERROR,
+  BODY_REQUIRED_RECORD_TYPES,
   HARNESS_JOB_ID_INVALID,
   blankRecordError,
+  bodyRequiredError,
   isBlank,
   normalizeHarnessJobId,
 } from "../agent-record-write-guard";
@@ -141,7 +144,60 @@ describe("normalizeHarnessJobId", () => {
   });
 });
 
+describe("bodyRequiredError", () => {
+  // Contract under test: an `analysis` row whose body is missing must be
+  // REFUSED, because the body is the analysis. 30 analyst analysis rows from
+  // 2026-11-10/11 were accepted title-only and their text is unrecoverable.
+  // The rule is scoped to that one type on purpose: title-only status rows for
+  // other types are legitimate and must keep writing.
+
+  it("refuses a bodyless analysis record", () => {
+    expect(bodyRequiredError("analysis", undefined)).toBe(BODYLESS_ANALYSIS_ERROR);
+    expect(bodyRequiredError("analysis", null)).toBe(BODYLESS_ANALYSIS_ERROR);
+    expect(bodyRequiredError("analysis", "")).toBe(BODYLESS_ANALYSIS_ERROR);
+    expect(bodyRequiredError("analysis", "  \n\t ")).toBe(BODYLESS_ANALYSIS_ERROR);
+  });
+
+  it("permits an analysis record that carries its body", () => {
+    expect(bodyRequiredError("analysis", "## Findings\n\nsomething real")).toBeNull();
+  });
+
+  it("does not make prose a requirement for other record types", () => {
+    // 47 corpus rows legitimately carry an empty body; this must not break them.
+    for (const t of ["report", "assessment", "engineering_log", "decision",
+                     "architecture_note", "inspection", "prompt", "response"]) {
+      expect(bodyRequiredError(t, "")).toBeNull();
+      expect(bodyRequiredError(t, undefined)).toBeNull();
+    }
+  });
+
+  it("ignores non-string record types it does not administer", () => {
+    expect(bodyRequiredError(undefined, "")).toBeNull();
+    expect(bodyRequiredError(42, "")).toBeNull();
+  });
+
+  it("names the type and the reference in the refusal", () => {
+    expect(BODYLESS_ANALYSIS_ERROR).toContain("analysis records require content");
+    expect(BODYLESS_ANALYSIS_ERROR).toMatch(/unrecoverable/);
+    expect(BODY_REQUIRED_RECORD_TYPES).toEqual(["analysis"]);
+  });
+});
+
 describe("wiring", () => {
+  it("the POST /agent-records handler enforces the analysis body rule", () => {
+    // A guard that is defined but never called protects nothing.
+    const routes = readFileSync(path.join(__dirname, "..", "routes.ts"), "utf8");
+    const postStart = routes.indexOf("router.post('/agent-records'");
+    const postEnd = routes.indexOf("router.patch('/agent-records/:id'", postStart);
+    const handler = routes.slice(postStart, postEnd);
+
+    expect(handler).toContain("bodyRequiredError(recordType, content)");
+    expect(handler).toMatch(/status\(400\)/);
+    // and it must run BEFORE the row is inserted
+    expect(handler.indexOf("bodyRequiredError(recordType, content)"))
+      .toBeLessThan(handler.indexOf("INSERT INTO nebula.agent_records"));
+  });
+
   it("the POST /agent-records handler actually calls the guard", () => {
     // A guard that is defined but never invoked protects nothing, which is the
     // failure mode this file exists to close.
