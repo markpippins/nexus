@@ -16,12 +16,19 @@ Two layers, per the calendar precedent:
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 _SELF = Path(__file__).resolve().parent
 _REPO = _SELF.parent.parent
+
+# The toolchain skip is a host-tool skip: route it through the shared guard so
+# test_host_tool_ci_visibility sees the marker instead of a silent skip.
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
+from host_tool_guard import missing_tools, skip_reason  # noqa: E402
 _TSP_V1 = _REPO / "typespec" / "v1"
 _MODELS = _TSP_V1 / "agenda" / "models.tsp"
 _MAIN = _TSP_V1 / "agenda" / "main.tsp"
@@ -136,7 +143,10 @@ def _toolchain():
 def test_compile_agenda_contract():
     tsp_dir, tsp_bin = _toolchain()
     if not tsp_bin:
-        pytest.skip("TypeSpec toolchain not locatable (npm install in typespec/v1)")
+        pytest.skip(skip_reason(
+            missing_tools("tsp"),
+            "the TypeSpec toolchain is not locatable (run npm install in typespec/v1)",
+        ))
     # The toolchain may come from the shared checkout while this worktree owns
     # the contract; compile the worktree's absolute entry point so imports
     # resolve beside the file, not beside node_modules.
