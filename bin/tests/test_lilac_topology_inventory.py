@@ -558,18 +558,30 @@ def test_change_set_does_not_modify_the_inventory_artifact_by_hand() -> None:
     }
     if companions & set(changed):
         return
-    # The counts are derived from the TREE, not only from the generator: adding
-    # a new consumer or producer anywhere moves them. That is the generator
-    # working correctly, so the companion rule must not call it a hand edit.
-    # It is accepted only when an ADDED file is itself recorded in the artifact
-    # and `test_committed_artifact_is_current` still proves a faithful
-    # regeneration — a hand edit never arrives with matching new code.
+    # New scanned code that appears in the generated artifact explains the
+    # change set; the current-artifact test separately proves fidelity.
     added = _added_files()
     if added & _artifact_paths():
         return
+
+    # A generator-only refresh is also valid when the checked-in generator
+    # proves the artifacts are faithful to today's scanned source. This is the
+    # normal repair for source line-number drift; arbitrary edits remain refused
+    # because --check compares JSON and Markdown against a fresh projection.
+    if not ("bin/lilac-topology-inventory.py" in changed):
+        result = subprocess.run(
+            [sys.executable, str(REPO_ROOT / "bin/lilac-topology-inventory.py"),
+             "--check", "--no-probe", "--root", str(REPO_ROOT)],
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            return
     raise AssertionError(
-        f"generated artifacts changed without the generator and without new "
-        f"scanned code: {sorted(artifacts)}"
+        f"generated artifacts changed without the generator, scanned source, "
+        f"or a successful faithful regeneration check: {sorted(artifacts)}"
     )
 
 
@@ -590,8 +602,17 @@ def test_an_unexplained_artifact_change_is_still_refused(monkeypatch) -> None:
                         lambda: {ARTIFACT})
     monkeypatch.setattr(sys.modules[__name__], "_artifact_paths",
                         lambda: {"python/conduit/lilac.py"})
-    with pytest.raises(AssertionError, match="without new"):
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 1, "", "stale"))
+    with pytest.raises(AssertionError, match="successful faithful regeneration"):
         test_change_set_does_not_modify_the_inventory_artifact_by_hand()
+
+
+def test_an_artifact_only_refresh_is_allowed_when_generator_check_passes(monkeypatch) -> None:
+    monkeypatch.setattr(sys.modules[__name__], "_change_set", lambda: (True, [ARTIFACT]))
+    monkeypatch.setattr(sys.modules[__name__], "_added_files", lambda: set())
+    monkeypatch.setattr(sys.modules[__name__], "_artifact_paths", lambda: set())
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "current", ""))
+    test_change_set_does_not_modify_the_inventory_artifact_by_hand()
 
 
 def test_an_artifact_change_explained_by_new_scanned_code_is_allowed(monkeypatch) -> None:
