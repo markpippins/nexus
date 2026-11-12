@@ -116,10 +116,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {row[0]}: {row[1]} threads ({row[2]} live)")
 
     problems = []
-    if total == 0:
+    if resolved == 0:
         problems.append(
-            "C1 forum_scope_v returned zero rows — forum-scoped triage would read "
-            "an empty queue; check the view definition and posts.forum_uuid"
+            "C1 forum_scope_v returned zero resolved forum rows — forum-scoped "
+            "triage would read an empty queue even if orphan rows exist; check "
+            "the view definition and posts.forum_uuid"
         )
     if resolved != resolvable:
         problems.append(

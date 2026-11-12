@@ -113,12 +113,18 @@ class CheckerBehaviour(unittest.TestCase):
         self.assertIn("C1", r.stderr)
         self.assertNotIn("verdict: PASS", r.stdout)
 
-    def test_T5_resolved_mismatch_fails(self):
+    def test_T5_all_orphan_view_fails_as_empty_forum_scope(self):
+        r = self.check(total=27, resolved=0, orphans=27, live=27, resolvable=0)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("C1", r.stderr)
+        self.assertNotIn("verdict: PASS", r.stdout)
+
+    def test_T6_resolved_mismatch_fails(self):
         r = self.check(total=10, resolved=8, orphans=2, live=10, resolvable=9)
         self.assertEqual(r.returncode, 1)
         self.assertIn("C2", r.stderr)
 
-    def test_T6_missing_psql_is_a_connection_error(self):
+    def test_T7_missing_psql_is_a_connection_error(self):
         env = dict(os.environ)
         env["PATH"] = "/nonexistent-for-forum-scope-test"
         r = subprocess.run(
