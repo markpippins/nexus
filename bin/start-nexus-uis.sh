@@ -6,7 +6,8 @@
 #
 # Usage:
 #   bin/start-nexus-uis.sh start    # start all nexus UIs (idempotent)
-#   bin/start-nexus-uis.sh status   # show systemd status for all UIs
+#   bin/start-nexus-uis.sh status   # per-UI health; exits 1 if any UI is
+#                                   # blocked by its Host header or unreachable
 #   bin/start-nexus-uis.sh stop     # stop all nexus UIs
 #   bin/start-nexus-uis.sh restart  # restart all nexus UIs
 #   bin/start-nexus-uis.sh logs     # tail logs for a specific UI
@@ -129,11 +130,46 @@ cmd_start_all() {
     echo "=== Done ==="
 }
 
+# Classify a UI by what a browser would actually get, not by whether a
+# socket is open. Vite (and Angular behind it) answer 403 "Blocked request"
+# for an unknown Host header while the port is bound and `curl 127.0.0.1`
+# works, so "something is listening" reports UP on a UI nobody can open.
+ui_health() {
+    local port="$1" host code body
+    host="$(hostname -s 2>/dev/null || hostname)"
+    # curl still prints 000 when the connection fails, so capture the value and
+    # ignore its exit status -- appending a fallback here would yield "000000".
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 \
+        -H "Host: $host" "http://127.0.0.1:$port/" 2>/dev/null)" || true
+    [ -n "$code" ] || code="000"
+    case "$code" in
+        000|"")
+            printf 'down'
+            ;;
+        403)
+            body="$(curl -s --max-time 4 -H "Host: $host" \
+                "http://127.0.0.1:$port/" 2>/dev/null | head -c 32)"
+            case "$body" in
+                "Blocked request."*) printf 'blocked' ;;
+                *) printf 'up' ;;
+            esac
+            ;;
+        5*)
+            printf 'error'
+            ;;
+        *)
+            printf 'up'
+            ;;
+    esac
+}
+
 cmd_status_all() {
     echo "=== Nexus UI Status (systemd) ==="
-    printf "%-22s %-6s %-12s %-10s %s\n" "UI" "PORT" "SYSTEMD" "LISTENING" "URL"
-    printf "%-22s %-6s %-12s %-10s %s\n" "--------------------" "------" "----------" "----------" "-------------------------"
+    printf "%-22s %-6s %-12s %-10s %-11s %s\n" "UI" "PORT" "SYSTEMD" "LISTENING" "HTTP" "URL"
+    printf "%-22s %-6s %-12s %-10s %-11s %s\n" \
+        "--------------------" "------" "----------" "----------" "-----------" "-------------------------"
 
+    local failures=0 blocked=0 unreachable=0
     for name in "${UI_NAMES[@]}"; do
         local port="${UI_PORTS[$name]}"
         local active="inactive"
@@ -150,8 +186,28 @@ cmd_status_all() {
         if port_is_listening "$port"; then
             listening="✅ UP"
         fi
-        printf "%-22s %-6s %-12s %-10s http://localhost:%s\n" "$name" "$port" "$active" "$listening" "$port"
+        local http health
+        health="$(ui_health "$port")"
+        case "$health" in
+            up)      http="✅ ok" ;;
+            blocked) http="⛔ blocked"; blocked=$((blocked + 1)); failures=$((failures + 1)) ;;
+            error)   http="⚠️  5xx"; failures=$((failures + 1)) ;;
+            *)       http="❌ down"; unreachable=$((unreachable + 1)); failures=$((failures + 1)) ;;
+        esac
+        printf "%-22s %-6s %-12s %-10s %-11s http://localhost:%s\n" \
+            "$name" "$port" "$active" "$listening" "$http" "$port"
     done
+
+    echo
+    if [ "$failures" -eq 0 ]; then
+        echo "All ${#UI_NAMES[@]} UIs respond on the LAN hostname."
+        return 0
+    fi
+    printf '%s of %s UIs are not usable from a browser (%s blocked by host header, %s unreachable).\n' \
+        "$failures" "${#UI_NAMES[@]}" "$blocked" "$unreachable"
+    echo "  blocked -> dev server rejects the Host header; see bin/start-nexus-uis.sh allowed-hosts"
+    echo "  down    -> nothing answering; see bin/start-nexus-uis.sh logs <name>"
+    return 1
 }
 
 cmd_stop_all() {
@@ -198,6 +254,7 @@ cmd_logs() {
 
 # ── Main ────────────────────────────────────────────────────────────────
 
+if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then
 case "${1:-status}" in
     start)   cmd_start_all ;;
     status)  cmd_status_all ;;
@@ -214,3 +271,4 @@ case "${1:-status}" in
         exit 1
         ;;
 esac
+fi
