@@ -167,13 +167,23 @@ interface TrackedSession {
   promptFile: string;
   wind_task_id?: string; // for governance BLOCK receipt on watchdog kill
   pid?: number; // child process PID (set by executeOpencode for direct SIGTERM)
-  // Stream chunks seen at the previous watchdog tick — the liveness baseline.
-  // A run whose stream is still advancing is working, even when it has written
-  // no agent record yet (see watchdog.ts).
+  // Raw stream chunks seen so far, and the count at the previous watchdog tick.
+  // Advancing chunks are the only liveness signal (see watchdog.ts); the counter
+  // lives on the session so /run and /run-direct share one baseline even though
+  // only /run-direct registers a HarnessJob.
+  streamChunks: number;
   lastStreamChunks: number;
 }
 
 const activeSessions = new Map<string, TrackedSession>();
+
+/** Count one raw stream chunk toward the session's watchdog liveness. */
+function noteStreamActivity(jobId: string): void {
+  const session = activeSessions.get(jobId);
+  if (session) session.streamChunks += 1;
+  const job = jobs.get(jobId);
+  if (job) job.streamChunks += 1;
+}
 
 // ── Async job registry (P1 item 6) ──────────────────────────────────
 // POST /run-direct { async: true } → 202 { job_id, state } immediately;
@@ -445,34 +455,17 @@ export function startWatchdog(): void {
       const elapsed = now - session.startedAt;
       if (elapsed < RUNAWAY_THRESHOLD_MS) continue;
 
-      // Signal 1 — is the job's stream still producing anything? Raw chunks,
-      // not translated text: a model inside a 4-minute test run emits no text
-      // to translate but is still working, and a hung child emits nothing at
-      // all. Until 2026-11-05 only a written record counted as output, so a
-      // tester verifying for 15 minutes before posting its attestation looked
-      // identical to a hung process and was killed mid-run (job 591282d5,
-      // issue 508195a6).
-      const chunks = jobs.get(jobId)?.streamChunks ?? session.lastStreamChunks;
+      // The only signal — is the job's stream still producing anything? Raw
+      // chunks, not translated text: a model inside a 4-minute test run emits
+      // no text to translate but is still working, and a hung child emits
+      // nothing at all. Agent-record existence is not consulted: a record
+      // written earlier in the run says nothing about whether the process is
+      // still moving, and treating it as liveness let one early record mask a
+      // stalled stream indefinitely.
+      const chunks = session.streamChunks;
       if (chunks > session.lastStreamChunks) {
         session.lastStreamChunks = chunks;
-        continue; // still working — do not even ask nebula
-      }
-
-      // Signal 2 — durable output since launch: has the role written an agent
-      // record? Unreachable nebula is treated as worst case (don't kill), as
-      // before: a governance surface being down must not become a kill order.
-      let hasOutput = false;
-      try {
-        const nebulaUrl = process.env.NEBULA_URL || "http://localhost:3101";
-        const since = new Date(session.startedAt).toISOString();
-        const resp = await fetch(
-          `${nebulaUrl}/api/agent-records?role=${encodeURIComponent(session.role)}&createdAfter=${since}&limit=1`
-        );
-        const data = await resp.json() as any;
-        hasOutput = (data?.items?.length || 0) > 0;
-      } catch {
-        // Can't reach nebula — assume worst case, don't kill
-        continue;
+        continue; // still working
       }
 
       if (!isRunaway({
@@ -480,7 +473,6 @@ export function startWatchdog(): void {
         thresholdMs: RUNAWAY_THRESHOLD_MS,
         progress: chunks,
         lastProgress: session.lastStreamChunks,
-        hasDurableRecord: hasOutput,
       })) continue;
 
       // ── Runaway detected — kill + unload ──────────────────────
@@ -528,9 +520,9 @@ export function startWatchdog(): void {
 - **Elapsed:** ${Math.round(elapsed / 1000)}s
 - **Threshold:** ${RUNAWAY_THRESHOLD_MS / 1000}s
 
-Nothing moved for the whole threshold: no event on the job's stream in the
-last tick and no agent record since launch. The process was killed and the
-model unloaded.`,
+No stream progress for the whole threshold: the job's stream produced no new
+raw chunks between watchdog ticks. The process was killed and the model
+unloaded.`,
             ['type:runaway-detected', 'to:architect', 'to:engineer', 'to:engineer-ii', 'to:devops', 'to:topologist', `role:${session.role}`],
             isoNow
           ]
@@ -779,6 +771,7 @@ app.post("/run", async (req, res) => {
         startedAt: startTime,
         promptFile,
         wind_task_id,
+        streamChunks: 0,
         lastStreamChunks: 0,
       });
 
@@ -881,14 +874,10 @@ app.post("/run", async (req, res) => {
               // Only what is left of the RUN's budget, never a fresh copy.
               timeout_ms: attemptSliceMs,
               first_token_ms: attemptAllowanceMs,
-              // Liveness for the runaway watchdog — same as the /run-direct
-              // path. Without this, sessions registered here keep
-              // streamChunks at 0 and fall back to the record-only rule,
-              // which is the bug this change exists to remove.
-              onActivity: () => {
-                const job = jobs.get(jobId);
-                if (job) job.streamChunks += 1;
-              },
+              // Liveness for the runaway watchdog — same counter as the
+              // /run-direct path. Without this a /run session's stream count
+              // never advances and every long task looks hung.
+              onActivity: () => noteStreamActivity(jobId),
             });
             attemptExit = result.exitCode;
             attemptStdout = result.stdout;
@@ -1296,6 +1285,7 @@ app.post("/run-direct", async (req, res) => {
       model: effectiveModel,
       startedAt: startTime,
       promptFile,
+      streamChunks: 0,
       lastStreamChunks: 0,
     });
     registerJob({
@@ -1339,10 +1329,7 @@ app.post("/run-direct", async (req, res) => {
       },
       // Liveness for the runaway watchdog: every raw stream chunk counts,
       // including the tool-call traffic onEvent deliberately ignores.
-      onActivity: () => {
-        const job = jobs.get(jobId);
-        if (job) job.streamChunks += 1;
-      },
+      onActivity: () => noteStreamActivity(jobId),
     };
 
     // ── Failover ladder — primary first, then fallbacks in priority order.
