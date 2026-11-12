@@ -217,7 +217,6 @@ ALTER TABLE resolution.proposition ENABLE TRIGGER ALL;
 
 ALTER TABLE resolution.expression DISABLE TRIGGER ALL;
 
-INSERT INTO resolution.expression (id, kind, operator, literal_value, attribute_id, function_name, return_type, label, concept_relationship_id, quantifier, referenced_proposition_id, proposition_ref_field) VALUES ('77777777-7777-7777-7777-777777777701', 'function_call', NULL, NULL, NULL, 'escalates_to', 'boolean', 'WorkRequest escalates_to Role(OnCall)', NULL, NULL, NULL, NULL);
 INSERT INTO resolution.expression (id, kind, operator, literal_value, attribute_id, function_name, return_type, label, concept_relationship_id, quantifier, referenced_proposition_id, proposition_ref_field) VALUES ('e1000000-0000-0000-0000-000000000001', 'relationship_ref', NULL, NULL, NULL, NULL, 'boolean', 'exists related Answer', '88893e8b-3f40-4a72-b6cf-47cbadfed531', 'EXISTS', NULL, NULL);
 INSERT INTO resolution.expression (id, kind, operator, literal_value, attribute_id, function_name, return_type, label, concept_relationship_id, quantifier, referenced_proposition_id, proposition_ref_field) VALUES ('e2000000-0000-0000-0000-000000000002', 'relationship_ref', NULL, NULL, NULL, NULL, 'boolean', 'exists related VerifiedStatement', 'fe03134e-7b46-4e59-a30b-94ce108d7525', 'EXISTS', NULL, NULL);
 INSERT INTO resolution.expression (id, kind, operator, literal_value, attribute_id, function_name, return_type, label, concept_relationship_id, quantifier, referenced_proposition_id, proposition_ref_field) VALUES ('e3000000-0000-0000-0000-000000000003', 'relationship_ref', NULL, NULL, NULL, NULL, 'boolean', 'exists related Answer with confidence = HIGH', '88893e8b-3f40-4a72-b6cf-47cbadfed531', 'EXISTS', NULL, NULL);
@@ -807,7 +806,6 @@ ALTER TABLE resolution.specification_lineage ENABLE TRIGGER ALL;
 
 ALTER TABLE resolution.verified_statement DISABLE TRIGGER ALL;
 
-INSERT INTO resolution.verified_statement (id, answer_id, expression_id, asset_concept_id, target_asset_id, verified_by, verified_at, notes) VALUES ('ba20d3d8-7428-4369-aae0-707001409c57', '88888888-8888-8888-8888-888888888801', '77777777-7777-7777-7777-777777777701', 'dda27bb4-a994-4c56-8693-34bee69738c4', 'cb000000-0000-0000-0000-00000000000b', 'Verifier', '2026-08-13 02:46:03.89994+00', 'Compiled from architect answer; planner answer concurred, used as corroboration not a second statement.');
 INSERT INTO resolution.verified_statement (id, answer_id, expression_id, asset_concept_id, target_asset_id, verified_by, verified_at, notes) VALUES ('ad000000-0000-0000-0000-0000000000ad', 'ab000000-0000-0000-0000-0000000000ab', 'ac000000-0000-0000-0000-0000000000ac', '07635f6e-b2d5-4459-bce4-91b471f25efd', 'f1000000-0000-0000-0000-00000000f001', 'Verifier', '2026-08-18 01:14:39.157636+00', 'Confirmed architect override: vision.status mismatch is a stale vocabulary artifact, not a real health disagreement.');
 
 
