@@ -56,10 +56,53 @@ except ImportError:
 class DatabaseLoader:
     """Load schema and data from the resolution database into the interpreter."""
 
-    def __init__(self, interpreter: ResolutionInterpreter, pool: Any) -> None:
+    #: read_adapter values the native loader can honour. NULL means native SQL.
+    NATIVE_READ_ADAPTERS = (None, "native_sql")
+
+    def __init__(
+        self,
+        interpreter: ResolutionInterpreter,
+        pool: Any,
+        representation_id: Optional[str] = None,
+    ) -> None:
         self.interpreter = interpreter
         self.pool = pool
+        # Optional explicit representation selection (V217). When set, only
+        # that representation is read; when unset, resolution is implicit and
+        # ambiguous concepts fail closed.
+        self.representation_id = representation_id
+        self._scoped: Optional[bool] = None
         self.load_report: Dict[str, Any] = {}
+
+    async def _representation_scoped(self, conn: Any) -> bool:
+        """True when V217's selector columns/functions are present.
+
+        The merged Python ships before the staged migration is applied, so the
+        loader must keep working against the pre-V217 schema. Detection is one
+        cached catalog probe; any failure (including a scripted test pool that
+        does not implement fetchval) means legacy behaviour.
+        """
+        if self._scoped is None:
+            try:
+                self._scoped = bool(
+                    await conn.fetchval(
+                        "SELECT EXISTS (SELECT 1 FROM information_schema.columns "
+                        "WHERE table_schema = 'resolution' "
+                        "AND table_name = 'representation' "
+                        "AND column_name = 'evaluation_role')"
+                    )
+                )
+            except Exception:
+                self._scoped = False
+        return self._scoped
+
+    def _require_native_adapter(self, read_adapter: Optional[str]) -> None:
+        """Fail closed on a read adapter this loader cannot execute."""
+        if read_adapter not in self.NATIVE_READ_ADAPTERS:
+            raise RuntimeError(
+                f"representation read_adapter {read_adapter!r} is not "
+                f"implemented by DatabaseLoader"
+            )
 
     async def load_all(self) -> None:
         """Load all schema and data from the database."""
@@ -203,16 +246,36 @@ class DatabaseLoader:
 
     async def load_attributes(self) -> None:
         async with self.pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT ca.id, ca.concept_id, ca.name, ca.description, "
-                "ca.value_type, ca.is_state_attribute, "
-                "cab.schema_name, cab.table_name, cab.column_name "
-                "FROM resolution.concept_attribute ca "
-                "LEFT JOIN resolution.concept_attribute_binding cab "
-                "ON cab.attribute_id = ca.id "
-                "WHERE ca.concept_id IN "
-                "(SELECT id FROM resolution.concept WHERE expired_at IS NULL)"
-            )
+            if await self._representation_scoped(conn):
+                # Representation-scoped: the SQL resolver owns the fail-closed
+                # rules and raises on ambiguity instead of picking a row.
+                rows = await conn.fetch(
+                    "SELECT ca.id, ca.concept_id, ca.name, ca.description, "
+                    "ca.value_type, ca.is_state_attribute, "
+                    "cab.schema_name, cab.table_name, cab.column_name "
+                    "FROM resolution.concept_attribute ca "
+                    "LEFT JOIN LATERAL ("
+                    "  SELECT b.schema_name, b.table_name, b.column_name "
+                    "  FROM resolution.concept_attribute_binding b "
+                    "  WHERE b.attribute_id = ca.id "
+                    "    AND b.representation_id IS NOT DISTINCT FROM "
+                    "        resolution.resolve_binding_representation(ca.concept_id) "
+                    "  LIMIT 1"
+                    ") cab ON TRUE "
+                    "WHERE ca.concept_id IN "
+                    "(SELECT id FROM resolution.concept WHERE expired_at IS NULL)"
+                )
+            else:
+                rows = await conn.fetch(
+                    "SELECT ca.id, ca.concept_id, ca.name, ca.description, "
+                    "ca.value_type, ca.is_state_attribute, "
+                    "cab.schema_name, cab.table_name, cab.column_name "
+                    "FROM resolution.concept_attribute ca "
+                    "LEFT JOIN resolution.concept_attribute_binding cab "
+                    "ON cab.attribute_id = ca.id "
+                    "WHERE ca.concept_id IN "
+                    "(SELECT id FROM resolution.concept WHERE expired_at IS NULL)"
+                )
             for row in rows:
                 binding = None
                 if row["schema_name"] and row["table_name"] and row["column_name"]:
@@ -245,16 +308,35 @@ class DatabaseLoader:
 
     async def load_relationships(self) -> None:
         async with self.pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT cr.id, cr.from_concept_id, cr.to_concept_id, "
-                "cr.relationship_type, cr.path, cr.notes, "
-                "crb.from_schema, crb.from_table, crb.from_column, "
-                "crb.to_schema, crb.to_table, crb.to_column "
-                "FROM resolution.concept_relationship cr "
-                "LEFT JOIN resolution.concept_relationship_binding crb "
-                "  ON crb.concept_relationship_id = cr.id "
-                "WHERE cr.expired_at IS NULL"
-            )
+            if await self._representation_scoped(conn):
+                rows = await conn.fetch(
+                    "SELECT cr.id, cr.from_concept_id, cr.to_concept_id, "
+                    "cr.relationship_type, cr.path, cr.notes, "
+                    "crb.from_schema, crb.from_table, crb.from_column, "
+                    "crb.to_schema, crb.to_table, crb.to_column "
+                    "FROM resolution.concept_relationship cr "
+                    "LEFT JOIN LATERAL ("
+                    "  SELECT b.from_schema, b.from_table, b.from_column, "
+                    "         b.to_schema, b.to_table, b.to_column "
+                    "  FROM resolution.concept_relationship_binding b "
+                    "  WHERE b.concept_relationship_id = cr.id "
+                    "    AND b.representation_id IS NOT DISTINCT FROM "
+                    "        resolution.relationship_binding_for(cr.id).representation_id "
+                    "  LIMIT 1"
+                    ") crb ON TRUE "
+                    "WHERE cr.expired_at IS NULL"
+                )
+            else:
+                rows = await conn.fetch(
+                    "SELECT cr.id, cr.from_concept_id, cr.to_concept_id, "
+                    "cr.relationship_type, cr.path, cr.notes, "
+                    "crb.from_schema, crb.from_table, crb.from_column, "
+                    "crb.to_schema, crb.to_table, crb.to_column "
+                    "FROM resolution.concept_relationship cr "
+                    "LEFT JOIN resolution.concept_relationship_binding crb "
+                    "  ON crb.concept_relationship_id = cr.id "
+                    "WHERE cr.expired_at IS NULL"
+                )
             for row in rows:
                 binding = None
                 # Hydrate the binding whenever the binding ROW exists — even
@@ -695,29 +777,60 @@ class DatabaseLoader:
 
     async def load_entities(self, concept_name: Optional[str] = None) -> None:
         async with self.pool.acquire() as conn:
-            sql = (
-                "SELECT r.id, r.concept_id, r.schema_name, r.table_name, "
-                "ri.identity_expression "
-                "FROM resolution.representation r "
-                "JOIN resolution.representation_identity ri "
-                "ON ri.representation_id = r.id "
-                "JOIN resolution.concept c ON c.id = r.concept_id "
-                "WHERE r.expired_at IS NULL"
-            )
+            scoped = await self._representation_scoped(conn)
+            if scoped:
+                sql = (
+                    "SELECT r.id, r.concept_id, r.schema_name, r.table_name, "
+                    "r.read_adapter, ri.identity_expression "
+                    "FROM resolution.representation r "
+                    "JOIN resolution.representation_identity ri "
+                    "ON ri.representation_id = r.id "
+                    "JOIN resolution.concept c ON c.id = r.concept_id "
+                    "WHERE r.expired_at IS NULL "
+                    "AND r.evaluation_role = 'executable'"
+                )
+            else:
+                sql = (
+                    "SELECT r.id, r.concept_id, r.schema_name, r.table_name, "
+                    "ri.identity_expression "
+                    "FROM resolution.representation r "
+                    "JOIN resolution.representation_identity ri "
+                    "ON ri.representation_id = r.id "
+                    "JOIN resolution.concept c ON c.id = r.concept_id "
+                    "WHERE r.expired_at IS NULL"
+                )
             params: List[Any] = []
             if concept_name:
                 sql += " AND c.name = $1"
                 params.append(concept_name)
+            if scoped and self.representation_id:
+                sql += " AND r.id = $" + str(len(params) + 1)
+                params.append(self.representation_id)
 
             rows = await conn.fetch(sql, *params)
+
+            # Fail closed on ambiguity: without an explicit selection, a
+            # concept may contribute at most one executable representation.
+            if scoped and not self.representation_id:
+                by_concept: Dict[Any, List[Any]] = {}
+                for row in rows:
+                    by_concept.setdefault(row["concept_id"], []).append(row)
+                ambiguous = [cid for cid, rs in by_concept.items() if len(rs) > 1]
+                if ambiguous:
+                    raise RuntimeError(
+                        "ambiguous executable representations for concept(s) "
+                        f"{ambiguous}; select one with representation_id"
+                    )
+
             for row in rows:
                 schema = row["schema_name"]
                 table = row["table_name"]
-                # Only load tables from schemas we own — skip external
-                # projections (nebula, vision, conduit) that may not exist
-                # or have incompatible schemas.
-                if schema not in ("resolution",):
-                    continue
+                if scoped:
+                    self._require_native_adapter(row["read_adapter"])
+                else:
+                    # Pre-V217 policy: only tables from schemas we own.
+                    if schema not in ("resolution",):
+                        continue
                 try:
                     table_sql = f"SELECT * FROM {schema}.{table}"
                     data_rows = await conn.fetch(table_sql)

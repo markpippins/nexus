@@ -40,9 +40,17 @@ from .contract import (
 class SolNativeAdapter:
     """Implements `SolStoragePort` against the `sol` database directly."""
 
-    def __init__(self, dsn: str, pool: Optional[Any] = None) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        pool: Optional[Any] = None,
+        representation_id: Optional[str] = None,
+    ) -> None:
         self._dsn = dsn
         self._pool = pool
+        # Optional explicit representation selection (V217). Unset means the
+        # concept's executable representations are used.
+        self._representation_id = representation_id
 
     async def _conn(self) -> Any:
         if self._pool is not None:
@@ -108,11 +116,23 @@ class SolNativeAdapter:
         # standalone sol-native case we do a conservative, schema-safe read:
         # only tables that exist and carry an id column. This returns empty
         # for concepts without a resolvable representation table.
-        tables = await self._rows(
+        # One query that works before AND after V217. `to_jsonb(r)` exposes
+        # evaluation_role when the column exists; pre-migration it is absent,
+        # so the ELSE branch preserves the original resolution-only policy
+        # instead of silently widening what this adapter reads.
+        sql = (
             "SELECT r.schema_name, r.table_name FROM resolution.representation r "
             "JOIN resolution.concept c ON c.id = r.concept_id "
-            "WHERE c.id = $1 AND r.expired_at IS NULL AND r.schema_name = 'resolution'",
+            "WHERE c.id = $1 AND r.expired_at IS NULL "
+            "AND (CASE WHEN to_jsonb(r) ? 'evaluation_role' "
+            "          THEN to_jsonb(r)->>'evaluation_role' = 'executable' "
+            "          ELSE r.schema_name = 'resolution' END)"
         )
+        args = [concept_id]
+        if self._representation_id:
+            sql += " AND r.id = $2"
+            args.append(self._representation_id)
+        tables = await self._rows(sql, *args)
         out: List[ContractSubject] = []
         for t in tables:
             schema, table = t["schema_name"], t["table_name"]

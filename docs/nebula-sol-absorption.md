@@ -203,35 +203,60 @@ provenance, and `prompt`/`response` are immutable history under I4.
 |---|---|
 | 1. Design note | **This document.** |
 | 2. Registry completion | **`sql/V216__nebula_sol_concept_registry.sql`**, staged inert. Concepts, identity strategies, representations, identities and governed values only. No DDL, no data movement, not applied live. |
-| 3. Executable representations | **Gated** on Architect + DBA ratification. Delta in §6.3. |
-| 4. Assessment family DDL | **Gated.** `assessment_kind` + subject/evidence FKs + `agent_record_id` on `nebula.assessments_history`; single writer. |
+| 3. Executable representations | **Implemented, staged inert** in `sql/V217__representation_scoped_bindings.sql`. Ratified: DBA `93d3f092-5e6f-476d-8ec7-41cf587360f9`, Architect `9b532211-da40-4b52-9729-b273523ff3ab`. Live application is operator-gated. |
+| 4. Assessment family DDL | **Still gated** — the Phase 3 ratification explicitly does not cover it. `assessment_kind` + subject/evidence FKs + `agent_record_id` on `nebula.assessments_history`; single writer. |
 | 5. Decision identity link | **Read-only reconciliation complete** (§2.2). The link column is gated with Phase 4/5. |
 | 6. Agenda TypeSpec | **`typespec/v1/agenda/`**, model-only, imported by the root umbrella. No table. |
 | 7. WorkRequest | No new table; deferral recorded; V170 withdrawn (§6.7). |
 
-### 6.3 The Phase 3 delta, precisely
+### 6.3 The Phase 3 delta, as ratified and implemented
 
-- `concept_attribute_binding`: add `representation_id uuid REFERENCES
-  resolution.representation(id)`, nullable for the legacy rows, with a partial
-  unique index on `(representation_id, attribute_id)`; the existing
-  `attribute_id` primary key is replaced by a surrogate key. Legacy rows keep
-  working through the concept's default representation.
-- `concept_relationship_binding`: the same treatment on
-  `concept_relationship_id`.
-- `representation`: add `evaluation_role text CHECK (evaluation_role IN
-  ('executable','descriptive'))` (or `is_executable boolean`), default
-  `'descriptive'` so nothing becomes evaluable by accident.
-- Compiler: resolve the binding for the representation selected by the
-  evaluation context; fail closed when the representation is descriptive, when
-  no binding exists, or when more than one row claims the default.
-- Loader/adapter: replace the two hard-coded `resolution` filters with
-  `evaluation_role = 'executable'` plus an optional `read_adapter` name;
-  unknown adapters fail closed.
-- JSONB: allow-listed function templates or generated columns only.
+Ratification: DBA `93d3f092-5e6f-476d-8ec7-41cf587360f9`
+(APPROVED_WITH_AMENDMENTS) adopted by Architect
+`9b532211-da40-4b52-9729-b273523ff3ab` (RATIFIED_WITH_AMENDMENTS). Staged
+inert as `sql/V217__representation_scoped_bindings.sql`; not applied live.
 
-Acceptance: `nebula.assessments` and `resolution.assessment` evaluate
-equivalently for one `Assessment` concept; an unbound representation fails
-closed; the legacy resolution-only path is unchanged.
+- `representation`: adds `evaluation_role text NOT NULL DEFAULT 'descriptive'
+  CHECK (IN ('executable','descriptive'))` and `read_adapter text`.
+- Both binding tables: surrogate `id` primary key, nullable
+  `representation_id uuid REFERENCES representation(id)`, partial unique
+  indexes on `(representation_id, attribute_id|concept_relationship_id)` and
+  on the bare key where `representation_id IS NULL`.
+- Backfill is deterministic and never arbitrates: a binding is scoped only
+  when its `(schema_name, table_name)` matches **exactly one** representation
+  of its concept. A representation becomes `executable` only if a binding was
+  scoped to it.
+- Resolution is fail-closed: an explicit selection (session setting
+  `resolution.representation_id`) must own a binding; otherwise exactly one
+  executable representation is used; a concept with **zero** representations
+  keeps its legacy NULL-leg binding; any other ambiguity raises.
+- Relationship bindings resolve against the from-concept's executable
+  representation, not the session selector, because a hop crosses concepts.
+- Compiler: `compile_condition`, `compile_root`, `compile_exists_chain` and
+  `correlation_ref` now look bindings up through
+  `attribute_binding_for` / `relationship_binding_for`.
+- Loader/adapter: `DatabaseLoader` and `SolNativeAdapter` read only
+  executable representations and fail closed on an unknown `read_adapter`.
+  Both retain a pre-V217 fallback so merged code works before the staged
+  migration is applied.
+- Function allow-list: `expression.function_name` is FK-constrained to
+  `resolution.function_binding` `NOT VALID`, and the migration refuses to
+  apply while any `function_call` still names an unregistered function
+  (today: `escalates_to`).
+
+Acceptance (proven in `bin/tests/test_v217_representation_bindings.py`):
+`nebula.assessments` and `resolution.assessment` evaluate identically for one
+`Assessment` concept; an unbound representation fails closed; two executable
+defaults fail closed; the live binding topology still resolves.
+
+**Interpretation note.** The Architect's illustrative "ImplementationPlan and
+WorkRequest stay NULL-leg" conflicts with its own determinism rule: each has
+two representations but only **one** matching its binding's `(schema, table)`
+(`conduit.wrp_dag_nodes` and `vision.work_requests` do not match). The
+operative rule — unique match, no arbitration — was implemented, so both are
+scoped to their `resolution` representation and keep evaluating. No
+arbitration occurred and nothing was promoted beyond the exact table+column
+that already evaluated.
 
 ### 6.7 WorkRequest
 
@@ -259,6 +284,14 @@ registered representation executable in one step.
 - `bin/tests/test_nebula_sol_concept_registry.py` proves V216 is data-only,
   idempotent, non-destructive, resolves every representation to a real
   relation, and rolls back cleanly — on a throwaway database, never live.
+- `bin/tests/test_v217_representation_bindings.py` proves V217 applies twice,
+  rolls back clean, scopes bindings only on a unique match, keeps the live
+  topology resolving, evaluates `nebula.assessments` and
+  `resolution.assessment` identically through `compile_root`, and fails
+  closed on an unbound or ambiguous representation.
+- `python/SOLScript/tests/test_representation_scope.py` covers the loader
+  half: ambiguity and unknown `read_adapter` fail closed, and the pre-V217
+  fallback keeps the resolution-only policy.
 - `bin/tests/test_agenda_typespec.py` pins the contract shape and compiles it
   when the TypeSpec toolchain is present.
 - `bin/tests/test_resolution_registry_closure.py` continues to guard the
