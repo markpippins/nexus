@@ -88,6 +88,26 @@ class UiAllowedHostsTests(unittest.TestCase):
                 f"{angular_json.parent.name}: machine-specific hostname committed",
             )
 
+    def test_lan_angular_apps_bind_all_interfaces(self):
+        """Angular's dev server defaults to `localhost`, which is ::1 here.
+
+        That binds IPv6 loopback only: the port is invisible on 127.0.0.1 and
+        unreachable from the LAN, which is how cascade-ui (4203) and nebula-ui
+        (4210) looked "down" for months while their units reported active.
+        """
+        declared = {}
+        for app in ("cascade-ui", "nexus-console"):
+            opts = _serve_options(ANGULAR / app / "angular.json")
+            self.assertIsNotNone(opts, f"{app}: no serve options")
+            declared[app] = opts.get("host")
+        for app, host in declared.items():
+            self.assertEqual(
+                host,
+                "0.0.0.0",
+                f"{app}: serve.options.host is {host!r}; Angular then binds "
+                f"localhost (::1) and the port is LAN-invisible",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
