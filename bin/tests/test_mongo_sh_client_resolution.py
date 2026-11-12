@@ -18,6 +18,9 @@ Contract pinned here (reopens to-do d6db2b90, upgrade context b3909d09):
   available `mongosh`
 - no client anywhere exits 4 and names every location tried plus the install
   recipe — the failure mode that replaced a bare `docker exec` error
+- process `MONGO_URI` overrides the env file; env-file `MONGO_URI` takes
+  precedence over the legacy `SPRING_DATA_MONGODB_URI` key
+- the Spring key remains a backward-compatible fallback
 - configuration faults (missing env file, missing URI) exit 3
 - no credential appears on stdout or stderr in any path
 
@@ -56,12 +59,19 @@ class MongoShResolutionTest(unittest.TestCase):
         with open(self.env_file, "w", encoding="utf-8") as fh:
             fh.write(body)
 
+    def _run_with_uri(self, uri, monkey_env=None):
+        self._fake("mongosh")
+        r = self._run(monkey_env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._argv("mongosh")[0], uri)
+        return r
+
     def _fake(self, name: str) -> str:
         """Create a fake client that appends its argv to a per-client file."""
         argv_file = os.path.join(self.tmp, f"{name}.argv")
         path = os.path.join(self.bindir, name)
         with open(path, "w", encoding="utf-8") as fh:
-            fh.write(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{argv_file}"\n')
+            fh.write(f'#!/bin/sh\nprintf "%s\n" "$@" > "{argv_file}"\n')
         os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         return argv_file
 
@@ -129,6 +139,21 @@ class MongoShResolutionTest(unittest.TestCase):
         self.assertIsNone(self._argv("mongosh"),
                           "the override must not fall through to mongosh")
 
+    # -- discoverable URI key --------------------------------------------
+    def test_prefers_mongo_uri_from_env_file_over_spring_key(self):
+        preferred = "mongodb://agentUser:agentPass@preferred-host:27017/nexus?authSource=admin"
+        self._write_env(f"MONGO_URI={preferred}\nSPRING_DATA_MONGODB_URI={_URI}\n")
+        self._run_with_uri(preferred)
+
+    def test_process_mongo_uri_overrides_both_env_file_keys(self):
+        preferred = "mongodb://processUser:processPass@process-host:27017/nexus?authSource=admin"
+        self._write_env(f"MONGO_URI=mongodb://fileUser:filePass@file-host:27017/nexus?authSource=admin\nSPRING_DATA_MONGODB_URI={_URI}\n")
+        self._run_with_uri(preferred, {"MONGO_URI": preferred})
+
+    def test_spring_uri_remains_backward_compatible(self):
+        self._write_env(f"SPRING_DATA_MONGODB_URI={_URI}\n")
+        self._run_with_uri(_URI)
+
     # -- failure modes ---------------------------------------------------
     def test_no_client_anywhere_exits_4_with_actionable_message(self):
         r = self._run()
@@ -149,7 +174,7 @@ class MongoShResolutionTest(unittest.TestCase):
         self._write_env("SOMETHING_ELSE=1\n")
         r = self._run()
         self.assertEqual(r.returncode, 3)
-        self.assertIn("SPRING_DATA_MONGODB_URI not set", r.stderr)
+        self.assertIn("MONGO_URI or SPRING_DATA_MONGODB_URI not set", r.stderr)
 
     # -- credential hygiene ----------------------------------------------
     def test_credentials_never_echoed(self):
