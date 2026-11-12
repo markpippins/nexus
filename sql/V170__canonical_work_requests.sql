@@ -1,4 +1,22 @@
 -- =============================================================================
+-- WITHDRAWN 2026-11-12 — DO NOT APPLY.
+-- =============================================================================
+-- Withdrawn as a draft by the Nebula → SOL absorption plan
+-- (docs/nebula-sol-absorption.md, phase 7). Two reasons:
+--
+--   1. It lands a canonical WorkRequest surface in `vision`, while the plan's
+--      rule is that operational data lives in `nebula`. Applying it would add
+--      a third physical home (vision.canonical_work_requests beside
+--      resolution.work_request and nebula.work_requests) and deepen exactly
+--      the drift the plan exists to stop.
+--   2. resolution.work_request remains the temporary physical home. No new
+--      table, no dual-write and no relocation in this effort.
+--
+-- THE BODY BELOW IS KEPT INTENTIONALLY. It is the reference template for the
+-- eventual nebula.work_requests table — normalized identity/authority/temporal
+-- spine, payload jsonb, business key, supersession. Reuse the shape; do not
+-- apply this file.
+-- =============================================================================
 -- V170 (DBA pre-stage — type-collapse deliverable): vision.canonical_work_requests
 -- =============================================================================
 --
