@@ -12,6 +12,14 @@ export default defineConfig(() => {
       },
     },
     server: {
+      // Hosts whose Host header is accepted. Vite's dev server refuses unknown
+      // Host values (DNS-rebinding guard) even when bound to 0.0.0.0, which
+      // makes LAN access look like an outage. Hosts come from the
+      // environment so no machine name is baked into the repo.
+      allowedHosts: (process.env.NEXUS_UI_ALLOWED_HOSTS ?? '')
+      .split(',')
+      .map((h) => h.trim())
+      .filter(Boolean),
       // Proxy /api and /config to the real tackle-srv backend.
       // In production (via server.ts), Express-level proxy handles this;
       // during Vite-only dev, these rules forward requests to tackle-srv:3410.

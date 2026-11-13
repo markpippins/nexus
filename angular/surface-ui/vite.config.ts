@@ -11,5 +11,12 @@ export default defineConfig({
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
     // nitro/vite builds from this
     server: { entry: "server" },
+      // Hosts accepted by Vite's Host-header check. It refuses unknown Host
+      // values even when bound to 0.0.0.0, so the LAN name comes from the
+      // environment instead of being baked into the repo.
+      allowedHosts: (process.env.NEXUS_UI_ALLOWED_HOSTS ?? '')
+        .split(',')
+        .map((h) => h.trim())
+        .filter(Boolean),
   },
 });

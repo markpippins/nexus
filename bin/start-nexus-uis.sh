@@ -82,6 +82,47 @@ port_is_listening() {
 
 # ── Commands ────────────────────────────────────────────────────────────
 
+# Vite dev servers — which also back `ng serve` — reject any request whose Host
+# header they do not recognise ("Blocked request. This host (...) is not
+# allowed.") even though the port is bound and `curl 127.0.0.1:<port>` works.
+# The allowlist is this machine's own identity, computed at runtime and handed
+# to the units through a systemd drop-in, so nothing machine-specific is
+# committed to the repo.
+ui_allowed_hosts() {
+    local short fqdn
+    short="$(hostname -s 2>/dev/null || hostname)"
+    fqdn="$(hostname -f 2>/dev/null || true)"
+    if [ -n "$fqdn" ] && [ "$fqdn" != "$short" ]; then
+        printf '%s,%s' "$short" "$fqdn"
+    else
+        printf '%s' "$short"
+    fi
+}
+
+cmd_allowed_hosts() {
+    local hosts dropin_dir
+    hosts="$(ui_allowed_hosts)"
+    echo "=== Installing LAN host-header allowlist drop-ins ==="
+    echo "  NEXUS_UI_ALLOWED_HOSTS=$hosts"
+    echo
+    for name in "${UI_NAMES[@]}"; do
+        [ -f "$HOME/.config/systemd/user/$name.service" ] || continue
+        dropin_dir="$HOME/.config/systemd/user/$name.service.d"
+        mkdir -p "$dropin_dir"
+        cat >"$dropin_dir/50-allowed-hosts.conf" <<EOF
+# Written by bin/start-nexus-uis.sh — LAN names this host answers to.
+# Dev servers bound to 0.0.0.0 reject unknown Host headers; these come from
+# the machine's own identity so nothing machine-specific lives in the repo.
+[Service]
+Environment=NEXUS_UI_ALLOWED_HOSTS=$hosts
+EOF
+        echo "  ✅ $name"
+    done
+    systemctl --user daemon-reload 2>/dev/null || true
+    echo
+    echo "Restart a UI for the change to take effect: $0 restart"
+}
+
 cmd_start_all() {
     echo "=== Starting Nexus UIs (via systemd) ==="
 
@@ -93,6 +134,9 @@ cmd_start_all() {
     if command -v python3 >/dev/null 2>&1; then
         echo "  operator standing lease: $(python3 "$NEXUS_ROOT/bin/operator-lease.py" ensure 2>/dev/null || echo 'degraded (will retry via timer)')"
     fi
+
+    # Units only pick the allowlist up on (re)start, so install drop-ins first.
+    cmd_allowed_hosts >/dev/null
 
     systemctl --user daemon-reload 2>/dev/null || true
 
@@ -257,6 +301,7 @@ cmd_logs() {
 if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then
 case "${1:-status}" in
     start)   cmd_start_all ;;
+    allowed-hosts) cmd_allowed_hosts ;;
     status)  cmd_status_all ;;
     stop)    cmd_stop_all ;;
     restart) cmd_restart_all ;;
@@ -267,7 +312,7 @@ case "${1:-status}" in
         echo "or 'journalctl --user -u <ui-name>.service -f' to follow."
         ;;
     *)
-        echo "Usage: $0 {start|status|stop|restart|logs|attach}"
+        echo "Usage: $0 {start|status|stop|restart|logs|attach|allowed-hosts}"
         exit 1
         ;;
 esac
