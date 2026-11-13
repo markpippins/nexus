@@ -197,9 +197,10 @@ Two supporting facts that constrain the registry rather than block it:
 The consequence for this strategy: "registered representation" means
 **described**, not **evaluable**. Phase 2 registers several representations that
 SOL cannot yet read; that is deliberate and recorded here so the registry does
-not overclaim. Phase 3's code is merged; applying `sql/V217` makes the selector
-live and remains operator-gated. Once applied, executable representations are
-read through the flag, not through a schema allow-list.
+not overclaim. Phase 3 is applied live (ledger
+`V217__representation_scoped_bindings`, 2026-11-13); executable representations
+are read through the flag, not through a schema allow-list, while descriptive
+representations remain described and are not materialised.
 
 ---
 
