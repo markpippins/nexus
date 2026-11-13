@@ -650,7 +650,10 @@ Expected: `resolution.receipt=1997`, `nebula.agent_records=16673`,
 `peb.decisions=16`, `nebula.agendas=3`, `nebula.agenda_items=1`,
 `nebula.assessments=0`, `nebula.assessments_history=0` on the 2026-11-13
 baseline. Capture your pre-window values and compare; V216 performs no data
-movement, so any change is a stop.
+movement. `nebula.agent_records` is a view over `agent_records_history`, so it
+can rise from legitimate agent-record writes during the window; record the
+pre-window value and attribute any delta to those writes. Any unexplained
+change in the other six surfaces is a stop.
 
 ### 3.6 Service health
 
@@ -658,12 +661,13 @@ No service restart is expected: V216 changes registry rows, not code or
 bindings. Spot-check the registry-reading services and the backend fleet:
 
 ```bash
-systemctl is-active nebula-srv semantics-srv resolution-srv
+systemctl --user is-active \
+  nebula-srv.service semantics-srv.service resolution-srv.service
 curl -fsS http://localhost:3101/health
 /home/codex/dev/nexus/bin/start-nexus-services.sh status | tail -10
 ```
 
-Expected: all three units `active`, the health request succeeds, and the status
+Expected: all three user-manager units `active`, the health request succeeds, and the status
 table has no new failure attributable to the apply. If a service caches the
 registry, restart only the service that owns the cache, per its owner's
 procedure; do not restart the fleet as part of this runbook.
