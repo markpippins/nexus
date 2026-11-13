@@ -5,22 +5,21 @@
  * timers or a live nebula, the same way admission.ts and terminal.ts were.
  *
  * ── Why this is a module and not an `if` inside the interval ──────────────
- * Until 2026-11-05 the rule past the threshold was: kill unless the role has
- * written an AGENT RECORD since launch. Work in progress was invisible to it —
- * stdout, tool calls, file reads, pytest runs. For a tester that is the wrong
- * shape entirely: verifying for ten or fifteen minutes and posting the
- * attestation at the end IS the normal shape, so a working run and a hung one
- * looked identical. Job 591282d5 was killed at 902s mid-verification (issue
- * 508195a6); two later runs escaped only because each happened to write
- * something after minute 6 and minute 11.
+ * The only liveness signal is the job's own stream advancing between watchdog
+ * ticks, counted in RAW chunks rather than in translated text. That distinction
+ * matters — onEvent only fires for non-empty text/reasoning, so a model sitting
+ * inside a four-minute test run emits nothing it would translate while being
+ * entirely alive.
  *
- * The fix is a second, independent liveness signal: the job's own stream
- * advancing between watchdog ticks, counted in RAW chunks rather than in
- * translated text. That distinction matters — onEvent only fires for non-empty
- * text/reasoning, so a model sitting inside a four-minute test run emits
- * nothing it would translate while being entirely alive. Kill only when BOTH
- * channels are silent for the whole threshold: a hang emits nothing on either,
- * while a busy agent emits stream traffic even with nothing to report yet.
+ * Agent-record existence is deliberately NOT a signal. It used to be one, and
+ * it was the wrong shape: a tester verifying for ten or fifteen minutes and
+ * posting its attestation at the end is the normal shape, so a working run and
+ * a hung one looked identical (job 591282d5 was killed at 902s mid-verification,
+ * issue 508195a6). Worse, because it was a standing "has written since launch"
+ * check, a single early record then masked a genuinely stalled stream for the
+ * rest of the run. A record says a role wrote something at some point; it says
+ * nothing about whether the process is still moving. Stream progress does, so
+ * it alone decides.
  *
  * ── What this deliberately does NOT do ────────────────────────────────────
  * It does not try to distinguish "working" from "spinning" by looking at what
@@ -46,18 +45,15 @@ export interface RunawaySignals {
   progress: number;
   /** Progress units observed at the previous tick. */
   lastProgress: number;
-  /** Whether the role has written an agent record since launch. */
-  hasDurableRecord: boolean;
 }
 
 /**
- * True only when the run has outlived the threshold AND nothing has moved on
- * either channel. Below the threshold nothing is a runaway; above it, any
- * activity at all is enough to keep the run alive.
+ * True only when the run has outlived the threshold AND its stream has not
+ * advanced since the previous tick. Below the threshold nothing is a runaway;
+ * above it, any new stream progress is enough to keep the run alive.
  */
 export function isRunaway(s: RunawaySignals): boolean {
   if (s.elapsedMs < s.thresholdMs) return false;
   if (s.progress > s.lastProgress) return false;
-  if (s.hasDurableRecord) return false;
   return true;
 }
