@@ -9,7 +9,8 @@ Python half:
 - an explicit selection narrows the read to one representation;
 - an unknown read_adapter fails closed;
 - executable non-resolution representations are loaded by the selector, with
-  no hard-coded schema allow-list.
+  no hard-coded schema allow-list;
+- attribute and relationship loads always use the V217 resolver-backed SQL.
 """
 
 from __future__ import annotations
@@ -25,15 +26,11 @@ from .conftest import _row, _run
 
 
 class ProbeConn:
-    """Connection whose scoped probe answer is scripted."""
+    """Connection whose executable representations are scripted."""
 
-    def __init__(self, reps: List[Any], scoped: bool = True) -> None:
+    def __init__(self, reps: List[Any]) -> None:
         self._reps = reps
-        self._scoped = scoped
         self.table_reads: List[str] = []
-
-    async def fetchval(self, sql: str, *args: Any) -> bool:
-        return self._scoped
 
     async def fetch(self, sql: str, *args: Any) -> List[Any]:
         if "FROM resolution.representation" in sql:
@@ -107,3 +104,34 @@ def test_non_resolution_executable_representation_is_loaded() -> None:
     loader = DatabaseLoader(ResolutionInterpreter(), Pool(conn))
     _run(loader.load_entities())
     assert any("nebula.a" in sql for sql in conn.table_reads)
+
+
+class CaptureConn:
+    """Capture SQL and return no rows, for load-shape checks."""
+
+    def __init__(self) -> None:
+        self.sql: List[str] = []
+
+    async def fetch(self, sql: str, *args: Any) -> List[Any]:
+        self.sql.append(sql)
+        return []
+
+
+def test_attributes_use_representation_resolver() -> None:
+    conn = CaptureConn()
+    loader = DatabaseLoader(ResolutionInterpreter(), Pool(conn))
+    _run(loader.load_attributes())
+    assert any("resolve_binding_representation" in sql for sql in conn.sql)
+    assert not any(
+        "LEFT JOIN resolution.concept_attribute_binding cab" in sql for sql in conn.sql
+    )
+
+
+def test_relationships_use_representation_resolver() -> None:
+    conn = CaptureConn()
+    loader = DatabaseLoader(ResolutionInterpreter(), Pool(conn))
+    _run(loader.load_relationships())
+    assert any("relationship_binding_for" in sql for sql in conn.sql)
+    assert not any(
+        "LEFT JOIN resolution.concept_relationship_binding crb" in sql for sql in conn.sql
+    )
