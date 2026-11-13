@@ -11,6 +11,7 @@
       "test_nebula_sol_concept_registry.py",
       "test_v217_representation_bindings.py",
       "test_v217_escalates_to_cleanup.py",
+      "test_v218_assessment_family.py",
       "test_roles_registry_parity.py",
       "test_verify_roles_transitional.py"
     ],
