@@ -4,10 +4,15 @@ Description=absorb hourly: ingest new chat exports + extract candidates (5 most 
 [Service]
 Type=oneshot
 WorkingDirectory=/home/codex/dev/nexus/python/absorb
+Environment=PYTHONPATH=/home/codex/dev/nexus/python
+Environment=PATH=/home/codex/.opencode/bin:/home/codex/.local/bin:/home/codex/.nvm/versions/node/v24.15.0/bin:/usr/local/bin:/usr/bin:/bin
 # Watermark-safe: only new/changed files get absorbed, then the 5 most
 # recent unconsumed documents go through candidate extraction.
 #
-# --probe-seconds 30: prove the model route answers before any document is
-# touched, so a dead route (quota, credentials, host down) fails in ~30s with
-# exit 2 instead of spending the 300s per-chunk budget on every chunk.
+# --probe-seconds 30: one cheap call proves the model route answers before any
+# document is touched, so a dead route (quota, credentials, host down) fails in
+# ~30s with exit 2 and a BACKEND UNAVAILABLE banner instead of burning the
+# 300s per-chunk budget on every chunk of every document. 30s is a deliberate
+# middle: a healthy route answers a tiny prompt in ~5s here, while a slow one
+# gets room to start without eating the whole run.
 ExecStart=/bin/bash -c 'python3 -u -m absorb run chat-export-markdown && python3 -u -m absorb_candidates consume --limit 5 --backend opencode --probe-seconds 30'
