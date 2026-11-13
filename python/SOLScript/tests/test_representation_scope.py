@@ -132,6 +132,11 @@ def test_relationships_use_representation_resolver() -> None:
     loader = DatabaseLoader(ResolutionInterpreter(), Pool(conn))
     _run(loader.load_relationships())
     assert any("relationship_binding_for" in sql for sql in conn.sql)
+    assert any("CASE WHEN EXISTS" in sql for sql in conn.sql)
+    assert any(
+        "(resolution.relationship_binding_for(cr.id)).representation_id" in sql
+        for sql in conn.sql
+    )
     assert not any(
         "LEFT JOIN resolution.concept_relationship_binding crb" in sql for sql in conn.sql
     )
