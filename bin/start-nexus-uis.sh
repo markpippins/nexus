@@ -1,7 +1,7 @@
 #!/bin/bash
 # bin/start-nexus-uis.sh — manage ALL Nexus UI dev servers via systemd user units
 #
-# All 24 UIs run as systemd --user services, each in its own unit.
+# All 25 UIs run as systemd --user services, each in its own unit.
 # This script provides a unified interface to start/stop/status them.
 #
 # Usage:
@@ -47,6 +47,7 @@ UI_NAMES=(
     "atlas-ui"             # 4216 (live; mock was :3000)
     "shrapnel-ui"          # 4217 (live; mock was :3000)
     "application-host"     # 4250 (standalone repo nexus-application-host)
+    "nebula-operations-ui" # 4300 (gitignored local checkout, nebula-operations-ui.service)
 )
 
 UI_PORTS[nebula-ui]=4210
@@ -73,6 +74,7 @@ UI_PORTS[mildred-ui]=4215  # live mode (mock was :3000, intentionally unbound in
 UI_PORTS[atlas-ui]=4216  # live mode (mock was :3000)
 UI_PORTS[shrapnel-ui]=4217  # live mode (mock was :3000)
 UI_PORTS[application-host]=4250  # standalone repo nexus-application-host (application-host.service)
+UI_PORTS[nebula-operations-ui]=4300  # gitignored local checkout (nebula-operations-ui.service)
 
 # ── Helpers ─────────────────────────────────────────────────────────────
 
