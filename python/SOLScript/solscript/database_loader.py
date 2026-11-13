@@ -777,33 +777,21 @@ class DatabaseLoader:
 
     async def load_entities(self, concept_name: Optional[str] = None) -> None:
         async with self.pool.acquire() as conn:
-            scoped = await self._representation_scoped(conn)
-            if scoped:
-                sql = (
-                    "SELECT r.id, r.concept_id, r.schema_name, r.table_name, "
-                    "r.read_adapter, ri.identity_expression "
-                    "FROM resolution.representation r "
-                    "JOIN resolution.representation_identity ri "
-                    "ON ri.representation_id = r.id "
-                    "JOIN resolution.concept c ON c.id = r.concept_id "
-                    "WHERE r.expired_at IS NULL "
-                    "AND r.evaluation_role = 'executable'"
-                )
-            else:
-                sql = (
-                    "SELECT r.id, r.concept_id, r.schema_name, r.table_name, "
-                    "ri.identity_expression "
-                    "FROM resolution.representation r "
-                    "JOIN resolution.representation_identity ri "
-                    "ON ri.representation_id = r.id "
-                    "JOIN resolution.concept c ON c.id = r.concept_id "
-                    "WHERE r.expired_at IS NULL"
-                )
+            sql = (
+                "SELECT r.id, r.concept_id, r.schema_name, r.table_name, "
+                "r.read_adapter, ri.identity_expression "
+                "FROM resolution.representation r "
+                "JOIN resolution.representation_identity ri "
+                "ON ri.representation_id = r.id "
+                "JOIN resolution.concept c ON c.id = r.concept_id "
+                "WHERE r.expired_at IS NULL "
+                "AND r.evaluation_role = 'executable'"
+            )
             params: List[Any] = []
             if concept_name:
                 sql += " AND c.name = $1"
                 params.append(concept_name)
-            if scoped and self.representation_id:
+            if self.representation_id:
                 sql += " AND r.id = $" + str(len(params) + 1)
                 params.append(self.representation_id)
 
@@ -811,7 +799,7 @@ class DatabaseLoader:
 
             # Fail closed on ambiguity: without an explicit selection, a
             # concept may contribute at most one executable representation.
-            if scoped and not self.representation_id:
+            if not self.representation_id:
                 by_concept: Dict[Any, List[Any]] = {}
                 for row in rows:
                     by_concept.setdefault(row["concept_id"], []).append(row)
@@ -825,12 +813,7 @@ class DatabaseLoader:
             for row in rows:
                 schema = row["schema_name"]
                 table = row["table_name"]
-                if scoped:
-                    self._require_native_adapter(row["read_adapter"])
-                else:
-                    # Pre-V217 policy: only tables from schemas we own.
-                    if schema not in ("resolution",):
-                        continue
+                self._require_native_adapter(row["read_adapter"])
                 try:
                     table_sql = f"SELECT * FROM {schema}.{table}"
                     data_rows = await conn.fetch(table_sql)

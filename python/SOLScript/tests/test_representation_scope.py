@@ -8,8 +8,8 @@ Python half:
   fails closed instead of loading both;
 - an explicit selection narrows the read to one representation;
 - an unknown read_adapter fails closed;
-- before V217 (catalog probe absent/failing) the loader keeps the original
-  resolution-only policy, so merged code works ahead of the staged migration.
+- executable non-resolution representations are loaded by the selector, with
+  no hard-coded schema allow-list.
 """
 
 from __future__ import annotations
@@ -42,23 +42,6 @@ class ProbeConn:
                 wanted = set(args)
                 reps = [r for r in reps if r["id"] in wanted]
             return reps
-        self.table_reads.append(sql)
-        return [_row(id="e1", asset_id="asset:1")]
-
-
-class NoProbeConn:
-    """Pre-V217 / minimal connection: fetchval is unavailable."""
-
-    def __init__(self, reps: List[Any]) -> None:
-        self._reps = reps
-        self.table_reads: List[str] = []
-
-    async def fetchval(self, sql: str, *args: Any) -> bool:
-        raise AttributeError("fetchval")
-
-    async def fetch(self, sql: str, *args: Any) -> List[Any]:
-        if "FROM resolution.representation" in sql:
-            return self._reps
         self.table_reads.append(sql)
         return [_row(id="e1", asset_id="asset:1")]
 
@@ -119,12 +102,8 @@ def test_unknown_read_adapter_fails_closed() -> None:
         _run(loader.load_entities())
 
 
-def test_pre_v217_keeps_resolution_only_policy() -> None:
-    conn = NoProbeConn([
-        _rep("c1", "nebula", "a"),
-        _rep("c2", "resolution", "b"),
-    ])
+def test_non_resolution_executable_representation_is_loaded() -> None:
+    conn = ProbeConn([_rep("c1", "nebula", "a")])
     loader = DatabaseLoader(ResolutionInterpreter(), Pool(conn))
     _run(loader.load_entities())
-    assert any("resolution.b" in sql for sql in conn.table_reads)
-    assert not any("nebula.a" in sql for sql in conn.table_reads)
+    assert any("nebula.a" in sql for sql in conn.table_reads)

@@ -171,9 +171,9 @@ is stated against its real state: **merged code** or **applied schema**.
 
 | # | Non-capability | Evidence |
 |---|---|---|
-| 1 | **In-memory SOL skips non-`resolution` representations.** | `DatabaseLoader.load_entities` — merged V217 code filters `evaluation_role = 'executable'` **only when that column exists** (`_representation_scoped` catalog probe); on the live schema it does not, so the legacy `if schema not in ("resolution",): continue` branch is what actually runs (`python/SOLScript/solscript/database_loader.py:832`). A `nebula`/`peb` representation is described but never materialised. |
-| 2 | **Subject listing is effectively `resolution`-only.** | `SolNativeAdapter.list_subjects` uses one query with `CASE WHEN to_jsonb(r) ? 'evaluation_role' … ELSE r.schema_name = 'resolution' END` (`adapters/sol_native.py:125-129`). Correct on both sides of V217; live means the `ELSE` branch. |
-| 3 | **Bindings are 1:1 per attribute and per relationship.** | Live keys are still `PRIMARY KEY (attribute_id)` and `PRIMARY KEY (concept_relationship_id)`. V217 would replace these with surrogate ids plus partial unique indexes, and the one-per-attribute limit **survives** that change: uniqueness becomes `(representation_id, attribute_id)`, so a concept still has one executable realization per attribute; other representations stay descriptive. |
+| 1 | **In-memory SOL reads only executable representations.** | `DatabaseLoader.load_entities` filters `evaluation_role = 'executable'`; the old `if schema not in ("resolution",): continue` allow-list is gone. A `nebula`/`peb` representation is materialised only when it is executable; descriptive representations remain described, not evaluated. |
+| 2 | **Subject listing uses the same executable selector.** | `SolNativeAdapter.list_subjects` reads only executable representations, rejects an unknown `read_adapter`, and fails closed when more than one executable representation claims a concept without an explicit selection. |
+| 3 | **Bindings are representation-scoped.** | V217 replaces the old `PRIMARY KEY (attribute_id)` / `PRIMARY KEY (concept_relationship_id)` keys with surrogate ids, nullable `representation_id`, and partial unique indexes on `(representation_id, attribute_id)` / `(representation_id, concept_relationship_id)` plus the legacy NULL leg. A concept still has one executable realization per attribute; other representations stay descriptive. |
 | 4 | **No cross-database reads.** | `compile_root`/`compile_condition` emit `%I.%I` from the binding: any table in *this* database with an `id` compiles, but there is no FDW, no second DSN, and no remote query path. |
 | 5 | **No Mongo evaluation.** | Nothing in the SQL compiler or `DatabaseLoader` reads MongoDB. `python/keychains` is an explicit one-way `PG → Mongo` projection and Mongo is never read back as operational state (D-2026-08-14-003); Mongo is not a representation SOL can resolve. |
 | 6 | **JSONB interiors need function bindings.** | `attribute_ref` compiles the whole column. A key inside `impact_scope` or `open_questions` needs an allow-listed `function_binding` template or a generated column. Interpolating a path from concept metadata is unsupported and must not be added — the template, not the metadata, is the trust boundary. |
@@ -193,8 +193,9 @@ Two supporting facts that constrain the registry rather than block it:
 The consequence for this strategy: "registered representation" means
 **described**, not **evaluable**. Phase 2 registers several representations that
 SOL cannot yet read; that is deliberate and recorded here so the registry does
-not overclaim. Phase 3's merged code does not change the live answer on its own —
-only applying `sql/V217` does, and that remains operator-gated.
+not overclaim. Phase 3's code is merged; applying `sql/V217` makes the selector
+live and remains operator-gated. Once applied, executable representations are
+read through the flag, not through a schema allow-list.
 
 ---
 
@@ -243,6 +244,8 @@ Ratification: DBA `93d3f092-5e6f-476d-8ec7-41cf587360f9`
 (APPROVED_WITH_AMENDMENTS) adopted by Architect
 `9b532211-da40-4b52-9729-b273523ff3ab` (RATIFIED_WITH_AMENDMENTS). Staged
 inert as `sql/V217__representation_scoped_bindings.sql`; not applied live.
+Operator procedure and window evidence:
+`docs/runbook-v217-representation-scoped-bindings-live-apply.md`.
 
 - `representation`: adds `evaluation_role text NOT NULL DEFAULT 'descriptive'
   CHECK (IN ('executable','descriptive'))` and `read_adapter text`.
@@ -265,8 +268,8 @@ inert as `sql/V217__representation_scoped_bindings.sql`; not applied live.
   `attribute_binding_for` / `relationship_binding_for`.
 - Loader/adapter: `DatabaseLoader` and `SolNativeAdapter` read only
   executable representations and fail closed on an unknown `read_adapter`.
-  Both retain a pre-V217 fallback so merged code works before the staged
-  migration is applied.
+  The pre-V217 schema allow-list fallback has been removed; the code requires
+  the representation selector to exist.
 - Function allow-list: `expression.function_name` is FK-constrained to
   `resolution.function_binding` `NOT VALID`, and the migration refuses to
   apply while any `function_call` still names an unregistered function.
@@ -355,8 +358,8 @@ today, and it is recorded as intent rather than capability.
   `resolution.assessment` identically through `compile_root`, and fails
   closed on an unbound or ambiguous representation.
 - `python/SOLScript/tests/test_representation_scope.py` covers the loader
-  half: ambiguity and unknown `read_adapter` fail closed, and the pre-V217
-  fallback keeps the resolution-only policy.
+  half: ambiguity and unknown `read_adapter` fail closed, and executable
+  non-`resolution` representations are loaded without a schema allow-list.
 - `bin/tests/test_agenda_typespec.py` pins the contract shape and compiles it
   when the TypeSpec toolchain is present.
 - `bin/tests/test_resolution_registry_closure.py` continues to guard the
