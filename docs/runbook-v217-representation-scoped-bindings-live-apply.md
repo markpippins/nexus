@@ -1,7 +1,7 @@
 # V217 live-apply runbook — executable representations (operator-gated)
 
-> **Status:** procedure only. Live application requires the operator's explicit
-> authorization for this window.
+> **Status:** **EXECUTED 2026-11-13.** V217 is applied live and ledgered; see
+> §7 for the window record. The steps below remain the reproducible procedure.
 >
 > **Scope:** Phase 3 only — `sql/V217__representation_scoped_bindings.sql`.
 > V218, Phase 4 and Phase 5 are out of scope and must not be applied here.
@@ -21,9 +21,11 @@
 | Design note | `docs/nebula-sol-absorption.md` §6.3 |
 | Migration | `sql/V217__representation_scoped_bindings.sql` |
 | Merged PR | **#982**, merge commit `7914983a65157f48d8aff0889b6a9e0fa65c6a15` |
+| Fallback-removal PR | **#993**, merge commit `60be1daf8cefba3d3a7fa56b27dc74a8a4896b7d` |
 | Migration blob | `6f6b453007cb10633c7d25c70ebd7884b75ce49a` |
 | DBA ratification | `93d3f092-5e6f-476d-8ec7-41cf587360f9` — APPROVED_WITH_AMENDMENTS |
 | Architect ratification | `9b532211-da40-4b52-9729-b273523ff3ab` — RATIFIED_WITH_AMENDMENTS |
+| Amendment / final gate | Architect `e150413d-c540-493b-aeb1-e355b4a7e59f`; DBA preflight `b7ec902b-e218-44fe-b2a7-8f88b93c870d`; DBA final `2f325760-f4ac-4365-88eb-b2e025505aa0`; DBA closeout `7b103e30-9926-428f-9571-1e87101f591a` |
 | Focused guard | `bin/tests/test_v217_representation_bindings.py` — 13 tests |
 | Expected ledger | `resolution.migration_ledger`, `schema_name='sql'`, `migration_label='V217__representation_scoped_bindings'` |
 
@@ -432,3 +434,41 @@ production rollback path; the verified full backup is the guaranteed fallback.
 - It does not make every registered representation executable; only a
   representation with a uniquely matched existing binding is promoted.
 - It does not replicate to vanadium.
+
+## 7. Window record — 2026-11-13
+
+- **Authorization:** operator request for Phase 3 end to end, excluding
+  vanadium and Phase 4/5. **Outcome:** applied and verified.
+- **Artifact:** blob `6f6b453007cb10633c7d25c70ebd7884b75ce49a`; PR #993 merge
+  `60be1daf8cefba3d3a7fa56b27dc74a8a4896b7d`; Tester attestation
+  `0b906215-3f80-4003-82a7-f9655b0b6de2`.
+- **Ratification:** Architect `e150413d-c540-493b-aeb1-e355b4a7e59f`; DBA
+  preflight `b7ec902b-e218-44fe-b2a7-8f88b93c870d`; DBA final
+  `2f325760-f4ac-4365-88eb-b2e025505aa0`; DBA closeout
+  `7b103e30-9926-428f-9571-1e87101f591a`; change-log thread
+  `f22a2d86-5d96-4f27-83ed-f9c714997668`.
+- **Pre-state:** 44 concepts, 31 representations, 7 attribute bindings,
+  6 relationship bindings, selector/key columns 0, V217 ledger 0, unregistered
+  function calls 0.
+- **Backup:** `nexus__20261113_005333.dump` (687M, verified); window
+  `v217-20261113T055457Z/full-pre.dump` sha256
+  `4ff6bf1e30e7ea89f1d30ea53d9121dfc7348ca2ad5f90ed6875bc2cef8ec7ea`.
+- **Rehearsal:** full restore + `rehearse-migration.py --allow-self-transaction`
+  reported `BEGIN; <migration> ROLLBACK;`; post-rollback 44/31/7/6 and selector
+  columns 0. Committed scratch apply: selector 2, keys 2+2, unique indexes 4,
+  resolver functions 3, executable representations 6, multiple-executable
+  concepts 0.
+- **Apply:** `2026-11-13T06:03:05.535465Z`, psql exit 0; `UPDATE 5` (attribute
+  scoping), `UPDATE 5` (relationship scoping), `UPDATE 6` (executable marking),
+  four indexes, seven functions, `COMMIT`.
+- **Post-state:** 5 scoped / 2 legacy attribute bindings; 5 scoped / 1 legacy
+  relationship bindings; six executable representations (Answer, OpenQuestion,
+  Requirement, ImplementationPlan, WorkRequest, WorkRequestEdge), one per
+  concept; zero concepts with more than one executable; descriptive-only
+  concepts remain descriptive and fail closed.
+- **Proof:** V217 guard 13/13; AC4 equivalence, AC5 unbound/zero/ambiguous
+  fail-closed all passed; full SOL suite 298/298; `:3101/health`
+  `{"status":"ok","db":true}`; services active.
+- **Ledger:** `sql | V217__representation_scoped_bindings | dba` exactly once.
+- **Not done:** V218, Phase 4/5 tables, vanadium replication. Rollback not
+  invoked; verified full backup retained.

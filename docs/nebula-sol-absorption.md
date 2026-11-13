@@ -18,10 +18,14 @@ registry starts overclaiming:
 Phase 2 (`sql/V216`) was **applied live on 2026-11-13** (ledger
 `V216__nebula_sol_concept_registry`, applied by the DBA; verified post-state:
 44 concepts, 20 identity strategies, 31 representations, 22 representation
-identities, 72 attributes, 56 values, zero bindings). Phase 3 (`sql/V217`)
-remains merged as a file and is **not applied live**. Phase 3's Python half is
-merged code with a pre-V217 fallback, so on the live schema it still behaves
-the pre-Phase-3 way (§4).
+identities, 72 attributes, 56 values, zero bindings). Phase 3 (`sql/V217`) was
+**applied live on 2026-11-13** (ledger
+`V217__representation_scoped_bindings`; PR #993 merge `60be1daf8`; DBA closeout
+`7b103e30`). The selector and representation-scoped bindings are live; the
+Python entity read paths require V217 and no longer carry the schema
+allow-list fallback. Six representations are executable, one per concept:
+Answer, OpenQuestion, Requirement, ImplementationPlan, WorkRequest and
+WorkRequestEdge.
 
 This note exists to stop a specific drift: registering a new durable
 representation inside `resolution` because that is where SOL can currently read
@@ -232,7 +236,7 @@ limits on the claim should be stated plainly:
 |---|---|
 | 1. Design note | **This document.** |
 | 2. Registry completion | **`sql/V216__nebula_sol_concept_registry.sql`**, merged in PR #980 (`3b99da08a`) and **applied live 2026-11-13**. Concepts, identity strategies, representations, identities and governed values only; no DDL, no data movement, zero bindings. The six new concepts are present; the existing `Assessment` registration is preserved. Ledger `V216__nebula_sol_concept_registry`. Procedure: `docs/runbook-v216-sol-registry-live-apply.md`. |
-| 3. Executable representations | **Merged code + staged migration.** `sql/V217__representation_scoped_bindings.sql` and its Python/TS consumers merged as PR #982 (`7914983a6`); the migration is **not applied live** (`representation.evaluation_role` absent). Ratified: DBA `93d3f092-5e6f-476d-8ec7-41cf587360f9`, Architect `9b532211-da40-4b52-9729-b273523ff3ab`. Live application is operator-gated. |
+| 3. Executable representations | **Applied live 2026-11-13.** `sql/V217__representation_scoped_bindings.sql` and its Python/TS consumers merged as PR #982 (`7914983a6`) plus the fallback removal in PR #993 (`60be1daf8`); ledger `V217__representation_scoped_bindings`; selector and scoped bindings present (2 selector columns, 4 unique indexes, 3 resolver functions). Ratified: DBA `93d3f092-5e6f-476d-8ec7-41cf587360f9`, Architect `9b532211-da40-4b52-9729-b273523ff3ab`, amendment `e150413d-c540-493b-aeb1-e355b4a7e59f`, DBA final `2f325760-f4ac-4365-88eb-b2e025505aa0`. |
 | 4. Assessment family DDL | **Still gated** — the Phase 3 ratification explicitly does not cover it. `assessment_kind` + subject/evidence FKs + `agent_record_id` on `nebula.assessments_history`; single writer. |
 | 5. Decision identity link | **Read-only reconciliation complete** (§2.2). The link column is gated with Phase 4/5. |
 | 6. Agenda TypeSpec | **`typespec/v1/agenda/`**, model-only, imported by the root umbrella. No table. |
@@ -242,9 +246,13 @@ limits on the claim should be stated plainly:
 
 Ratification: DBA `93d3f092-5e6f-476d-8ec7-41cf587360f9`
 (APPROVED_WITH_AMENDMENTS) adopted by Architect
-`9b532211-da40-4b52-9729-b273523ff3ab` (RATIFIED_WITH_AMENDMENTS). Staged
-inert as `sql/V217__representation_scoped_bindings.sql`; not applied live.
-Operator procedure and window evidence:
+`9b532211-da40-4b52-9729-b273523ff3ab` (RATIFIED_WITH_AMENDMENTS); fallback
+removal and runtime one-executable amendment: Architect
+`e150413d-c540-493b-aeb1-e355b4a7e59f`; DBA final gate
+`2f325760-f4ac-4365-88eb-b2e025505aa0`. Applied live on 2026-11-13 as
+`sql/V217__representation_scoped_bindings.sql` (ledger
+`V217__representation_scoped_bindings`; PR #993 merge `60be1daf8`; DBA closeout
+`7b103e30`). Operator procedure and window evidence:
 `docs/runbook-v217-representation-scoped-bindings-live-apply.md`.
 
 - `representation`: adds `evaluation_role text NOT NULL DEFAULT 'descriptive'
@@ -327,11 +335,14 @@ database on 2026-11-13, not carried over from the 2026-11-12 pass:
   on title → 14 pairs under both raw and case/trim-normalised equality; joined
   on `id` → 0 shared ids.
 - `information_schema.columns` → `nebula.assessments` columns, and
-  `resolution.representation.evaluation_role` **absent** (V217 not applied).
-- `pg_constraint` → live binding primary keys are still `attribute_id` and
-  `concept_relationship_id`.
+  `resolution.representation.evaluation_role` / `read_adapter` **present**
+  (V217 applied 2026-11-13).
+- `pg_indexes` / `pg_constraint` → binding surrogate `id` and
+  `representation_id` present; four partial unique indexes
+  (`cab_rep_attr_uq`, `cab_attr_legacy_uq`, `crb_rep_rel_uq`,
+  `crb_rel_legacy_uq`) present.
 - `resolution.concept` → `Assessment` present; the six V216 concepts present
-  (live since 2026-11-13); V217 markers still absent.
+  (live since 2026-11-13); V217 markers present and ledger row written.
 - `pg_class`/`pg_get_viewdef` → `nebula.agent_records`, `nebula.assessments`,
   `nebula.work_requests`, `nebula.architect_specs` are views over `*_history`;
   `Answer` resolves to `resolution.open_question_answer`.
