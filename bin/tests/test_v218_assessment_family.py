@@ -41,11 +41,8 @@ if str(REPO_ROOT) not in sys.path:
 
 from host_tool_guard import skip_unless_host_tools  # noqa: E402
 
-pytestmark = pytest.mark.skipif(
-    not skip_unless_host_tools(
-        "createdb", "dropdb", "psql", doing="these tests create a throwaway database"
-    ),
-    reason="host PG tools (createdb/dropdb/psql) unavailable",
+pytestmark = skip_unless_host_tools(
+    "createdb", "dropdb", "psql", doing="these tests create a throwaway database"
 )
 
 V218 = REPO_ROOT / "sql" / "V218__assessment_family_and_decision_link.sql"
