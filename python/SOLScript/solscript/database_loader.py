@@ -71,30 +71,7 @@ class DatabaseLoader:
         # that representation is read; when unset, resolution is implicit and
         # ambiguous concepts fail closed.
         self.representation_id = representation_id
-        self._scoped: Optional[bool] = None
         self.load_report: Dict[str, Any] = {}
-
-    async def _representation_scoped(self, conn: Any) -> bool:
-        """True when V217's selector columns/functions are present.
-
-        The merged Python ships before the staged migration is applied, so the
-        loader must keep working against the pre-V217 schema. Detection is one
-        cached catalog probe; any failure (including a scripted test pool that
-        does not implement fetchval) means legacy behaviour.
-        """
-        if self._scoped is None:
-            try:
-                self._scoped = bool(
-                    await conn.fetchval(
-                        "SELECT EXISTS (SELECT 1 FROM information_schema.columns "
-                        "WHERE table_schema = 'resolution' "
-                        "AND table_name = 'representation' "
-                        "AND column_name = 'evaluation_role')"
-                    )
-                )
-            except Exception:
-                self._scoped = False
-        return self._scoped
 
     def _require_native_adapter(self, read_adapter: Optional[str]) -> None:
         """Fail closed on a read adapter this loader cannot execute."""
@@ -246,36 +223,24 @@ class DatabaseLoader:
 
     async def load_attributes(self) -> None:
         async with self.pool.acquire() as conn:
-            if await self._representation_scoped(conn):
-                # Representation-scoped: the SQL resolver owns the fail-closed
-                # rules and raises on ambiguity instead of picking a row.
-                rows = await conn.fetch(
-                    "SELECT ca.id, ca.concept_id, ca.name, ca.description, "
-                    "ca.value_type, ca.is_state_attribute, "
-                    "cab.schema_name, cab.table_name, cab.column_name "
-                    "FROM resolution.concept_attribute ca "
-                    "LEFT JOIN LATERAL ("
-                    "  SELECT b.schema_name, b.table_name, b.column_name "
-                    "  FROM resolution.concept_attribute_binding b "
-                    "  WHERE b.attribute_id = ca.id "
-                    "    AND b.representation_id IS NOT DISTINCT FROM "
-                    "        resolution.resolve_binding_representation(ca.concept_id) "
-                    "  LIMIT 1"
-                    ") cab ON TRUE "
-                    "WHERE ca.concept_id IN "
-                    "(SELECT id FROM resolution.concept WHERE expired_at IS NULL)"
-                )
-            else:
-                rows = await conn.fetch(
-                    "SELECT ca.id, ca.concept_id, ca.name, ca.description, "
-                    "ca.value_type, ca.is_state_attribute, "
-                    "cab.schema_name, cab.table_name, cab.column_name "
-                    "FROM resolution.concept_attribute ca "
-                    "LEFT JOIN resolution.concept_attribute_binding cab "
-                    "ON cab.attribute_id = ca.id "
-                    "WHERE ca.concept_id IN "
-                    "(SELECT id FROM resolution.concept WHERE expired_at IS NULL)"
-                )
+            # Representation-scoped: the SQL resolver owns the fail-closed
+            # rules and raises on ambiguity instead of picking a row.
+            rows = await conn.fetch(
+                "SELECT ca.id, ca.concept_id, ca.name, ca.description, "
+                "ca.value_type, ca.is_state_attribute, "
+                "cab.schema_name, cab.table_name, cab.column_name "
+                "FROM resolution.concept_attribute ca "
+                "LEFT JOIN LATERAL ("
+                "  SELECT b.schema_name, b.table_name, b.column_name "
+                "  FROM resolution.concept_attribute_binding b "
+                "  WHERE b.attribute_id = ca.id "
+                "    AND b.representation_id IS NOT DISTINCT FROM "
+                "        resolution.resolve_binding_representation(ca.concept_id) "
+                "  LIMIT 1"
+                ") cab ON TRUE "
+                "WHERE ca.concept_id IN "
+                "(SELECT id FROM resolution.concept WHERE expired_at IS NULL)"
+            )
             for row in rows:
                 binding = None
                 if row["schema_name"] and row["table_name"] and row["column_name"]:
@@ -308,35 +273,23 @@ class DatabaseLoader:
 
     async def load_relationships(self) -> None:
         async with self.pool.acquire() as conn:
-            if await self._representation_scoped(conn):
-                rows = await conn.fetch(
-                    "SELECT cr.id, cr.from_concept_id, cr.to_concept_id, "
-                    "cr.relationship_type, cr.path, cr.notes, "
-                    "crb.from_schema, crb.from_table, crb.from_column, "
-                    "crb.to_schema, crb.to_table, crb.to_column "
-                    "FROM resolution.concept_relationship cr "
-                    "LEFT JOIN LATERAL ("
-                    "  SELECT b.from_schema, b.from_table, b.from_column, "
-                    "         b.to_schema, b.to_table, b.to_column "
-                    "  FROM resolution.concept_relationship_binding b "
-                    "  WHERE b.concept_relationship_id = cr.id "
-                    "    AND b.representation_id IS NOT DISTINCT FROM "
-                    "        resolution.relationship_binding_for(cr.id).representation_id "
-                    "  LIMIT 1"
-                    ") crb ON TRUE "
-                    "WHERE cr.expired_at IS NULL"
-                )
-            else:
-                rows = await conn.fetch(
-                    "SELECT cr.id, cr.from_concept_id, cr.to_concept_id, "
-                    "cr.relationship_type, cr.path, cr.notes, "
-                    "crb.from_schema, crb.from_table, crb.from_column, "
-                    "crb.to_schema, crb.to_table, crb.to_column "
-                    "FROM resolution.concept_relationship cr "
-                    "LEFT JOIN resolution.concept_relationship_binding crb "
-                    "  ON crb.concept_relationship_id = cr.id "
-                    "WHERE cr.expired_at IS NULL"
-                )
+            rows = await conn.fetch(
+                "SELECT cr.id, cr.from_concept_id, cr.to_concept_id, "
+                "cr.relationship_type, cr.path, cr.notes, "
+                "crb.from_schema, crb.from_table, crb.from_column, "
+                "crb.to_schema, crb.to_table, crb.to_column "
+                "FROM resolution.concept_relationship cr "
+                "LEFT JOIN LATERAL ("
+                "  SELECT b.from_schema, b.from_table, b.from_column, "
+                "         b.to_schema, b.to_table, b.to_column "
+                "  FROM resolution.concept_relationship_binding b "
+                "  WHERE b.concept_relationship_id = cr.id "
+                "    AND b.representation_id IS NOT DISTINCT FROM "
+                "        resolution.relationship_binding_for(cr.id).representation_id "
+                "  LIMIT 1"
+                ") crb ON TRUE "
+                "WHERE cr.expired_at IS NULL"
+            )
             for row in rows:
                 binding = None
                 # Hydrate the binding whenever the binding ROW exists — even

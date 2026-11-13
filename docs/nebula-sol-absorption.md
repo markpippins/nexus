@@ -277,8 +277,9 @@ removal and runtime one-executable amendment: Architect
   `attribute_binding_for` / `relationship_binding_for`.
 - Loader/adapter: `DatabaseLoader` and `SolNativeAdapter` read only
   executable representations and fail closed on an unknown `read_adapter`.
-  The pre-V217 schema allow-list fallback has been removed; the code requires
-  the representation selector to exist.
+  The pre-V217 schema allow-list fallback and the `_representation_scoped`
+  catalog probe are gone; entity, attribute and relationship loads all use the
+  V217 selector/resolver.
 - Function allow-list: `expression.function_name` is FK-constrained to
   `resolution.function_binding` `NOT VALID`, and the migration refuses to
   apply while any `function_call` still names an unregistered function.
@@ -348,10 +349,11 @@ database on 2026-11-13, not carried over from the 2026-11-12 pass:
   `nebula.work_requests`, `nebula.architect_specs` are views over `*_history`;
   `Answer` resolves to `resolution.open_question_answer`.
 - `shrapnel.object_instance` → 4,399 objects, for the §4 Shrapnel claim.
-- Source reads: `database_loader.py` (`_representation_scoped`,
-  `_require_native_adapter`, `load_entities`, `load_shrapnel_facts`),
-  `adapters/sol_native.py` (`list_subjects`), `sql/V216`, `sql/V217`,
-  `sql/V152__shrapnel_bridge_readthrough.sql`, `python/keychains/projection.py`.
+- Source reads: `database_loader.py` (`_require_native_adapter`,
+  `load_entities`, `load_attributes`, `load_relationships`,
+  `load_shrapnel_facts`), `adapters/sol_native.py` (`list_subjects`),
+  `sql/V216`, `sql/V217`, `sql/V152__shrapnel_bridge_readthrough.sql`,
+  `python/keychains/projection.py`.
 
 **Evidence limitation.** "Title-identical" is a title comparison, not proof that
 an ADR and an agent record are the same artifact — it is the strongest signal
