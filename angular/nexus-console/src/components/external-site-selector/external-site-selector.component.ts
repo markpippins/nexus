@@ -1,5 +1,6 @@
 import { Component, ChangeDetectionStrategy, input, output } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { uiOriginFor } from '../../ui-origins.js';
 
 export interface ExternalSite {
   name: string;
@@ -8,7 +9,7 @@ export interface ExternalSite {
 }
 
 export const EXTERNAL_SITES: ExternalSite[] = [
-  { name: 'View Architect',  url: 'http://localhost:3003',                shortName: 'view-architect' },
+  { name: 'View Architect',  url: uiOriginFor(3003),                shortName: 'view-architect' },
   { name: 'Google',          url: 'https://www.google.com',               shortName: 'google' },
   { name: 'GitHub',          url: 'https://github.com',                   shortName: 'github' },
   { name: 'ChatGPT',         url: 'https://chatgpt.com',                  shortName: 'chatgpt' },
