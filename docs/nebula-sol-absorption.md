@@ -226,7 +226,7 @@ limits on the claim should be stated plainly:
 | Phase | Status |
 |---|---|
 | 1. Design note | **This document.** |
-| 2. Registry completion | **`sql/V216__nebula_sol_concept_registry.sql`**, staged inert, merged in PR #980 (`3b99da08a`). Concepts, identity strategies, representations, identities and governed values only. No DDL, no data movement; **not applied live** — none of its six concepts exist in `resolution.concept` yet. |
+| 2. Registry completion | **`sql/V216__nebula_sol_concept_registry.sql`**, staged inert, merged in PR #980 (`3b99da08a`). Concepts, identity strategies, representations, identities and governed values only. No DDL, no data movement; **not applied live** — none of its six concepts exist in `resolution.concept` yet. Operator-gated live-apply procedure: `docs/runbook-v216-sol-registry-live-apply.md`. |
 | 3. Executable representations | **Merged code + staged migration.** `sql/V217__representation_scoped_bindings.sql` and its Python/TS consumers merged as PR #982 (`7914983a6`); the migration is **not applied live** (`representation.evaluation_role` absent). Ratified: DBA `93d3f092-5e6f-476d-8ec7-41cf587360f9`, Architect `9b532211-da40-4b52-9729-b273523ff3ab`. Live application is operator-gated. |
 | 4. Assessment family DDL | **Still gated** — the Phase 3 ratification explicitly does not cover it. `assessment_kind` + subject/evidence FKs + `agent_record_id` on `nebula.assessments_history`; single writer. |
 | 5. Decision identity link | **Read-only reconciliation complete** (§2.2). The link column is gated with Phase 4/5. |
