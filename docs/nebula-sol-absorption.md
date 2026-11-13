@@ -15,9 +15,13 @@ registry starts overclaiming:
 | **Merged code** | Python/TypeScript on `main` — runs, but may take a legacy path |
 | **Applied schema** | live DDL/data — what the running system can actually resolve |
 
-Phase 2 (`sql/V216`) and Phase 3 (`sql/V217`) are merged as files and are
-**not applied live**. Phase 3's Python half is merged code with a pre-V217
-fallback, so on the live schema it still behaves the pre-Phase-3 way (§4).
+Phase 2 (`sql/V216`) was **applied live on 2026-11-13** (ledger
+`V216__nebula_sol_concept_registry`, applied by the DBA; verified post-state:
+44 concepts, 20 identity strategies, 31 representations, 22 representation
+identities, 72 attributes, 56 values, zero bindings). Phase 3 (`sql/V217`)
+remains merged as a file and is **not applied live**. Phase 3's Python half is
+merged code with a pre-V217 fallback, so on the live schema it still behaves
+the pre-Phase-3 way (§4).
 
 This note exists to stop a specific drift: registering a new durable
 representation inside `resolution` because that is where SOL can currently read
@@ -226,7 +230,7 @@ limits on the claim should be stated plainly:
 | Phase | Status |
 |---|---|
 | 1. Design note | **This document.** |
-| 2. Registry completion | **`sql/V216__nebula_sol_concept_registry.sql`**, staged inert, merged in PR #980 (`3b99da08a`). Concepts, identity strategies, representations, identities and governed values only. No DDL, no data movement; **not applied live** — none of its six concepts exist in `resolution.concept` yet. Operator-gated live-apply procedure: `docs/runbook-v216-sol-registry-live-apply.md`. |
+| 2. Registry completion | **`sql/V216__nebula_sol_concept_registry.sql`**, merged in PR #980 (`3b99da08a`) and **applied live 2026-11-13**. Concepts, identity strategies, representations, identities and governed values only; no DDL, no data movement, zero bindings. The six new concepts are present; the existing `Assessment` registration is preserved. Ledger `V216__nebula_sol_concept_registry`. Procedure: `docs/runbook-v216-sol-registry-live-apply.md`. |
 | 3. Executable representations | **Merged code + staged migration.** `sql/V217__representation_scoped_bindings.sql` and its Python/TS consumers merged as PR #982 (`7914983a6`); the migration is **not applied live** (`representation.evaluation_role` absent). Ratified: DBA `93d3f092-5e6f-476d-8ec7-41cf587360f9`, Architect `9b532211-da40-4b52-9729-b273523ff3ab`. Live application is operator-gated. |
 | 4. Assessment family DDL | **Still gated** — the Phase 3 ratification explicitly does not cover it. `assessment_kind` + subject/evidence FKs + `agent_record_id` on `nebula.assessments_history`; single writer. |
 | 5. Decision identity link | **Read-only reconciliation complete** (§2.2). The link column is gated with Phase 4/5. |
@@ -323,7 +327,8 @@ database on 2026-11-13, not carried over from the 2026-11-12 pass:
   `resolution.representation.evaluation_role` **absent** (V217 not applied).
 - `pg_constraint` → live binding primary keys are still `attribute_id` and
   `concept_relationship_id`.
-- `resolution.concept` → `Assessment` present; the six V216 concepts absent.
+- `resolution.concept` → `Assessment` present; the six V216 concepts present
+  (live since 2026-11-13); V217 markers still absent.
 - `pg_class`/`pg_get_viewdef` → `nebula.agent_records`, `nebula.assessments`,
   `nebula.work_requests`, `nebula.architect_specs` are views over `*_history`;
   `Answer` resolves to `resolution.open_question_answer`.
