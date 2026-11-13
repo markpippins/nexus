@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import signal
 import subprocess
 import sys
 import time
@@ -298,6 +300,88 @@ def ollama_chat(model: str, chunk_text: str, timeout: int = 900) -> list[dict]:
 OPENCODE_MODEL = "opencode/big-pickle"
 
 
+class BackendUnavailable(AbsorbError):
+    """The model route itself is unusable — not one document.
+
+    Raised when the provider rejects the request (quota, credentials) or stops
+    answering. Grinding the rest of the batch cannot succeed, and every chunk
+    costs a full timeout, so the run aborts instead of stalling silently.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("E_TRANSIENT_BACKEND_UNAVAILABLE", message)
+
+
+# Definitive provider rejections. `opencode run` exits 0 while printing these,
+# so the exit code cannot tell "out of credit" apart from "model answered" —
+# the balance outage looked like a slow model for hours because of it.
+BACKEND_REJECTION_MARKERS = (
+    "insufficient balance",
+    "insufficient_quota",
+    "credit balance is too low",
+    "top up at",
+    "quota exceeded",
+    "invalid api key",
+    "invalid_api_key",
+    "payment required",
+    "unauthorized",
+)
+
+
+def backend_rejection(text: str) -> str | None:
+    """The matched marker, if this output is a provider rejection."""
+    low = (text or "").lower()
+    return next((m for m in BACKEND_REJECTION_MARKERS if m in low), None)
+
+
+def _run_bounded(argv: list[str], timeout: int) -> subprocess.CompletedProcess:
+    """Run argv under a timeout that also reaps its children.
+
+    `opencode run` spawns helper processes (terrain-mcp, prompt bridge) that
+    inherit the stdout pipe. `subprocess.run(timeout=...)` kills only the
+    direct child, leaving those helpers alive and holding the pipe; a new
+    session plus a group kill means a timed-out call leaves nothing behind.
+    """
+    proc = subprocess.Popen(
+        argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        stdin=subprocess.DEVNULL, text=True, start_new_session=True)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            proc.kill()
+        try:
+            proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        raise
+    return subprocess.CompletedProcess(argv, proc.returncode, out, err)
+
+
+def probe_backend(backend: str, timeout: int) -> None:
+    """Prove the route answers before spending the batch on it.
+
+    A dead route otherwise costs the full per-chunk timeout on every chunk of
+    every document before a single failure is visible.
+    """
+    if backend != "opencode":
+        return  # the other backends refuse quickly on first use
+    try:
+        res = _run_bounded(
+            ["opencode", "run", "-m", OPENCODE_MODEL, "--pure",
+             "Reply with exactly: ok"], timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise BackendUnavailable(
+            f"opencode gave no answer in {timeout}s — route stalled") from exc
+    combined = f"{res.stdout or ''}\n{res.stderr or ''}"
+    marker = backend_rejection(combined)
+    if marker:
+        raise BackendUnavailable(
+            f"opencode rejected a probe request ({marker}): {combined.strip()[:160]}")
+
+
 def opencode_extract(model_full: str, chunk_text: str,
                      timeout: int = 300) -> list[dict]:
     """Harness-mediated extraction: shells out to `opencode run` under the
@@ -308,13 +392,26 @@ def opencode_extract(model_full: str, chunk_text: str,
     msg = (SYSTEM_PROMPT +
            "\n\nRespond with ONLY the raw JSON object, nothing else."
            f"\n\n<transcript_chunk>\n{chunk_text}\n</transcript_chunk>")
-    res = subprocess.run(
-        ["opencode", "run", "-m", model_full, "--pure", msg],
-        capture_output=True, text=True, timeout=timeout,
-        # opencode blocks at init when stdin is an inherited pipe that nobody
-        # writes to, printing nothing while it waits. Pin /dev/null so a
-        # harness-launched run cannot stall silently for the whole timeout.
-        stdin=subprocess.DEVNULL)
+    try:
+        # stdin is pinned to /dev/null inside _run_bounded: opencode blocks at
+        # init when stdin is an inherited pipe that nobody writes to.
+        res = _run_bounded(
+            ["opencode", "run", "-m", model_full, "--pure", msg], timeout)
+    except subprocess.TimeoutExpired as exc:
+        # TimeoutExpired is not an AbsorbError: the caller reads
+        # `error_class` off whatever it catches, so letting this escape
+        # crashed the whole batch with AttributeError instead of recording a
+        # failed document.
+        raise AbsorbError(
+            "E_TRANSIENT_LLM_TIMEOUT",
+            f"opencode exceeded {timeout}s on a {len(chunk_text)}-char chunk") from exc
+    combined = f"{res.stdout or ''}\n{res.stderr or ''}"
+    marker = backend_rejection(combined)
+    if marker:
+        # rc is 0 for these, so this check must come before the rc check.
+        raise BackendUnavailable(
+            f"opencode rejected the request ({marker}) — quota or credentials, "
+            f"not a slow chunk: {combined.strip()[:160]}")
     if res.returncode != 0:
         raise AbsorbError("E_TRANSIENT_LLM_UNAVAILABLE",
                           f"opencode rc={res.returncode}: {res.stderr[-160:]}")
@@ -439,6 +536,32 @@ def mark_consumed(document_id: str) -> None:
         (CONSUMER_PROFILE, CONSUMER_VERSION, document_id))
 
 
+
+# 0 (default) = never retire a document because of timeouts. A provider-wide
+# outage looks exactly like one oversized chunk, and silently consuming the
+# queue during an outage would discard corpus content that was never
+# extracted. Operators opt in to a ceiling for one pathological document.
+MAX_EXTRACTION_TIMEOUTS = int(os.environ.get("ABSORB_MAX_EXTRACTION_TIMEOUTS", "0"))
+
+
+def note_extraction_timeout(document_id: str) -> int:
+    """Count extraction timeouts for one document.
+
+    A chunk that reliably exceeds the model budget never makes progress, so
+    without a ceiling the same document is retried forever and every run burns
+    the entire timeout again.
+    """
+    rows = pg_fetchall(
+        "UPDATE absorb.documents "
+        "SET metadata = jsonb_set(coalesce(metadata, '{}'::jsonb), "
+        "                         '{candidate_timeouts}', "
+        "                         to_jsonb(coalesce((metadata->>'candidate_timeouts')::int, 0) + 1)) "
+        "WHERE id = %s "
+        "RETURNING (metadata->>'candidate_timeouts')::int AS attempts",
+        (document_id,))
+    return int(rows[0]["attempts"]) if rows else 0
+
+
 # ── Main loop ────────────────────────────────────────────────────────
 
 def main(argv=None) -> int:
@@ -447,6 +570,11 @@ def main(argv=None) -> int:
     c = sub.add_parser("consume", help="extract candidates from unconsumed documents")
     c.add_argument("--limit", type=int, default=5,
                    help="batch size; hourly cadence uses 5 most-recent")
+    c.add_argument("--probe-seconds", type=int, default=90,
+                   help="prove the model route answers before doing any work; "
+                        "0 disables the probe")
+    c.add_argument("--timeout", type=int, default=300,
+                   help="per-chunk extraction budget in seconds (default 300)")
     c.add_argument("--backend", choices=["opencode", "tackle", "ollama"],
                    default="opencode",
                    help=f"opencode = harness-mediated {OPENCODE_MODEL} (low rate limits, "
@@ -471,7 +599,17 @@ def main(argv=None) -> int:
     else:
         docs = pending_documents(args.limit)
         print(f"{len(docs)} document(s) pending candidate extraction")
+    if not args.dry_run and args.probe_seconds > 0:
+        try:
+            probe_backend(args.backend, args.probe_seconds)
+        except BackendUnavailable as err:
+            print(f"\n\u26d4 BACKEND UNAVAILABLE — batch aborted before doing any work\n"
+                  f"   {err.message[:200]}\n"
+                  f"   Fix the route (quota, credentials, host). No document was consumed.")
+            return 2
+
     ok = failed = candidates_written = 0
+    consecutive_timeouts = 0
     for d in docs:
         label = f"{(d['title'] or '?')[:52]}"
         try:
@@ -487,7 +625,7 @@ def main(argv=None) -> int:
             oc_model = OPENCODE_MODEL
             for i, ch in enumerate(chunks):
                 if args.backend == "opencode":
-                    found.extend(opencode_extract(oc_model, ch))
+                    found.extend(opencode_extract(oc_model, ch, timeout=args.timeout))
                 elif target:
                     found.extend(llm_extract(target, ch))
                 else:
@@ -499,18 +637,35 @@ def main(argv=None) -> int:
             mark_consumed(d["id"])
             candidates_written += wrote
             ok += 1
+            consecutive_timeouts = 0
             print(f"  ✓ {label} — {len(chunks)} chunk(s), {wrote} candidate(s) "
                   f"[{time.time()-t0:.0f}s]")
+        except BackendUnavailable as err:
+            print(f"  ✗ {label} — [{err.error_code}] {err.message[:160]}")
+            print("\n\u26d4 BACKEND UNAVAILABLE — aborting the batch; the queue is intact")
+            return 2
         except AbsorbError as err:
             failed += 1
             print(f"  ✗ {label} — [{err.error_code}] ({err.error_class}) {err.message[:120]}")
+            if err.error_code == "E_TRANSIENT_LLM_TIMEOUT":
+                consecutive_timeouts += 1
+                if consecutive_timeouts >= 2:
+                    print(f"\n\u26d4 BACKEND STALLED — {consecutive_timeouts} timeouts in a row "
+                          f"with no successful chunk; aborting the batch")
+                    return 2
+            if err.error_code == "E_TRANSIENT_LLM_TIMEOUT" and MAX_EXTRACTION_TIMEOUTS > 0:
+                attempts = note_extraction_timeout(d["id"])
+                if attempts >= MAX_EXTRACTION_TIMEOUTS:
+                    mark_consumed(d["id"])
+                    print(f"    skipped after {attempts} timeouts — chunk exceeds "
+                          f"the model budget; queued no further")
         except Exception as err:  # never let one doc kill the batch
             failed += 1
-            print(f"  ✗ {label} — [E_PERMANENT_UNEXPECTED] {type(err).__name__}: {str(err)[:120]}")
-            mark_consumed(d["id"])
-            # transient → do not watermark; retried next invocation
-            if err.error_class == "permanent":
-                mark_consumed(d["id"])  # permanent failures don't block the queue
+            print(f"  ✗ {label} — [E_UNEXPECTED] {type(err).__name__}: {str(err)[:120]}")
+            # Unclassified failures stay queued. Consuming the document here
+            # would drop its content without ever extracting a candidate, and
+            # reading `error_class` off an arbitrary exception raised
+            # AttributeError, which took the whole batch down with it.
 
     print(f"\ndone: {ok} | failed: {failed} | candidates written: {candidates_written}")
     return 1 if failed and not ok else 0
