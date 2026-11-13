@@ -426,6 +426,17 @@ def test_ac2_zero_representation_concept_keeps_null_leg(migrated):
     """) == "2"
 
 
+def test_ac3_no_concept_has_multiple_executable_representations(migrated):
+    assert psql(migrated, """
+        select count(*) from (
+            select concept_id
+              from resolution.representation
+             where evaluation_role='executable' and expired_at is null
+             group by concept_id having count(*) > 1
+        ) ambiguous
+    """) == "0"
+
+
 def test_ac3_executable_only_where_scoped(migrated):
     # Scoped representations became executable; the unscoped satellites did not.
     for schema, table in (("resolution", "open_question_answer"),
@@ -514,6 +525,23 @@ def test_ac5_unbound_representation_fails_closed(migrated):
         expect_fail=True,
     )
     assert "no concept_attribute_binding" in err
+
+
+def test_ac5_zero_executable_fails_closed(migrated):
+    concept = psql(migrated, """
+        insert into resolution.concept (name) values ('ZeroExec') returning id
+    """)
+    psql(migrated, f"""
+        insert into resolution.representation
+          (concept_id, label, schema_name, table_name, evaluation_role)
+        values ('{concept}', 'descriptive only', 'resolution', 'assessment', 'descriptive')
+    """)
+    err = psql(
+        migrated,
+        f"select resolution.resolve_binding_representation('{concept}')",
+        expect_fail=True,
+    )
+    assert "none is executable" in err
 
 
 def test_ac5_ambiguous_defaults_fail_closed(migrated):

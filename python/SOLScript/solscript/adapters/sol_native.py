@@ -112,29 +112,34 @@ class SolNativeAdapter:
         ]
 
     async def list_subjects(self, concept_id: str) -> List[ContractSubject]:
-        # Subjects live in per-concept representation tables. For the
-        # standalone sol-native case we do a conservative, schema-safe read:
-        # only tables that exist and carry an id column. This returns empty
-        # for concepts without a resolvable representation table.
-        # One query that works before AND after V217. `to_jsonb(r)` exposes
-        # evaluation_role when the column exists; pre-migration it is absent,
-        # so the ELSE branch preserves the original resolution-only policy
-        # instead of silently widening what this adapter reads.
+        # Subjects live in per-concept representation tables. V217 makes the
+        # selector explicit: only executable representations are read, and an
+        # unknown read adapter or an unselected ambiguous set fails closed.
         sql = (
-            "SELECT r.schema_name, r.table_name FROM resolution.representation r "
+            "SELECT r.schema_name, r.table_name, r.read_adapter "
+            "FROM resolution.representation r "
             "JOIN resolution.concept c ON c.id = r.concept_id "
             "WHERE c.id = $1 AND r.expired_at IS NULL "
-            "AND (CASE WHEN to_jsonb(r) ? 'evaluation_role' "
-            "          THEN to_jsonb(r)->>'evaluation_role' = 'executable' "
-            "          ELSE r.schema_name = 'resolution' END)"
+            "AND r.evaluation_role = 'executable'"
         )
         args = [concept_id]
         if self._representation_id:
             sql += " AND r.id = $2"
             args.append(self._representation_id)
         tables = await self._rows(sql, *args)
+        if not self._representation_id and len(tables) > 1:
+            raise RuntimeError(
+                f"ambiguous executable representations for concept {concept_id}; "
+                "select one with representation_id"
+            )
         out: List[ContractSubject] = []
         for t in tables:
+            read_adapter = t.get("read_adapter") if hasattr(t, "get") else None
+            if read_adapter not in (None, "native_sql"):
+                raise RuntimeError(
+                    f"representation read_adapter {read_adapter!r} is not "
+                    "implemented by SolNativeAdapter"
+                )
             schema, table = t["schema_name"], t["table_name"]
             try:
                 rows = await self._rows(
