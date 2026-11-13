@@ -1,9 +1,23 @@
 # Nebula → SOL absorption: classification, then executable representations
 
-**Status:** ratified design note (Phase 1). Companion migration `sql/V216` is
-staged inert. Phases 3 and 4 remain gated on Architect + DBA ratification.
-**Measured:** 2026-11-12 against live `nexus` (PostgreSQL 17.11).
+**Status:** ratified design note (Phase 1).
+**Measured:** 2026-11-12, re-verified 2026-11-13, against live `nexus`
+(PostgreSQL 17.11). Counts are point-in-time; the table in §2 records the
+re-verified figures.
 **Plan:** approved 2026-11-12 in the Nebula/SOL absorption thread.
+
+Three states are kept distinct throughout, because conflating them is how a
+registry starts overclaiming:
+
+| State | Meaning |
+|---|---|
+| **Reviewed text** | this note — a decision, not a capability |
+| **Merged code** | Python/TypeScript on `main` — runs, but may take a legacy path |
+| **Applied schema** | live DDL/data — what the running system can actually resolve |
+
+Phase 2 (`sql/V216`) and Phase 3 (`sql/V217`) are merged as files and are
+**not applied live**. Phase 3's Python half is merged code with a pre-V217
+fallback, so on the live schema it still behaves the pre-Phase-3 way (§4).
 
 This note exists to stop a specific drift: registering a new durable
 representation inside `resolution` because that is where SOL can currently read
@@ -38,22 +52,29 @@ migration template for the eventual `nebula` home.
 
 ## 2. Measured overlap with the agent-record types
 
-`nebula.agent_records` holds 16,605 live records across the nine allowed
-`record_type` values. No `Decision`, `Ticket`, `Receipt`, `AgentRecord`,
-`Report`, `Inspection` or `Analysis` concept exists in `resolution.concept`
-today.
+`nebula.agent_records` is a **view** over `nebula.agent_records_history`
+(current bitemporal slice). It holds **16,628** rows across the nine allowed
+`record_type` values (a `CHECK` constraint on the history table, re-verified
+2026-11-13). No `Decision`, `Ticket`, `Receipt`, `AgentRecord`, `Report`,
+`Inspection` or `Analysis` concept exists in `resolution.concept`; the only
+matching concept among those names is `Assessment`.
 
 | `record_type` | Rows | Existing shape | Relationship |
 |---|---:|---|---|
-| `report` | 10,519 | none | No domain shape |
-| `engineering_log` | 2,740 | `nebula.work_sessions`, `nebula.executions` | Operational adjacency only; not governance |
-| `response` | 641 | `resolution.Answer` | Partial — an answer is a settled statement, a response is narrative |
-| `analysis` | 628 | `resolution.observation` (6), `nebula.observations` (0) | Adjacent: an observation is an event/finding, an analysis is reasoning over it |
-| `assessment` | 595 | `nebula.assessments` (0), `resolution.assessment` (1) | **Same noun, different payload** — see §2.1 |
-| `decision` | 525 | `peb.decisions` (16 ADRs) | **Same artifact, two representations, no identity link** — see §2.2 |
-| `architecture_note` | 479 | `nebula.specifications`, `architect_specs` | Adjacent: a specification is settled, a note is rationale |
-| `inspection` | 345 | none named; assessment/attestation-shaped | **Subtype, not a table** |
+| `report` | 10,521 | none | No domain shape |
+| `engineering_log` | 2,756 | `nebula.work_sessions` (6), `nebula.executions` (0) | Operational adjacency only; not governance |
+| `response` | 641 | `Answer` concept → `resolution.open_question_answer` (0) | Partial — an answer is a settled statement, a response is narrative |
+| `analysis` | 629 | `resolution.observation` (6), `nebula.observations` (0) | Adjacent: an observation is an event/finding, an analysis is reasoning over it |
+| `assessment` | 596 | `nebula.assessments` (0), `resolution.assessment` (1) | **Same noun, different payload** — see §2.1 |
+| `decision` | 526 | `peb.decisions` (16 ADRs) | **Same artifact, two representations, no identity link** — see §2.2 |
+| `architecture_note` | 480 | `nebula.specifications` (1); `architect_specs` views in `nebula` and `scratch` | Adjacent: a specification is settled, a note is rationale |
+| `inspection` | 346 | none named; assessment/attestation-shaped | **Subtype, not a table** |
 | `prompt` | 133 | operator prompt store | Weak; provenance-only, never keychained |
+
+Row counts are a snapshot, not a stable contract; the *relationship* column is
+the claim this note is responsible for. `resolution.ticket` currently holds 0
+rows and `resolution.receipt` 1,997 — the tables are canonical, the near-empty
+one is still the physical home named by the plan.
 
 ### 2.1 Assessment family
 
@@ -66,7 +87,7 @@ and `forum_post_id`. It holds **0 rows**, so adopting it has no backfill risk.
 (`rationale`, `dimensions_used`, `dimensions_total`, `resolved_at`). That is a
 representation difference, not a second concept.
 
-`inspection` (345 records) has no table of its own. It is assessment-shaped:
+`inspection` (346 records) has no table of its own. It is assessment-shaped:
 subject → finding → confidence → evidence. It becomes
 `assessment_kind = 'inspection'`, not `nebula.inspections`.
 
@@ -80,11 +101,12 @@ Two neighbours stay separate because their lifecycles differ:
 
 ### 2.2 Decisions already use concept/representation in practice
 
-`peb.decisions` holds 16 accepted ADRs. ADR-015 is titled *"Architecture
-Decision Records live in PEB, not Nebula"* — the authority home is already
-decided. Fourteen of the sixteen ADR titles are byte-identical (case/trim) to a
-`decision` agent record; **zero** ids are shared. The pairing is real but
-unlinked:
+`peb.decisions` holds **16** accepted ADRs (all rows `status = 'accepted'`).
+ADR-015 is titled *"Architecture Decision Records live in PEB, not Nebula"* —
+the authority home is already decided. **Fourteen** of the sixteen ADR titles
+match a `decision` agent record; the match holds under raw equality as well as
+case/trim-normalised equality, so it is not an artefact of the comparison.
+**Zero** ids are shared. The pairing is real but unlinked:
 
 | ADR | `peb.decisions.id` | `nebula.agent_records.id` |
 |---|---|---|
@@ -122,8 +144,8 @@ backfill is authorised by this note; Phase 5 adds the link.
 | `resolution.receipt` | **Concept/representation** | Producer-registered, kind-discriminated, append-only; register, do not relocate. |
 | `nebula.agendas` / `nebula.agenda_items` | **TypeSpec + Concept/representation** | Deliberation contract; JSONB already present. No new table. |
 | `resolution.work_request` | **Concept/representation** | Keep as the temporary physical home; explicit deferral to `nebula`. |
-| Shrapnel EAV | **Index/projection only** | Never authority. The agent-record bridge is an index. |
-| MongoDB | **Instance storage only** | Not reachable by SOL evaluation (see §4). |
+| Shrapnel EAV | **Index/projection only** | Never authority. The V152 bridge admits seven named members; a generic EAV property is not a concept attribute. |
+| MongoDB (`python/keychains`, `atomic-mongodb`) | **Index/projection only** | One-way `PG → Mongo`; instance storage and context, never authority, never evaluated by SOL (see §4 item 5). |
 
 The narrative family (`report`, `analysis`, `architecture_note`,
 `engineering_log`, `prompt`, `response`) shares `AgentRecord`. They differ only
@@ -140,46 +162,35 @@ authorities, different tables — and both already have the right names.
 
 ## 4. What SOL cannot do today (non-capabilities)
 
-These are properties of the current implementation, not of the registry.
+These are properties of the current implementation, not of the registry. Each
+is stated against its real state: **merged code** or **applied schema**.
 
-1. **The in-memory loader skips non-`resolution` representations.**
-   `DatabaseLoader.load_entities` inner-joins `representation_identity`, then
-   `if schema not in ("resolution",): continue`
-   (`python/SOLScript/solscript/database_loader.py:719`). Metadata can describe a
-   `nebula` representation; the interpreter will not materialise its rows.
-2. **Subject listing is hard-filtered to `resolution`.**
-   `SolNativeAdapter.list_subjects` selects with
-   `r.schema_name = 'resolution'`
-   (`python/SOLScript/solscript/adapters/sol_native.py:114`).
-3. **Bindings are one-per-attribute and one-per-relationship.**
-   `concept_attribute_binding.attribute_id` is the primary key and
-   `concept_relationship_binding.concept_relationship_id` is the primary key
-   (`schemas/migrations/resolution/resolution_migration_v6.sql:12`,
-   `resolution_migration_v5.sql:27`). A concept with N representations can have
-   exactly one executable realization per attribute. The others are descriptive.
-4. **Bindings are hand-authored, never inferred.** Both migration headers say
-   so; Phase 3 keeps that stance and only scopes the binding to a
-   representation.
-5. **The SQL compiler is schema-qualified but PostgreSQL-local.** `compile_root`
-   and `compile_condition` emit `%I.%I` from the binding, so any same-database
-   table with an `id` compiles — but there is no cross-database read, no FDW and
-   no MongoDB path.
-6. **JSONB interiors are not addressable.** `attribute_ref` selects the whole
-   column. A key inside `impact_scope` needs an allow-listed `function_binding`
-   template or a generated column; interpolating a path from concept metadata is
-   not supported and must not be added.
-7. **Shrapnel storage is generic; Shrapnel evaluation is not.** Any concept's
-   data can be stored as EAV, and the in-memory loader materialises every object
-   as a `ShrapnelFact`. But the DB-side bridge
-   (`sql/V152__shrapnel_bridge_readthrough.sql`) has a fixed seven-member
-   allow-list keyed on `asset_id`, the generic loader registers no
-   `ConceptAttribute`s for EAV property names, and a new subject needs a
-   bespoke bridge.
+| # | Non-capability | Evidence |
+|---|---|---|
+| 1 | **In-memory SOL skips non-`resolution` representations.** | `DatabaseLoader.load_entities` — merged V217 code filters `evaluation_role = 'executable'` **only when that column exists** (`_representation_scoped` catalog probe); on the live schema it does not, so the legacy `if schema not in ("resolution",): continue` branch is what actually runs (`python/SOLScript/solscript/database_loader.py:832`). A `nebula`/`peb` representation is described but never materialised. |
+| 2 | **Subject listing is effectively `resolution`-only.** | `SolNativeAdapter.list_subjects` uses one query with `CASE WHEN to_jsonb(r) ? 'evaluation_role' … ELSE r.schema_name = 'resolution' END` (`adapters/sol_native.py:125-129`). Correct on both sides of V217; live means the `ELSE` branch. |
+| 3 | **Bindings are 1:1 per attribute and per relationship.** | Live keys are still `PRIMARY KEY (attribute_id)` and `PRIMARY KEY (concept_relationship_id)`. V217 would replace these with surrogate ids plus partial unique indexes, and the one-per-attribute limit **survives** that change: uniqueness becomes `(representation_id, attribute_id)`, so a concept still has one executable realization per attribute; other representations stay descriptive. |
+| 4 | **No cross-database reads.** | `compile_root`/`compile_condition` emit `%I.%I` from the binding: any table in *this* database with an `id` compiles, but there is no FDW, no second DSN, and no remote query path. |
+| 5 | **No Mongo evaluation.** | Nothing in the SQL compiler or `DatabaseLoader` reads MongoDB. `python/keychains` is an explicit one-way `PG → Mongo` projection and Mongo is never read back as operational state (D-2026-08-14-003); Mongo is not a representation SOL can resolve. |
+| 6 | **JSONB interiors need function bindings.** | `attribute_ref` compiles the whole column. A key inside `impact_scope` or `open_questions` needs an allow-listed `function_binding` template or a generated column. Interpolating a path from concept metadata is unsupported and must not be added — the template, not the metadata, is the trust boundary. |
 
-The consequence for this strategy: until Phase 3 lands, "registered
-representation" must be read as *described*, not *evaluable*. Phase 2 therefore
-registers several representations that SOL cannot yet read; that is deliberate
-and recorded here so the registry does not overclaim.
+Two supporting facts that constrain the registry rather than block it:
+
+- **Bindings are hand-authored, never inferred.** Both migration headers say so;
+  Phase 3 keeps that stance and only scopes an existing binding to a
+  representation. Nothing derives a binding from a table's columns.
+- **Shrapnel storage is generic; Shrapnel evaluation is not.** The in-memory
+  loader materialises every EAV object as a `ShrapnelFact` (4,399 objects live),
+  but the DB-side bridge (`sql/V152__shrapnel_bridge_readthrough.sql`) is a fixed
+  seven-member allow-list keyed on `asset_id`, the generic loader registers no
+  `ConceptAttribute`s for EAV property names, and a new member or subject needs a
+  bespoke bridge. Storing in Shrapnel does not make a property evaluable.
+
+The consequence for this strategy: "registered representation" means
+**described**, not **evaluable**. Phase 2 registers several representations that
+SOL cannot yet read; that is deliberate and recorded here so the registry does
+not overclaim. Phase 3's merged code does not change the live answer on its own —
+only applying `sql/V217` does, and that remains operator-gated.
 
 ---
 
@@ -195,6 +206,19 @@ The keychain cites governed conclusions, not every artifact:
 Explicitly **not** citable: `prompt`, `response`, `engineering_log`. They are
 provenance, and `prompt`/`response` are immutable history under I4.
 
+**Boundary, not current behaviour.** This is a policy the plan sets, and two
+limits on the claim should be stated plainly:
+
+- Nothing enforces it today. `python/keychains/projection.py` has no
+  `record_type` filter — `_state_vector` groups by whatever record types the
+  records carry, and the store is a one-way projection, never authority.
+- The nearest written proposal (`docs/architecture-reports-keychain-index.md`
+  §9, 2026-10-31) proposes a wider set: "decisions, attestations/assessments,
+  inspections, notes, and only the reports a decision cites". The plan's set
+  above is the narrower, ratified one; **attestations are deliberately excluded
+  here**, and reconciling that difference belongs to the keychain work, not to
+  this absorption effort.
+
 ---
 
 ## 6. Phase status
@@ -202,8 +226,8 @@ provenance, and `prompt`/`response` are immutable history under I4.
 | Phase | Status |
 |---|---|
 | 1. Design note | **This document.** |
-| 2. Registry completion | **`sql/V216__nebula_sol_concept_registry.sql`**, staged inert. Concepts, identity strategies, representations, identities and governed values only. No DDL, no data movement, not applied live. |
-| 3. Executable representations | **Implemented, staged inert** in `sql/V217__representation_scoped_bindings.sql`. Ratified: DBA `93d3f092-5e6f-476d-8ec7-41cf587360f9`, Architect `9b532211-da40-4b52-9729-b273523ff3ab`. Live application is operator-gated. |
+| 2. Registry completion | **`sql/V216__nebula_sol_concept_registry.sql`**, staged inert, merged in PR #980 (`3b99da08a`). Concepts, identity strategies, representations, identities and governed values only. No DDL, no data movement; **not applied live** — none of its six concepts exist in `resolution.concept` yet. |
+| 3. Executable representations | **Merged code + staged migration.** `sql/V217__representation_scoped_bindings.sql` and its Python/TS consumers merged as PR #982 (`7914983a6`); the migration is **not applied live** (`representation.evaluation_role` absent). Ratified: DBA `93d3f092-5e6f-476d-8ec7-41cf587360f9`, Architect `9b532211-da40-4b52-9729-b273523ff3ab`. Live application is operator-gated. |
 | 4. Assessment family DDL | **Still gated** — the Phase 3 ratification explicitly does not cover it. `assessment_kind` + subject/evidence FKs + `agent_record_id` on `nebula.assessments_history`; single writer. |
 | 5. Decision identity link | **Read-only reconciliation complete** (§2.2). The link column is gated with Phase 4/5. |
 | 6. Agenda TypeSpec | **`typespec/v1/agenda/`**, model-only, imported by the root umbrella. No table. |
@@ -241,8 +265,12 @@ inert as `sql/V217__representation_scoped_bindings.sql`; not applied live.
   migration is applied.
 - Function allow-list: `expression.function_name` is FK-constrained to
   `resolution.function_binding` `NOT VALID`, and the migration refuses to
-  apply while any `function_call` still names an unregistered function
-  (today: `escalates_to`).
+  apply while any `function_call` still names an unregistered function.
+  That preflight condition is now **satisfied**: the orphaned `escalates_to`
+  expression was removed under v39 (PR #983, `44723cfb0`), tombstoned in
+  `resolution.expression_cleanup_tombstone`, and the unregistered-function
+  count is 0. Satisfying a preflight does not apply V217; it only stops the
+  migration from refusing.
 
 Acceptance (proven in `bin/tests/test_v217_representation_bindings.py`):
 `nebula.assessments` and `resolution.assessment` evaluate identically for one
@@ -280,6 +308,38 @@ automatic deduplication or rewriting of the decision pairs; making every
 registered representation executable in one step.
 
 ## 8. Verification
+
+### 8.1 How the claims above were measured
+
+Every number and physical surface in §2–§3 was re-read from the live `nexus`
+database on 2026-11-13, not carried over from the 2026-11-12 pass:
+
+- `nebula.agent_records` (view) grouped by `record_type` → the nine rows in §2,
+  total 16,628.
+- `peb.decisions` → 16 rows, all `accepted`; joined to `decision` agent records
+  on title → 14 pairs under both raw and case/trim-normalised equality; joined
+  on `id` → 0 shared ids.
+- `information_schema.columns` → `nebula.assessments` columns, and
+  `resolution.representation.evaluation_role` **absent** (V217 not applied).
+- `pg_constraint` → live binding primary keys are still `attribute_id` and
+  `concept_relationship_id`.
+- `resolution.concept` → `Assessment` present; the six V216 concepts absent.
+- `pg_class`/`pg_get_viewdef` → `nebula.agent_records`, `nebula.assessments`,
+  `nebula.work_requests`, `nebula.architect_specs` are views over `*_history`;
+  `Answer` resolves to `resolution.open_question_answer`.
+- `shrapnel.object_instance` → 4,399 objects, for the §4 Shrapnel claim.
+- Source reads: `database_loader.py` (`_representation_scoped`,
+  `_require_native_adapter`, `load_entities`, `load_shrapnel_facts`),
+  `adapters/sol_native.py` (`list_subjects`), `sql/V216`, `sql/V217`,
+  `sql/V152__shrapnel_bridge_readthrough.sql`, `python/keychains/projection.py`.
+
+**Evidence limitation.** "Title-identical" is a title comparison, not proof that
+an ADR and an agent record are the same artifact — it is the strongest signal
+available without an identity link, which is exactly why Phase 5 exists. The
+keychain boundary in §5 is a plan decision; no test or constraint enforces it
+today, and it is recorded as intent rather than capability.
+
+### 8.2 What the tests cover (throwaway databases, never live)
 
 - `bin/tests/test_nebula_sol_concept_registry.py` proves V216 is data-only,
   idempotent, non-destructive, resolves every representation to a real
