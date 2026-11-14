@@ -211,7 +211,7 @@ def _invoke_ollama_direct(cfg: dict[str, Any], prompt: str) -> tuple[str | None,
     import urllib.error
 
     model = cfg.get("model_identifier", "deepseek-coder:latest")
-    endpoint = cfg.get("endpoint_url", "").rstrip("/") or "http://192.168.1.202:11434"
+    endpoint = cfg.get("endpoint_url", "").rstrip("/") or os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
     url = f"{endpoint}/api/generate"
 
     payload = json.dumps({

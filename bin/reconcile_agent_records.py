@@ -252,9 +252,11 @@ def main() -> int:
         for f in CACHE_DIR.glob("*.npy"):
             f.unlink()
 
-    # Pre-flight Ollama health check
+        # Pre-flight Ollama health check
+    import os
+    OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
     try:
-        with urllib.request.urlopen("http://192.168.1.202:11434/api/tags", timeout=5) as r:
+        with urllib.request.urlopen(f"{OLLAMA_URL}/api/tags", timeout=5) as r:
             models = json.loads(r.read().decode()).get("models", [])
             model_names = {m["name"] for m in models}
             if args.model not in model_names and f"{args.model}:latest" not in model_names:
@@ -263,7 +265,7 @@ def main() -> int:
                     args.model, ", ".join(sorted(model_names)[:10]),
                 )
     except Exception as e:
-        log.error("Ollama not reachable at 192.168.1.202:11434 — %s", e)
+        log.error("Ollama not reachable at %s — %s", OLLAMA_URL, e)
         return 1
 
     log.info("Fetching finalized agent records...")

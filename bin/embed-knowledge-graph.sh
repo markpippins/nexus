@@ -23,7 +23,7 @@ set -euo pipefail
 NEXUS_ROOT="/home/codex/dev/nexus"
 VENV_PY="${NEXUS_ROOT}/python/rover/.venv/bin/python"
 EMBED_SCRIPT="${NEXUS_ROOT}/bin/embed_semantic_layers.py"
-OLLAMA_URL="http://192.168.1.202:11434"
+OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434}"
 MODEL="nomic-embed-text"
 PSQL=(docker exec -i pgvector_db psql -U pguser -d nexus -t -A -q)
 
