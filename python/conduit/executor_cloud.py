@@ -537,9 +537,11 @@ def _build_evidence_protocol(req: Dict[str, Any], role: str) -> str:
     ])
     if targets:
         lines.append(
-            "1. Create or modify every target file, relative to the working directory "
+            "1. Create or modify every target area, relative to the working directory "
             f"({req.get('path', '')}): " + ", ".join(targets) + "."
-            " A file whose content is unchanged from the start of the attempt does not count."
+            " A target area that is a directory is satisfied by files you create or"
+            " change inside it. A file whose content is unchanged from the start of"
+            " the attempt does not count."
         )
     else:
         lines.append(
@@ -553,20 +555,24 @@ def _build_evidence_protocol(req: Dict[str, Any], role: str) -> str:
         "     -H 'Content-Type: application/json' \\",
         "     -d '" + json.dumps(record_payload) + "'",
         "   ```",
-        "3. Print exactly one line as the last line of your final answer:",
+        "3. Print exactly one line as the last line of your final answer, listing every"
+        " file you created or modified (never a directory, never the target list copied"
+        " back verbatim) together with its sha256 from `sha256sum <path>`:",
         "   NEXUS_WORK_EVIDENCE: " + json.dumps({
             "work_request_id": wr_id,
             "attempt_id": attempt_id,
             "session_id": session_id,
-            "artifacts": targets or ["<path>",],
+            "artifacts": [{"path": "<repo-relative path of a file you changed>",
+                           "sha256": "<sha256sum of that file>"}],
             "agent_record": "<record id from step 2>",
         }),
         "",
         "Constraints:",
         "- Never run a command or read a path outside the working directory; a permission "
         "prompt is auto-rejected in this non-interactive run and aborts the whole attempt.",
-        "- Do not stop before the target files exist and the marker line is printed. Do not "
-        "report completion based on intent, exit codes, or a described plan.",
+        "- Do not stop before the target files exist and the marker line is printed, and do"
+        " not emit an empty artifacts list: at least one changed file must be reported."
+        " Do not report completion based on intent, exit codes, or a described plan.",
         "- Do not issue receipts — the conduit manager handles the audit trail.",
     ])
     return "\n".join(lines)

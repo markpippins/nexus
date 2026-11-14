@@ -122,9 +122,10 @@ Active-run visibility for the runaway watchdog. Response — **200**:
   reached the end of its turn — it is not a claim that the task was
   accomplished; that evidence lives in the transcript.
 - Exit codes: `0` success; `124` timeout; `137` killed by signal (watchdog/external).
-- Runs are watched by a 15-minute runaway watchdog: a session producing no
-  agent records is SIGTERM'd, its model unloaded, and a `type:runaway-detected`
-  record + `BLOCK` governance receipt are emitted.
+- Runs are watched by a 15-minute runaway watchdog: a session whose stream
+  produces no new raw chunks between watchdog ticks is SIGTERM'd, its model
+  unloaded, and a `type:runaway-detected` record + `BLOCK` governance receipt
+  are emitted. Agent-record existence is deliberately not a liveness signal.
 - Admission (T20): roles without a valid `tackle.config_bundle` are refused
   (`403`) with `admission.outcome` ∈ `NO_CONFIG | ROLE_REVOKED | CONFIG_INVALIDATED`.
 - Governance receipts land in `peb.governance_events` via the canonical receipt chain.

@@ -243,8 +243,22 @@ class WorkflowWiringTest(unittest.TestCase):
         wf_path = os.path.join(REPO_ROOT, ".github", "workflows", "vanadium-sonar.yml")
         with open(wf_path, "r", encoding="utf-8") as fh:
             wf = fh.read()
-        # pre-flight step exists, runs before the scan
+        # pre-flight step exists, runs before the scan and receives the same
+        # secret-backed host URL required by the CLI contract.
         self.assertIn("bin/ci/sonar_preflight.py", wf)
+        self.assertIn(
+            "id: sonar-preflight\n"
+            "        env:\n"
+            "          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}",
+            wf,
+        )
+        # The scan must NOT set sonar.projectVersion. Setting it makes the
+        # live 9.9.8 instance assign no leak period, which empties every
+        # new_* metric and turns the gate into a vacuous pass (#1000/#1001,
+        # reproduced on a clean scratch project). Without it the server
+        # computes a period and the gate measures real code.
+        self.assertNotIn("-Dsonar.projectVersion", wf)
+        self.assertNotIn("SONAR_NEW_CODE_VERSION", wf)
         # scan + scanner-install steps are gated on the probe result
         self.assertIn("steps.sonar-preflight.outputs.ready", wf)
         # not-ready path emits a warning annotation, job stays green

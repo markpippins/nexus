@@ -68,6 +68,7 @@ import { ConfirmDialogComponent } from './components/confirm-dialog/confirm-dial
 import { GatewayManagementComponent } from './components/gateway-management/gateway-management.component.js';
 import { RegistryServerManagementComponent } from './components/registry-server-management/registry-server-management.component.js';
 import { IframeViewComponent } from './components/iframe-view/iframe-view.component.js';
+import { uiOriginFor } from './ui-origins.js';
 import { NavToolbarComponent } from './nav-toolbar/nav-toolbar.component.js';
 import { GenericTreeNode } from './models/generic-tree.model.js';
 import { MessageBoxContainerComponent } from './components/message-box-container/message-box-container.component.js';
@@ -197,27 +198,27 @@ export class AppComponent implements OnInit, AfterViewInit, OnDestroy {
   isNavCollapsed = this.uiPreferencesService.isNavCollapsed;
 
   viewModeUrls: Record<string, string> = {
-    'conduit-ui': 'http://localhost:4201',
-    'duality': 'http://localhost:3002',
-    'plurality': 'http://localhost:3004',
-    'assembly': 'http://localhost:4214',
-    'nebula-rms': 'http://localhost:4210',
-    'peb-ui': 'http://localhost:4206',
-    'kernel-ui': 'http://localhost:4207',
-    'tackle-ui': 'http://localhost:4202',
-    'cascade-ui': 'http://localhost:4203',
-    'execution-ui': 'http://localhost:4205',
-    'vision-ui': 'http://localhost:4208',
-    'wind-ui': 'http://localhost:4209',
-    'nebula-cp': 'http://localhost:4014',
-    'semantics-ui': 'http://localhost:4213',
-    'shrapnel': 'http://localhost:4217',
-    'throttler-ui': 'http://localhost:4211',
-    'barbie': 'http://localhost:3010',
-    'monaco-judge': 'http://localhost:4016',
-    'conduit-legacy-ui': 'http://localhost:4015',
-    'data-explorer': 'http://localhost:4212',
-    'atlas': 'http://localhost:4216',
+    'conduit-ui': uiOriginFor(4201),
+    'duality': uiOriginFor(3002),
+    'plurality': uiOriginFor(3004),
+    'assembly': uiOriginFor(4214),
+    'nebula-rms': uiOriginFor(4210),
+    'peb-ui': uiOriginFor(4206),
+    'kernel-ui': uiOriginFor(4207),
+    'tackle-ui': uiOriginFor(4202),
+    'cascade-ui': uiOriginFor(4203),
+    'execution-ui': uiOriginFor(4205),
+    'vision-ui': uiOriginFor(4208),
+    'wind-ui': uiOriginFor(4209),
+    'nebula-cp': uiOriginFor(4014),
+    'semantics-ui': uiOriginFor(4213),
+    'shrapnel': uiOriginFor(4217),
+    'throttler-ui': uiOriginFor(4211),
+    'barbie': uiOriginFor(3010),
+    'monaco-judge': uiOriginFor(4016),
+    'conduit-legacy-ui': uiOriginFor(4015),
+    'data-explorer': uiOriginFor(4212),
+    'atlas': uiOriginFor(4216),
   };
 
   isIframeMode = computed(() =>
@@ -1110,7 +1111,7 @@ export class AppComponent implements OnInit, AfterViewInit, OnDestroy {
   private treeAdapters = new Map<string, TreeProviderAdapter>();
 
   /** Tackle UI (AI Config) runs as a standalone app on port 4202 */
-  readonly tackleUiUrl = 'http://localhost:4202';
+  readonly tackleUiUrl = uiOriginFor(4202);
   showAiConfigPopup = signal(false);
 
   constructor() {

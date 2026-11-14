@@ -619,6 +619,99 @@ rationale-less extends, depth > 3, or append-only mutation attempts.
 
 ---
 
+## Stereotype lifecycle: retire / tombstone (SQL verb, migration 0010)
+
+`stereotype_reconcile` (0008) converges **declared** state but never removes a
+stereotype. Lifecycle is how a name leaves the catalog without rewriting the
+contract chain.
+
+Retirement is **not** a revision. A retirement revision would carry the same
+fields/parent/rationale as its head and therefore the same
+`contract_fingerprint`; folding a flag into the fingerprint would invalidate
+committed fingerprints (Mongo `schema_fingerprint`, evidence SQL), and keeping
+the fingerprint honest would make reconcile no-op on the retirement — invisible,
+and impossible to reverse. So 0010 adds an append-only
+`shrapnel.stereotype_lifecycle_event` log beside the immutable revision chain.
+It touches no revision and no fingerprint.
+
+### Two states
+
+| State | `stereotype_reconcile` | `object_classify` | Existing instances |
+|---|---|---|---|
+| `active` | allowed | allowed | untouched |
+| `deprecated` | allowed | allowed, reports `lifecycle_state` | untouched |
+| `retired` | **refused** (reactivate first) | **refused** | untouched |
+
+Reversal is another event (`deprecated`/`retired` → `active`), never an erase.
+The log rejects `UPDATE` and `DELETE` with triggers.
+
+### Absence never destroys
+
+Retirement requires a **positive** `@retired` annotation. A stereotype owned by
+a source but absent from that source's declared catalog is reported as
+`orphan_candidate` and is never acted on. CI can fail on an unannotated orphan
+without destroying anything; destruction requires an annotation, a reviewed
+plan, and a two-phase apply.
+
+### Ownership
+
+`shrapnel.stereotype_source_owner` records the source that created a
+stereotype (first claim wins, never transferred). Lifecycle transitions are
+owner-scoped, so the verb cannot touch hand-authored entries or 0007's
+`work_request` family: they have no owner row. Use
+`stereotype_reconcile_owned(source, name, …)` on the emitter path to reconcile
+and claim ownership in one call.
+
+### Two phases
+
+```sql
+-- Phase 1 — pure read. Nothing written, no locks.
+SELECT * FROM shrapnel.stereotype_lifecycle_report(
+  'tsp-eav-emitter',
+  ARRAY['Gadget','Widget'],          -- full declared catalog
+  ARRAY['Widget'],                   -- names carrying @retired
+  ARRAY[]::text[],                   -- names carrying @deprecated
+  '{"Widget":{"reason":"no producers remain","reference":"NEXUS-1234"}}'::jsonb);
+
+-- Phase 2 — apply, bound to the phase-1 plan token.
+SELECT * FROM shrapnel.stereotype_lifecycle_apply(
+  'tsp-eav-emitter', '<plan_token>',
+  ARRAY['Gadget','Widget'], ARRAY['Widget'], ARRAY[]::text[],
+  '{"Widget":{"reason":"no producers remain","reference":"NEXUS-1234"}}'::jsonb);
+```
+
+`stereotype_lifecycle_plan` is the implementation name for phase 1;
+`stereotype_lifecycle_report` is an exact alias matching the design record.
+The token is a sha256 over the plan **and** the observed head revision
+id/version/fingerprint of every named stereotype. Apply recomputes it against
+the current catalog and refuses (`40001`) if anything moved. A blocked row
+refuses the whole plan — a partially applied destructive plan is not a plan
+anyone reviewed.
+
+### The database refuses; the caller is not trusted
+
+The event trigger enforces: `from_state` equals the current state; only the
+four legal transitions; a non-empty reason; retirement pins `at_revision_id`;
+the source owns the stereotype; and a stereotype with live (non-retired)
+children cannot be retired. Apply emits children first (reverse-topological),
+but the trigger re-checks the order.
+
+### What it deliberately does not do
+
+- No hard delete: the stereotype, its revisions and its history remain.
+- No cascade: children are retired explicitly, children first.
+- No retroactive un-classification: existing instances keep their
+  classification forever.
+- No inference from absence, ever.
+
+Tests: `npm test` runs `test/lifecycle.test.js`, which builds a throwaway
+database from the whole migration chain and drives
+`test/lifecycle_0010_stereotype_lifecycle.sql` (real triggers and CHECK
+constraints, not mocks). It skips only when the admin DSN cannot create a
+database.
+
+---
+
 ### `POST /api/encode`
 
 Generic encode endpoint. Identical behaviour to `POST /api/objects` but also
@@ -734,6 +827,23 @@ transaction.
 - `migrations/0002_value_extension_type_guard.sql` — DB-level guard trigger
   that rejects any `value_<type>` extension row whose parent `value` row's
   declared `value_type_code` does not match the type the extension represents.
+- `migrations/0003_candidate_state_model.sql` — candidate state model plus
+  `value_long`/`value_string` FK parity and its regression guard.
+- `migrations/0004_stereotype_model.sql` — stereotype identity, immutable
+  revision chain, fields, effective contract and the append-only triggers.
+- `migrations/0005_stereotype_api.sql` — stereotype database API: resolve,
+  chain, extends, effective contract, object classification.
+- `migrations/0006_reconcile_legacy_field.sql` — reconciles the legacy
+  QBE-era field/value shape to the canonical 0001 contract.
+- `migrations/0007_work_request_stereotypes.sql` — the `work_request`
+  stereotype family (base, dispatchable, tester attestation).
+- `migrations/0008_stereotype_reconcile.sql` — idempotent catalog
+  reconciliation. Converges declared state; **never removes** a stereotype.
+- `migrations/0009_stereotype_field_freeze_subtransaction.sql` — prerequisite
+  fix: the field-freeze guard must survive a plpgsql subtransaction (PR #628).
+- `migrations/0010_stereotype_lifecycle.sql` — the retire/tombstone verb:
+  append-only lifecycle events, ownership, two-phase report/apply (see
+  "Stereotype lifecycle" above).
 - `smoke_example.sql` — the canonical DO-block example from the spec, plus a
   decode query to verify the round-trip. Not part of the migration flow; run
   manually with `psql -f smoke_example.sql` against the same DB.
@@ -741,22 +851,11 @@ transaction.
   on each failure mode (wrong extension, second extension, no parent).
   Run with `npm run dbcheck`.
 
-> **Defect (pre-existing, not introduced here): `npm run migrate` cannot apply
-> `0007_work_request_stereotypes.sql`.** That file uses the psql meta-command
-> `\gset` three times to thread one `stereotype_create_revision` id into the
-> next `CREATE`. `\gset` is a *client* directive, not SQL, so
-> `src/scripts/migrate.js` — which pipes each file to `pool.query()` — dies
-> with `syntax error at or near "\"`. The file has never been applied on this
-> host: it is absent from `shrapnel._migration_ledger` and
-> `shrapnel.stereotype_crud` does not exist. The ledger currently ends at
-> `0006_reconcile_legacy_field.sql`.
->
-> Two independent causes, either of which alone would block it: the `\gset`
-> above, and `0003`'s top-level `SAVEPOINT`/`ROLLBACK TO SAVEPOINT`, which is
-> likewise illegal through the driver. Until this is fixed, migrations must be
-> applied with `psql -v ON_ERROR_STOP=1 -1 -f <file>` (which is what the
-> hermetic sheet tests do). Reported to the architect; **no fix applied here**,
-> as the SQL and the runner are both DBA/architect-owned.
+`npm run migrate` applies each file with `psql -1`, together with its
+`shrapnel._migration_ledger` row, in one transaction. This is deliberate: the
+chain contains `\gset` (0007) and top-level `SAVEPOINT`/`ROLLBACK TO SAVEPOINT`
+(0003), neither of which the `pg` driver can parse. (The old driver-based
+runner made 0003 and 0007 unappliable; that defect was fixed in PR #614.)
 
 ## Sheets (phase 1, V166)
 

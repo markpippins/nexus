@@ -39,6 +39,12 @@ from app.api.routes_admin import router as admin_router
 from app.api.routes_sessions import router as sessions_router
 from app.api.routes_breaker import router as breaker_router
 from app.api.routes_receipts import router as receipts_router
+from app.api.routes_consolidated import router as consolidated_router
+from app.api.routes_lilac import (
+    lilac_enabled_from_env,
+    router as lilac_router,
+)
+from lilac_client import LilacClient
 
 # ── Logging ──────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -174,10 +180,15 @@ async def metrics_auth_middleware(request: Request, call_next):
     if auth_response is not None:
         return auth_response
 
-    # Metrics timing
+    # Metrics timing. `status` defaults to 500 because a raising endpoint never
+    # yields a response — reading `response` here (the old shape) raised
+    # UnboundLocalError inside the finally block, which replaced the endpoint's
+    # own exception before the error handler could build the JSON envelope.
     start = time.monotonic()
+    status = 500
     try:
         response = await call_next(request)
+        status = response.status_code
         return response
     finally:
         duration = time.monotonic() - start
@@ -189,7 +200,7 @@ async def metrics_auth_middleware(request: Request, call_next):
         REQUEST_COUNT.labels(
             method=request.method,
             path=route_path,
-            status=response.status_code,
+            status=status,
         ).inc()
         REQUEST_DURATION.labels(
             method=request.method,
@@ -206,6 +217,24 @@ app.include_router(admin_router, prefix="/admin", tags=["admin"])
 app.include_router(sessions_router, prefix="/api/sessions", tags=["sessions"])
 app.include_router(breaker_router, prefix="/api/breaker", tags=["breaker"])
 app.include_router(receipts_router, prefix="/api/receipts", tags=["receipts"])
+# Consolidated bare-/api surface (typespec/v1/conduit-kernel/python/operations.tsp).
+# Legacy routers above stay mounted so rollback is checkout + restart. Static
+# consolidated paths are registered before /api/{identifier} inside the module.
+app.include_router(consolidated_router)
+
+
+# ── Lilac proxy surface (plan 8261669) — STAGED-INERT ────────────────
+#
+# Mounted ONLY when CONDUIT_LILAC_URL is set. With the variable absent these
+# paths do not exist at all, so the default write path is byte-identical to
+# before this surface was added (AC6). The routes delegate to lilac-srv and
+# hold no SQL of their own; a guard in tests/test_lilac_service_contract.py
+# pins both properties.
+if lilac_enabled_from_env():
+    _lilac_client = LilacClient.from_env()
+    if _lilac_client is not None:
+        app.state.lilac_client = _lilac_client
+        app.include_router(lilac_router, prefix="/lilac", tags=["lilac"])
 
 
 # ── Exception handlers ──────────────────────────────────────────────

@@ -1,0 +1,22 @@
+[Unit]
+Description=MongoDB (Docker) — image/volume/guards owned by bin/start-mongodb-docker.sh
+Documentation=https://github.com/codex/nexus/blob/main/docs/mongodb-4.4-eol-upgrade-handoff.md
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# The unit carries no image tag or volume of its own: those live here, so the
+# start script's guards (downgrade refusal, pinned-rollback refusal) always run.
+# Post-cutover values: the live volume is mongodb_data_v8 on mongo:8.0.38;
+# `mongodb_data` is the pinned 4.4 rollback and must never be started.
+Environment=MONGO_VERSION=mongo:8.0.38
+Environment=MONGO_VOLUME=mongodb_data_v8
+Environment=MONGO_BIND_ADDR=0.0.0.0
+ExecStart=/home/codex/dev/nexus/bin/start-mongodb-docker.sh
+ExecStop=/usr/bin/docker stop atomic-mongodb
+TimeoutStartSec=180
+
+[Install]
+WantedBy=default.target

@@ -15,6 +15,14 @@ const devPort = Number(process.env.PORT) || 3000;
 export default defineConfig({
   vite: {
     server: {
+      // Hosts whose Host header is accepted. Vite's dev server refuses unknown
+      // Host values (DNS-rebinding guard) even when bound to 0.0.0.0, which
+      // makes LAN access look like an outage. Hosts come from the
+      // environment so no machine name is baked into the repo.
+      allowedHosts: (process.env.NEXUS_UI_ALLOWED_HOSTS ?? '')
+      .split(',')
+      .map((h) => h.trim())
+      .filter(Boolean),
       port: devPort,
       strictPort: true,
       host: true,

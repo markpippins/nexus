@@ -8,15 +8,23 @@ Reconcile Conduit TypeSpec operations against:
 import ast
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
-TYPESPEC_DIR = Path("/home/codex/dev/nexus-worktrees/conduit-typespec-capture/typespec/v1/conduit-kernel/python")
-CONDUIT_DIR = Path("/home/codex/dev/nexus-worktrees/conduit-typespec-capture/python/conduit/app")
-CONDUIT_MCP_DIR = Path("/home/codex/dev/nexus-worktrees/conduit-typespec-capture/typescript/conduit-mcp/src")
+# Measure the tree this script lives in. The paths used to be pinned to one
+# operator worktree, so running the script from any other checkout silently
+# reconciled THAT checkout's files — the report looked authoritative while
+# describing code nobody had edited (measured 2026-11-10 during the 8261651
+# caller repoint).
+REPO_ROOT = Path(__file__).resolve().parent
+TYPESPEC_DIR = REPO_ROOT / "typespec/v1/conduit-kernel/python"
+CONDUIT_DIR = REPO_ROOT / "python/conduit/app"
+CONDUIT_MCP_DIR = REPO_ROOT / "typescript/conduit-mcp/src"
 
 # Known router prefixes from main.py app.include_router calls
 ROUTER_PREFIXES = {
+    "consolidated_router": "/api",
     "receipts_router": "/api",
     "sessions_router": "/api",
     "breaker_router": "/api",
@@ -137,7 +145,11 @@ def parse_conduit_client(ts_file: Path) -> Dict[str, List[Dict]]:
     operations = {"get": [], "post": [], "patch": [], "delete": [], "put": []}
     
     # Parse fetch calls
-    fetch_pattern = re.compile(r'(get|post|patch|delete|put|del)\s*\(\s*["\`](/api/[^"\`]+)["\`]')
+    # `/api` (no trailing segment) is a real call — GET /api lists sessions and
+    # POST /api inserts a receipt. The old pattern required a character after
+    # `/api/`, so both calls were invisible to the reconciliation and read as
+    # "not called by conduit-mcp" (measured 2026-11-10, plan 8261651).
+    fetch_pattern = re.compile(r'(get|post|patch|delete|put|del)\s*\(\s*["\`](/api(?:/[^"\`]*)?)["\`]')
     
     for match in fetch_pattern.finditer(content):
         method = match.group(1).upper()
@@ -165,6 +177,11 @@ def merge_operations(*op_dicts: Dict[str, List[Dict]]) -> Dict[str, List[Dict]]:
     return merged
 
 def normalize_route(route: str) -> str:
+    # A query string is not part of the path template. Leaving it in made
+    # correct calls read as caller-only drift: `GET /api/stale?threshold_seconds=`
+    # and `DELETE /api/{plan_id}?types=${...}` both appear on the live
+    # consolidated surface (plan 8261651, 2026-11-10).
+    route = route.split('?', 1)[0]
     route = re.sub(r'\{[^}]+\}', '{param}', route)
     route = re.sub(r'\$\{.*?\}', '{param}', route)
     return route.rstrip('/')
@@ -186,6 +203,12 @@ def main():
     # Parse actual FastAPI routes from each routes file
     conduit_operations = {}
     router_files = {
+        # The canonical TypeSpec-aligned surface (PR #938). Without this entry
+        # `GET /api/breaker` had no implementation owner: the legacy breaker
+        # router declares "/" under a /api prefix, so it normalizes to /api,
+        # and the consolidated declaration was never scanned (measured
+        # 2026-11-10, plan 8261651).
+        "routes_consolidated.py": "consolidated_router",
         "routes_receipts.py": "receipts_router",
         "routes_sessions.py": "sessions_router",
         "routes_breaker.py": "breaker_router",
@@ -349,7 +372,7 @@ def main():
         }
     }
     
-    output_file = Path("/home/codex/dev/nexus-worktrees/conduit-typespec-capture/reconcile_conduit_report_v2.json")
+    output_file = Path(sys.argv[1]) if len(sys.argv) > 1 else REPO_ROOT / "reconcile_conduit_report_v2.json"
     output_file.write_text(json.dumps(report, indent=2))
     print(f"\nReport written to: {output_file}")
 

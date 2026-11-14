@@ -1,0 +1,15 @@
+# D3 seed-gate run — plan 8261645 (KG projection contract freeze)
+# Read-only: hashes, the freeze package's own contract test, vocabulary comparison.
+# run_by=bin/convergence_seed_gate.py at 2026-11-10T23:16:42+00:00
+# KG projection seed gate (plan 8261645, package D3)
+# freeze: typespec/convergence/kg-projection-contract-freeze.v1.json
+# result: not_run_by_the_decomposition; run now by bin/convergence_seed_gate.py
+
+[PASS] freeze_manifest_intact: 9/9 artifact hashes match; manifest fingerprint 9a073a105050… == expected
+[PASS] envelope_contract: 9/9 contract cases pass
+[PASS] relation_vocabulary_equal: 10 declared == 10 canonical (6 backbone + 4 governed)
+[PASS] section_owner_complete: 9/9 canonical sections resolve to one owner
+[PASS] no_non_canonical_seed: 0 seeded row(s); non-canonical targets excluded: {work_requests, plans}
+[PASS] jsonb_classification_present: 25/25 classified columns carry a declared class; 0 seeded node/edge column(s) feeding the graph (seeding not performed)
+
+6/6 checks pass

@@ -37,18 +37,8 @@ JOIN resolution.concept_attribute ca ON ca.id = st.attribute_id AND ca.name = 's
 JOIN resolution.concept c ON c.id = ca.concept_id AND c.name = 'OpenQuestion'
 WHERE st.value = 'IN_DELIBERATION' AND oq.id = '99999999-9999-9999-9999-999999999901';
 
--- the Verifier compiles the architect's (higher-confidence) answer into SOL IR
-INSERT INTO resolution.expression (id, kind, function_name, return_type, label) VALUES
-    ('77777777-7777-7777-7777-777777777701', 'function_call', 'escalates_to', 'boolean',
-     'WorkRequest escalates_to Role(OnCall)');
-
-INSERT INTO resolution.verified_statement (answer_id, expression_id, asset_concept_id, target_asset_id, verified_by, notes)
-SELECT '88888888-8888-8888-8888-888888888801', '77777777-7777-7777-7777-777777777701', c.id,
-       'cb000000-0000-0000-0000-00000000000b', 'Verifier',
-       'Compiled from architect answer; planner answer concurred, used as corroboration not a second statement.'
-FROM resolution.concept c WHERE c.name = 'Candidate';
-
--- resolve the question now that a verified statement exists
+-- The Role-vs-Person decision is recorded; executable relationship semantics
+-- remain unmodeled until a real concept_relationship and implementation exist.
 UPDATE resolution.open_question oq
 SET status_value_id = st.id, updated_at = now()
 FROM resolution.concept_attribute_value st

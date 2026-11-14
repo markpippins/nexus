@@ -1,0 +1,247 @@
+{
+  "$comment": [
+    "Interaction vocabulary v1 for plan 8261645 (Track C).",
+    "Versioned, bounded, and descriptive only: it names actors, roles, states,",
+    "transitions, rules, invariants and context so that Aegis/Wind candidates",
+    "and Brainfood slices can reference a shared vocabulary with provenance.",
+    "This file creates no role, no state, no rule and no authority.",
+    "Every entry carries provenance: where the term is declared, and whether",
+    "this decomposition observed it statically (declared) or verified it at",
+    "runtime (observed). Nothing here is 'observed' unless a command was run."
+  ],
+  "vocabulary_id": "nexus.interaction.vocabulary",
+  "vocabulary_version": "1.0.0",
+  "frozen_at": "2026-11-10",
+  "plan_ref": "8261645",
+  "status": "frozen",
+  "change_policy": "append-only via a new vocabulary_version; never edit a frozen entry in place",
+  "provenance_model": {
+    "declared": "term exists in the cited source file; static read only",
+    "observed": "term was exercised in a run; the run's evidence slot must be cited",
+    "derived": "term is composed from cited terms; composition rule must be stated"
+  },
+  "actors": [
+    {
+      "id": "actor.planner",
+      "label": "planner",
+      "description": "Produces batches/plans; groups, never implements.",
+      "provenance": {"source": "docs/night-shift-doctrine.md", "kind": "declared"}
+    },
+    {
+      "id": "actor.builder",
+      "label": "builder",
+      "description": "Implements a bounded plan or batch; ends with verification evidence.",
+      "provenance": {"source": "docs/night-shift-doctrine.md", "kind": "declared"}
+    },
+    {
+      "id": "actor.critic",
+      "label": "critic",
+      "description": "Reviews a change (diff) against its claimed scope; gate to review, not a merge authority.",
+      "provenance": {"source": "docs/night-shift-doctrine.md", "kind": "declared"}
+    },
+    {
+      "id": "actor.reviewer",
+      "label": "reviewer",
+      "description": "CI/CD-adjacent merge judgement; never silence-fixes.",
+      "provenance": {"source": "docs/night-shift-doctrine.md", "kind": "declared"}
+    },
+    {
+      "id": "actor.architect",
+      "label": "architect",
+      "description": "Ratifies vocabulary, contracts and ownership; issues rulings.",
+      "provenance": {"source": "schemas/decision-b-freeze/FREEZE-MANIFEST.json (assembled_by: ontologist) + repo role files", "kind": "declared"}
+    },
+    {
+      "id": "actor.inspector",
+      "label": "inspector",
+      "description": "Investigates projects and files error/warning records; does not implement.",
+      "provenance": {"source": "CLAUDE.md agent roster", "kind": "declared"}
+    },
+    {
+      "id": "actor.operator",
+      "label": "operator",
+      "description": "Human authority of record for the closed authority set.",
+      "provenance": {"source": "schemas/decision-b-freeze/jsonb_contract_test.py", "kind": "declared"}
+    },
+    {
+      "id": "actor.system",
+      "label": "system",
+      "description": "Scheduled/automated actor (night shift, sweeps, projections).",
+      "provenance": {"source": "docs/night-shift-doctrine.md", "kind": "declared"}
+    }
+  ],
+  "roles": [
+    {
+      "id": "role.authority",
+      "description": "May change governed state on a named surface (see ownership matrix).",
+      "provenance": {"source": "schemas/convergence/README.md §4", "kind": "derived"}
+    },
+    {
+      "id": "role.executor",
+      "description": "Executes bounded work; produces evidence; holds no merge authority.",
+      "provenance": {"source": "schemas/convergence/README.md §4", "kind": "derived"}
+    },
+    {
+      "id": "role.verifier",
+      "description": "Confirms an evidence slot without owning the surface.",
+      "provenance": {"source": "schemas/convergence/README.md §3", "kind": "derived"}
+    },
+    {
+      "id": "role.satellite",
+      "description": "Emits references/triggers about another system's state; never authoritative (e.g. vision, keychains projection).",
+      "provenance": {"source": "moleculer/nexus-broker/services/keychain-snapshot.service.ts header", "kind": "declared"}
+    }
+  ],
+  "states": [
+    {"id": "state.wrp.CREATED", "category": "initial", "transitions_to": ["INTAKE", "FAILED"], "provenance": {"source": "schemas/protocol/wrp-state-machine.json", "kind": "declared"}},
+    {"id": "state.wrp.INTAKE", "category": "active", "transitions_to": ["PLANNING", "FAILED"], "provenance": {"source": "schemas/protocol/wrp-state-machine.json", "kind": "declared"}},
+    {"id": "state.wrp.PLANNING", "category": "active", "transitions_to": ["CRITIQUE", "FAILED"], "provenance": {"source": "schemas/protocol/wrp-state-machine.json", "kind": "declared"}},
+    {"id": "state.wrp.CRITIQUE", "category": "active", "transitions_to": ["SPECIFICATION", "PLANNING", "FAILED"], "provenance": {"source": "schemas/protocol/wrp-state-machine.json", "kind": "declared"}},
+    {"id": "state.wrp.SPECIFICATION", "category": "active", "transitions_to": ["APPROVED", "CRITIQUE", "FAILED"], "provenance": {"source": "schemas/protocol/wrp-state-machine.json", "kind": "declared"}},
+    {"id": "state.wrp.APPROVED", "category": "gate", "transitions_to": ["QUEUED", "SPECIFICATION", "FAILED"], "provenance": {"source": "schemas/protocol/wrp-state-machine.json", "kind": "declared"}},
+    {"id": "state.wrp.QUEUED", "category": "active", "transitions_to": ["EXECUTING", "FAILED"], "provenance": {"source": "schemas/protocol/wrp-state-machine.json", "kind": "declared"}},
+    {"id": "state.wrp.EXECUTING", "category": "active", "transitions_to": ["COMPLETED", "FAILED"], "provenance": {"source": "schemas/protocol/wrp-state-machine.json", "kind": "declared"}},
+    {"id": "state.wrp.COMPLETED", "category": "terminal", "transitions_to": ["ARCHIVED"], "provenance": {"source": "schemas/protocol/wrp-state-machine.json", "kind": "declared"}},
+    {"id": "state.wrp.ARCHIVED", "category": "terminal", "transitions_to": [], "provenance": {"source": "schemas/protocol/wrp-state-machine.json", "kind": "declared"}},
+    {"id": "state.wrp.FAILED", "category": "terminal", "transitions_to": [], "provenance": {"source": "schemas/protocol/wrp-state-machine.json", "kind": "declared"}},
+    {"id": "state.ticket.open", "category": "work", "transitions_to": ["claimed", "stale"], "provenance": {"source": "conduit ticket lifecycle (conduit-mcp claim_ticket/release_ticket)", "kind": "declared"}},
+    {"id": "state.ticket.claimed", "category": "work", "transitions_to": ["open", "completed", "stale"], "provenance": {"source": "conduit ticket lifecycle", "kind": "declared"}},
+    {"id": "state.ticket.stale", "category": "work", "transitions_to": ["open", "claimed"], "provenance": {"source": "conduit ticket lifecycle (staleMinutes takeover)", "kind": "declared"}},
+    {"id": "state.ticket.completed", "category": "terminal", "transitions_to": [], "provenance": {"source": "conduit ticket lifecycle", "kind": "declared"}},
+    {"id": "state.checkpoint.pending", "category": "projection", "transitions_to": ["delivering", "not_applicable", "failed"], "provenance": {"source": "schemas/migrations/resolution/resolution_keychain_event_v1.sql", "kind": "declared"}},
+    {"id": "state.checkpoint.delivering", "category": "projection", "transitions_to": ["delivered", "failed"], "provenance": {"source": "schemas/migrations/resolution/resolution_keychain_event_v1.sql (checkpoint_status CHECK)", "kind": "declared"}},
+    {"id": "state.checkpoint.delivered", "category": "projection", "transitions_to": [], "provenance": {"source": "schemas/migrations/resolution/resolution_keychain_event_v1.sql (checkpoint_status CHECK)", "kind": "declared"}},
+    {"id": "state.checkpoint.not_applicable", "category": "terminal", "transitions_to": [], "provenance": {"source": "schemas/migrations/resolution/resolution_keychain_event_v1.sql (checkpoint_status CHECK)", "kind": "declared"}}
+  ],
+  "transitions": [
+    {
+      "id": "transition.plan.receipt",
+      "label": "plan receipt appended",
+      "trigger_class": "conduit.receipt",
+      "evidence": "conduit receipt chain (PLAN_CREATE | PLANNING | IMPLEMENTATION | REVIEW_PASS | REVIEW_REJECT | BLOCK | HOLD | API_LIMIT | CANCELLED | ABANDONED | REQUEUED)",
+      "provenance": {"source": "conduit-mcp issue_receipt tool contract", "kind": "declared"}
+    },
+    {
+      "id": "transition.wrp.guarded",
+      "label": "WRP state change",
+      "trigger_class": "vision.lifecycle.transition",
+      "evidence": "vision.lifecycle.transition.committed | vision.lifecycle.transition.refused in resolution.keychain_event_outbox",
+      "provenance": {"source": "python/vision/losm-store/src/losm_store/governed_triggers.py", "kind": "declared"}
+    },
+    {
+      "id": "transition.resolution.committed",
+      "label": "governed SOL transition committed",
+      "trigger_class": "resolution.transition",
+      "evidence": "resolution.transition.committed | resolution.transition.rejected (legacy: sol-transition:<transitionId>:<entityId>)",
+      "provenance": {"source": "python/keychains/trigger.py", "kind": "declared"}
+    },
+    {
+      "id": "transition.peb.admission",
+      "label": "PEB admission or deny-contract-promotion decision",
+      "trigger_class": "peb.admission",
+      "evidence": "peb.admission.<outcome> | peb.deny_contract_promotion.<outcome>; PEB remains the authority",
+      "provenance": {"source": "python/peb-kernel/src/peb_kernel/keychains.py", "kind": "declared"}
+    },
+    {
+      "id": "transition.vision.decision",
+      "label": "vision-adapted governance decision",
+      "trigger_class": "vision.decision",
+      "evidence": "vision.<decision_class>.decision with owning caller's authoritative event id",
+      "provenance": {"source": "python/vision/losm-store/src/losm_store/governed_triggers.py", "kind": "declared"}
+    }
+  ],
+  "rules": [
+    {
+      "id": "rule.adjacency",
+      "statement": "A transition is valid only if the target state is in the source state's transitions_to list.",
+      "provenance": {"source": "schemas/protocol/wrp-state-machine.json STR-001", "kind": "declared"}
+    },
+    {
+      "id": "rule.event_per_transition",
+      "statement": "Each transition MUST produce a WRP event recorded in the event store.",
+      "provenance": {"source": "schemas/protocol/wrp-state-machine.json STR-002", "kind": "declared"}
+    },
+    {
+      "id": "rule.terminal_absorbing",
+      "statement": "Terminal states (COMPLETED, ARCHIVED, FAILED) may not transition onward; retry creates a new version.",
+      "provenance": {"source": "schemas/protocol/wrp-state-machine.json STR-003/STR-004", "kind": "declared"}
+    },
+    {
+      "id": "rule.trigger_is_commit",
+      "statement": "A Keychains trigger exists only for a successful governed state transition or decision point; outcome is one of committed|refused|rejected|unknown|stale|failed.",
+      "provenance": {"source": "schemas/migrations/resolution/resolution_keychain_event_v1.sql + python/keychains/trigger.py", "kind": "declared"}
+    },
+    {
+      "id": "rule.idempotent_trigger",
+      "statement": "The same logical decision point may never produce two distinguishable checkpoints: idempotency_key = <namespace>:<source_event_id>.",
+      "provenance": {"source": "python/keychains/trigger.py", "kind": "declared"}
+    },
+    {
+      "id": "rule.satellite_not_authority",
+      "statement": "A satellite projection (vision, keychains Mongo projection) may describe another system's state and may not be read back as operational authority.",
+      "provenance": {"source": "moleculer/nexus-broker/services/keychain-snapshot.service.ts header", "kind": "declared"}
+    },
+    {
+      "id": "rule.vocabulary_frozen",
+      "statement": "Frozen vocabulary entries are append-only; a semantic change requires vocabulary_version bump plus architect ratification.",
+      "provenance": {"source": "schemas/convergence/work-packages.v1.json C1", "kind": "derived"}
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant.read_set_identity_only",
+      "statement": "A decision context read_set contains stable identities, versions, hashes, cursors and access scope — never source content.",
+      "provenance": {"source": "schemas/migrations/resolution/resolution_keychain_event_v1.sql COMMENT + keychain DecisionContextManifest", "kind": "declared"}
+    },
+    {
+      "id": "invariant.authority_closed_set",
+      "statement": "source_authority must belong to {resolution, shrapnel, aegis, semantics, keychains, peb, operator, conduit, wind, vision}.",
+      "provenance": {"source": "schemas/decision-b-freeze/jsonb_contract_test.py", "kind": "declared"}
+    },
+    {
+      "id": "invariant.no_duplicate_wave",
+      "statement": "A continuity track may cite in-flight plans but may not spawn a duplicate plan for the same work.",
+      "provenance": {"source": "schemas/convergence/README.md §1", "kind": "derived"}
+    },
+    {
+      "id": "invariant.peb_activation_frozen",
+      "statement": "No package in this decomposition may create or change a PEB activation.",
+      "provenance": {"source": "schemas/convergence/README.md §0", "kind": "derived"}
+    },
+    {
+      "id": "invariant.temporal_columns_survive_jsonb",
+      "statement": "JSONB storage must not erase temporal semantics: valid_from/valid_until/recorded_on_dt/recorded_until_dt remain first-class columns, never payload fields.",
+      "provenance": {"source": "schemas/migrations/resolution/resolution_data_consolidated.sql (observation columns) + schemas/decision-b-freeze", "kind": "declared"}
+    }
+  ],
+  "context": {
+    "fields": [
+      {"id": "context.correlation_id", "description": "Caller-supplied correlation across one logical interaction.", "provenance": {"source": "schemas/migrations/resolution/resolution_keychain_event_v1.sql", "kind": "declared"}},
+      {"id": "context.causation_id", "description": "Immediate cause of the event.", "provenance": {"source": "schemas/migrations/resolution/resolution_keychain_event_v1.sql", "kind": "declared"}},
+      {"id": "context.actor", "description": "Acting identity for the interaction.", "provenance": {"source": "schemas/migrations/resolution/resolution_keychain_event_v1.sql", "kind": "declared"}},
+      {"id": "context.as_of", "description": "Evaluation instant for a decision.", "provenance": {"source": "keychain TriggerEventContract (as_of)", "kind": "declared"}},
+      {"id": "context.effective_at", "description": "Valid-time of the recorded change.", "provenance": {"source": "schemas/migrations/resolution/resolution_keychain_event_v1.sql", "kind": "declared"}},
+      {"id": "context.recorded_at", "description": "Record-time of the event row.", "provenance": {"source": "schemas/migrations/resolution/resolution_keychain_event_v1.sql", "kind": "declared"}},
+      {"id": "context.read_set", "description": "Stable identities/versions/hashes available to the evaluator.", "provenance": {"source": "schemas/migrations/resolution/resolution_keychain_event_v1.sql COMMENT", "kind": "declared"}},
+      {"id": "context.doctrine_snapshot", "description": "Prompt/bootstrap/procedure hashes under which a decision was taken.", "provenance": {"source": "keychain TriggerEventContract (doctrine_snapshot)", "kind": "declared"}},
+      {"id": "context.checkpoint_status", "description": "Projection delivery state of a trigger.", "provenance": {"source": "schemas/migrations/resolution/resolution_keychain_event_v1.sql", "kind": "declared"}}
+    ]
+  },
+  "consumers": [
+    {
+      "consumer": "C3 aegis-wind binding",
+      "artifact": "python/aegis/convergence/track-c-aegis-wind-interaction-binding.md",
+      "rule": "Aegis registry components map to vocabulary kinds by name; a mapping never creates a new state or invariant."
+    },
+    {
+      "consumer": "C2 brainfood slices",
+      "artifact": "schemas/convergence/brainfood-slice.v1.json",
+      "rule": "A slice may cite vocabulary ids in its `interactions` array; a citation is not an assertion of authority."
+    },
+    {
+      "consumer": "D1 keychains binding",
+      "artifact": "moleculer/nexus-broker/services/keychain-snapshot.service.ts",
+      "rule": "Every trigger class carries an `interaction` kind, an `evaluation` reference, a `transition` reference and an `evidence` reference."
+    }
+  ]
+}

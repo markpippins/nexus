@@ -1,5 +1,6 @@
 from typing import Dict, Any, List, Optional
 
+import os
 import uuid as _uuid
 
 from sqlalchemy.orm import Session
@@ -16,6 +17,45 @@ from losm_store.canonical_bridge import (
     mirror_tombstone_work_request,
 )
 
+# C1 gate 1 (Lilac plan 8261670): five-field provenance envelope stamped on
+# every ticket/receipt mutation. Same field names as the conduit db_adapter
+# and cascade admission_subscriber write-sites:
+# producer_id, source_channel, source_system, process_id, invocation_id.
+_PROVENANCE_FIELDS = (
+    "producer_id",
+    "source_channel",
+    "source_system",
+    "process_id",
+    "invocation_id",
+)
+
+_INVOCATION_ID = os.environ.get("INVOCATION_ID", "unsupervised") or "unsupervised"
+
+
+def _stamp_provenance_into_context(
+    context_data: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """Add the five-field provenance envelope to context_data.
+
+    Called by write-side paths so every ticket mutation carries
+    deterministic source identity. Falls back to process-identity defaults
+    when caller-supplied values are absent.
+    """
+    context = dict(context_data or {})
+    context["provenance"] = {
+        "producer_id": context_data.get("producer_id", "nexus-losm-python")
+        if context_data else "nexus-losm-python",
+        "source_channel": context_data.get("source_channel", "losm-python")
+        if context_data else "losm-python",
+        "source_system": context_data.get("source_system", "losm")
+        if context_data else "losm",
+        "process_id": context_data.get("process_id", str(os.getpid()))
+        if context_data else str(os.getpid()),
+        "invocation_id": context_data.get("invocation_id", _INVOCATION_ID)
+        if context_data else _INVOCATION_ID,
+    }
+    return context
+
 
 def create_work_request(
     db: Session,
@@ -30,6 +70,9 @@ def create_work_request(
     # canonical id (PK-carried identity, V186 convention); legacy_id carries
     # the mirror source. The PlanningTask model stays the read projection.
     wr_id = str(_uuid.uuid4())
+    # C1 gate 1 (Lilac plan 8261670): stamp the five-field provenance envelope
+    # on the context carried by both the canonical and mirror writes.
+    stamped_context = _stamp_provenance_into_context(context_data)
     if dual_write_enabled():
         canonical_insert_for_create(
             db,
@@ -37,7 +80,7 @@ def create_work_request(
             intent=intent,
             constraints=constraints,
             priority=priority,
-            context_data=context_data,
+            context_data=stamped_context,
         )
     mirror_insert_work_request(
         db,
@@ -46,7 +89,7 @@ def create_work_request(
         status=WorkStatus.NEW.value,
         constraints=constraints,
         priority=priority,
-        context_data=context_data,
+        context_data=stamped_context,
     )
     db.commit()
     wr = get_work_request_by_wr_id(db, wr_id)

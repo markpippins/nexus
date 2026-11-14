@@ -283,7 +283,6 @@ from this host**; no conclusion about Vanadium the machine is drawn.
 6. vision-srv-py terrain entry: confirm whether `activeFlag=true`/missing unit
    was retired after #908, or whether the 2026-11-08T13:38Z sysadmin report is
    the last word on a service that is still half-decommissioned.
-
 ## Plan and draft housekeeping (2026-11-10)
 
 - Ghost plans 8261653, 8261654, 8261665 reconciled to `completed` via `nebula.blueprints_history` (guarded, with `payload.reconciliation`). No receipts forged. 8261665 still differs from the receipt-derived `nebula.plan_status`.

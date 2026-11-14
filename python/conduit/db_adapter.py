@@ -1079,7 +1079,21 @@ class DBAdapter:
         Identity split: ``producer_id``/``source_channel`` carry the
         declaring write authority (e.g. the TS front-door when it declares
         itself via the REST body), while ``process_id``/``invocation_id``
-        always describe the process that physically performed the write."""
+        always describe the process that physically performed the write.
+
+        L4 gate (Lilac plan 8261670): fail-closed writer identity. An
+        explicitly blank ``producer_id``/``source_channel`` (present but
+        empty) is an ambiguous writer and is refused here — before any
+        write — instead of being silently replaced by the process default.
+        Omitted (None) still falls back to the process default so the
+        staged-inert default path is unchanged."""
+        for _field, _value in (("producer_id", producer_id),
+                              ("source_channel", source_channel)):
+            if _value is not None and not str(_value).strip():
+                raise PermissionError(
+                    "lilac 8261670: ambiguous writer identity — refusing "
+                    "mutation rather than silently defaulting %s" % _field
+                )
         return {
             "producer_id": producer_id or "nexus-conduit-python",
             "source_channel": source_channel or "conduit-python",

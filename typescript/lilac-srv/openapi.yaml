@@ -1,0 +1,232 @@
+openapi: 3.0.3
+info:
+  title: lilac-srv — typed Lilac Resolution surface
+  version: 1.0.0
+  description: |
+    The single typed, idempotent surface for Lilac Resolution persistence:
+    ticket lifecycle, receipt issuance, claim/evidence linkage, timeline and
+    parity diagnostics.
+
+    Every mutation requires a provenance envelope
+    (`source_implementation`, `runtime_route`, `contract_version`,
+    `source_identity`, `idempotency_key`). A missing or ambiguous envelope is
+    refused with a typed body and writes nothing.
+
+    Replays classify as `duplicate-equivalent`; a replay that reuses an
+    identity with a different payload is refused as `conflict` with both
+    fingerprints recorded.
+
+    This surface deliberately owns neither PEB admission nor Wind workflow
+    definitions, and writes only canonical `resolution.*` tables.
+
+    STAGED-INERT: no live caller is repointed at this service.
+
+servers:
+  - url: http://localhost:3172
+
+paths:
+  /health:
+    get:
+      operationId: health
+      summary: Liveness and contract version
+      responses:
+        "200":
+          description: Service is up
+
+  /v1/meta:
+    get:
+      operationId: meta
+      summary: Service identity, contract version and staging posture
+      responses:
+        "200":
+          description: Service metadata
+
+  /v1/receipts:
+    post:
+      operationId: issueReceipt
+      summary: Issue a canonical receipt (kind-discriminated)
+      description: |
+        Idempotent on `(source_system, source_receipt_id)`. The payload
+        fingerprint is computed server-side and stored, so a replay with a
+        different payload is a conflict rather than an overwrite.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReceiptRequest"
+      responses:
+        "201": { description: accepted }
+        "200": { description: duplicate-equivalent }
+        "409": { description: conflict — both fingerprints recorded }
+        "422": { description: envelope missing, incomplete or ambiguous }
+
+  /v1/tickets:
+    post:
+      operationId: issueTicket
+      summary: Issue a workflow ticket
+      description: |
+        Idempotent on `(workflow_ref, role, position, generation)`. A ticket
+        does not change status on replay; transitions are separate mutations.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TicketRequest"
+      responses:
+        "201": { description: accepted }
+        "200": { description: duplicate-equivalent }
+        "409": { description: conflict — both fingerprints recorded }
+        "422": { description: envelope missing, incomplete or ambiguous }
+
+  /v1/tickets/{ticket_id}/transitions:
+    post:
+      operationId: recordTransition
+      summary: Record a ticket status transition with its driving receipt
+      description: |
+        Idempotent on `(ticket_id, from_status, to_status, input_receipt_id,
+        fanout_policy_version)`.
+      parameters:
+        - name: ticket_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransitionRequest"
+      responses:
+        "201": { description: accepted }
+        "200": { description: duplicate-equivalent }
+        "409": { description: conflict — both fingerprints recorded }
+        "422": { description: envelope missing, incomplete or ambiguous }
+
+  /v1/fanouts:
+    post:
+      operationId: recordFanout
+      summary: Record a receipt-to-ticket fan-out
+      description: |
+        Idempotent on `(input_receipt_id, kind, fan_out_policy_version)`. The
+        fan-out ledger is the only place a receipt-to-ticket spawn is recorded;
+        a conflicting replay persists both fingerprints on the ledger row.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FanoutRequest"
+      responses:
+        "201": { description: accepted }
+        "200": { description: duplicate-equivalent }
+        "409": { description: conflict — both fingerprints recorded }
+        "422": { description: envelope missing, incomplete or ambiguous }
+
+  /v1/tickets/{ticket_id}/timeline:
+    get:
+      operationId: ticketTimeline
+      summary: Ticket row plus its transitions, each with the driving receipt
+      parameters:
+        - name: ticket_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Timeline }
+        "404": { description: Ticket not found }
+
+  /v1/parity:
+    get:
+      operationId: parityDiagnostics
+      summary: Recorded parity evidence plus provenance counts per surface
+      description: |
+        Reports `recorded: false` when no dual-read measurement exists — an
+        absent measurement is never reported as a pass.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 5, minimum: 1, maximum: 50 }
+      responses:
+        "200": { description: Parity diagnostics }
+
+components:
+  schemas:
+    Provenance:
+      type: object
+      required:
+        - source_implementation
+        - runtime_route
+        - contract_version
+        - source_identity
+        - idempotency_key
+      additionalProperties: false
+      properties:
+        source_implementation:
+          type: string
+          description: Repo-relative implementation that performed the mutation
+        runtime_route:
+          type: string
+          description: '"<METHOD> <path>" the mutation arrived on'
+        contract_version:
+          type: integer
+          enum: [1]
+        source_identity:
+          type: string
+          description: Stable identity of the source (agent record, session, process)
+        idempotency_key:
+          type: string
+          minLength: 8
+          maxLength: 200
+          description: Unique per mutation; never reusable for a different target
+
+    ReceiptRequest:
+      type: object
+      required: [provenance, producer_id, kind, source_system, source_receipt_id, payload]
+      properties:
+        provenance: { $ref: "#/components/schemas/Provenance" }
+        producer_id: { type: string }
+        kind: { type: string }
+        source_system: { type: string }
+        source_receipt_id: { type: string }
+        payload: { type: object }
+        refs: { type: object }
+
+    TicketRequest:
+      type: object
+      required: [provenance, workflow_ref, role, position]
+      properties:
+        provenance: { $ref: "#/components/schemas/Provenance" }
+        workflow_ref: { type: string }
+        role: { type: string }
+        position: { type: integer }
+        generation: { type: integer, default: 0 }
+        objective: { type: string }
+        predecessor_receipt_id: { type: string, nullable: true }
+
+    TransitionRequest:
+      type: object
+      required: [provenance, input_receipt_id, from_status, to_status]
+      properties:
+        provenance: { $ref: "#/components/schemas/Provenance" }
+        input_receipt_id: { type: string }
+        from_status: { type: string }
+        to_status: { type: string }
+        fanout_policy_version: { type: integer, default: 1 }
+        outcome_class: { type: string }
+        payload: { type: object }
+
+    FanoutRequest:
+      type: object
+      required: [provenance, input_receipt_id, kind, produced]
+      properties:
+        provenance: { $ref: "#/components/schemas/Provenance" }
+        input_receipt_id: { type: string }
+        kind: { type: string }
+        fan_out_policy_version: { type: integer, default: 1 }
+        produced:
+          type: array
+          items: { type: object }
+        outcome: { type: string }

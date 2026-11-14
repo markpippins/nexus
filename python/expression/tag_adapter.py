@@ -79,7 +79,7 @@ def adapt_tag_record(record: dict[str, Any]) -> list[dict[str, Any]]:
     observations: list[dict[str, Any]] = []
 
     for key, raw_value in [*_raw_tags(record), *_metadata_items(record)]:
-        value = raw_value if isinstance(raw_value, (str, int, float, bool)) else raw_value
+        value = raw_value
         normalized = _normalize_tag(value)
         if not normalized:
             continue

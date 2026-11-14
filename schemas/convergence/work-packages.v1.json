@@ -1,0 +1,302 @@
+{
+  "$comment": [
+    "Work-package registry for plan 8261645 (Parallel convergence tracks).",
+    "Decomposition-only: this file declares ownership, dependencies, evidence",
+    "outputs and non-authoritative stop conditions. It never mutates state.",
+    "Human-readable twin: schemas/convergence/README.md (§2).",
+    "Vocabulary: schemas/convergence/interaction-vocabulary.v1.json.",
+    "Authority set is closed (schemas/decision-b-freeze/jsonb_contract_test.py)."
+  ],
+  "version": "1.0.0",
+  "plan_ref": "8261645",
+  "work_request_id": "wr-8261645-1794345779-9cd52843",
+  "blueprint_state": "decomposition_complete",
+  "runtime_claim": false,
+  "mutates_state": false,
+  "authority_set": [
+    "resolution",
+    "shrapnel",
+    "aegis",
+    "semantics",
+    "keychains",
+    "peb",
+    "operator",
+    "conduit",
+    "wind",
+    "vision"
+  ],
+  "tracks": {
+    "A": {
+      "name": "Moleculer continuity",
+      "continuity_basis": [
+        "moleculer/ports.yaml",
+        "moleculer/PORT-MAP.md",
+        "moleculer/M1-SERVICE-MANIFEST.md",
+        "moleculer/M1-TRAFFIC-CANARY.md"
+      ],
+      "in_flight_carriers": ["8261657", "8261658", "8261659", "8261655", "8261665"],
+      "restarts_existing_work": false
+    },
+    "B": {
+      "name": "Night Shift readiness",
+      "continuity_basis": [
+        "docs/night-shift-doctrine.md",
+        "typescript/conduit-mcp",
+        "python/conduit"
+      ],
+      "in_flight_carriers": ["8261650", "8261651"],
+      "restarts_existing_work": false
+    },
+    "C": {
+      "name": "Interaction ontology, Brainfood slices, Aegis/Wind consumption",
+      "continuity_basis": [
+        "schemas/ontology/",
+        "schemas/protocol/wrp-state-machine.json",
+        "python/aegis/aegis.py",
+        "typespec/v1/aegis-srv",
+        "typespec/v1/wind-srv"
+      ],
+      "in_flight_carriers": [],
+      "restarts_existing_work": false
+    },
+    "D": {
+      "name": "Resolution, Keychains bindings, KG projection contract",
+      "continuity_basis": [
+        "schemas/migrations/resolution/",
+        "python/keychains/trigger.py",
+        "moleculer/nexus-broker/services/keychain-snapshot.service.ts",
+        "schemas/decision-b-freeze/",
+        "typescript/shrapnel/",
+        "typespec/v1/resolution-srv"
+      ],
+      "in_flight_carriers": ["8261639", "8261661"],
+      "restarts_existing_work": false
+    }
+  },
+  "evidence_slot_schema": {
+    "observed": "command or file path + result summary",
+    "artifact": "repo-relative path",
+    "timestamp": "ISO-8601",
+    "verification_owner": "one role from schemas/convergence/README.md §4"
+  },
+  "packages": [
+    {
+      "id": "A1",
+      "track": "A",
+      "title": "Twin-port continuity register",
+      "owner": "builder",
+      "dependencies": [],
+      "artifact": "moleculer/convergence/track-a-moleculer-continuity.md",
+      "evidence_outputs": [
+        "register citing ports.yaml + PORT-MAP.md rows",
+        "observed local port-scan state with timestamp"
+      ],
+      "stop_condition": "register published; ports.yaml, generated PORT-MAP regions and service processes untouched",
+      "rollback": "revert the markdown artifact",
+      "authority_boundary": "may not edit the port registry, start/stop a twin, or ratify a port",
+      "peb_impact": "none"
+    },
+    {
+      "id": "A2",
+      "track": "A",
+      "title": "Canary promotion ladder continuity",
+      "owner": "planner",
+      "dependencies": ["A1"],
+      "artifact": "moleculer/convergence/track-a-moleculer-continuity.md (§2 canary ladder)",
+      "evidence_outputs": [
+        "plan references 8261657 / 8261658 / 8261659",
+        "canary-diff record referenced from moleculer/PORT-MAP.md status column"
+      ],
+      "stop_condition": "ladder published as references; cutover decisions remain with the named plans and the reviewer",
+      "rollback": "revert the ladder section",
+      "authority_boundary": "no merge, no cutover, no traffic shift",
+      "peb_impact": "none"
+    },
+    {
+      "id": "B1",
+      "track": "B",
+      "title": "Bounded Night-Shift rehearsal harness",
+      "owner": "builder",
+      "dependencies": ["docs/night-shift-doctrine.md", "conduit ticket/receipt pipeline"],
+      "artifact": "python/conduit/convergence/track-b-night-shift-rehearsal.md",
+      "evidence_outputs": [
+        "rehearsal transcript (planner -> builder -> critic -> reviewer) against an isolated test DB",
+        "bound proof: same-file batching and <=5 work requests per cycle",
+        "receipt-isolation proof (test DB, live conduit DB never contacted)"
+      ],
+      "stop_condition": "rehearsal recorded as non-authoritative evidence; no live receipt, plan transition or merge produced",
+      "rollback": "drop the rehearsal database and branch; nothing to retract",
+      "authority_boundary": "may not write to the live conduit DB, merge, or attest",
+      "peb_impact": "none"
+    },
+    {
+      "id": "B2",
+      "track": "B",
+      "title": "Rehearsal receipt and rollback proof",
+      "owner": "reviewer",
+      "dependencies": ["B1"],
+      "artifact": "python/conduit/convergence/track-b-night-shift-rehearsal.md (§4 evidence slots)",
+      "evidence_outputs": [
+        "receipt-chain snapshot from the isolated rehearsal store",
+        "rollback demonstration (unblock/ticket release or branch revert) with the observed command"
+      ],
+      "stop_condition": "receipt and rollback slots filled or explicitly reported unfilled; review judgement stops before merge authority",
+      "rollback": "delete the rehearsal store snapshot copy",
+      "authority_boundary": "no merge, no production attestation",
+      "peb_impact": "none"
+    },
+    {
+      "id": "C1",
+      "track": "C",
+      "title": "Versioned interaction vocabulary v1",
+      "owner": "architect",
+      "dependencies": [],
+      "artifact": "schemas/convergence/interaction-vocabulary.v1.json",
+      "evidence_outputs": [
+        "frozen vocabulary_version 1.0.0",
+        "per-entry provenance (source path + declared/observed marker)"
+      ],
+      "stop_condition": "vocabulary frozen; extension requires a version bump, never an in-place edit",
+      "rollback": "supersede with a new version file",
+      "authority_boundary": "describes actors/roles/states/transitions/rules/invariants/context; creates no role, rule or state",
+      "peb_impact": "none"
+    },
+    {
+      "id": "C2",
+      "track": "C",
+      "title": "Bounded Brainfood slice contract",
+      "owner": "builder",
+      "dependencies": ["C1"],
+      "artifact": "schemas/convergence/brainfood-slice.v1.json",
+      "evidence_outputs": [
+        "slice identity + source references + fingerprints",
+        "valid/recorded time pair and explicit status enum",
+        "size/quantity bounds"
+      ],
+      "stop_condition": "contract published; no slice written to a governed table",
+      "rollback": "delete the contract file",
+      "authority_boundary": "slices are derived artifacts; they carry no authority bit",
+      "peb_impact": "none"
+    },
+    {
+      "id": "C3",
+      "track": "C",
+      "title": "Aegis/Wind vocabulary consumption binding",
+      "owner": "architect",
+      "dependencies": ["C1"],
+      "artifact": "python/aegis/convergence/track-c-aegis-wind-interaction-binding.md",
+      "evidence_outputs": [
+        "Aegis registry component -> vocabulary kind mapping table",
+        "Wind workflow candidate consumption rule with provenance",
+        "explicit no-authority statement for both consumers"
+      ],
+      "stop_condition": "binding published; aegis/wind/PEB state untouched",
+      "rollback": "revert the binding document",
+      "authority_boundary": "may not alter invariants, add transitions, or create an activation",
+
+      "peb_impact": "none"
+    },
+    {
+      "id": "D1",
+      "track": "D",
+      "title": "Keychains trigger-class -> event binding map",
+      "owner": "builder",
+      "dependencies": ["C1"],
+      "artifact": "moleculer/nexus-broker/services/keychain-snapshot.service.ts",
+      "evidence_outputs": [
+        "documented trigger-class table (resolution / peb / vision / legacy) next to TriggerEventContract",
+        "read-set and checkpoint binding rule per class"
+      ],
+      "stop_condition": "mapping documented in place; projection code path unchanged (comment-only edit)",
+      "rollback": "revert the comment block",
+      "authority_boundary": "may not add a trigger class at runtime or change idempotency",
+      "peb_impact": "none"
+    },
+    {
+      "id": "D2",
+      "track": "D",
+      "title": "Resolution JSONB classification",
+      "owner": "architect",
+      "dependencies": ["D1"],
+      "artifact": "schemas/convergence/resolution-jsonb-classification.v1.json",
+      "evidence_outputs": [
+        "one class per governed JSONB column (payload_only | queryable_identity | lineage | authority | projection)",
+        "governed-key preservation rule",
+        "temporal-semantics preservation rule"
+      ],
+      "stop_condition": "classification published; no migration applied, no column altered",
+      "rollback": "supersede with a new classification version",
+      "authority_boundary": "may not promote payload to authority or move a governed key into JSONB-only storage",
+      "peb_impact": "none"
+    },
+    {
+      "id": "D3",
+      "track": "D",
+      "title": "KG projection contract freeze",
+      "owner": "architect",
+      "dependencies": ["D2"],
+      "artifact": "typespec/convergence/kg-projection-contract-freeze.v1.json",
+      "evidence_outputs": [
+        "ownership matrix for Resolution, Shrapnel, Aegis, Semantics, Keychains",
+        "frozen section / relation / provenance rule set referencing schemas/decision-b-freeze/relation-vocabulary-map.json",
+        "seed gate that must pass before any graph seeding"
+      ],
+      "stop_condition": "freeze published; no seeding run, no graph rows written",
+      "rollback": "supersede the freeze file; no data to unwind",
+      "authority_boundary": "may not seed, and may not reassign a section or relation to a new owner",
+      "peb_impact": "none"
+    },
+    {
+      "id": "D4",
+      "track": "D",
+      "title": "Vision trigger-evidence registration",
+      "owner": "builder",
+      "dependencies": ["D1"],
+      "artifact": "python/vision/convergence/track-d-resolution-trigger-evidence.md",
+      "evidence_outputs": [
+        "enumerated vision.lifecycle / vision.decision / vision.receipt trigger kinds with source paths",
+        "read_set and payload field expectations",
+        "known representation_disagreement rows cited as observed evidence"
+      ],
+      "stop_condition": "emitter documented as evidence source only; no emitter code change",
+      "rollback": "revert the document",
+      "authority_boundary": "vision remains a satellite; no authority over work_request state",
+      "peb_impact": "none"
+    }
+  ],
+  "unfilled_evidence": [],
+  "evidence": [
+    {
+      "slot": "B1.transcript",
+      "path": "docs/convergence/evidence/b1-rehearsal-transcript.md",
+      "produced_by": "bin/convergence_rehearsal.py",
+      "environment": "isolated gateway on an ephemeral loopback port; throwaway PostgreSQL database; live :3100/:3103 untouched",
+      "authority": "non-authoritative rehearsal transcript"
+    },
+    {
+      "slot": "B2.receipt_chain_snapshot",
+      "path": "docs/convergence/evidence/b2-receipt-chain-snapshot.txt",
+      "produced_by": "bin/convergence_rehearsal.py",
+      "environment": "same run; receipts materialised in the throwaway store inside a rolled-back transaction",
+      "authority": "non-authoritative; live conduit receipt rows for rehearsal ids = 0"
+    },
+    {
+      "slot": "B2.rollback",
+      "path": "docs/convergence/evidence/b2-receipt-chain-snapshot.txt",
+      "produced_by": "bin/convergence_rehearsal.py",
+      "environment": "same run; ticket takeover claimed->stale->open plus REQUEUED, then transaction rollback",
+      "authority": "non-authoritative; rehearsal tables remaining = 0, throwaway database removed"
+    },
+    {
+      "slot": "D3.seed_gate_run",
+      "path": "docs/convergence/evidence/d3-seed-gate-output.txt",
+      "produced_by": "bin/convergence_seed_gate.py",
+      "environment": "read-only: artifact hashes, freeze contract test, vocabulary comparison",
+      "authority": "no seeding performed; gate result recorded, no graph rows written"
+    }
+  ],
+  "notes": [
+    "Evidence slots are produced by the cited commands; regenerate rather than edit.",
+    "Package IDs are stable; renames require a registry version bump."
+  ]
+}

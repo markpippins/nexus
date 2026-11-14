@@ -55,6 +55,27 @@ def test_list_subjects_reads_representation_table() -> None:
     assert subjects[0].attributes["frame_material"] == "steel"
 
 
+def test_list_subjects_unknown_read_adapter_fails_closed() -> None:
+    conn = FakeConn(
+        [[_row(schema_name="resolution", table_name="bike", read_adapter="mongodb")]]
+    )
+    adapter = SolNativeAdapter(dsn="", pool=FakePool(conn))
+    with pytest.raises(RuntimeError, match="read_adapter"):
+        _run(adapter.list_subjects("concept-bike"))
+
+
+def test_list_subjects_ambiguous_executable_representations_fail_closed() -> None:
+    conn = FakeConn(
+        [[
+            _row(schema_name="resolution", table_name="bike", read_adapter=None),
+            _row(schema_name="nebula", table_name="bike", read_adapter=None),
+        ]]
+    )
+    adapter = SolNativeAdapter(dsn="", pool=FakePool(conn))
+    with pytest.raises(RuntimeError, match="ambiguous executable representations"):
+        _run(adapter.list_subjects("concept-bike"))
+
+
 def test_list_shrapnel_facts_reads_eav() -> None:
     # The adapter queries object_instance+oav+field+value, then typed value
     # extension tables per type code.

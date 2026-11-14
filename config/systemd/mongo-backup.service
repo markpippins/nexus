@@ -1,0 +1,30 @@
+[Unit]
+# Nightly MongoDB backup: mongodump -> gzip archive, integrity gates
+# (gzip -t + mongorestore --dryRun), sha256 manifest, retention, stamp.
+# Closes architect handoff c9540d99 §3.1 — "3.4M keychain records exist with
+# zero recoverable copy" — and gives the 4.4 -> 8.0 migration a recurring
+# rollback net. Per architect decision 13600407: systemd user timers are the
+# single OS-level substrate; cron stays retired.
+Description=MongoDB nightly backup (verified, local disk)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# ExecStart MUST resolve at invocation time. A git-checkout path
+# (/home/codex/dev/nexus/bin/mongo-backup.sh) does not until the change is
+# merged, which made the unit fail with "Command ... is not executable: No such
+# file or directory" — including at 04:05. This points at the installed copy
+# that `bin/install-mongo-backup.sh` writes, so installing is the deploy step.
+ExecStart=%h/.local/lib/nexus/mongo-backup/mongo-backup.sh
+# The script reads the Mongo URI from nexus/.env; it never echoes it. Override
+# with a drop-in if the checkout lives elsewhere.
+Environment=MONGO_ENV_FILE=%h/dev/nexus/.env
+TimeoutStartSec=1h
+# No User=/Group=: this is a user unit and already runs as the invoking user.
+
+# The dump streams through `docker exec`; keep the unit quiet on success but
+# never hide a failure (systemd records it either way).
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

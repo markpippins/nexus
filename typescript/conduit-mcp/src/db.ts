@@ -63,6 +63,10 @@ import { Pool, PoolClient, types } from "pg";
 import { evaluateReleaseGate, ReleaseDecision } from "./release-gate";
 import { RippleAssignment } from "./ripple-classifier";
 import { CompareTarget } from "./compile-compare";
+import {
+  canonicalizeEventPayload,
+  toCanonicalEventType,
+} from "./runtime-kernel";
 
 // ── Keep timestamps as ISO strings ─────────────────────────────────
 // pg parses TIMESTAMPTZ into Date objects by default. Override to keep
@@ -1214,23 +1218,30 @@ const migrations: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_wre_created_at ON ${PG_SCHEMA}.work_request_events(created_at);
       `);
       // Backfill event log for existing pending work requests.
-      // Every existing WR with status 'pending' gets a synthetic WR_SUBMITTED event
-      // so the fold produces VALIDATED state, making them eligible for the decision loop.
+      // Every existing WR with status 'pending' gets a synthetic
+      // WORKREQUEST.CREATED event (WR_SUBMITTED transcoded at this write
+      // boundary — the runtime verb is preserved in the payload) so the fold
+      // produces VALIDATED state, making them eligible for the decision loop.
       // Skip identity-less rows (wr_id NULL/'' — e.g. the resolution seed
       // `wr-mongo-wiring`): they have no compile-unit identity, so they can't
       // carry an event-log entry (wr_id is the FK key). Backfilling them would
       // violate the NOT NULL constraint and brick fresh-schema bootstrap.
       await exec(`
         INSERT INTO ${PG_SCHEMA}.work_request_events (wr_id, event_type, payload, created_at)
-        SELECT wr_id, 'WR_SUBMITTED',
-               jsonb_build_object('backfill', true, 'original_status', status),
+        SELECT wr_id, 'WORKREQUEST.CREATED',
+               jsonb_build_object(
+                 'backfill', true,
+                 'original_status', status,
+                 'runtime_event_type', 'WR_SUBMITTED'
+               ),
                recorded_on_dt
         FROM ${VISION_SCHEMA}.work_requests
         WHERE status = 'pending'
           AND wr_id IS NOT NULL
           AND wr_id <> ''
           AND wr_id NOT IN (
-            SELECT wr_id FROM ${PG_SCHEMA}.work_request_events WHERE event_type = 'WR_SUBMITTED'
+            SELECT wr_id FROM ${PG_SCHEMA}.work_request_events
+            WHERE event_type IN ('WR_SUBMITTED', 'WORKREQUEST.CREATED')
           )
       `);
       // Also ensure the work_requests cache status reflects the initial folded state
@@ -1240,7 +1251,7 @@ const migrations: Migration[] = [
         WHERE wr.status = 'pending'
           AND wr.wr_id IN (
             SELECT wre.wr_id FROM ${PG_SCHEMA}.work_request_events wre
-            WHERE wre.event_type = 'WR_SUBMITTED'
+            WHERE wre.event_type IN ('WR_SUBMITTED', 'WORKREQUEST.CREATED')
               AND wr.wr_id = wre.wr_id
           )
       `);
@@ -1301,6 +1312,35 @@ const migrations: Migration[] = [
 
         CREATE INDEX IF NOT EXISTS idx_wrs_current_state
           ON ${PG_SCHEMA}.work_request_state(current_state);
+
+        -- Owned ledger state graph, generated from the kernel TRANSITION_TABLE
+        -- (LEDGER_STATE_GRAPH in runtime-kernel.ts). allowed_transitions() is
+        -- the authoritative lookup; migration 034 pins the same 11 edges and
+        -- verifies them against the kernel graph on the live/CI path.
+        CREATE TABLE IF NOT EXISTS ${PG_SCHEMA}.work_request_state_graph (
+          from_state TEXT NOT NULL,
+          to_state TEXT NOT NULL,
+          PRIMARY KEY (from_state, to_state)
+        );
+        INSERT INTO ${PG_SCHEMA}.work_request_state_graph (from_state, to_state) VALUES
+          ('PROPOSED','PLANNING'), ('PROPOSED','CANCELLED'),
+          ('PLANNING','PENDING'), ('PLANNING','CANCELLED'),
+          ('PENDING','IMPLEMENTING'), ('PENDING','CANCELLED'),
+          ('IMPLEMENTING','REVIEW'), ('IMPLEMENTING','FAILED'),
+          ('REVIEW','COMPLETED'), ('REVIEW','FAILED'), ('REVIEW','CANCELLED')
+        ON CONFLICT DO NOTHING;
+
+        CREATE OR REPLACE FUNCTION ${PG_SCHEMA}.allowed_transitions(from_state TEXT)
+        RETURNS TEXT[] AS $FN$
+        BEGIN
+          RETURN COALESCE(
+            (SELECT array_agg(to_state ORDER BY to_state)
+             FROM ${PG_SCHEMA}.work_request_state_graph
+             WHERE work_request_state_graph.from_state = allowed_transitions.from_state),
+            ARRAY[]::TEXT[]
+          );
+        END;
+        $FN$ LANGUAGE plpgsql STABLE;
       `);
 
       await exec(`
@@ -1609,11 +1649,52 @@ const migrations: Migration[] = [
   },
   {
     version: 19,
-    description: "Broaden work_request_events CHECK constraint to accept runtime kernel WR_* event types alongside existing Vision event types",
+    description: "Pin work_request_events CHECK to the canonical dot-namespaced WRP vocabulary (WR_* is transcoded at the write boundary, never stored)",
     up: async (exec) => {
+      // Transcode pre-cutover rows BEFORE the CHECK narrows (mirrors migration
+      // 034 step 1). Without this, a database still holding WR_* rows cannot
+      // accept the canonical CHECK and the whole bootstrap fails. The runtime
+      // verb is preserved in payload.runtime_event_type and transition rows
+      // carry the ledger new_state the projector requires.
+      await exec(`
+        UPDATE ${PG_SCHEMA}.work_request_events
+           SET payload = COALESCE(payload, '{}'::jsonb)
+                        || jsonb_build_object('runtime_event_type', event_type)
+                        || CASE event_type
+                             WHEN 'WR_VALIDATED' THEN jsonb_build_object('new_state', 'PLANNING')
+                             WHEN 'WR_QUEUED'    THEN jsonb_build_object('new_state', 'PENDING')
+                             WHEN 'WR_CLAIMED'   THEN jsonb_build_object('new_state', 'IMPLEMENTING')
+                             WHEN 'WR_ACKED'     THEN jsonb_build_object('new_state', 'REVIEW')
+                             WHEN 'WR_SETTLED'   THEN jsonb_build_object('new_state', 'COMPLETED')
+                             WHEN 'WR_REJECTED'  THEN jsonb_build_object('new_state', 'CANCELLED')
+                             WHEN 'WR_FAILED'    THEN jsonb_build_object('new_state', 'FAILED')
+                             WHEN 'WR_NOOP'      THEN jsonb_build_object('new_state', 'CANCELLED')
+                             WHEN 'WR_DEFERRED'  THEN jsonb_build_object('new_state', 'CANCELLED')
+                             ELSE '{}'::jsonb
+                           END,
+               event_type = CASE event_type
+                             WHEN 'WR_SUBMITTED' THEN 'WORKREQUEST.CREATED'
+                             WHEN 'WR_VALIDATED' THEN 'STATE.TRANSITION_COMMITTED'
+                             WHEN 'WR_QUEUED'    THEN 'STATE.TRANSITION_COMMITTED'
+                             WHEN 'WR_CLAIMED'   THEN 'STATE.TRANSITION_COMMITTED'
+                             WHEN 'WR_ACKED'     THEN 'STATE.TRANSITION_COMMITTED'
+                             WHEN 'WR_SETTLED'   THEN 'STATE.TRANSITION_COMMITTED'
+                             WHEN 'WR_REJECTED'  THEN 'STATE.TRANSITION_COMMITTED'
+                             WHEN 'WR_FAILED'    THEN 'STATE.TRANSITION_COMMITTED'
+                             WHEN 'WR_NOOP'      THEN 'STATE.TRANSITION_COMMITTED'
+                             WHEN 'WR_DEFERRED'  THEN 'STATE.TRANSITION_COMMITTED'
+                             ELSE event_type
+                           END
+         WHERE event_type IN (
+           'WR_SUBMITTED','WR_VALIDATED','WR_QUEUED','WR_CLAIMED','WR_ACKED',
+           'WR_SETTLED','WR_REJECTED','WR_FAILED','WR_NOOP','WR_DEFERRED'
+         );
+      `);
       await exec(`
         ALTER TABLE ${PG_SCHEMA}.work_request_events
         DROP CONSTRAINT IF EXISTS work_request_events_event_type_check;
+        ALTER TABLE ${PG_SCHEMA}.work_request_events
+        DROP CONSTRAINT IF EXISTS chk_event_type;
       `);
       await exec(`
         ALTER TABLE ${PG_SCHEMA}.work_request_events
@@ -1622,9 +1703,7 @@ const migrations: Migration[] = [
           'WORKREQUEST.CREATED','VISION.IR_PRODUCED',
           'STATE.TRANSITION_PROPOSED','STATE.TRANSITION_APPROVED','STATE.TRANSITION_COMMITTED',
           'EXECUTION.STARTED','EXECUTION.COMPLETED','EXECUTION.FAILED',
-          'SYSTEM.CRON_TRIGGERED',
-          'WR_SUBMITTED','WR_VALIDATED','WR_QUEUED','WR_CLAIMED','WR_ACKED','WR_SETTLED',
-          'WR_REJECTED',          'WR_FAILED','WR_NOOP','WR_DEFERRED'
+          'SYSTEM.CRON_TRIGGERED'
         ));
       `);
     },
@@ -5064,6 +5143,14 @@ export async function appendEvent(
 
     const eventId = crypto.randomUUID();
 
+    // Write-boundary transcode (migration 034): the kernel speaks WR_*; the
+    // ledger stores ONLY canonical dot-namespaced values. The exact runtime
+    // verb travels in payload.runtime_event_type so the read boundary can map
+    // back losslessly, and transition events carry the ledger new_state the
+    // projector requires. A stray WR_* write fails loudly at the CHECK.
+    const canonicalEventType = toCanonicalEventType(eventType);
+    const storedPayload = canonicalizeEventPayload(eventType, payload);
+
     // T19: populate correlation_id (the WR's identity) and causation_id
     // (the immediately-preceding event) so the WR's events form a queryable
     // causal chain under one correlation identity. correlation_id = the
@@ -5084,7 +5171,13 @@ export async function appendEvent(
       `INSERT INTO ${PG_SCHEMA}.work_request_events
          (event_id, work_request_id, event_type, payload, actor_type, actor_id, correlation_id, causation_id)
        VALUES (@eventId::uuid, @uuid::uuid, @eventType, @payload::jsonb, 'system', '', @uuid::uuid, @prevEventId::uuid)`,
-      { eventId, uuid, eventType, payload: JSON.stringify(payload), prevEventId },
+      {
+        eventId,
+        uuid,
+        eventType: canonicalEventType,
+        payload: JSON.stringify(storedPayload),
+        prevEventId,
+      },
     );
 
     const statusMap: Record<string, string> = {
@@ -5104,7 +5197,8 @@ export async function appendEvent(
       "EXECUTION.COMPLETED": "completed",
       "EXECUTION.FAILED": "failed",
     };
-    const newStatus = statusMap[eventType] || "pending";
+    const newStatus =
+      statusMap[eventType] || statusMap[canonicalEventType] || "pending";
     await tQuery(
       client,
       `UPDATE ${VISION_SCHEMA}.work_requests SET status = @newStatus WHERE work_request_uuid = @uuid`,
@@ -5132,7 +5226,10 @@ export async function appendEvent(
       client,
       aggregateType: "work_request",
       aggregateId: uuid,
-      eventType: kernelEventTypeMap[eventType] || "transition.committed",
+      eventType:
+        kernelEventTypeMap[eventType] ||
+        kernelEventTypeMap[canonicalEventType] ||
+        "transition.committed",
       actor: "conduit-mcp",
       authority: "builder",
       payload: { from_status: fromStatus, to_status: newStatus, conduit_event_type: eventType, event_id: eventId },
@@ -5155,6 +5252,10 @@ export async function appendLedgerEvent(
   } = {},
 ): Promise<string> {
   const eventId = crypto.randomUUID();
+  // Same write-boundary transcode as appendEvent: a caller may hand us a
+  // kernel WR_* verb, but the ledger only ever stores canonical values.
+  const canonicalEventType = toCanonicalEventType(eventType);
+  const storedPayload = canonicalizeEventPayload(eventType, payload);
   await q(
     `INSERT INTO ${PG_SCHEMA}.work_request_events
        (event_id, work_request_id, event_type, event_version,
@@ -5164,11 +5265,11 @@ export async function appendLedgerEvent(
     {
       eventId,
       workRequestId,
-      eventType,
+      eventType: canonicalEventType,
       eventVersion: opts.eventVersion ?? 1,
       correlationId: opts.correlationId || null,
       causationId: opts.causationId || null,
-      payload: JSON.stringify(payload),
+      payload: JSON.stringify(storedPayload),
       actorType: opts.actorType ?? "system",
       actorId: opts.actorId ?? "",
     },
