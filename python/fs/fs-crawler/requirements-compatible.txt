@@ -3,7 +3,7 @@ fastapi==0.104.1
 uvicorn[standard]==0.24.0
 
 # Database Drivers
-motor==3.3.2  # Async MongoDB
+motor==3.7.1  # Async MongoDB
 redis==5.0.1
 sqlalchemy>=2.0.36
 aiomysql==0.3.0
@@ -14,7 +14,7 @@ pydantic-settings>=2.1.0
 
 # Media Processing Libraries
 mutagen==1.47.0  # Audio metadata
-Pillow>=12.3.0   # Image processing (security floor — GHSA advisories on <12.3)
+Pillow>=13.0.0   # Image processing (security floor — GHSA advisories on <12.3)
 ExifRead==3.0.0  # EXIF data
 python-magic==0.4.27  # File type detection
 
