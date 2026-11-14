@@ -243,8 +243,15 @@ class WorkflowWiringTest(unittest.TestCase):
         wf_path = os.path.join(REPO_ROOT, ".github", "workflows", "vanadium-sonar.yml")
         with open(wf_path, "r", encoding="utf-8") as fh:
             wf = fh.read()
-        # pre-flight step exists, runs before the scan
+        # pre-flight step exists, runs before the scan and receives the same
+        # secret-backed host URL required by the CLI contract.
         self.assertIn("bin/ci/sonar_preflight.py", wf)
+        self.assertIn(
+            "id: sonar-preflight\n"
+            "        env:\n"
+            "          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}",
+            wf,
+        )
         # scan + scanner-install steps are gated on the probe result
         self.assertIn("steps.sonar-preflight.outputs.ready", wf)
         # not-ready path emits a warning annotation, job stays green
