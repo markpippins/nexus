@@ -210,7 +210,11 @@ def _loads_loose(content: str) -> dict:
     Strategy: direct parse -> fence strip -> raw_decode scan from every '{'
     until one yields a complete dict."""
     text = content.strip()
-    text = re.sub(r"(?:^```(?:json)?\s*|\s*```$)", "", text)
+    # Each alternative is grouped explicitly (Sonar S5850): without it the
+    # reader cannot tell whether the anchors bind to one branch or to the
+    # whole alternation, and the intent here is "strip a leading fence OR a
+    # trailing fence", anchored at the string edges.
+    text = re.sub(r"(?:^```(?:json)?\s*)|(?:\s*```$)", "", text)
     try:
         return json.loads(text)
     except json.JSONDecodeError:
