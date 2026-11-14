@@ -61,27 +61,33 @@ migration template for the eventual `nebula` home.
 ## 2. Measured overlap with the agent-record types
 
 `nebula.agent_records` is a **view** over `nebula.agent_records_history`
-(current bitemporal slice). It holds **16,628** rows across the nine allowed
+(current bitemporal slice). It holds **16,746** rows across the nine allowed
 `record_type` values (a `CHECK` constraint on the history table, re-verified
-2026-11-13). No `Decision`, `Ticket`, `Receipt`, `AgentRecord`, `Report`,
-`Inspection` or `Analysis` concept exists in `resolution.concept`; the only
-matching concept among those names is `Assessment`.
+2026-11-14). At the time of the original measurement (2026-11-13, before V216
+was applied) no `Decision`, `Ticket`, `Receipt`, `AgentRecord`, `Report`,
+`Inspection` or `Analysis` concept existed in `resolution.concept` and the only
+matching concept among those names was `Assessment`. That sentence is now
+superseded by the Phase 2 migration: `Ticket`, `Receipt`, `AgentRecord`,
+`Decision`, `Agenda`, `AgendaItem` and `Assessment` are all registered as
+concepts today (§6). The classification in this section is unchanged — what
+changed is that the registry now *describes* the overlap instead of being
+silent about it.
 
 | `record_type` | Rows | Existing shape | Relationship |
 |---|---:|---|---|
-| `report` | 10,521 | none | No domain shape |
-| `engineering_log` | 2,756 | `nebula.work_sessions` (6), `nebula.executions` (0) | Operational adjacency only; not governance |
-| `response` | 641 | `Answer` concept → `resolution.open_question_answer` (0) | Partial — an answer is a settled statement, a response is narrative |
-| `analysis` | 629 | `resolution.observation` (6), `nebula.observations` (0) | Adjacent: an observation is an event/finding, an analysis is reasoning over it |
-| `assessment` | 596 | `nebula.assessments` (0), `resolution.assessment` (1) | **Same noun, different payload** — see §2.1 |
-| `decision` | 526 | `peb.decisions` (16 ADRs) | **Same artifact, two representations, no identity link** — see §2.2 |
+| `report` | 10,554 | none | No domain shape |
+| `engineering_log` | 2,809 | `nebula.work_sessions` (6), `nebula.executions` (0) | Operational adjacency only; not governance |
+| `response` | 644 | `Answer` concept → `resolution.open_question_answer` (0) | Partial — an answer is a settled statement, a response is narrative |
+| `analysis` | 633 | `resolution.observation` (6), `nebula.observations` (0) | Adjacent: an observation is an event/finding, an analysis is reasoning over it |
+| `assessment` | 612 | `nebula.assessments` (0), `resolution.assessment` (1) | **Same noun, different payload** — see §2.1 |
+| `decision` | 530 | `peb.decisions` (16 ADRs) | **Same artifact, two representations, no identity link** — see §2.2 |
 | `architecture_note` | 480 | `nebula.specifications` (1); `architect_specs` views in `nebula` and `scratch` | Adjacent: a specification is settled, a note is rationale |
-| `inspection` | 346 | none named; assessment/attestation-shaped | **Subtype, not a table** |
+| `inspection` | 351 | none named; assessment/attestation-shaped | **Subtype, not a table** |
 | `prompt` | 133 | operator prompt store | Weak; provenance-only, never keychained |
 
 Row counts are a snapshot, not a stable contract; the *relationship* column is
 the claim this note is responsible for. `resolution.ticket` currently holds 0
-rows and `resolution.receipt` 1,997 — the tables are canonical, the near-empty
+rows and `resolution.receipt` 1,998 — the tables are canonical, the near-empty
 one is still the physical home named by the plan.
 
 ### 2.1 Assessment family
@@ -95,7 +101,7 @@ and `forum_post_id`. It holds **0 rows**, so adopting it has no backfill risk.
 (`rationale`, `dimensions_used`, `dimensions_total`, `resolved_at`). That is a
 representation difference, not a second concept.
 
-`inspection` (346 records) has no table of its own. It is assessment-shaped:
+`inspection` (351 records) has no table of its own. It is assessment-shaped:
 subject → finding → confidence → evidence. It becomes
 `assessment_kind = 'inspection'`, not `nebula.inspections`.
 
@@ -332,7 +338,7 @@ Every number and physical surface in §2–§3 was re-read from the live `nexus`
 database on 2026-11-13, not carried over from the 2026-11-12 pass:
 
 - `nebula.agent_records` (view) grouped by `record_type` → the nine rows in §2,
-  total 16,628.
+  total 16,746.
 - `peb.decisions` → 16 rows, all `accepted`; joined to `decision` agent records
   on title → 14 pairs under both raw and case/trim-normalised equality; joined
   on `id` → 0 shared ids.
@@ -345,6 +351,23 @@ database on 2026-11-13, not carried over from the 2026-11-12 pass:
   `crb_rel_legacy_uq`) present.
 - `resolution.concept` → `Assessment` present; the six V216 concepts present
   (live since 2026-11-13); V217 markers present and ledger row written.
+- **Re-verified 2026-11-14 after V216/V217 went live.** The `record_type`
+  counts and the `resolution.receipt` total drifted upward with normal use and
+  were refreshed in place (`report` 10,521→10,554, `engineering_log`
+  2,756→2,809, `response` 641→644, `analysis` 629→633, `assessment` 596→612,
+  `decision` 526→530, `inspection` 346→351, total 16,628→16,746, `receipt`
+  1,997→1,998). `architecture_note` (480) and `prompt` (133) were unchanged.
+  The §2.2 decision figures reproduced **exactly** on re-measurement: 16 ADRs,
+  all `accepted`, 14 title matches under both raw and case/trim-normalised
+  equality, 0 shared ids. `nebula.assessments` 0, `resolution.assessment` 1,
+  `resolution.ticket` 0, `nebula.work_sessions` 6, `nebula.executions` 0,
+  `resolution.open_question_answer` 0, `resolution.observation` 6,
+  `nebula.observations` 0, `nebula.specifications` 1, `nebula.attestations` 10,
+  `nebula.requirement_verifications` 0 and `shrapnel.object_instance` 4,399
+  all still hold. One §2 sentence was factually stale and is corrected above:
+  it claimed no `Decision`/`Ticket`/`Receipt`/`AgentRecord` concept existed,
+  which V216's live apply had already made untrue. No other claim required
+  correction, and no figure in this note was carried over unverified.
 - `pg_class`/`pg_get_viewdef` → `nebula.agent_records`, `nebula.assessments`,
   `nebula.work_requests`, `nebula.architect_specs` are views over `*_history`;
   `Answer` resolves to `resolution.open_question_answer`.
