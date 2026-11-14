@@ -26,7 +26,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
     ])
 log = logging.getLogger("qwen-extract")
 
-OLLAMA_URL = "http://192.168.1.202:11434/api/chat"
+import os
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
+OLLAMA_URL = f"{OLLAMA_BASE_URL}/api/chat"
 MODEL = "qwen2.5-coder:latest"  # 7.6B code-optimized
 
 CODE_HARVESTER_PROMPT = """You are an advanced Software Archaeologist and Technical Analyst. Your primary mission is to extract actionable engineering intent and harvest implementable code blocks from unstructured developer chat transcripts.

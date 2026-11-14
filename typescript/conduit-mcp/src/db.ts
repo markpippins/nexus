@@ -6103,10 +6103,13 @@ export async function listGovernanceEvents(filters: {
 
 // ── Seed defaults ───────────────────────────────────────────────────
 
+// Local model-server default for conduit; override per deployment unit via OLLAMA_URL.
+const CONDUIT_OLLAMA_DEFAULT = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
+
 const DEFAULT_PROVIDERS = [
   { name: "OpenAI", type: "openai", endpoint_url: "https://api.openai.com/v1" },
   { name: "Anthropic", type: "anthropic", endpoint_url: "https://api.anthropic.com/v1" },
-  { name: "Ollama", type: "ollama", endpoint_url: "http://192.168.1.202:11434" },
+  { name: "Ollama", type: "ollama", endpoint_url: CONDUIT_OLLAMA_DEFAULT },
   { name: "OpenCode", type: "opencode", endpoint_url: "http://localhost:3100" },
   { name: "Codex", type: "codex", endpoint_url: "" },
 ];
