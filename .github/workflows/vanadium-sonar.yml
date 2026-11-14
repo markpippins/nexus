@@ -146,18 +146,25 @@ jobs:
         run: |
           # SONAR_TOKEN env var is honored by the scanner; do not also pass
           # -Dsonar.login (duplicate-token warning).
-          # sonar.projectVersion is the anchor for the project's
-          # new-code period (PREVIOUS_VERSION). Without it every analysis
-          # recorded version "not provided", so no version event ever
-          # advanced and "new code" stayed pinned to an old analysis — the
+          # sonar.projectVersion is the anchor for the project's new-code
+          # period (PREVIOUS_VERSION). Without it every analysis recorded
+          # version "not provided", no version event ever advanced, and the
           # gate re-judged months of settled history as new (2026-11-14).
-          # Using the scanned commit keeps the window at "changed since the
-          # previous scan", which is what a merge gate should measure. The
-          # value comes from env, never from an inline expression in shell source.
+          #
+          # The version must NOT change per scan. Sonar starts a version at
+          # the analysis that declares it, so a per-commit version leaves the
+          # leak period empty on every single run — a permanently vacuous
+          # green gate (observed 2026-11-14 with "$GITHUB_SHA"). One version
+          # per calendar month keeps the window bounded (changes since that
+          # month's first scan) while remaining stable across runs.
+          #
+          # The value comes from env, never from an inline expression in
+          # shell source.
+          SONAR_NEW_CODE_VERSION="$(date -u +%Y.%m)"
           "$HOME/bin/sonar-scanner" \
             -Dsonar.host.url="$SONAR_HOST_URL" \
             -Dsonar.projectKey=nexus \
-            -Dsonar.projectVersion="$GITHUB_SHA" \
+            -Dsonar.projectVersion="$SONAR_NEW_CODE_VERSION" \
             -Dsonar.projectBaseDir="$GITHUB_WORKSPACE" \
             -Dsonar.qualitygate.wait=true \
             -Dsonar.qualitygate.timeout=600
