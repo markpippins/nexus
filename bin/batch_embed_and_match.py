@@ -27,7 +27,8 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 log = logging.getLogger("batch_embed")
 
 NEBULA_API = "http://localhost:3101/api"
-OLLAMA_URL = "http://192.168.1.202:11434/api/embeddings"
+import os
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/") + "/api/embeddings"
 EMBED_MODEL = "nomic-embed-text"
 DOCKER_PSQL = ["docker", "exec", "-i", "pgvector_db", "psql", "-U", "pguser", "-d", "nexus", "-v", "ON_ERROR_STOP=1"]
 

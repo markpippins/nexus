@@ -22,7 +22,7 @@
 #
 # PREREQUISITES:
 #   - Docker container `pgvector_db` running with the nexus database
-#   - Ollama running on helium (192.168.1.202):11434 with `snowflake-arctic-embed2` pulled
+#   - Ollama running locally (127.0.0.1):11434 with `snowflake-arctic-embed2` pulled
 #   - Python venv at nexus/python/rover/.venv activated (or the script will
 #     activate it for you)
 #   - Nebula REST API reachable at localhost:3101 (for --apply via API)
@@ -89,15 +89,16 @@ check_prereqs() {
     log_info "  ✓ pgvector_db container is running"
 
     # Check Ollama
-    if ! curl -sf http://192.168.1.202:11434/api/tags >/dev/null 2>&1; then
-        log_error "Ollama is not reachable at 192.168.1.202:11434."
+          OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434}"
+      if ! curl -sf "${OLLAMA_URL}/api/tags" >/dev/null 2>&1; then
+          log_error "Ollama is not reachable at ${OLLAMA_URL}."
         log_error "Start it with: ollama serve"
         exit 1
     fi
     log_info "  ✓ Ollama is reachable"
 
     # Check embedding model
-    if ! curl -sf http://192.168.1.202:11434/api/tags | grep -q "snowflake-arctic-embed2"; then
+          if ! curl -sf "${OLLAMA_URL}/api/tags" | grep -q "snowflake-arctic-embed2"; then
         log_warn "  Model 'snowflake-arctic-embed2' not found in Ollama."
         log_warn "  Pull it with: ollama pull snowflake-arctic-embed2"
     else

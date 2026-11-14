@@ -1462,7 +1462,7 @@ export default class HarnessWorker extends Service {
   }
 
   private async executeOllama(prompt: string, role: string, model: string | undefined, timeout_ms: number): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-    const ollamaUrl = process.env.OLLAMA_URL || "http://192.168.1.202:11434";
+    const ollamaUrl = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
     const effectiveModel = model || process.env.OLLAMA_MODEL || "qwen2.5:0.5b";
     try {
       const controller = new AbortController();

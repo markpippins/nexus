@@ -49,7 +49,7 @@ log = logging.getLogger("unified_search")
 # local ollama on helium (default) -> Gemini -> NVIDIA NIM -> OpenRouter.
 # These constants are legacy defaults; the actual embed call uses
 # embed_client.embed_one() which reads its own env-driven provider chain.
-OLLAMA_URL = os.environ.get('EMBED_OLLAMA_URL', 'http://192.168.1.202:11434')
+OLLAMA_URL = os.environ.get('EMBED_OLLAMA_URL', 'http://127.0.0.1:11434')
 EMBED_MODEL = os.environ.get('EMBED_MODEL', 'nomic-embed-text')
 DOCKER_PSQL = [
     "docker", "exec", "-i", "pgvector_db",

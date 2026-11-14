@@ -83,7 +83,7 @@ fi
 if [[ ! -f "${V083_SQL}" ]]; then
   echo "ERROR: V083 backfill SQL missing: ${V083_SQL}" >&2; exit 1
 fi
-if [[ "${SKIP_EMBED}" != "1" ]] && ! curl -sf --max-time 5 "http://192.168.1.202:11434/api/tags" | grep -q nomic-embed-text; then
+if [[ "${SKIP_EMBED}" != "1" ]] && ! curl -sf --max-time 5 "${OLLAMA_URL:-http://127.0.0.1:11434}/api/tags" | grep -q nomic-embed-text; then
   echo "ERROR: Ollama unreachable or nomic-embed-text not pulled (or use --skip-embed)" >&2; exit 1
 fi
 

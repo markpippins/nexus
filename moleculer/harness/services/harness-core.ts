@@ -413,7 +413,7 @@ function startWatchdog(): void {
       // Unload Ollama model if one was in use
       if (session.model) {
         try {
-          const ollamaUrl = process.env.OLLAMA_URL || "http://192.168.1.202:11434";
+          const ollamaUrl = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
           await fetch(`${ollamaUrl}/api/generate`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1628,7 +1628,7 @@ async function executeOllama(
   model: string | undefined,
   timeout_ms: number
 ): Promise<HarnessExecResult> {
-  const ollamaUrl = process.env.OLLAMA_URL || "http://192.168.1.202:11434";
+  const ollamaUrl = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
   const effectiveModel = model || process.env.OLLAMA_MODEL || "qwen2.5:0.5b";
   // Defense-in-depth clamp inside the executor too (CodeQL
   // js/resource-exhaustion remediation): even if a future call site

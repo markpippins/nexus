@@ -96,8 +96,8 @@ def _openrouter_key():
 
 
 def _ollama_host():
-    # Default rehomed to helium (192.168.1.202); env still overrides.
-    return os.environ.get("OLLAMA_EMBED_HOST", "http://192.168.1.202:11434")
+          # Default to the local ollama server; env still overrides.
+      return os.environ.get("OLLAMA_EMBED_HOST", "http://127.0.0.1:11434")
 
 
 def _chunk(text: str, limit: int = LOCAL_CHUNK_CHARS) -> list[str]:
@@ -223,7 +223,7 @@ def _embed_ollama(texts: list[str]) -> list[list[float]]:
 
 
 _TIERS = [
-    ("ollama-local", _embed_ollama),  # DEFAULT: helium (192.168.1.202) — user directive
+          ("ollama-local", _embed_ollama),  # DEFAULT: local ollama (127.0.0.1:11434)
     ("gemini", _embed_gemini),        # 768-dim, dimension-compatible external fallback
     ("nim", _embed_nim),              # hosted NIM models are 1024-dim -> dim-guard rejects
     ("openrouter", _embed_openrouter),
