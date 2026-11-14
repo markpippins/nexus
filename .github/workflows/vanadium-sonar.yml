@@ -23,13 +23,18 @@ jobs:
 
       - name: Pre-flight — is the SonarQube server reachable?
         id: sonar-preflight
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         # DBA resilience fix (record f8b7f689): the job runs on label
         # [self-hosted, vanadium]; when the vanadium runner is offline
         # (laptop off the home network) a titanium runner may pick it up,
         # and sonar-scanner then fails against the unreachable server —
         # a network condition masquerading as a code failure, red on every
-        # PR and on main. The probe checks DNS, TCP, and the SonarQube
-        # liveness endpoint. NOT READY -> ::warning:: annotation and every
+        # PR and on main. The preflight must receive SONAR_HOST_URL just like
+        # the scan step; otherwise the probe reports a workflow-contract error
+        # and silently skips all coverage/scanner work even on the home LAN.
+        # The probe checks DNS, TCP, and the SonarQube liveness endpoint.
+        # NOT READY -> ::warning:: annotation and every
         # scan step below is skipped (job green). Reachable -> proceed
         # exactly as before; the quality gate still fails real problems.
         run: |
