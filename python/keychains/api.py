@@ -70,10 +70,7 @@ def agent_records_status(store: KeychainStore) -> dict[str, Any]:
     """Current contextual-projection status for ``agent-records``."""
 
     active = store.active_checkpoint()
-    if active and active.get("checkpoint_id"):
-        latest = store.latest_committed_checkpoint()
-    else:
-        latest = store.latest_committed_checkpoint()
+    latest = store.latest_committed_checkpoint()
 
     if latest is not None and latest.get("entryCount") is not None:
         entry_count = int(latest["entryCount"])

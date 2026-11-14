@@ -252,6 +252,11 @@ class WorkflowWiringTest(unittest.TestCase):
             "          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}",
             wf,
         )
+        # The scan must anchor the new-code period (PREVIOUS_VERSION) to the
+        # commit under scan. Without a projectVersion every analysis recorded
+        # "not provided", no version event advanced, and the gate re-judged
+        # months of settled history as new code (2026-11-14).
+        self.assertIn('-Dsonar.projectVersion="$GITHUB_SHA"', wf)
         # scan + scanner-install steps are gated on the probe result
         self.assertIn("steps.sonar-preflight.outputs.ready", wf)
         # not-ready path emits a warning annotation, job stays green

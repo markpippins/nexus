@@ -146,9 +146,18 @@ jobs:
         run: |
           # SONAR_TOKEN env var is honored by the scanner; do not also pass
           # -Dsonar.login (duplicate-token warning).
+          # sonar.projectVersion is the anchor for the project's
+          # new-code period (PREVIOUS_VERSION). Without it every analysis
+          # recorded version "not provided", so no version event ever
+          # advanced and "new code" stayed pinned to an old analysis — the
+          # gate re-judged months of settled history as new (2026-11-14).
+          # Using the scanned commit keeps the window at "changed since the
+          # previous scan", which is what a merge gate should measure. The
+          # value comes from env, never from an inline expression in shell source.
           "$HOME/bin/sonar-scanner" \
             -Dsonar.host.url="$SONAR_HOST_URL" \
             -Dsonar.projectKey=nexus \
+            -Dsonar.projectVersion="$GITHUB_SHA" \
             -Dsonar.projectBaseDir="$GITHUB_WORKSPACE" \
             -Dsonar.qualitygate.wait=true \
             -Dsonar.qualitygate.timeout=600
