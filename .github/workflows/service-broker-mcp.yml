@@ -1,0 +1,37 @@
+name: service-broker-mcp build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'typescript/service-broker-mcp/**'
+      - '.github/workflows/service-broker-mcp.yml'
+  pull_request:
+    branches: ['**']
+    paths:
+      - 'typescript/service-broker-mcp/**'
+      - '.github/workflows/service-broker-mcp.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  service-broker-mcp-build:
+    name: service-broker-mcp (Zod 4 + TypeScript build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: typescript/service-broker-mcp
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install package dependencies
+        run: npm install --no-audit --no-fund --no-package-lock
+      - name: Verify resolved Zod major version
+        run: node -e 'const v = require("zod/package.json").version; console.log(`Resolved zod ${v}`); if (!v.startsWith("4.")) process.exit(1)'
+      - name: Build
+        run: npm run build
