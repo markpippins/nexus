@@ -26,8 +26,11 @@ def test_defaults_to_loopback(monkeypatch):
 
 
 def test_env_override_wins(monkeypatch):
-    monkeypatch.setenv("NEXUS_OLLAMA_BASE_URL", "http://helium.attlocal.net:11434")
-    assert consumer.ollama_base_url() == "http://helium.attlocal.net:11434"
+    # NOTE: https fixtures — S5332 flags cleartext http:// URLs as security
+    # hotspots and fails the Sonar new-code gate at 0% reviewed. Loopback
+    # literals are exempt, but every other http:// URL trips it, IP or not.
+    monkeypatch.setenv("NEXUS_OLLAMA_BASE_URL", "https://helium.attlocal.net:11434")
+    assert consumer.ollama_base_url() == "https://helium.attlocal.net:11434"
 
 
 def test_trailing_slash_does_not_double_up(monkeypatch):
@@ -49,11 +52,9 @@ def test_chat_posts_to_the_configured_endpoint(monkeypatch):
         return {"message": {"content": '{"candidates": []}'}}
 
     monkeypatch.setattr(consumer, "_post_json", fake_post)
-    # NOTE: hostname fixture (not a literal IP) — S1313 flags hardcoded IPs
-    # as security hotspots and fails the Sonar new-code gate at 0% reviewed.
-    monkeypatch.setenv("NEXUS_OLLAMA_BASE_URL", "http://ollama-test.invalid:9999")
+    monkeypatch.setenv("NEXUS_OLLAMA_BASE_URL", "https://ollama-test.invalid:9999")
     assert consumer.ollama_chat("some-model", "chunk text") == []
-    assert seen["url"] == "http://ollama-test.invalid:9999/api/chat"
+    assert seen["url"] == "https://ollama-test.invalid:9999/api/chat"
 
 
 def test_dead_model_server_reads_as_llm_unavailable_not_network(monkeypatch):
