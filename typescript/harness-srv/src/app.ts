@@ -72,6 +72,10 @@ import { join, resolve } from "path";
 import { v4 as uuidv4 } from "uuid";
 
 const execFileAsync = promisify(execFile);
+
+// Local model-server default for harness-srv; override per deployment unit via OLLAMA_URL.
+const HARNESS_OLLAMA_DEFAULT = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
+
 export const app = express();
 app.use(express.json());
 
@@ -491,7 +495,7 @@ export function startWatchdog(): void {
       // Unload Ollama model if one was in use
       if (session.model) {
         try {
-          const ollamaUrl = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
+          const ollamaUrl = HARNESS_OLLAMA_DEFAULT;
           await fetch(`${ollamaUrl}/api/generate`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1912,7 +1916,7 @@ async function executeOllama(
   model: string | undefined,
   timeout_ms: number
 ): Promise<HarnessExecResult> {
-  const ollamaUrl = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
+  const ollamaUrl = HARNESS_OLLAMA_DEFAULT;
   const effectiveModel = model || process.env.OLLAMA_MODEL || "qwen2.5:0.5b";
   // Defense-in-depth clamp inside the executor too (CodeQL
   // js/resource-exhaustion remediation): even if a future call site

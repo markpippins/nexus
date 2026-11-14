@@ -1622,10 +1622,13 @@ export type { ResolvedRoleConfig as RoleConfigResolved };
 
 // ── Seed defaults ───────────────────────────────────────────────────
 
+// Local model-server default for tackle-mcp; override per deployment unit via OLLAMA_URL.
+const TACKLE_MCP_OLLAMA_DEFAULT = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
+
 const DEFAULT_PROVIDERS = [
   { name: "OpenAI", type: "openai", endpoint_url: "https://api.openai.com/v1" },
   { name: "Anthropic", type: "anthropic", endpoint_url: "https://api.anthropic.com/v1" },
-  { name: "Ollama", type: "ollama", endpoint_url: "http://127.0.0.1:11434" },
+  { name: "Ollama", type: "ollama", endpoint_url: TACKLE_MCP_OLLAMA_DEFAULT },
   { name: "OpenCode", type: "opencode", endpoint_url: "http://localhost:3100" },
   { name: "Codex", type: "codex", endpoint_url: "" },
 ];
