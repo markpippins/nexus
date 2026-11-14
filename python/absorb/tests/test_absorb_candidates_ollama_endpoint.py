@@ -49,9 +49,11 @@ def test_chat_posts_to_the_configured_endpoint(monkeypatch):
         return {"message": {"content": '{"candidates": []}'}}
 
     monkeypatch.setattr(consumer, "_post_json", fake_post)
-    monkeypatch.setenv("NEXUS_OLLAMA_BASE_URL", "http://10.1.2.3:9999")
+    # NOTE: hostname fixture (not a literal IP) — S1313 flags hardcoded IPs
+    # as security hotspots and fails the Sonar new-code gate at 0% reviewed.
+    monkeypatch.setenv("NEXUS_OLLAMA_BASE_URL", "http://ollama-test.invalid:9999")
     assert consumer.ollama_chat("some-model", "chunk text") == []
-    assert seen["url"] == "http://10.1.2.3:9999/api/chat"
+    assert seen["url"] == "http://ollama-test.invalid:9999/api/chat"
 
 
 def test_dead_model_server_reads_as_llm_unavailable_not_network(monkeypatch):
