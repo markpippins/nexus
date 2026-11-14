@@ -99,6 +99,31 @@ If the chunk contains no actionable intent, return {"candidates": []}."""
 
 # ── HTTP helpers ─────────────────────────────────────────────────────
 
+# Ollama endpoint. Loopback by default: it used to be a hardcoded LAN address,
+# so when DHCP moved the model host every chunk came back connection-refused —
+# indistinguishable from a backend outage, and fixable only by editing code.
+# NEXUS_OLLAMA_BASE_URL points absorb at a model server elsewhere instead.
+DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434"
+
+
+def ollama_base_url() -> str:
+    """Resolve the Ollama base URL at call time, not import time.
+
+    The env var is set per systemd unit and tests vary it without reimporting
+    the module, so the lookup belongs at the call site."""
+    return (os.environ.get("NEXUS_OLLAMA_BASE_URL") or DEFAULT_OLLAMA_BASE_URL).rstrip("/")
+
+
+def _transport_error_class(url: str) -> str:
+    """A refused or timed-out connection to the model server is an LLM outage,
+    not a network one; the class decides whether the batch backs off or the
+    backend is declared unavailable. Covers the default port and every
+    configured base URL."""
+    if "11434" in url or url.startswith(ollama_base_url()):
+        return "E_TRANSIENT_LLM_UNAVAILABLE"
+    return "E_TRANSIENT_NETWORK"
+
+
 def _post_json(url: str, body: dict, timeout: int = 180) -> dict:
     req = urllib.request.Request(url, data=json.dumps(body).encode(),
                                  headers={"Content-Type": "application/json"})
@@ -110,7 +135,7 @@ def _post_json(url: str, body: dict, timeout: int = 180) -> dict:
         cls = "E_PERMANENT" if e.code < 500 else "E_TRANSIENT"
         raise AbsorbError(f"{cls}_HTTP_{e.code}", f"{url} -> {e.code}: {text[:160]}")
     except (urllib.error.URLError, TimeoutError, OSError) as e:
-        raise AbsorbError("E_TRANSIENT_LLM_UNAVAILABLE" if "11434" in url else "E_TRANSIENT_NETWORK", str(e)[:160])
+        raise AbsorbError(_transport_error_class(url), str(e)[:160])
 
 
 # ── Tackle configbundle resolution (Rover lineage) ───────────────────
@@ -292,7 +317,7 @@ def ollama_chat(model: str, chunk_text: str, timeout: int = 900) -> list[dict]:
         "stream": False,
         "options": {"temperature": 0.1, "num_predict": 2048},
     }
-    resp = _post_json("http://192.168.1.202:11434/api/chat", body, timeout=timeout)
+    resp = _post_json(f"{ollama_base_url()}/api/chat", body, timeout=timeout)
     content = resp.get("message", {}).get("content", "")
     parsed = _loads_loose(content)
     return [n for n in (normalize_candidate(c) for c in parsed.get("candidates", [])) if n]
