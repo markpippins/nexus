@@ -146,25 +146,18 @@ jobs:
         run: |
           # SONAR_TOKEN env var is honored by the scanner; do not also pass
           # -Dsonar.login (duplicate-token warning).
-          # sonar.projectVersion is the anchor for the project's new-code
-          # period (PREVIOUS_VERSION). Without it every analysis recorded
-          # version "not provided", no version event ever advanced, and the
-          # gate re-judged months of settled history as new (2026-11-14).
-          #
-          # The version must NOT change per scan. Sonar starts a version at
-          # the analysis that declares it, so a per-commit version leaves the
-          # leak period empty on every single run — a permanently vacuous
-          # green gate (observed 2026-11-14 with "$GITHUB_SHA"). One version
-          # per calendar month keeps the window bounded (changes since that
-          # month's first scan) while remaining stable across runs.
-          #
-          # The value comes from env, never from an inline expression in
-          # shell source.
-          SONAR_NEW_CODE_VERSION="$(date -u +%Y.%m)"
+          # Deliberately NOT setting sonar.projectVersion. Trialed twice on
+          # 2026-11-14 (#1000 per-commit, #1001 month-stable) and measured on
+          # the live 9.9.8 instance: with a projectVersion present the server
+          # assigns no leak period at all, so every new_* metric is empty and
+          # the quality gate evaluates nothing. Reproduced on a clean scratch
+          # project (3 analyses, a real commit between them, constant version =>
+          # periods=None, new_lines=None). Without projectVersion the server
+          # does compute a period, so the gate measures real code. Empty
+          # new-code windows are worse than a red gate; see record b1e19537.
           "$HOME/bin/sonar-scanner" \
             -Dsonar.host.url="$SONAR_HOST_URL" \
             -Dsonar.projectKey=nexus \
-            -Dsonar.projectVersion="$SONAR_NEW_CODE_VERSION" \
             -Dsonar.projectBaseDir="$GITHUB_WORKSPACE" \
             -Dsonar.qualitygate.wait=true \
             -Dsonar.qualitygate.timeout=600
