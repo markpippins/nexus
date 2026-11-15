@@ -87,6 +87,7 @@ const execFileAsync = promisify(execFile);
 const HARNESS_OLLAMA_DEFAULT = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
 
 export const app = express();
+app.disable("x-powered-by");
 app.use(express.json());
 
 // Global request limiter — CodeQL js/missing-rate-limiting remediation
