@@ -46,12 +46,18 @@ import {
 import {
   classifyLadder,
   classifyTerminal,
+  codexRefusalMessage,
+  codexErrorMessages,
   errorMessageFromEvent,
   errorMessagesOf,
   harnessEndedAttempt,
   lastStepReason,
+  scanCodexStream,
+  scanHarnessStream,
+  detectHarness,
   scanOpencodeStream,
 } from "./terminal";
+import { codexArgs } from "./codex-cli";
 import type { AttemptOutcome } from "./terminal";
 import { ADMISSION_OUTCOME } from "./admission";
 // Runaway watchdog rule + constants (T16 guardrail, 1285 remediation slice 2).
@@ -1497,10 +1503,13 @@ app.post("/run-direct", async (req, res) => {
           }
           const attemptVerdict = classifyTerminal({
             exitCode: attemptExit,
-            marks: scanOpencodeStream(attemptStdout),
+            // Format-agnostic: the attempt's own stream says which CLI wrote
+            // it, so a ladder may mix codex and opencode rungs.
+            marks: scanHarnessStream(attemptStdout),
             timedOut: harnessEndedAttempt(attemptExit, attemptStderr),
             noFirstToken: abandonedForNoFirstToken,
             interrupted: false,
+            harness: detectHarness(attemptStdout),
           });
           outcomes.push({
             source: attempt.source,
@@ -1545,7 +1554,7 @@ app.post("/run-direct", async (req, res) => {
       // The run's own stream is the evidence for HOW it ended; the exit
       // status alone is not (see terminal.ts — job 2b5c34ae exited 0 with a
       // transcript that stopped mid-task).
-      const marks = scanOpencodeStream(stdout);
+      const marks = scanHarnessStream(stdout);
       const stopReason = lastStepReason(marks);
       const job = jobs.get(jobId);
       if (job) {
@@ -1901,6 +1910,11 @@ async function executeHarness(params: HarnessExecParams): Promise<HarnessExecRes
     );
   } else if (binary === "opencode") {
     return executeOpencode(params, promptContent);
+  } else if (binary === "codex") {
+    // codex exposes no --agent/--format flags and takes its prompt on stdin;
+    // see codex-cli.ts for the argv differences verified against
+    // codex-cli 0.169.0 (2026-11-15).
+    return executeCodex(params, promptContent);
   } else {
     throw new Error(`Harness ${harness_id} binary '${binary}' not yet supported`);
   }
@@ -2220,6 +2234,226 @@ async function executeOpencode(
         stderrOut = 'opencode killed by signal (watchdog or external kill) — partial output below';
       }
       const errorMsgs = errorMessagesOf(scanOpencodeStream(stdout));
+      if (errorMsgs.length > 0) {
+        const errText = errorMsgs.join("\n");
+        stderrOut = stderrOut ? `${stderrOut}\n${errText}` : errText;
+      }
+      if (exitCode === 0) {
+        incrementConsumedUnits(role).catch(() => {});
+      }
+      resolve({ exitCode, stdout, stderr: stderrOut });
+    });
+
+    child.on('error', (err) => {
+      clearInterval(timer);
+      if (firstTokenTimer) clearInterval(firstTokenTimer);
+      resolve({ exitCode: 1, stdout, stderr: err.message });
+    });
+  });
+}
+
+/**
+ * Execute via the codex CLI (`codex exec --json`).
+ *
+ * Supervision here is deliberately the SAME as executeOpencode's — direct
+ * PID registration for the runaway watchdog and POST /jobs/:id/interrupt, a
+ * fixed 1s supervisor tick against a deadline (never a timer armed with a
+ * user-influenced duration), the first-token guard, and the refusal watch —
+ * because those are properties of a harness CHILD, not of one vendor's CLI.
+ * Two things do differ and both are isolated: the argv (codex-cli.ts) and the
+ * JSONL vocabulary on stdout (scanCodexStream in terminal.ts).
+ *
+ * Two codex-specific behaviours are load-bearing and were measured on
+ * 2026-11-15 against codex-cli 0.169.0:
+ *
+ *  1. stdin must be CLOSED after the prompt. codex prints "Reading additional
+ *     input from stdin..." and waits while stdin is open, even when a
+ *     positional prompt is supplied — a harness child that leaves the pipe
+ *     open hangs until the timeout kills it.
+ *  2. codex emits an EMPTY `agent_message` item before it starts working. It
+ *     is not a first token: counting it would disarm the first-token guard
+ *     for the rest of the run, which is exactly the hang the guard exists to
+ *     catch.
+ */
+async function executeCodex(
+  params: HarnessExecParams,
+  promptContent: string
+): Promise<HarnessExecResult> {
+  const { prompt_file, work_dir, agent, role, model, timeout_ms, first_token_ms, onEvent, onActivity } = params;
+  // The silence allowance for this attempt: the ladder's number when it sent
+  // one, otherwise the guard clamped to this attempt's own timeout.
+  const firstTokenGuardMs = Math.min(
+    timeout_ms,
+    Number.isFinite(first_token_ms) && (first_token_ms as number) > 0
+      ? (first_token_ms as number)
+      : FIRST_TOKEN_TIMEOUT_MS
+  );
+  const codexBin = process.env.CODEX_BIN || "codex";
+  // Extract jobId from prompt filename (${jobId}.md) for watchdog PID tracking
+  const jobId = prompt_file.split("/").pop()?.replace(".md", "") || "";
+  const cmdArgs = codexArgs({ workDir: work_dir, model, sandbox: process.env.CODEX_SANDBOX });
+
+  await log("info", `codex exec agent=${agent} (prompt-carried: codex has no --agent) model=${model ?? "(cli default)"} file=${prompt_file} dir=${work_dir} bin=${codexBin} sandbox=${process.env.CODEX_SANDBOX || "(default)"} prompt_chars=${promptContent.length}`);
+
+  return new Promise((resolve) => {
+    const child = spawn(codexBin, cmdArgs, {
+      cwd: work_dir,
+      // Same rule as the opencode path: the resolved --model is the child's
+      // truthful provenance, never the long-lived server's inherited value.
+      env: buildChildEnv({ role, jobId, model }),
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    if (child.stdin) {
+      child.stdin.on("error", () => { /* child may have exited early */ });
+      child.stdin.write(promptContent);
+      child.stdin.end();
+    }
+
+    // Register PID for runaway watchdog (direct SIGTERM instead of pkill -f)
+    // and for the async job contract's POST /jobs/:id/interrupt.
+    if (jobId) {
+      const session = activeSessions.get(jobId);
+      if (session) {
+        session.pid = child.pid;
+        log("info", `codex pid=${child.pid} registered for watchdog (job=${jobId.slice(0, 8)})`);
+      }
+      const job = jobs.get(jobId);
+      if (job) {
+        job.pid = child.pid ?? null;
+      }
+    }
+
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    let noFirstToken = false;
+    let firstTokenSeen = false;
+    // The provider's refusal, while it may still be answered by output.
+    let refusal: RefusalWatch | null = null;
+    // Set when the grace window elapsed and WE ended the attempt on that
+    // refusal — the close handler reports it as a refusal, not a stall.
+    let refusedAbandon = false;
+    let firstTokenTimer: NodeJS.Timeout | null = null;
+    // ── Stream translation ───────────────────────────────────────
+    // codex --json emits one JSON envelope per line. Assistant text arrives
+    // as whole `item.completed` items (there are no incremental deltas), so
+    // each non-empty agent_message/reasoning item is translated once into a
+    // text.delta — downstream consumers never parse codex's wire format.
+    let lineBuf = '';
+    const emitParsed = () => {
+      const lines = (lineBuf + '').split('\n');
+      lineBuf = lines.pop() ?? ''; // last element may be incomplete
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('{')) continue;
+        try {
+          const ev = JSON.parse(trimmed) as any;
+          // Hard failures only: an `item` of type error is ADVICE (every run
+          // here starts with ignored-config warnings) and watching it as a
+          // refusal would abandon healthy runs after the grace window.
+          const refusalMsg = codexRefusalMessage(ev);
+          if (refusalMsg && !firstTokenSeen) {
+            refusal = noteRefusal(refusal, refusalMsg, Date.now());
+            continue;
+          }
+          if (ev?.type === 'item.completed') {
+            const item = ev.item ?? {};
+            const text =
+              typeof item.text === 'string'
+                ? item.text
+                : typeof ev.text === 'string'
+                  ? ev.text
+                  : '';
+            if ((item.type === 'agent_message' || item.type === 'reasoning') && text.trim()) {
+              if (!firstTokenSeen) {
+                firstTokenSeen = true;
+                if (firstTokenTimer) clearInterval(firstTokenTimer);
+              }
+              if (onEvent) onEvent('text', { text });
+            }
+          }
+        } catch { /* non-JSON line — skip */ }
+      }
+    };
+    child.stdout?.on('data', (data: Buffer) => {
+      const chunk = data.toString();
+      stdout += chunk;
+      lineBuf += chunk;
+      onActivity?.();
+      emitParsed();
+    });
+    child.stderr?.on('data', (data: Buffer) => { stderr += data.toString(); });
+
+    // Fixed 1s supervisor tick instead of setTimeout(timeout_ms): the
+    // user-influenced duration is compared against a deadline rather than
+    // handed to the timer API, so no timer with a user-controlled duration
+    // is ever armed (CodeQL js/resource-exhaustion remediation — same
+    // deadline pattern as the opencode path and the runaway watchdog).
+    const deadline = Date.now() + timeout_ms;
+    const firstTokenDeadline = Date.now() + firstTokenGuardMs;
+    const timer = setInterval(() => {
+      if (Date.now() < deadline) return;
+      timedOut = true;
+      clearInterval(timer);
+      child.kill('SIGTERM');
+      // Give it 5s to exit gracefully, then force-kill
+      setTimeout(() => {
+        try { child.kill('SIGKILL'); } catch { /* already dead */ }
+      }, 5000);
+    }, 1000);
+
+    // First-token guard — a model that never emits assistant text within
+    // firstTokenGuardMs is abandoned (exit 124 + marker) so the failover
+    // ladder rolls to the next model instead of waiting out the full run
+    // timeout on a hung provider.
+    firstTokenTimer = setInterval(() => {
+      if (firstTokenSeen) {
+        if (firstTokenTimer) clearInterval(firstTokenTimer);
+        return;
+      }
+      const now = Date.now();
+      // The provider's own words outrank the guard's deadline: a refusal that
+      // nothing answered is final after the grace window.
+      if (refusalIsTerminal(refusal, now, REFUSAL_GRACE_MS)) {
+        if (firstTokenTimer) clearInterval(firstTokenTimer);
+        refusedAbandon = true;
+        child.kill('SIGTERM');
+        setTimeout(() => {
+          try { child.kill('SIGKILL'); } catch { /* already dead */ }
+        }, 5000);
+        return;
+      }
+      if (now < firstTokenDeadline) return;
+      if (firstTokenTimer) clearInterval(firstTokenTimer);
+      noFirstToken = true;
+      child.kill('SIGTERM');
+      setTimeout(() => {
+        try { child.kill('SIGKILL'); } catch { /* already dead */ }
+      }, 5000);
+    }, 1000);
+
+    child.on('close', (code) => {
+      clearInterval(timer);
+      if (firstTokenTimer) clearInterval(firstTokenTimer);
+      let exitCode = code ?? 1;
+      let stderrOut = stderr;
+      if (refusedAbandon && refusal) {
+        // Exit 1, not 124: the harness did not run out of time and the model
+        // did not hang — the provider refused.
+        exitCode = 1;
+        stderrOut = refusalAbandonMessage(refusal, Date.now());
+      } else if (noFirstToken) {
+        exitCode = 124;
+        stderrOut = `codex produced no first token within ${firstTokenGuardMs}ms — abandoning`;
+      } else if (timedOut) {
+        exitCode = 124;
+        stderrOut = `codex timeout after ${timeout_ms}ms — partial output below`;
+      } else if (code === null) {
+        exitCode = 137;
+        stderrOut = 'codex killed by signal (watchdog or external kill) — partial output below';
+      }
+      const errorMsgs = codexErrorMessages(scanCodexStream(stdout));
       if (errorMsgs.length > 0) {
         const errText = errorMsgs.join("\n");
         stderrOut = stderrOut ? `${stderrOut}\n${errText}` : errText;
