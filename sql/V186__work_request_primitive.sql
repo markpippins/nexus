@@ -3,12 +3,16 @@
 -- resolution.work_request (DBA; ruling thread 402d8a0d, records e772b969 /
 -- ffe14f38, DBA confirmation 6be5faaa).
 --
--- ⚠️  STAGED INERT — NOT APPLIED TO LIVE. ⚠️
--- Posture mirrors V184 (calendar primitive): staged, gated, idempotent.
--- Apply happens ONLY on explicit operator go, after the architect rules the
--- Option A/B fork (engineer-ii recommends B; DBA concurs with evidence).
--- R9 note: schema change — vanadium replication question attaches at apply
--- time (vanadium unreachable from titanium while traveling).
+-- ✅ APPLIED TO LIVE 2026-09-20 03:22:49Z — operator go 17316f4f; DBA apply
+-- record 09ac979a (exit 0, 7/7 verification battery green; 7 canonical rows:
+-- 6 vision + 1 nebula; 6 asset mirrors linked). This file is retained as the
+-- applied migration of record; a re-run is refused loudly and non-mutating by
+-- V186-GATE-001 because the legacy rows already exist.
+--
+-- Provenance note: resolution.migration_ledger has no V186 row. One
+-- documentary row is authorized (architect 8d0e0ee8, DBA 1a3d32d8) with
+-- historical applied_at 2026-09-20 03:22:49Z, but has NOT been executed; it
+-- requires a separate DBA step and the operator's R9 replication answer.
 --
 -- THE FORK THIS FILE ANSWERS (Option B):
 --   A) repair vision's broken store in place (throwaway if canonicalization

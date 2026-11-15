@@ -40,6 +40,7 @@ describe("global rate limiter (PR #575, tester GAP 1) — runs last, exhausts th
     // well (same fix as execution-srv/src/limiter.test.ts, 3ef28597).
     const res = await fetch(`${baseUrl}/definitely/not/a/route`);
     expect(res.status).toBe(404);
+    expect(res.headers.get("x-powered-by")).toBeNull();
     // express-rate-limit 7.5.1 emits `ratelimit` (combined) + `ratelimit-policy`
     // for draft-7 — NOT the legacy `ratelimit-limit`/`x-ratelimit-*` names.
     expect(res.headers.get("ratelimit")).toMatch(/limit=300/);
