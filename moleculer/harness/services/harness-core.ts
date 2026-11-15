@@ -17,16 +17,19 @@ import express from "express";
 import rateLimit from "express-rate-limit";
 import { resolveContext, resolveRoleModel, emitEvent, pool, redis, checkConfigAdmission, incrementConsumedUnits, emitGovernanceReceipt } from "./db.js";
 import {
+  agyErrorMessages,
   classifyTerminal,
   codexErrorMessages,
   detectHarness,
   errorMessagesOf,
   lastStepReason,
+  scanAgyStream,
   scanCodexStream,
   scanHarnessStream,
   scanOpencodeStream,
 } from "./terminal.js";
-import { codexArgs } from "./codex-cli.js";
+import { agyArgs, agyModelFromEnv } from "./agy-cli.js";
+import { codexArgs, codexModelFromEnv } from "./codex-cli.js";
 import { ADMISSION_OUTCOME } from "./admission.js";
 import { execFile, spawn } from "child_process";
 import { promisify } from "util";
@@ -1624,6 +1627,11 @@ async function executeHarness(params: HarnessExecParams): Promise<HarnessExecRes
     // see codex-cli.ts for the argv differences verified against
     // codex-cli 0.169.0 (2026-11-15).
     return executeCodex(params, promptContent);
+  } else if (binary === "agy") {
+    // agy prints one turn in stream-json and takes its prompt on argv
+    // (--print <prompt>); see agy-cli.ts for the surface verified against
+    // agy 1.5.9 (2026-11-15).
+    return executeAgy(params, promptContent);
   } else {
     throw new Error(`Harness ${harness_id} binary '${binary}' not yet supported`);
   }
@@ -1943,9 +1951,11 @@ async function executeCodex(
   const { prompt_file, work_dir, agent, role, model, timeout_ms, onEvent } = params;
   const codexBin = process.env.CODEX_BIN || "codex";
   const jobId = prompt_file.split("/").pop()?.replace(".md", "") || "";
-  const cmdArgs = codexArgs({ workDir: work_dir, model, sandbox: process.env.CODEX_SANDBOX });
+  // Absent means Luna 5.6, never "whatever this machine's codex config says".
+  const codexModel = codexModelFromEnv(model ?? process.env.CODEX_MODEL);
+  const cmdArgs = codexArgs({ workDir: work_dir, model: codexModel, sandbox: process.env.CODEX_SANDBOX });
 
-  await log("info", `codex exec agent=${agent} (prompt-carried: codex has no --agent) model=${model ?? "(cli default)"} file=${prompt_file} dir=${work_dir} bin=${codexBin} sandbox=${process.env.CODEX_SANDBOX || "(default)"} prompt_chars=${promptContent.length}`);
+  await log("info", `codex exec agent=${agent} (prompt-carried: codex has no --agent) model=${codexModel} file=${prompt_file} dir=${work_dir} bin=${codexBin} sandbox=${process.env.CODEX_SANDBOX || "(default)"} prompt_chars=${promptContent.length}`);
 
   return new Promise((resolve) => {
     const child = spawn(codexBin, cmdArgs, {
@@ -1955,8 +1965,9 @@ async function executeCodex(
         HARNESS_ROLE: role,
         HARNESS_JOB_ID: jobId,
         // The resolved --model is the child's truthful provenance — never the
-        // long-lived server's inherited value (2026-11-06 misattribution).
-        ...(typeof model === "string" && model.trim() ? { NEXUS_AGENT_MODEL: model.trim() } : {}),
+        // long-lived server's inherited value (2026-11-06 misattribution) —
+        // so the Luna default is what gets attributed when no model was sent.
+        ...{ NEXUS_AGENT_MODEL: codexModel },
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -2070,6 +2081,164 @@ async function executeCodex(
         stderrOut = 'codex killed by signal (watchdog or external kill) — partial output below';
       }
       const errorMsgs = codexErrorMessages(scanCodexStream(stdout));
+      if (errorMsgs.length > 0) {
+        const errText = errorMsgs.join("\n");
+        stderrOut = stderrOut ? `${stderrOut}\n${errText}` : errText;
+      }
+      if (exitCode === 0) {
+        incrementConsumedUnits(role).catch(() => {});
+      }
+      resolve({ exitCode, stdout, stderr: stderrOut });
+    });
+
+    child.on('error', (err) => {
+      clearInterval(timer);
+      if (firstTokenTimer) clearInterval(firstTokenTimer);
+      resolve({ exitCode: 1, stdout, stderr: err.message });
+    });
+  });
+}
+
+/**
+ * Execute via the agy CLI (`agy --output-format stream-json ... --print`).
+ *
+ * This port has no provider-refusal module, so the agy path carries the
+ * timeout and first-token guards only — same as the codex path here. What
+ * is agy-specific is isolated to the argv (agy-cli.ts) and the `event`
+ * envelopes on stdout (scanAgyStream in terminal.ts), both verified against
+ * agy 1.5.9 on 2026-11-15: no usable --agent (the charter rides in the
+ * prompt), the prompt on argv (`--print` last), deltas on `step_update`,
+ * the verdict in one terminal `result` event.
+ */
+async function executeAgy(
+  params: HarnessExecParams,
+  promptContent: string
+): Promise<HarnessExecResult> {
+  const { prompt_file, work_dir, agent, role, model, timeout_ms, onEvent } = params;
+  const agyBin = process.env.AGY_BIN || "agy";
+  const jobId = prompt_file.split("/").pop()?.replace(".md", "") || "";
+  // Absent means Gemini Flash, never "whatever this host's agy defaults to".
+  const agyModel = agyModelFromEnv(model ?? process.env.AGY_MODEL);
+  const cmdArgs = agyArgs({ model: agyModel, prompt: promptContent });
+
+  await log("info", `agy print agent=${agent} (prompt-carried: agy has no configured agents) model=${agyModel} file=${prompt_file} dir=${work_dir} bin=${agyBin} prompt_chars=${promptContent.length}`);
+
+  return new Promise((resolve) => {
+    const child = spawn(agyBin, cmdArgs, {
+      cwd: work_dir,
+      env: {
+        ...process.env,
+        HARNESS_ROLE: role,
+        HARNESS_JOB_ID: jobId,
+        // The resolved --model is the child's truthful provenance — never the
+        // long-lived server's inherited value (2026-11-06 misattribution).
+        NEXUS_AGENT_MODEL: agyModel,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    // agy print mode never reads stdin; handing it a closed pipe is harmless.
+    if (child.stdin) {
+      child.stdin.on("error", () => { /* child may have exited early */ });
+      child.stdin.end();
+    }
+
+    // Register PID for the runaway watchdog and POST /jobs/:id/interrupt.
+    if (jobId) {
+      const session = activeSessions.get(jobId);
+      if (session) {
+        session.pid = child.pid;
+        log("info", `agy pid=${child.pid} registered for watchdog (job=${jobId.slice(0, 8)})`);
+      }
+      const job = jobs.get(jobId);
+      if (job) {
+        job.pid = child.pid ?? null;
+      }
+    }
+
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    let noFirstToken = false;
+    let firstTokenSeen = false;
+    let firstTokenTimer: NodeJS.Timeout | null = null;
+    // agy stream-json emits one JSON envelope per line. Assistant text arrives
+    // as incremental `text_delta` fragments on `step_update`; only a fragment
+    // with real text marks the first token (a DONE step still carries its
+    // trailing newline, which must not disarm the guard).
+    let lineBuf = '';
+    const emitParsed = () => {
+      const lines = (lineBuf + '').split('\n');
+      lineBuf = lines.pop() ?? '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('{')) continue;
+        try {
+          const ev = JSON.parse(trimmed) as any;
+          if (ev?.event === 'step_update') {
+            const step = ev.step_update ?? {};
+            const text = typeof step.text_delta === 'string' ? step.text_delta : '';
+            if (step.step_type === 'agent_response' && text.trim()) {
+              if (!firstTokenSeen) {
+                firstTokenSeen = true;
+                if (firstTokenTimer) clearInterval(firstTokenTimer);
+              }
+              if (onEvent) onEvent('text', { text });
+            }
+          }
+        } catch { /* non-JSON line — skip */ }
+      }
+    };
+    child.stdout?.on('data', (data: Buffer) => {
+      const chunk = data.toString();
+      stdout += chunk;
+      lineBuf += chunk;
+      emitParsed();
+    });
+    child.stderr?.on('data', (data: Buffer) => { stderr += data.toString(); });
+
+    const deadline = Date.now() + timeout_ms;
+    const firstTokenDeadline = Date.now() + Math.min(timeout_ms, FIRST_TOKEN_TIMEOUT_MS);
+    const timer = setInterval(() => {
+      if (Date.now() < deadline) return;
+      timedOut = true;
+      clearInterval(timer);
+      child.kill('SIGTERM');
+      setTimeout(() => {
+        try { child.kill('SIGKILL'); } catch { /* already dead */ }
+      }, 5000);
+    }, 1000);
+
+    firstTokenTimer = setInterval(() => {
+      if (firstTokenSeen) {
+        if (firstTokenTimer) clearInterval(firstTokenTimer);
+        return;
+      }
+      if (Date.now() < firstTokenDeadline) return;
+      if (firstTokenTimer) clearInterval(firstTokenTimer);
+      noFirstToken = true;
+      child.kill('SIGTERM');
+      setTimeout(() => {
+        try { child.kill('SIGKILL'); } catch { /* already dead */ }
+      }, 5000);
+    }, 1000);
+
+    child.on('close', (code) => {
+      clearInterval(timer);
+      if (firstTokenTimer) clearInterval(firstTokenTimer);
+      let exitCode = code ?? 1;
+      let stderrOut = stderr;
+      if (noFirstToken) {
+        exitCode = 124;
+        stderrOut = `agy produced no first token within ${Math.min(timeout_ms, FIRST_TOKEN_TIMEOUT_MS)}ms — abandoning`;
+      } else if (timedOut) {
+        exitCode = 124;
+        stderrOut = `agy timeout after ${timeout_ms}ms — partial output below`;
+      } else if (code === null) {
+        exitCode = 137;
+        stderrOut = 'agy killed by signal (watchdog or external kill) — partial output below';
+      }
+      const errorMsgs = agyErrorMessages(scanAgyStream(stdout));
       if (errorMsgs.length > 0) {
         const errText = errorMsgs.join("\n");
         stderrOut = stderrOut ? `${stderrOut}\n${errText}` : errText;

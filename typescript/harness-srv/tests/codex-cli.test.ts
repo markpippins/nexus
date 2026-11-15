@@ -21,7 +21,7 @@
  * Usage: npx tsx tests/codex-cli.test.ts
  */
 
-import { codexArgs, codexSandboxFromEnv, CODEX_DEFAULT_SANDBOX } from "../src/codex-cli";
+import { codexArgs, codexModelFromEnv, codexSandboxFromEnv, CODEX_DEFAULT_MODEL, CODEX_DEFAULT_SANDBOX } from "../src/codex-cli";
 import {
   codexErrorMessages,
   codexFinalText,
@@ -54,8 +54,8 @@ console.log("== codexArgs ==");
 {
   eq(
     codexArgs({ workDir: "/tmp/wd" }),
-    ["exec", "--json", "--skip-git-repo-check", "--cd", "/tmp/wd", "--sandbox", CODEX_DEFAULT_SANDBOX, "--ephemeral", "-"],
-    "default argv: exec/json/cd/sandbox/ephemeral/stdin sentinel"
+    ["exec", "--json", "--skip-git-repo-check", "--cd", "/tmp/wd", "--model", CODEX_DEFAULT_MODEL, "--sandbox", CODEX_DEFAULT_SANDBOX, "--ephemeral", "-"],
+    "default argv: exec/json/cd/Luna-5.6/sandbox/ephemeral/stdin sentinel"
   );
   assert(
     !codexArgs({ workDir: "/tmp/wd" }).includes("--agent"),
@@ -72,14 +72,21 @@ console.log("== codexArgs ==");
     ["--model", "gpt-5.4"],
     "resolved model is passed as --model M"
   );
-  assert(
-    !codexArgs({ workDir: "/tmp/wd", model: "" }).includes("--model"),
-    "empty model is omitted, not forwarded as --model ''"
+  eq(
+    codexArgs({ workDir: "/tmp/wd", model: "" }).slice(5, 7),
+    ["--model", CODEX_DEFAULT_MODEL],
+    "empty model falls back to Luna 5.6, not forwarded as --model ''"
   );
-  assert(
-    !codexArgs({ workDir: "/tmp/wd", model: null }).includes("--model"),
-    "null model is omitted"
+  eq(
+    codexArgs({ workDir: "/tmp/wd", model: null }).slice(5, 7),
+    ["--model", CODEX_DEFAULT_MODEL],
+    "null model falls back to Luna 5.6"
   );
+
+  eq(codexModelFromEnv(undefined), CODEX_DEFAULT_MODEL, "unset CODEX_MODEL keeps Luna 5.6");
+  eq(codexModelFromEnv(""), CODEX_DEFAULT_MODEL, "blank CODEX_MODEL keeps Luna 5.6");
+  eq(codexModelFromEnv("  gpt-5.4  "), "gpt-5.4", "CODEX_MODEL override is trimmed and honored");
+  eq(CODEX_DEFAULT_MODEL, "gpt-5.6-luna", "the default is Luna 5.6");
 
   const persistent = codexArgs({ workDir: "/tmp/wd", persistSession: true });
   assert(!persistent.includes("--ephemeral"), "persistSession=true keeps the session on disk");

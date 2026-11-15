@@ -54,7 +54,7 @@ export interface TerminalInput {
   noFirstToken: boolean;
   interrupted: boolean;
   /** Which CLI produced the stream; only used to word the detail line. */
-  harness?: "opencode" | "codex";
+  harness?: "opencode" | "codex" | "agy";
 }
 
 export interface TerminalVerdict {
@@ -140,7 +140,9 @@ export function classifyTerminal(input: TerminalInput): TerminalVerdict {
   // Word the verdict with the CLI that actually ran: codex and opencode are
   // both harness children now, and "opencode exited 1" on a codex run sends
   // the reader to the wrong tool.
-  const label = input.harness === "codex" ? "codex" : "opencode";
+  let label = "opencode";
+  if (input.harness === "codex") label = "codex";
+  else if (input.harness === "agy") label = "agy";
 
   if (input.exitCode !== 0) {
     return {
@@ -337,8 +339,109 @@ export function codexMarksToStreamMarks(marks: CodexMark[]): StreamMark[] {
   return out;
 }
 
+// ── agy stream ──────────────────────────────────────────────────────
+
+/**
+ * One decision-relevant marker from agy's `--output-format stream-json`.
+ * Assistant text arrives as incremental `text_delta` fragments on
+ * `step_update` events (`step_type: "agent_response"`); the run's last word
+ * is one `result` event (SUCCESS carries `response`, ERROR carries `error`).
+ * Observed on agy 1.5.9 (2026-11-15).
+ */
+export interface AgyMark {
+  kind: "delta" | "result" | "error";
+  /** delta only: one incremental assistant-text fragment (may be "\n"). */
+  text?: string;
+  /** result only: the full response on SUCCESS, or "" when it never spoke. */
+  response?: string;
+  /** error only: the human-readable message, prefixed with its source. */
+  message?: string;
+}
+
+/**
+ * Parse agy's JSON-lines stream into marks. `init` carries no decision and
+ * non-agent step types are skipped; a DONE step still carries its trailing
+ * fragment, so emptiness is judged on the trimmed text downstream.
+ */
+export function scanAgyStream(stdout: string): AgyMark[] {
+  const marks: AgyMark[] = [];
+  if (!stdout) return marks;
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+    let ev: any;
+    try {
+      ev = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (ev?.event === "result") {
+      const r = ev.result ?? {};
+      if (r.status === "SUCCESS") {
+        marks.push({
+          kind: "result",
+          response: typeof r.response === "string" ? r.response : "",
+        });
+      } else if (r.status === "ERROR") {
+        const msg = typeof r.error === "string" ? r.error.trim() : "";
+        marks.push({ kind: "error", message: `agy error: ${msg || "run failed"}` });
+      }
+      continue;
+    }
+    if (ev?.event === "step_update") {
+      const step = ev.step_update ?? {};
+      if (step.step_type === "agent_response" && typeof step.text_delta === "string" && step.text_delta) {
+        marks.push({ kind: "delta", text: step.text_delta });
+      }
+    }
+  }
+  return marks;
+}
+
+/** Error messages in arrival order, exact repeats collapsed. */
+export function agyErrorMessages(marks: AgyMark[]): string[] {
+  const out: string[] = [];
+  for (const m of marks) {
+    if (m.kind !== "error" || !m.message) continue;
+    if (!out.includes(m.message)) out.push(m.message);
+  }
+  return out;
+}
+
+/** The assistant's full response from the SUCCESS result, or "". */
+export function agyFinalText(marks: AgyMark[]): string {
+  for (let i = marks.length - 1; i >= 0; i--) {
+    const m = marks[i];
+    if (m.kind === "result" && m.response) return m.response;
+  }
+  return "";
+}
+
+/** Did agy report SUCCESS (the run's own last word)? */
+export function agyTurnCompleted(marks: AgyMark[]): boolean {
+  for (let i = marks.length - 1; i >= 0; i--) {
+    if (marks[i].kind === "result") return true;
+  }
+  return false;
+}
+
+/**
+ * Project agy marks onto the shared vocabulary the terminal classifier
+ * reads: a SUCCESS result is the counterpart of opencode's
+ * `step_finish(part.reason="stop")`, preserving arrival order for the
+ * "the run's LAST word decides" rule.
+ */
+export function agyMarksToStreamMarks(marks: AgyMark[]): StreamMark[] {
+  const out: StreamMark[] = [];
+  for (const m of marks) {
+    if (m.kind === "error" && m.message) out.push({ kind: "error", message: m.message });
+    else if (m.kind === "result") out.push({ kind: "step_finish", reason: "stop" });
+  }
+  return out;
+}
+
 /** Which CLI wrote this stream. Defaults to opencode (the incumbent). */
-export function detectHarness(stdout: string): "opencode" | "codex" {
+export function detectHarness(stdout: string): "opencode" | "codex" | "agy" {
   if (!stdout) return "opencode";
   for (const line of stdout.split("\n")) {
     const trimmed = line.trim();
@@ -351,6 +454,10 @@ export function detectHarness(stdout: string): "opencode" | "codex" {
     }
     if (ev?.type === "thread.started" || ev?.type === "turn.started" || ev?.type === "turn.completed" || ev?.type === "turn.failed") {
       return "codex";
+    }
+    // agy speaks in `event` envelopes; both the other CLIs use `type`.
+    if (ev?.event === "init" || ev?.event === "step_update" || ev?.event === "result") {
+      return "agy";
     }
     if (ev?.type === "step_finish" || ev?.type === "text" || ev?.type === "reasoning") {
       return "opencode";
@@ -415,6 +522,18 @@ export function scanHarnessStream(stdout: string): StreamMark[] {
     if (ev?.type === "step_finish") {
       const reason = typeof ev.part?.reason === "string" ? ev.part.reason : null;
       marks.push(reason ? { kind: "step_finish", reason } : { kind: "step_finish" });
+      continue;
+    }
+    // agy: a SUCCESS result is the run ending on purpose (step_finish/stop);
+    // an ERROR result is the failure, worded with its source.
+    if (ev?.event === "result") {
+      const r = ev.result ?? {};
+      if (r.status === "SUCCESS") {
+        marks.push({ kind: "step_finish", reason: "stop" });
+      } else if (r.status === "ERROR") {
+        const msg = typeof r.error === "string" && r.error.trim() ? r.error.trim() : "run failed";
+        marks.push({ kind: "error", message: `agy error: ${msg}` });
+      }
     }
   }
   return marks;

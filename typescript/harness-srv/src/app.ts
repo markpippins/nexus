@@ -46,18 +46,21 @@ import {
 import {
   classifyLadder,
   classifyTerminal,
+  agyErrorMessages,
   codexRefusalMessage,
   codexErrorMessages,
   errorMessageFromEvent,
   errorMessagesOf,
   harnessEndedAttempt,
   lastStepReason,
+  scanAgyStream,
   scanCodexStream,
   scanHarnessStream,
   detectHarness,
   scanOpencodeStream,
 } from "./terminal";
-import { codexArgs } from "./codex-cli";
+import { agyArgs, agyModelFromEnv } from "./agy-cli";
+import { codexArgs, codexModelFromEnv } from "./codex-cli";
 import { runSupervisedChild } from "./child-process";
 import type { AttemptOutcome } from "./terminal";
 import { ADMISSION_OUTCOME } from "./admission";
@@ -1916,6 +1919,11 @@ async function executeHarness(params: HarnessExecParams): Promise<HarnessExecRes
     // see codex-cli.ts for the argv differences verified against
     // codex-cli 0.169.0 (2026-11-15).
     return executeCodex(params, promptContent);
+  } else if (binary === "agy") {
+    // agy prints one turn in stream-json and takes its prompt on argv
+    // (--print <prompt>); see agy-cli.ts for the surface verified against
+    // agy 1.5.9 (2026-11-15).
+    return executeAgy(params, promptContent);
   } else {
     throw new Error(`Harness ${harness_id} binary '${binary}' not yet supported`);
   }
@@ -2186,9 +2194,10 @@ async function executeCodex(
   );
   const codexBin = process.env.CODEX_BIN || "codex";
   const jobId = prompt_file.split("/").pop()?.replace(".md", "") || "";
-  const cmdArgs = codexArgs({ workDir: work_dir, model, sandbox: process.env.CODEX_SANDBOX });
+  const codexModel = codexModelFromEnv(model ?? process.env.CODEX_MODEL);
+  const cmdArgs = codexArgs({ workDir: work_dir, model: codexModel, sandbox: process.env.CODEX_SANDBOX });
 
-  await log("info", `codex exec agent=${agent} (prompt-carried: codex has no --agent) model=${model ?? "(cli default)"} file=${prompt_file} dir=${work_dir} bin=${codexBin} sandbox=${process.env.CODEX_SANDBOX || "(default)"} prompt_chars=${promptContent.length}`);
+  await log("info", `codex exec agent=${agent} (prompt-carried: codex has no --agent) model=${codexModel} file=${prompt_file} dir=${work_dir} bin=${codexBin} sandbox=${process.env.CODEX_SANDBOX || "(default)"} prompt_chars=${promptContent.length}`);
 
   let refusal: RefusalWatch | null = null;
 
@@ -2197,8 +2206,9 @@ async function executeCodex(
     args: cmdArgs,
     workDir: work_dir,
     // Same env rule as the opencode path: the resolved --model is the child's
-    // truthful provenance, never the long-lived server's inherited value.
-    env: buildChildEnv({ role, jobId, model }),
+    // truthful provenance, never the long-lived server's inherited value —
+    // so the Luna default is what gets attributed when no model was sent.
+    env: buildChildEnv({ role, jobId, model: codexModel }),
     promptContent,
     timeoutMs: timeout_ms,
     firstTokenGuardMs,
@@ -2253,6 +2263,101 @@ async function executeCodex(
     exitCode = 1;
     stderr = refusalAbandonMessage(refusal, Date.now());
   }
+  if (exitCode === 0) {
+    incrementConsumedUnits(role).catch(() => {});
+  }
+  return { exitCode, stdout: run.stdout, stderr };
+}
+
+/**
+ * Execute via the agy CLI (`agy --output-format stream-json ... --print`).
+ *
+ * Supervision is shared with every other executor (src/child-process.ts); what
+ * remains here is agy's argv and its `event`-envelope wire format. Both were
+ * verified against agy 1.5.9 on 2026-11-15:
+ *
+ *  1. agy has no usable --agent: `agy agent` exits 0 with empty output (no
+ *     agents configured), and `--agent tester` is rejected. The role charter
+ *     rides in the prompt, like codex.
+ *  2. Print mode does not read stdin — `--print` consumes the next argv token
+ *     as the prompt. The prompt travels on argv (last, so it cannot swallow
+ *     a flag). The shared spawn still hands the child a closed stdin pipe;
+ *     agy never reads it, which is harmless.
+ *  3. Assistant text arrives as incremental `text_delta` fragments on
+ *     `step_update` events with `step_type: "agent_response"` — opencode's
+ *     delta shape, not codex's whole items. Only non-blank fragments mark
+ *     the first token (a DONE step still carries its trailing `"\\n"`).
+ *  4. The run's last word is one `result` event: SUCCESS carries the full
+ *     `response`, ERROR carries `error`. No refusal vocabulary was measured
+ *     for agy, so there is no refusal watch here — only the deadline and the
+ *     first-token guard. If agy grows a mid-run refusal shape, it gets a
+ *     matcher in terminal.ts like codexRefusalMessage, not inline logic.
+ */
+async function executeAgy(
+  params: HarnessExecParams,
+  promptContent: string
+): Promise<HarnessExecResult> {
+  const { prompt_file, work_dir, agent, role, model, timeout_ms, first_token_ms, onEvent, onActivity } = params;
+  const firstTokenGuardMs = Math.min(
+    timeout_ms,
+    Number.isFinite(first_token_ms) && (first_token_ms as number) > 0
+      ? (first_token_ms as number)
+      : FIRST_TOKEN_TIMEOUT_MS
+  );
+  const agyBin = process.env.AGY_BIN || "agy";
+  const jobId = prompt_file.split("/").pop()?.replace(".md", "") || "";
+  // Absent means Gemini Flash, never "whatever this host's agy defaults to".
+  const agyModel = agyModelFromEnv(model ?? process.env.AGY_MODEL);
+  const cmdArgs = agyArgs({ model: agyModel, prompt: promptContent });
+
+  await log("info", `agy print agent=${agent} (prompt-carried: agy has no configured agents) model=${agyModel} file=${prompt_file} dir=${work_dir} bin=${agyBin} prompt_chars=${promptContent.length}`);
+
+  const run = await runSupervisedChild({
+    bin: agyBin,
+    args: cmdArgs,
+    workDir: work_dir,
+    // Same env rule as every other path: the resolved --model is the child's
+    // truthful provenance, never the long-lived server's inherited value.
+    env: buildChildEnv({ role, jobId, model: agyModel }),
+    promptContent,
+    timeoutMs: timeout_ms,
+    firstTokenGuardMs,
+    label: "agy",
+    onChildPid: (pid) => registerRunningChild(jobId, pid, "agy"),
+    streamErrors: (stdout) => agyErrorMessages(scanAgyStream(stdout)),
+    // agy stream-json emits one JSON envelope per line. Deltas arrive on
+    // `step_update`; the terminal `result` is read at close (terminal.ts),
+    // so the live parse only watches for assistant text.
+    attachStreams: (child, markFirstToken) => {
+      let lineBuf = "";
+      const emitParsed = () => {
+        const lines = (lineBuf + "").split("\n");
+        lineBuf = lines.pop() ?? ""; // last element may be incomplete
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("{")) continue;
+          try {
+            const ev = JSON.parse(trimmed) as any;
+            if (ev?.event === "step_update") {
+              const su = ev.step_update ?? {};
+              const text = typeof su.text_delta === "string" ? su.text_delta : "";
+              if (su.step_type === "agent_response" && text.trim()) {
+                markFirstToken();
+                if (onEvent) onEvent("text", { text });
+              }
+            }
+          } catch { /* non-JSON line — skip */ }
+        }
+      };
+      child.stdout?.on("data", (data: Buffer) => {
+        lineBuf += data.toString();
+        onActivity?.();
+        emitParsed();
+      });
+    },
+  });
+
+  const { exitCode, stderr } = run;
   if (exitCode === 0) {
     incrementConsumedUnits(role).catch(() => {});
   }
