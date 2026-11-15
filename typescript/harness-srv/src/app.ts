@@ -58,7 +58,7 @@ import {
   scanOpencodeStream,
 } from "./terminal";
 import { codexArgs } from "./codex-cli";
-import { armSupervision, spawnHarnessChild } from "./child-process";
+import { runSupervisedChild } from "./child-process";
 import type { AttemptOutcome } from "./terminal";
 import { ADMISSION_OUTCOME } from "./admission";
 // Runaway watchdog rule + constants (T16 guardrail, 1285 remediation slice 2).
@@ -2003,12 +2003,29 @@ async function executeOllama(
 }
 
 /**
- * Execute via opencode CLI (full tool access, requires GPU for reasonable speed).
- * When a model was resolved from tackle config_bundle it is passed via --model,
- * so external-provider changes made in tackle-ui take effect on harness runs.
+ * Register a spawned harness child under its job id, for the runaway watchdog
+ * (direct SIGTERM instead of `pkill -f`) and for the async job contract's
+ * POST /jobs/:id/interrupt.
+ */
+function registerRunningChild(jobId: string, pid: number | undefined, label: string): void {
+  if (!jobId) return;
+  const session = activeSessions.get(jobId);
+  if (session) {
+    session.pid = pid;
+    log("info", `${label} pid=${pid} registered for watchdog (job=${jobId.slice(0, 8)})`);
+  }
+  const job = jobs.get(jobId);
+  if (job) {
+    job.pid = pid ?? null;
+  }
+}
+
+/**
+ * Execute via the opencode CLI (`opencode run --format json`).
  *
- * Uses child_process.spawn (not execFile) so the T16 runaway watchdog can
- * directly SIGTERM the child process by PID instead of pattern-matching pkill.
+ * The supervision (spawn, deadline, first-token guard, refusal watch, kill) is
+ * shared with every other executor in src/child-process.ts; what remains here
+ * is opencode's own argv and its JSONL wire format.
  */
 async function executeOpencode(
   params: HarnessExecParams,
@@ -2028,10 +2045,9 @@ async function executeOpencode(
   const jobId = prompt_file.split("/").pop()?.replace(".md", "") || "";
 
   // NOTE (opencode 1.18.x): `opencode run [message..]` requires the prompt as
-  // a message. We pipe the prompt via stdin instead of passing it as a
-  // positional arg: opencode's resolveRunInput() uses piped stdin when the
-  // positional message is empty, and piping avoids argv-length limits (E2BIG)
-  // for large Assembly-thread prompts.
+  // a message. It is piped on stdin instead of argv: opencode's
+  // resolveRunInput() uses piped stdin when the positional message is empty,
+  // and piping avoids argv-length limits (E2BIG) for large Assembly prompts.
   //
   // `--file` is deliberately NOT passed: (a) the prompt file only contains the
   // same text we already deliver as the message, so attaching it adds nothing;
@@ -2039,7 +2055,7 @@ async function executeOpencode(
   // config providers (`Model not found: <provider>/<model>`) — with --file,
   // opencode 1.18.16 resolves the model against a provider registry that has
   // not yet loaded config providers. The prompt file stays on disk for jobId/
-  // watchdog bookkeeping (prompt_file.split("/").pop() below).
+  // watchdog bookkeeping.
   const cmdArgs = [
     "run",
     "--agent", agent,
@@ -2051,188 +2067,117 @@ async function executeOpencode(
 
   await log("info", `opencode exec agent=${agent} model=${model ?? "(unset)"} file=${prompt_file} dir=${work_dir} bin=${opencodeBin} prompt_chars=${promptContent.length}`);
 
-  return new Promise((resolve) => {
+  // The provider's refusal, while it may still be answered by output.
+  let refusal: RefusalWatch | null = null;
+
+  const run = await runSupervisedChild({
+    bin: opencodeBin,
+    args: cmdArgs,
+    workDir: work_dir,
     // NEXUS_AGENT_MODEL belongs in the child env, not the parent's: the
     // resolved `--model` is what the child actually runs on, and a long-lived
     // server's inherited value can name a different model entirely
     // (2026-11-06: plan glm-5.3-flash-free, records posted as glm-4.5).
-    // See src/child-env.ts. The prompt is piped as the run message (opencode
-    // reads non-TTY stdin as the message via resolveRunInput).
-    const child = spawnHarnessChild({
-      bin: opencodeBin,
-      args: cmdArgs,
-      workDir: work_dir,
-      env: buildChildEnv({ role, jobId, model }),
-      promptContent,
-    });
-
-    // Register PID for runaway watchdog (direct SIGTERM instead of pkill -f)
-    // and for the async job contract's POST /jobs/:id/interrupt.
-    if (jobId) {
-      const session = activeSessions.get(jobId);
-      if (session) {
-        session.pid = child.pid;
-        log("info", `opencode pid=${child.pid} registered for watchdog (job=${jobId.slice(0, 8)})`);
-      }
-      const job = jobs.get(jobId);
-      if (job) {
-        job.pid = child.pid ?? null;
-      }
-    }
-
-    let stdout = '';
-    let stderr = '';
-    let firstTokenSeen = false;
-    // The provider's refusal, while it may still be answered by output.
-    let refusal: RefusalWatch | null = null;
+    // See src/child-env.ts.
+    env: buildChildEnv({ role, jobId, model }),
+    promptContent,
+    timeoutMs: timeout_ms,
+    firstTokenGuardMs,
+    label: "opencode",
+    refusalIsTerminal: () => refusalIsTerminal(refusal, Date.now(), REFUSAL_GRACE_MS),
+    onChildPid: (pid) => registerRunningChild(jobId, pid, "opencode"),
+    streamErrors: (stdout) => errorMessagesOf(scanOpencodeStream(stdout)),
     // ── Stream translation (P1 item 6) ───────────────────────────
-    // opencode --format json emits a JSON-lines stream; translate each
-    // envelope ONCE here into typed events (text → text.delta, reasoning →
-    // thinking) so downstream consumers (SSE /jobs/:id/events, the duality
-    // subscriber) never parse opencode's wire format themselves. Lines can
-    // span chunks, so a partial line buffer is kept.
-    let lineBuf = '';
-    const emitParsed = () => {
-      const lines = (lineBuf + '').split('\n');
-      lineBuf = lines.pop() ?? ''; // last element may be incomplete
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith('{')) continue;
-        try {
-          const ev = JSON.parse(trimmed) as any;
-          // Provider failures (e.g. 429) arrive as `{"type":"error",...}`
-          // envelopes on stdout — NOT on stderr. They are read off the whole
-          // stream at close (terminal.ts) so the same parse both surfaces the
-          // cause and decides the state; parsing them twice, differently, is
-          // how the exit status came to outrank the error in the first place.
-          // A refusal can arrive and then sit there while opencode retries
-          // (provider-refusal.ts). Watch it now; the supervisor tick below
-          // makes it terminal if nothing follows within the grace window. The
-          // whole stream is still read at close, which stays the deciding
-          // evidence when the process ends on its own.
-          if (ev?.type === 'error' && !firstTokenSeen) {
-            const msg = errorMessageFromEvent(ev);
-            if (msg) refusal = noteRefusal(refusal, msg, Date.now());
-            continue;
-          }
-          if (ev?.type === 'text' || ev?.type === 'reasoning') {
-            // The supervisor polls this and disarms its own guard.
-            if (!firstTokenSeen) firstTokenSeen = true;
-            if (onEvent) {
-              const part = ev.part ?? {};
-              const text =
-                typeof part?.text === 'string'
-                  ? part.text
-                  : typeof ev.text === 'string'
-                    ? ev.text
-                    : '';
-              if (text.trim()) {
-                onEvent(ev.type, { text });
+    // opencode --format json emits JSON-lines; translate each envelope ONCE
+    // here into typed events (text → text.delta, reasoning → thinking) so
+    // downstream consumers never parse opencode's wire format. Lines can span
+    // chunks, so a partial line buffer is kept.
+    attachStreams: (child, markFirstToken) => {
+      let lineBuf = "";
+      const emitParsed = () => {
+        const lines = (lineBuf + "").split("\n");
+        lineBuf = lines.pop() ?? ""; // last element may be incomplete
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("{")) continue;
+          try {
+            const ev = JSON.parse(trimmed) as any;
+            // Provider failures (e.g. 429) arrive as `{"type":"error",...}`
+            // envelopes on stdout — NOT on stderr. They are read off the whole
+            // stream at close (terminal.ts) so the same parse both surfaces
+            // the cause and decides the state. A refusal can arrive and then
+            // sit there while opencode retries; watch it now, and the
+            // supervisor makes it terminal if nothing follows in the grace
+            // window.
+            if (ev?.type === "error" && !refusal) {
+              const msg = errorMessageFromEvent(ev);
+              if (msg) refusal = noteRefusal(refusal, msg, Date.now());
+              continue;
+            }
+            if (ev?.type === "text" || ev?.type === "reasoning") {
+              // The supervisor polls this and disarms its own guard.
+              markFirstToken();
+              if (onEvent) {
+                const part = ev.part ?? {};
+                const text =
+                  typeof part?.text === "string"
+                    ? part.text
+                    : typeof ev.text === "string"
+                      ? ev.text
+                      : "";
+                if (text.trim()) {
+                  onEvent(ev.type, { text });
+                }
               }
             }
-          }
-        } catch { /* non-JSON line — skip */ }
-      }
-    };
-    child.stdout?.on('data', (data: Buffer) => {
-      const chunk = data.toString();
-      stdout += chunk;
-      lineBuf += chunk;
-      onActivity?.();
-      emitParsed();
-    });
-    child.stderr?.on('data', (data: Buffer) => { stderr += data.toString(); });
-
-    // Deadline + first-token guard, shared with every other executor: a model
-    // that never emits a token is abandoned (exit 124 + marker) so the failover
-    // ladder rolls on instead of waiting out the full run timeout, and an
-    // unanswered provider refusal outranks the guard's own deadline.
-    // (src/child-process.ts)
-    const supervision = armSupervision({
-      child,
-      timeoutMs: timeout_ms,
-      firstTokenGuardMs,
-      firstTokenSeen: () => firstTokenSeen,
-      refusalIsTerminal: () => refusalIsTerminal(refusal, Date.now(), REFUSAL_GRACE_MS),
-    });
-
-    child.on('close', (code) => {
-      supervision.stop();
-      const { timedOut, noFirstToken, refusedAbandon } = supervision.state;
-      let exitCode = code ?? 1;
-      let stderrOut = stderr;
-      if (refusedAbandon && refusal) {
-        // Exit 1, not 124: the harness did not run out of time and the model
-        // did not hang — the provider refused. Saying so keeps this out of
-        // the stall path (no ten-minute cooldown for an honest 429) and gives
-        // the caller the actual cause instead of "no first token".
-        exitCode = 1;
-        stderrOut = refusalAbandonMessage(refusal, Date.now());
-      } else if (noFirstToken) {
-        exitCode = 124;
-        stderrOut = `opencode produced no first token within ${firstTokenGuardMs}ms — abandoning`;
-      } else if (timedOut) {
-        // A signal-killed child reports code=null, which otherwise surfaces
-        // as a misleading '(no stderr; exit 1)'. Mirror the ollama path's
-        // exitCode 124 + message so callers know this was a timeout, and
-        // keep the partial stdout for the caller to surface.
-        exitCode = 124;
-        stderrOut = `opencode timeout after ${timeout_ms}ms — partial output below`;
-      } else if (code === null) {
-        // Killed by a signal outside the timeout (e.g. the 15-min runaway
-        // watchdog or an external kill) — report it honestly too instead of
-        // the generic exit 1.
-        exitCode = 137;
-        stderrOut = 'opencode killed by signal (watchdog or external kill) — partial output below';
-      }
-      const errorMsgs = errorMessagesOf(scanOpencodeStream(stdout));
-      if (errorMsgs.length > 0) {
-        const errText = errorMsgs.join("\n");
-        stderrOut = stderrOut ? `${stderrOut}\n${errText}` : errText;
-      }
-      if (exitCode === 0) {
-        incrementConsumedUnits(role).catch(() => {});
-      }
-      resolve({ exitCode, stdout, stderr: stderrOut });
-    });
-
-    child.on('error', (err) => {
-      supervision.stop();
-      resolve({ exitCode: 1, stdout, stderr: err.message });
-    });
+          } catch { /* non-JSON line — skip */ }
+        }
+      };
+      child.stdout?.on("data", (data: Buffer) => {
+        lineBuf += data.toString();
+        onActivity?.();
+        emitParsed();
+      });
+    },
   });
+
+  let { exitCode, stderr } = run;
+  if (run.state.refusedAbandon && refusal) {
+    // Exit 1, not 124: the harness did not run out of time and the model did
+    // not hang — the provider refused. Saying so keeps this out of the stall
+    // path (no ten-minute cooldown for an honest 429).
+    exitCode = 1;
+    stderr = refusalAbandonMessage(refusal, Date.now());
+  }
+  if (exitCode === 0) {
+    incrementConsumedUnits(role).catch(() => {});
+  }
+  return { exitCode, stdout: run.stdout, stderr };
 }
 
 /**
  * Execute via the codex CLI (`codex exec --json`).
  *
- * Supervision here is deliberately the SAME as executeOpencode's — direct
- * PID registration for the runaway watchdog and POST /jobs/:id/interrupt, a
- * fixed 1s supervisor tick against a deadline (never a timer armed with a
- * user-influenced duration), the first-token guard, and the refusal watch —
- * because those are properties of a harness CHILD, not of one vendor's CLI.
- * Two things do differ and both are isolated: the argv (codex-cli.ts) and the
- * JSONL vocabulary on stdout (scanCodexStream in terminal.ts).
+ * Supervision is shared with every other executor (src/child-process.ts); what
+ * remains here is codex's argv and its JSONL wire format. Both were verified
+ * against codex-cli 0.169.0 on 2026-11-15:
  *
- * Two codex-specific behaviours are load-bearing and were measured on
- * 2026-11-15 against codex-cli 0.169.0:
- *
- *  1. stdin must be CLOSED after the prompt. codex prints "Reading additional
- *     input from stdin..." and waits while stdin is open, even when a
- *     positional prompt is supplied — a harness child that leaves the pipe
- *     open hangs until the timeout kills it.
+ *  1. codex has no --agent/--format: the role charter is already in the prompt
+ *     file, and JSONL comes from --json. Its prompt is read from stdin, so the
+ *     shared spawn closes that pipe — codex waits on an open stdin even when a
+ *     prompt was supplied ("Reading additional input from stdin...").
  *  2. codex emits an EMPTY `agent_message` item before it starts working. It
- *     is not a first token: counting it would disarm the first-token guard
- *     for the rest of the run, which is exactly the hang the guard exists to
- *     catch.
+ *     is not a first token: marking it would disarm the first-token guard for
+ *     the rest of the run, which is exactly the hang the guard catches.
+ *  3. `item.completed` with `item.type: "error"` carries ADVICE (ignored config
+ *     keys, on every run). It is never a refusal — treating it as one would
+ *     abandon healthy runs after the grace window.
  */
 async function executeCodex(
   params: HarnessExecParams,
   promptContent: string
 ): Promise<HarnessExecResult> {
   const { prompt_file, work_dir, agent, role, model, timeout_ms, first_token_ms, onEvent, onActivity } = params;
-  // The silence allowance for this attempt: the ladder's number when it sent
-  // one, otherwise the guard clamped to this attempt's own timeout.
   const firstTokenGuardMs = Math.min(
     timeout_ms,
     Number.isFinite(first_token_ms) && (first_token_ms as number) > 0
@@ -2240,136 +2185,78 @@ async function executeCodex(
       : FIRST_TOKEN_TIMEOUT_MS
   );
   const codexBin = process.env.CODEX_BIN || "codex";
-  // Extract jobId from prompt filename (${jobId}.md) for watchdog PID tracking
   const jobId = prompt_file.split("/").pop()?.replace(".md", "") || "";
   const cmdArgs = codexArgs({ workDir: work_dir, model, sandbox: process.env.CODEX_SANDBOX });
 
   await log("info", `codex exec agent=${agent} (prompt-carried: codex has no --agent) model=${model ?? "(cli default)"} file=${prompt_file} dir=${work_dir} bin=${codexBin} sandbox=${process.env.CODEX_SANDBOX || "(default)"} prompt_chars=${promptContent.length}`);
 
-  return new Promise((resolve) => {
+  let refusal: RefusalWatch | null = null;
+
+  const run = await runSupervisedChild({
+    bin: codexBin,
+    args: cmdArgs,
+    workDir: work_dir,
     // Same env rule as the opencode path: the resolved --model is the child's
     // truthful provenance, never the long-lived server's inherited value.
-    // spawnHarnessChild also closes the prompt pipe, which codex requires —
-    // it waits on an open stdin even when a prompt was supplied (2026-11-15).
-    const child = spawnHarnessChild({
-      bin: codexBin,
-      args: cmdArgs,
-      workDir: work_dir,
-      env: buildChildEnv({ role, jobId, model }),
-      promptContent,
-    });
-
-    // Register PID for runaway watchdog (direct SIGTERM instead of pkill -f)
-    // and for the async job contract's POST /jobs/:id/interrupt.
-    if (jobId) {
-      const session = activeSessions.get(jobId);
-      if (session) {
-        session.pid = child.pid;
-        log("info", `codex pid=${child.pid} registered for watchdog (job=${jobId.slice(0, 8)})`);
-      }
-      const job = jobs.get(jobId);
-      if (job) {
-        job.pid = child.pid ?? null;
-      }
-    }
-
-    let stdout = '';
-    let stderr = '';
-    let firstTokenSeen = false;
-    // The provider's refusal, while it may still be answered by output.
-    let refusal: RefusalWatch | null = null;
-    // ── Stream translation ───────────────────────────────────────
-    // codex --json emits one JSON envelope per line. Assistant text arrives
-    // as whole `item.completed` items (there are no incremental deltas), so
-    // each non-empty agent_message/reasoning item is translated once into a
-    // text.delta — downstream consumers never parse codex's wire format.
-    let lineBuf = '';
-    const emitParsed = () => {
-      const lines = (lineBuf + '').split('\n');
-      lineBuf = lines.pop() ?? ''; // last element may be incomplete
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith('{')) continue;
-        try {
-          const ev = JSON.parse(trimmed) as any;
-          // Hard failures only: an `item` of type error is ADVICE (every run
-          // here starts with ignored-config warnings) and watching it as a
-          // refusal would abandon healthy runs after the grace window.
-          const refusalMsg = codexRefusalMessage(ev);
-          if (refusalMsg && !firstTokenSeen) {
-            refusal = noteRefusal(refusal, refusalMsg, Date.now());
-            continue;
-          }
-          if (ev?.type === 'item.completed') {
-            const item = ev.item ?? {};
-            const text =
-              typeof item.text === 'string'
-                ? item.text
-                : typeof ev.text === 'string'
-                  ? ev.text
-                  : '';
-            if ((item.type === 'agent_message' || item.type === 'reasoning') && text.trim()) {
-              // The supervisor polls this and disarms its own guard.
-              if (!firstTokenSeen) firstTokenSeen = true;
-              if (onEvent) onEvent('text', { text });
+    env: buildChildEnv({ role, jobId, model }),
+    promptContent,
+    timeoutMs: timeout_ms,
+    firstTokenGuardMs,
+    label: "codex",
+    refusalIsTerminal: () => refusalIsTerminal(refusal, Date.now(), REFUSAL_GRACE_MS),
+    onChildPid: (pid) => registerRunningChild(jobId, pid, "codex"),
+    streamErrors: (stdout) => codexErrorMessages(scanCodexStream(stdout)),
+    // codex --json emits one JSON envelope per line. Assistant text arrives as
+    // whole `item.completed` items (no incremental deltas), so each non-empty
+    // agent_message/reasoning item is translated once into a text.delta.
+    attachStreams: (child, markFirstToken) => {
+      let lineBuf = "";
+      const emitParsed = () => {
+        const lines = (lineBuf + "").split("\n");
+        lineBuf = lines.pop() ?? ""; // last element may be incomplete
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("{")) continue;
+          try {
+            const ev = JSON.parse(trimmed) as any;
+            const refusalMsg = codexRefusalMessage(ev);
+            if (refusalMsg && !refusal) {
+              refusal = noteRefusal(refusal, refusalMsg, Date.now());
+              continue;
             }
-          }
-        } catch { /* non-JSON line — skip */ }
-      }
-    };
-    child.stdout?.on('data', (data: Buffer) => {
-      const chunk = data.toString();
-      stdout += chunk;
-      lineBuf += chunk;
-      onActivity?.();
-      emitParsed();
-    });
-    child.stderr?.on('data', (data: Buffer) => { stderr += data.toString(); });
-
-    const supervision = armSupervision({
-      child,
-      timeoutMs: timeout_ms,
-      firstTokenGuardMs,
-      firstTokenSeen: () => firstTokenSeen,
-      refusalIsTerminal: () => refusalIsTerminal(refusal, Date.now(), REFUSAL_GRACE_MS),
-    });
-
-    child.on('close', (code) => {
-      supervision.stop();
-      const { timedOut, noFirstToken, refusedAbandon } = supervision.state;
-      let exitCode = code ?? 1;
-      let stderrOut = stderr;
-      if (refusedAbandon && refusal) {
-        // Exit 1, not 124: the harness did not run out of time and the model
-        // did not hang — the provider refused.
-        exitCode = 1;
-        stderrOut = refusalAbandonMessage(refusal, Date.now());
-      } else if (noFirstToken) {
-        exitCode = 124;
-        stderrOut = `codex produced no first token within ${firstTokenGuardMs}ms — abandoning`;
-      } else if (timedOut) {
-        exitCode = 124;
-        stderrOut = `codex timeout after ${timeout_ms}ms — partial output below`;
-      } else if (code === null) {
-        exitCode = 137;
-        stderrOut = 'codex killed by signal (watchdog or external kill) — partial output below';
-      }
-      const errorMsgs = codexErrorMessages(scanCodexStream(stdout));
-      if (errorMsgs.length > 0) {
-        const errText = errorMsgs.join("\n");
-        stderrOut = stderrOut ? `${stderrOut}\n${errText}` : errText;
-      }
-      if (exitCode === 0) {
-        incrementConsumedUnits(role).catch(() => {});
-      }
-      resolve({ exitCode, stdout, stderr: stderrOut });
-    });
-
-    child.on('error', (err) => {
-      supervision.stop();
-      resolve({ exitCode: 1, stdout, stderr: err.message });
-    });
+            if (ev?.type === "item.completed") {
+              const item = ev.item ?? {};
+              const text =
+                typeof item.text === "string"
+                  ? item.text
+                  : typeof ev.text === "string"
+                    ? ev.text
+                    : "";
+              if ((item.type === "agent_message" || item.type === "reasoning") && text.trim()) {
+                markFirstToken();
+                if (onEvent) onEvent("text", { text });
+              }
+            }
+          } catch { /* non-JSON line — skip */ }
+        }
+      };
+      child.stdout?.on("data", (data: Buffer) => {
+        lineBuf += data.toString();
+        onActivity?.();
+        emitParsed();
+      });
+    },
   });
+
+  let { exitCode, stderr } = run;
+  if (run.state.refusedAbandon && refusal) {
+    exitCode = 1;
+    stderr = refusalAbandonMessage(refusal, Date.now());
+  }
+  if (exitCode === 0) {
+    incrementConsumedUnits(role).catch(() => {});
+  }
+  return { exitCode, stdout: run.stdout, stderr };
 }
 
 // ── Outcome helpers ─────────────────────────────────────────────────

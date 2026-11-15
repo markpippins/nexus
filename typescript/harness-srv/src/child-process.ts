@@ -99,6 +99,130 @@ export interface ArmSupervisionParams {
   refusalIsTerminal?: () => boolean;
 }
 
+export interface RunSupervisedParams {
+  bin: string;
+  args: string[];
+  workDir: string;
+  env: NodeJS.ProcessEnv;
+  promptContent: string;
+  timeoutMs: number;
+  firstTokenGuardMs: number;
+  /** Which CLI this is, as it should read in a timeout/abandon message. */
+  label: string;
+  /**
+   * Attach the CLI's own stdout/stderr readers. The executor owns its wire
+   * format; this module only supplies the plumbing: call markFirstToken() the
+   * first time real assistant text arrives (the guard polls it). Chunk-level
+   * watchdog activity stays the executor's job, since it already sees each
+   * chunk.
+   */
+  attachStreams: (child: ChildProcess, markFirstToken: () => void) => void;
+  /** Has a provider refusal gone unanswered past its grace window? */
+  refusalIsTerminal?: () => boolean;
+  /** CLI-specific error text to append to stderr, from the full stdout. */
+  streamErrors: (stdout: string) => string[];
+  /** Called once with the child pid (or undefined when spawn failed), so the
+   *  caller can register it with the runaway watchdog and job registry. */
+  onChildPid?: (pid: number | undefined) => void;
+}
+
+export interface SupervisedResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  state: SupervisionState;
+}
+
+/**
+ * Run one supervised child to completion.
+ *
+ * Everything that is true of ANY harness child lives here: spawn with the
+ * prompt pipe closed, PID hand-off, the deadline and first-token guard, and
+ * the mapping from how the child ended to the exit code the callers already
+ * key on (1 refusal, 124 timeout, 124 no-first-token, 137 signalled). The
+ * executor supplies only what differs: its stdout reader and its idea of
+ * which stream lines are errors.
+ */
+export function runSupervisedChild({
+  bin,
+  args,
+  workDir,
+  env,
+  promptContent,
+  timeoutMs,
+  firstTokenGuardMs,
+  label,
+  attachStreams,
+  refusalIsTerminal,
+  streamErrors,
+  onChildPid,
+}: RunSupervisedParams): Promise<SupervisedResult> {
+  return new Promise((resolve) => {
+    const child = spawnHarnessChild({ bin, args, workDir, env, promptContent });
+    onChildPid?.(child.pid);
+
+    let stdout = "";
+    let stderr = "";
+    let firstTokenSeen = false;
+
+    attachStreams(child, () => { firstTokenSeen = true; });
+
+    // Every stdout chunk belongs to the executor's parser AND to the buffers
+    // the caller receives; capturing here keeps that one writer.
+    child.stdout?.on("data", (data: Buffer) => {
+      stdout += data.toString();
+    });
+    child.stderr?.on("data", (data: Buffer) => {
+      stderr += data.toString();
+    });
+
+    const supervision = armSupervision({
+      child,
+      timeoutMs,
+      firstTokenGuardMs,
+      firstTokenSeen: () => firstTokenSeen,
+      refusalIsTerminal,
+    });
+
+    child.on("close", (code) => {
+      supervision.stop();
+      const state = supervision.state;
+      let exitCode = code ?? 1;
+      let stderrOut = stderr;
+      if (state.refusedAbandon) {
+        // Exit 1, not 124: the harness did not run out of time and the model
+        // did not hang — the provider refused. The caller supplies the words.
+        exitCode = 1;
+      } else if (state.noFirstToken) {
+        exitCode = 124;
+        stderrOut = `${label} produced no first token within ${firstTokenGuardMs}ms — abandoning`;
+      } else if (state.timedOut) {
+        exitCode = 124;
+        stderrOut = `${label} timeout after ${timeoutMs}ms — partial output below`;
+      } else if (code === null) {
+        exitCode = 137;
+        stderrOut = `${label} killed by signal (watchdog or external kill) — partial output below`;
+      }
+      const errors = streamErrors(stdout);
+      if (errors.length > 0) {
+        const errText = errors.join("\n");
+        stderrOut = stderrOut ? `${stderrOut}\n${errText}` : errText;
+      }
+      resolve({ exitCode, stdout, stderr: stderrOut, state });
+    });
+
+    child.on("error", (err) => {
+      supervision.stop();
+      resolve({
+        exitCode: 1,
+        stdout,
+        stderr: err.message,
+        state: supervision.state,
+      });
+    });
+  });
+}
+
 /**
  * Arm the attempt's two deadlines and return the live state plus a stop().
  *
