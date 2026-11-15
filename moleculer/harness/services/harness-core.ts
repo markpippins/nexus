@@ -18,10 +18,15 @@ import rateLimit from "express-rate-limit";
 import { resolveContext, resolveRoleModel, emitEvent, pool, redis, checkConfigAdmission, incrementConsumedUnits, emitGovernanceReceipt } from "./db.js";
 import {
   classifyTerminal,
+  codexErrorMessages,
+  detectHarness,
   errorMessagesOf,
   lastStepReason,
+  scanCodexStream,
+  scanHarnessStream,
   scanOpencodeStream,
 } from "./terminal.js";
+import { codexArgs } from "./codex-cli.js";
 import { ADMISSION_OUTCOME } from "./admission.js";
 import { execFile, spawn } from "child_process";
 import { promisify } from "util";
@@ -1241,10 +1246,11 @@ app.post("/run-direct", async (req, res) => {
             // own stream before treating it as the winning attempt.
             const attemptVerdict = classifyTerminal({
               exitCode: 0,
-              marks: scanOpencodeStream(attemptStdout),
+              marks: scanHarnessStream(attemptStdout),
               timedOut: false,
               noFirstToken: false,
               interrupted: false,
+              harness: detectHarness(attemptStdout),
             });
             if (attemptVerdict.state !== "failed") {
               modelUsed = attempt.model;
@@ -1281,7 +1287,7 @@ app.post("/run-direct", async (req, res) => {
       // must keep its cancellation exit code (137), not the executor's.
       // The run's own stream is the evidence for HOW it ended; the exit
       // status alone is not (see terminal.ts).
-      const marks = scanOpencodeStream(stdout);
+      const marks = scanHarnessStream(stdout);
       const stopReason = lastStepReason(marks);
       const job = jobs.get(jobId);
       if (job) {
@@ -1613,6 +1619,11 @@ async function executeHarness(params: HarnessExecParams): Promise<HarnessExecRes
     );
   } else if (binary === "opencode") {
     return executeOpencode(params, promptContent);
+  } else if (binary === "codex") {
+    // codex exposes no --agent/--format flags and takes its prompt on stdin;
+    // see codex-cli.ts for the argv differences verified against
+    // codex-cli 0.169.0 (2026-11-15).
+    return executeCodex(params, promptContent);
   } else {
     throw new Error(`Harness ${harness_id} binary '${binary}' not yet supported`);
   }
@@ -1886,6 +1897,179 @@ async function executeOpencode(
         stderrOut = 'opencode killed by signal (watchdog or external kill) — partial output below';
       }
       const errorMsgs = errorMessagesOf(scanOpencodeStream(stdout));
+      if (errorMsgs.length > 0) {
+        const errText = errorMsgs.join("\n");
+        stderrOut = stderrOut ? `${stderrOut}\n${errText}` : errText;
+      }
+      if (exitCode === 0) {
+        incrementConsumedUnits(role).catch(() => {});
+      }
+      resolve({ exitCode, stdout, stderr: stderrOut });
+    });
+
+    child.on('error', (err) => {
+      clearInterval(timer);
+      if (firstTokenTimer) clearInterval(firstTokenTimer);
+      resolve({ exitCode: 1, stdout, stderr: err.message });
+    });
+  });
+}
+
+/**
+ * Execute via the codex CLI (`codex exec --json`).
+ *
+ * Supervision is deliberately the SAME as executeOpencode's — PID registration
+ * for the watchdog, a fixed 1s supervisor tick against a deadline, the
+ * first-token guard and the refusal watch — because those are properties of a
+ * harness CHILD, not of one vendor's CLI. Two things differ and both are
+ * isolated: the argv (codex-cli.ts) and the JSONL vocabulary on stdout
+ * (scanCodexStream in terminal.ts).
+ *
+ * Two codex-specific behaviours are load-bearing, measured on 2026-11-15
+ * against codex-cli 0.169.0:
+ *
+ *  1. stdin must be CLOSED after the prompt. codex prints "Reading additional
+ *     input from stdin..." and waits while stdin is open, even when a prompt
+ *     was supplied — a harness child that leaves the pipe open hangs until
+ *     the timeout kills it.
+ *  2. codex emits an EMPTY `agent_message` item before it starts working. It
+ *     is not a first token: counting it would disarm the first-token guard for
+ *     the rest of the run, which is exactly the hang the guard exists to catch.
+ */
+async function executeCodex(
+  params: HarnessExecParams,
+  promptContent: string
+): Promise<HarnessExecResult> {
+  const { prompt_file, work_dir, agent, role, model, timeout_ms, onEvent } = params;
+  const codexBin = process.env.CODEX_BIN || "codex";
+  const jobId = prompt_file.split("/").pop()?.replace(".md", "") || "";
+  const cmdArgs = codexArgs({ workDir: work_dir, model, sandbox: process.env.CODEX_SANDBOX });
+
+  await log("info", `codex exec agent=${agent} (prompt-carried: codex has no --agent) model=${model ?? "(cli default)"} file=${prompt_file} dir=${work_dir} bin=${codexBin} sandbox=${process.env.CODEX_SANDBOX || "(default)"} prompt_chars=${promptContent.length}`);
+
+  return new Promise((resolve) => {
+    const child = spawn(codexBin, cmdArgs, {
+      cwd: work_dir,
+      env: {
+        ...process.env,
+        HARNESS_ROLE: role,
+        HARNESS_JOB_ID: jobId,
+        // The resolved --model is the child's truthful provenance — never the
+        // long-lived server's inherited value (2026-11-06 misattribution).
+        ...(typeof model === "string" && model.trim() ? { NEXUS_AGENT_MODEL: model.trim() } : {}),
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    if (child.stdin) {
+      child.stdin.on("error", () => { /* child may have exited early */ });
+      child.stdin.write(promptContent);
+      child.stdin.end();
+    }
+
+    // Register PID for the runaway watchdog and POST /jobs/:id/interrupt.
+    if (jobId) {
+      const session = activeSessions.get(jobId);
+      if (session) {
+        session.pid = child.pid;
+        log("info", `codex pid=${child.pid} registered for watchdog (job=${jobId.slice(0, 8)})`);
+      }
+      const job = jobs.get(jobId);
+      if (job) {
+        job.pid = child.pid ?? null;
+      }
+    }
+
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    let noFirstToken = false;
+    let firstTokenSeen = false;
+    let firstTokenTimer: NodeJS.Timeout | null = null;
+    // codex --json emits one JSON envelope per line; assistant text arrives as
+    // whole `item.completed` items (no incremental deltas), translated once
+    // here into text.delta so consumers never parse codex's wire format.
+    let lineBuf = '';
+    const emitParsed = () => {
+      const lines = (lineBuf + '').split('\n');
+      lineBuf = lines.pop() ?? '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('{')) continue;
+        try {
+          const ev = JSON.parse(trimmed) as any;
+          // Only real assistant text counts as the first token: codex emits an
+          // EMPTY agent_message before it starts working, and an `item` of
+          // type error carries config advice on every run.
+          if (ev?.type === 'item.completed') {
+            const item = ev.item ?? {};
+            const text =
+              typeof item.text === 'string'
+                ? item.text
+                : typeof ev.text === 'string'
+                  ? ev.text
+                  : '';
+            if ((item.type === 'agent_message' || item.type === 'reasoning') && text.trim()) {
+              if (!firstTokenSeen) {
+                firstTokenSeen = true;
+                if (firstTokenTimer) clearInterval(firstTokenTimer);
+              }
+              if (onEvent) onEvent('text', { text });
+            }
+          }
+        } catch { /* non-JSON line — skip */ }
+      }
+    };
+    child.stdout?.on('data', (data: Buffer) => {
+      const chunk = data.toString();
+      stdout += chunk;
+      lineBuf += chunk;
+      emitParsed();
+    });
+    child.stderr?.on('data', (data: Buffer) => { stderr += data.toString(); });
+
+    const deadline = Date.now() + timeout_ms;
+    const firstTokenDeadline = Date.now() + Math.min(timeout_ms, FIRST_TOKEN_TIMEOUT_MS);
+    const timer = setInterval(() => {
+      if (Date.now() < deadline) return;
+      timedOut = true;
+      clearInterval(timer);
+      child.kill('SIGTERM');
+      setTimeout(() => {
+        try { child.kill('SIGKILL'); } catch { /* already dead */ }
+      }, 5000);
+    }, 1000);
+
+    firstTokenTimer = setInterval(() => {
+      if (firstTokenSeen) {
+        if (firstTokenTimer) clearInterval(firstTokenTimer);
+        return;
+      }
+      if (Date.now() < firstTokenDeadline) return;
+      if (firstTokenTimer) clearInterval(firstTokenTimer);
+      noFirstToken = true;
+      child.kill('SIGTERM');
+      setTimeout(() => {
+        try { child.kill('SIGKILL'); } catch { /* already dead */ }
+      }, 5000);
+    }, 1000);
+
+    child.on('close', (code) => {
+      clearInterval(timer);
+      if (firstTokenTimer) clearInterval(firstTokenTimer);
+      let exitCode = code ?? 1;
+      let stderrOut = stderr;
+      if (noFirstToken) {
+        exitCode = 124;
+        stderrOut = `codex produced no first token within ${Math.min(timeout_ms, FIRST_TOKEN_TIMEOUT_MS)}ms — abandoning`;
+      } else if (timedOut) {
+        exitCode = 124;
+        stderrOut = `codex timeout after ${timeout_ms}ms — partial output below`;
+      } else if (code === null) {
+        exitCode = 137;
+        stderrOut = 'codex killed by signal (watchdog or external kill) — partial output below';
+      }
+      const errorMsgs = codexErrorMessages(scanCodexStream(stdout));
       if (errorMsgs.length > 0) {
         const errText = errorMsgs.join("\n");
         stderrOut = stderrOut ? `${stderrOut}\n${errText}` : errText;

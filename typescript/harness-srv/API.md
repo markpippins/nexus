@@ -33,8 +33,18 @@ python3 tools/api-docs/gen_openapi.py --inventory /tmp/api_inventory.json   # (v
 
 > **Hand-authored section — preserved across regeneration.** Base URL:
 > `http://localhost:3420`. JSON in/out. Execution harness: resolves Tackle role
-> context + Wind task context, then invokes an agent (opencode CLI or ollama
-> HTTP) and reports the result. Every run emits `harness.started` →
+> context + Wind task context, then invokes an agent (opencode CLI, codex CLI or
+> ollama HTTP) and reports the result.
+>
+> Supported `binary` values in `tackle.harnesses`: `opencode`, `codex`, `ollama`.
+> The codex path drives `codex exec --json` (codex-cli 0.169.0): `--cd` for the
+> work dir, `--model` for the resolved model, `--sandbox`
+> (`read-only|workspace-write|danger-full-access`, default `danger-full-access`,
+> override with `CODEX_SANDBOX`), `--ephemeral` (override with
+> `CODEX_PERSIST_SESSION=1`-style call sites — see `src/codex-cli.ts`), and the
+> prompt on stdin via a trailing `-`. codex has no `--agent` flag: the role
+> charter travels in the prompt file, and the resolved `agent` is logged only.
+> Set `CODEX_BIN` to point at a specific binary. Every run emits `harness.started` →
 > `harness.completed|failed` events to `cascade.events` and governance receipts
 > (`PLAN_CREATE` → `IMPLEMENTATION` → `REVIEW_PASS|REVIEW_REJECT|BLOCK`).
 
