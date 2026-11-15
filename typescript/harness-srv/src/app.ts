@@ -58,6 +58,7 @@ import {
   scanOpencodeStream,
 } from "./terminal";
 import { codexArgs } from "./codex-cli";
+import { armSupervision, spawnHarnessChild } from "./child-process";
 import type { AttemptOutcome } from "./terminal";
 import { ADMISSION_OUTCOME } from "./admission";
 // Runaway watchdog rule + constants (T16 guardrail, 1285 remediation slice 2).
@@ -2051,24 +2052,19 @@ async function executeOpencode(
   await log("info", `opencode exec agent=${agent} model=${model ?? "(unset)"} file=${prompt_file} dir=${work_dir} bin=${opencodeBin} prompt_chars=${promptContent.length}`);
 
   return new Promise((resolve) => {
-    const child = spawn(opencodeBin, cmdArgs, {
-      cwd: work_dir,
-      // NEXUS_AGENT_MODEL belongs here, not in the parent environment: the
-      // resolved `--model` is what the child actually runs on, and a
-      // long-lived server's inherited value can name a different model
-      // entirely (2026-11-06: plan glm-5.3-flash-free, records posted as
-      // glm-4.5). See src/child-env.ts.
+    // NEXUS_AGENT_MODEL belongs in the child env, not the parent's: the
+    // resolved `--model` is what the child actually runs on, and a long-lived
+    // server's inherited value can name a different model entirely
+    // (2026-11-06: plan glm-5.3-flash-free, records posted as glm-4.5).
+    // See src/child-env.ts. The prompt is piped as the run message (opencode
+    // reads non-TTY stdin as the message via resolveRunInput).
+    const child = spawnHarnessChild({
+      bin: opencodeBin,
+      args: cmdArgs,
+      workDir: work_dir,
       env: buildChildEnv({ role, jobId, model }),
-      stdio: ['pipe', 'pipe', 'pipe'],
+      promptContent,
     });
-
-    // Pipe the prompt as the run message (opencode reads non-TTY stdin as the
-    // message via resolveRunInput). Ignore EPIPE — the child may exit early.
-    if (child.stdin) {
-      child.stdin.on("error", () => { /* child may have exited early */ });
-      child.stdin.write(promptContent);
-      child.stdin.end();
-    }
 
     // Register PID for runaway watchdog (direct SIGTERM instead of pkill -f)
     // and for the async job contract's POST /jobs/:id/interrupt.
@@ -2086,15 +2082,9 @@ async function executeOpencode(
 
     let stdout = '';
     let stderr = '';
-    let timedOut = false;
-    let noFirstToken = false;
     let firstTokenSeen = false;
     // The provider's refusal, while it may still be answered by output.
     let refusal: RefusalWatch | null = null;
-    // Set when the grace window elapsed and WE ended the attempt on that
-    // refusal — the close handler reports it as a refusal, not a stall.
-    let refusedAbandon = false;
-    let firstTokenTimer: NodeJS.Timeout | null = null;
     // ── Stream translation (P1 item 6) ───────────────────────────
     // opencode --format json emits a JSON-lines stream; translate each
     // envelope ONCE here into typed events (text → text.delta, reasoning →
@@ -2126,10 +2116,8 @@ async function executeOpencode(
             continue;
           }
           if (ev?.type === 'text' || ev?.type === 'reasoning') {
-            if (!firstTokenSeen) {
-              firstTokenSeen = true;
-              if (firstTokenTimer) clearInterval(firstTokenTimer);
-            }
+            // The supervisor polls this and disarms its own guard.
+            if (!firstTokenSeen) firstTokenSeen = true;
             if (onEvent) {
               const part = ev.part ?? {};
               const text =
@@ -2155,58 +2143,22 @@ async function executeOpencode(
     });
     child.stderr?.on('data', (data: Buffer) => { stderr += data.toString(); });
 
-    // Fixed 1s supervisor tick instead of setTimeout(timeout_ms): the
-    // user-influenced duration is compared against a deadline rather than
-    // handed to the timer API, so no timer with a user-controlled duration
-    // is ever armed (CodeQL js/resource-exhaustion remediation, alerts
-    // #753/#754/#758 family — same deadline pattern as the runaway watchdog).
-    const deadline = Date.now() + timeout_ms;
-    const firstTokenDeadline = Date.now() + firstTokenGuardMs;
-    const timer = setInterval(() => {
-      if (Date.now() < deadline) return;
-      timedOut = true;
-      clearInterval(timer);
-      child.kill('SIGTERM');
-      // Give it 5s to exit gracefully, then force-kill
-      setTimeout(() => {
-        try { child.kill('SIGKILL'); } catch { /* already dead */ }
-      }, 5000);
-    }, 1000);
-
-    // First-token guard — a model that never emits a text/reasoning token
-    // within FIRST_TOKEN_TIMEOUT_MS is abandoned (exit 124 + marker) so the
-    // failover ladder rolls to the next model instead of waiting out the full
-    // run timeout on a hung provider.
-    firstTokenTimer = setInterval(() => {
-      if (firstTokenSeen) {
-        if (firstTokenTimer) clearInterval(firstTokenTimer);
-        return;
-      }
-      const now = Date.now();
-      // The provider's own words outrank the guard's deadline: a refusal that
-      // nothing answered is final after the grace window, and the run fails
-      // over in seconds instead of burning the full first-token allowance.
-      if (refusalIsTerminal(refusal, now, REFUSAL_GRACE_MS)) {
-        if (firstTokenTimer) clearInterval(firstTokenTimer);
-        refusedAbandon = true;
-        child.kill('SIGTERM');
-        setTimeout(() => {
-          try { child.kill('SIGKILL'); } catch { /* already dead */ }
-        }, 5000);
-        return;
-      }
-      if (now < firstTokenDeadline) return;
-      if (firstTokenTimer) clearInterval(firstTokenTimer);
-      noFirstToken = true;
-      child.kill('SIGTERM');
-      setTimeout(() => {
-        try { child.kill('SIGKILL'); } catch { /* already dead */ }
-      }, 5000);
-    }, 1000);
+    // Deadline + first-token guard, shared with every other executor: a model
+    // that never emits a token is abandoned (exit 124 + marker) so the failover
+    // ladder rolls on instead of waiting out the full run timeout, and an
+    // unanswered provider refusal outranks the guard's own deadline.
+    // (src/child-process.ts)
+    const supervision = armSupervision({
+      child,
+      timeoutMs: timeout_ms,
+      firstTokenGuardMs,
+      firstTokenSeen: () => firstTokenSeen,
+      refusalIsTerminal: () => refusalIsTerminal(refusal, Date.now(), REFUSAL_GRACE_MS),
+    });
 
     child.on('close', (code) => {
-      clearInterval(timer);
-      if (firstTokenTimer) clearInterval(firstTokenTimer);
+      supervision.stop();
+      const { timedOut, noFirstToken, refusedAbandon } = supervision.state;
       let exitCode = code ?? 1;
       let stderrOut = stderr;
       if (refusedAbandon && refusal) {
@@ -2245,8 +2197,7 @@ async function executeOpencode(
     });
 
     child.on('error', (err) => {
-      clearInterval(timer);
-      if (firstTokenTimer) clearInterval(firstTokenTimer);
+      supervision.stop();
       resolve({ exitCode: 1, stdout, stderr: err.message });
     });
   });
@@ -2296,19 +2247,17 @@ async function executeCodex(
   await log("info", `codex exec agent=${agent} (prompt-carried: codex has no --agent) model=${model ?? "(cli default)"} file=${prompt_file} dir=${work_dir} bin=${codexBin} sandbox=${process.env.CODEX_SANDBOX || "(default)"} prompt_chars=${promptContent.length}`);
 
   return new Promise((resolve) => {
-    const child = spawn(codexBin, cmdArgs, {
-      cwd: work_dir,
-      // Same rule as the opencode path: the resolved --model is the child's
-      // truthful provenance, never the long-lived server's inherited value.
+    // Same env rule as the opencode path: the resolved --model is the child's
+    // truthful provenance, never the long-lived server's inherited value.
+    // spawnHarnessChild also closes the prompt pipe, which codex requires —
+    // it waits on an open stdin even when a prompt was supplied (2026-11-15).
+    const child = spawnHarnessChild({
+      bin: codexBin,
+      args: cmdArgs,
+      workDir: work_dir,
       env: buildChildEnv({ role, jobId, model }),
-      stdio: ['pipe', 'pipe', 'pipe'],
+      promptContent,
     });
-
-    if (child.stdin) {
-      child.stdin.on("error", () => { /* child may have exited early */ });
-      child.stdin.write(promptContent);
-      child.stdin.end();
-    }
 
     // Register PID for runaway watchdog (direct SIGTERM instead of pkill -f)
     // and for the async job contract's POST /jobs/:id/interrupt.
@@ -2326,15 +2275,9 @@ async function executeCodex(
 
     let stdout = '';
     let stderr = '';
-    let timedOut = false;
-    let noFirstToken = false;
     let firstTokenSeen = false;
     // The provider's refusal, while it may still be answered by output.
     let refusal: RefusalWatch | null = null;
-    // Set when the grace window elapsed and WE ended the attempt on that
-    // refusal — the close handler reports it as a refusal, not a stall.
-    let refusedAbandon = false;
-    let firstTokenTimer: NodeJS.Timeout | null = null;
     // ── Stream translation ───────────────────────────────────────
     // codex --json emits one JSON envelope per line. Assistant text arrives
     // as whole `item.completed` items (there are no incremental deltas), so
@@ -2366,10 +2309,8 @@ async function executeCodex(
                   ? ev.text
                   : '';
             if ((item.type === 'agent_message' || item.type === 'reasoning') && text.trim()) {
-              if (!firstTokenSeen) {
-                firstTokenSeen = true;
-                if (firstTokenTimer) clearInterval(firstTokenTimer);
-              }
+              // The supervisor polls this and disarms its own guard.
+              if (!firstTokenSeen) firstTokenSeen = true;
               if (onEvent) onEvent('text', { text });
             }
           }
@@ -2385,57 +2326,17 @@ async function executeCodex(
     });
     child.stderr?.on('data', (data: Buffer) => { stderr += data.toString(); });
 
-    // Fixed 1s supervisor tick instead of setTimeout(timeout_ms): the
-    // user-influenced duration is compared against a deadline rather than
-    // handed to the timer API, so no timer with a user-controlled duration
-    // is ever armed (CodeQL js/resource-exhaustion remediation — same
-    // deadline pattern as the opencode path and the runaway watchdog).
-    const deadline = Date.now() + timeout_ms;
-    const firstTokenDeadline = Date.now() + firstTokenGuardMs;
-    const timer = setInterval(() => {
-      if (Date.now() < deadline) return;
-      timedOut = true;
-      clearInterval(timer);
-      child.kill('SIGTERM');
-      // Give it 5s to exit gracefully, then force-kill
-      setTimeout(() => {
-        try { child.kill('SIGKILL'); } catch { /* already dead */ }
-      }, 5000);
-    }, 1000);
-
-    // First-token guard — a model that never emits assistant text within
-    // firstTokenGuardMs is abandoned (exit 124 + marker) so the failover
-    // ladder rolls to the next model instead of waiting out the full run
-    // timeout on a hung provider.
-    firstTokenTimer = setInterval(() => {
-      if (firstTokenSeen) {
-        if (firstTokenTimer) clearInterval(firstTokenTimer);
-        return;
-      }
-      const now = Date.now();
-      // The provider's own words outrank the guard's deadline: a refusal that
-      // nothing answered is final after the grace window.
-      if (refusalIsTerminal(refusal, now, REFUSAL_GRACE_MS)) {
-        if (firstTokenTimer) clearInterval(firstTokenTimer);
-        refusedAbandon = true;
-        child.kill('SIGTERM');
-        setTimeout(() => {
-          try { child.kill('SIGKILL'); } catch { /* already dead */ }
-        }, 5000);
-        return;
-      }
-      if (now < firstTokenDeadline) return;
-      if (firstTokenTimer) clearInterval(firstTokenTimer);
-      noFirstToken = true;
-      child.kill('SIGTERM');
-      setTimeout(() => {
-        try { child.kill('SIGKILL'); } catch { /* already dead */ }
-      }, 5000);
-    }, 1000);
+    const supervision = armSupervision({
+      child,
+      timeoutMs: timeout_ms,
+      firstTokenGuardMs,
+      firstTokenSeen: () => firstTokenSeen,
+      refusalIsTerminal: () => refusalIsTerminal(refusal, Date.now(), REFUSAL_GRACE_MS),
+    });
 
     child.on('close', (code) => {
-      clearInterval(timer);
-      if (firstTokenTimer) clearInterval(firstTokenTimer);
+      supervision.stop();
+      const { timedOut, noFirstToken, refusedAbandon } = supervision.state;
       let exitCode = code ?? 1;
       let stderrOut = stderr;
       if (refusedAbandon && refusal) {
@@ -2465,8 +2366,7 @@ async function executeCodex(
     });
 
     child.on('error', (err) => {
-      clearInterval(timer);
-      if (firstTokenTimer) clearInterval(firstTokenTimer);
+      supervision.stop();
       resolve({ exitCode: 1, stdout, stderr: err.message });
     });
   });
