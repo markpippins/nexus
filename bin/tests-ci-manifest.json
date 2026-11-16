@@ -13,6 +13,7 @@
       "test_v217_escalates_to_cleanup.py",
       "test_v218_assessment_family.py",
    "test_v219_request_kind_migration.py",
+      "test_v220_work_request_links_migration.py",
       "test_roles_registry_parity.py",
       "test_verify_roles_transitional.py"
     ],
