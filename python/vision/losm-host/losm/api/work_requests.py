@@ -21,6 +21,7 @@ from losm_store.repository import (
 )
 from losm_store.canonical_bridge import (
     dual_write_enabled,
+    legacy_history_available,
     canonical_update_for_status,
     mirror_update_work_request,
     mirror_insert_lifecycle_event,
@@ -185,24 +186,25 @@ def transition_wr(wr_id: str, payload: TransitionRequest, db: Session = Depends(
         db.commit()
         raise HTTPException(status_code=400, detail=validation.reason)
 
-    # W2a: canonical-first status mutation (mapped via STATUS_MAP), then the
-    # bitemporal mirror update (verbatim losm state) + raw lifecycle event —
-    # all in the same transaction. The refusal path above is unchanged.
-    if dual_write_enabled():
+    # W2a/W2c: canonical status mutation; the legacy mirror is written only
+    # while its history base exists (V187 archives it). The refusal path above
+    # is unchanged.
+    if dual_write_enabled() or not legacy_history_available(db):
         canonical_update_for_status(
             db,
             wr_id=str(wr_id),
             new_status_value=payload.to_state,
         )
-    mirror_update_work_request(
-        db,
-        wr_id=str(wr_id),
-        intent=None,
-        constraints=None,
-        priority=None,
-        context_data=None,
-        status=payload.to_state,
-    )
+    if legacy_history_available(db):
+        mirror_update_work_request(
+            db,
+            wr_id=str(wr_id),
+            intent=None,
+            constraints=None,
+            priority=None,
+            context_data=None,
+            status=payload.to_state,
+        )
     lifecycle_event_id = str(uuid.uuid4())
     mirror_insert_lifecycle_event(
         db,
