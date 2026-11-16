@@ -833,5 +833,103 @@ class V187WorkRequestDemotionE2E(unittest.TestCase):
         self.assertIn("vision.sneaky_consumer", str(cm.exception))
 
 
+
+class V187LiveResidualE2E(unittest.TestCase):
+    """V187 against the actual post-V186 live residual shape.
+
+    Live has a non-canonical test row and three Nebula-history rows whose
+    canonical legacy_id carries the vision prefix.  The amended migration must
+    archive the former without deleting it and preserve the latter (including
+    their execution.requests FKs) without surfacing them in canonical views.
+    """
+
+    RESIDUAL_IDS = [
+        "09f7f5c9-6202-4262-93c9-87e82c729d07",
+        "0ec94c16-0451-4c66-86d7-d017f317851a",
+        "e16cec45-2085-4a67-a968-2e6b7dd4f5ff",
+    ]
+
+    def setUp(self):
+        self.db = ThrowawayDB()
+        self.db.__enter__()
+        self.conn = self.db.conn
+        with self.conn.cursor() as cur:
+            self.assets, self.vision_uuids, self.nebula_id = seed_live_shape(cur)
+            for rid in self.RESIDUAL_IDS:
+                cur.execute(
+                    """INSERT INTO nebula.work_requests_history
+                           (id, title, business_status, context, legacy_id,
+                            dco_json, created_at, updated_at, valid_from,
+                            valid_until, recorded_on_dt, recorded_until_dt)
+                       VALUES (%s, %s, 'DRAFT', '{}'::jsonb, %s, '{}'::text,
+                               now() - interval '4 days', now() - interval '4 days',
+                               now() - interval '4 days', 'infinity'::timestamptz,
+                               now() - interval '4 days', 'infinity'::timestamptz)""",
+                    (rid, f"residual probe {rid[:8]}", f"residual-{rid[:8]}"),
+                )
+        self.conn.commit()
+        apply_v186(self.conn)
+        with self.conn.cursor() as cur:
+            # Simulate the live post-V186 contamination: the canonical rows
+            # for these Nebula-history rows carry the vision prefix.
+            for rid in self.RESIDUAL_IDS:
+                cur.execute(
+                    "UPDATE resolution.work_request SET legacy_id = %s WHERE id = %s",
+                    (f"vision.work_requests:{rid}", rid))
+            # The non-canonical test artifact was added after V186 on live.
+            cur.execute(
+                """INSERT INTO vision.work_requests
+                       (wr_id, dco_json, context, status, step_outputs,
+                        recorded_on_dt, recorded_until_dt, work_request_uuid,
+                        title, asset_id, entity_key)
+                   VALUES ('wr-test-p11-local', '{}'::text, '{}'::jsonb,
+                           'validated', '{}'::text, now() - interval '3 days',
+                           NULL, 'workrequest:wr-test-p11-local',
+                           'P1-1 depth test WR (updated)', NULL, NULL)""")
+            # Two execution requests point at residual rows, as on live.
+            for rid in self.RESIDUAL_IDS[:2]:
+                cur.execute(
+                    """INSERT INTO execution.requests
+                           (business_key, title, status, source_wr_id)
+                       VALUES (%s, 'residual execution', 'READY', %s)""",
+                    (f"bk-residual-{rid[:8]}", rid))
+        self.conn.commit()
+
+    def tearDown(self):
+        self.db.__exit__()
+
+    def test_amended_v187_quarantines_and_preserves_residual(self):
+        apply_v187(self.conn)  # raises on any gate/postcondition failure
+
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM vision.work_requests_v187_archive")
+            self.assertEqual(cur.fetchone()[0], 7)  # 6 canonical + 1 test row
+            cur.execute("SELECT count(*) FROM vision.work_request_legacy_id_map")
+            self.assertEqual(cur.fetchone()[0], 6)
+            cur.execute("SELECT count(*) FROM vision.work_requests")
+            self.assertEqual(cur.fetchone()[0], 6)
+            cur.execute("SELECT count(*) FROM vision.work_requests WHERE wr_id = 'wr-test-p11-local'")
+            self.assertEqual(cur.fetchone()[0], 0)
+            cur.execute("SELECT count(*) FROM vision.work_requests_losm")
+            self.assertEqual(cur.fetchone()[0], 6)
+            cur.execute("SELECT count(*) FROM vision.work_request_v187_quarantine")
+            self.assertEqual(cur.fetchone()[0], 1)
+            cur.execute("SELECT count(*) FROM vision.work_request_v187_residual")
+            self.assertEqual(cur.fetchone()[0], 3)
+            for rid in self.RESIDUAL_IDS:
+                cur.execute(
+                    """SELECT count(*) FROM resolution.work_request
+                       WHERE id = %s AND legacy_id = %s
+                         AND valid_until = 'infinity'::timestamptz""",
+                    (rid, f"vision.work_requests:{rid}"))
+                self.assertEqual(cur.fetchone()[0], 1)
+            cur.execute(
+                """SELECT count(*) FROM execution.requests er
+                   JOIN resolution.work_request c ON c.id = er.source_wr_id
+                   WHERE er.source_wr_id = ANY(%s::uuid[])""",
+                (self.RESIDUAL_IDS,))
+            self.assertEqual(cur.fetchone()[0], 2)
+
+
 if __name__ == "__main__":
     unittest.main()
