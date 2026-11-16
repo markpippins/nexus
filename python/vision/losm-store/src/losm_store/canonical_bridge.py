@@ -29,7 +29,10 @@ schema change.
   no extra commit). A canonical write failure aborts the whole operation; a
   mirror failure aborts too — never silent.
 * Rollback = flag flip: ``LOSM_W2_DUAL_WRITE=0`` restores legacy-only behavior
-  (which still works, because it now writes the history base directly).
+  while the history base exists. After V187 (plan 8261650 Stage 6) the legacy
+  history base is archived and the bridge becomes canonical-only: the mirror
+  primitives detect the absent relation and no-op rather than failing a
+  canonical write that already succeeded.
 * PK-carried identity (V186 convention): one UUID is BOTH the losm ``wr_id``
   and the canonical ``id``; canonical ``legacy_id`` =
   ``vision.work_requests_history:<uuid>``.
@@ -93,6 +96,27 @@ def dual_write_enabled() -> bool:
     return raw.strip().lower() not in {"0", "off", "false", "no"}
 
 
+def legacy_history_available(db: Session) -> bool:
+    """True while ``vision.work_requests_history`` is a writable relation.
+
+    V187 renames that base to ``work_requests_history_v187_archive`` and does
+    not recreate a write surface. Detection is deliberately runtime, not an
+    environment flag: the same process can survive the migration, and a stale
+    flag must not turn a successful canonical write into a failed request.
+    Non-PostgreSQL dialects (the sealed SQLite tests) keep the historical
+    mirror behaviour; only the live Postgres relation decides the cutover.
+    """
+    bind = db.get_bind()
+    if bind is not None and bind.dialect.name != "postgresql":
+        # SQLite has no to_regclass; its test fixture supplies the mirror
+        # tables through Base.metadata, so preserve the legacy path there.
+        return True
+    found = db.connection().execute(
+        text("SELECT to_regclass('vision.work_requests_history')")
+    ).scalar()
+    return found is not None
+
+
 def map_status(losm_status: str) -> str:
     """Total, checked mapping losm WorkStatus value -> canonical status."""
     mapped = STATUS_MAP.get(losm_status)
@@ -145,6 +169,8 @@ def mirror_insert_work_request(
     parent_request_id: Optional[str] = None,
 ) -> None:
     """Insert an OPEN bitemporal version into vision.work_requests_history."""
+    if not legacy_history_available(db):
+        return
     nid = _next_history_id(db, "work_requests_history")
     db.connection().execute(
         text(
@@ -175,6 +201,8 @@ def mirror_close_work_request(db: Session, *, wr_id: str) -> int:
     Returns the number of versions closed. Used before inserting a new
     version (update) or tombstoning (delete).
     """
+    if not legacy_history_available(db):
+        return 0
     result = db.connection().execute(
         text(
             "UPDATE vision.work_requests_history SET recorded_until_dt = now() "
@@ -200,6 +228,8 @@ def mirror_update_work_request(
     ``status`` here is the VERBATIM losm WorkStatus value (the history base
     has no CHECK — the view's CASE maps legacy spellings for old readers).
     """
+    if not legacy_history_available(db):
+        return
     mirror_close_work_request(db, wr_id=wr_id)
     # New version carries the merged current projection. Scalar fields the
     # caller did not change fall back to the last version's values.
@@ -473,6 +503,7 @@ __all__ = [
     "CANONICAL_STATUS_VOCABULARY",
     "STATUS_MAP",
     "dual_write_enabled",
+    "legacy_history_available",
     "map_status",
     "canonical_insert_for_create",
     "canonical_update_for_status",

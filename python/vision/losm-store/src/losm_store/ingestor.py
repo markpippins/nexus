@@ -9,14 +9,15 @@ from typing import Any, Dict
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from losm_store.models import PlanningTask, WorkStatus
 from losm_store.canonical_bridge import (
     dual_write_enabled,
+    legacy_history_available,
     canonical_update_for_status,
     mirror_insert_ingest_record,
     mirror_insert_governance_event,
     mirror_update_work_request,
 )
+from losm_store.repository import get_work_request_by_wr_id
 from losm_store.governed_triggers import GovernedTriggerAdapter
 from losm_ir.execution_receipt import ExecutionReceipt
 from losm_ir.transition import validate_transition
@@ -76,7 +77,7 @@ class ExecutionReceiptIngestor:
             payload=canonical,
         )
 
-        planning_task = db.query(PlanningTask).filter_by(wr_id=receipt.work_request_id).first()
+        planning_task = get_work_request_by_wr_id(db, receipt.work_request_id)
         if planning_task is None:
             governance_event_id = str(uuid.uuid4())
             governance_payload = {
@@ -133,21 +134,22 @@ class ExecutionReceiptIngestor:
         # W2a (plan 4c3b74bd): canonical-first status mutation (mapped via
         # STATUS_MAP, losm state preserved in context.losm_status), then the
         # bitemporal mirror update (verbatim target state) — same txn.
-        if dual_write_enabled():
+        if dual_write_enabled() or not legacy_history_available(db):
             canonical_update_for_status(
                 db,
                 wr_id=receipt.work_request_id,
                 new_status_value=target_state,
             )
-        mirror_update_work_request(
-            db,
-            wr_id=receipt.work_request_id,
-            intent=None,
-            constraints=None,
-            priority=None,
-            context_data=context,
-            status=target_state,
-        )
+        if legacy_history_available(db):
+            mirror_update_work_request(
+                db,
+                wr_id=receipt.work_request_id,
+                intent=None,
+                constraints=None,
+                priority=None,
+                context_data=context,
+                status=target_state,
+            )
 
         governance_event_id = str(__import__("uuid").uuid4())
         governance_payload = {

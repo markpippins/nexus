@@ -5,10 +5,12 @@ import uuid as _uuid
 
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import NoResultFound
+from sqlalchemy import text
 
 from losm_store.models import PlanningTask, Artifact, Branch, BranchArtifact, WorkStatus
 from losm_store.canonical_bridge import (
     dual_write_enabled,
+    legacy_history_available,
     canonical_insert_for_create,
     canonical_update_for_status,
     canonical_disposition_for_delete,
@@ -30,6 +32,45 @@ _PROVENANCE_FIELDS = (
 )
 
 _INVOCATION_ID = os.environ.get("INVOCATION_ID", "unsupervised") or "unsupervised"
+
+
+_CANONICAL_STATUS_TO_LOSM = {
+    "DRAFT": "NEW",
+    "APPROVED": "PLAN_APPROVAL_GATE",
+    "DISPATCHED": "EXECUTION",
+    "COMPLETED": "COMPLETION",
+}
+
+
+def _canonical_task_from_row(row) -> PlanningTask:
+    """Project a resolution.work_request row into the legacy PlanningTask shape.
+
+    V187 removes the legacy history base, so rows created after the cutover no
+    longer appear in vision.work_requests_losm. The losm API contract still
+    addresses WRs by the stable UUID and returns the same attributes; this
+    projection keeps that contract while canonical is the only writer.
+    """
+    context = row["context"] or {}
+    losm_status = context.get("losm_status") or _CANONICAL_STATUS_TO_LOSM.get(
+        row["business_status"], "NEW"
+    )
+    try:
+        status = WorkStatus(losm_status)
+    except ValueError:
+        status = WorkStatus.NEW
+    return PlanningTask(
+        id=(_uuid.UUID(str(row["id"])).int % 2_147_483_647) + 1,
+        wr_id=str(row["id"]),
+        parent_request_id=context.get("parent_request_id"),
+        intent=row["intent"] or row["title"] or "",
+        constraints=row["constraints"],
+        priority=int(context.get("losm_priority", 5)),
+        context_data=context,
+        status=status,
+        created_at=row["created_at"],
+        recorded_on_dt=row["recorded_on_dt"],
+        recorded_until_dt=row["recorded_until_dt"],
+    )
 
 
 def _stamp_provenance_into_context(
@@ -64,16 +105,15 @@ def create_work_request(
     priority: int = 5,
     context_data: Optional[Dict[str, Any]] = None
 ) -> PlanningTask:
-    # W2a (plan 4c3b74bd, substrate-corrected): canonical-first, then the
-    # legacy mirror as raw bitemporal SQL against vision.work_requests_history
-    # in the SAME transaction. One uuid is both the losm wr_id and the
-    # canonical id (PK-carried identity, V186 convention); legacy_id carries
-    # the mirror source. The PlanningTask model stays the read projection.
+    # W2a/W2c (plan 4c3b74bd, substrate-corrected): canonical-first. While the
+    # legacy history base exists the mirror is written in the SAME transaction;
+    # after V187 the mirror is absent and canonical is the only write. One uuid
+    # is both the losm wr_id and the canonical id (PK-carried identity, V186).
     wr_id = str(_uuid.uuid4())
     # C1 gate 1 (Lilac plan 8261670): stamp the five-field provenance envelope
     # on the context carried by both the canonical and mirror writes.
     stamped_context = _stamp_provenance_into_context(context_data)
-    if dual_write_enabled():
+    if dual_write_enabled() or not legacy_history_available(db):
         canonical_insert_for_create(
             db,
             wr_id=wr_id,
@@ -82,15 +122,16 @@ def create_work_request(
             priority=priority,
             context_data=stamped_context,
         )
-    mirror_insert_work_request(
-        db,
-        wr_id=wr_id,
-        intent=intent,
-        status=WorkStatus.NEW.value,
-        constraints=constraints,
-        priority=priority,
-        context_data=stamped_context,
-    )
+    if legacy_history_available(db):
+        mirror_insert_work_request(
+            db,
+            wr_id=wr_id,
+            intent=intent,
+            status=WorkStatus.NEW.value,
+            constraints=constraints,
+            priority=priority,
+            context_data=stamped_context,
+        )
     db.commit()
     wr = get_work_request_by_wr_id(db, wr_id)
     return wr
@@ -109,8 +150,30 @@ def get_work_request(db: Session, wr_id: str) -> PlanningTask:
 
 
 def get_work_request_by_wr_id(db: Session, wr_id: str) -> Optional[PlanningTask]:
-    """Look up a work request by its business-key UUID (wr_id column)."""
-    return db.query(PlanningTask).filter(PlanningTask.wr_id == wr_id).first()
+    """Look up a work request by its stable business-key UUID.
+
+    The legacy view is consulted first so pre-V187 rows keep their integer id
+    and historical mirror state. Post-V187 rows are read from canonical and
+    projected into the same PlanningTask contract.
+    """
+    wr = db.query(PlanningTask).filter(PlanningTask.wr_id == wr_id).first()
+    if wr is not None:
+        return wr
+    try:
+        canonical_id = str(_uuid.UUID(str(wr_id)))
+    except (ValueError, AttributeError, TypeError):
+        return None
+    row = db.execute(
+        text(
+            "SELECT id, intent, title, constraints, context, business_status, "
+            "       created_at, recorded_on_dt, recorded_until_dt "
+            "FROM resolution.work_request "
+            "WHERE id = :id AND valid_until = 'infinity'::timestamptz "
+            "  AND business_status <> 'CANCELLED'"
+        ),
+        {"id": canonical_id},
+    ).mappings().first()
+    return _canonical_task_from_row(row) if row is not None else None
 
 
 def update_work_request(
@@ -126,15 +189,14 @@ def update_work_request(
     wr = get_work_request_by_wr_id(db, wr_id)
     if wr is None:
         return None
-    # W2a: canonical-first status mutation, then bitemporal mirror update
-    # (close + reopen) — same transaction, plan-of-record ordering. ORM
-    # objects stay read-projections.
+    # W2a/W2c: canonical-first status mutation; the legacy mirror is updated
+    # only while its history base exists.
     new_status_value = (
         status.value if hasattr(status, "value") else str(status)
     ) if status is not None else (
         wr.status.value if hasattr(wr.status, "value") else str(wr.status)
     )
-    if dual_write_enabled():
+    if dual_write_enabled() or not legacy_history_available(db):
         canonical_update_for_status(
             db,
             wr_id=wr_id,
@@ -143,15 +205,16 @@ def update_work_request(
             constraints=constraints,
             priority=priority,
         )
-    mirror_update_work_request(
-        db,
-        wr_id=wr_id,
-        intent=intent,
-        constraints=constraints,
-        priority=priority,
-        context_data=context_data,
-        status=new_status_value,
-    )
+    if legacy_history_available(db):
+        mirror_update_work_request(
+            db,
+            wr_id=wr_id,
+            intent=intent,
+            constraints=constraints,
+            priority=priority,
+            context_data=context_data,
+            status=new_status_value,
+        )
     db.commit()
     db.expire_all()
     return get_work_request_by_wr_id(db, wr_id)
@@ -167,22 +230,40 @@ def delete_work_request(db: Session, wr_id: str) -> bool:
         return False
     # W2a (plan 4c3b74bd §W2a.4): canonical rows are never deleted. The losm
     # API delete maps to a canonical CANCELLED disposition (COMPLETED rows are
-    # never regressed); the legacy mirror is tombstoned bitemporally (slice
-    # closed), honoring the existing wire contract — artifacts/branches/edges
-    # keep full lineage in the history bases.
-    if dual_write_enabled():
+    # never regressed); the mirror tombstone is written only while the legacy
+    # history base exists.
+    if dual_write_enabled() or not legacy_history_available(db):
         canonical_disposition_for_delete(db, wr_id=wr_id)
-    mirror_tombstone_work_request(db, wr_id=wr_id)
+    if legacy_history_available(db):
+        mirror_tombstone_work_request(db, wr_id=wr_id)
     # Detach BEFORE commit so the caller's instance keeps its loaded state
     # (commit would expire it, leaving a dangling detached-expired object
     # whose next attribute access raises DetachedInstanceError).
-    db.expunge(wr)  # tombstoned: the instance is gone from the open slice
+    if wr in db:
+        db.expunge(wr)  # tombstoned: the instance is gone from the open slice
     db.commit()
     return True
 
 
 def list_work_requests(db: Session, skip: int = 0, limit: int = 100) -> List[PlanningTask]:
-    return db.query(PlanningTask).offset(skip).limit(limit).all()
+    """List legacy-view rows plus canonical-only losm rows (post-V187)."""
+    rows = db.query(PlanningTask).order_by(PlanningTask.created_at.desc()).all()
+    seen = {row.wr_id for row in rows}
+    canonical_rows = db.execute(
+        text(
+            "SELECT id, intent, title, constraints, context, business_status, "
+            "       created_at, recorded_on_dt, recorded_until_dt "
+            "FROM resolution.work_request "
+            "WHERE valid_until = 'infinity'::timestamptz "
+            "  AND business_status <> 'CANCELLED' "
+            "  AND created_by LIKE 'losm_store%' "
+            "ORDER BY created_at DESC"
+        )
+    ).mappings().all()
+    for row in canonical_rows:
+        if str(row["id"]) not in seen:
+            rows.append(_canonical_task_from_row(row))
+    return rows[skip: skip + limit]
 
 
 def list_all_artifacts(
