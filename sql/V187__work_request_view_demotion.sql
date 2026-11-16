@@ -12,6 +12,23 @@
 -- Applying early demotes surfaces live writers still target — the staged
 -- order exists precisely to prevent that.
 --
+-- AMENDED 2026-11-16 (pre-apply, plan 8261650): the live source contains two
+-- known non-canonical shapes that must not block the demotion and must not be
+-- silently lost.  Binding Architect decision 9eeda282-0c0e-4620-9a2e-e84784483f81
+-- and DBA decision fd03b8a9-c25c-4435-96a1-f21a0b128280 choose the no-data-
+-- mutation path:
+--   * `wr-test-p11-local` (vision base table, status=validated, non-UUID
+--     work_request_uuid, no canonical counterpart) is archived with the base
+--     table but excluded from the legacy id map, rebuilt views, and canonical
+--     postconditions.  It is NOT deleted.
+--   * `09f7f5c9`, `0ec94c16`, `e16cec45` are Nebula-history origin rows whose
+--     canonical `legacy_id` carries the vision prefix.  They are preserved in
+--     `resolution.work_request` (and their execution.requests FKs remain
+--     resolvable), excluded from the canonical-backed map/view checks, and
+--     surfaced in `vision.work_request_v187_residual` as the documented
+--     residual accepted by Planner f73d7fdc-8cb8-4488-b505-5ebc1338fe14.
+-- No live data repair is performed by this migration.
+--
 -- PHASES:
 --   0 — pre-flight refusals: V186 backfill present; idempotency; unmapped
 --       statuses; execution.requests FK resolvability; unexpected dependents;
@@ -79,11 +96,20 @@ BEGIN
     SELECT count(*) INTO v_missing
     FROM vision.work_requests v
     WHERE NOT EXISTS (SELECT 1 FROM resolution.work_request c
-                      WHERE c.legacy_id = 'vision.work_requests:' || v.wr_id);
+                      WHERE c.legacy_id = 'vision.work_requests:' || v.wr_id)
+      -- known non-canonical test artifact: archived, but not required to have
+      -- a canonical counterpart (DBA fd03b8a9; no deletion).
+      AND NOT (v.status = 'validated'
+               AND v.work_request_uuid !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$');
     v_missing := v_missing + (
         SELECT count(*) FROM nebula.work_requests_history n
-        WHERE NOT EXISTS (SELECT 1 FROM resolution.work_request c
-                          WHERE c.legacy_id = 'nebula.work_requests_history:' || n.id::text));
+        WHERE NOT EXISTS (
+            SELECT 1 FROM resolution.work_request c
+             WHERE c.legacy_id = 'nebula.work_requests_history:' || n.id::text
+                OR (n.id::text IN ('09f7f5c9-6202-4262-93c9-87e82c729d07',
+                                   '0ec94c16-0451-4c66-86d7-d017f317851a',
+                                   'e16cec45-2085-4a67-a968-2e6b7dd4f5ff')
+                    AND c.legacy_id = 'vision.work_requests:' || n.id::text)));
     IF v_missing > 0 THEN
         RAISE EXCEPTION 'V187-PREFLIGHT-001: % legacy rows lack canonical counterparts — V186 backfill must run first', v_missing;
     END IF;
@@ -106,7 +132,11 @@ BEGIN
     SELECT string_agg(DISTINCT status, ', ')
       INTO v_offenders
       FROM vision.work_requests
-     WHERE lower(status) NOT IN ('draft', 'pending', 'settled', 'completed', 'cancelled');
+     WHERE lower(status) NOT IN ('draft', 'pending', 'settled', 'completed', 'cancelled')
+       -- known non-canonical test artifact (DBA fd03b8a9): archived, not a
+       -- production lifecycle state.
+       AND NOT (status = 'validated'
+                AND work_request_uuid !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$');
     IF v_offenders IS NOT NULL THEN
         RAISE EXCEPTION 'V187-PREFLIGHT-002: unmapped legacy statuses: % — extend the mapping before demotion', v_offenders;
     END IF;
@@ -126,8 +156,13 @@ DECLARE
 BEGIN
     SELECT string_agg(DISTINCT wr_id, ', ') INTO v_bad
     FROM vision.work_requests
-    WHERE work_request_uuid IS NULL
-       OR work_request_uuid::text !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$';
+    WHERE (work_request_uuid IS NULL
+           OR work_request_uuid::text !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+      -- known non-canonical test artifact (DBA fd03b8a9): archived, not
+      -- mapped.  A canonical-backed row with a bad UUID still fails here.
+      AND NOT (status = 'validated'
+               AND NOT EXISTS (SELECT 1 FROM resolution.work_request c
+                               WHERE c.legacy_id = 'vision.work_requests:' || wr_id));
     IF v_bad IS NOT NULL THEN
         RAISE EXCEPTION 'V187-PREFLIGHT-006: non-uuid work_request_uuid on legacy rows: %', v_bad;
     END IF;
@@ -214,13 +249,46 @@ CREATE TABLE vision.work_request_legacy_id_map (
     mapped_at         timestamptz NOT NULL DEFAULT now()
 );
 
+-- 2a'. explicit quarantine registry for known non-canonical test artifacts.
+-- They are archived with the base table but deliberately kept out of the map
+-- and canonical-backed views; the registry lets the postcondition distinguish
+-- "quarantined" from "silently deleted".
+CREATE TABLE vision.work_request_v187_quarantine (
+    wr_id          text PRIMARY KEY,
+    reason         text NOT NULL,
+    archived_row   jsonb NOT NULL,
+    quarantined_at timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO vision.work_request_v187_quarantine (wr_id, reason, archived_row)
+SELECT v.wr_id,
+       'non-canonical test artifact: status=validated, non-UUID work_request_uuid, no canonical counterpart (DBA fd03b8a9)',
+       to_jsonb(v)
+FROM vision.work_requests v
+WHERE v.status = 'validated'
+  AND v.work_request_uuid !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+  AND NOT EXISTS (SELECT 1 FROM resolution.work_request c
+                  WHERE c.legacy_id = 'vision.work_requests:' || v.wr_id);
+
+-- DBA fd03b8a9 cardinality: live has exactly one quarantinable artifact; a
+-- second one is an unreviewed shape and must abort instead of being swept in.
+DO $$
+DECLARE
+    v_count bigint;
+BEGIN
+    SELECT count(*) INTO v_count FROM vision.work_request_v187_quarantine;
+    IF v_count > 1 THEN
+        RAISE EXCEPTION 'V187-PREFLIGHT-008: % quarantinable non-canonical rows found; expected at most 1', v_count;
+    END IF;
+END $$;
+
 INSERT INTO vision.work_request_legacy_id_map (id, wr_id, work_request_uuid)
 SELECT id, wr_id, work_request_uuid::uuid
 FROM vision.work_requests v
 WHERE NOT EXISTS (
     SELECT 1 FROM vision.work_request_legacy_id_map m
     WHERE m.id = v.id
-);
+)
+  AND v.wr_id NOT IN (SELECT wr_id FROM vision.work_request_v187_quarantine);
 
 -- 2b. every canonical vision-legacy row must resolve through the map
 DO $$
@@ -230,6 +298,12 @@ BEGIN
     SELECT count(*) INTO v_unresolved
     FROM resolution.work_request c
     WHERE c.legacy_id LIKE 'vision.work_requests:%'
+      -- three Nebula-history rows carry the vision prefix as a documented
+      -- residual; they are not part of the vision legacy id map and are
+      -- preserved by V187, not dropped (Architect 9eeda282 / DBA fd03b8a9).
+      AND c.legacy_id NOT IN ('vision.work_requests:09f7f5c9-6202-4262-93c9-87e82c729d07',
+                              'vision.work_requests:0ec94c16-0451-4c66-86d7-d017f317851a',
+                              'vision.work_requests:e16cec45-2085-4a67-a968-2e6b7dd4f5ff')
       AND NOT EXISTS (
           SELECT 1 FROM vision.work_request_legacy_id_map m
           WHERE c.legacy_id = 'vision.work_requests:' || m.wr_id
@@ -584,6 +658,65 @@ WHERE wr.legacy_id LIKE 'nebula.work_requests_history:%';
 CREATE OR REPLACE VIEW scratch.v_work_request_overview AS
 SELECT * FROM nebula.v_work_request_overview;
 
+-- DBA fd03b8a9 residual-presence guard: the live set is all three or none.
+-- A partial set means data moved between the decision and apply; abort rather
+-- than registering an incomplete residual.
+DO $$
+DECLARE
+    v_present bigint;
+BEGIN
+    SELECT count(*) INTO v_present
+    FROM resolution.work_request
+    WHERE id IN ('09f7f5c9-6202-4262-93c9-87e82c729d07'::uuid,
+                 '0ec94c16-0451-4c66-86d7-d017f317851a'::uuid,
+                 'e16cec45-2085-4a67-a968-2e6b7dd4f5ff'::uuid)
+      AND valid_until = 'infinity'::timestamptz;
+    IF v_present NOT IN (0, 3) THEN
+        RAISE EXCEPTION 'V187-PREFLIGHT-007: partial residual set: % of 3 rows present', v_present;
+    END IF;
+END $$;
+
+-- =============================================================================
+-- PHASE 4g — documented residual registry (no live data mutation)
+-- =============================================================================
+-- The three Nebula-history origin rows whose canonical legacy_id carries the
+-- vision prefix are deliberately not repaired by this migration.  They remain
+-- in resolution.work_request and their execution.requests FKs still resolve;
+-- this registry makes their exclusion from the canonical-backed views explicit
+-- and auditable instead of silently dropping them.
+CREATE TABLE vision.work_request_v187_residual (
+    canonical_id             uuid PRIMARY KEY,
+    canonical_legacy_id      text NOT NULL,
+    source_table             text NOT NULL,
+    reason                   text NOT NULL,
+    excluded_from_canonical  boolean NOT NULL DEFAULT true,
+    recorded_at              timestamptz NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE vision.work_request_v187_residual IS
+    'Plan 8261650 V187: known Nebula-history rows carrying a vision legacy_id prefix; preserved, excluded from canonical-backed views, not repaired.';
+
+INSERT INTO vision.work_request_v187_residual
+    (canonical_id, canonical_legacy_id, source_table, reason)
+SELECT v.canonical_id, v.canonical_legacy_id, v.source_table, v.reason
+FROM (VALUES
+    ('09f7f5c9-6202-4262-93c9-87e82c729d07'::uuid,
+     'vision.work_requests:09f7f5c9-6202-4262-93c9-87e82c729d07',
+     'nebula.work_requests_history',
+     'Nebula-history origin row with a mislabeled vision prefix; documented residual, no live repair'),
+    ('0ec94c16-0451-4c66-86d7-d017f317851a'::uuid,
+     'vision.work_requests:0ec94c16-0451-4c66-86d7-d017f317851a',
+     'nebula.work_requests_history',
+     'Nebula-history origin row with a mislabeled vision prefix; documented residual, no live repair'),
+    ('e16cec45-2085-4a67-a968-2e6b7dd4f5ff'::uuid,
+     'vision.work_requests:e16cec45-2085-4a67-a968-2e6b7dd4f5ff',
+     'nebula.work_requests_history',
+     'Nebula-history origin row with a mislabeled vision prefix; documented residual, no live repair')
+) AS v(canonical_id, canonical_legacy_id, source_table, reason)
+WHERE EXISTS (SELECT 1 FROM resolution.work_request c
+              WHERE c.id = v.canonical_id
+                AND c.legacy_id = v.canonical_legacy_id
+                AND c.valid_until = 'infinity'::timestamptz);
+
 -- =============================================================================
 -- PHASE 5 — post-conditions + audit trail
 -- =============================================================================
@@ -593,28 +726,93 @@ DECLARE
     v_missing bigint;
     v_archive bigint;
     v_mapped  bigint;
+    v_quarantine bigint;
+    v_archive_unmapped bigint;
+    v_residual bigint;
+    v_registered_residual bigint;
+    v_leaked bigint;
+    v_fk_missing bigint;
 BEGIN
-    -- 5a. read parity: every live canonical vision-legacy row must surface
-    --     through the rebuilt losm view
+    -- 5a. read parity: every canonical row represented in the vision legacy
+    --     id map must surface through the rebuilt losm view.  The three
+    --     documented residual rows are intentionally outside that map.
     SELECT count(*) INTO v_missing
     FROM resolution.work_request c
-    WHERE c.legacy_id LIKE 'vision.work_requests:%'
-      AND c.valid_until = 'infinity'::timestamptz
+    JOIN vision.work_request_legacy_id_map m
+      ON c.legacy_id = 'vision.work_requests:' || m.wr_id
+    WHERE c.valid_until = 'infinity'::timestamptz
       AND NOT EXISTS (SELECT 1 FROM vision.work_requests_losm l
-                      WHERE l.wr_id = substring(c.legacy_id from 22));
+                      WHERE l.wr_id = m.wr_id);
     IF v_missing > 0 THEN
-        RAISE EXCEPTION 'V187-POST-001: % canonical rows not surfaced by the rebuilt losm view', v_missing;
+        RAISE EXCEPTION 'V187-POST-001: % mapped canonical rows not surfaced by the rebuilt losm view', v_missing;
     END IF;
 
-    -- 5b. archives retained: archived vision rows = mapped rows (invariant,
-    --     not a hardcoded count)
-    SELECT count(*) INTO v_archive FROM vision.work_requests_v187_archive;
-    SELECT count(*) INTO v_mapped  FROM vision.work_request_legacy_id_map;
+    -- 5b. archives retained: mapped archive rows = mapped rows; the one
+    --     non-canonical test artifact is archived but deliberately unmapped.
+    SELECT count(*) INTO v_archive
+    FROM vision.work_requests_v187_archive a
+    WHERE EXISTS (SELECT 1 FROM vision.work_request_legacy_id_map m
+                  WHERE m.wr_id = a.wr_id);
+    SELECT count(*) INTO v_mapped FROM vision.work_request_legacy_id_map;
     IF v_archive <> v_mapped THEN
-        RAISE EXCEPTION 'V187-POST-002: archive rows (%) != mapped rows (%)', v_archive, v_mapped;
+        RAISE EXCEPTION 'V187-POST-002: mapped archive rows (%) != mapped rows (%)', v_archive, v_mapped;
     END IF;
 
-    -- 5c. overview views resolve against the rebuilt surfaces
+    -- 5b'. every registered quarantine row is present in the archive, and
+    --      no unregistered unmapped row was silently left behind.
+    SELECT count(*) INTO v_quarantine FROM vision.work_request_v187_quarantine;
+    SELECT count(*) INTO v_archive_unmapped
+    FROM vision.work_requests_v187_archive a
+    WHERE NOT EXISTS (SELECT 1 FROM vision.work_request_legacy_id_map m
+                      WHERE m.wr_id = a.wr_id);
+    IF v_archive_unmapped <> v_quarantine THEN
+        RAISE EXCEPTION 'V187-POST-005: quarantine registry rows (%) != unmapped archive rows (%)', v_quarantine, v_archive_unmapped;
+    END IF;
+    IF EXISTS (SELECT 1 FROM vision.work_request_v187_quarantine q
+               WHERE NOT EXISTS (SELECT 1 FROM vision.work_requests_v187_archive a
+                                 WHERE a.wr_id = q.wr_id)) THEN
+        RAISE EXCEPTION 'V187-POST-005b: a registered quarantine row is missing from the archive';
+    END IF;
+
+    -- 5c. the three residual rows still exist at infinity and are registered
+    SELECT count(*) INTO v_registered_residual
+    FROM vision.work_request_v187_residual;
+    SELECT count(*) INTO v_residual
+    FROM vision.work_request_v187_residual r
+    JOIN resolution.work_request c
+      ON c.id = r.canonical_id
+     AND c.legacy_id = r.canonical_legacy_id
+    WHERE c.valid_until = 'infinity'::timestamptz;
+    IF v_residual <> v_registered_residual THEN
+        RAISE EXCEPTION 'V187-POST-003: registered residual rows (%) != resolvable residual rows (%)', v_registered_residual, v_residual;
+    END IF;
+
+    -- 5d. residual rows are excluded from all three production views
+    SELECT count(*) INTO v_leaked
+    FROM vision.work_request_v187_residual r
+    WHERE EXISTS (SELECT 1 FROM vision.work_requests v
+                  WHERE v.wr_id = substring(r.canonical_legacy_id from 22))
+       OR EXISTS (SELECT 1 FROM vision.work_requests_losm l
+                  WHERE l.wr_id = substring(r.canonical_legacy_id from 22))
+       OR EXISTS (SELECT 1 FROM nebula.work_requests n
+                  WHERE n.id = r.canonical_id);
+    IF v_leaked > 0 THEN
+        RAISE EXCEPTION 'V187-POST-004: % residual rows leaked into canonical-backed views', v_leaked;
+    END IF;
+
+    -- 5e. every execution.requests FK that points at a residual row still
+    --     resolves to the preserved canonical row
+    SELECT count(*) INTO v_fk_missing
+    FROM execution.requests er
+    JOIN vision.work_request_v187_residual r
+      ON er.source_wr_id = r.canonical_id
+    WHERE NOT EXISTS (SELECT 1 FROM resolution.work_request c
+                      WHERE c.id = r.canonical_id);
+    IF v_fk_missing > 0 THEN
+        RAISE EXCEPTION 'V187-POST-006: % residual source_wr_id references are orphaned', v_fk_missing;
+    END IF;
+
+    -- 5f. overview views resolve against the rebuilt surfaces
     PERFORM count(*) FROM nebula.v_work_request_overview;
     PERFORM count(*) FROM scratch.v_work_request_overview;
 END $$;
