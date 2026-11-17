@@ -727,14 +727,20 @@ def check_hierarchy_evidence(candidate_id: str) -> str:
                         "similarity": float(row[5]) if row[5] else None,
                     })
             
-            # 3. Check similar work_requests → follow source_requirement_id
+            # 3. Check similar work_requests → follow the normalized requirement link
             if not system_id or not subsystem_id:
                 cur.execute("""
-                    SELECT wr.source_requirement_id, wr.title
+                    SELECT rrl.requirement_id, wr.title
                     FROM nebula.work_requests wr
+                    JOIN resolution.request_requirement_link rrl
+                      ON rrl.request_id = wr.id
+                     AND rrl.relation = 'source'
+                     AND rrl.valid_until = 'infinity'::timestamptz
+                     AND rrl.recorded_until_dt = 'infinity'::timestamptz
                     WHERE (similarity(lower(wr.title), lower(%s)) > 0.4
                            OR lower(wr.title) LIKE '%%' || lower(%s) || '%%')
-                      AND wr.source_requirement_id IS NOT NULL
+                      AND rrl.requirement_id IS NOT NULL
+                    GROUP BY rrl.requirement_id, wr.title, wr.created_at
                     ORDER BY wr.created_at DESC
                     LIMIT 3
                 """, (title, title))

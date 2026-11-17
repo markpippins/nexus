@@ -6,6 +6,7 @@ import { q, qT, toEpochMs, camelCaseRow, parsePagination, normalizeStatus, STATU
 
 const execFileAsync = promisify(execFile)
 
+
 /**
  * nebula-srv (Wave 3.1) — harvest pipeline domain.
  * Ported from nexus/typescript/nebula-srv/src/routes.ts sections:
@@ -1242,16 +1243,16 @@ export default class NebulaHarvestController {
         q(
            `SELECT DISTINCT ON (wr.id) wr.*
            FROM nebula.work_requests wr
-           LEFT JOIN nebula.requirements req ON req.id = wr.source_requirement_id
+           JOIN nebula.v_work_request_requirement req ON req.request_id = wr.id AND req.relation = 'source'
            WHERE req.${scopeField} = ?
            ORDER BY wr.id, wr.created_at DESC
            LIMIT ? OFFSET ?`,
           [id, pageSize, offset]
         ),
         q(
-          `SELECT COUNT(*)::int AS total
+          `SELECT COUNT(DISTINCT wr.id)::int AS total
            FROM nebula.work_requests wr
-           LEFT JOIN nebula.requirements req ON req.id = wr.source_requirement_id
+           JOIN nebula.v_work_request_requirement req ON req.request_id = wr.id AND req.relation = 'source'
            WHERE req.${scopeField} = ?`,
           [id]
         ),

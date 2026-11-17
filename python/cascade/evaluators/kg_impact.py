@@ -64,16 +64,21 @@ def _get_candidate_cluster(cur: Any, candidate_id: str) -> ArtifactCluster:
         impl_plans = [{"id": str(r[0]), "plan_number": r[1], "title": r[2], "status": r[3]} for r in cur.fetchall()]
 
     # Implementation plans → work_requests
-    # work_requests links via source_requirement_id or source_specification_id
+    # work_requests link through the normalized request_requirement_link table
     if req_ids:
         cur.execute(
-            """SELECT wr.id, wr.title, wr.status, wr.source_requirement_id
+            """SELECT DISTINCT wr.id, wr.title, wr.status, rrl.requirement_id
                FROM nebula.work_requests wr
-               WHERE wr.source_requirement_id = ANY(%s::uuid[])""",
+               JOIN resolution.request_requirement_link rrl
+                 ON rrl.request_id = wr.id
+                AND rrl.relation = 'source'
+                AND rrl.valid_until = 'infinity'::timestamptz
+                AND rrl.recorded_until_dt = 'infinity'::timestamptz
+               WHERE rrl.requirement_id = ANY(%s::uuid[])""",
             (req_ids,),
         )
         work_reqs = [
-            {"id": str(r[0]), "title": r[1], "status": r[2], "source_requirement_id": str(r[3]) if r[3] else None}
+            {"id": str(r[0]), "title": r[1], "status": r[2], "requirement_id": str(r[3]) if r[3] else None}
             for r in cur.fetchall()
         ]
 
