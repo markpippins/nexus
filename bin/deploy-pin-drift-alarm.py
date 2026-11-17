@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""deploy-pin-drift-alarm.py — HEAD/digest drift alarm for the live deploy tree.
+"""deploy-pin-drift-alarm.py — HEAD/digest drift alarm for the live deploy tree,
+plus the watchdog that shouts when this alarm itself stops running.
 
 Both live units run out of /home/codex/deploy/lilac-shadow:
 
@@ -26,14 +27,30 @@ Scope is HEAD + tracked files under python/. The units are Python services
 whose PYTHONPATH points into that tree; the rest of the checkout is not
 loaded by them.
 
+Liveness (--watchdog): a drift alarm that has stopped running looks exactly
+like a clean tree from the outside, so every completed check (BASELINE, OK,
+DRIFT) writes ~/.cache/deploy-pin-drift-alarm/heartbeat.json. The watchdog
+reads only that file: if the newest heartbeat is older than --max-age
+(default 2700s = 45 min = three missed quarter-hourly runs) it posts once per
+stall episode and exits 2. A missing heartbeat with no baseline is a fresh
+install, not a stall, so it stays quiet; a missing heartbeat *after* a
+baseline has been accepted is a stall.
+
+The watchdog cannot catch its own death: it is a second timer, offset to
+*:7/15. If the systemd user manager itself stops, nothing posts —
+heartbeat.json's mtime is then the only evidence, and running
+`bin/deploy-pin-drift-alarm.py --watchdog` by hand (or from cron) reports
+STALLED.
+
 Usage:
   deploy-pin-drift-alarm.py              # check, post on a new episode
   deploy-pin-drift-alarm.py --dry-run    # report only, no writes, no posts
   deploy-pin-drift-alarm.py --accept     # rebaseline after an intended change
+  deploy-pin-drift-alarm.py --watchdog   # shout if no check completed within --max-age
   deploy-pin-drift-alarm.py --json       # machine-readable verdict
 
 Exit codes: 0 baseline/current (first run or match), 1 tooling error,
-2 drift detected (posted, or the episode was already posted).
+2 drift or stall detected (posted, or the episode was already posted).
 """
 
 from __future__ import annotations
@@ -53,6 +70,17 @@ DEFAULT_REPO = os.environ.get("DEPLOY_PIN_REPO", "/home/codex/deploy/lilac-shado
 DEFAULT_STATE = os.environ.get(
     "DEPLOY_PIN_STATE", str(Path.home() / ".cache" / "deploy-pin-drift-alarm" / "state.json")
 )
+# Liveness marker written by every completed check; read only by --watchdog.
+DEFAULT_HEARTBEAT = os.environ.get(
+    "DEPLOY_PIN_HEARTBEAT", str(Path.home() / ".cache" / "deploy-pin-drift-alarm" / "heartbeat.json")
+)
+# Stall dedupe lives in its own file so it can never clobber the baseline.
+DEFAULT_WATCHDOG_STATE = os.environ.get(
+    "DEPLOY_PIN_WATCHDOG_STATE",
+    str(Path.home() / ".cache" / "deploy-pin-drift-alarm" / "watchdog.json"),
+)
+# 2700s = 45 min: three missed quarter-hourly runs before shouting.
+DEFAULT_MAX_AGE = int(os.environ.get("DEPLOY_PIN_MAX_AGE_SECONDS", "2700"))
 # The paths whose contents the two units import from.
 WATCHED_PATHS = ("python",)
 
@@ -219,6 +247,51 @@ def _render(drift: dict, current: dict, repo: str) -> tuple[str, str]:
     return title, "\n".join(lines)
 
 
+def _render_stall(
+    *, heartbeat_path: Path, last_check: str, age: int, max_age: int, hb: dict, repo: str
+) -> tuple[str, str]:
+    minutes = int(age // 60)
+    threshold_min = int(max_age // 60)
+    last_verdict = hb.get("verdict") or "?"
+    last_head = (hb.get("head") or "?")[:10]
+    lines = [
+        "**The deploy pin drift alarm has stopped running.**",
+        "",
+        f"* heartbeat: `{heartbeat_path}`",
+        f"* last completed check: `{last_check}` ({minutes} min ago)",
+        f"* threshold: {threshold_min} min ({max_age}s — three missed quarter-hourly runs)",
+        f"* last verdict: `{last_verdict}` at head `{last_head}`",
+        f"* tree: `{repo}`",
+        f"* observed: {datetime.now(timezone.utc).isoformat(timespec='seconds')}",
+        "",
+        "Since that check nothing has compared the live tree's HEAD or file digests "
+        "against the baseline, so the pin's state is **unknown — not clean**. A silent "
+        "alarm and a clean tree look identical from the outside, which is exactly why "
+        "this watchdog exists. This run did NOT inspect the tree itself.",
+        "",
+        "**What to do**",
+        "",
+        "1. Find out why the schedule stopped:",
+        "   `systemctl --user status deploy-pin-drift-alarm.timer`",
+        "   `systemctl --user list-timers 'deploy-pin-*'`",
+        "   `journalctl --user -u deploy-pin-drift-alarm.service -n 50`",
+        "2. Common causes: the timer was disabled or stopped by hand; the service keeps "
+        "failing (exit 1 = tooling error: git, the state file, or Assembly "
+        "unreachable); the deploy checkout moved or was removed; no systemd user "
+        "manager running for this account.",
+        "3. Fix the cause, then run the check by hand to learn the real state: "
+        "`bin/deploy-pin-drift-alarm.py` (`--accept` ONLY for an intended tree change — "
+        "it rewrites the baseline and hides the drift).",
+        "4. The next completed check writes a fresh heartbeat and ends this episode; "
+        "the watchdog posts once per stall, not once per silent run.",
+    ]
+    title = (
+        f"DEPLOY PIN ALARM STALLED: no check since {last_check} "
+        f"({minutes} min > {threshold_min} min) on {repo.rsplit('/', 1)[-1]}"
+    )
+    return title, "\n".join(lines)
+
+
 def post_episode(title: str, body: str) -> str:
     uid = _role_id(ROLE)
     if not uid:
@@ -256,14 +329,175 @@ def save_state(path: Path, state: dict) -> None:
     tmp.replace(path)
 
 
+def write_heartbeat(path: Path, repo: str, current: dict, verdict: str) -> None:
+    """Liveness marker for --watchdog: when a check last completed, not what it saw."""
+    payload = {
+        "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "repo": repo,
+        "head": current["head"],
+        "head_ref": current["head_ref"],
+        "file_count": current["file_count"],
+        "verdict": verdict,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    tmp.replace(path)
+
+
+def _heartbeat_or_warn(path: Path, repo: str, current: dict, verdict: str) -> None:
+    # A heartbeat we cannot write is itself an outage the watchdog will report,
+    # so this must not take the check's real verdict down with it.
+    try:
+        write_heartbeat(path, repo, current, verdict)
+    except OSError as exc:
+        print(f"WARN: could not write heartbeat {path}: {exc}", file=sys.stderr)
+
+
+def _parse_ts(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def run_watchdog(args) -> int:
+    """Shout when the quarter-hourly check has gone silent."""
+    heartbeat_path = Path(args.heartbeat)
+    watchdog_state_path = Path(args.watchdog_state)
+    now = datetime.now(timezone.utc)
+    verdict: dict = {
+        "verdict": "OK",
+        "heartbeat": str(heartbeat_path),
+        "max_age_seconds": args.max_age,
+    }
+
+    hb: dict | None
+    try:
+        hb = json.loads(heartbeat_path.read_text())
+    except FileNotFoundError:
+        hb = None
+    except Exception as exc:
+        print(f"ERROR: heartbeat {heartbeat_path} is unreadable: {exc}", file=sys.stderr)
+        return 1
+
+    if hb is None:
+        # Nothing has ever run. A fresh install is not a stall, so fall back to
+        # the accepted baseline's timestamp instead of inventing evidence.
+        try:
+            baseline = load_state(Path(args.state)).get("baseline") or {}
+        except RuntimeError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
+        last_check = baseline.get("captured_at")
+        if not last_check:
+            print("NO-HEARTBEAT: no completed check and no baseline recorded; nothing to judge")
+            if args.json:
+                print(json.dumps({**verdict, "verdict": "NO-EVIDENCE"}, sort_keys=True))
+            return 0
+        source = "baseline"
+    else:
+        last_check = hb.get("checked_at")
+        if not last_check:
+            print(f"ERROR: heartbeat {heartbeat_path} has no checked_at", file=sys.stderr)
+            return 1
+        source = "heartbeat"
+
+    try:
+        age = int((now - _parse_ts(last_check)).total_seconds())
+    except (TypeError, ValueError) as exc:
+        print(f"ERROR: cannot parse last check {last_check!r}: {exc}", file=sys.stderr)
+        return 1
+
+    verdict.update({"last_check": last_check, "age_seconds": age, "evidence": source})
+    if hb is not None:
+        verdict.update({"last_verdict": hb.get("verdict"), "last_head": hb.get("head")})
+
+    if age <= args.max_age:
+        print(
+            f"OK watchdog: last completed check {last_check} ({age}s ago) is inside "
+            f"{args.max_age}s ({source})"
+        )
+        if args.json:
+            print(json.dumps(verdict, sort_keys=True))
+        return 0
+
+    episode = hashlib.sha256(
+        json.dumps({"last": last_check, "max_age": args.max_age}, sort_keys=True).encode()
+    ).hexdigest()
+    try:
+        wstate = load_state(watchdog_state_path)
+    except RuntimeError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    already = (wstate.get("posted") or {}).get("episode") == episode
+    verdict.update({"verdict": "STALLED", "episode": episode, "already_posted": already})
+    print(
+        f"STALLED: no completed check since {last_check} ({age}s ago > {args.max_age}s) "
+        f"via {source} episode={episode[:12]}{' (already posted)' if already else ''}"
+    )
+
+    if args.dry_run:
+        verdict["posted"] = None
+        print("DRY-RUN: no post, no state write")
+    elif already:
+        verdict["posted"] = wstate["posted"].get("thread_id")
+    else:
+        title, body = _render_stall(
+            heartbeat_path=heartbeat_path,
+            last_check=last_check,
+            age=age,
+            max_age=args.max_age,
+            hb=hb or {},
+            repo=args.repo,
+        )
+        try:
+            thread_id = post_episode(title, body)
+        except (urllib.error.URLError, RuntimeError, OSError) as exc:
+            # A stalled alarm we cannot announce is still a stalled alarm.
+            print(f"ERROR: stall detected but posting failed: {exc}", file=sys.stderr)
+            verdict["posted"] = None
+            print(json.dumps(verdict, sort_keys=True))
+            return 2
+        wstate["posted"] = {
+            "episode": episode,
+            "thread_id": thread_id,
+            "posted_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        wstate["last_stall"] = {
+            "last_check": last_check,
+            "age_seconds": age,
+        }
+        save_state(watchdog_state_path, wstate)
+        verdict["posted"] = thread_id
+        print(f"POSTED thread={thread_id} forum={FORUM}")
+
+    if args.json:
+        print(json.dumps(verdict, sort_keys=True))
+    return 2
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--repo", default=DEFAULT_REPO)
     ap.add_argument("--state", default=DEFAULT_STATE)
+    ap.add_argument("--heartbeat", default=DEFAULT_HEARTBEAT)
+    ap.add_argument("--watchdog-state", default=DEFAULT_WATCHDOG_STATE)
+    ap.add_argument(
+        "--watchdog",
+        action="store_true",
+        help="shout when the alarm itself has stopped running (heartbeat age)",
+    )
+    ap.add_argument(
+        "--max-age",
+        type=int,
+        default=DEFAULT_MAX_AGE,
+        help="seconds a heartbeat may age before the watchdog shouts (default 2700 = 45 min)",
+    )
     ap.add_argument("--accept", action="store_true", help="rebaseline to the current tree")
     ap.add_argument("--dry-run", action="store_true", help="no writes, no posts")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
+
+    if args.watchdog:
+        return run_watchdog(args)
 
     repo, state_path = args.repo, Path(args.state)
     if not Path(repo, ".git").exists():
@@ -291,6 +525,7 @@ def main() -> int:
             state["baseline"] = current
             state["accepted_at"] = current["captured_at"]
             save_state(state_path, state)
+            _heartbeat_or_warn(Path(args.heartbeat), repo, current, "BASELINE")
         verdict["verdict"] = "BASELINE"
         action = "would record" if args.dry_run else "recorded"
         print(
@@ -303,6 +538,8 @@ def main() -> int:
 
     drift = compare(baseline, current)
     if drift["clean"]:
+        if not args.dry_run:
+            _heartbeat_or_warn(Path(args.heartbeat), repo, current, "OK")
         print(
             f"OK head={current['head'][:10]} ref={current['head_ref']} "
             f"files={current['file_count']} match the baseline of "
@@ -326,6 +563,10 @@ def main() -> int:
             "removed": drift["removed"],
         }
     )
+
+    # Liveness first: the check ran, whatever we manage to say about it.
+    if not args.dry_run:
+        _heartbeat_or_warn(Path(args.heartbeat), repo, current, "DRIFT")
 
     title, body = _render(drift, current, repo)
     print(f"DRIFT head {drift['head_before'][:10] if drift['head_before'] else '?'} -> "
