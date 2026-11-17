@@ -6,15 +6,6 @@ import { q, qT, toEpochMs, camelCaseRow, parsePagination, normalizeStatus, STATU
 
 const execFileAsync = promisify(execFile)
 
-// AC11: scoped work-request reads resolve their requirement through the
-// normalized link, never the retired single-source shortcut.
-const REQUIREMENT_LINK_JOIN = `
-           JOIN resolution.request_requirement_link rrl
-             ON rrl.request_id = wr.id
-            AND rrl.relation = 'source'
-            AND rrl.valid_until = 'infinity'::timestamptz
-            AND rrl.recorded_until_dt = 'infinity'::timestamptz
-           JOIN nebula.requirements req ON req.id = rrl.requirement_id`
 
 /**
  * nebula-srv (Wave 3.1) — harvest pipeline domain.
@@ -1252,7 +1243,7 @@ export default class NebulaHarvestController {
         q(
            `SELECT DISTINCT ON (wr.id) wr.*
            FROM nebula.work_requests wr
-${REQUIREMENT_LINK_JOIN}
+           JOIN nebula.v_work_request_requirement req ON req.request_id = wr.id AND req.relation = 'source'
            WHERE req.${scopeField} = ?
            ORDER BY wr.id, wr.created_at DESC
            LIMIT ? OFFSET ?`,
@@ -1261,7 +1252,7 @@ ${REQUIREMENT_LINK_JOIN}
         q(
           `SELECT COUNT(DISTINCT wr.id)::int AS total
            FROM nebula.work_requests wr
-${REQUIREMENT_LINK_JOIN}
+           JOIN nebula.v_work_request_requirement req ON req.request_id = wr.id AND req.relation = 'source'
            WHERE req.${scopeField} = ?`,
           [id]
         ),

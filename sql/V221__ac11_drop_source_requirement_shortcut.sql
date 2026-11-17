@@ -65,6 +65,25 @@ BEGIN
     END IF;
 END $$;
 
+-- ── normalized read projection used by the application consumers ──────────
+-- Static SQL in the services joins this view; no consumer interpolates a SQL
+-- fragment. The view only exposes current bitemporal link rows.
+CREATE OR REPLACE VIEW nebula.v_work_request_requirement AS
+SELECT rrl.request_id,
+       rrl.requirement_id,
+       rrl.relation,
+       rrl.provenance,
+       req.system_id,
+       req.subsystem_id,
+       req.feature_id
+  FROM resolution.request_requirement_link rrl
+  JOIN nebula.requirements req ON req.id = rrl.requirement_id
+ WHERE rrl.valid_until = 'infinity'::timestamptz
+   AND rrl.recorded_until_dt = 'infinity'::timestamptz;
+
+COMMENT ON VIEW nebula.v_work_request_requirement IS
+    'Plan 8261650 AC11: current normalized request-to-requirement links with the requirement hierarchy. Read-only projection; consumers never use the retired single-source shortcut.';
+
 -- ── remove the shortcut and the views that expose it ───────────────────────
 DO $$
 BEGIN
@@ -240,6 +259,10 @@ BEGIN
 
     IF to_regclass('resolution.request_requirement_link') IS NULL THEN
         RAISE EXCEPTION 'V221-POST-003: normalized requirement link table is missing';
+    END IF;
+
+    IF to_regclass('nebula.v_work_request_requirement') IS NULL THEN
+        RAISE EXCEPTION 'V221-POST-004: normalized requirement read view is missing';
     END IF;
 END $$;
 

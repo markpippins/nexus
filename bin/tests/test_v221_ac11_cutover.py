@@ -251,7 +251,12 @@ def test_no_consumer_reads_or_writes_the_shortcut():
     for path in CONSUMERS:
         text = path.read_text(encoding="utf-8")
         assert "source_requirement_id" not in text, path
-        assert "resolution.request_requirement_link" in text, path
+        if path.suffix == ".ts":
+            # HTTP consumers join the static read view, never a SQL fragment.
+            assert "nebula.v_work_request_requirement" in text, path
+            assert "${REQUIREMENT_LINK_JOIN}" not in text, path
+        else:
+            assert "resolution.request_requirement_link" in text, path
 
 
 def test_migration_is_the_staged_drop_and_keeps_the_link_path():
@@ -259,6 +264,8 @@ def test_migration_is_the_staged_drop_and_keeps_the_link_path():
     code = without_transaction(body_of(text))
     assert "V221-PREFLIGHT-003" in text
     assert "V221-POST-001" in text
+    assert "V221-POST-004" in text
+    assert "nebula.v_work_request_requirement" in code
     assert re.search(
         r"ALTER\s+TABLE\s+resolution\.work_request\s+DROP\s+COLUMN\s+source_requirement_id",
         code,
@@ -287,18 +294,15 @@ def test_v221_drops_the_shortcut_and_rebuilds_views(migrated):
     """) == "0"
     assert psql(migrated, "select count(*) from nebula.work_requests") == "3"
     assert psql(migrated, "select count(*) from scratch.v_work_request_overview") == "3"
+    assert psql(migrated, "select count(*) from nebula.v_work_request_requirement") == "2"
 
 
 def test_link_scoping_returns_the_requirement_hierarchy(migrated):
     rows = psql(migrated, f"""
         select distinct wr.id
           from nebula.work_requests wr
-          join resolution.request_requirement_link rrl
-            on rrl.request_id = wr.id
-           and rrl.relation = 'source'
-           and rrl.valid_until = 'infinity'::timestamptz
-           and rrl.recorded_until_dt = 'infinity'::timestamptz
-          join nebula.requirements req on req.id = rrl.requirement_id
+          join nebula.v_work_request_requirement req
+            on req.request_id = wr.id and req.relation = 'source'
          where req.system_id = '99999999-9999-4999-8999-999999999991'
          order by wr.id
     """)
@@ -309,12 +313,8 @@ def test_link_scoping_returns_the_requirement_hierarchy(migrated):
         select count(*) from (
           select distinct on (wr.id) wr.*
             from nebula.work_requests wr
-            join resolution.request_requirement_link rrl
-              on rrl.request_id = wr.id
-             and rrl.relation = 'source'
-             and rrl.valid_until = 'infinity'::timestamptz
-             and rrl.recorded_until_dt = 'infinity'::timestamptz
-            join nebula.requirements req on req.id = rrl.requirement_id
+            join nebula.v_work_request_requirement req
+              on req.request_id = wr.id and req.relation = 'source'
            where req.system_id = '99999999-9999-4999-8999-999999999991'
            order by wr.id, wr.created_at desc
            limit 2 offset 0
@@ -323,12 +323,8 @@ def test_link_scoping_returns_the_requirement_hierarchy(migrated):
     assert psql(migrated, """
         select count(distinct wr.id)::int
           from nebula.work_requests wr
-          join resolution.request_requirement_link rrl
-            on rrl.request_id = wr.id
-           and rrl.relation = 'source'
-           and rrl.valid_until = 'infinity'::timestamptz
-           and rrl.recorded_until_dt = 'infinity'::timestamptz
-          join nebula.requirements req on req.id = rrl.requirement_id
+          join nebula.v_work_request_requirement req
+            on req.request_id = wr.id and req.relation = 'source'
          where req.system_id = '99999999-9999-4999-8999-999999999991'
     """) == "1"
 

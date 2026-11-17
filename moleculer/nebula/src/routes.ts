@@ -24,15 +24,6 @@ export {
 
 const execFileAsync = promisify(execFile);
 
-// AC11: scoped work-request reads resolve their requirement through the
-// normalized link, never the retired single-source shortcut.
-const REQUIREMENT_LINK_JOIN = `
-           JOIN resolution.request_requirement_link rrl
-             ON rrl.request_id = wr.id
-            AND rrl.relation = 'source'
-            AND rrl.valid_until = 'infinity'::timestamptz
-            AND rrl.recorded_until_dt = 'infinity'::timestamptz
-           JOIN nebula.requirements req ON req.id = rrl.requirement_id`;
 
 // ── Color Palette (matches client) ────────────────────────────────
 const COLOR_PALETTE = [
@@ -3886,7 +3877,7 @@ export function createRoutes(pool: Pool): Router {
         pool.query(
           `SELECT DISTINCT ON (wr.id) wr.*
            FROM nebula.work_requests wr
-${REQUIREMENT_LINK_JOIN}
+           JOIN nebula.v_work_request_requirement req ON req.request_id = wr.id AND req.relation = 'source'
            LEFT JOIN nebula.specifications spec ON spec.id = wr.source_specification_id
            LEFT JOIN nebula.agenda_items ai ON ai.agenda_id = spec.agenda_id AND ai.included = true
            WHERE req.system_id = $1
@@ -3897,7 +3888,7 @@ ${REQUIREMENT_LINK_JOIN}
         pool.query(
           `SELECT COUNT(DISTINCT wr.id)::int AS total
            FROM nebula.work_requests wr
-${REQUIREMENT_LINK_JOIN}
+           JOIN nebula.v_work_request_requirement req ON req.request_id = wr.id AND req.relation = 'source'
            LEFT JOIN nebula.specifications spec ON spec.id = wr.source_specification_id
            LEFT JOIN nebula.agenda_items ai ON ai.agenda_id = spec.agenda_id AND ai.included = true
            WHERE req.system_id = $1`,
@@ -3921,7 +3912,7 @@ ${REQUIREMENT_LINK_JOIN}
         pool.query(
           `SELECT DISTINCT ON (wr.id) wr.*
            FROM nebula.work_requests wr
-${REQUIREMENT_LINK_JOIN}
+           JOIN nebula.v_work_request_requirement req ON req.request_id = wr.id AND req.relation = 'source'
            LEFT JOIN nebula.specifications spec ON spec.id = wr.source_specification_id
            LEFT JOIN nebula.agenda_items ai ON ai.agenda_id = spec.agenda_id AND ai.included = true
            WHERE req.subsystem_id = $1
@@ -3932,7 +3923,7 @@ ${REQUIREMENT_LINK_JOIN}
         pool.query(
           `SELECT COUNT(DISTINCT wr.id)::int AS total
            FROM nebula.work_requests wr
-${REQUIREMENT_LINK_JOIN}
+           JOIN nebula.v_work_request_requirement req ON req.request_id = wr.id AND req.relation = 'source'
            LEFT JOIN nebula.specifications spec ON spec.id = wr.source_specification_id
            LEFT JOIN nebula.agenda_items ai ON ai.agenda_id = spec.agenda_id AND ai.included = true
            WHERE req.subsystem_id = $1`,
@@ -3956,7 +3947,7 @@ ${REQUIREMENT_LINK_JOIN}
         pool.query(
           `SELECT DISTINCT ON (wr.id) wr.*
            FROM nebula.work_requests wr
-${REQUIREMENT_LINK_JOIN}
+           JOIN nebula.v_work_request_requirement req ON req.request_id = wr.id AND req.relation = 'source'
            LEFT JOIN nebula.specifications spec ON spec.id = wr.source_specification_id
            LEFT JOIN nebula.agenda_items ai ON ai.agenda_id = spec.agenda_id AND ai.included = true
            WHERE req.feature_id = $1
@@ -3967,7 +3958,7 @@ ${REQUIREMENT_LINK_JOIN}
         pool.query(
           `SELECT COUNT(DISTINCT wr.id)::int AS total
            FROM nebula.work_requests wr
-${REQUIREMENT_LINK_JOIN}
+           JOIN nebula.v_work_request_requirement req ON req.request_id = wr.id AND req.relation = 'source'
            LEFT JOIN nebula.specifications spec ON spec.id = wr.source_specification_id
            LEFT JOIN nebula.agenda_items ai ON ai.agenda_id = spec.agenda_id AND ai.included = true
            WHERE req.feature_id = $1`,
