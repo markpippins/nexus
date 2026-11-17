@@ -27,8 +27,12 @@ const {
   OUTBOX_TABLE,
   mongoUrl,
   ensureOutboxTable,
+  snapshotProductionOutbox,
+  assertProductionOutboxUnchanged,
   dropIsolatedDatabase,
 } = require('./helpers/isolated-mongo')
+
+let productionOutboxBaseline = null
 
 const BROKER_DIR = path.resolve(__dirname, '..')
 // OS-assigned ports by default (see tests/helpers/ephemeral-ports.js);
@@ -93,11 +97,13 @@ function stopBroker() {
 
 test.before(async () => {
   await ensureOutboxTable()
+  productionOutboxBaseline = await snapshotProductionOutbox()
   await startBroker()
 })
 
   test.after(async () => {
     await stopBroker()
+    await assertProductionOutboxUnchanged(productionOutboxBaseline)
     // Drop this process's isolated keychain database so repeat runs are clean
     // and the suite leaves no keychains_test_* databases behind.
     const mongo = new MongoClient(mongoUrl())

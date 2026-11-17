@@ -95,13 +95,29 @@ function splitOutboxTable(table = OUTBOX_TABLE) {
 }
 
 /**
+ * The table production actually uses. The test table is created as a structural
+ * copy of THIS table — never from a hand-written column list — so it cannot
+ * drift from production as columns, defaults, constraints or indexes change.
+ */
+const PRODUCTION_OUTBOX_TABLE = 'resolution.keychain_event_outbox'
+
+/**
  * Create the test outbox table if it is missing — idempotent and safe to call
  * from every broker-booting test file at once.
  *
- * Mirrors the production table exactly (column set, defaults, status/outcome
- * CHECKs, the pending partial index and the unique (namespace, event) key), so
- * a row that inserts here would also insert there: the tests keep exercising
- * the same deliveries, only in a table production never reads or writes.
+ * Provisioned with `CREATE TABLE ... (LIKE resolution.keychain_event_outbox
+ * INCLUDING ALL)`: PostgreSQL copies the column list, types, NOT NULLs, defaults
+ * (including the `gen_random_uuid()` primary key), CHECK constraints, indexes
+ * (the `(checkpoint_status, recorded_at)` partial pending index included) and
+ * the unique `(source_namespace, source_event_id)` key. A migration that adds a
+ * column to production therefore shows up in the test table on the next run
+ * instead of silently diverging, and a row that would insert here would insert
+ * there too — the tests keep exercising the same deliveries, only in a table
+ * production never reads or writes.
+ *
+ * Deliberately no fallback DDL: if the production table is missing (a bare CI
+ * database before `tests/fixtures/keychain-delta-ci-pg.sql` is applied), this
+ * fails loudly rather than inventing a transcript that could drift.
  *
  * Concurrent CREATE ... IF NOT EXISTS from several test processes can still
  * race on PostgreSQL's catalog unique indexes (23505 / 42P06 / 42P07). Those
@@ -121,47 +137,27 @@ async function ensureOutboxTable(poolOrOptions = {}) {
         ...(poolOrOptions || {}),
       })
   const owned = pool !== poolOrOptions
-  const ddl = `
-    CREATE SCHEMA IF NOT EXISTS ${schema};
-    CREATE TABLE IF NOT EXISTS ${schema}.${table} (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      source_namespace text NOT NULL,
-      source_event_id text NOT NULL,
-      event_kind text NOT NULL,
-      outcome text NOT NULL,
-      schema_version integer NOT NULL DEFAULT 1,
-      aggregate_id text,
-      causation_id text,
-      correlation_id text,
-      actor text,
-      contract_id text,
-      evaluator_id text,
-      law_id text,
-      effective_at timestamptz,
-      recorded_at timestamptz NOT NULL DEFAULT now(),
-      read_set jsonb NOT NULL DEFAULT '{}'::jsonb,
-      payload jsonb NOT NULL DEFAULT '{}'::jsonb,
-      checkpoint_status text NOT NULL DEFAULT 'pending',
-      delivery_attempts integer NOT NULL DEFAULT 0,
-      delivered_at timestamptz,
-      last_error text,
-      created_at timestamptz NOT NULL DEFAULT now(),
-      claimed_at timestamptz,
-      CONSTRAINT ${table.slice(0, 48)}_checkpoint_status_ck CHECK (
-        checkpoint_status = ANY (ARRAY['pending','delivering','delivered','not_applicable','failed'])
-      ),
-      CONSTRAINT ${table.slice(0, 48)}_outcome_ck CHECK (
-        outcome = ANY (ARRAY['committed','refused','rejected','unknown','stale','drift',
-                             'quarantined','superseded','rolled_back','failed'])
-      )
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS ${table}_source_event_uq
-      ON ${schema}.${table} (source_namespace, source_event_id);
-    CREATE INDEX IF NOT EXISTS idx_${table}_pending
-      ON ${schema}.${table} (checkpoint_status, recorded_at)
-      WHERE checkpoint_status = ANY (ARRAY['pending','failed']);
-  `
+  const target = `${schema}.${table}`
   try {
+    // Pinned at production for debugging: nothing to create, nothing to own.
+    if (target === PRODUCTION_OUTBOX_TABLE) {
+      const present = await pool.query('SELECT to_regclass($1) AS reg', [target])
+      if (!present.rows[0] || !present.rows[0].reg) {
+        throw new Error(`${target} does not exist; cannot run the suite against it`)
+      }
+      return
+    }
+    const template = await pool.query('SELECT to_regclass($1) AS reg', [PRODUCTION_OUTBOX_TABLE])
+    if (!template.rows[0] || !template.rows[0].reg) {
+      throw new Error(
+        `cannot provision ${target}: template table ${PRODUCTION_OUTBOX_TABLE} does not exist ` +
+        '(apply tests/fixtures/keychain-delta-ci-pg.sql on a fresh CI database)',
+      )
+    }
+    const ddl = `
+      CREATE SCHEMA IF NOT EXISTS ${schema};
+      CREATE TABLE IF NOT EXISTS ${target} (LIKE ${PRODUCTION_OUTBOX_TABLE} INCLUDING ALL);
+    `
     let lastError = null
     for (let attempt = 0; attempt < 4; attempt += 1) {
       try {
@@ -239,13 +235,103 @@ async function dropIsolatedDatabase(mongo) {
   await mongo.db(MONGO_DB_NAME).dropDatabase()
 }
 
+/**
+ * Rows in production's outbox that came from a test run — the signature the
+ * suite's own inserts leave behind. Production traffic (`peb`, `vision`, …)
+ * never matches it, so this counter is quiet even while the live system is
+ * delivering.
+ */
+const PRODUCTION_TEST_SIGNATURE =
+  "(source_namespace ~ '^(keychain-test-|sol-e2e-|broker-smoke|keychains-)' " +
+  "OR actor ~ '^broker-smoke')"
+
+function outboxPool(overrides = {}) {
+  const { Pool } = require('pg')
+  return new Pool({
+    host: process.env.PG_HOST || 'localhost',
+    port: Number(process.env.PG_PORT || 5432),
+    user: process.env.PG_USER || 'pguser',
+    password: process.env.PG_PASSWORD || 'pgpass',
+    database: process.env.PG_DB_NAME || 'nexus',
+    ...(overrides || {}),
+  })
+}
+
+/**
+ * Cheap guard, one half: count test-signature rows in PRODUCTION's outbox
+ * before the test file starts. `assertProductionOutboxUnchanged` re-counts at
+ * the end and fails the run if the number moved.
+ *
+ * Counting the signature rather than the total is deliberate: the live
+ * peb-kernel writes real `peb.admission.*` rows while the suite runs, so a bare
+ * total would flap for reasons the suite cannot control. A test-signature row
+ * can only come from the harness, which is exactly what must never happen.
+ *
+ * Cost: one aggregate query over an indexed table, per test file.
+ */
+async function snapshotProductionOutbox(overrides = {}) {
+  const pool = outboxPool(overrides)
+  try {
+    const res = await pool.query(
+      `SELECT count(*)::int AS n, now() AS at
+         FROM ${PRODUCTION_OUTBOX_TABLE}
+        WHERE ${PRODUCTION_TEST_SIGNATURE}`,
+    )
+    return { count: res.rows[0].n, since: res.rows[0].at }
+  } finally {
+    await pool.end().catch(() => {})
+  }
+}
+
+/**
+ * Cheap guard, second half: fail the test file (and so the run) if any
+ * test-signature row appeared in production's outbox since the snapshot.
+ */
+async function assertProductionOutboxUnchanged(baseline, overrides = {}) {
+  if (!baseline) throw new Error('production outbox guard: no baseline snapshot was taken')
+  const pool = outboxPool(overrides)
+  try {
+    const res = await pool.query(
+      `SELECT count(*)::int AS n
+         FROM ${PRODUCTION_OUTBOX_TABLE}
+        WHERE ${PRODUCTION_TEST_SIGNATURE}`,
+    )
+    const now = res.rows[0].n
+    if (now !== baseline.count) {
+      const offenders = await pool.query(
+        `SELECT source_namespace, source_event_id, coalesce(actor, '-') AS actor, recorded_at
+           FROM ${PRODUCTION_OUTBOX_TABLE}
+          WHERE ${PRODUCTION_TEST_SIGNATURE}
+            AND recorded_at >= $1
+          ORDER BY recorded_at DESC
+          LIMIT 5`,
+        [baseline.since],
+      )
+      const detail = offenders.rows
+        .map((r) => `  ${r.source_namespace} / ${r.actor} / ${r.source_event_id} @ ${r.recorded_at}`)
+        .join('\n')
+      throw new Error(
+        `the suite wrote ${now - baseline.count} test row(s) into production's ` +
+        `${PRODUCTION_OUTBOX_TABLE} (${baseline.count} -> ${now}). ` +
+        `A test must use KEYCHAIN_OUTBOX_TABLE (${OUTBOX_TABLE}), never production's queue.\n` +
+        detail,
+      )
+    }
+  } finally {
+    await pool.end().catch(() => {})
+  }
+}
+
 module.exports = {
   MONGO_DB_NAME,
   OUTBOX_NAMESPACE_PREFIX,
   OUTBOX_TABLE,
+  PRODUCTION_OUTBOX_TABLE,
   mongoUrl,
   brokerEnv,
   ensureOutboxTable,
+  snapshotProductionOutbox,
+  assertProductionOutboxUnchanged,
   dropIsolatedDatabase,
   waitForKeychainReady,
 }

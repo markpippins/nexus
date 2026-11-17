@@ -48,9 +48,13 @@ const {
   OUTBOX_TABLE,
   mongoUrl,
   ensureOutboxTable,
+  snapshotProductionOutbox,
+  assertProductionOutboxUnchanged,
   dropIsolatedDatabase,
   waitForKeychainReady,
 } = require('./helpers/isolated-mongo')
+
+let productionOutboxBaseline = null
 
 dotenv.config({ path: path.join(__dirname, '..', '.env') })
 
@@ -161,11 +165,13 @@ test.before(async () => {
   // The broker claims from KEYCHAIN_OUTBOX_TABLE; make sure this suite's table
   // exists before it boots (idempotent, safe alongside the other test files).
   await ensureOutboxTable()
+  productionOutboxBaseline = await snapshotProductionOutbox()
   await startBroker()
 })
 
   test.after(async () => {
     await stopBroker()
+    await assertProductionOutboxUnchanged(productionOutboxBaseline)
     // Drop this process's isolated keychain database so repeat runs are clean.
     const mongo = new MongoClient(MONGO_URL)
     try {

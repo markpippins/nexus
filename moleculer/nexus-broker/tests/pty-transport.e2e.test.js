@@ -20,8 +20,12 @@ const assert = require('node:assert/strict')
     OUTBOX_TABLE,
     mongoUrl,
     ensureOutboxTable,
+    snapshotProductionOutbox,
+    assertProductionOutboxUnchanged,
     dropIsolatedDatabase,
   } = require('./helpers/isolated-mongo')
+
+  let productionOutboxBaseline = null
 
 const BROKER_DIR = path.resolve(__dirname, '..')
 // OS-assigned ports by default (see tests/helpers/ephemeral-ports.js);
@@ -118,6 +122,7 @@ let ptyWorkerHealth
 before(async () => {
   await resolvePorts()
   await ensureOutboxTable()
+  productionOutboxBaseline = await snapshotProductionOutbox()
   await startBroker()
   // Confirm the gateway now advertises the transport worker and the HTTP
   // proxy route for its health resolves.
@@ -130,6 +135,7 @@ before(async () => {
 
   after(async () => {
     await stopBroker()
+    await assertProductionOutboxUnchanged(productionOutboxBaseline)
     // Drop this process's isolated keychain database (no leftovers per run).
     const mongo = new MongoClient(mongoUrl())
     try {

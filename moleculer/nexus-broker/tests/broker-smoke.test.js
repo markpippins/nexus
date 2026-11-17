@@ -22,9 +22,14 @@ const {
   OUTBOX_TABLE,
   mongoUrl,
   ensureOutboxTable,
+  snapshotProductionOutbox,
+  assertProductionOutboxUnchanged,
   dropIsolatedDatabase,
   waitForKeychainReady,
 } = require('./helpers/isolated-mongo')
+
+// Guard baseline: test-signature rows in production's outbox before this file runs.
+let productionOutboxBaseline = null
 
 dotenv.config({ path: path.join(__dirname, '..', '.env') })
 
@@ -179,12 +184,15 @@ test.before(async () => {
   // broker claims from KEYCHAIN_OUTBOX_TABLE, and production's outbox table
   // (resolution.keychain_event_outbox) must stay untouched by the suite.
   await ensureOutboxTable()
+  productionOutboxBaseline = await snapshotProductionOutbox()
   await startBroker()
   await ensureKeychainSeed()
 })
 
   test.after(async () => {
     await stopBroker()
+    // Fail the run if this file left a test-signature row in production's queue.
+    await assertProductionOutboxUnchanged(productionOutboxBaseline)
     // Drop this process's isolated keychain database so repeat runs start
     // from a clean store instead of inheriting the previous run's checkpoints.
     const mongo = new MongoClient(mongoUrl())
