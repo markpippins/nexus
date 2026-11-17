@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { Service, ServiceBroker, Context } from "moleculer";
+import { Service, ServiceBroker, Context, Errors } from "moleculer";
 import { Pool } from "pg";
 import Redis from "ioredis";
 import { v4 as uuidv4 } from "uuid";
@@ -10,6 +10,7 @@ import { existsSync } from "fs";
 import { join } from "path";
 import { emitExecutionTelemetry, loadGoverningText } from "../lib/execution-telemetry.ts";
 import { resolveOllamaNumPredictFromEnv } from "../lib/ollama-options.ts";
+import { decidePlanSubmission, LATEST_PLAN_RECEIPT_SQL } from "../lib/plan-lifecycle.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -156,6 +157,20 @@ function buildGovernanceReceiptPayload(params: {
   };
 }
 
+/**
+ * Outcome of a receipt write. Callers that only record history can ignore it;
+ * the lifecycle leg (PLAN_CREATE) must not: a rejected lifecycle receipt means
+ * the plan cannot accept this work, and proceeding anyway is what produced runs
+ * against closed plans (see lib/plan-lifecycle.ts).
+ */
+export interface GovernanceReceiptOutcome {
+  type: string;
+  plan_id: string;
+  issued: boolean;
+  http_status: number | null;
+  error: string | null;
+}
+
 async function emitGovernanceReceipt(params: {
   planId: string;
   type: string;
@@ -163,11 +178,12 @@ async function emitGovernanceReceipt(params: {
   sessionId: string;
   summary: string;
   metadata?: Record<string, any>;
-}): Promise<void> {
+}): Promise<GovernanceReceiptOutcome> {
   const payload = buildGovernanceReceiptPayload(params);
   const conduitUrl = (process.env.CONDUIT_MCP_URL || "http://localhost:3100").replace(/\/$/, "");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5_000);
+  const base = { type: params.type, plan_id: params.planId };
   try {
     const resp = await fetch(`${conduitUrl}/vision/receipts`, {
       method: "POST",
@@ -178,11 +194,13 @@ async function emitGovernanceReceipt(params: {
     if (!resp.ok) {
       const body = await resp.text();
       console.warn(`[worker.harness] governance receipt ${params.type} for ${params.planId} rejected: HTTP ${resp.status}: ${body.slice(0, 200)}`);
-    } else {
-      console.log(`[worker.harness] governance receipt ${params.type} issued for ${params.planId} (session ${params.sessionId.slice(0, 8)})`);
+      return { ...base, issued: false, http_status: resp.status, error: body.slice(0, 400).trim() || null };
     }
+    console.log(`[worker.harness] governance receipt ${params.type} issued for ${params.planId} (session ${params.sessionId.slice(0, 8)})`);
+    return { ...base, issued: true, http_status: resp.status, error: null };
   } catch (err: any) {
     console.warn(`[worker.harness] governance receipt ${params.type} for ${params.planId} failed: ${err?.message || err}`);
+    return { ...base, issued: false, http_status: null, error: String(err?.message || err) };
   } finally {
     clearTimeout(timer);
   }
@@ -508,6 +526,28 @@ export default class HarnessWorker extends Service {
       });
     }
     return this.redis;
+  }
+
+  /**
+   * Latest receipt for a plan, read from the same view and ordering the ledger
+   * validates against (nebula.receipts_unified; see LATEST_PLAN_RECEIPT_SQL).
+   * A lookup failure is reported, not guessed around: the caller then relies on
+   * the PLAN_CREATE emission guard, which aborts before any request/attempt row
+   * is written.
+   */
+  private async latestPlanReceiptType(
+    planId: string,
+  ): Promise<{ type: string | null; lookup_failed: boolean }> {
+    try {
+      const pool = await this.getPool();
+      const result = await pool.query(LATEST_PLAN_RECEIPT_SQL, [planId]);
+      return { type: result.rows[0]?.type ?? null, lookup_failed: false };
+    } catch (err: any) {
+      this.logger.warn(
+        `[plan] latest receipt lookup failed for ${planId}: ${err?.message || err}`,
+      );
+      return { type: null, lookup_failed: true };
+    }
   }
 
   private async resolveContext(windTaskId: string, overrides?: Record<string, any>): Promise<any> {
@@ -1136,6 +1176,42 @@ export default class HarnessWorker extends Service {
 
       const resolved = await this.resolveContext(wind_task_id, contextOverrides);
 
+      // Plan-lifecycle gate. The run writes PLAN_CREATE for this plan at walk
+      // start; if the ledger's transition map does not permit that from the
+      // plan's current state, refuse HERE — before the started event, the
+      // receipt and the execution request/attempt rows — instead of emitting a
+      // receipt the ledger rejects and then running anyway.
+      if (!resolveOnly) {
+        const planState = await this.latestPlanReceiptType(wind_task_id);
+        const decision = decidePlanSubmission(wind_task_id, planState.type);
+        if (!decision.allowed) {
+          this.logger.warn(`run refused job=${jobId} plan=${wind_task_id}: ${decision.message}`);
+          await this.emitEvent({
+            event_type: "harness.refused",
+            source: "worker.harness.run",
+            aggregate_type: "harness_job",
+            aggregate_id: jobId,
+            payload: {
+              wind_task_id,
+              reason: decision.reason,
+              latest_receipt_type: decision.latest_receipt_type,
+              http_status: decision.http_status,
+            },
+            actor_type: "system",
+          }).catch(() => {});
+          throw new Errors.MoleculerError(decision.message, decision.http_status, "PLAN_STATE_REFUSED", {
+            plan_id: wind_task_id,
+            latest_receipt_type: decision.latest_receipt_type,
+            reason: decision.reason,
+          });
+        }
+        if (planState.lookup_failed) {
+          this.logger.warn(
+            `[plan] lifecycle state unknown for ${wind_task_id}; the PLAN_CREATE emission guard will refuse the run if the ledger rejects it`,
+          );
+        }
+      }
+
       // Interactive-hosted guard (Freebuff roles) — never launched here.
       if (resolved.model?.invocation_mode === "INTERACTIVE") {
         return {
@@ -1185,7 +1261,7 @@ export default class HarnessWorker extends Service {
       });
 
       if (!resolveOnly) {
-        await emitGovernanceReceipt({
+        const planCreate = await emitGovernanceReceipt({
           planId: wind_task_id,
           type: "PLAN_CREATE",
           agentRole: resolved.role,
@@ -1193,6 +1269,40 @@ export default class HarnessWorker extends Service {
           summary: `worker.harness ${jobId.slice(0, 8)}: run started (${resolved.task.task_slug})`,
           metadata: { stage: "run_start", wind_task_id, task_slug: resolved.task.task_slug, harness_id: effectiveHarnessId },
         });
+        if (!planCreate.issued) {
+          // Emission guard (defence in depth): the plan gate above reads the
+          // same state, but a plan can close between the read and this write.
+          // Either way the ledger refusing PLAN_CREATE means this work has no
+          // valid lifecycle, so the run stops before ensureAttemptForRun
+          // creates the request/attempt — no half-written ledger rows.
+          const reason = planCreate.http_status
+            ? `HTTP ${planCreate.http_status}: ${planCreate.error ?? "no detail"}`
+            : planCreate.error ?? "receipt channel unavailable";
+          const message =
+            `plan ${wind_task_id} refused the PLAN_CREATE lifecycle receipt (${reason}). ` +
+            `No execution request or attempt was created, and no agent was launched. ` +
+            `Submit this work on a fresh plan (new wind task), or advance this plan first; ` +
+            `see lib/plan-lifecycle.ts for the states that accept PLAN_CREATE.`;
+          this.logger.error(`run refused job=${jobId} plan=${wind_task_id}: ${message}`);
+          await this.emitEvent({
+            event_type: "harness.refused",
+            source: "worker.harness.run",
+            aggregate_type: "harness_job",
+            aggregate_id: jobId,
+            payload: {
+              wind_task_id,
+              reason: "PLAN_CREATE_REJECTED",
+              http_status: planCreate.http_status,
+              receipt_error: planCreate.error,
+            },
+            actor_type: "system",
+          }).catch(() => {});
+          throw new Errors.MoleculerError(message, 409, "PLAN_CREATE_REJECTED", {
+            plan_id: wind_task_id,
+            latest_receipt_type: null,
+            receipt: planCreate,
+          });
+        }
       }
 
       // Attempt ledger (ac38fa9b phase B): one attempt row per run.

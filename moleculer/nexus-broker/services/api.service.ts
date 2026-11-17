@@ -124,15 +124,32 @@ export default class ApiService extends Service {
               },
             } as any,
 
-            cors: {
-              origin: "*",
-              methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-              allowedHeaders: "*",
-              credentials: false,
-              maxAge: 3600,
+                          cors: {
+                origin: "*",
+                methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+                allowedHeaders: "*",
+                credentials: false,
+                maxAge: 3600,
+              } as any,
+
+              // Same status contract as the execution routes above: a thrown
+              // MoleculerError's numeric code is the HTTP status, so a refused
+              // run (409 PLAN_STATE_REFUSED / PLAN_CREATE_REJECTED) reaches the
+              // caller as a refusal instead of a generic 500. Before this the
+              // harness routes fell through to moleculer-web's default handler.
+              onError(req: any, res: any, err: any) {
+                const code = (err as any)?.code;
+                const status = Number.isInteger(code) && code >= 400 && code < 600 ? code : 500;
+                res.setHeader("Content-Type", "application/json; charset=utf-8");
+                res.statusCode = status;
+                res.end(JSON.stringify({
+                  error: (err as any)?.message ?? String(err),
+                  type: (err as any)?.type ?? undefined,
+                  data: (err as any)?.data ?? undefined,
+                }));
+              },
             } as any,
-          } as any,
-        ] as any,
+          ] as any,
 
         log4XXResponses: false,
         logRequestParams: "info",
