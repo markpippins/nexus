@@ -4107,7 +4107,12 @@ export function createRoutes(pool: Pool): Router {
         pool.query(
           `SELECT DISTINCT ON (wr.id) wr.*
            FROM nebula.work_requests wr
-           LEFT JOIN nebula.requirements req ON req.id = wr.source_requirement_id
+           JOIN resolution.request_requirement_link rrl
+             ON rrl.request_id = wr.id
+            AND rrl.relation = 'source'
+            AND rrl.valid_until = 'infinity'::timestamptz
+            AND rrl.recorded_until_dt = 'infinity'::timestamptz
+           JOIN nebula.requirements req ON req.id = rrl.requirement_id
            LEFT JOIN nebula.specifications spec ON spec.id = wr.source_specification_id
            LEFT JOIN nebula.agenda_items ai ON ai.agenda_id = spec.agenda_id AND ai.included = true
            WHERE req.system_id = $1
@@ -4116,9 +4121,14 @@ export function createRoutes(pool: Pool): Router {
           [id, pageSize, offset]
         ),
         pool.query(
-          `SELECT COUNT(*)::int AS total
+          `SELECT COUNT(DISTINCT wr.id)::int AS total
            FROM nebula.work_requests wr
-           LEFT JOIN nebula.requirements req ON req.id = wr.source_requirement_id
+           JOIN resolution.request_requirement_link rrl
+             ON rrl.request_id = wr.id
+            AND rrl.relation = 'source'
+            AND rrl.valid_until = 'infinity'::timestamptz
+            AND rrl.recorded_until_dt = 'infinity'::timestamptz
+           JOIN nebula.requirements req ON req.id = rrl.requirement_id
            LEFT JOIN nebula.specifications spec ON spec.id = wr.source_specification_id
            LEFT JOIN nebula.agenda_items ai ON ai.agenda_id = spec.agenda_id AND ai.included = true
            WHERE req.system_id = $1`,
@@ -4142,7 +4152,12 @@ export function createRoutes(pool: Pool): Router {
         pool.query(
           `SELECT DISTINCT ON (wr.id) wr.*
            FROM nebula.work_requests wr
-           LEFT JOIN nebula.requirements req ON req.id = wr.source_requirement_id
+           JOIN resolution.request_requirement_link rrl
+             ON rrl.request_id = wr.id
+            AND rrl.relation = 'source'
+            AND rrl.valid_until = 'infinity'::timestamptz
+            AND rrl.recorded_until_dt = 'infinity'::timestamptz
+           JOIN nebula.requirements req ON req.id = rrl.requirement_id
            LEFT JOIN nebula.specifications spec ON spec.id = wr.source_specification_id
            LEFT JOIN nebula.agenda_items ai ON ai.agenda_id = spec.agenda_id AND ai.included = true
            WHERE req.subsystem_id = $1
@@ -4151,9 +4166,14 @@ export function createRoutes(pool: Pool): Router {
           [id, pageSize, offset]
         ),
         pool.query(
-          `SELECT COUNT(*)::int AS total
+          `SELECT COUNT(DISTINCT wr.id)::int AS total
            FROM nebula.work_requests wr
-           LEFT JOIN nebula.requirements req ON req.id = wr.source_requirement_id
+           JOIN resolution.request_requirement_link rrl
+             ON rrl.request_id = wr.id
+            AND rrl.relation = 'source'
+            AND rrl.valid_until = 'infinity'::timestamptz
+            AND rrl.recorded_until_dt = 'infinity'::timestamptz
+           JOIN nebula.requirements req ON req.id = rrl.requirement_id
            LEFT JOIN nebula.specifications spec ON spec.id = wr.source_specification_id
            LEFT JOIN nebula.agenda_items ai ON ai.agenda_id = spec.agenda_id AND ai.included = true
            WHERE req.subsystem_id = $1`,
@@ -4177,7 +4197,12 @@ export function createRoutes(pool: Pool): Router {
         pool.query(
           `SELECT DISTINCT ON (wr.id) wr.*
            FROM nebula.work_requests wr
-           LEFT JOIN nebula.requirements req ON req.id = wr.source_requirement_id
+           JOIN resolution.request_requirement_link rrl
+             ON rrl.request_id = wr.id
+            AND rrl.relation = 'source'
+            AND rrl.valid_until = 'infinity'::timestamptz
+            AND rrl.recorded_until_dt = 'infinity'::timestamptz
+           JOIN nebula.requirements req ON req.id = rrl.requirement_id
            LEFT JOIN nebula.specifications spec ON spec.id = wr.source_specification_id
            LEFT JOIN nebula.agenda_items ai ON ai.agenda_id = spec.agenda_id AND ai.included = true
            WHERE req.feature_id = $1
@@ -4186,9 +4211,14 @@ export function createRoutes(pool: Pool): Router {
           [id, pageSize, offset]
         ),
         pool.query(
-          `SELECT COUNT(*)::int AS total
+          `SELECT COUNT(DISTINCT wr.id)::int AS total
            FROM nebula.work_requests wr
-           LEFT JOIN nebula.requirements req ON req.id = wr.source_requirement_id
+           JOIN resolution.request_requirement_link rrl
+             ON rrl.request_id = wr.id
+            AND rrl.relation = 'source'
+            AND rrl.valid_until = 'infinity'::timestamptz
+            AND rrl.recorded_until_dt = 'infinity'::timestamptz
+           JOIN nebula.requirements req ON req.id = rrl.requirement_id
            LEFT JOIN nebula.specifications spec ON spec.id = wr.source_specification_id
            LEFT JOIN nebula.agenda_items ai ON ai.agenda_id = spec.agenda_id AND ai.included = true
            WHERE req.feature_id = $1`,

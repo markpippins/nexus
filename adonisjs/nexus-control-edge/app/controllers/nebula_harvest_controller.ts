@@ -1242,16 +1242,26 @@ export default class NebulaHarvestController {
         q(
            `SELECT DISTINCT ON (wr.id) wr.*
            FROM nebula.work_requests wr
-           LEFT JOIN nebula.requirements req ON req.id = wr.source_requirement_id
+           JOIN resolution.request_requirement_link rrl
+             ON rrl.request_id = wr.id
+            AND rrl.relation = 'source'
+            AND rrl.valid_until = 'infinity'::timestamptz
+            AND rrl.recorded_until_dt = 'infinity'::timestamptz
+           JOIN nebula.requirements req ON req.id = rrl.requirement_id
            WHERE req.${scopeField} = ?
            ORDER BY wr.id, wr.created_at DESC
            LIMIT ? OFFSET ?`,
           [id, pageSize, offset]
         ),
         q(
-          `SELECT COUNT(*)::int AS total
+          `SELECT COUNT(DISTINCT wr.id)::int AS total
            FROM nebula.work_requests wr
-           LEFT JOIN nebula.requirements req ON req.id = wr.source_requirement_id
+           JOIN resolution.request_requirement_link rrl
+             ON rrl.request_id = wr.id
+            AND rrl.relation = 'source'
+            AND rrl.valid_until = 'infinity'::timestamptz
+            AND rrl.recorded_until_dt = 'infinity'::timestamptz
+           JOIN nebula.requirements req ON req.id = rrl.requirement_id
            WHERE req.${scopeField} = ?`,
           [id]
         ),
