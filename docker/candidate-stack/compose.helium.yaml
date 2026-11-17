@@ -1,45 +1,71 @@
-# helium override for the candidate stack.
+# helium override for the candidate stack — HELIUM-OWNED DEPLOY PATH.
 #
 # Applied as:
 #   docker compose -f compose.yaml -f compose.helium.yaml up -d
 #
-# WHY THIS EXISTS: the base manifest targets the titanium-local topology —
-# host.docker.internal reaches titanium's own PG/Mongo/Conduit. On helium
-# those services live on the AUTHORITY HOST over LAN, so the env must be
-# retargeted (compose `environment` overrides both base values and env_file
-# per key). MONGO_URL itself is NOT set here: it carries credentials and is
-# injected by deploy-candidate.yml into the rendered .env (never committed).
+# WHY THIS EXISTS: the base manifest (compose.yaml) targets the titanium-local
+# topology — host.docker.internal reaches titanium's own PG/Mongo/Conduit, and
+# the broker/control-edge are built from source. On helium those services live
+# on the AUTHORITY HOST over LAN and are deployed from pre-built images, so this
+# override does three things:
+#   1. retargets PG/Conduit/Mongo at the authority host (titanium) over LAN
+#   2. pins the broker and control-edge to pre-built images (no source build)
+#   3. drops the build context entirely so helium never touches the source tree
+#
+# This is the SINGLE helium-specific override. The separate compose.pinned.yaml
+# was folded into this file and removed.
 #
 # Near-twin of compose.vanadium.yaml by construction: both are non-authority
-# hosts, so both point at titanium for PG/Conduit and differ only in which
+# hosts, so both point at titanium for PG/Conduit/Mongo and differ only in which
 # mongod the injected MONGO_URL names.
 #
-# NO in-group mongo. Architect decision 24ba3e38 §3 first asked for a
-# self-contained mongo here; PR review 4de54dfe AMENDED that for this shape:
-# the group PROJECTS shared data, so a self-contained store would risk
+# NO in-group mongo. Architect decision 24ba3e38 §3 as amended by PR review
+# 4de54dfe: the group PROJECTS shared data, so a self-contained store would risk
 # split-brain and manufacture the seed/sync problem §3 was trying to avoid.
 # The shared authority is the correct posture for a projecting failover group.
-# An in-group mongo remains expressible via `candidate_mongo_source: local` if
-# the mongo-durability charter question (doctrine 8d9c751a) ever lands.
+# An in-group mongo remains expressible via candidate_mongo_source: local if the
+# mongo-durability charter question (doctrine 8d9c751a) ever lands.
 #
 # helium-specific facts this override deliberately does NOT change:
 #   - helium runs its own backing stores (~/srv/infra: helium-mongo,
 #     helium-redis, helium-nats) — the group still runs its own in-compose
 #     redis rather than joining helium-infra, so the two projects stay
-#     independent and `docker compose down` on either cannot disturb the other.
+#     independent and docker compose down on either cannot disturb the other.
 #   - host ports 14080/18082 are free on helium; only 8092 (nexus-core),
 #     27017/6379/4222/8222 (helium-infra) and 11434 (ollama) are taken.
 #   - helium is a 4 GB board running ollama: the broker's mem_limit of 1g
 #     matters here more than it does on vanadium.
+#
+# AUTHORITY HOST: titanium at 192.168.1.71 (the current LAN IP, not the old
+# 192.168.1.120 (old authority IP). Do not edit these by hand — they must match
+# /home/codex/dev/nexus/ansible/inventory/group_vars/all.yml authority_host and
+# the .env MONGO_URL below, or a future ansible deploy will drift them back.
 
 services:
   broker:
+    # 0.1.1 = the 0.1.0 application image plus the agent runtime layer built by
+    # Dockerfile.runtime (opencode 1.19.0 + git), because the application image
+    # ships the compiled broker but no runtime: every harn-opencode job died at
+    # `spawn opencode ENOENT`. The layer is built FROM the pinned image on the
+    # host that runs it (arch-correct — helium is aarch64), so it is a runtime
+    # addendum, not a source build.
+    image: candidate/broker:0.1.1
+    build: null   # helium uses pre-built image; no source build
     environment:
-      # Workers reach shared infrastructure on the authority host.
-      PG_HOST: "192.168.1.120"
-      CONDUIT_MCP_URL: "http://192.168.1.120:3100"
+      # Workers reach shared infrastructure on the authority host over LAN.
+      PG_HOST: "192.168.1.71"
+      CONDUIT_MCP_URL: "http://192.168.1.71:3100"
+      # helium runs the group's only ollama daemon and it runs on the HOST, not
+      # inside this compose project. worker.harness's ollama path defaults to
+      # 127.0.0.1:11434, which in-container is nothing (verified: "fetch
+      # failed"), so point it at the host-gateway that compose.yaml already
+      # declares via extra_hosts. Without this the ollama harness path can only
+      # ever fail, however healthy everything else is.
+      OLLAMA_URL: "http://host.docker.internal:11434"
       # REDIS_HOST stays "redis" — in-compose DNS, unchanged.
 
   control-edge:
+    image: candidate/control-edge:0.1.0
+    build: null   # helium uses pre-built image; no source build
     environment:
-      PG_HOST: "192.168.1.120"
+      PG_HOST: "192.168.1.71"
