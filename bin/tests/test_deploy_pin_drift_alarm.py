@@ -84,14 +84,12 @@ def _make_repo(root: pathlib.Path) -> pathlib.Path:
     (repo / "python").mkdir(parents=True)
     (repo / "python" / "mod.py").write_text("x = 1\n")
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    # Configure the identity in the repo itself: a CI runner has no global
+    # git identity, and every commit the fixture makes needs one.
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "test"], check=True)
     subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
-    subprocess.run(
-        [
-            "git", "-C", str(repo), "-c", "user.email=t@example.invalid",
-            "-c", "user.name=test", "commit", "-qm", "init pin",
-        ],
-        check=True,
-    )
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "init pin"], check=True)
     return repo
 
 
