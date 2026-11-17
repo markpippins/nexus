@@ -49,7 +49,7 @@ services:
     # `spawn opencode ENOENT`. The layer is built FROM the pinned image on the
     # host that runs it (arch-correct — helium is aarch64), so it is a runtime
     # addendum, not a source build.
-    image: candidate/broker:0.1.2
+    image: candidate/broker:0.1.3
     build: null   # helium uses pre-built image; no source build
     environment:
       # Workers reach shared infrastructure on the authority host over LAN.
