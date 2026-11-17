@@ -21,15 +21,10 @@ const {
   OUTBOX_NAMESPACE_PREFIX,
   OUTBOX_TABLE,
   mongoUrl,
-  ensureOutboxTable,
-  snapshotProductionOutbox,
-  assertProductionOutboxUnchanged,
+  registerProductionOutboxGuard,
   dropIsolatedDatabase,
   waitForKeychainReady,
 } = require('./helpers/isolated-mongo')
-
-// Guard baseline: test-signature rows in production's outbox before this file runs.
-let productionOutboxBaseline = null
 
 dotenv.config({ path: path.join(__dirname, '..', '.env') })
 
@@ -179,20 +174,20 @@ async function ensureKeychainSeed() {
   }
 }
 
-test.before(async () => {
-  // Provision this suite's own outbox table before booting the broker: the
-  // broker claims from KEYCHAIN_OUTBOX_TABLE, and production's outbox table
-  // (resolution.keychain_event_outbox) must stay untouched by the suite.
-  await ensureOutboxTable()
-  productionOutboxBaseline = await snapshotProductionOutbox()
-  await startBroker()
-  await ensureKeychainSeed()
-})
-
-  test.after(async () => {
+// Provision this suite's own outbox table, baseline production's outbox, boot
+// the broker and seed it, then stop it and drop this process's isolated
+// keychain database — with the production-outbox assertion always last.
+registerProductionOutboxGuard({
+  before: test.before,
+  after: test.after,
+  async setup() {
+    // The broker claims from KEYCHAIN_OUTBOX_TABLE; production's outbox table
+    // (resolution.keychain_event_outbox) must stay untouched by the suite.
+    await startBroker()
+    await ensureKeychainSeed()
+  },
+  async teardown() {
     await stopBroker()
-    // Fail the run if this file left a test-signature row in production's queue.
-    await assertProductionOutboxUnchanged(productionOutboxBaseline)
     // Drop this process's isolated keychain database so repeat runs start
     // from a clean store instead of inheriting the previous run's checkpoints.
     const mongo = new MongoClient(mongoUrl())
@@ -202,7 +197,8 @@ test.before(async () => {
     } finally {
       await mongo.close()
     }
-  })
+  },
+})
 
 test('GET /api/health reports ok with all worker services', async () => {
   const res = await fetch(`${BASE}/health`)

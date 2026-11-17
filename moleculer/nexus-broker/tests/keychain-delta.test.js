@@ -47,14 +47,10 @@ const {
   OUTBOX_NAMESPACE_PREFIX,
   OUTBOX_TABLE,
   mongoUrl,
-  ensureOutboxTable,
-  snapshotProductionOutbox,
-  assertProductionOutboxUnchanged,
+  registerProductionOutboxGuard,
   dropIsolatedDatabase,
   waitForKeychainReady,
 } = require('./helpers/isolated-mongo')
-
-let productionOutboxBaseline = null
 
 dotenv.config({ path: path.join(__dirname, '..', '.env') })
 
@@ -161,17 +157,17 @@ function instanceCount(stateVector) {
   return Object.values(stateVector || {}).reduce((sum, instances) => sum + instances.length, 0)
 }
 
-test.before(async () => {
-  // The broker claims from KEYCHAIN_OUTBOX_TABLE; make sure this suite's table
-  // exists before it boots (idempotent, safe alongside the other test files).
-  await ensureOutboxTable()
-  productionOutboxBaseline = await snapshotProductionOutbox()
-  await startBroker()
-})
-
-  test.after(async () => {
+// Guard first (a matching outbox table, then production's baseline), then the
+// broker; teardown stops it and drops this process's store before the
+// production-outbox assertion.
+registerProductionOutboxGuard({
+  before: test.before,
+  after: test.after,
+  async setup() {
+    await startBroker()
+  },
+  async teardown() {
     await stopBroker()
-    await assertProductionOutboxUnchanged(productionOutboxBaseline)
     // Drop this process's isolated keychain database so repeat runs are clean.
     const mongo = new MongoClient(MONGO_URL)
     try {
@@ -180,7 +176,8 @@ test.before(async () => {
     } finally {
       await mongo.close()
     }
-  })
+  },
+})
 
 test('checkpoints persist deltas, not full copies, and rewind reconstructs them', async () => {
   const sourceNamespace = `keychains-delta-${process.pid}-${Date.now()}`

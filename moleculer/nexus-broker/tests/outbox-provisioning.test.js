@@ -16,6 +16,11 @@
  *   - concurrent provisioners neither deadlock nor drop a table that is in use;
  *   - production's outbox is never mutated by any of it.
  *
+ * It also pins the shared production-outbox guard
+ * (`registerProductionOutboxGuard`): both node:test hooks come from one call, a
+ * call that cannot guard is refused, and the assertion still runs — next to,
+ * not instead of, the teardown error — when the file's teardown fails.
+ *
  * Everything here happens on a private probe table
  * (`resolution_test.keychain_event_outbox_probe_<pid>`), never on the table the
  * broker-booting tests share and never on production's table, so this file can
@@ -37,6 +42,7 @@ const {
   ensureOutboxTable,
   outboxShape,
   shapesMatch,
+  registerProductionOutboxGuard,
 } = require('./helpers/isolated-mongo')
 
 dotenv.config({ path: path.join(__dirname, '..', '.env') })
@@ -284,6 +290,60 @@ test('concurrent provisioners neither deadlock nor drop a table in use', async (
   )
   assert.equal(kept.rows[0].n, 1, 'the pre-existing marker row must survive the race')
   await assertProbeMatchesProduction('after concurrent provisioning')
+})
+
+/**
+ * Stand-ins for node:test's hook registrars, so a guard can be driven without
+ * provisioning the shared table this file deliberately stays off.
+ */
+function captureHooks() {
+  const registered = {}
+  return {
+    registered,
+    before: (fn) => { registered.before = fn },
+    after: (fn) => { registered.after = fn },
+  }
+}
+
+test('the production guard registers both hooks from one call', () => {
+  const hooks = captureHooks()
+  registerProductionOutboxGuard({ before: hooks.before, after: hooks.after })
+  assert.equal(typeof hooks.registered.before, 'function', 'the guard must register its before hook')
+  assert.equal(typeof hooks.registered.after, 'function', 'the guard must register its after hook')
+})
+
+test('the production guard refuses a call that would not guard anything', () => {
+  assert.throws(() => registerProductionOutboxGuard({}), /before/, 'missing registrars must not pass silently')
+  assert.throws(() => registerProductionOutboxGuard({ before: () => {} }), /after/, 'a half-wired guard must be refused')
+  assert.throws(() => registerProductionOutboxGuard(), TypeError)
+})
+
+test('the production guard always runs its assertion in the after hook', async () => {
+  const hooks = captureHooks()
+  registerProductionOutboxGuard({ before: hooks.before, after: hooks.after })
+  // The before hook never ran, so there is no baseline: the assertion has to be
+  // what rejects, which is only true if it is wired into the after hook.
+  await assert.rejects(hooks.registered.after(), /no baseline snapshot was taken/)
+})
+
+test('the production guard asserts even when teardown throws', async () => {
+  const hooks = captureHooks()
+  registerProductionOutboxGuard({
+    before: hooks.before,
+    after: hooks.after,
+    teardown: async () => { throw new Error('teardown exploded') },
+  })
+  await assert.rejects(hooks.registered.after(), (err) => {
+    assert.ok(err instanceof AggregateError, `expected both failures to surface, got ${err}`)
+    assert.equal(
+      err.errors.length,
+      2,
+      `expected teardown + assertion errors, got ${JSON.stringify(err.errors.map((e) => e.message))}`,
+    )
+    assert.match(err.errors[0].message, /teardown exploded/)
+    assert.match(err.errors[1].message, /no baseline snapshot/)
+    return true
+  })
 })
 
 test("production's outbox is never mutated by provisioning", async () => {

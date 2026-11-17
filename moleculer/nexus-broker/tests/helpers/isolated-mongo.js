@@ -403,6 +403,77 @@ async function assertProductionOutboxUnchanged(baseline, overrides = {}) {
   }
 }
 
+/**
+ * Register the production-outbox guard for a test file — one call, both hooks.
+ *
+ * Four test files carried their own copy of provision → snapshot → assert in
+ * their before/after hooks, so a step could be lost in an edit and the files
+ * could drift apart. Here the wiring exists once:
+ *
+ *   1. `ensureOutboxTable()` provisions this process's own queue;
+ *   2. `snapshotProductionOutbox()` records the test-signature baseline in
+ *      production's outbox;
+ *   3. `setup()` boots the file's broker (and any seed it needs);
+ *   4. `teardown()` stops it — this runs even when a test failed;
+ *   5. `assertProductionOutboxUnchanged()` fails the file if a test-signature
+ *      row reached production's queue. It runs last and runs even when
+ *      `teardown()` throws, so a shutdown error cannot mask a leak.
+ *
+ * The node:test hook registrars are passed in rather than registered on import
+ * so that ordering is the guard's business, not the file's: the baseline is
+ * taken before `setup()` boots anything, because the guard is what calls it.
+ *
+ * Usage (broker-booting files):
+ *
+ *   registerProductionOutboxGuard({
+ *     before, after,
+ *     async setup() { await startBroker() },
+ *     async teardown() { await stopBroker(); await dropTestDatabase() },
+ *   })
+ */
+function registerProductionOutboxGuard({ before, after, setup = null, teardown = null } = {}) {
+  for (const [name, register] of [['before', before], ['after', after]]) {
+    if (typeof register !== 'function') {
+      throw new TypeError(
+        `registerProductionOutboxGuard: ${name} must be node:test's ${name} hook registrar ` +
+        '(pass `before`/`after` or `test.before`/`test.after`)',
+      )
+    }
+  }
+  let baseline = null
+  before(async () => {
+    // Provision first: the file's broker claims from this table, and the
+    // baseline must predate any test write.
+    await ensureOutboxTable()
+    baseline = await snapshotProductionOutbox()
+    if (setup) await setup()
+  })
+  after(async () => {
+    const failures = []
+    if (teardown) {
+      try {
+        await teardown()
+      } catch (err) {
+        failures.push(err)
+      }
+    }
+    // Always the last thing this file does, and always attempted: a leak into
+    // production's queue must never be reported as a plain teardown failure.
+    try {
+      await assertProductionOutboxUnchanged(baseline)
+    } catch (err) {
+      failures.push(err)
+    }
+    if (failures.length === 1) throw failures[0]
+    if (failures.length > 1) {
+      throw new AggregateError(
+        failures,
+        'production-outbox guard: teardown and the production-queue assertion both failed',
+      )
+    }
+  })
+}
+
 module.exports = {
   MONGO_DB_NAME,
   OUTBOX_NAMESPACE_PREFIX,
@@ -417,6 +488,7 @@ module.exports = {
   ensureOutboxTable,
   snapshotProductionOutbox,
   assertProductionOutboxUnchanged,
+  registerProductionOutboxGuard,
   dropIsolatedDatabase,
   waitForKeychainReady,
 }
