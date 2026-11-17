@@ -1396,7 +1396,7 @@ class DBAdapter:
                             "attempt-null (plan=%s type=%s)",
                             raw_attempt, plan_id, receipt_type)
                 with self._get_connection() as conn:
-                    conn.execute(
+                    cursor = conn.execute(
                         """INSERT INTO execution.receipts
                            (request_id, attempt_id, type, agent_role, summary, metadata,
                             lineage_source, lineage_original_id, issued_at)
@@ -1405,6 +1405,23 @@ class DBAdapter:
                         (request_id, mirror_attempt_id, receipt_type, agent_role, summary,
                          json.dumps(exec_meta), receipt_id, now),
                     )
+                    # Replay of an already-recorded receipt: nothing new to
+                    # authorize, so nothing new is appended.
+                    if cursor.rowcount > 0:
+                        self._emit_receipt_issued(
+                            conn,
+                            receipt_id=receipt_id,
+                            plan_id=plan_id,
+                            receipt_type=receipt_type,
+                            agent_role=agent_role,
+                            session_id=session_id,
+                            ticket_id=ticket_id or None,
+                            summary=summary,
+                            tokens_used=tokens_used,
+                            created_at=now,
+                            storage="execution",
+                            request_id=request_id,
+                        )
                     conn.commit()
             else:
                 # C1 gate 3: fail-closed canary enforcement on the synthetic
@@ -1432,10 +1449,25 @@ class DBAdapter:
                     ON CONFLICT DO NOTHING
                 """
                 with self._get_connection() as conn:
-                    conn.execute(query, (
+                    cursor = conn.execute(query, (
                         receipt_id, plan_id, receipt_type, agent_role, session_id,
                         ticket_id, summary, artifact_path, meta_json, tokens_used, now,
                     ))
+                    if cursor.rowcount > 0:
+                        self._emit_receipt_issued(
+                            conn,
+                            receipt_id=receipt_id,
+                            plan_id=plan_id,
+                            receipt_type=receipt_type,
+                            agent_role=agent_role,
+                            session_id=session_id,
+                            ticket_id=ticket_id or None,
+                            summary=summary,
+                            tokens_used=tokens_used,
+                            created_at=now,
+                            storage="vision",
+                            request_id=None,
+                        )
                     conn.commit()
                 _log.info(
                     "insert_receipt: synthetic fallback id=%s plan=%s channel=%s producer=%s correlation=%s",
@@ -1932,6 +1964,7 @@ class DBAdapter:
         actor: str = "conduit-python",
         authority: str = "system",
         payload: Optional[Dict[str, Any]] = None,
+        receipt: Optional[str] = None,
     ) -> None:
         """Insert into kernel.transition_event within an existing transaction.
 
@@ -1945,8 +1978,8 @@ class DBAdapter:
             """
             INSERT INTO kernel.transition_event
                 (event_id, event_type, aggregate_type, aggregate_id,
-                 actor, authority, payload)
-            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
+                 actor, authority, payload, receipt)
+            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s)
             """,
             (
                 event_id,
@@ -1956,6 +1989,94 @@ class DBAdapter:
                 actor,
                 authority,
                 json.dumps(payload or {}),
+                receipt,
+            ),
+        )
+
+    # ── receipt.issued emission (receipt.issued gap, 2026-11-17) ──────
+
+    @staticmethod
+    def receipt_content_hash(
+        receipt_id: str,
+        plan_id: str,
+        receipt_type: str,
+        agent_role: str,
+        summary: str,
+        created_at: str,
+    ) -> str:
+        """Content-addressed hash for a receipt's kernel envelope.
+
+        ``receipt.must_carry_hash`` (kernel.policy_rule, migration 010)
+        rejects any ``receipt.issued`` event whose envelope ``receipt`` is
+        empty, so every emission must carry a hash. SHA-256 over the six
+        fields that define the receipt's identity; the same receipt always
+        produces the same digest.
+        """
+        canonical = json.dumps(
+            [receipt_id, plan_id, receipt_type, agent_role, summary or "", created_at],
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def _emit_receipt_issued(
+        self,
+        conn,
+        *,
+        receipt_id: str,
+        plan_id: str,
+        receipt_type: str,
+        agent_role: str,
+        session_id: Optional[str],
+        ticket_id: Optional[str],
+        summary: str,
+        tokens_used: int,
+        created_at: str,
+        storage: str,
+        request_id: Optional[str],
+    ) -> None:
+        """Append the kernel ``receipt.issued`` event for a receipt inserted in
+        this transaction.
+
+        ADR-016: every state change is one row in kernel.transition_event, and
+        an issued receipt IS a state change — ``getLatestReceiptType`` derives
+        plan state from the receipt ledger. This is what makes
+        ``receipt.must_carry_hash`` a live policy instead of unreachable
+        configuration.
+
+        Runs on the caller's connection, before the caller commits, so a
+        policy rejection rolls the receipt back (fail closed). Idempotent: at
+        most one ``receipt.issued`` per receipt id.
+        """
+        seen = conn.execute(
+            "SELECT 1 FROM kernel.transition_event "
+            "WHERE event_type = 'receipt.issued' "
+            "AND aggregate_type = 'receipt' AND aggregate_id = %s LIMIT 1",
+            (receipt_id,),
+        ).fetchone()
+        if seen:
+            return
+        self._record_kernel_transition(
+            conn,
+            aggregate_type="receipt",
+            aggregate_id=receipt_id,
+            event_type="receipt.issued",
+            actor=agent_role or "conduit-python",
+            authority=agent_role or "system",
+            payload={
+                "receipt_id": receipt_id,
+                "plan_id": plan_id,
+                "type": receipt_type,
+                "agent_role": agent_role,
+                "ticket_id": ticket_id,
+                "session_id": session_id,
+                "tokens_used": tokens_used,
+                "created_at": created_at,
+                "storage": storage,
+                "request_id": request_id,
+            },
+            receipt=self.receipt_content_hash(
+                receipt_id, plan_id, receipt_type, agent_role, summary, created_at,
             ),
         )
 
