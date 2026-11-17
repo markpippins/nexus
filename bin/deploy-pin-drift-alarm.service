@@ -1,0 +1,28 @@
+# Source of truth for ~/.config/systemd/user/deploy-pin-drift-alarm.service
+#
+# Deploy (operator action, same doctrine as landed-digest-guard.service):
+#   cp bin/deploy-pin-drift-alarm.service ~/.config/systemd/user/
+#   cp bin/deploy-pin-drift-alarm.timer   ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now deploy-pin-drift-alarm.timer
+#   bin/deploy-pin-drift-alarm.py --accept    # establish the baseline once
+#
+# Why: conduit-kernel.service and nexus-execution-worker.service both import
+# out of /home/codex/deploy/lilac-shadow (pin base 318d9ea8 + deploy-lineage
+# commit 39898886, branch deploy/lilac-pin-318d9ea8-receipt-issued). Nothing
+# under bin/, docs/ or .github/ pulls or resets that tree, so drift is always
+# an operator action — this alarm turns that silence into a forum post on
+# issues-and-open-questions.
+#
+# Read-only over the deploy tree; runs from the PRIMARY checkout. Baseline and
+# episode dedupe live in ~/.cache/deploy-pin-drift-alarm/state.json. Exit 2
+# (drift) fails the unit on purpose so the journal shows it too.
+[Unit]
+Description=deploy pin drift alarm (HEAD + tracked python/ digests of /home/codex/deploy/lilac-shadow)
+Documentation=file:///home/codex/dev/nexus/bin/deploy-pin-drift-alarm.py
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/deploy-pin-drift-alarm.py
+TimeoutStartSec=180
