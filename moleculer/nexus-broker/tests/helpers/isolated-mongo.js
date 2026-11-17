@@ -102,26 +102,83 @@ function splitOutboxTable(table = OUTBOX_TABLE) {
 const PRODUCTION_OUTBOX_TABLE = 'resolution.keychain_event_outbox'
 
 /**
- * Create the test outbox table if it is missing — idempotent and safe to call
- * from every broker-booting test file at once.
+ * Shape of an outbox table as PostgreSQL reports it: column names in order,
+ * types, nullability and defaults. Enough to catch the drift that matters — a
+ * migration adding/removing a column, or changing a type or default — without
+ * diffing constraint and index text, which LIKE copies wholesale anyway.
+ */
+async function outboxShape(queryable, qualified) {
+  const [schema, table] = qualified.split('.')
+  const res = await queryable.query(
+    `SELECT column_name,
+            ordinal_position::int AS position,
+            data_type,
+            udt_name,
+            is_nullable,
+            coalesce(column_default, '') AS column_default
+       FROM information_schema.columns
+      WHERE table_schema = $1 AND table_name = $2
+      ORDER BY ordinal_position`,
+    [schema, table],
+  )
+  return res.rows
+}
+
+function shapesMatch(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b)
+}
+
+/** Human-readable first differences, so a recreate explains itself in the log. */
+function describeShapeDiff(production, test) {
+  const prod = new Map(production.map((c) => [c.column_name, c]))
+  const tst = new Map(test.map((c) => [c.column_name, c]))
+  const notes = []
+  for (const [name, col] of prod) {
+    const other = tst.get(name)
+    if (!other) {
+      notes.push(`missing column ${name} (${col.data_type})`)
+      continue
+    }
+    if (other.data_type !== col.data_type) notes.push(`${name}: type ${other.data_type} -> ${col.data_type}`)
+    if (other.is_nullable !== col.is_nullable) notes.push(`${name}: nullability ${other.is_nullable} -> ${col.is_nullable}`)
+    if (other.column_default !== col.column_default) {
+      notes.push(`${name}: default ${JSON.stringify(other.column_default)} -> ${JSON.stringify(col.column_default)}`)
+    }
+    if (other.position !== col.position) notes.push(`${name}: position ${other.position} -> ${col.position}`)
+  }
+  for (const name of tst.keys()) if (!prod.has(name)) notes.push(`extra column ${name}`)
+  return notes
+}
+
+/**
+ * Create — or, when it has drifted, recreate — the test outbox table.
  *
- * Provisioned with `CREATE TABLE ... (LIKE resolution.keychain_event_outbox
- * INCLUDING ALL)`: PostgreSQL copies the column list, types, NOT NULLs, defaults
- * (including the `gen_random_uuid()` primary key), CHECK constraints, indexes
- * (the `(checkpoint_status, recorded_at)` partial pending index included) and
- * the unique `(source_namespace, source_event_id)` key. A migration that adds a
- * column to production therefore shows up in the test table on the next run
- * instead of silently diverging, and a row that would insert here would insert
- * there too — the tests keep exercising the same deliveries, only in a table
- * production never reads or writes.
+ * `CREATE TABLE ... (LIKE resolution.keychain_event_outbox INCLUDING ALL)`
+ * copies columns, types, NOT NULLs, defaults (including the `gen_random_uuid()`
+ * primary key), CHECK constraints, indexes (the `(checkpoint_status,
+ * recorded_at)` partial pending index included) and the unique
+ * `(source_namespace, source_event_id)` key from the live table. A row that
+ * would insert here would insert there too: the tests keep exercising the same
+ * deliveries, only in a table production never reads or writes.
+ *
+ * LIKE only applies at CREATE time, and the table survives between runs — so
+ * `IF NOT EXISTS` alone would silently keep a stale copy after a production
+ * migration. This compares the existing table's shape (columns, types,
+ * nullability, defaults, order) against production and DROPs and recreates it
+ * when they differ. The table is a test artifact; losing its rows on a schema
+ * change is the intended behaviour.
  *
  * Deliberately no fallback DDL: if the production table is missing (a bare CI
  * database before `tests/fixtures/keychain-delta-ci-pg.sql` is applied), this
  * fails loudly rather than inventing a transcript that could drift.
  *
- * Concurrent CREATE ... IF NOT EXISTS from several test processes can still
- * race on PostgreSQL's catalog unique indexes (23505 / 42P06 / 42P07). Those
- * are benign here: retry a few times, then confirm the table is present.
+ * Compare-and-DDL runs in one transaction under a transaction-scoped advisory
+ * lock, because four test files call this at boot and one may be dropping the
+ * table while another is about to use it. Catalog races (23505 / 42P06 / 42P07 /
+ * 42710) are retried a few times.
+ *
+ * Returns `{ action: 'created' | 'recreated' | 'unchanged' | 'skipped', target }`
+ * (plus `diff` on recreate); callers may ignore it.
  */
 async function ensureOutboxTable(poolOrOptions = {}) {
   const { Pool } = require('pg')
@@ -145,7 +202,7 @@ async function ensureOutboxTable(poolOrOptions = {}) {
       if (!present.rows[0] || !present.rows[0].reg) {
         throw new Error(`${target} does not exist; cannot run the suite against it`)
       }
-      return
+      return { action: 'skipped', target }
     }
     const template = await pool.query('SELECT to_regclass($1) AS reg', [PRODUCTION_OUTBOX_TABLE])
     if (!template.rows[0] || !template.rows[0].reg) {
@@ -154,31 +211,52 @@ async function ensureOutboxTable(poolOrOptions = {}) {
         '(apply tests/fixtures/keychain-delta-ci-pg.sql on a fresh CI database)',
       )
     }
-    const ddl = `
-      CREATE SCHEMA IF NOT EXISTS ${schema};
-      CREATE TABLE IF NOT EXISTS ${target} (LIKE ${PRODUCTION_OUTBOX_TABLE} INCLUDING ALL);
-    `
     let lastError = null
     for (let attempt = 0; attempt < 4; attempt += 1) {
+      const client = await pool.connect()
       try {
-        await pool.query(ddl)
-        lastError = null
-        break
+        await client.query('BEGIN')
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['keychain_test_outbox_provision'])
+        await client.query(`CREATE SCHEMA IF NOT EXISTS ${schema}`)
+        const exists = await client.query('SELECT to_regclass($1) AS reg', [target])
+        let action = 'created'
+        let diff = []
+        if (exists.rows[0] && exists.rows[0].reg) {
+          const productionShape = await outboxShape(client, PRODUCTION_OUTBOX_TABLE)
+          const testShape = await outboxShape(client, target)
+          if (shapesMatch(productionShape, testShape)) {
+            action = 'unchanged'
+          } else {
+            diff = describeShapeDiff(productionShape, testShape)
+            action = 'recreated'
+            // LIKE only takes effect at CREATE, so a drifted table has to go.
+            await client.query(`DROP TABLE ${target}`)
+          }
+        }
+        if (action !== 'unchanged') {
+          await client.query(`CREATE TABLE ${target} (LIKE ${PRODUCTION_OUTBOX_TABLE} INCLUDING ALL)`)
+        }
+        await client.query('COMMIT')
+        if (action === 'recreated') {
+          console.log(
+            `[isolated-mongo] recreated ${target} from ${PRODUCTION_OUTBOX_TABLE} ` +
+            `after schema drift: ${diff.join('; ')}`,
+          )
+        }
+        return { action, target, diff }
       } catch (err) {
-        // 23505 duplicate key, 42P06 schema exists, 42P07 relation exists: a
-        // concurrent creator won the race — harmless.
-        if (['23505', '42P06', '42P07', '42710'].includes(err && err.code)) {
+        await client.query('ROLLBACK').catch(() => undefined)
+        if (['23505', '42P06', '42P07', '42710'].includes(err && err.code) && attempt < 3) {
           lastError = err
           await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)))
           continue
         }
         throw err
+      } finally {
+        client.release()
       }
     }
-    const present = await pool.query(`SELECT to_regclass($1) AS reg`, [`${schema}.${table}`])
-    if (!present.rows[0] || !present.rows[0].reg) {
-      throw lastError || new Error(`test outbox table ${schema}.${table} is not present after provisioning`)
-    }
+    throw lastError || new Error(`could not provision ${target}`)
   } finally {
     if (owned) await pool.end().catch(() => {})
   }
