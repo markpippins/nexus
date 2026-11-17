@@ -180,9 +180,12 @@ function describeShapeDiff(production, test) {
  * Returns `{ action: 'created' | 'recreated' | 'unchanged' | 'skipped', target }`
  * (plus `diff` on recreate); callers may ignore it.
  */
-async function ensureOutboxTable(poolOrOptions = {}) {
+async function ensureOutboxTable(poolOrOptions = {}, tableOverride = null) {
   const { Pool } = require('pg')
-  const { schema, table } = splitOutboxTable()
+  // `tableOverride` lets a caller reconcile a private probe table (the
+  // provisioning tests do this so they cannot race the broker files that share
+  // OUTBOX_TABLE). Normal callers pass nothing.
+  const { schema, table } = splitOutboxTable(tableOverride || OUTBOX_TABLE)
   const pool = poolOrOptions && typeof poolOrOptions.query === 'function'
     ? poolOrOptions
     : new Pool({
@@ -407,6 +410,10 @@ module.exports = {
   PRODUCTION_OUTBOX_TABLE,
   mongoUrl,
   brokerEnv,
+  splitOutboxTable,
+  outboxShape,
+  shapesMatch,
+  describeShapeDiff,
   ensureOutboxTable,
   snapshotProductionOutbox,
   assertProductionOutboxUnchanged,
