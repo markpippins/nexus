@@ -11,8 +11,15 @@
  */
 const { test, before, after } = require('node:test')
 const assert = require('node:assert/strict')
-const { spawn } = require('node:child_process')
-const path = require('node:path')
+  const { spawn } = require('node:child_process')
+  const path = require('node:path')
+  const { MongoClient } = require('mongodb')
+  const {
+    MONGO_DB_NAME,
+    OUTBOX_NAMESPACE_PREFIX,
+    mongoUrl,
+    dropIsolatedDatabase,
+  } = require('./helpers/isolated-mongo')
 
 const BROKER_DIR = path.resolve(__dirname, '..')
 // OS-assigned ports by default (see tests/helpers/ephemeral-ports.js);
@@ -46,6 +53,9 @@ function startBroker() {
           SERVICE_PORT: TEST_SERVICE_PORT,
           PTY_WS_PORT: TEST_PTY_WS_PORT,
           NODE_ENV: 'test',
+          // Isolated keychain store per broker process (helpers/isolated-mongo.js).
+          MONGO_DB_NAME,
+          KEYCHAIN_OUTBOX_NAMESPACE_PREFIX: OUTBOX_NAMESPACE_PREFIX,
         },
         stdio: ['ignore', 'ignore', 'ignore'],
       }
@@ -114,9 +124,17 @@ before(async () => {
   ptyWorkerHealth = tw
 })
 
-after(async () => {
-  await stopBroker()
-})
+  after(async () => {
+    await stopBroker()
+    // Drop this process's isolated keychain database (no leftovers per run).
+    const mongo = new MongoClient(mongoUrl())
+    try {
+      await mongo.connect()
+      await dropIsolatedDatabase(mongo)
+    } finally {
+      await mongo.close()
+    }
+  })
 
 test('PTY transport: spawn → ack → output → input → resize → exit', async () => {
   const ws = await connect(WS_URL)

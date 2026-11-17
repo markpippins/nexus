@@ -42,6 +42,13 @@ const path = require('node:path')
 const dotenv = require('dotenv')
 const { MongoClient } = require('mongodb')
 const { getEphemeralPort } = require('./helpers/ephemeral-ports')
+const {
+  MONGO_DB_NAME: TEST_MONGO_DB,
+  OUTBOX_NAMESPACE_PREFIX,
+  mongoUrl,
+  dropIsolatedDatabase,
+  waitForKeychainReady,
+} = require('./helpers/isolated-mongo')
 
 dotenv.config({ path: path.join(__dirname, '..', '.env') })
 
@@ -50,7 +57,7 @@ const BROKER_DIR = path.resolve(__dirname, '..')
 // HARNESS_FIXED_PORTS=1 restores the historical DELTA_TEST_* values.
 const FIXED_SERVICE_PORT = process.env.DELTA_TEST_PORT || '4100'
 const FIXED_PTY_WS_PORT = process.env.DELTA_TEST_PTY_WS_PORT || String(Number(FIXED_SERVICE_PORT) + 2)
-const MONGO_URL = process.env.MONGO_URL || 'mongodb://localhost:27017'
+  const MONGO_URL = mongoUrl()
 let TEST_PORT = null
 let TEST_PTY_WS_PORT = null
 let BASE = null
@@ -69,9 +76,14 @@ async function startBroker() {
       cwd: BROKER_DIR,
       env: {
         ...process.env,
-        SERVICE_PORT: TEST_PORT,
-        PTY_WS_PORT: TEST_PTY_WS_PORT,
-        NODE_ENV: 'test',
+                  SERVICE_PORT: TEST_PORT,
+          PTY_WS_PORT: TEST_PTY_WS_PORT,
+          NODE_ENV: 'test',
+          // Isolated keychain store per broker process (helpers/isolated-mongo.js):
+          // this test writes checkpoints and previously did so in the shared
+          // "keychains" database while other brokers booted against it.
+          MONGO_DB_NAME: TEST_MONGO_DB,
+          KEYCHAIN_OUTBOX_NAMESPACE_PREFIX: OUTBOX_NAMESPACE_PREFIX,
       },
       stdio: ['ignore', 'ignore', 'ignore'],
     }
@@ -79,8 +91,14 @@ async function startBroker() {
   const deadline = Date.now() + 30_000
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(`${BASE}/health`)
-      if (res.ok) return
+              const res = await fetch(`${BASE}/health`)
+        if (res.ok) {
+          // Gateway health is not service readiness — see helpers/isolated-mongo.js.
+          // Without this the first snapshot POST can hit an unregistered
+          // keychain service and return 503.
+          await waitForKeychainReady(BASE)
+          return
+        }
     } catch {
       /* not up yet */
     }
@@ -139,9 +157,17 @@ test.before(async () => {
   await startBroker()
 })
 
-test.after(async () => {
-  await stopBroker()
-})
+  test.after(async () => {
+    await stopBroker()
+    // Drop this process's isolated keychain database so repeat runs are clean.
+    const mongo = new MongoClient(MONGO_URL)
+    try {
+      await mongo.connect()
+      await dropIsolatedDatabase(mongo)
+    } finally {
+      await mongo.close()
+    }
+  })
 
 test('checkpoints persist deltas, not full copies, and rewind reconstructs them', async () => {
   const sourceNamespace = `keychains-delta-${process.pid}-${Date.now()}`
@@ -219,7 +245,7 @@ test('checkpoints persist deltas, not full copies, and rewind reconstructs them'
 
   try {
     await mongo.connect()
-    db = mongo.db('keychains')
+          db = mongo.db(TEST_MONGO_DB)
     // Fresh-store guard: a dedicated CI/scratch Mongo has no prior collections,
     // so these pre-state reads return empty and restore() would wrongly wipe
     // the store after the run. On an empty store, skip pre-state capture and
@@ -255,7 +281,7 @@ test('checkpoints persist deltas, not full copies, and rewind reconstructs them'
     )
     if (!baseline) {
       const seedRes = await postSnapshot({
-        source_namespace: `keychains-anchor-${process.pid}-${Date.now()}`,
+        source_namespace: `${OUTBOX_NAMESPACE_PREFIX}anchor-${process.pid}-${Date.now()}`,
         source_event_id: randomUUID(),
         kind: 'sol.transition.committed',
         outcome: 'committed',

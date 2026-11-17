@@ -16,6 +16,13 @@ const dotenv = require('dotenv')
 const { Pool } = require('pg')
 const { MongoClient } = require('mongodb')
 const { getEphemeralPort } = require('./helpers/ephemeral-ports')
+const {
+  MONGO_DB_NAME: TEST_MONGO_DB,
+  OUTBOX_NAMESPACE_PREFIX,
+  mongoUrl,
+  dropIsolatedDatabase,
+  waitForKeychainReady,
+} = require('./helpers/isolated-mongo')
 
 dotenv.config({ path: path.join(__dirname, '..', '.env') })
 
@@ -46,6 +53,13 @@ async function startBroker() {
         SERVICE_PORT: TEST_PORT,
         PTY_WS_PORT: TEST_PTY_WS_PORT,
         NODE_ENV: 'test',
+        // Isolated keychain store for this process (helpers/isolated-mongo.js).
+        // Without it every broker in the suite shares Mongo database
+        // "keychains" and the checkpoint/rewind assertions race the other
+        // brokers' outbox pollers.
+        MONGO_DB_NAME: TEST_MONGO_DB,
+        // Claim only this process's outbox rows (production leaves this empty).
+        KEYCHAIN_OUTBOX_NAMESPACE_PREFIX: OUTBOX_NAMESPACE_PREFIX,
       },
       // Drain output so a large projection cannot block the child on a full
       // pipe before the test reaches its assertions.
@@ -58,7 +72,13 @@ async function startBroker() {
   while (Date.now() < deadline) {
     try {
       const res = await fetch(`${BASE}/health`)
-      if (res.ok) return
+      if (res.ok) {
+        // Gateway health is not service readiness: the keychain service
+        // registers when its own started() resolves, and calls before that
+        // return 503. Wait for the endpoint this file actually uses.
+        await waitForKeychainReady(BASE)
+        return
+      }
     } catch {
       /* not up yet */
     }
@@ -128,7 +148,7 @@ async function ensureKeychainSeed() {
          (source_namespace, source_event_id, event_kind, outcome, actor, read_set, payload)
        VALUES ($1, $2, 'sol.e2e.transition.committed', 'committed', 'broker-smoke-seed', '{}', '{}')
        ON CONFLICT (source_namespace, source_event_id) DO NOTHING`,
-      [`broker-smoke-seed-${process.pid}`, randomUUID()],
+              [`${OUTBOX_NAMESPACE_PREFIX}seed-${process.pid}`, randomUUID()],
     )
     const deadline = Date.now() + 20_000
     for (;;) {
@@ -155,9 +175,18 @@ test.before(async () => {
   await ensureKeychainSeed()
 })
 
-test.after(async () => {
-  await stopBroker()
-})
+  test.after(async () => {
+    await stopBroker()
+    // Drop this process's isolated keychain database so repeat runs start
+    // from a clean store instead of inheriting the previous run's checkpoints.
+    const mongo = new MongoClient(mongoUrl())
+    try {
+      await mongo.connect()
+      await dropIsolatedDatabase(mongo)
+    } finally {
+      await mongo.close()
+    }
+  })
 
 test('GET /api/health reports ok with all worker services', async () => {
   const res = await fetch(`${BASE}/health`)
@@ -257,13 +286,13 @@ test('deny_contract_promotion negative outcomes create immutable decision checkp
   const sourceNamespace = `keychains-negative-${process.pid}-${Date.now()}`
   const sourceEventId = randomUUID()
   const before = await (await fetch(`${BASE}/keychain-snapshot/agent-records/status`)).json()
-  const mongo = new MongoClient(process.env.MONGO_URL || 'mongodb://localhost:27017')
+  const mongo = new MongoClient(mongoUrl())
   let previousActive = null
   let previousEntries = null
   let previousRecordTypeState = null
   await mongo.connect()
   {
-    const db = mongo.db('keychains')
+    const db = mongo.db(TEST_MONGO_DB)
     previousActive = await db.collection('active_checkpoints').findOne({ _id: 'agent-records' })
     previousEntries = await db.collection('entries').find({}).toArray()
     previousRecordTypeState = await db.collection('record_type_state').find({}).toArray()
@@ -348,13 +377,13 @@ test('deny_contract_promotion negative outcomes create immutable decision checkp
   assert.deepEqual(transition.read_set, triggerEvent.read_set)
 
   try {
-    const db = mongo.db('keychains')
+    const db = mongo.db(TEST_MONGO_DB)
     assert.equal(await db.collection('ar_snapshots').countDocuments({
       source_namespace: sourceNamespace,
       source_event_id: sourceEventId,
     }), 1)
   } finally {
-    const db = mongo.db('keychains')
+    const db = mongo.db(TEST_MONGO_DB)
     const checkpoint = await db.collection('ar_snapshots').findOne({
       source_namespace: sourceNamespace,
       source_event_id: sourceEventId,
@@ -385,7 +414,7 @@ test('deny_contract_promotion negative outcomes create immutable decision checkp
 
 test('observation window classifies pre-activation and outside-window evidence without rewriting history', async () => {
   const sourceNamespace = `keychains-window-${process.pid}-${Date.now()}`
-  const mongo = new MongoClient(process.env.MONGO_URL || 'mongodb://localhost:27017')
+  const mongo = new MongoClient(mongoUrl())
   const events = [
     {
       source_event_id: 'pre-activation',
@@ -408,7 +437,7 @@ test('observation window classifies pre-activation and outside-window evidence w
   const checkpointIds = []
   try {
     await mongo.connect()
-    const db = mongo.db('keychains')
+    const db = mongo.db(TEST_MONGO_DB)
     previousActive = await db.collection('active_checkpoints').findOne({ _id: 'agent-records' })
     previousEntries = await db.collection('entries').find({}).toArray()
     previousRecordTypeState = await db.collection('record_type_state').find({}).toArray()
@@ -487,7 +516,7 @@ test('observation window classifies pre-activation and outside-window evidence w
     assert.equal(filtered.items[0].source_namespace, sourceNamespace)
     assert.equal(filtered.items[0].observation_window.phase, 'outside_window')
   } finally {
-    const db = mongo.db('keychains')
+    const db = mongo.db(TEST_MONGO_DB)
     await db.collection('transitions').deleteMany({ source_namespace: sourceNamespace })
     if (checkpointIds.length) {
       await db.collection('ar_drift_findings').deleteMany({ checkpoint_id: { $in: checkpointIds } })
@@ -597,7 +626,7 @@ test('decision checkpoint preserves owner, authorization, and evaluator read-set
       },
     },
   }
-  const mongo = new MongoClient(process.env.MONGO_URL || 'mongodb://localhost:27017')
+  const mongo = new MongoClient(mongoUrl())
   let checkpointId = null
   let previousActive = null
   let previousEntries = null
@@ -605,7 +634,7 @@ test('decision checkpoint preserves owner, authorization, and evaluator read-set
 
   try {
     await mongo.connect()
-    const db = mongo.db('keychains')
+    const db = mongo.db(TEST_MONGO_DB)
     previousActive = await db.collection('active_checkpoints').findOne({ _id: 'agent-records' })
     previousEntries = await db.collection('entries').find({}).toArray()
     previousRecordTypeState = await db.collection('record_type_state').find({}).toArray()
@@ -692,7 +721,7 @@ test('decision checkpoint preserves owner, authorization, and evaluator read-set
     assert.deepEqual(transition.read_set, triggerEvent.read_set)
     assert.equal(transition.checkpoint_status, 'delivered')
   } finally {
-    const db = mongo.db('keychains')
+    const db = mongo.db(TEST_MONGO_DB)
     if (!checkpointId) {
       const checkpoint = await db.collection('ar_snapshots').findOne({
         source_namespace: sourceNamespace,
@@ -741,7 +770,7 @@ test('SOL outbox events are delivered into Keychains and replayed idempotently',
     password: process.env.PG_PASSWORD || 'pgpass',
     database: process.env.PG_DB_NAME || 'nexus',
   })
-  const sourceNamespace = `sol-e2e-${process.pid}-${Date.now()}`
+      const sourceNamespace = `${OUTBOX_NAMESPACE_PREFIX}sol-e2e-${process.pid}-${Date.now()}`
   const sourceEventId = randomUUID()
   const eventKind = 'sol.e2e.transition.committed'
   const payload = { test_run: sourceNamespace, decision: 'committed' }

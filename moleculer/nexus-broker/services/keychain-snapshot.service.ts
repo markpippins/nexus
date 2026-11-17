@@ -338,6 +338,57 @@ const PG_CONFIG = {
 
 const MONGO_URL = process.env.MONGO_URL || "mongodb://localhost:27017";
 
+/**
+ * Mongo database holding the keychain projections (transitions, snapshots,
+ * checkpoint entries/sequences, the entries/active_checkpoints read model).
+ *
+ * Configurable because the name defines the whole keychain *namespace*: two
+ * brokers pointed at the same Mongo and the same database name share one
+ * projection store, so their outbox pollers write the same collections, their
+ * boot-time unique-index creation races, and any consumer that snapshots and
+ * restores those collections is reading a store another broker is mutating.
+ * Production keeps the historical default ("keychains"); test harnesses set
+ * MONGO_DB_NAME per broker process so concurrently booted brokers are isolated
+ * (see tests/helpers/isolated-mongo.js).
+ */
+const KEYCHAIN_MONGO_DB = process.env.MONGO_DB_NAME || "keychains";
+
+/**
+ * Optional namespace prefix this broker will CLAIM from
+ * resolution.keychain_event_outbox.
+ *
+ * The outbox is a single global queue and the poller claims rows with
+ * `FOR UPDATE SKIP LOCKED`, so whichever broker claims a row is the one that
+ * projects it into ITS keychain store. With one broker per environment (the
+ * production shape) that is exactly right. With several brokers booted at
+ * once — the test suite boots four — a row can be claimed by a broker whose
+ * store is not the one the producer is watching, and the projection silently
+ * lands somewhere else.
+ *
+ * Empty (the default, and all production deployments) means "claim any row",
+ * preserving today's behaviour byte for byte. Test harnesses set it to their
+ * per-process namespace prefix so each broker only claims the events its own
+ * test produced (see tests/helpers/isolated-mongo.js).
+ */
+const KEYCHAIN_OUTBOX_NAMESPACE_PREFIX = (process.env.KEYCHAIN_OUTBOX_NAMESPACE_PREFIX || "").trim();
+
+/**
+ * Reserved outbox namespace prefix that brokers SKIP unless they opt in via
+ * KEYCHAIN_OUTBOX_NAMESPACE_PREFIX.
+ *
+ * Test harnesses produce real outbox events (that is the delivery path under
+ * test), but any broker in any environment can claim them from the shared
+ * queue — including a deployed broker on another host. Observed 2026-11-17:
+ * the helium candidate broker claimed two test seed rows and wrote the
+ * resulting checkpoints into the LIVE keychains store (versions 544/545), i.e.
+ * running the test suite mutated production state. Marking test namespaces
+ * reserved makes that impossible: a broker with no include-prefix configured
+ * (every production deployment) never claims them, while a test broker claims
+ * exactly its own prefix.
+ */
+const KEYCHAIN_OUTBOX_EXCLUDE_NAMESPACE_PREFIX =
+  process.env.KEYCHAIN_OUTBOX_EXCLUDE_NAMESPACE_PREFIX ?? "keychain-test-";
+
 export default class KeychainService extends Service {
   private pool: Pool | null = null;
   private mongo: MongoClient | null = null;
@@ -365,7 +416,7 @@ export default class KeychainService extends Service {
         status: {
           async handler() {
             const client = await this.getMongo();
-            const db = client.db("keychains");
+            const db = client.db(KEYCHAIN_MONGO_DB);
             const latest = await db.collection("snapshots").findOne({}, { sort: { version: -1 } });
             // D3 (keychains thread e267263c): there is no snapshot timer — the
             // interval retired with PR #116 and the contract no longer
@@ -422,7 +473,7 @@ export default class KeychainService extends Service {
         agentRecordsTransitions: {
           async handler(ctx: Context) {
             const client = await this.getMongo();
-            const db = client.db("keychains");
+            const db = client.db(KEYCHAIN_MONGO_DB);
             const limit = Math.min(Number((ctx.params as any)?.limit || 50), 200);
             const filter: Record<string, any> = {};
             const activationRef = (ctx.params as any)?.activation_ref;
@@ -447,7 +498,7 @@ export default class KeychainService extends Service {
         agentRecordsDoctrineSets: {
           async handler(ctx: Context) {
             const client = await this.getMongo();
-            const db = client.db("keychains");
+            const db = client.db(KEYCHAIN_MONGO_DB);
             const params = ctx.params as any;
             const requestedLimit = Number(params?.limit || 5000);
             const limit = Number.isInteger(requestedLimit) ? Math.max(1, Math.min(requestedLimit, 10000)) : 5000;
@@ -645,7 +696,7 @@ export default class KeychainService extends Service {
            */
           async handler(ctx: Context) {
             const client = await this.getMongo();
-            const db = client.db("keychains");
+            const db = client.db(KEYCHAIN_MONGO_DB);
             const rawVersion = (ctx.params as any)?.at || (ctx.params as any)?.version;
             const version = Number(rawVersion);
             if (!version || version < 1) {
@@ -770,7 +821,7 @@ export default class KeychainService extends Service {
         agentRecordsStatus: {
           async handler() {
             const client = await this.getMongo();
-            const db = client.db("keychains");
+            const db = client.db(KEYCHAIN_MONGO_DB);
             const active = await db.collection("active_checkpoints").findOne({ _id: "agent-records" } as any) as any;
             const latest = active
               ? await db.collection("ar_snapshots").findOne({
@@ -801,7 +852,7 @@ export default class KeychainService extends Service {
         this.pool = new Pool(PG_CONFIG);
         this.mongo = new MongoClient(MONGO_URL);
         await this.mongo.connect();
-        const keychainsDb = this.mongo.db("keychains");
+        const keychainsDb = this.mongo.db(KEYCHAIN_MONGO_DB);
         await keychainsDb.collection("transitions").createIndex(
           { keychain_event_id: 1 },
           { unique: true, sparse: true },
@@ -875,7 +926,7 @@ export default class KeychainService extends Service {
 
   private async runDoctrineReconstruction(params: any, apply: boolean): Promise<any> {
     const client = await this.getMongo();
-    const db = client.db("keychains");
+    const db = client.db(KEYCHAIN_MONGO_DB);
     const requestedLimit = Number(params?.limit || 5000);
     if (!Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 10000) {
       return { ok: false, mode: "rejected", error: "limit must be an integer between 1 and 10000" };
@@ -1067,17 +1118,25 @@ export default class KeychainService extends Service {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      const result = await client.query<OutboxRow>(`
-        WITH candidate AS (
-          SELECT id
-          FROM resolution.keychain_event_outbox
-          WHERE checkpoint_status IN ('pending', 'failed')
-             OR (checkpoint_status = 'delivering'
-                 AND claimed_at < now() - interval '5 minutes')
-          ORDER BY recorded_at, id
-          FOR UPDATE SKIP LOCKED
-          LIMIT 1
-        )
+              const result = await client.query<OutboxRow>(`
+          WITH candidate AS (
+            SELECT id
+            FROM resolution.keychain_event_outbox
+            WHERE (checkpoint_status IN ('pending', 'failed')
+               OR (checkpoint_status = 'delivering'
+                   AND claimed_at < now() - interval '5 minutes'))
+              -- Namespace ownership. Include-prefix set (test harness): claim only
+              -- that prefix. Unset (production): claim everything EXCEPT reserved
+              -- test namespaces, so tests can never be delivered into live state.
+              AND (
+                CASE WHEN $1 <> '' THEN source_namespace LIKE $1 || '%'
+                     ELSE ($2 = '' OR source_namespace NOT LIKE $2 || '%')
+                END
+              )
+            ORDER BY recorded_at, id
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1
+          )
         UPDATE resolution.keychain_event_outbox e
            SET checkpoint_status = 'delivering',
                claimed_at = now(),
@@ -1088,9 +1147,9 @@ export default class KeychainService extends Service {
         RETURNING e.id, e.source_namespace, e.source_event_id, e.event_kind,
                   e.outcome, e.schema_version, e.aggregate_id, e.causation_id,
                   e.correlation_id, e.actor, e.contract_id, e.evaluator_id,
-                  e.law_id, e.effective_at, e.recorded_at, e.read_set, e.payload,
-                  e.checkpoint_status, e.delivery_attempts
-      `);
+                  e.law_id, e.effective_at, e.recorded_at,                     e.read_set, e.payload,
+                    e.checkpoint_status, e.delivery_attempts
+        `, [KEYCHAIN_OUTBOX_NAMESPACE_PREFIX, KEYCHAIN_OUTBOX_EXCLUDE_NAMESPACE_PREFIX]);
       if (!result.rows.length) {
         await client.query("ROLLBACK");
         client.release();
@@ -1141,7 +1200,7 @@ export default class KeychainService extends Service {
 
   private async releaseTriggerReservation(triggerEvent: TriggerEventContract): Promise<void> {
     const client = await this.getMongo();
-    await client.db("keychains").collection("transitions").updateOne(
+    await client.db(KEYCHAIN_MONGO_DB).collection("transitions").updateOne(
       { keychain_event_id: triggerEvent.idempotency_key, reservation: true },
       { $unset: { reservation: "", reservation_at: "", checkpoint_id: "" } },
     );
@@ -1191,7 +1250,7 @@ export default class KeychainService extends Service {
 
   private async reconcileCommittedCheckpoints(): Promise<void> {
     const client = await this.getMongo();
-    const db = client.db("keychains");
+    const db = client.db(KEYCHAIN_MONGO_DB);
     const staleBefore = new Date(Date.now() - this.checkpointReservationTtlMs);
     await db.collection("transitions").updateMany(
       { reservation: true, reservation_at: { $lt: staleBefore } },
@@ -1276,7 +1335,7 @@ export default class KeychainService extends Service {
   private async runSnapshot(params: { label?: string }): Promise<any> {
     const pool = await this.getPool();
     const client = await this.getMongo();
-    const db = client.db("keychains");
+    const db = client.db(KEYCHAIN_MONGO_DB);
 
     // ── Read canonical state (PG) ────────────────────────────────────────
     const obsRes = await pool.query<Observation>(
@@ -2158,7 +2217,7 @@ export default class KeychainService extends Service {
   }): Promise<any> {
     const pool = await this.getPool();
     const client = await this.getMongo();
-    const db = client.db("keychains");
+    const db = client.db(KEYCHAIN_MONGO_DB);
 
     // ── Normalize the trigger event (shared contract, catalogue 332d6831) ─
     // Structured triggerEvent OR backward-compatible legacy trigger string.

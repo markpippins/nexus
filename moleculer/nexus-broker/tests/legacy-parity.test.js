@@ -20,6 +20,13 @@ const { spawn } = require('node:child_process')
 const path = require('node:path')
 const dotenv = require('dotenv')
 const { getEphemeralPort } = require('./helpers/ephemeral-ports')
+const { MongoClient } = require('mongodb')
+const {
+  MONGO_DB_NAME,
+  OUTBOX_NAMESPACE_PREFIX,
+  mongoUrl,
+  dropIsolatedDatabase,
+} = require('./helpers/isolated-mongo')
 
 const BROKER_DIR = path.resolve(__dirname, '..')
 // OS-assigned ports by default (see tests/helpers/ephemeral-ports.js);
@@ -49,6 +56,11 @@ async function startBroker() {
         SERVICE_PORT: TEST_PORT,
         PTY_WS_PORT: TEST_PTY_WS_PORT,
         NODE_ENV: 'test',
+        // Isolated keychain store per broker process (helpers/isolated-mongo.js).
+        MONGO_DB_NAME,
+        // Claim only this process's outbox rows, so this broker cannot steal
+        // another test's seed event (production leaves this empty).
+        KEYCHAIN_OUTBOX_NAMESPACE_PREFIX: OUTBOX_NAMESPACE_PREFIX,
       },
       // Drain output so a large projection cannot block the child on a full
       // pipe before the test reaches its assertions.
@@ -80,9 +92,18 @@ test.before(async () => {
   await startBroker()
 })
 
-test.after(async () => {
-  stopBroker()
-})
+  test.after(async () => {
+    await stopBroker()
+    // Drop this process's isolated keychain database so repeat runs are clean
+    // and the suite leaves no keychains_test_* databases behind.
+    const mongo = new MongoClient(mongoUrl())
+    try {
+      await mongo.connect()
+      await dropIsolatedDatabase(mongo)
+    } finally {
+      await mongo.close()
+    }
+  })
 
 async function jsonOr404(url) {
   const res = await fetch(url)
