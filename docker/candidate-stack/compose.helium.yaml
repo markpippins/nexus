@@ -49,7 +49,7 @@ services:
     # `spawn opencode ENOENT`. The layer is built FROM the pinned image on the
     # host that runs it (arch-correct — helium is aarch64), so it is a runtime
     # addendum, not a source build.
-    image: candidate/broker:0.1.1
+    image: candidate/broker:0.1.2
     build: null   # helium uses pre-built image; no source build
     environment:
       # Workers reach shared infrastructure on the authority host over LAN.
@@ -62,6 +62,12 @@ services:
       # declares via extra_hosts. Without this the ollama harness path can only
       # ever fail, however healthy everything else is.
       OLLAMA_URL: "http://host.docker.internal:11434"
+      # Generation ceiling for the ollama harness path. The broker defaults to
+      # 1024 when this is unset, which on this CPU-only board (measured 3.41
+      # tok/s on openbmb/minicpm5-2b) is a ~300s floor per job no matter how
+      # short the answer is. 256 is enough for a step-level reply and keeps the
+      # worst case around 75s here.
+      OLLAMA_NUM_PREDICT: "256"
       # REDIS_HOST stays "redis" — in-compose DNS, unchanged.
 
   control-edge:

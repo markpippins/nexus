@@ -9,6 +9,7 @@ import { writeFile, readFile, unlink, mkdir } from "fs/promises";
 import { existsSync } from "fs";
 import { join } from "path";
 import { emitExecutionTelemetry, loadGoverningText } from "../lib/execution-telemetry.ts";
+import { resolveOllamaNumPredictFromEnv } from "../lib/ollama-options.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -1462,15 +1463,20 @@ export default class HarnessWorker extends Service {
   }
 
   private async executeOllama(prompt: string, role: string, model: string | undefined, timeout_ms: number): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-    const ollamaUrl = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
-    const effectiveModel = model || process.env.OLLAMA_MODEL || "qwen2.5:0.5b";
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeout_ms);
-      const resp = await fetch(`${ollamaUrl}/api/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: effectiveModel, prompt, stream: false, options: { num_predict: 1024, temperature: 0.3 } }),
+          const ollamaUrl = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
+      const effectiveModel = model || process.env.OLLAMA_MODEL || "qwen2.5:0.5b";
+      // Ceiling is deployment configuration (OLLAMA_NUM_PREDICT, default 1024
+      // — unchanged). On a CPU-only board the old hardcoded 1024 dominated
+      // every job's runtime (helium measures 3.41 tok/s → ~300s floor) and
+      // surfaced only as an abort at the harness timeout. See lib/ollama-options.ts.
+      const numPredict = resolveOllamaNumPredictFromEnv();
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeout_ms);
+        const resp = await fetch(`${ollamaUrl}/api/generate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: effectiveModel, prompt, stream: false, options: { num_predict: numPredict, temperature: 0.3 } }),
         signal: controller.signal,
       });
       clearTimeout(timer);

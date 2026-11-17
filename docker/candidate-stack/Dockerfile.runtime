@@ -23,12 +23,17 @@
 #
 #   Build on the host that will run it (the application image is already there):
 #     docker build -f Dockerfile.runtime \
-#       --build-arg OPENCODE_VERSION=1.19.0 \
-#       -t candidate/broker:<app-version>-runtime .
+#       --build-arg APP_IMAGE=candidate/broker-app:<app-version> \
+#       -t candidate/broker:<app-version> .
+#
+#   APP_IMAGE defaults to the published application tag so a runtime-only
+#   rebuild needs no arguments; pass it when layering onto a freshly built
+#   application image (e.g. one carrying a code change not yet released).
 #
 # Keep the tag in lockstep with the broker image pinned in compose.helium.yaml.
 
-FROM candidate/broker:0.1.0
+ARG APP_IMAGE=candidate/broker:0.1.0
+FROM ${APP_IMAGE}
 
 USER root
 
