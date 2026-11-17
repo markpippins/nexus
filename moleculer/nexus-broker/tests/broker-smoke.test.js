@@ -19,7 +19,9 @@ const { getEphemeralPort } = require('./helpers/ephemeral-ports')
 const {
   MONGO_DB_NAME: TEST_MONGO_DB,
   OUTBOX_NAMESPACE_PREFIX,
+  OUTBOX_TABLE,
   mongoUrl,
+  ensureOutboxTable,
   dropIsolatedDatabase,
   waitForKeychainReady,
 } = require('./helpers/isolated-mongo')
@@ -60,6 +62,8 @@ async function startBroker() {
         MONGO_DB_NAME: TEST_MONGO_DB,
         // Claim only this process's outbox rows (production leaves this empty).
         KEYCHAIN_OUTBOX_NAMESPACE_PREFIX: OUTBOX_NAMESPACE_PREFIX,
+        // This suite's own queue — never production's outbox table.
+        KEYCHAIN_OUTBOX_TABLE: OUTBOX_TABLE,
       },
       // Drain output so a large projection cannot block the child on a full
       // pipe before the test reaches its assertions.
@@ -144,7 +148,7 @@ async function ensureKeychainSeed() {
        ON CONFLICT (id, recorded_on_dt) DO NOTHING`,
     )
     await pool.query(
-      `INSERT INTO resolution.keychain_event_outbox
+      `INSERT INTO ${OUTBOX_TABLE}
          (source_namespace, source_event_id, event_kind, outcome, actor, read_set, payload)
        VALUES ($1, $2, 'sol.e2e.transition.committed', 'committed', 'broker-smoke-seed', '{}', '{}')
        ON CONFLICT (source_namespace, source_event_id) DO NOTHING`,
@@ -171,6 +175,10 @@ async function ensureKeychainSeed() {
 }
 
 test.before(async () => {
+  // Provision this suite's own outbox table before booting the broker: the
+  // broker claims from KEYCHAIN_OUTBOX_TABLE, and production's outbox table
+  // (resolution.keychain_event_outbox) must stay untouched by the suite.
+  await ensureOutboxTable()
   await startBroker()
   await ensureKeychainSeed()
 })
@@ -778,7 +786,7 @@ test('SOL outbox events are delivered into Keychains and replayed idempotently',
 
   try {
     await pool.query(
-      `INSERT INTO resolution.keychain_event_outbox
+      `INSERT INTO ${OUTBOX_TABLE}
          (source_namespace, source_event_id, event_kind, outcome, actor, read_set, payload)
        VALUES ($1, $2, $3, 'committed', $4, $5::jsonb, $6::jsonb)`,
       [sourceNamespace, sourceEventId, eventKind, 'broker-smoke', JSON.stringify(readSet), JSON.stringify(payload)],
@@ -787,7 +795,7 @@ test('SOL outbox events are delivered into Keychains and replayed idempotently',
     const delivered = await waitFor(async () => {
       const result = await pool.query(
         `SELECT source_namespace, source_event_id, checkpoint_status, delivery_attempts
-           FROM resolution.keychain_event_outbox
+           FROM ${OUTBOX_TABLE}
           WHERE source_namespace = $1 AND source_event_id = $2`,
         [sourceNamespace, sourceEventId],
       )
@@ -864,7 +872,7 @@ test('SOL outbox events are delivered into Keychains and replayed idempotently',
 
     const afterReplay = await pool.query(
       `SELECT checkpoint_status, delivery_attempts
-         FROM resolution.keychain_event_outbox
+         FROM ${OUTBOX_TABLE}
         WHERE source_namespace = $1 AND source_event_id = $2`,
       [sourceNamespace, sourceEventId],
     )
@@ -872,7 +880,7 @@ test('SOL outbox events are delivered into Keychains and replayed idempotently',
     assert.equal(afterReplay.rows[0].delivery_attempts, delivered.delivery_attempts)
   } finally {
     await pool.query(
-      `DELETE FROM resolution.keychain_event_outbox
+      `DELETE FROM ${OUTBOX_TABLE}
         WHERE source_namespace = $1 AND source_event_id = $2`,
       [sourceNamespace, sourceEventId],
     )

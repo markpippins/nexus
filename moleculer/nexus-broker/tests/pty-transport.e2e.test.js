@@ -17,7 +17,9 @@ const assert = require('node:assert/strict')
   const {
     MONGO_DB_NAME,
     OUTBOX_NAMESPACE_PREFIX,
+    OUTBOX_TABLE,
     mongoUrl,
+    ensureOutboxTable,
     dropIsolatedDatabase,
   } = require('./helpers/isolated-mongo')
 
@@ -56,6 +58,7 @@ function startBroker() {
           // Isolated keychain store per broker process (helpers/isolated-mongo.js).
           MONGO_DB_NAME,
           KEYCHAIN_OUTBOX_NAMESPACE_PREFIX: OUTBOX_NAMESPACE_PREFIX,
+          KEYCHAIN_OUTBOX_TABLE: OUTBOX_TABLE,
         },
         stdio: ['ignore', 'ignore', 'ignore'],
       }
@@ -114,6 +117,7 @@ let ptyWorkerHealth
 
 before(async () => {
   await resolvePorts()
+  await ensureOutboxTable()
   await startBroker()
   // Confirm the gateway now advertises the transport worker and the HTTP
   // proxy route for its health resolves.

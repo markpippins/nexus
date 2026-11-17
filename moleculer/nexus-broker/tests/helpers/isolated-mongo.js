@@ -70,6 +70,125 @@ const OUTBOX_NAMESPACE_PREFIX =
   `keychain-test-${process.pid}-${crypto.randomBytes(3).toString('hex')}-`
 
 /**
+ * Outbox table this test process uses INSTEAD of production's.
+ *
+ * The namespace prefix above only decides who CLAIMS a row; the rows still had
+ * to be written somewhere, and the suite was writing them into
+ * `resolution.keychain_event_outbox` — production's queue — because that was the
+ * only table the broker knew about. Eighteen such rows are still there. The
+ * broker now takes `KEYCHAIN_OUTBOX_TABLE` (default unchanged for production),
+ * so tests point at their own table in their own schema and production's queue
+ * is never written to at all.
+ *
+ * `ensureOutboxTable()` creates it idempotently (schema, table, indexes and
+ * CHECK constraints mirroring production) before a broker boots, so the test
+ * never depends on someone having provisioned it by hand.
+ */
+const OUTBOX_TABLE =
+  process.env.KEYCHAIN_OUTBOX_TABLE || 'resolution_test.keychain_event_outbox'
+
+/** Split `schema.table` into its parts (validated by the caller's DDL). */
+function splitOutboxTable(table = OUTBOX_TABLE) {
+  const match = /^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$/.exec(String(table).trim())
+  if (!match) throw new Error(`outbox table must be schema.table, got ${JSON.stringify(table)}`)
+  return { schema: match[1], table: match[2] }
+}
+
+/**
+ * Create the test outbox table if it is missing — idempotent and safe to call
+ * from every broker-booting test file at once.
+ *
+ * Mirrors the production table exactly (column set, defaults, status/outcome
+ * CHECKs, the pending partial index and the unique (namespace, event) key), so
+ * a row that inserts here would also insert there: the tests keep exercising
+ * the same deliveries, only in a table production never reads or writes.
+ *
+ * Concurrent CREATE ... IF NOT EXISTS from several test processes can still
+ * race on PostgreSQL's catalog unique indexes (23505 / 42P06 / 42P07). Those
+ * are benign here: retry a few times, then confirm the table is present.
+ */
+async function ensureOutboxTable(poolOrOptions = {}) {
+  const { Pool } = require('pg')
+  const { schema, table } = splitOutboxTable()
+  const pool = poolOrOptions && typeof poolOrOptions.query === 'function'
+    ? poolOrOptions
+    : new Pool({
+        host: process.env.PG_HOST || 'localhost',
+        port: Number(process.env.PG_PORT || 5432),
+        user: process.env.PG_USER || 'pguser',
+        password: process.env.PG_PASSWORD || 'pgpass',
+        database: process.env.PG_DB_NAME || 'nexus',
+        ...(poolOrOptions || {}),
+      })
+  const owned = pool !== poolOrOptions
+  const ddl = `
+    CREATE SCHEMA IF NOT EXISTS ${schema};
+    CREATE TABLE IF NOT EXISTS ${schema}.${table} (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      source_namespace text NOT NULL,
+      source_event_id text NOT NULL,
+      event_kind text NOT NULL,
+      outcome text NOT NULL,
+      schema_version integer NOT NULL DEFAULT 1,
+      aggregate_id text,
+      causation_id text,
+      correlation_id text,
+      actor text,
+      contract_id text,
+      evaluator_id text,
+      law_id text,
+      effective_at timestamptz,
+      recorded_at timestamptz NOT NULL DEFAULT now(),
+      read_set jsonb NOT NULL DEFAULT '{}'::jsonb,
+      payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+      checkpoint_status text NOT NULL DEFAULT 'pending',
+      delivery_attempts integer NOT NULL DEFAULT 0,
+      delivered_at timestamptz,
+      last_error text,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      claimed_at timestamptz,
+      CONSTRAINT ${table.slice(0, 48)}_checkpoint_status_ck CHECK (
+        checkpoint_status = ANY (ARRAY['pending','delivering','delivered','not_applicable','failed'])
+      ),
+      CONSTRAINT ${table.slice(0, 48)}_outcome_ck CHECK (
+        outcome = ANY (ARRAY['committed','refused','rejected','unknown','stale','drift',
+                             'quarantined','superseded','rolled_back','failed'])
+      )
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS ${table}_source_event_uq
+      ON ${schema}.${table} (source_namespace, source_event_id);
+    CREATE INDEX IF NOT EXISTS idx_${table}_pending
+      ON ${schema}.${table} (checkpoint_status, recorded_at)
+      WHERE checkpoint_status = ANY (ARRAY['pending','failed']);
+  `
+  try {
+    let lastError = null
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        await pool.query(ddl)
+        lastError = null
+        break
+      } catch (err) {
+        // 23505 duplicate key, 42P06 schema exists, 42P07 relation exists: a
+        // concurrent creator won the race — harmless.
+        if (['23505', '42P06', '42P07', '42710'].includes(err && err.code)) {
+          lastError = err
+          await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)))
+          continue
+        }
+        throw err
+      }
+    }
+    const present = await pool.query(`SELECT to_regclass($1) AS reg`, [`${schema}.${table}`])
+    if (!present.rows[0] || !present.rows[0].reg) {
+      throw lastError || new Error(`test outbox table ${schema}.${table} is not present after provisioning`)
+    }
+  } finally {
+    if (owned) await pool.end().catch(() => {})
+  }
+}
+
+/**
  * Env for a spawned broker: spreads overrides last so callers can still set
  * ports/NODE_ENV, but database name and outbox namespace default to this
  * process's isolated ones.
@@ -78,6 +197,7 @@ function brokerEnv(overrides = {}) {
   return {
     MONGO_DB_NAME,
     KEYCHAIN_OUTBOX_NAMESPACE_PREFIX: OUTBOX_NAMESPACE_PREFIX,
+    KEYCHAIN_OUTBOX_TABLE: OUTBOX_TABLE,
     ...overrides,
   }
 }
@@ -122,8 +242,10 @@ async function dropIsolatedDatabase(mongo) {
 module.exports = {
   MONGO_DB_NAME,
   OUTBOX_NAMESPACE_PREFIX,
+  OUTBOX_TABLE,
   mongoUrl,
   brokerEnv,
+  ensureOutboxTable,
   dropIsolatedDatabase,
   waitForKeychainReady,
 }

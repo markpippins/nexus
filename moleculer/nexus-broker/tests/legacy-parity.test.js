@@ -24,7 +24,9 @@ const { MongoClient } = require('mongodb')
 const {
   MONGO_DB_NAME,
   OUTBOX_NAMESPACE_PREFIX,
+  OUTBOX_TABLE,
   mongoUrl,
+  ensureOutboxTable,
   dropIsolatedDatabase,
 } = require('./helpers/isolated-mongo')
 
@@ -61,6 +63,7 @@ async function startBroker() {
         // Claim only this process's outbox rows, so this broker cannot steal
         // another test's seed event (production leaves this empty).
         KEYCHAIN_OUTBOX_NAMESPACE_PREFIX: OUTBOX_NAMESPACE_PREFIX,
+        KEYCHAIN_OUTBOX_TABLE: OUTBOX_TABLE,
       },
       // Drain output so a large projection cannot block the child on a full
       // pipe before the test reaches its assertions.
@@ -89,6 +92,7 @@ function stopBroker() {
 }
 
 test.before(async () => {
+  await ensureOutboxTable()
   await startBroker()
 })
 

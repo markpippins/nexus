@@ -45,7 +45,9 @@ const { getEphemeralPort } = require('./helpers/ephemeral-ports')
 const {
   MONGO_DB_NAME: TEST_MONGO_DB,
   OUTBOX_NAMESPACE_PREFIX,
+  OUTBOX_TABLE,
   mongoUrl,
+  ensureOutboxTable,
   dropIsolatedDatabase,
   waitForKeychainReady,
 } = require('./helpers/isolated-mongo')
@@ -84,6 +86,8 @@ async function startBroker() {
           // "keychains" database while other brokers booted against it.
           MONGO_DB_NAME: TEST_MONGO_DB,
           KEYCHAIN_OUTBOX_NAMESPACE_PREFIX: OUTBOX_NAMESPACE_PREFIX,
+          // Never production's queue: this suite writes its own outbox table.
+          KEYCHAIN_OUTBOX_TABLE: OUTBOX_TABLE,
       },
       stdio: ['ignore', 'ignore', 'ignore'],
     }
@@ -154,6 +158,9 @@ function instanceCount(stateVector) {
 }
 
 test.before(async () => {
+  // The broker claims from KEYCHAIN_OUTBOX_TABLE; make sure this suite's table
+  // exists before it boots (idempotent, safe alongside the other test files).
+  await ensureOutboxTable()
   await startBroker()
 })
 

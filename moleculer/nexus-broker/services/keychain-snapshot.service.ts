@@ -354,8 +354,8 @@ const MONGO_URL = process.env.MONGO_URL || "mongodb://localhost:27017";
 const KEYCHAIN_MONGO_DB = process.env.MONGO_DB_NAME || "keychains";
 
 /**
- * Optional namespace prefix this broker will CLAIM from
- * resolution.keychain_event_outbox.
+ * Optional namespace prefix this broker will CLAIM from the outbox table
+ * (KEYCHAIN_OUTBOX_TABLE, default resolution.keychain_event_outbox).
  *
  * The outbox is a single global queue and the poller claims rows with
  * `FOR UPDATE SKIP LOCKED`, so whichever broker claims a row is the one that
@@ -389,6 +389,31 @@ const KEYCHAIN_OUTBOX_NAMESPACE_PREFIX = (process.env.KEYCHAIN_OUTBOX_NAMESPACE_
 const KEYCHAIN_OUTBOX_EXCLUDE_NAMESPACE_PREFIX =
   process.env.KEYCHAIN_OUTBOX_EXCLUDE_NAMESPACE_PREFIX ?? "keychain-test-";
 
+/**
+ * Qualified name of the outbox table this broker claims from, `schema.table`.
+ *
+ * Default is production's historical table, so a deployment that sets nothing
+ * behaves exactly as before. Configurable for one reason: the test harness
+ * used to INSERT its seed events straight into production's queue (18 such
+ * rows are still sitting there), which is a write to live data on every test
+ * run no matter how the rows are later claimed or excluded. With this, the
+ * suite points at its own table and production's queue is never touched.
+ *
+ * Validated rather than interpolated blindly: the value ends up in SQL, and a
+ * qualified-name check keeps a typo (or an injected fragment) from becoming
+ * part of a query.
+ */
+const KEYCHAIN_OUTBOX_TABLE = (() => {
+  const configured = (process.env.KEYCHAIN_OUTBOX_TABLE || "").trim();
+  const name = configured || "resolution.keychain_event_outbox";
+  if (!/^[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+    throw new Error(
+      `KEYCHAIN_OUTBOX_TABLE must be a qualified table name (schema.table), got ${JSON.stringify(configured)}`,
+    );
+  }
+  return name;
+})();
+
 export default class KeychainService extends Service {
   private pool: Pool | null = null;
   private mongo: MongoClient | null = null;
@@ -421,12 +446,13 @@ export default class KeychainService extends Service {
             // D3 (keychains thread e267263c): there is no snapshot timer — the
             // interval retired with PR #116 and the contract no longer
             // advertises one. Snapshots are driven by decision points /
-            // state transitions consumed from resolution.keychain_event_outbox.
+            // state transitions consumed from the outbox table
+            // (KEYCHAIN_OUTBOX_TABLE, default resolution.keychain_event_outbox).
             // lastEventAt/lastSnapshotAt expose that posture so a monitor sees
             // "idle outbox" rather than a fictional 60s cadence.
             const pool = await this.getPool();
             const outboxRes = await pool.query(
-              `SELECT max(created_at) AS last_event_at FROM resolution.keychain_event_outbox`,
+              `SELECT max(created_at) AS last_event_at FROM ${KEYCHAIN_OUTBOX_TABLE}`,
             );
             const lastEventAt = outboxRes.rows[0]?.last_event_at
               ? new Date(outboxRes.rows[0].last_event_at).toISOString()
@@ -452,8 +478,14 @@ export default class KeychainService extends Service {
             }
             return {
               enabled: true,
-              mode: "event_driven",
-              outboxPollMs: Number(process.env.KEYCHAIN_OUTBOX_POLL_MS || 5000),
+                              mode: "event_driven",
+                // Observable resolution of the outbox configuration: an operator
+                // (and the test suite's default-config assertion) can see which
+                // table this broker actually claims from.
+                outboxTable: KEYCHAIN_OUTBOX_TABLE,
+                outboxNamespacePrefix: KEYCHAIN_OUTBOX_NAMESPACE_PREFIX || null,
+                outboxExcludeNamespacePrefix: KEYCHAIN_OUTBOX_EXCLUDE_NAMESPACE_PREFIX || null,
+                outboxPollMs: Number(process.env.KEYCHAIN_OUTBOX_POLL_MS || 5000),
               lastEventAt,
               lastSnapshotAt: arNewest ? arNewest.created_at : null,
               latestSnapshot: latest ? latest.version : null,
@@ -910,6 +942,15 @@ export default class KeychainService extends Service {
           `${this.baseInterval()} checkpoints, deltas between; ` +
           `checkpoint_entries full copies retired`
         );
+        // The outbox table is configurable (KEYCHAIN_OUTBOX_TABLE) so the test
+        // harness never writes into production's queue. Log the resolved value
+        // at boot: "which queue does this broker actually poll" must be
+        // answerable from the startup output, not inferred from the code.
+        this.logger.info(
+          `keychain outbox table resolved: ${KEYCHAIN_OUTBOX_TABLE} ` +
+          `(namespace prefix: ${KEYCHAIN_OUTBOX_NAMESPACE_PREFIX || "<any>"}, ` +
+          `excluded: ${KEYCHAIN_OUTBOX_EXCLUDE_NAMESPACE_PREFIX || "<none>"})`
+        );
       },
 
       async stopped() {
@@ -1121,7 +1162,7 @@ export default class KeychainService extends Service {
               const result = await client.query<OutboxRow>(`
           WITH candidate AS (
             SELECT id
-            FROM resolution.keychain_event_outbox
+            FROM ${KEYCHAIN_OUTBOX_TABLE}
             WHERE (checkpoint_status IN ('pending', 'failed')
                OR (checkpoint_status = 'delivering'
                    AND claimed_at < now() - interval '5 minutes'))
@@ -1137,7 +1178,7 @@ export default class KeychainService extends Service {
             FOR UPDATE SKIP LOCKED
             LIMIT 1
           )
-        UPDATE resolution.keychain_event_outbox e
+        UPDATE ${KEYCHAIN_OUTBOX_TABLE} e
            SET checkpoint_status = 'delivering',
                claimed_at = now(),
                delivery_attempts = e.delivery_attempts + 1,
@@ -1172,7 +1213,7 @@ export default class KeychainService extends Service {
   ): Promise<void> {
     try {
       await client.query(
-        `UPDATE resolution.keychain_event_outbox
+        `UPDATE ${KEYCHAIN_OUTBOX_TABLE}
             SET checkpoint_status = $1,
                 claimed_at = NULL,
                 delivered_at = CASE WHEN $1 IN ('delivered', 'not_applicable') THEN now() ELSE delivered_at END,
@@ -1189,7 +1230,7 @@ export default class KeychainService extends Service {
 
   private async renewOutboxClaim(client: PoolClient, row: OutboxRow): Promise<void> {
     await client.query(
-      `UPDATE resolution.keychain_event_outbox
+      `UPDATE ${KEYCHAIN_OUTBOX_TABLE}
           SET claimed_at = now()
         WHERE id = $1
           AND checkpoint_status = 'delivering'
