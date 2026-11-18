@@ -40,6 +40,13 @@
  *  - Leftovers from a crashed run are swept (older than two hours) when the next
  *    database is created; nothing else is ever dropped, and the sweeper refuses
  *    any name outside the `nexus_test_` prefix.
+ *  - Every connection this process and its children open carries an
+ *    `application_name` of `nexus-test-<runid>-<pid>` (exported as
+ *    `TEST_APPLICATION_NAME`, inherited by children as `PGAPPNAME`). A row
+ *    census can only see WRITES; the name makes a harness connection visible in
+ *    `pg_stat_activity` wherever it goes, so `helpers/shared-db-guard.js` can
+ *    also fail a run that only READS the shared database — which is the shape
+ *    the `KEYCHAIN_SOURCE_DATABASES` bug had.
  *
  * Cost: one `CREATE DATABASE`, one ~3.5 s bootstrap apply, and one drop per test
  * file. Files run in parallel processes, each with its own database, so there is
@@ -82,6 +89,29 @@ if (TEST_PG_DATABASE === 'nexus' || TEST_PG_DATABASE === 'postgres') {
   throw new Error(`refusing to use ${TEST_PG_DATABASE} as the test database — it is a deployment database`)
 }
 
+//
+// Connection identity.
+//
+// The tag is per PROCESS (per test file) and carries the run id as a prefix, so
+// one run's connections are greppable together while two files can never be
+// confused for each other. That matters for more than tidiness: the guard's
+// watch treats "my tag on the shared database" as a failure, and a tag shared
+// across files would let one file's deliberate-leak control trip another file's
+// assertion. Postgres truncates application_name at 63 bytes, so truncate here
+// rather than silently lose the pid.
+const TEST_RUN_ID =
+  (process.env.NEXUS_TEST_RUN_ID || '').trim() ||
+  (process.env.GITHUB_RUN_ID ? `gh${process.env.GITHUB_RUN_ID}` : 'local')
+const TEST_APPLICATION_NAME = `nexus-test-${TEST_RUN_ID}-${process.pid}`.slice(0, 63)
+const TEST_APPLICATION_PREFIX = 'nexus-test-'
+
+// Inherited by every child (broker, execution-srv, bridge). `pg` does not read
+// PGAPPNAME itself — libpq's convention is only honoured because the services
+// pass `application_name: process.env.PGAPPNAME` explicitly (see PG_CONFIG in
+// services/keychain-snapshot.service.ts and the two workers).
+process.env.NEXUS_TEST_RUN_ID = process.env.NEXUS_TEST_RUN_ID || TEST_RUN_ID
+process.env.PGAPPNAME = TEST_APPLICATION_NAME
+
 let ensured = null
 let createdByThisProcess = false
 
@@ -91,6 +121,8 @@ function pgBaseConfig(overrides = {}) {
     port: Number(process.env.PG_PORT || 5432),
     user: process.env.PG_USER || 'pguser',
     password: process.env.PG_PASSWORD || 'pgpass',
+    // So a connection is attributable to this run whatever database it reaches.
+    application_name: TEST_APPLICATION_NAME,
     ...(overrides || {}),
   }
 }
@@ -230,6 +262,9 @@ async function dropTestDatabase() {
 
 module.exports = {
   TEST_PG_DATABASE,
+  TEST_RUN_ID,
+  TEST_APPLICATION_NAME,
+  TEST_APPLICATION_PREFIX,
   BOOTSTRAP_SQL,
   TEST_DB_PREFIX,
   createdEpoch,

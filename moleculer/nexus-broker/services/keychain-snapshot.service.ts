@@ -334,6 +334,12 @@ const PG_CONFIG = {
   user: process.env.PG_USER || "pguser",
   password: process.env.PG_PASSWORD || "pgpass",
   database: process.env.PG_DB_NAME || "nexus",
+  // Identifies this process's connections in pg_stat_activity. `pg` does not
+  // read libpq's PGAPPNAME itself, so it has to be passed explicitly. The test
+  // harness sets PGAPPNAME per run: that is what makes a harness connection to
+  // a shared database attributable whether it reads or writes. Production
+  // leaves it unset and the connections are named after the service.
+  application_name: process.env.PGAPPNAME || "nexus-broker",
 };
 
 const MONGO_URL = process.env.MONGO_URL || "mongodb://localhost:27017";

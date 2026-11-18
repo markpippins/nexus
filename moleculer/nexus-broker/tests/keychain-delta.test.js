@@ -57,7 +57,7 @@ const {
   dropIsolatedDatabase,
   waitForKeychainReady,
 } = require('./helpers/isolated-mongo')
-const { TEST_PG_DATABASE, ensureTestDatabase, pgConfig } = require('./helpers/isolated-pg')
+const { TEST_PG_DATABASE, ensureTestDatabase, pgConfig, TEST_APPLICATION_NAME } = require('./helpers/isolated-pg')
 
 //
 // PG records THIS test owns.
@@ -160,6 +160,10 @@ async function startBroker() {
           KEYCHAIN_OUTBOX_TABLE: OUTBOX_TABLE,
           // Poll this run's database by name — see the note in broker-smoke.
           KEYCHAIN_SOURCE_DATABASES: TEST_PG_DATABASE,
+          // Name this child's PG connections after the run (helpers/isolated-pg.js);
+          // a harness connection to a shared database is then attributable in
+          // pg_stat_activity even when it only reads. Inherited as PGAPPNAME too.
+          PGAPPNAME: TEST_APPLICATION_NAME,
       },
       // Captured, not discarded: see helpers/broker-log.js.
       stdio: ['ignore', brokerLogFd, brokerLogFd],

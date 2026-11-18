@@ -31,16 +31,47 @@
  * cause. CI sets the strict flag, where the only writer is the kernel the job
  * booted, so the broad net is asserted where it can be trusted.
  *
- * Cost: nine count queries (~20 ms) before and after each broker file.
+ * Cost: nine count queries (~20 ms) before and after each broker file, plus one
+ * long-lived sampler connection while the file runs (see below).
  *
- * Limits worth stating: this catches WRITES. A regression that only READS the
- * shared database (which is what the `KEYCHAIN_SOURCE_DATABASES` bug did — the
- * poller read `nexus` every five seconds) is invisible to a row census. The
- * complementary check is a connection-level assertion (a per-run
- * `application_name` on harness connections, asserted absent from `nexus`),
- * which is a separate change.
+ * The other half: READS
+ * ---------------------
+ * A row census is blind to a regression that only READS the shared database, and
+ * that is exactly what hid for months: `KEYCHAIN_SOURCE_DATABASES` names the
+ * databases the poller polls — every entry is opened, read every five seconds,
+ * and its rows written into the keychain store. The outbox writes were the
+ * symptom; the read was the bug.
+ *
+ * So every harness connection carries `application_name = nexus-test-<runid>-
+ * <pid>` (helpers/isolated-pg.js; children inherit it as PGAPPNAME, and the
+ * broker's pools pass it through). While a guarded file runs, a sampler
+ * connection watches `pg_stat_activity` for exactly this file's tag on the
+ * shared database. A hit fails the run and names the reader — pid, application
+ * name, state and last query — whether it was reading or writing.
+ *
+ * Why sampling, and why it is reliable: the poller keeps a pooled client open
+ * between polls (`setInterval` + `pool.query`), so a harness-tagged session on
+ * the shared database is not a momentary event — it is a session that lives for
+ * the length of the file. Sampling every 400 ms cannot miss it, and a leak that
+ * connects and disconnects inside 400 ms would still have to have been spawned
+ * by this process tree, which the census would then catch on the write side.
+ * `pg_stat_statements` would add post-hoc evidence but is not installed in this
+ * project's PostgreSQL instances (checked: `pg_available_extensions` lists it,
+ * the view does not exist), so nothing depends on it.
+ *
+ * What stays legitimate: the tag must match THIS file's tag exactly. Live
+ * production traffic on a developer machine carries the service's own name
+ * (`nexus-broker`, or nothing on older builds), never `nexus-test-*`, so it is
+ * invisible here. A concurrent harness in another worktree has a different tag
+ * for the same reason. The bridge test is bound to the external kernel's
+ * database by design and does not register this guard at all.
  */
-const { pgBaseConfig } = require('./isolated-pg')
+const {
+  pgBaseConfig,
+  TEST_APPLICATION_NAME,
+  TEST_APPLICATION_PREFIX,
+  TEST_RUN_ID,
+} = require('./isolated-pg')
 // One authority for the historical test signature: the quarantine tool owns it
 // (it is what set the eighteen rows aside), and the run-scoped form the guards
 // pass is that list plus this run's namespace prefix.
@@ -48,6 +79,16 @@ const { HISTORICAL_TEST_SIGNATURE } = require('../../bin/outbox-quarantine')
 
 const SHARED_DATABASE = (process.env.NEXUS_SHARED_DB || 'nexus').trim()
 const STRICT = String(process.env.NEXUS_TEST_STRICT_SHARED_DB || '') === '1'
+// The guard's own connections are named with this suffix and excluded from the
+// watch: a census or sampler session is itself a harness connection to the
+// shared database, and reporting it would make the check fail on itself.
+const GUARD_APPLICATION_SUFFIX = '-guard'
+const CONNECTION_SAMPLE_MS = Number(process.env.NEXUS_TEST_CONNECTION_SAMPLE_MS || 400)
+
+/** This run's tag, plus the guard suffix, for the guard's own connections. */
+function guardApplicationName(tag = TEST_APPLICATION_NAME) {
+  return `${tag}${GUARD_APPLICATION_SUFFIX}`.slice(0, 63)
+}
 
 /** Agent-record ids the delta and smoke suites insert into the temporal table. */
 const TEST_AGENT_RECORD_IDS = [
@@ -103,7 +144,12 @@ function attributablePredicate(table, outboxSignature) {
  */
 async function snapshotSharedDatabase({ outboxSignature = null } = {}) {
   const { Client } = require('pg')
-  const client = new Client({ ...pgBaseConfig(), database: SHARED_DATABASE, connectionTimeoutMillis: 3000 })
+  const client = new Client({
+    ...pgBaseConfig(),
+    database: SHARED_DATABASE,
+    application_name: guardApplicationName(),
+    connectionTimeoutMillis: 3000,
+  })
   try {
     await client.connect()
   } catch (err) {
@@ -173,13 +219,185 @@ async function assertSharedDatabaseUnchanged(before, options = {}) {
   return { warnings, tables: after.tables.length }
 }
 
+// ---------------------------------------------------------------------------
+// Connection-level check: reads, not just writes
+// ---------------------------------------------------------------------------
+
+const CONNECTION_QUERY = `
+  SELECT pid,
+         application_name,
+         usename,
+         state,
+         backend_start,
+         state_change,
+         wait_event_type,
+         wait_event,
+         left(coalesce(query, ''), 300) AS query
+    FROM pg_stat_activity
+   WHERE datname = $1
+     AND application_name = $2
+     AND pid <> pg_backend_pid()
+`
+
+/**
+ * One-shot census of harness-tagged sessions connected to `database`. The caller
+ * passes a tag; it is never optional at this layer because an empty tag would
+ * match nothing and read as "clean" (the same footgun the outbox signature had).
+ */
+async function listHarnessConnectionsOnShared({ tag, database = SHARED_DATABASE } = {}) {
+  if (!tag) {
+    throw new Error(
+      'listHarnessConnectionsOnShared: a connection tag is required — an empty tag matches nothing and ' +
+        'would silently pass. Use TEST_APPLICATION_NAME from helpers/isolated-pg.js.',
+    )
+  }
+  const { Client } = require('pg')
+  const client = new Client({
+    ...pgBaseConfig(),
+    database,
+    application_name: guardApplicationName(tag),
+    connectionTimeoutMillis: 3000,
+  })
+  await client.connect()
+  try {
+    const res = await client.query(CONNECTION_QUERY, [database, tag])
+    return res.rows
+  } finally {
+    await client.end().catch(() => undefined)
+  }
+}
+
+/** Human-readable failure line: what was seen, where, and what it was doing. */
+function describeHarnessConnection(row, { database = SHARED_DATABASE } = {}) {
+  const doing = row.state === 'active' ? 'running' : row.state || 'unknown'
+  const waited =
+    row.wait_event_type && row.wait_event
+      ? `, waiting on ${row.wait_event_type}/${row.wait_event}`
+      : ''
+  const since = row.state_change ? new Date(row.state_change).toISOString() : 'unknown'
+  const query = (row.query || '').replace(/\s+/g, ' ').trim()
+  return (
+    `shared database guard: a connection from this test run is attached to ${database} — ` +
+    `application_name=${row.application_name} pid=${row.pid} user=${row.usename} ` +
+    `${doing} since ${since}${waited}` +
+    (query && query !== '<IDLE>' ? `, last query: ${query}` : ', no query recorded') +
+    `\n  The harness must only connect to its own ${'nexus_test_*'} database. A read counts: ` +
+    '`KEYCHAIN_SOURCE_DATABASES` names the databases the poller reads, so pointing it at the deployment ' +
+    'database delivers its rows into the keychain store without the harness writing a single row.'
+  )
+}
+
+/**
+ * Watch the shared database for this file's tagged connections while it runs.
+ *
+ * Returns `{ tag, available, reason, offenders, stop() }`. `stop()` clears the
+ * sampler, ends the connection and resolves to the offenders seen (deduplicated
+ * by pid, latest state kept). When the shared database is unreachable there is
+ * nothing to watch, so `available` is false and `offenders` stays empty — an
+ * environment with no shared database must not fail for the absence of one.
+ */
+function startHarnessConnectionWatch({
+  tag = TEST_APPLICATION_NAME,
+  database = SHARED_DATABASE,
+  intervalMs = CONNECTION_SAMPLE_MS,
+} = {}) {
+  const state = {
+    tag,
+    database,
+    available: false,
+    reason: null,
+    // pid -> row
+    offenders: new Map(),
+    errors: [],
+  }
+  const { Client } = require('pg')
+  const client = new Client({
+    ...pgBaseConfig(),
+    database,
+    application_name: guardApplicationName(tag),
+    connectionTimeoutMillis: 3000,
+  })
+  let timer = null
+  let stopped = false
+  let inFlight = null
+
+  const sample = async () => {
+    const res = await client.query(CONNECTION_QUERY, [database, tag])
+    for (const row of res.rows) {
+      if (String(row.application_name || '').endsWith(GUARD_APPLICATION_SUFFIX)) continue
+      state.offenders.set(row.pid, row)
+    }
+  }
+
+  const tick = () => {
+    if (stopped || inFlight) return inFlight
+    inFlight = sample()
+      .catch((err) => {
+        // One lost sample must not end the watch; the connection drop below is
+        // reported once, and `stop()` still returns what was already seen.
+        if (state.errors.length < 5) state.errors.push(err.message)
+      })
+      .finally(() => {
+        inFlight = null
+      })
+    return inFlight
+  }
+
+  const ready = client
+    .connect()
+    .then(async () => {
+      state.available = true
+      await tick() // sample once immediately: a broker that leaked at boot is already visible
+      timer = setInterval(() => void tick(), intervalMs)
+      if (typeof timer.unref === 'function') timer.unref()
+    })
+    .catch((err) => {
+      state.available = false
+      state.reason = `cannot watch ${database}: ${err.message}`
+    })
+
+  return {
+    tag,
+    database,
+    /** Resolves once the sampler is connected (or has given up). */
+    ready: () => ready,
+    get available() {
+      return state.available
+    },
+    get reason() {
+      return state.reason
+    },
+    get offenders() {
+      return [...state.offenders.values()]
+    },
+    async stop() {
+      stopped = true
+      await ready
+      if (timer) clearInterval(timer)
+      if (inFlight) await inFlight.catch(() => undefined)
+      // One last look, so a leak that appeared between samples is not lost.
+      if (state.available) await tick()
+      await client.end().catch(() => undefined)
+      return [...state.offenders.values()]
+    },
+  }
+}
+
 module.exports = {
   SHARED_DATABASE,
   STRICT,
   MONITORED_TABLES,
   TEST_AGENT_RECORD_IDS,
+  TEST_APPLICATION_NAME,
+  TEST_APPLICATION_PREFIX,
+  TEST_RUN_ID,
+  GUARD_APPLICATION_SUFFIX,
+  guardApplicationName,
   attributablePredicate,
   snapshotSharedDatabase,
   diffSharedDatabase,
   assertSharedDatabaseUnchanged,
+  listHarnessConnectionsOnShared,
+  describeHarnessConnection,
+  startHarnessConnectionWatch,
 }

@@ -26,7 +26,7 @@ const {
   dropIsolatedDatabase,
   waitForKeychainReady,
 } = require('./helpers/isolated-mongo')
-const { TEST_PG_DATABASE, ensureTestDatabase } = require('./helpers/isolated-pg')
+const { TEST_PG_DATABASE, ensureTestDatabase, TEST_APPLICATION_NAME } = require('./helpers/isolated-pg')
 
 dotenv.config({ path: path.join(__dirname, '..', '.env') })
 
@@ -76,6 +76,10 @@ async function startBroker() {
         // which would poll the deployment database no matter how isolated the
         // rest of the harness is.
         KEYCHAIN_SOURCE_DATABASES: TEST_PG_DATABASE,
+        // Name this child's PG connections after the run (helpers/isolated-pg.js);
+        // a harness connection to a shared database is then attributable in
+        // pg_stat_activity even when it only reads. Inherited as PGAPPNAME too.
+        PGAPPNAME: TEST_APPLICATION_NAME,
       },
       // Captured to a file rather than drained to /dev/null: a file cannot
       // block the child on a full pipe, and a boot failure says why.

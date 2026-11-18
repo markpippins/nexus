@@ -36,7 +36,7 @@ const BROKER_DIR = path.resolve(__dirname, '..')
 // HARNESS_FIXED_PORTS=1 restores the historical 4088/4089.
 const FIXED_SERVICE_PORT = process.env.TEST_SERVICE_PORT || '4088'
 const FIXED_PTY_WS_PORT = process.env.TEST_PTY_WS_PORT || String(Number(FIXED_SERVICE_PORT) + 1)
-const { TEST_PG_DATABASE, ensureTestDatabase } = require('./helpers/isolated-pg')
+const { TEST_PG_DATABASE, ensureTestDatabase, TEST_APPLICATION_NAME } = require('./helpers/isolated-pg')
 
 // Resolved in startLegacySurface(): an operator-provided URL, or a surface this
 // file boots itself against its own per-run database.
@@ -76,6 +76,10 @@ async function startBroker() {
         KEYCHAIN_OUTBOX_TABLE: OUTBOX_TABLE,
         // The poller reads by DATABASE NAME, not PG_DB_NAME.
         KEYCHAIN_SOURCE_DATABASES: TEST_PG_DATABASE,
+        // Name this child's PG connections after the run (helpers/isolated-pg.js);
+        // a harness connection to a shared database is then attributable in
+        // pg_stat_activity even when it only reads. Inherited as PGAPPNAME too.
+        PGAPPNAME: TEST_APPLICATION_NAME,
       },
       // Captured to a file rather than drained to /dev/null: a file cannot
       // block the child on a full pipe, and a boot failure says why.

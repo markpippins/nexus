@@ -456,6 +456,7 @@ export default class HarnessWorker extends Service {
           user: process.env.PG_USER || "pguser",
           password: process.env.PG_PASSWORD || "pgpass",
           database: process.env.PG_DB_NAME || "nexus",
+          application_name: process.env.PGAPPNAME || "nexus-broker",
           max: 5,
           idleTimeoutMillis: 30000,
           connectionTimeoutMillis: 5000,
@@ -511,6 +512,7 @@ export default class HarnessWorker extends Service {
         user: process.env.PG_USER || "pguser",
         password: process.env.PG_PASSWORD || "pgpass",
         database: process.env.PG_DB_NAME || "nexus",
+        application_name: process.env.PGAPPNAME || "nexus-broker",
         max: 5,
       });
     }

@@ -23,7 +23,7 @@ const assert = require('node:assert/strict')
     registerProductionOutboxGuard,
     dropIsolatedDatabase,
   } = require('./helpers/isolated-mongo')
-const { TEST_PG_DATABASE } = require('./helpers/isolated-pg')
+const { TEST_PG_DATABASE, TEST_APPLICATION_NAME } = require('./helpers/isolated-pg')
 
 const BROKER_DIR = path.resolve(__dirname, '..')
 const { createBrokerLog } = require('./helpers/broker-log')
@@ -73,6 +73,10 @@ function startBroker() {
           KEYCHAIN_OUTBOX_TABLE: OUTBOX_TABLE,
           // Poll this run's database by name — see the note in broker-smoke.
           KEYCHAIN_SOURCE_DATABASES: TEST_PG_DATABASE,
+          // Name this child's PG connections after the run (helpers/isolated-pg.js);
+          // a harness connection to a shared database is then attributable in
+          // pg_stat_activity even when it only reads. Inherited as PGAPPNAME too.
+          PGAPPNAME: TEST_APPLICATION_NAME,
         },
         stdio: ['ignore', brokerLogFd, brokerLogFd],
       }

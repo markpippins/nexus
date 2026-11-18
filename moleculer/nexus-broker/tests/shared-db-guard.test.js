@@ -18,6 +18,14 @@ const {
   attributablePredicate,
 } = require('./helpers/shared-db-guard')
 const { HISTORICAL_TEST_SIGNATURE } = require('../bin/outbox-quarantine')
+const {
+  TEST_APPLICATION_NAME,
+  TEST_APPLICATION_PREFIX,
+  GUARD_APPLICATION_SUFFIX,
+  guardApplicationName,
+  describeHarnessConnection,
+  listHarnessConnectionsOnShared,
+} = require('./helpers/shared-db-guard')
 
 const OUTBOX = 'resolution.keychain_event_outbox'
 const HISTORY = 'nebula.agent_records_history'
@@ -77,6 +85,48 @@ test('the census covers all three schema families the harness could reach', () =
   }
   assert.ok(MONITORED_TABLES.includes(OUTBOX))
   assert.ok(MONITORED_TABLES.includes(HISTORY))
+})
+
+test('this process has a run-unique connection tag that cannot be confused with production', () => {
+  assert.match(TEST_APPLICATION_NAME, new RegExp(`^${TEST_APPLICATION_PREFIX}`))
+  assert.ok(TEST_APPLICATION_NAME.includes(String(process.pid)), 'the tag must distinguish this file from its siblings')
+  assert.ok(TEST_APPLICATION_NAME.length <= 63, 'Postgres truncates application_name at 63 bytes')
+  assert.ok(!TEST_APPLICATION_NAME.includes('-guard'), 'the harness tag must not look like a guard connection')
+})
+
+test('the guard names its own connections so the watch cannot report itself', () => {
+  assert.equal(guardApplicationName('nexus-test-x'), `nexus-test-x${GUARD_APPLICATION_SUFFIX}`)
+  assert.notEqual(guardApplicationName('nexus-test-x'), 'nexus-test-x')
+  assert.ok(guardApplicationName().endsWith(GUARD_APPLICATION_SUFFIX))
+})
+
+test('the failure message names the reader, the connection and the database', () => {
+  const message = describeHarnessConnection(
+    {
+      pid: 4242,
+      application_name: 'nexus-test-gh1-99',
+      usename: 'pguser',
+      state: 'idle',
+      state_change: new Date('2026-11-18T04:00:00Z'),
+      wait_event_type: 'Client',
+      wait_event: 'ClientRead',
+      query: 'SELECT id\n  FROM resolution.keychain_event_outbox\n WHERE checkpoint_status = \'pending\'',
+    },
+    { database: 'nexus' },
+  )
+  assert.match(message, /attached to nexus/)
+  assert.match(message, /application_name=nexus-test-gh1-99/)
+  assert.match(message, /pid=4242/)
+  assert.match(message, /Client\/ClientRead/)
+  assert.match(message, /SELECT id FROM resolution\.keychain_event_outbox/, 'the query is the actionable part')
+  assert.match(message, /KEYCHAIN_SOURCE_DATABASES/, 'the message must point at the bug class')
+})
+
+test('an empty connection tag is refused rather than read as "clean"', async () => {
+  // The footgun already found once: a missing argument that silently narrows the
+  // check to nothing. An empty tag matches no session, so it must throw.
+  await assert.rejects(() => listHarnessConnectionsOnShared({ tag: '' }), /a connection tag is required/)
+  await assert.rejects(() => listHarnessConnectionsOnShared({}), /a connection tag is required/)
 })
 
 test('predicates name the markers each suite actually uses', () => {

@@ -49,6 +49,8 @@ const { TEST_PG_DATABASE, ensureTestDatabase, dropTestDatabase } = require('./is
 const {
   snapshotSharedDatabase,
   diffSharedDatabase,
+  startHarnessConnectionWatch,
+  describeHarnessConnection,
 } = require('./shared-db-guard')
 
 function mongoUrl() {
@@ -697,6 +699,7 @@ function registerProductionOutboxGuard({ before, after, setup = null, teardown =
   }
   let baseline = null
   let sharedBaseline = null
+  let connectionWatch = null
   before(async () => {
     // The per-run database must exist before ANY of the guard's work touches
     // PG: the sweep, the probe table clone and the production-queue baseline
@@ -719,6 +722,11 @@ function registerProductionOutboxGuard({ before, after, setup = null, teardown =
     // Census of the SHARED database, taken before the broker boots and before
     // any test writes: the file must leave it unchanged (helpers/shared-db-guard.js).
     sharedBaseline = await snapshotSharedDatabase({ outboxSignature: PRODUCTION_TEST_SIGNATURE })
+    // And the read half of the same guard: watch the shared database for this
+    // file's tagged connections (helpers/isolated-pg.js names them). Started
+    // before `setup()` so a broker that connects to the shared database on boot
+    // — which is what the poller does — is already visible.
+    connectionWatch = startHarnessConnectionWatch()
     if (setup) await setup()
   })
   after(async () => {
@@ -733,11 +741,36 @@ function registerProductionOutboxGuard({ before, after, setup = null, teardown =
     // Always attempted, and always before the table drop: a leak into
     // production's queue must never be reported as a plain teardown failure.
     let leaked = false
+
     try {
       await assertProductionOutboxUnchanged(baseline)
     } catch (err) {
       failures.push(err)
       leaked = true
+    }
+    // Read half: was a connection from this run attached to the shared database
+    // while the file ran? Writes are the census's job; a pure reader is only
+    // visible here.
+    if (connectionWatch) {
+      try {
+        const offenders = await connectionWatch.stop()
+        if (!connectionWatch.available) {
+          console.warn(`[shared-db] connection watch skipped: ${connectionWatch.reason}`)
+        }
+        // No `leaked = true` here: a read leaves nothing to inspect, so keeping
+        // the per-run database for a post-mortem would only leave junk behind.
+        for (const row of offenders) {
+          failures.push(new Error(describeHarnessConnection(row, { database: connectionWatch.database })))
+        }
+        if (connectionWatch.available && !offenders.length) {
+          console.log(
+            `[shared-db] no harness connection to ${connectionWatch.database} ` +
+              `(tag ${connectionWatch.tag})`,
+          )
+        }
+      } catch (err) {
+        failures.push(err)
+      }
     }
     // Broader net: any harness-shaped row (or, in strict CI mode, any row at
     // all) appearing in the shared database during this file.

@@ -53,8 +53,13 @@ const {
   QUARANTINE_STATUS,
   QUARANTINE_MARKER,
 } = require('../bin/outbox-quarantine')
-const { TEST_PG_DATABASE, ensureTestDatabase, dropTestDatabase } = require('./helpers/isolated-pg')
-const { snapshotSharedDatabase, diffSharedDatabase } = require('./helpers/shared-db-guard')
+const { TEST_PG_DATABASE, ensureTestDatabase, dropTestDatabase, TEST_APPLICATION_NAME } = require('./helpers/isolated-pg')
+const {
+  snapshotSharedDatabase,
+  diffSharedDatabase,
+  startHarnessConnectionWatch,
+  describeHarnessConnection,
+} = require('./helpers/shared-db-guard')
 
 dotenv.config({ path: path.join(__dirname, '..', '.env') })
 
@@ -69,6 +74,7 @@ const CLAIM_PARAMS = ['', 'keychain-test-']
 let pool = null
 let baseline = null
 let sharedBaseline = null
+let connectionWatch = null
 let child = null
 const brokerLog = createBrokerLog('outbox-quarantine')
 
@@ -164,6 +170,10 @@ async function startBrokerOn(table) {
         // The poller reads outbox rows from the PostgreSQL databases named
         // here (not from PG_DB_NAME), so without this it polls `nexus`.
         KEYCHAIN_SOURCE_DATABASES: TEST_PG_DATABASE,
+        // Name this child's PG connections after the run (helpers/isolated-pg.js);
+        // a harness connection to a shared database is then attributable in
+        // pg_stat_activity even when it only reads. Inherited as PGAPPNAME too.
+        PGAPPNAME: TEST_APPLICATION_NAME,
         // Deliberately NO include-prefix: this broker must behave like
         // production (claim everything except the reserved test namespaces).
         // The quarantined row is excluded by its status, not by its name.
@@ -195,6 +205,9 @@ before(async () => {
   // This file boots a broker, so it is covered by the same "no writes to the
   // shared database" census the outbox guard applies to the other broker files.
   sharedBaseline = await snapshotSharedDatabase({ outboxSignature: PRODUCTION_TEST_SIGNATURE })
+  // Read half of the same guard: this file's broker must not be attached to the
+  // shared database at all, whatever it does there.
+  connectionWatch = startHarnessConnectionWatch({ tag: TEST_APPLICATION_NAME })
   pool = makePool()
   baseline = await snapshotProductionOutbox()
   await ensureOutboxTable(pool, PROBE_TABLE)
@@ -223,9 +236,17 @@ after(async () => {
         await snapshotSharedDatabase({ outboxSignature: PRODUCTION_TEST_SIGNATURE }),
       )
       for (const warning of diff.warnings) console.warn(`[shared-db] ${warning}`)
+      const offenders = connectionWatch ? await connectionWatch.stop() : []
+      const connectionFailures = offenders.map((row) =>
+        describeHarnessConnection(row, { database: connectionWatch.database }),
+      )
+      if (!connectionFailures.length) {
+        console.log(`[shared-db] no harness connection to ${connectionWatch?.database ?? 'nexus'} (tag ${TEST_APPLICATION_NAME})`)
+      }
       await pool.end().catch(() => undefined)
       if (outboxFailure) throw outboxFailure
-      if (diff.failures.length) throw new Error(diff.failures.join('\n\n'))
+      const all = [...diff.failures, ...connectionFailures]
+      if (all.length) throw new Error(all.join('\n\n'))
     }
     await dropTestDatabase().catch((err) => console.warn(`[outbox-quarantine] drop skipped: ${err.message}`))
   }
