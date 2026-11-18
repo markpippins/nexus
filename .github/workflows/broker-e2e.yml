@@ -198,7 +198,25 @@ jobs:
       # deployment state — and it needs no services to prove it refuses.
       - name: Unit cases (drift + fail-closed env guard)
         working-directory: moleculer/nexus-broker
-        run: node --test tests/keychain-drift.test.js tests/env-guard.test.js
+        run: node --require ./tests/helpers/env-guard.js --test tests/keychain-drift.test.js tests/env-guard.test.js
+
+      # Negative control for the preload: the step above proves the guard does
+      # NOT fire on a runner (which is the safe answer only if the guard is
+      # actually loaded), so this proves it DOES fire when the environment
+      # names deployment state. Without this pair a preload that silently
+      # failed to resolve — or a stale symlinked node_modules on a developer
+      # machine — would look identical to a passing suite.
+      - name: Prove the env-guard preload is live (negative control)
+        working-directory: moleculer/nexus-broker
+        run: |
+          if MONGO_DB_NAME=keychains node --require ./tests/helpers/env-guard.js -e 'process.exit(0)' >/tmp/env-guard-control.log 2>&1; then
+            echo 'the preload allowed a deployment database name — it is not guarding anything'
+            cat /tmp/env-guard-control.log
+            exit 1
+          fi
+          grep -q 'MONGO_DB_NAME=keychains is a deployment database' /tmp/env-guard-control.log \
+            || { echo 'the preload failed for a reason other than the guard'; cat /tmp/env-guard-control.log; exit 1; }
+          echo 'env guard preload is live: refusing a deployment database name as expected'
       # pg_isready health checks validate neither credentials nor database
       # (they pass with any server that accepts connections). The only honest
       # readiness signal for schema application is an authenticated query as
