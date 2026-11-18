@@ -336,6 +336,9 @@ export async function qAll(sql: string, params: Record<string, any> = {}): Promi
 
 const KERNEL_SCHEMA = "kernel";
 
+/** Aggregate type used by `receipt.issued` events (one aggregate per receipt). */
+const RECEIPT_AGGREGATE_TYPE = "receipt";
+
 /**
  * Record a state transition in kernel.transition_event.
  * The trg_authorize_transition trigger fires BEFORE INSERT and enforces:
@@ -3459,6 +3462,86 @@ export async function resolveRequestForPlan(planId: string): Promise<string | nu
   return created?.id ?? null;
 }
 
+/**
+ * Content-addressed hash for a receipt's kernel envelope.
+ *
+ * `receipt.must_carry_hash` (kernel.policy_rule, migration 010) rejects any
+ * `receipt.issued` event whose envelope `receipt` is empty, so every emission
+ * must carry a hash. SHA-256 over a fixed field list: the same receipt always
+ * yields the same digest, and the hash covers the fields that define the
+ * receipt's identity (not the mutable routing metadata).
+ */
+export function receiptContentHash(
+  r: Pick<ReceiptRow, "id" | "plan_id" | "type" | "agent_role" | "summary" | "created_at">,
+): string {
+  const canonical = JSON.stringify([
+    r.id ?? null,
+    r.plan_id ?? null,
+    r.type ?? null,
+    r.agent_role ?? null,
+    r.summary ?? "",
+    r.created_at ?? null,
+  ]);
+  return `sha256:${crypto.createHash("sha256").update(canonical, "utf8").digest("hex")}`;
+}
+
+/**
+ * Emit the kernel `receipt.issued` event for a receipt that was just persisted.
+ *
+ * ADR-016: every state change is one row in kernel.transition_event — and an
+ * issued receipt IS a state change (`getLatestReceiptType` derives plan status
+ * from the receipt ledger). The event is what makes `receipt.must_carry_hash`
+ * a live policy instead of unreachable configuration.
+ *
+ * MUST run inside the same transaction as the receipt INSERT (pass `client`):
+ * if the kernel rejects the event, the receipt rolls back too. Receipts are
+ * kernel-authorized, never recorded without their event.
+ *
+ * Idempotent: at most one `receipt.issued` per receipt id, so a retried write
+ * cannot double-append.
+ */
+async function emitReceiptIssued(
+  client: PoolClient,
+  r: ReceiptRow,
+  storage: "execution" | "vision",
+  requestId: string | null,
+): Promise<void> {
+  const seen = await tOne(
+    client,
+    `SELECT event_id::text AS event_id
+       FROM ${KERNEL_SCHEMA}.transition_event
+      WHERE event_type = 'receipt.issued'
+        AND aggregate_type = @aggregateType
+        AND aggregate_id = @aggregateId
+      LIMIT 1`,
+    { aggregateType: RECEIPT_AGGREGATE_TYPE, aggregateId: r.id },
+  );
+  if (seen) return;
+
+  await recordTransition({
+    client,
+    aggregateType: RECEIPT_AGGREGATE_TYPE,
+    aggregateId: r.id,
+    eventType: "receipt.issued",
+    actor: r.agent_role,
+    authority: r.agent_role,
+    payload: {
+      receipt_id: r.id,
+      plan_id: r.plan_id,
+      type: r.type,
+      agent_role: r.agent_role,
+      ticket_id: r.ticket_id ?? null,
+      session_id: r.session_id ?? null,
+      tokens_used: r.tokens_used ?? 0,
+      created_at: r.created_at,
+      storage,
+      request_id: requestId,
+    },
+    // Satisfies receipt.must_carry_hash (policy rule 200).
+    receipt: receiptContentHash(r),
+  });
+}
+
 export async function insertReceipt(r: ReceiptRow): Promise<void> {
   const requestId = await resolveRequestForPlan(r.plan_id);
   if (requestId) {
@@ -3482,32 +3565,43 @@ export async function insertReceipt(r: ReceiptRow): Promise<void> {
       ticket_id: r.ticket_id ?? null,
       tokens_used: r.tokens_used ?? 0,
     };
-    await qRun(
-      `INSERT INTO execution.receipts
-         (request_id, attempt_id, type, agent_role, summary, metadata,
-          lineage_source, lineage_original_id, issued_at)
-       VALUES (@requestId::uuid, NULL, @type, @agent_role, @summary, @metadata::jsonb,
-               'conduit', @id, @created_at)
-       ON CONFLICT (lineage_original_id) WHERE lineage_source = 'conduit' DO NOTHING`,
-      {
-        requestId,
-        type: r.type,
-        agent_role: r.agent_role,
-        summary: r.summary ?? "",
-        metadata: JSON.stringify(execMeta),
-        id: r.id,
-        created_at: r.created_at,
-      },
-    );
+    await withTransaction(async (client) => {
+      const changes = await tRun(
+        client,
+        `INSERT INTO execution.receipts
+           (request_id, attempt_id, type, agent_role, summary, metadata,
+            lineage_source, lineage_original_id, issued_at)
+         VALUES (@requestId::uuid, NULL, @type, @agent_role, @summary, @metadata::jsonb,
+                 'conduit', @id, @created_at)
+         ON CONFLICT (lineage_original_id) WHERE lineage_source = 'conduit' DO NOTHING`,
+        {
+          requestId,
+          type: r.type,
+          agent_role: r.agent_role,
+          summary: r.summary ?? "",
+          metadata: JSON.stringify(execMeta),
+          id: r.id,
+          created_at: r.created_at,
+        },
+      );
+      // Replay of an already-recorded receipt: nothing new to authorize.
+      if (changes === 0) return;
+      await emitReceiptIssued(client, r, "execution", requestId);
+    });
     return;
   }
   // Test/synthetic plan: preserve legacy write surface (frozen in D-T19-2(d)).
-  await qRun(
-    `INSERT INTO ${VISION_SCHEMA}.receipts
-      (id, plan_id, type, agent_role, session_id, ticket_id, artifact_path, summary, metadata_json, tokens_used, created_at)
-    VALUES (@id, @plan_id, @type, @agent_role, @session_id, @ticket_id, @artifact_path, @summary, @metadata_json, @tokens_used, @created_at)`,
-    { ...r, tokens_used: r.tokens_used ?? 0 }
-  );
+  await withTransaction(async (client) => {
+    const changes = await tRun(
+      client,
+      `INSERT INTO ${VISION_SCHEMA}.receipts
+        (id, plan_id, type, agent_role, session_id, ticket_id, artifact_path, summary, metadata_json, tokens_used, created_at)
+      VALUES (@id, @plan_id, @type, @agent_role, @session_id, @ticket_id, @artifact_path, @summary, @metadata_json, @tokens_used, @created_at)`,
+      { ...r, tokens_used: r.tokens_used ?? 0 },
+    );
+    if (changes === 0) return;
+    await emitReceiptIssued(client, r, "vision", null);
+  });
 }
 
 export async function getReceiptsForPlan(planId: string): Promise<ReceiptRow[]> {

@@ -239,6 +239,8 @@ class _AdvisoryLockPool:
         self.receipt_inserts = 0
         self.synthetic_inserts = 0
         self.canonical_inserts = 0
+        self.receipt_issued_selects = 0
+        self.transition_events = []
         self.plan_lock = threading.Lock()
         self.review_validation_entered = threading.Event()
         self.release_review_validation = threading.Event()
@@ -339,6 +341,21 @@ class _AdvisoryLockCursor:
         if "INSERT INTO vision.receipts" in sql:
             self.pool.synthetic_inserts += 1
             self.pool.latest_receipt = params[2]
+            self.row = None
+            self.rowcount = 1
+            return
+        # receipt.issued emission (2026-11-17): the idempotency probe and the
+        # event INSERT are part of the receipt write, so they must appear here
+        # — and the event must be appended while the plan lock is still held.
+        if "SELECT 1 FROM kernel.transition_event" in sql and "receipt.issued" in sql:
+            self.pool.receipt_issued_selects += 1
+            self.row = None
+            return
+        if "INSERT INTO kernel.transition_event" in sql:
+            assert self.pool.plan_lock.locked(), (
+                "kernel transition written outside the plan lock"
+            )
+            self.pool.transition_events.append(params)
             self.row = None
             self.rowcount = 1
             return
@@ -661,6 +678,15 @@ def test_review_pass_and_builder_attempt_share_lock_through_receipt_write(monkey
     assert pool.latest_receipt == "REVIEW_PASS"
     assert pool.receipt_inserts == 1
     assert pool.attempt_inserts == 0
+    # Exactly one receipt.issued event, carrying the hash that
+    # receipt.must_carry_hash requires.
+    assert pool.receipt_issued_selects == 1
+    assert len(pool.transition_events) == 1
+    event = pool.transition_events[0]
+    assert event[1] == "receipt.issued"
+    assert event[2] == "receipt"
+    assert event[3] == "review-pass-1"
+    assert str(event[7]).startswith("sha256:")
     assert pool.lock_keys == pool.released_lock_keys
     assert pool.lock_keys[0] == pool.lock_keys[1]
     assert pool.checked_out == pool.returned
@@ -685,6 +711,12 @@ def test_review_pass_synthetic_receipt_write_remains_under_transaction_lock(monk
 
     assert pool.synthetic_inserts == 1
     assert pool.latest_receipt == "REVIEW_PASS"
+    assert pool.receipt_issued_selects == 1
+    assert len(pool.transition_events) == 1
+    event = pool.transition_events[0]
+    assert event[1] == "receipt.issued"
+    assert event[3] == "review-pass-synthetic"
+    assert str(event[7]).startswith("sha256:")
     assert pool.lock_keys == pool.released_lock_keys
     assert pool.checked_out == pool.returned
 
