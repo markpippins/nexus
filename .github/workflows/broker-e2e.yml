@@ -132,6 +132,9 @@ on:
       - 'jvm/spring/peb-kernel/**'
       - 'typescript/execution-srv/**'
       - 'typescript/heartbeat-client/**'
+      # The plan-lifecycle suite parses this file's ALLOWED map, so a ledger
+      # change must re-run the broker job that checks the mirror for drift.
+      - 'typescript/conduit-mcp/src/receipts.ts'
       - '.github/workflows/broker-e2e.yml'
   pull_request:
     paths:
@@ -147,6 +150,9 @@ on:
       - 'jvm/spring/peb-kernel/**'
       - 'typescript/execution-srv/**'
       - 'typescript/heartbeat-client/**'
+      # The plan-lifecycle suite parses this file's ALLOWED map, so a ledger
+      # change must re-run the broker job that checks the mirror for drift.
+      - 'typescript/conduit-mcp/src/receipts.ts'
       - '.github/workflows/broker-e2e.yml'
   workflow_dispatch:
 
@@ -202,9 +208,18 @@ jobs:
       # env guard is included here because it is the cheapest possible gate on
       # the failure this whole effort exists to prevent — a test run pointed at
       # deployment state — and it needs no services to prove it refuses.
-      - name: Unit cases (drift + fail-closed env guard)
+      #
+      # plan-lifecycle + ollama-options arrived with #1018 and were named by no
+      # workflow, so "CI green" did not attest to either. plan-lifecycle is the
+      # drift guard on the broker's PLAN_CREATE_ALLOWED_FROM table: it parses
+      # conduit's ALLOWED map out of typescript/conduit-mcp/src/receipts.ts and
+      # fails on divergence in either direction (see the paths filter above —
+      # that file now triggers this workflow). ollama-options pins the
+      # generation-ceiling resolver. Both are hermetic: no network, no PG, no
+      # assets beyond the checkout.
+      - name: Unit cases (plan lifecycle, ollama options, drift + fail-closed env guard)
         working-directory: moleculer/nexus-broker
-        run: node --require ./tests/helpers/env-guard.js --test tests/keychain-drift.test.js tests/env-guard.test.js tests/broker-log.test.js tests/shared-db-guard.test.js
+        run: node --require ./tests/helpers/env-guard.js --test tests/plan-lifecycle.test.js tests/ollama-options.test.js tests/keychain-drift.test.js tests/env-guard.test.js tests/broker-log.test.js tests/shared-db-guard.test.js
 
       # Negative control for the preload: the step above proves the guard does
       # NOT fire on a runner (which is the safe answer only if the guard is
