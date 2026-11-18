@@ -14,9 +14,18 @@ What this verifies
 2. The artifact still matches the live table: all 46 ids exist, business
    statuses and plan mappings are unchanged, and no `plan_id` backfill has
    happened (it is deferred to the admin-gated apply step).
-3. The live queue is still correctly described: pending plan 8261650 projects
-   through `6217db7f`, and pending plan 8261668 is reported as the known gap
-   (it has no WorkRequest).
+3. The live queue is still correctly described: plan 8261650 projects through
+   `6217db7f` at `LIVE_QUEUE_EXPECTED_STATUS`, and pending plan 8261668 is
+   reported as the known gap (it has no WorkRequest).
+
+Row classification
+------------------
+Every live row gets exactly one outcome: in the ratified ledger, pinned
+out-of-window, or unclassified. Pinned rows are the #8261674 rows this ledger
+deliberately does not cover; they are identity-pinned by `(id, legacy_id)` with
+a NULL `plan_id`, mirroring `ac13_verify_8261650.py`'s
+`OUT_OF_WINDOW_WORK_REQUESTS` so the two guards agree about the same rows.
+Unclassified rows fail closed and are named.
 
 What this must never do
 -----------------------
@@ -63,7 +72,48 @@ EXPECTED_COUNTS = {
     "RETIRE": 23,
 }
 EXPECTED_STATUS = {"DRAFT": 30, "CANCELLED": 14, "COMPLETED": 2}
-EXPECTED_PLAN_STATUS = {"completed": 30, "archived": 4, "pending": 1, "": 11}
+
+# The live queue row is the one ledger row whose plan is still pending. The
+# expectation lives in ONE constant: both the row-level assertion and the
+# `EXPECTED_PLAN_STATUS` distribution below are derived from it, so reconciling
+# plan 8261650 (residual 2 of docs/lilac/ac13-bookkeeping-window-8261650.md) is
+# a one-line edit here rather than three that can drift apart.
+LIVE_QUEUE_PLAN = "8261650"
+LIVE_QUEUE_ROW_ID = "6217db7f-577d-4a6d-9708-61167279aa2e"
+LIVE_QUEUE_EXPECTED_STATUS = "pending"
+
+_BASELINE_PLAN_STATUS = {"completed": 30, "archived": 4, "": 11}
+
+
+def derive_plan_status_counts(live_queue_status: str) -> dict[str, int]:
+    """Plan-status distribution with the live queue row at `live_queue_status`."""
+    counts = dict(_BASELINE_PLAN_STATUS)
+    counts[live_queue_status] = counts.get(live_queue_status, 0) + 1
+    return counts
+
+
+EXPECTED_PLAN_STATUS = derive_plan_status_counts(LIVE_QUEUE_EXPECTED_STATUS)
+
+# Rows present in resolution.work_request but deliberately outside this 46-row
+# ledger. Pinned by identity exactly as ac13_verify_8261650.py pins them: the
+# two 2026-11-17 #8261674 W-B2 rows. A pinned row must keep this legacy_id and
+# a NULL plan_id; any mutation is a failure, and any other unknown row is
+# unclassified and fails closed.
+#
+# Deliberately NOT pinned: 66b9d2e0 (wr-8261673-...), which the AC13 guard
+# counts inside its frozen 47-row baseline but which this ledger never
+# ratified. Pinning it here would bless an undispositioned row, so it stays
+# unclassified and named until the ledger itself is amended.
+PINNED_OUT_OF_WINDOW_ROWS = {
+    "51d3e506-1bd8-40b5-b77f-4dca2df4dc7f": "wr-8261674-1794954783-7b623473",
+    "6bfebc75-f9e2-4118-a86e-dae9c3ff5a32": (
+        "vision.work_requests:wr-8261674-1794937465-wb2ticketclass"
+    ),
+}
+
+ROW_LEDGER = "in_ledger"
+ROW_PINNED_OUT_OF_WINDOW = "pinned_out_of_window"
+ROW_UNCLASSIFIED = "unclassified"
 VERDICTS = frozenset(EXPECTED_COUNTS)
 UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
@@ -222,11 +272,17 @@ def validate_artifact(doc: dict[str, Any]) -> list[str]:
             f"plan status counts are {dict(plan_statuses)}, expected {EXPECTED_PLAN_STATUS}"
         )
 
-    live = by_id.get("6217db7f-577d-4a6d-9708-61167279aa2e")
+    live = by_id.get(LIVE_QUEUE_ROW_ID)
     if live is None:
-        errors.append("the live queue row 6217db7f is missing")
-    elif (live.get("plan_number"), live.get("plan_status")) != ("8261650", "pending"):
-        errors.append("row 6217db7f must project pending plan 8261650")
+        errors.append(f"the live queue row {LIVE_QUEUE_ROW_ID[:8]} is missing")
+    elif (live.get("plan_number"), live.get("plan_status")) != (
+        LIVE_QUEUE_PLAN,
+        LIVE_QUEUE_EXPECTED_STATUS,
+    ):
+        errors.append(
+            f"row {LIVE_QUEUE_ROW_ID[:8]} must project plan {LIVE_QUEUE_PLAN} "
+            f"as {LIVE_QUEUE_EXPECTED_STATUS}"
+        )
 
     return errors
 
@@ -255,6 +311,15 @@ def pending_plans_without_wr(conn) -> list[str]:
         return [r[0] for r in cur.fetchall()]
 
 
+def classify_row(row_id: str, ledger: dict[str, Any]) -> str:
+    """One of ROW_LEDGER, ROW_PINNED_OUT_OF_WINDOW, ROW_UNCLASSIFIED."""
+    if row_id in ledger:
+        return ROW_LEDGER
+    if row_id in PINNED_OUT_OF_WINDOW_ROWS:
+        return ROW_PINNED_OUT_OF_WINDOW
+    return ROW_UNCLASSIFIED
+
+
 def validate_live(
     doc: dict[str, Any],
     rows: list[dict[str, Any]],
@@ -266,15 +331,43 @@ def validate_live(
     expected = {r["row_id"]: r for r in doc.get("rows", [])}
     actual = {r["row_id"]: r for r in rows}
 
-    if len(rows) != EXPECTED_TOTAL:
-        errors.append(f"live row count is {len(rows)}, expected {EXPECTED_TOTAL}")
+    pinned = sorted(rid for rid in actual if classify_row(rid, expected) == ROW_PINNED_OUT_OF_WINDOW)
+    unclassified = sorted(
+        rid for rid in actual if classify_row(rid, expected) == ROW_UNCLASSIFIED
+    )
+
+    # A duplicated id collapses in `actual`, so this count is what catches it.
+    accounted = len(expected.keys() & actual.keys()) + len(pinned) + len(unclassified)
+    if accounted != len(rows):
+        errors.append(
+            f"live row count is {len(rows)} but only {accounted} row(s) are accounted for"
+        )
 
     missing = sorted(set(expected) - set(actual))
-    extra = sorted(set(actual) - set(expected))
     if missing:
         errors.append(f"live table is missing {len(missing)} row(s): {', '.join(x[:8] for x in missing)}")
-    if extra:
-        errors.append(f"live table has {len(extra)} row(s) not in the artifact: {', '.join(x[:8] for x in extra)}")
+    if unclassified:
+        errors.append(
+            f"live table has {len(unclassified)} row(s) not classified by the ledger: "
+            f"{', '.join(x[:8] for x in unclassified)}"
+        )
+    if pinned:
+        warnings.append(
+            f"{len(pinned)} pinned out-of-window #8261674 row(s) present and "
+            f"identity-matched: {', '.join(x[:8] for x in pinned)}"
+        )
+    for rid in pinned:
+        want_legacy = PINNED_OUT_OF_WINDOW_ROWS[rid]
+        if (actual[rid].get("legacy_id") or "") != want_legacy:
+            errors.append(
+                f"pinned out-of-window row {rid[:8]}: legacy_id is "
+                f"{actual[rid].get('legacy_id')!r}, expected {want_legacy!r}"
+            )
+        if actual[rid].get("plan_id"):
+            errors.append(
+                f"pinned out-of-window row {rid[:8]} has plan_id "
+                f"{actual[rid]['plan_id']!r}, expected NULL"
+            )
 
     statuses: collections.Counter[str] = collections.Counter()
     plan_statuses: collections.Counter[str] = collections.Counter()
@@ -302,9 +395,9 @@ def validate_live(
                 f"artifact recorded {exp.get('plan_status')!r}"
             )
 
-    if len(rows) == EXPECTED_TOTAL and dict(statuses) != EXPECTED_STATUS:
+    if not missing and dict(statuses) != EXPECTED_STATUS:
         errors.append(f"live business status counts are {dict(statuses)}, expected {EXPECTED_STATUS}")
-    if len(rows) == EXPECTED_TOTAL and dict(plan_statuses) != EXPECTED_PLAN_STATUS:
+    if not missing and dict(plan_statuses) != EXPECTED_PLAN_STATUS:
         errors.append(f"live plan status counts are {dict(plan_statuses)}, expected {EXPECTED_PLAN_STATUS}")
 
     backfilled = sum(n for value, n in plan_ids.items() if value)
@@ -324,9 +417,12 @@ def validate_live(
     else:
         errors.append("no pending plan without a WorkRequest; the recorded 8261668 gap disappeared")
 
-    live = actual.get("6217db7f-577d-4a6d-9708-61167279aa2e")
-    if live is None or live.get("plan_status") != "pending":
-        errors.append("row 6217db7f no longer projects a pending plan")
+    live = actual.get(LIVE_QUEUE_ROW_ID)
+    if live is None or live.get("plan_status") != LIVE_QUEUE_EXPECTED_STATUS:
+        errors.append(
+            f"row {LIVE_QUEUE_ROW_ID[:8]} no longer projects a "
+            f"{LIVE_QUEUE_EXPECTED_STATUS} plan"
+        )
 
     return errors, warnings
 
