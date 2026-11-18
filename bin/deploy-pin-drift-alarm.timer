@@ -1,0 +1,14 @@
+# Source of truth for ~/.config/systemd/user/deploy-pin-drift-alarm.timer
+# Quarter-hourly: the live kernel imports out of the deploy tree, so a
+# hand-edit there can go unnoticed for hours otherwise. Persistent=true makes a
+# missed schedule (machine asleep) run once on wake.
+[Unit]
+Description=quarter-hourly deploy pin drift check (HEAD + python/ digests)
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+Unit=deploy-pin-drift-alarm.service
+
+[Install]
+WantedBy=timers.target

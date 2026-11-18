@@ -1,0 +1,34 @@
+# Source of truth for ~/.config/systemd/user/deploy-pin-drift-alarm-watchdog.service
+#
+# Deploy (operator action, same doctrine as landed-digest-guard.service):
+#   cp bin/deploy-pin-drift-alarm-watchdog.service ~/.config/systemd/user/
+#   cp bin/deploy-pin-drift-alarm-watchdog.timer   ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now deploy-pin-drift-alarm-watchdog.timer
+#
+# Why: deploy-pin-drift-alarm.timer can only report drift while it still runs.
+# If the timer is disabled, the service keeps failing, the deploy checkout is
+# moved, or the user manager stops scheduling, the live tree goes unwatched and
+# silence looks exactly like "no drift". This unit closes that hole: it reads
+# ONLY the heartbeat the alarm writes (~/.cache/deploy-pin-drift-alarm/
+# heartbeat.json) and, when the newest completed check is older than 45 min
+# (three missed quarter-hourly runs), posts once per stall episode to
+# issues-and-open-questions and exits 2 so the unit fails visibly too.
+#
+# Two independent timers are the point: the watchdog is offset to *:7/15 so it
+# never shares a boundary with the check it watches. It cannot catch its own
+# death — if the systemd user manager stops entirely, nothing posts and
+# heartbeat.json's mtime is the only evidence. Run
+# `bin/deploy-pin-drift-alarm.py --watchdog` by hand (or from cron) to check.
+#
+# Never reverts, re-pins, restarts or accepts anything: announcer only.
+[Unit]
+Description=deploy pin drift alarm watchdog (shouts when the quarter-hourly check goes silent)
+Documentation=file:///home/codex/dev/nexus/bin/deploy-pin-drift-alarm.py
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/deploy-pin-drift-alarm.py --watchdog
+TimeoutStartSec=120
+SyslogIdentifier=deploy-pin-drift-watchdog

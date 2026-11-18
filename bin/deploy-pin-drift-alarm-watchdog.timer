@@ -1,0 +1,16 @@
+# Source of truth for ~/.config/systemd/user/deploy-pin-drift-alarm-watchdog.timer
+#
+# Offset to *:7/15 on purpose: the alarm runs at *:0/15, so the watchdog never
+# shares a boundary with the check it is watching and always sees a settled
+# heartbeat. Persistent=true means a machine that was asleep or off still gets
+# an immediate verdict on wake — which is when a silent gap is most likely.
+[Unit]
+Description=quarter-hourly watchdog for the deploy pin drift alarm (heartbeat age)
+
+[Timer]
+OnCalendar=*:7/15
+Persistent=true
+Unit=deploy-pin-drift-alarm-watchdog.service
+
+[Install]
+WantedBy=timers.target
