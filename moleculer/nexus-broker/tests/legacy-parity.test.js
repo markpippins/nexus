@@ -20,6 +20,7 @@ const { spawn } = require('node:child_process')
 const path = require('node:path')
 const dotenv = require('dotenv')
 const { getEphemeralPort } = require('./helpers/ephemeral-ports')
+const { createBrokerLog } = require('./helpers/broker-log')
 const { MongoClient } = require('mongodb')
 const {
   MONGO_DB_NAME,
@@ -44,10 +45,15 @@ dotenv.config({ path: path.join(BROKER_DIR, '.env') })
 
 let child = null
 
+// Boot failures must explain themselves: the broker's stdout/stderr go to a
+// file instead of /dev/null (see helpers/broker-log.js).
+const brokerLog = createBrokerLog('legacy-parity')
+
 async function startBroker() {
   TEST_PORT = await getEphemeralPort(FIXED_SERVICE_PORT)
   TEST_PTY_WS_PORT = await getEphemeralPort(FIXED_PTY_WS_PORT)
   BASE = `http://localhost:${TEST_PORT}/api`
+  const brokerLogFd = brokerLog.open()
   child = spawn(
     process.execPath,
     ['node_modules/.bin/moleculer-runner', '--mask', '**/*.js', 'dist/services'],
@@ -65,11 +71,12 @@ async function startBroker() {
         KEYCHAIN_OUTBOX_NAMESPACE_PREFIX: OUTBOX_NAMESPACE_PREFIX,
         KEYCHAIN_OUTBOX_TABLE: OUTBOX_TABLE,
       },
-      // Drain output so a large projection cannot block the child on a full
-      // pipe before the test reaches its assertions.
-      stdio: ['ignore', 'ignore', 'ignore'],
+      // Captured to a file rather than drained to /dev/null: a file cannot
+      // block the child on a full pipe, and a boot failure says why.
+      stdio: ['ignore', brokerLogFd, brokerLogFd],
     }
   )
+  brokerLog.close(brokerLogFd)
 
   // Wait for gateway to answer /api/health (up to 30s)
   const deadline = Date.now() + 30_000
@@ -80,7 +87,7 @@ async function startBroker() {
     } catch {}
     await new Promise((r) => setTimeout(r, 500))
   }
-  throw new Error('broker did not become healthy within 30s')
+  throw new Error(brokerLog.describe('broker did not become healthy within 30s', child))
 }
 
 function stopBroker() {

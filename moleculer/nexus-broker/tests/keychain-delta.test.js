@@ -43,12 +43,11 @@ const { test } = require('node:test')
 const assert = require('node:assert/strict')
 const { createHash, randomUUID } = require('node:crypto')
 const { spawn } = require('node:child_process')
-const fs = require('node:fs')
-const os = require('node:os')
 const path = require('node:path')
 const dotenv = require('dotenv')
 const { MongoClient } = require('mongodb')
 const { getEphemeralPort } = require('./helpers/ephemeral-ports')
+const { createBrokerLog } = require('./helpers/broker-log')
 const {
   MONGO_DB_NAME: TEST_MONGO_DB,
   OUTBOX_NAMESPACE_PREFIX,
@@ -74,37 +73,17 @@ const sha256 = (value) => `sha256:${createHash('sha256').update(value).digest('h
 
 let child = null
 
-/**
- * Where this file's broker writes its output.
- *
- * The spawn used `stdio: 'ignore'` for all three streams, which drained the
- * pipes (so a chatty service could never block the child) and simultaneously
- * threw the evidence away: when the broker failed to become healthy in CI the
- * only thing the log said was "broker did not become healthy within 30s", and
- * the reason was in a stream nobody kept. A file keeps the same
- * non-blocking property and the evidence.
- */
-const BROKER_LOG = path.join(os.tmpdir(), `keychain-delta-broker-${process.pid}.log`)
-
-/** Tail of the broker's own output, for a boot failure that needs explaining. */
-function brokerOutputTail(lines = 40) {
-  try {
-    const text = fs.readFileSync(BROKER_LOG, 'utf8').trimEnd()
-    if (!text) return `(broker produced no output; log: ${BROKER_LOG})`
-    return `${text.split('\n').slice(-lines).join('\n')}\n(log: ${BROKER_LOG})`
-  } catch (err) {
-    return `(broker log unreadable: ${err.message})`
-  }
-}
+// The broker's output is captured, not discarded — see helpers/broker-log.js
+// for why (a boot failure used to say nothing but "did not become healthy").
+const brokerLog = createBrokerLog('keychain-delta')
 
 async function startBroker() {
   TEST_PORT = await getEphemeralPort(FIXED_SERVICE_PORT)
   TEST_PTY_WS_PORT = await getEphemeralPort(FIXED_PTY_WS_PORT)
   BASE = `http://localhost:${TEST_PORT}/api`
-  // One descriptor for stdout and stderr, closed in this process right after
-  // the spawn: the child keeps its own copies, and two independent 'w' opens on
-  // one path would interleave at separate offsets.
-  const brokerLogFd = openBrokerLog()
+  // One descriptor for stdout and stderr, released in this process right
+  // after the spawn: the child keeps its own copies.
+  const brokerLogFd = brokerLog.open()
   child = spawn(
     process.execPath,
     ['node_modules/.bin/moleculer-runner', '--mask', '**/*.js', 'dist/services'],
@@ -123,11 +102,11 @@ async function startBroker() {
           // Never production's queue: this suite writes its own outbox table.
           KEYCHAIN_OUTBOX_TABLE: OUTBOX_TABLE,
       },
-      // Captured, not discarded: see BROKER_LOG above.
+      // Captured, not discarded: see helpers/broker-log.js.
       stdio: ['ignore', brokerLogFd, brokerLogFd],
     }
   )
-  fs.closeSync(brokerLogFd)
+  brokerLog.close(brokerLogFd)
   const deadline = Date.now() + 30_000
   while (Date.now() < deadline) {
     try {
@@ -145,9 +124,7 @@ async function startBroker() {
     await new Promise((r) => setTimeout(r, 500))
   }
   throw new Error(
-    'broker did not become healthy within 30s' +
-    (child ? ` (exit=${child.exitCode} signal=${child.signalCode})` : ' (no child)') +
-    `\n--- broker output ---\n${brokerOutputTail()}`,
+    brokerLog.describe('broker did not become healthy within 30s', child),
   )
 }
 
@@ -169,11 +146,6 @@ function postSnapshot(triggerEvent) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ triggerEvent }),
   })
-}
-
-/** Open the broker log for the spawn, handing the child its own descriptor. */
-function openBrokerLog() {
-  return fs.openSync(BROKER_LOG, 'w')
 }
 
 /**

@@ -198,7 +198,7 @@ jobs:
       # deployment state — and it needs no services to prove it refuses.
       - name: Unit cases (drift + fail-closed env guard)
         working-directory: moleculer/nexus-broker
-        run: node --require ./tests/helpers/env-guard.js --test tests/keychain-drift.test.js tests/env-guard.test.js
+        run: node --require ./tests/helpers/env-guard.js --test tests/keychain-drift.test.js tests/env-guard.test.js tests/broker-log.test.js
 
       # Negative control for the preload: the step above proves the guard does
       # NOT fire on a runner (which is the safe answer only if the guard is

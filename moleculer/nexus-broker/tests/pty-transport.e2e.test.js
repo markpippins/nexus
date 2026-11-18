@@ -25,6 +25,7 @@ const assert = require('node:assert/strict')
   } = require('./helpers/isolated-mongo')
 
 const BROKER_DIR = path.resolve(__dirname, '..')
+const { createBrokerLog } = require('./helpers/broker-log')
 // Load the broker's .env like the other broker-booting files do: MONGO_URL
 // carries the credentials this file's own Mongo client needs to drop its
 // isolated database in teardown (without it dropDatabase is Unauthorized).
@@ -48,8 +49,13 @@ async function resolvePorts() {
 
 let child = null
 
+// Boot failures must explain themselves: the broker's stdout/stderr go to a
+// file instead of /dev/null (see helpers/broker-log.js).
+const brokerLog = createBrokerLog('pty-transport')
+
 function startBroker() {
   return new Promise((resolve, reject) => {
+    const brokerLogFd = brokerLog.open()
     child = spawn(
       process.execPath,
       ['node_modules/.bin/moleculer-runner', '--mask', '**/*.js', 'dist/services'],
@@ -65,12 +71,15 @@ function startBroker() {
           KEYCHAIN_OUTBOX_NAMESPACE_PREFIX: OUTBOX_NAMESPACE_PREFIX,
           KEYCHAIN_OUTBOX_TABLE: OUTBOX_TABLE,
         },
-        stdio: ['ignore', 'ignore', 'ignore'],
+        stdio: ['ignore', brokerLogFd, brokerLogFd],
       }
     )
+    brokerLog.close(brokerLogFd)
     const deadline = Date.now() + 30_000
     const poll = async () => {
-      if (Date.now() > deadline) return reject(new Error('broker did not become healthy'))
+      if (Date.now() > deadline) {
+        return reject(new Error(brokerLog.describe('broker did not become healthy within 30s', child)))
+      }
       try {
         const res = await fetch(`${BASE}/health`)
         if (res.ok) return resolve()
