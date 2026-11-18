@@ -23,9 +23,10 @@
 # Included: tests/pty-transport.e2e.test.js — proven exit 0 hermetically
 # (fresh Mongo on :28017, free ports, no NATS, no PG).
 #   tests/keychain-delta.test.js — self-seeds its full-manifest anchor via
-#   the API on a fresh Mongo (worktree fix, same PR), with PG shimmed to the
-#   real agent_records schema + grouping-rule seed rows
-#   (tests/fixtures/keychain-delta-ci-pg.sql). Proven on all three branches:
+#   the API on a fresh Mongo, and seeds its own agent_records rows (no fixture
+#   seed: the harness builds its PostgreSQL database from
+#   sql/ci-bootstrap/nexus-ci-bootstrap.sql — see helpers/isolated-pg.js).
+#   Proven on all three branches:
 #   fresh store (seeds + cleans up), re-run (re-seeds), pre-seeded store
 #   (adopts existing anchor, restores around it). The one-line service fix
 #   in keychain-snapshot.service.ts makes a fresh store take the D6 base
@@ -158,6 +159,11 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+    env:
+      # The shared-database census (tests/helpers/shared-db-guard.js) asserts
+      # row counts, not just harness signatures, when nothing else writes the
+      # database. In this job the only writer is the suite itself.
+      NEXUS_TEST_STRICT_SHARED_DB: '1'
     services:
       postgres:
         image: pgvector/pgvector:pg17
@@ -198,7 +204,7 @@ jobs:
       # deployment state — and it needs no services to prove it refuses.
       - name: Unit cases (drift + fail-closed env guard)
         working-directory: moleculer/nexus-broker
-        run: node --require ./tests/helpers/env-guard.js --test tests/keychain-drift.test.js tests/env-guard.test.js tests/broker-log.test.js
+        run: node --require ./tests/helpers/env-guard.js --test tests/keychain-drift.test.js tests/env-guard.test.js tests/broker-log.test.js tests/shared-db-guard.test.js
 
       # Negative control for the preload: the step above proves the guard does
       # NOT fire on a runner (which is the safe answer only if the guard is
@@ -233,23 +239,13 @@ jobs:
           done
           echo "postgres never accepted an authenticated connection"
           exit 1
-      # Fail fast on fixture drift. This job's only outbox schema is
-      # tests/fixtures/keychain-delta-ci-pg.sql, and the harness clones it into
-      # the test queue with `LIKE ... INCLUDING ALL` — so a stale fixture becomes
-      # a missing column in the table the broker polls. It drifted once already
-      # (21 of 23 columns, bigserial id, no created_at) and the only symptom was
-      # a broker 500 inside the delta test, reported as "broker did not become
-      # healthy". This applies the fixture AND the repo-canonical bootstrap to
-      # two scratch databases and diffs the table they define — no broker, no
-      # Mongo, seconds instead of a boot timeout.
-      - name: Verify keychain-delta fixture matches the canonical bootstrap
-        working-directory: moleculer/nexus-broker
-        env:
-          PG_HOST: localhost
-          PG_PORT: '5432'
-          PG_USER: pguser
-          PG_PASSWORD: pgpass
-        run: node tests/verify-outbox-fixture.js
+      # The fixture-vs-canonical check that used to sit here is gone, along with
+      # the fixture it checked. Nothing applied that shim any more: the harness
+      # builds every database from sql/ci-bootstrap/nexus-ci-bootstrap.sql, so
+      # the property the check approximated ("the outbox table the poller uses
+      # matches the canonical schema") is now proven by the suites themselves,
+      # in both jobs, on a freshly created database each time. A check whose
+      # subject has no consumer reads as assurance without providing any.
 
       # Neither step names a database any more. The harness creates its own
       # (tests/helpers/isolated-pg.js), applies the canonical bootstrap to it
@@ -318,9 +314,14 @@ jobs:
       PGPASSWORD: pgpass
       PGDATABASE: nexus
       MONGO_URL: mongodb://localhost:28017/nexus
-      # NOTE: the broker suites in this job no longer read these. Each test
-      # creates its own database and polls it by name; the values above serve
-      # the peb-kernel and execution-srv processes only.
+      # The broker suites in this job no longer read these: each test creates
+      # its own database and polls it by name. The values above serve the
+      # peb-kernel and execution-srv processes only.
+      #
+      # Strict shared-database census: apart from the kernel (whose writes are
+      # its own), nothing else writes `nexus` while the suite runs, so a row
+      # count change there is the suite's doing.
+      NEXUS_TEST_STRICT_SHARED_DB: '1'
     steps:
       - uses: actions/checkout@v4
 

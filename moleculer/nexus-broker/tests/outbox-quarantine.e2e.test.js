@@ -54,6 +54,7 @@ const {
   QUARANTINE_MARKER,
 } = require('../bin/outbox-quarantine')
 const { TEST_PG_DATABASE, ensureTestDatabase, dropTestDatabase } = require('./helpers/isolated-pg')
+const { snapshotSharedDatabase, diffSharedDatabase } = require('./helpers/shared-db-guard')
 
 dotenv.config({ path: path.join(__dirname, '..', '.env') })
 
@@ -67,6 +68,7 @@ const CLAIM_PARAMS = ['', 'keychain-test-']
 
 let pool = null
 let baseline = null
+let sharedBaseline = null
 let child = null
 const brokerLog = createBrokerLog('outbox-quarantine')
 
@@ -190,6 +192,9 @@ async function startBrokerOn(table) {
 
 before(async () => {
   await ensureTestDatabase()
+  // This file boots a broker, so it is covered by the same "no writes to the
+  // shared database" census the outbox guard applies to the other broker files.
+  sharedBaseline = await snapshotSharedDatabase({ outboxSignature: PRODUCTION_TEST_SIGNATURE })
   pool = makePool()
   baseline = await snapshotProductionOutbox()
   await ensureOutboxTable(pool, PROBE_TABLE)
@@ -209,7 +214,18 @@ after(async () => {
     if (pool) {
       await pool.query(`DROP TABLE IF EXISTS ${PROBE_TABLE}`).catch(() => undefined)
       await pool.query(`DROP TABLE IF EXISTS ${E2E_TABLE}`).catch(() => undefined)
-      await assertProductionOutboxUnchanged(baseline).finally(() => pool.end().catch(() => undefined))
+      const outboxFailure = await assertProductionOutboxUnchanged(baseline).then(
+        () => null,
+        (err) => err,
+      )
+      const diff = diffSharedDatabase(
+        sharedBaseline,
+        await snapshotSharedDatabase({ outboxSignature: PRODUCTION_TEST_SIGNATURE }),
+      )
+      for (const warning of diff.warnings) console.warn(`[shared-db] ${warning}`)
+      await pool.end().catch(() => undefined)
+      if (outboxFailure) throw outboxFailure
+      if (diff.failures.length) throw new Error(diff.failures.join('\n\n'))
     }
     await dropTestDatabase().catch((err) => console.warn(`[outbox-quarantine] drop skipped: ${err.message}`))
   }

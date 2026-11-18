@@ -46,6 +46,10 @@ const crypto = require('node:crypto')
 // deliberately not `process.env.PG_DB_NAME`: CI sets that to the shared
 // throwaway database, and inheriting it would put tests back on shared state.
 const { TEST_PG_DATABASE, ensureTestDatabase, dropTestDatabase } = require('./isolated-pg')
+const {
+  snapshotSharedDatabase,
+  diffSharedDatabase,
+} = require('./shared-db-guard')
 
 function mongoUrl() {
   return process.env.MONGO_URL || 'mongodb://localhost:27017'
@@ -305,8 +309,8 @@ function describeShapeDiff(production, test) {
  * when they differ. The table is a test artifact; losing its rows on a schema
  * change is the intended behaviour.
  *
- * Deliberately no fallback DDL: if the production table is missing (a bare CI
- * database before `tests/fixtures/keychain-delta-ci-pg.sql` is applied), this
+ * Deliberately no fallback DDL: if the canonical table is missing (a database
+ * that was not built from `sql/ci-bootstrap/nexus-ci-bootstrap.sql`), this
  * fails loudly rather than inventing a transcript that could drift.
  *
  * Compare-and-DDL runs in one transaction under a transaction-scoped advisory
@@ -348,7 +352,7 @@ async function ensureOutboxTable(poolOrOptions = {}, tableOverride = null) {
     if (!template.rows[0] || !template.rows[0].reg) {
       throw new Error(
         `cannot provision ${target}: template table ${PRODUCTION_OUTBOX_TABLE} does not exist ` +
-        '(apply tests/fixtures/keychain-delta-ci-pg.sql on a fresh CI database)',
+        '(the per-run database is built from sql/ci-bootstrap/nexus-ci-bootstrap.sql)',
       )
     }
     let lastError = null
@@ -692,6 +696,7 @@ function registerProductionOutboxGuard({ before, after, setup = null, teardown =
     }
   }
   let baseline = null
+  let sharedBaseline = null
   before(async () => {
     // The per-run database must exist before ANY of the guard's work touches
     // PG: the sweep, the probe table clone and the production-queue baseline
@@ -711,6 +716,9 @@ function registerProductionOutboxGuard({ before, after, setup = null, teardown =
     // baseline must predate any test write.
     await ensureOutboxTable()
     baseline = await snapshotProductionOutbox()
+    // Census of the SHARED database, taken before the broker boots and before
+    // any test writes: the file must leave it unchanged (helpers/shared-db-guard.js).
+    sharedBaseline = await snapshotSharedDatabase({ outboxSignature: PRODUCTION_TEST_SIGNATURE })
     if (setup) await setup()
   })
   after(async () => {
@@ -730,6 +738,22 @@ function registerProductionOutboxGuard({ before, after, setup = null, teardown =
     } catch (err) {
       failures.push(err)
       leaked = true
+    }
+    // Broader net: any harness-shaped row (or, in strict CI mode, any row at
+    // all) appearing in the shared database during this file.
+    try {
+      const after = await snapshotSharedDatabase({ outboxSignature: PRODUCTION_TEST_SIGNATURE })
+      const diff = diffSharedDatabase(sharedBaseline, after)
+      for (const warning of diff.warnings) console.warn(`[shared-db] ${warning}`)
+      for (const failure of diff.failures) failures.push(new Error(failure))
+      if (diff.failures.length) leaked = true
+      if (!diff.failures.length && !diff.warnings.length) {
+        // Positive evidence that the census ran (rather than silently skipping
+        // because the shared database was unreachable).
+        console.log(`[shared-db] census unchanged across ${after.tables.length} table(s) in ${after.database}`)
+      }
+    } catch (err) {
+      failures.push(err)
     }
     if (leaked) {
       // Keep the rows that would explain the leak; the sweep reaps the table.
