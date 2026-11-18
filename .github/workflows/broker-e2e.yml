@@ -192,10 +192,13 @@ jobs:
         working-directory: moleculer/nexus-broker
         run: npm ci && npm run build
       # Pure unit cases: no PG, no Mongo, no broker boot. Run before the
-      # service-dependent steps so a drift regression fails in seconds.
-      - name: Keychain drift unit cases
+      # service-dependent steps so a drift regression fails in seconds. The
+      # env guard is included here because it is the cheapest possible gate on
+      # the failure this whole effort exists to prevent — a test run pointed at
+      # deployment state — and it needs no services to prove it refuses.
+      - name: Unit cases (drift + fail-closed env guard)
         working-directory: moleculer/nexus-broker
-        run: node --test tests/keychain-drift.test.js
+        run: node --test tests/keychain-drift.test.js tests/env-guard.test.js
       # pg_isready health checks validate neither credentials nor database
       # (they pass with any server that accepts connections). The only honest
       # readiness signal for schema application is an authenticated query as
@@ -350,6 +353,21 @@ jobs:
         working-directory: moleculer/nexus-broker
         run: npm ci && npm run build
 
+      # Outbox provisioning: the LIKE clone, drift reconcile, cross-process
+      # concurrency, and the guard wiring. It needs the seeded
+      # resolution.keychain_event_outbox to clone from, which is why it lives
+      # in this job; it was previously in NO workflow, so the reconciliation
+      # this suite depends on was unverified in CI. Its own leak case is the
+      # regression test for the eighteen test rows the harness once wrote into
+      # production's queue.
+      - name: Unit — outbox provisioning, drift and leak guard
+        working-directory: moleculer/nexus-broker
+        run: |
+          set -o pipefail
+          node --test --test-reporter=tap tests/outbox-provisioning.test.js \
+            2>&1 | tee /tmp/tap-outbox-provisioning.log
+          python3 ../../bin/pgie-evidence.py guard /tmp/tap-outbox-provisioning.log 12 "outbox-provisioning" /tmp/pgie-results.tsv
+
       # The bridge imports psycopg2 lazily inside the persist step; a missing
       # module would surface as a confusing producer failure mid-test.
       # (GitHub runners export PIP_BREAK_SYSTEM_PACKAGES=1, so the house
@@ -467,7 +485,7 @@ jobs:
             --pg-port 5432 --mongo-port 28017 --kernel-port 18099 --legacy-port 32110 \
             --out evidence/pgie-evidence.json
           cp /tmp/tap-bridge-lifecycle.log /tmp/tap-broker-smoke.log \
-             /tmp/tap-legacy-parity.log evidence/ 2>/dev/null || true
+             /tmp/tap-legacy-parity.log /tmp/tap-outbox-provisioning.log evidence/ 2>/dev/null || true
           cat evidence/pgie-evidence.json
 
       - name: Upload pgie-evidence/1 artifact (pass and fail runs)

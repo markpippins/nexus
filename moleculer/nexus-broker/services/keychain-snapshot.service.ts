@@ -479,9 +479,11 @@ export default class KeychainService extends Service {
             return {
               enabled: true,
                               mode: "event_driven",
-                // Observable resolution of the outbox configuration: an operator
-                // (and the test suite's default-config assertion) can see which
-                // table this broker actually claims from.
+                // Observable resolution of the store and outbox configuration:
+                // an operator (and the test suite's default-config assertion)
+                // can see which database and which queue this broker actually
+                // reads, without inferring either from the code or the boot log.
+                mongoDb: KEYCHAIN_MONGO_DB,
                 outboxTable: KEYCHAIN_OUTBOX_TABLE,
                 outboxNamespacePrefix: KEYCHAIN_OUTBOX_NAMESPACE_PREFIX || null,
                 outboxExcludeNamespacePrefix: KEYCHAIN_OUTBOX_EXCLUDE_NAMESPACE_PREFIX || null,
@@ -947,7 +949,8 @@ export default class KeychainService extends Service {
         // at boot: "which queue does this broker actually poll" must be
         // answerable from the startup output, not inferred from the code.
         this.logger.info(
-          `keychain outbox table resolved: ${KEYCHAIN_OUTBOX_TABLE} ` +
+          `keychain store resolved: ${KEYCHAIN_MONGO_DB}; ` +
+          `outbox table: ${KEYCHAIN_OUTBOX_TABLE} ` +
           `(namespace prefix: ${KEYCHAIN_OUTBOX_NAMESPACE_PREFIX || "<any>"}, ` +
           `excluded: ${KEYCHAIN_OUTBOX_EXCLUDE_NAMESPACE_PREFIX || "<none>"})`
         );

@@ -26,10 +26,15 @@
  *     its own PTY_WS_PORT (default 3130). Without overriding that a second
  *     broker cannot boot while the production unit is running — it dies with
  *     EADDRINUSE on 127.0.0.1:3130 before the gateway ever answers.
- *   - The test writes into the shared `keychains` database, so it captures the
- *     pointer/state documents first and restores them on the way out —
- *     including on SIGINT/SIGTERM, because an interrupted run otherwise
- *     leaves committed checkpoints that advance the live active pointer.
+ *   - The test does NOT write into the shared `keychains` database or
+ *     production's outbox queue: the broker boots against this process's own
+ *     Mongo database and claims from this process's own outbox table
+ *     (helpers/isolated-mongo.js). The pre-state capture / restore below is a
+ *     re-run guard for a pinned store — a fresh-store run seeds its anchor and
+ *     deletes only its own documents.
+ *   - That restore is still registered on SIGINT/SIGTERM: an interrupted run
+ *     leaves committed checkpoints behind, and on a pinned store those would
+ *     advance the active pointer for the next run.
  *   - Deltas are addressed by prevVersion pointers, not contiguous version
  *     ranges, so removing the checkpoints this test creates cannot break
  *     reconstruction of any later checkpoint.

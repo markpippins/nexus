@@ -36,6 +36,8 @@
  * removes it at the end of the file so repeat runs start clean.
  *
  * Override: set MONGO_DB_NAME yourself to pin a specific database (debugging).
+ * The override is validated (`assertSafeTestEnv`): the name must look like a
+ * test database, because this helper DROPS it on the way out.
  */
 const crypto = require('node:crypto')
 
@@ -84,8 +86,22 @@ const OUTBOX_NAMESPACE_PREFIX =
  * CHECK constraints mirroring production) before a broker boots, so the test
  * never depends on someone having provisioned it by hand.
  */
+/**
+ * Identity of this test process: pid, a base-36 timestamp and randomness.
+ *
+ * The outbox table name is derived from it, so no two runs — or two
+ * `node --test` processes of one run — share a queue table. A stable name was
+ * not enough: `ensureOutboxTable()` DROPs and recreates a drifted table, so one
+ * process's drift recreate could drop the table another process's broker was
+ * polling, and a table left behind by a killed run was silently reused by the
+ * next one. Per-process tables make both impossible; the guard drops its own
+ * table on the way out and `sweepStaleTestOutboxTables()` reaps ones a killed
+ * run could not drop.
+ */
+const RUN_TAG = `${process.pid}_${Date.now().toString(36)}_${crypto.randomBytes(3).toString('hex')}`
+
 const OUTBOX_TABLE =
-  process.env.KEYCHAIN_OUTBOX_TABLE || 'resolution_test.keychain_event_outbox'
+  process.env.KEYCHAIN_OUTBOX_TABLE || `resolution_test.keychain_event_outbox_${RUN_TAG}`
 
 /** Split `schema.table` into its parts (validated by the caller's DDL). */
 function splitOutboxTable(table = OUTBOX_TABLE) {
@@ -100,6 +116,121 @@ function splitOutboxTable(table = OUTBOX_TABLE) {
  * drift from production as columns, defaults, constraints or indexes change.
  */
 const PRODUCTION_OUTBOX_TABLE = 'resolution.keychain_event_outbox'
+
+/** Mongo databases that belong to a deployment, never to a test run. */
+const PRODUCTION_MONGO_DATABASES = new Set(['keychains', 'admin', 'config', 'local'])
+
+/** Schema production's outbox lives in; a test queue must never be created there. */
+const PRODUCTION_OUTBOX_SCHEMA = 'resolution'
+
+/** `because Mongo URL path` — the database a connection string selects, if any. */
+function mongoDbFromUrl(url) {
+  const match = /^mongodb(?:\+srv)?:\/\/[^/]+\/([^?/#]+)/.exec(String(url || ''))
+  return match ? decodeURIComponent(match[1]) : null
+}
+
+/**
+ * Refuse to run the suite against deployment state.
+ *
+ * The isolation in this file is opt-in by construction: `MONGO_DB_NAME`,
+ * `KEYCHAIN_OUTBOX_TABLE` and the namespace prefix all default to per-process
+ * values. The hazard that actually bit was a *human* override —
+ * `MONGO_DB_NAME=keychains npm test` points every broker at the live store and
+ * `dropIsolatedDatabase()` then drops production on the way out, and
+ * `KEYCHAIN_OUTBOX_TABLE=resolution.keychain_event_outbox` silently switches
+ * the "isolated" queue back to production's (`ensureOutboxTable()` reports
+ * `skipped`, the suite reads and writes the live queue). Neither is a typo the
+ * code can notice at use time; both are decidable from the environment alone,
+ * so they are decided here, once, before anything connects.
+ *
+ * Fail-closed rules (`NEXUS_TEST_ALLOW_SHARED_STORES=1` is the deliberate
+ * escape hatch, and is the only way to pin a shared store):
+ *   - `NODE_ENV=production` is refused outright;
+ *   - an explicit `MONGO_DB_NAME` must look like a test database (contain
+ *     "test") and must not be a deployment database;
+ *   - the resolved keychain database must not be a deployment database;
+ *   - the outbox table must not be production's, and must not live in
+ *     production's `resolution` schema.
+ *
+ * A `MONGO_URL` that selects a deployment database is only a warning: every
+ * broker boot path in the suite overrides the database name explicitly (and
+ * `dropIsolatedDatabase()` never uses the URL's), so the URL alone cannot move
+ * a test's writes into production — but it is exactly how a *new* test file
+ * would, so it is said out loud.
+ *
+ * Returns `{ mongoDb, outboxTable, problems, warnings }`; throws when any
+ * problem is found, so the run fails at import time with the reason and the
+ * override, not with a confusing authorization or data error later.
+ */
+function assertSafeTestEnv(env = process.env, overrides = {}) {
+  const mongoDb = String(overrides.mongoDb ?? MONGO_DB_NAME).trim()
+  const outboxTable = String(overrides.outboxTable ?? OUTBOX_TABLE).trim()
+  const problems = []
+  const warnings = []
+
+  if (String(env.NEXUS_TEST_ALLOW_SHARED_STORES || '') === '1') {
+    // Explicit, greppable opt-in for debugging against a shared store.
+    return { mongoDb, outboxTable, problems, warnings, allowed: true }
+  }
+
+  if (String(env.NODE_ENV || '').toLowerCase() === 'production') {
+    problems.push('NODE_ENV=production — a test run must never identify as production')
+  }
+
+  const requestedDb = String(env.MONGO_DB_NAME || '').trim()
+  if (requestedDb) {
+    if (PRODUCTION_MONGO_DATABASES.has(requestedDb.toLowerCase())) {
+      problems.push(
+        `MONGO_DB_NAME=${requestedDb} is a deployment database and this suite DROPS it on the way out`,
+      )
+    } else if (!/test/i.test(requestedDb)) {
+      problems.push(
+        `MONGO_DB_NAME=${requestedDb} does not look like a test database (no "test" in the name); ` +
+        'this suite drops it in teardown, so pinning an arbitrary name is refused',
+      )
+    }
+  }
+  if (PRODUCTION_MONGO_DATABASES.has(mongoDb.toLowerCase())) {
+    problems.push(`resolved keychain database ${mongoDb} is a deployment database`)
+  }
+
+  const urlDb = mongoDbFromUrl(env.MONGO_URL)
+  if (urlDb && PRODUCTION_MONGO_DATABASES.has(urlDb.toLowerCase()) && !requestedDb) {
+    warnings.push(
+      `MONGO_URL selects the deployment database "${urlDb}"; every boot in this suite overrides ` +
+      'MONGO_DB_NAME, but a new test file that forgets to would write live state',
+    )
+  }
+
+  if (outboxTable === PRODUCTION_OUTBOX_TABLE) {
+    problems.push(
+      `KEYCHAIN_OUTBOX_TABLE=${outboxTable} is production's queue; the suite would claim and write ` +
+      'live outbox rows',
+    )
+  } else {
+    try {
+      const { schema } = splitOutboxTable(outboxTable)
+      if (schema === PRODUCTION_OUTBOX_SCHEMA) {
+        problems.push(
+          `KEYCHAIN_OUTBOX_TABLE=${outboxTable} lives in production's "${PRODUCTION_OUTBOX_SCHEMA}" ` +
+          'schema; test queues belong in resolution_test',
+        )
+      }
+    } catch (err) {
+      problems.push(err.message)
+    }
+  }
+
+  for (const warning of warnings) console.warn(`[isolated-mongo] WARNING: ${warning}`)
+  if (problems.length) {
+    throw new Error(
+      'refusing to run: this test configuration would touch deployment state\n' +
+      problems.map((p) => `  - ${p}`).join('\n') +
+      '\nSet NEXUS_TEST_ALLOW_SHARED_STORES=1 only if you really mean to share a live store.',
+    )
+  }
+  return { mongoDb, outboxTable, problems, warnings, allowed: false }
+}
 
 /**
  * Shape of an outbox table as PostgreSQL reports it: column names in order,
@@ -310,10 +441,109 @@ async function waitForKeychainReady(baseUrl, timeoutMs = 30_000) {
   throw new Error(`keychain service not ready after ${timeoutMs}ms (last: ${last})`)
 }
 
-/** Drop this process's isolated database (call from the file's after hook). */
+/**
+ * Drop this process's isolated database (call from the file's after hook) and
+ * verify it is actually gone.
+ *
+ * `dropDatabase()` returning without an error is not proof: a prior run left
+ * three `keychains_test_*` databases behind because the client could not
+ * authenticate (the PTY suite never loaded `.env`, so its URL had no
+ * credentials) and every caller ignored the result. The assertion is cheap and
+ * turns "the suite cleans up after itself" from a claim into a check. When the
+ * client lacks `listDatabases` (code 13) verification is skipped with a
+ * warning rather than failing a run that did drop the database.
+ */
 async function dropIsolatedDatabase(mongo) {
   if (!mongo) return
   await mongo.db(MONGO_DB_NAME).dropDatabase()
+  try {
+    const { databases } = await mongo.db('admin').admin().listDatabases({ nameOnly: true })
+    if (databases.some((db) => db.name === MONGO_DB_NAME)) {
+      throw new Error(
+        `dropDatabase() returned but ${MONGO_DB_NAME} is still listed — the next run would inherit ` +
+        'these checkpoints',
+      )
+    }
+  } catch (err) {
+    if (err && err.code === 13) {
+      console.warn('[isolated-mongo] could not verify the drop (no listDatabases privilege)')
+      return
+    }
+    throw err
+  }
+}
+
+/**
+ * Drop this process's test outbox table. Refuses production's table and
+ * production's schema outright — the name is derived here, so the only way to
+ * reach this function with either is a deliberate override.
+ */
+/** Whether this process's test outbox table currently exists. */
+async function testOutboxTableExists(overrides = {}) {
+  const { schema, table } = splitOutboxTable(OUTBOX_TABLE)
+  const pool = outboxPool(overrides)
+  try {
+    const res = await pool.query('SELECT to_regclass($1) AS reg', [`${schema}.${table}`])
+    return Boolean(res.rows[0] && res.rows[0].reg)
+  } finally {
+    await pool.end().catch(() => {})
+  }
+}
+
+async function dropTestOutboxTable(overrides = {}, tableOverride = null) {
+  const { schema, table } = splitOutboxTable(tableOverride || OUTBOX_TABLE)
+  const target = `${schema}.${table}`
+  if (target === PRODUCTION_OUTBOX_TABLE || schema === PRODUCTION_OUTBOX_SCHEMA) {
+    throw new Error(`refusing to drop ${target}: that is production's outbox`)
+  }
+  const pool = outboxPool(overrides)
+  try {
+    await pool.query(`DROP TABLE IF EXISTS ${schema}.${table}`)
+    return target
+  } finally {
+    await pool.end().catch(() => {})
+  }
+}
+
+/**
+ * Reap test outbox tables from runs that were killed before teardown.
+ *
+ * Per-process table names prevent cross-run interference, but a `kill -9` (or a
+ * CI job timeout) skips the drop and the tables would accumulate. Names embed
+ * the run's start time (base-36), so a table is only swept when it is older
+ * than `olderThanMs` and belongs to another process. Tables from the old shared
+ * naming scheme (`keychain_event_outbox`) do not match the pattern and are left
+ * alone.
+ */
+async function sweepStaleTestOutboxTables({ olderThanMs = 6 * 60 * 60 * 1000, overrides = {} } = {}) {
+  const pool = outboxPool(overrides)
+  const dropped = []
+  try {
+    const res = await pool.query(
+      `SELECT table_name
+         FROM information_schema.tables
+        WHERE table_schema = 'resolution_test'
+          AND table_name LIKE 'keychain_event_outbox\\_%'`,
+    )
+    const cutoff = Date.now() - olderThanMs
+    for (const row of res.rows) {
+      const match = /^keychain_event_outbox_(\d+)_([0-9a-z]+)_[0-9a-f]+$/.exec(row.table_name)
+      if (!match) continue
+      if (Number(match[1]) === process.pid) continue
+      const startedAt = parseInt(match[2], 36)
+      if (!Number.isFinite(startedAt) || startedAt > cutoff) continue
+      await pool.query(`DROP TABLE IF EXISTS resolution_test.${row.table_name}`)
+      dropped.push(row.table_name)
+    }
+    return dropped
+  } finally {
+    await pool.end().catch(() => {})
+  }
+}
+
+/** SQL string literal, quoted for embedding in a predicate. */
+function sqlLiteral(value) {
+  return `'${String(value).replace(/'/g, "''")}'`
 }
 
 /**
@@ -321,10 +551,19 @@ async function dropIsolatedDatabase(mongo) {
  * suite's own inserts leave behind. Production traffic (`peb`, `vision`, …)
  * never matches it, so this counter is quiet even while the live system is
  * delivering.
+ *
+ * The prefix set is history: those four namespaces are what earlier runs wrote
+ * before the suite had its own table (eighteen rows are still in production
+ * because of it), so they stay matched. The last clause is NOT history — it is
+ * this run's own namespace prefix, taken from the environment, which is what
+ * makes the guard cover a custom `KEYCHAIN_OUTBOX_NAMESPACE_PREFIX` (e.g.
+ * `sol-e2e-…`) that no fixed regex knows about. A hardcoded signature only
+ * ever catches leaks that look like past leaks.
  */
 const PRODUCTION_TEST_SIGNATURE =
   "(source_namespace ~ '^(keychain-test-|sol-e2e-|broker-smoke|keychains-)' " +
-  "OR actor ~ '^broker-smoke')"
+  "OR actor ~ '^broker-smoke' " +
+  `OR source_namespace LIKE ${sqlLiteral(OUTBOX_NAMESPACE_PREFIX)} || '%')`
 
 function outboxPool(overrides = {}) {
   const { Pool } = require('pg')
@@ -417,7 +656,13 @@ async function assertProductionOutboxUnchanged(baseline, overrides = {}) {
  *   4. `teardown()` stops it — this runs even when a test failed;
  *   5. `assertProductionOutboxUnchanged()` fails the file if a test-signature
  *      row reached production's queue. It runs last and runs even when
- *      `teardown()` throws, so a shutdown error cannot mask a leak.
+ *      `teardown()` throws, so a shutdown error cannot mask a leak;
+ *   6. the file's own test outbox table is dropped — unless step 5 reported a
+ *      leak, in which case it is kept for post-mortem (the stale-table sweep
+ *      reaps it later).
+ *
+ * Step 0, before provisioning, reaps stale tables from killed runs; a sweep
+ * failure is a warning, never a failed run.
  *
  * The node:test hook registrars are passed in rather than registered on import
  * so that ordering is the guard's business, not the file's: the baseline is
@@ -442,6 +687,14 @@ function registerProductionOutboxGuard({ before, after, setup = null, teardown =
   }
   let baseline = null
   before(async () => {
+    try {
+      const swept = await sweepStaleTestOutboxTables()
+      if (swept.length) {
+        console.log(`[isolated-mongo] swept ${swept.length} stale test outbox table(s): ${swept.join(', ')}`)
+      }
+    } catch (err) {
+      console.warn(`[isolated-mongo] stale test-outbox sweep skipped: ${err.message}`)
+    }
     // Provision first: the file's broker claims from this table, and the
     // baseline must predate any test write.
     await ensureOutboxTable()
@@ -457,28 +710,53 @@ function registerProductionOutboxGuard({ before, after, setup = null, teardown =
         failures.push(err)
       }
     }
-    // Always the last thing this file does, and always attempted: a leak into
+    // Always attempted, and always before the table drop: a leak into
     // production's queue must never be reported as a plain teardown failure.
+    let leaked = false
     try {
       await assertProductionOutboxUnchanged(baseline)
     } catch (err) {
       failures.push(err)
+      leaked = true
+    }
+    if (leaked) {
+      // Keep the rows that would explain the leak; the sweep reaps the table.
+      const present = await testOutboxTableExists().catch(() => false)
+      if (present) {
+        console.warn(`[isolated-mongo] keeping ${OUTBOX_TABLE} for post-mortem (a leak was reported)`)
+      }
+    } else {
+      try {
+        await dropTestOutboxTable()
+      } catch (err) {
+        failures.push(err)
+      }
     }
     if (failures.length === 1) throw failures[0]
     if (failures.length > 1) {
-      throw new AggregateError(
-        failures,
-        'production-outbox guard: teardown and the production-queue assertion both failed',
-      )
+      throw new AggregateError(failures, 'production-outbox guard: more than one guard step failed')
     }
   })
 }
+
+// Fail closed at import time: a misconfigured environment must break the run
+// before a client connects, not after something has been written.
+assertSafeTestEnv()
 
 module.exports = {
   MONGO_DB_NAME,
   OUTBOX_NAMESPACE_PREFIX,
   OUTBOX_TABLE,
+  RUN_TAG,
   PRODUCTION_OUTBOX_TABLE,
+  PRODUCTION_TEST_SIGNATURE,
+  PRODUCTION_MONGO_DATABASES,
+  PRODUCTION_OUTBOX_SCHEMA,
+  assertSafeTestEnv,
+  mongoDbFromUrl,
+  testOutboxTableExists,
+  dropTestOutboxTable,
+  sweepStaleTestOutboxTables,
   mongoUrl,
   brokerEnv,
   splitOutboxTable,

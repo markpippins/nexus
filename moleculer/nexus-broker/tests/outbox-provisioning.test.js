@@ -39,6 +39,7 @@ const dotenv = require('dotenv')
 const { Pool } = require('pg')
 const {
   PRODUCTION_OUTBOX_TABLE,
+  PRODUCTION_TEST_SIGNATURE,
   ensureOutboxTable,
   outboxShape,
   shapesMatch,
@@ -50,8 +51,10 @@ dotenv.config({ path: path.join(__dirname, '..', '.env') })
 const HELPER_PATH = require.resolve('./helpers/isolated-mongo')
 const PROBE_TABLE = `resolution_test.keychain_event_outbox_probe_${process.pid}`
 const PROBE_NAMESPACE = `keychain-test-provision-${process.pid}`
-const TEST_SIGNATURE =
-  "(source_namespace ~ '^(keychain-test-|sol-e2e-|broker-smoke|keychains-)' OR actor ~ '^broker-smoke')"
+// One authority for the leak signature: the helper's (static history plus THIS
+// run's namespace prefix). A local copy here would silently stop matching a
+// run whose prefix differs from the historical four.
+const TEST_SIGNATURE = PRODUCTION_TEST_SIGNATURE
 
 function makePool() {
   return new Pool({
