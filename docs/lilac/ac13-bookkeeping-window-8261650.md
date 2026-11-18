@@ -7,6 +7,11 @@ clause of plan 8261650 as unmet and re-record dispositions (a second
 exactly-one-marker-per-thread invariant) or issue a third close-out receipt
 (forbidden by the window).
 
+The two files under [`ac13-bookkeeping-window-8261650/`](ac13-bookkeeping-window-8261650/)
+are **unexecuted drafts** of a bounded follow-on write that still needs operator
+approval. No SQL from them has been run and the authorization record has not been
+posted; the live rows are unchanged (`pending`, payload md5s recorded below).
+
 ## Authorization
 
 | Field | Value |
@@ -91,5 +96,23 @@ bookkeeping. The verifier's protected set is identity-pinned (47 baseline rows +
 | Blueprint reconciliation | set `blueprint_status = 'completed'` for 8261650 / 8261668 / 8261673 to match receipt-derived `REVIEW_PASS` | same approval; also update `verify-workrequest-disposition.py` expectation first (residual 4) |
 | Live `receipt.issued` proof | emit/observe a `receipt.issued` kernel row from a new receipt | requires a kernel restart or a fresh receipt — neither is authorized |
 
-The drafted SQL for the first two (guarded by exact pre-image, with rollback) was
-prepared in the 2026-11-18 pass and is not applied.
+### Draft artifacts (versioned here, NOT executed)
+
+| File | What it is | SHA-256 |
+|---|---|---|
+| [`ac13_annotation_8261650.sql`](ac13-bookkeeping-window-8261650/ac13_annotation_8261650.sql) | the guarded, single-transaction write: `BEGIN` → `SELECT … FOR UPDATE` on the three rows → `$guard$` pre-state block (3 rows / 3 `pending` / AC13 still verbatim) → `jsonb_set` of the AC13 entry guarded on the exact `$before$` payload → status `UPDATE … AND blueprint_status = 'pending'` (expect `UPDATE 3`) → `$post$` postcondition block → `COMMIT`; the rollback statements are included commented out | `79c17c470f84528df7fdcf0d0543f1bb8344289bfcfda7c463f655fb67670646` |
+| [`ac13_write_authorization.md`](ac13-bookkeeping-window-8261650/ac13_write_authorization.md) | the authorization-record draft that must be posted **before** the SQL runs, carrying the pre-image md5s, `updated_at` values, row ids, rollback and the cross-check that moves | `703a11cafcad805f582ac2609cc81e58ff6130bf87140d9bc61d2d3dcd763e5a` |
+
+Both files are byte-for-byte copies of the 2026-11-18 drafts (digests above are of
+the committed files and of the originals they were copied from). They are
+**drafts pending operator approval**: not executed, no authorization record posted.
+The pre-image they pin is still the live pre-image — `8261650`
+`207c537d067efbcaef0a61d60d92daf4`, `8261668` `95f5f6263f5e193efe412456fa551514`,
+`8261673` `2354af0cb8d457bb06e41ebc11a591d4`, all `blueprint_status = 'pending'`.
+If those digests no longer match, the SQL's own `$before$` guard refuses and the
+whole transaction rolls back; re-capture the pre-image before retrying.
+
+Execution is a separate, operator-gated act: post the authorization draft, run
+`psql -v ON_ERROR_STOP=1 -f docs/lilac/ac13-bookkeeping-window-8261650/ac13_annotation_8261650.sql`,
+then re-run `ac13_verify_8261650.py` and update the disposition-verifier
+expectation for residual 4 in the same change set.
