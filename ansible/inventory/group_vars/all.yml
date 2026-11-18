@@ -14,7 +14,12 @@
 # ── Host topology ─────────────────────────────────────────────────────
 # titanium owns PostgreSQL + Redis + Conduit. Every other host is a client
 # of those services over LAN.
-authority_host: 192.168.1.120
+#
+# Re-verified 2026-11-18: 192.168.1.71 answers on :3100 and :5432; the
+# previous value (192.168.1.120) refused both. compose.vanadium.yaml hardcoded
+# the same stale address — compose cannot read this variable, so the two are
+# hand-copied twins and must be changed together.
+authority_host: 192.168.1.71
 
 # ── Code checkout ─────────────────────────────────────────────────────
 nexus_root: /home/codex/dev/nexus
