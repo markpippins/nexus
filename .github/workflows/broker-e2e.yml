@@ -23,9 +23,10 @@
 # Included: tests/pty-transport.e2e.test.js — proven exit 0 hermetically
 # (fresh Mongo on :28017, free ports, no NATS, no PG).
 #   tests/keychain-delta.test.js — self-seeds its full-manifest anchor via
-#   the API on a fresh Mongo (worktree fix, same PR), with PG shimmed to the
-#   real agent_records schema + grouping-rule seed rows
-#   (tests/fixtures/keychain-delta-ci-pg.sql). Proven on all three branches:
+#   the API on a fresh Mongo, and seeds its own agent_records rows (no fixture
+#   seed: the harness builds its PostgreSQL database from
+#   sql/ci-bootstrap/nexus-ci-bootstrap.sql — see helpers/isolated-pg.js).
+#   Proven on all three branches:
 #   fresh store (seeds + cleans up), re-run (re-seeds), pre-seeded store
 #   (adopts existing anchor, restores around it). The one-line service fix
 #   in keychain-snapshot.service.ts makes a fresh store take the D6 base
@@ -158,6 +159,11 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+    env:
+      # The shared-database census (tests/helpers/shared-db-guard.js) asserts
+      # row counts, not just harness signatures, when nothing else writes the
+      # database. In this job the only writer is the suite itself.
+      NEXUS_TEST_STRICT_SHARED_DB: '1'
     services:
       postgres:
         image: pgvector/pgvector:pg17
@@ -192,10 +198,31 @@ jobs:
         working-directory: moleculer/nexus-broker
         run: npm ci && npm run build
       # Pure unit cases: no PG, no Mongo, no broker boot. Run before the
-      # service-dependent steps so a drift regression fails in seconds.
-      - name: Keychain drift unit cases
+      # service-dependent steps so a drift regression fails in seconds. The
+      # env guard is included here because it is the cheapest possible gate on
+      # the failure this whole effort exists to prevent — a test run pointed at
+      # deployment state — and it needs no services to prove it refuses.
+      - name: Unit cases (drift + fail-closed env guard)
         working-directory: moleculer/nexus-broker
-        run: node --test tests/keychain-drift.test.js
+        run: node --require ./tests/helpers/env-guard.js --test tests/keychain-drift.test.js tests/env-guard.test.js tests/broker-log.test.js tests/shared-db-guard.test.js
+
+      # Negative control for the preload: the step above proves the guard does
+      # NOT fire on a runner (which is the safe answer only if the guard is
+      # actually loaded), so this proves it DOES fire when the environment
+      # names deployment state. Without this pair a preload that silently
+      # failed to resolve — or a stale symlinked node_modules on a developer
+      # machine — would look identical to a passing suite.
+      - name: Prove the env-guard preload is live (negative control)
+        working-directory: moleculer/nexus-broker
+        run: |
+          if MONGO_DB_NAME=keychains node --require ./tests/helpers/env-guard.js -e 'process.exit(0)' >/tmp/env-guard-control.log 2>&1; then
+            echo 'the preload allowed a deployment database name — it is not guarding anything'
+            cat /tmp/env-guard-control.log
+            exit 1
+          fi
+          grep -q 'MONGO_DB_NAME=keychains is a deployment database' /tmp/env-guard-control.log \
+            || { echo 'the preload failed for a reason other than the guard'; cat /tmp/env-guard-control.log; exit 1; }
+          echo 'env guard preload is live: refusing a deployment database name as expected'
       # pg_isready health checks validate neither credentials nor database
       # (they pass with any server that accepts connections). The only honest
       # readiness signal for schema application is an authenticated query as
@@ -212,22 +239,28 @@ jobs:
           done
           echo "postgres never accepted an authenticated connection"
           exit 1
-      - name: Apply keychain-delta PG shim
-        env:
-          PGPASSWORD: pgpass
-        run: |
-          psql -v ON_ERROR_STOP=1 -h localhost -U pguser -d nexus \
-            < moleculer/nexus-broker/tests/fixtures/keychain-delta-ci-pg.sql
-          # Postcondition: the anchor state vector must resolve to exactly
-          # 4 logical instances (2 chains collapse + 1 standalone).
-          N=$(psql -h localhost -U pguser -d nexus -tAc \
-            "SELECT count(*) FROM nebula.agent_records")
-          echo "agent_records rows: $N"
-          [ "$N" -eq 5 ] || { echo "shim seed rows missing"; exit 1; }
+      # The fixture-vs-canonical check that used to sit here is gone, along with
+      # the fixture it checked. Nothing applied that shim any more: the harness
+      # builds every database from sql/ci-bootstrap/nexus-ci-bootstrap.sql, so
+      # the property the check approximated ("the outbox table the poller uses
+      # matches the canonical schema") is now proven by the suites themselves,
+      # in both jobs, on a freshly created database each time. A check whose
+      # subject has no consumer reads as assurance without providing any.
+
+      # Neither step names a database any more. The harness creates its own
+      # (tests/helpers/isolated-pg.js), applies the canonical bootstrap to it
+      # and tells the broker to poll it via KEYCHAIN_SOURCE_DATABASES — which is
+      # the variable that actually selects the polled database, so pinning it to
+      # `nexus` here used to keep the suite on the shared database no matter
+      # what PG_DB_NAME said. Only credentials remain in the environment.
       - name: PTY transport E2E (hermetic booting suite)
         working-directory: moleculer/nexus-broker
         env:
           MONGO_URL: mongodb://localhost:28017
+          PG_HOST: localhost
+          PG_PORT: '5432'
+          PG_USER: pguser
+          PG_PASSWORD: pgpass
         run: node --test tests/pty-transport.e2e.test.js
       - name: Keychain delta E2E (self-seeding anchor)
         working-directory: moleculer/nexus-broker
@@ -237,7 +270,6 @@ jobs:
           PG_PORT: '5432'
           PG_USER: pguser
           PG_PASSWORD: pgpass
-          PG_DATABASE: nexus
         run: node --test tests/keychain-delta.test.js
 
   pg-integration-e2e:
@@ -282,6 +314,14 @@ jobs:
       PGPASSWORD: pgpass
       PGDATABASE: nexus
       MONGO_URL: mongodb://localhost:28017/nexus
+      # The broker suites in this job no longer read these: each test creates
+      # its own database and polls it by name. The values above serve the
+      # peb-kernel and execution-srv processes only.
+      #
+      # Strict shared-database census: apart from the kernel (whose writes are
+      # its own), nothing else writes `nexus` while the suite runs, so a row
+      # count change there is the suite's doing.
+      NEXUS_TEST_STRICT_SHARED_DB: '1'
     steps:
       - uses: actions/checkout@v4
 
@@ -350,6 +390,21 @@ jobs:
         working-directory: moleculer/nexus-broker
         run: npm ci && npm run build
 
+      # Outbox provisioning: the LIKE clone, drift reconcile, cross-process
+      # concurrency, and the guard wiring. It needs the seeded
+      # resolution.keychain_event_outbox to clone from, which is why it lives
+      # in this job; it was previously in NO workflow, so the reconciliation
+      # this suite depends on was unverified in CI. Its own leak case is the
+      # regression test for the eighteen test rows the harness once wrote into
+      # production's queue.
+      - name: Unit — outbox provisioning, drift and leak guard
+        working-directory: moleculer/nexus-broker
+        run: |
+          set -o pipefail
+          node --test --test-reporter=tap tests/outbox-provisioning.test.js \
+            2>&1 | tee /tmp/tap-outbox-provisioning.log
+          python3 ../../bin/pgie-evidence.py guard /tmp/tap-outbox-provisioning.log 12 "outbox-provisioning" /tmp/pgie-results.tsv
+
       # The bridge imports psycopg2 lazily inside the persist step; a missing
       # module would surface as a confusing producer failure mid-test.
       # (GitHub runners export PIP_BREAK_SYSTEM_PACKAGES=1, so the house
@@ -395,10 +450,15 @@ jobs:
       # final steps emit + upload the artifact with if:always(), so FAILED
       # runs produce evidence too. NOTE: these steps are the only callers;
       # do not duplicate guard logic inline — change the helper instead.
+      # PEB_PG_DATABASE names the database the kernel above was booted against:
+      # it admits the bridge's claim by reading the row the bridge wrote, so
+      # both sides must agree. It is explicit and applies to this file only;
+      # every other suite builds and uses its own per-run database.
       - name: E2E — harness bridge producer cycle + attempt lifecycle
         working-directory: moleculer/nexus-broker
         env:
           PEB_BASE_URL: http://localhost:18099
+          PEB_PG_DATABASE: nexus
         run: |
           set -o pipefail
           node --test --test-reporter=tap \
@@ -414,6 +474,37 @@ jobs:
             2>&1 | tee /tmp/tap-broker-smoke.log
           python3 ../../bin/pgie-evidence.py guard /tmp/tap-broker-smoke.log 12 "broker-smoke" /tmp/pgie-results.tsv
 
+      # The quarantine is a data disposition, so it has to be provable against a
+      # real broker and not just in SQL: this boots one on a private probe table
+      # and checks that a set-aside row is never claimed while a fresh event
+      # still lands a checkpoint attributable to it. Lives in this job because it
+      # needs the repo-canonical bootstrap (nebula.agent_records) and a broker.
+      - name: E2E — outbox quarantine disposition (fresh event still broadcasts)
+        working-directory: moleculer/nexus-broker
+        run: |
+          set -o pipefail
+          node --test --test-reporter=tap tests/outbox-quarantine.e2e.test.js \
+            2>&1 | tee /tmp/tap-outbox-quarantine.log
+          python3 ../../bin/pgie-evidence.py guard /tmp/tap-outbox-quarantine.log 2 "outbox-quarantine" /tmp/pgie-results.tsv
+
+      # The read half of the shared-database guard needs its CONTROL to run, not
+      # just to exist. This boots the real broker twice with one difference,
+      # KEYCHAIN_SOURCE_DATABASES: pointed at `nexus` the guard must catch the
+      # poller (the historical leak, which read the deployment database every
+      # five seconds), pointed at the per-run database it must see nothing. The
+      # control's namespace prefix matches nothing in `nexus`, so the reproduced
+      # leak is a read that rolls back — no row there is touched.
+      # It skips itself on a host with no shared database; expecting exactly two
+      # passes is what turns that skip into a failure here, where the database
+      # does exist, so the proof cannot quietly stop running.
+      - name: E2E — shared-database read guard (historical leak control)
+        working-directory: moleculer/nexus-broker
+        run: |
+          set -o pipefail
+          node --test --test-reporter=tap tests/shared-db-read-guard.e2e.test.js \
+            2>&1 | tee /tmp/tap-shared-db-read-guard.log
+          python3 ../../bin/pgie-evidence.py guard /tmp/tap-shared-db-read-guard.log 2 "shared-db-read-guard" /tmp/pgie-results.tsv
+
       # execution-srv's file:../heartbeat-client dependency has no committed
       # lock and needs its dist/ built (same two steps as its Dockerfile build
       # stage). Without this, `node dist/index.js` dies with MODULE_NOT_FOUND
@@ -426,27 +517,20 @@ jobs:
       # worker surface against the REAL legacy execution-srv over the same PG.
       # execution-srv on a non-standard port (nothing on the runner may already
       # own 3110, but the explicit pair removes the dependence entirely).
+      # The test now boots the legacy execution-srv itself, on an ephemeral
+      # port, against its own per-run database (helpers/isolated-pg.js). The
+      # step only has to produce dist/; a separately booted server would read a
+      # different database than the broker under comparison.
       - name: E2E — legacy execution-srv parity (broker-pg-integration class)
         working-directory: moleculer/nexus-broker
-        env:
-          LEGACY_EXECUTION_URL: http://localhost:32110
         run: |
           set -o pipefail
           pushd ../../typescript/execution-srv
           npm ci && npm run build
-          PGHOST=localhost PGPORT=5432 PGUSER=pguser PGPASSWORD=pgpass PGDATABASE=nexus \
-            PORT=32110 node dist/index.js > /tmp/execution-srv.log 2>&1 &
-          SRV_PID=$!
           popd
-          for i in $(seq 1 30); do
-            curl -sf --max-time 2 http://localhost:32110/health >/dev/null 2>&1 && break
-            sleep 1
-          done
-          curl -sf http://localhost:32110/health >/dev/null || { echo "execution-srv never became healthy"; tail -40 /tmp/execution-srv.log; exit 1; }
           node --test --test-reporter=tap tests/legacy-parity.test.js \
             2>&1 | tee /tmp/tap-legacy-parity.log
           STATUS=$?
-          kill $SRV_PID 2>/dev/null || true
           python3 ../../bin/pgie-evidence.py guard /tmp/tap-legacy-parity.log 8 "legacy-parity" /tmp/pgie-results.tsv
           exit $STATUS
 
@@ -467,7 +551,7 @@ jobs:
             --pg-port 5432 --mongo-port 28017 --kernel-port 18099 --legacy-port 32110 \
             --out evidence/pgie-evidence.json
           cp /tmp/tap-bridge-lifecycle.log /tmp/tap-broker-smoke.log \
-             /tmp/tap-legacy-parity.log evidence/ 2>/dev/null || true
+             /tmp/tap-legacy-parity.log /tmp/tap-outbox-provisioning.log evidence/ 2>/dev/null || true
           cat evidence/pgie-evidence.json
 
       - name: Upload pgie-evidence/1 artifact (pass and fail runs)

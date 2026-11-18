@@ -222,6 +222,7 @@ export default class WitnessedRunsWorker extends Service {
         user: process.env.PG_USER || "pguser",
         password: process.env.PG_PASSWORD || "pgpass",
         database: process.env.PG_DB_NAME || "nexus",
+        application_name: process.env.PGAPPNAME || "nexus-broker",
         options: "-c search_path=execution",
         max: 5,
         idleTimeoutMillis: 30000,

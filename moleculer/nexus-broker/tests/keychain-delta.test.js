@@ -26,10 +26,15 @@
  *     its own PTY_WS_PORT (default 3130). Without overriding that a second
  *     broker cannot boot while the production unit is running — it dies with
  *     EADDRINUSE on 127.0.0.1:3130 before the gateway ever answers.
- *   - The test writes into the shared `keychains` database, so it captures the
- *     pointer/state documents first and restores them on the way out —
- *     including on SIGINT/SIGTERM, because an interrupted run otherwise
- *     leaves committed checkpoints that advance the live active pointer.
+ *   - The test does NOT write into the shared `keychains` database or
+ *     production's outbox queue: the broker boots against this process's own
+ *     Mongo database and claims from this process's own outbox table
+ *     (helpers/isolated-mongo.js). The pre-state capture / restore below is a
+ *     re-run guard for a pinned store — a fresh-store run seeds its anchor and
+ *     deletes only its own documents.
+ *   - That restore is still registered on SIGINT/SIGTERM: an interrupted run
+ *     leaves committed checkpoints behind, and on a pinned store those would
+ *     advance the active pointer for the next run.
  *   - Deltas are addressed by prevVersion pointers, not contiguous version
  *     ranges, so removing the checkpoints this test creates cannot break
  *     reconstruction of any later checkpoint.
@@ -42,6 +47,73 @@ const path = require('node:path')
 const dotenv = require('dotenv')
 const { MongoClient } = require('mongodb')
 const { getEphemeralPort } = require('./helpers/ephemeral-ports')
+const { createBrokerLog } = require('./helpers/broker-log')
+const {
+  MONGO_DB_NAME: TEST_MONGO_DB,
+  OUTBOX_NAMESPACE_PREFIX,
+  OUTBOX_TABLE,
+  mongoUrl,
+  registerProductionOutboxGuard,
+  dropIsolatedDatabase,
+  waitForKeychainReady,
+} = require('./helpers/isolated-mongo')
+const { TEST_PG_DATABASE, ensureTestDatabase, pgConfig, TEST_APPLICATION_NAME } = require('./helpers/isolated-pg')
+
+//
+// PG records THIS test owns.
+//
+// The delta assertions need a non-empty current-state view: the service builds
+// the anchor state vector from `nebula.agent_records` (the view over the
+// temporal `agent_records_history`), and an empty view materializes no
+// `record_type_state` rows, so "rewind reconstructs the materialized current
+// state" has nothing to compare against.
+//
+// Those rows used to be shipped by the CI shim (`keychain-delta-ci-pg.sql`),
+// which is fixture-as-scaffolding: the suite was green because an operator-managed
+// step had prepared the database, and the fixture could drift from the schema it
+// mirrors with nothing to notice. They are created here instead, with ids this
+// test owns, and deleted on the way out. The shapes are the ones that exercise
+// the resolver's grouping rules: an amendment chain (2 -> 1 instance), a
+// supersession chain (2 -> 1) and a standalone (1), i.e. 4 logical instances.
+const PG_RECORD_IDS = [
+  '11111111-1111-4111-8111-111111111111',
+  '22222222-2222-4222-8222-222222222222',
+  '33333333-3333-4333-8333-333333333333',
+  '44444444-4444-4444-8444-444444444444',
+  '55555555-5555-4555-8555-555555555555',
+]
+
+async function seedPgRecords() {
+  const { Pool } = require('pg')
+  const pool = new Pool({ ...pgConfig(), connectionTimeoutMillis: 3000 })
+  try {
+    // Fixed recorded_on_dt so the (id, recorded_on_dt) PK makes a re-seed a no-op.
+    await pool.query(
+      `INSERT INTO nebula.agent_records_history
+         (id, record_type, role, title, content, tags, created_at, level, visibility_scope,
+          recorded_on_dt, recorded_until_dt, valid_from, valid_until)
+       VALUES
+         ('11111111-1111-4111-8111-111111111111', 'report', 'engineer', 'Report 05aa1111: initial issuance', 'initial body', '{}', '2026-01-01T00:29:00Z', 1, 'all', '2026-01-01T00:00:00Z', 'infinity', '2026-01-01T00:00:00Z', 'infinity'),
+         ('22222222-2222-4222-8222-222222222222', 'report', 'engineer', 'Report 05aa1111: amendment one', 'amended body', '{}', '2026-01-01T00:20:00Z', 1, 'all', '2026-01-01T00:00:01Z', 'infinity', '2026-01-01T00:00:01Z', 'infinity'),
+         ('33333333-3333-4333-8333-333333333333', 'analysis', 'analyst', 'Analysis: superseded baseline', 'baseline body', '{supersedes:}', '2026-01-01T00:15:00Z', 2, 'all', '2026-01-01T00:00:02Z', 'infinity', '2026-01-01T00:00:02Z', 'infinity'),
+         ('44444444-4444-4444-8444-444444444444', 'analysis', 'analyst', 'Analysis: superseding revision', 'revision body', '{supersedes:33333333}', '2026-01-01T00:10:00Z', 2, 'all', '2026-01-01T00:00:03Z', 'infinity', '2026-01-01T00:00:03Z', 'infinity'),
+         ('55555555-5555-4555-8555-555555555555', 'inspection', 'inspector', 'Inspection: standalone observation', 'inspection body', '{}', '2026-01-01T00:05:00Z', 3, 'all', '2026-01-01T00:00:04Z', 'infinity', '2026-01-01T00:00:04Z', 'infinity')
+       ON CONFLICT (id, recorded_on_dt) DO NOTHING`,
+    )
+  } finally {
+    await pool.end().catch(() => undefined)
+  }
+}
+
+async function removePgRecords() {
+  const { Pool } = require('pg')
+  const pool = new Pool({ ...pgConfig(), connectionTimeoutMillis: 3000 })
+  try {
+    await pool.query('DELETE FROM nebula.agent_records_history WHERE id = ANY($1::uuid[])', [PG_RECORD_IDS])
+  } finally {
+    await pool.end().catch(() => undefined)
+  }
+}
 
 dotenv.config({ path: path.join(__dirname, '..', '.env') })
 
@@ -50,7 +122,7 @@ const BROKER_DIR = path.resolve(__dirname, '..')
 // HARNESS_FIXED_PORTS=1 restores the historical DELTA_TEST_* values.
 const FIXED_SERVICE_PORT = process.env.DELTA_TEST_PORT || '4100'
 const FIXED_PTY_WS_PORT = process.env.DELTA_TEST_PTY_WS_PORT || String(Number(FIXED_SERVICE_PORT) + 2)
-const MONGO_URL = process.env.MONGO_URL || 'mongodb://localhost:27017'
+  const MONGO_URL = mongoUrl()
 let TEST_PORT = null
 let TEST_PTY_WS_PORT = null
 let BASE = null
@@ -58,10 +130,17 @@ const sha256 = (value) => `sha256:${createHash('sha256').update(value).digest('h
 
 let child = null
 
+// The broker's output is captured, not discarded — see helpers/broker-log.js
+// for why (a boot failure used to say nothing but "did not become healthy").
+const brokerLog = createBrokerLog('keychain-delta')
+
 async function startBroker() {
   TEST_PORT = await getEphemeralPort(FIXED_SERVICE_PORT)
   TEST_PTY_WS_PORT = await getEphemeralPort(FIXED_PTY_WS_PORT)
   BASE = `http://localhost:${TEST_PORT}/api`
+  // One descriptor for stdout and stderr, released in this process right
+  // after the spawn: the child keeps its own copies.
+  const brokerLogFd = brokerLog.open()
   child = spawn(
     process.execPath,
     ['node_modules/.bin/moleculer-runner', '--mask', '**/*.js', 'dist/services'],
@@ -69,24 +148,47 @@ async function startBroker() {
       cwd: BROKER_DIR,
       env: {
         ...process.env,
-        SERVICE_PORT: TEST_PORT,
-        PTY_WS_PORT: TEST_PTY_WS_PORT,
-        NODE_ENV: 'test',
+                  SERVICE_PORT: TEST_PORT,
+          PTY_WS_PORT: TEST_PTY_WS_PORT,
+          NODE_ENV: 'test',
+          // Isolated keychain store per broker process (helpers/isolated-mongo.js):
+          // this test writes checkpoints and previously did so in the shared
+          // "keychains" database while other brokers booted against it.
+          MONGO_DB_NAME: TEST_MONGO_DB,
+          KEYCHAIN_OUTBOX_NAMESPACE_PREFIX: OUTBOX_NAMESPACE_PREFIX,
+          // Never production's queue: this suite writes its own outbox table.
+          KEYCHAIN_OUTBOX_TABLE: OUTBOX_TABLE,
+          // Poll this run's database by name — see the note in broker-smoke.
+          KEYCHAIN_SOURCE_DATABASES: TEST_PG_DATABASE,
+          // Name this child's PG connections after the run (helpers/isolated-pg.js);
+          // a harness connection to a shared database is then attributable in
+          // pg_stat_activity even when it only reads. Inherited as PGAPPNAME too.
+          PGAPPNAME: TEST_APPLICATION_NAME,
       },
-      stdio: ['ignore', 'ignore', 'ignore'],
+      // Captured, not discarded: see helpers/broker-log.js.
+      stdio: ['ignore', brokerLogFd, brokerLogFd],
     }
   )
+  brokerLog.close(brokerLogFd)
   const deadline = Date.now() + 30_000
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(`${BASE}/health`)
-      if (res.ok) return
+              const res = await fetch(`${BASE}/health`)
+        if (res.ok) {
+          // Gateway health is not service readiness — see helpers/isolated-mongo.js.
+          // Without this the first snapshot POST can hit an unregistered
+          // keychain service and return 503.
+          await waitForKeychainReady(BASE)
+          return
+        }
     } catch {
       /* not up yet */
     }
     await new Promise((r) => setTimeout(r, 500))
   }
-  throw new Error('broker did not become healthy within 30s')
+  throw new Error(
+    brokerLog.describe('broker did not become healthy within 30s', child),
+  )
 }
 
 function stopBroker() {
@@ -135,12 +237,31 @@ function instanceCount(stateVector) {
   return Object.values(stateVector || {}).reduce((sum, instances) => sum + instances.length, 0)
 }
 
-test.before(async () => {
-  await startBroker()
-})
-
-test.after(async () => {
-  await stopBroker()
+// Guard first (a matching outbox table, then production's baseline), then the
+// broker; teardown stops it and drops this process's store before the
+// production-outbox assertion.
+registerProductionOutboxGuard({
+  before: test.before,
+  after: test.after,
+  async setup() {
+    await ensureTestDatabase()
+    await seedPgRecords()
+    await startBroker()
+  },
+  async teardown() {
+    await stopBroker()
+    // Remove this test's own PG records (the database is dropped right after by
+    // the guard, but leaving them behind would be wrong if it were kept).
+    await removePgRecords().catch((err) => console.warn(`[keychain-delta] pg cleanup skipped: ${err.message}`))
+    // Drop this process's isolated keychain database so repeat runs are clean.
+    const mongo = new MongoClient(MONGO_URL)
+    try {
+      await mongo.connect()
+      await dropIsolatedDatabase(mongo)
+    } finally {
+      await mongo.close()
+    }
+  },
 })
 
 test('checkpoints persist deltas, not full copies, and rewind reconstructs them', async () => {
@@ -219,7 +340,7 @@ test('checkpoints persist deltas, not full copies, and rewind reconstructs them'
 
   try {
     await mongo.connect()
-    db = mongo.db('keychains')
+          db = mongo.db(TEST_MONGO_DB)
     // Fresh-store guard: a dedicated CI/scratch Mongo has no prior collections,
     // so these pre-state reads return empty and restore() would wrongly wipe
     // the store after the run. On an empty store, skip pre-state capture and
@@ -255,7 +376,7 @@ test('checkpoints persist deltas, not full copies, and rewind reconstructs them'
     )
     if (!baseline) {
       const seedRes = await postSnapshot({
-        source_namespace: `keychains-anchor-${process.pid}-${Date.now()}`,
+        source_namespace: `${OUTBOX_NAMESPACE_PREFIX}anchor-${process.pid}-${Date.now()}`,
         source_event_id: randomUUID(),
         kind: 'sol.transition.committed',
         outcome: 'committed',

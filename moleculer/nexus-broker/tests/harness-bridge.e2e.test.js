@@ -18,6 +18,35 @@ const { execFileSync } = require('node:child_process')
 const { randomUUID } = require('node:crypto')
 const dotenv = require('dotenv')
 const { Pool } = require('pg')
+const isolatedPg = require('./helpers/isolated-pg')
+
+//
+// Which database this file uses.
+//
+// The isolated per-run database is the default. This file also drives the PEB
+// kernel — an EXTERNAL process booted by CI (or by hand) against its own
+// database — and the kernel admits the bridge's claim by reading the row the
+// bridge just wrote. Two databases cannot satisfy that read, so when the kernel
+// is supplied through PEB_BASE_URL the caller must also say which database it
+// was attached to, via PEB_PG_DATABASE. That is an explicit, named coupling to
+// the service under test; it is never inferred, and without it the file uses
+// its own database like every other test.
+const EXTERNAL_KERNEL_PG = (process.env.PEB_PG_DATABASE || '').trim()
+const TEST_PG_DATABASE = EXTERNAL_KERNEL_PG || isolatedPg.TEST_PG_DATABASE
+
+if (!EXTERNAL_KERNEL_PG) {
+  test.before(async () => {
+    await isolatedPg.ensureTestDatabase()
+  })
+  test.after(async () => {
+    await isolatedPg.dropTestDatabase().catch((err) => console.warn(`[harness-bridge] drop skipped: ${err.message}`))
+  })
+} else {
+  console.log(
+    `[harness-bridge] using the external kernel's database ${EXTERNAL_KERNEL_PG} (PEB_PG_DATABASE); ` +
+      'the kernel reads the claim row this bridge writes, so the two must agree',
+  )
+}
 
 const BROKER_DIR = path.resolve(__dirname, '..')
 const REPO_ROOT = path.resolve(BROKER_DIR, '..', '..')
@@ -52,7 +81,7 @@ async function pgUp() {
     port: Number(process.env.PG_PORT || 5432),
     user: process.env.PG_USER || 'pguser',
     password: process.env.PG_PASSWORD || 'pgpass',
-    database: process.env.PG_DB_NAME || 'nexus',
+    database: TEST_PG_DATABASE,
     connectionTimeoutMillis: 2000,
   })
   try {

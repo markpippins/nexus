@@ -11,10 +11,26 @@
  */
 const { test, before, after } = require('node:test')
 const assert = require('node:assert/strict')
-const { spawn } = require('node:child_process')
-const path = require('node:path')
+  const { spawn } = require('node:child_process')
+  const path = require('node:path')
+  const { MongoClient } = require('mongodb')
+  const dotenv = require('dotenv')
+  const {
+    MONGO_DB_NAME,
+    OUTBOX_NAMESPACE_PREFIX,
+    OUTBOX_TABLE,
+    mongoUrl,
+    registerProductionOutboxGuard,
+    dropIsolatedDatabase,
+  } = require('./helpers/isolated-mongo')
+const { TEST_PG_DATABASE, TEST_APPLICATION_NAME } = require('./helpers/isolated-pg')
 
 const BROKER_DIR = path.resolve(__dirname, '..')
+const { createBrokerLog } = require('./helpers/broker-log')
+// Load the broker's .env like the other broker-booting files do: MONGO_URL
+// carries the credentials this file's own Mongo client needs to drop its
+// isolated database in teardown (without it dropDatabase is Unauthorized).
+dotenv.config({ path: path.join(BROKER_DIR, '.env') })
 // OS-assigned ports by default (see tests/helpers/ephemeral-ports.js);
 // HARNESS_FIXED_PORTS=1 restores the historical 4199/3199.
 const FIXED_SERVICE_PORT = process.env.TEST_SERVICE_PORT_PTY || '4199'
@@ -34,8 +50,13 @@ async function resolvePorts() {
 
 let child = null
 
+// Boot failures must explain themselves: the broker's stdout/stderr go to a
+// file instead of /dev/null (see helpers/broker-log.js).
+const brokerLog = createBrokerLog('pty-transport')
+
 function startBroker() {
   return new Promise((resolve, reject) => {
+    const brokerLogFd = brokerLog.open()
     child = spawn(
       process.execPath,
       ['node_modules/.bin/moleculer-runner', '--mask', '**/*.js', 'dist/services'],
@@ -46,13 +67,26 @@ function startBroker() {
           SERVICE_PORT: TEST_SERVICE_PORT,
           PTY_WS_PORT: TEST_PTY_WS_PORT,
           NODE_ENV: 'test',
+          // Isolated keychain store per broker process (helpers/isolated-mongo.js).
+          MONGO_DB_NAME,
+          KEYCHAIN_OUTBOX_NAMESPACE_PREFIX: OUTBOX_NAMESPACE_PREFIX,
+          KEYCHAIN_OUTBOX_TABLE: OUTBOX_TABLE,
+          // Poll this run's database by name — see the note in broker-smoke.
+          KEYCHAIN_SOURCE_DATABASES: TEST_PG_DATABASE,
+          // Name this child's PG connections after the run (helpers/isolated-pg.js);
+          // a harness connection to a shared database is then attributable in
+          // pg_stat_activity even when it only reads. Inherited as PGAPPNAME too.
+          PGAPPNAME: TEST_APPLICATION_NAME,
         },
-        stdio: ['ignore', 'ignore', 'ignore'],
+        stdio: ['ignore', brokerLogFd, brokerLogFd],
       }
     )
+    brokerLog.close(brokerLogFd)
     const deadline = Date.now() + 30_000
     const poll = async () => {
-      if (Date.now() > deadline) return reject(new Error('broker did not become healthy'))
+      if (Date.now() > deadline) {
+        return reject(new Error(brokerLog.describe('broker did not become healthy within 30s', child)))
+      }
       try {
         const res = await fetch(`${BASE}/health`)
         if (res.ok) return resolve()
@@ -102,20 +136,33 @@ function waitFor(ws, predicate, description, timeoutMs = 15_000) {
 
 let ptyWorkerHealth
 
-before(async () => {
-  await resolvePorts()
-  await startBroker()
-  // Confirm the gateway now advertises the transport worker and the HTTP
-  // proxy route for its health resolves.
-  const health = await (await fetch(`${BASE}/health`)).json()
-  assert.ok(health.workers.includes('worker.pty-transport'), 'workers list should include worker.pty-transport')
-  const tw = await (await fetch(`${BASE}/workers/pty-transport/health`)).json()
-  assert.equal(tw.service, 'worker.pty-transport')
-  ptyWorkerHealth = tw
-})
-
-after(async () => {
-  await stopBroker()
+// Provision this file's outbox table and baseline production's queue, boot the
+// broker, and assert the queue is still clean after teardown stops it.
+registerProductionOutboxGuard({
+  before,
+  after,
+  async setup() {
+    await resolvePorts()
+    await startBroker()
+    // Confirm the gateway now advertises the transport worker and the HTTP
+    // proxy route for its health resolves.
+    const health = await (await fetch(`${BASE}/health`)).json()
+    assert.ok(health.workers.includes('worker.pty-transport'), 'workers list should include worker.pty-transport')
+    const tw = await (await fetch(`${BASE}/workers/pty-transport/health`)).json()
+    assert.equal(tw.service, 'worker.pty-transport')
+    ptyWorkerHealth = tw
+  },
+  async teardown() {
+    await stopBroker()
+    // Drop this process's isolated keychain database (no leftovers per run).
+    const mongo = new MongoClient(mongoUrl())
+    try {
+      await mongo.connect()
+      await dropIsolatedDatabase(mongo)
+    } finally {
+      await mongo.close()
+    }
+  },
 })
 
 test('PTY transport: spawn → ack → output → input → resize → exit', async () => {

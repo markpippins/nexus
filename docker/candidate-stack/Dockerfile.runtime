@@ -1,0 +1,62 @@
+# Runtime addendum for the candidate broker image.
+#
+# WHY THIS EXISTS
+#   The pinned candidate/broker:<app-version> image contains the compiled broker
+#   but no agent runtime, so every `harn-opencode` job died at
+#   `spawn opencode ENOENT` before a model was ever consulted. The harness's
+#   other path (harn-ollama) needs no in-image binary, but the opencode path is
+#   the production one and must be usable on every host that runs this stack.
+#
+# WHY IT IS A SEPARATE, TINY STAGE
+#   Building the app from source is what timed out on the 4 GB helium board
+#   (multi-minute install+build with no progress output). This file does not
+#   build the app at all: it starts FROM the already-published application
+#   image and adds only the runtime, so the build is bounded by the apt/npm
+#   fetch, not by compiling anything.
+#
+# WHY THE RUNTIME IS INSTALLED, NOT COPIED
+#   The first attempt copied an opencode binary from the x86_64 dev host and the
+#   container failed with `Exec format error` — helium is aarch64, the donated
+#   binary was amd64. Installing through npm inside the builder stage resolves
+#   the platform-specific build for the architecture being built, so the same
+#   Dockerfile works on amd64 and arm64 hosts alike.
+#
+#   Build on the host that will run it (the application image is already there):
+#     docker build -f Dockerfile.runtime \
+#       --build-arg APP_IMAGE=candidate/broker-app:<app-version> \
+#       -t candidate/broker:<app-version> .
+#
+#   APP_IMAGE defaults to the published application tag so a runtime-only
+#   rebuild needs no arguments; pass it when layering onto a freshly built
+#   application image (e.g. one carrying a code change not yet released).
+#
+# Keep the tag in lockstep with the broker image pinned in compose.helium.yaml.
+
+ARG APP_IMAGE=candidate/broker:0.1.0
+FROM ${APP_IMAGE}
+
+USER root
+
+# git: harness jobs that produce a git claim shell out to it (`git_claim`), and
+# the runtime gap named both binaries missing.
+ARG INSTALL_GIT=1
+RUN if [ "$INSTALL_GIT" = "1" ]; then \
+      apt-get update \
+      && apt-get install -y --no-install-recommends git ca-certificates \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# The agent runtime itself. Pinned version, resolved for this build's platform.
+ARG OPENCODE_VERSION=1.19.0
+RUN npm install -g --no-fund --no-audit "opencode-ai@${OPENCODE_VERSION}"
+
+# Fail the build if the runtime is not actually runnable in this base image —
+# `--version` executes the binary, so a wrong-architecture artifact is caught at
+# build time instead of as `spawn opencode ENOENT`/`Exec format error` at 3am.
+RUN opencode --version \
+ && git --version \
+ && command -v opencode
+
+# NOTE: the base image's default user is deliberately not changed here — the
+# broker's existing runtime identity (and its file ownership expectations, e.g.
+# the harness prompt work-dir and pty sessions) must stay exactly as it was.

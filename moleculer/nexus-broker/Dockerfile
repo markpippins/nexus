@@ -21,6 +21,14 @@ RUN npm ci --no-audit --no-fund
 
 COPY tsconfig.json moleculer.config.ts ./
 COPY services ./services
+# lib/ is a first-class compile root (tsconfig include) and services import
+# from it (`../lib/execution-telemetry`, `../lib/keychain-drift`, …). Without
+# this COPY, `npx tsc` fails with TS2307 on every such import, and the image
+# quietly cannot be rebuilt from the current tree at all — which is exactly
+# what happened on helium: candidate/broker:0.1.0 was built from a stale
+# 2026-09-20 checkout (its image has dist/services but no dist/lib), so the
+# running broker predates every lib/ import in the repo.
+COPY lib ./lib
 RUN npx tsc
 
 ENV NODE_ENV=production SERVICE_PORT=4080

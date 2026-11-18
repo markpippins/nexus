@@ -16,6 +16,17 @@ const dotenv = require('dotenv')
 const { Pool } = require('pg')
 const { MongoClient } = require('mongodb')
 const { getEphemeralPort } = require('./helpers/ephemeral-ports')
+const { createBrokerLog } = require('./helpers/broker-log')
+const {
+  MONGO_DB_NAME: TEST_MONGO_DB,
+  OUTBOX_NAMESPACE_PREFIX,
+  OUTBOX_TABLE,
+  mongoUrl,
+  registerProductionOutboxGuard,
+  dropIsolatedDatabase,
+  waitForKeychainReady,
+} = require('./helpers/isolated-mongo')
+const { TEST_PG_DATABASE, ensureTestDatabase, TEST_APPLICATION_NAME } = require('./helpers/isolated-pg')
 
 dotenv.config({ path: path.join(__dirname, '..', '.env') })
 
@@ -32,10 +43,15 @@ let BASE = null
 
 let child = null
 
+// Boot failures must explain themselves: the broker's stdout/stderr go to a
+// file instead of /dev/null (see helpers/broker-log.js).
+const brokerLog = createBrokerLog('broker-smoke')
+
 async function startBroker() {
   TEST_PORT = await getEphemeralPort(FIXED_SERVICE_PORT)
   TEST_PTY_WS_PORT = await getEphemeralPort(FIXED_PTY_WS_PORT)
   BASE = `http://localhost:${TEST_PORT}/api`
+  const brokerLogFd = brokerLog.open()
   child = spawn(
     process.execPath,
     ['node_modules/.bin/moleculer-runner', '--mask', '**/*.js', 'dist/services'],
@@ -46,25 +62,50 @@ async function startBroker() {
         SERVICE_PORT: TEST_PORT,
         PTY_WS_PORT: TEST_PTY_WS_PORT,
         NODE_ENV: 'test',
+        // Isolated keychain store for this process (helpers/isolated-mongo.js).
+        // Without it every broker in the suite shares Mongo database
+        // "keychains" and the checkpoint/rewind assertions race the other
+        // brokers' outbox pollers.
+        MONGO_DB_NAME: TEST_MONGO_DB,
+        // Claim only this process's outbox rows (production leaves this empty).
+        KEYCHAIN_OUTBOX_NAMESPACE_PREFIX: OUTBOX_NAMESPACE_PREFIX,
+        // This suite's own queue — never production's outbox table.
+        KEYCHAIN_OUTBOX_TABLE: OUTBOX_TABLE,
+        // The poller reads its outbox from the PostgreSQL databases NAMED
+        // here, not from PG_DB_NAME. Left unset it defaults to `nexus,sol`,
+        // which would poll the deployment database no matter how isolated the
+        // rest of the harness is.
+        KEYCHAIN_SOURCE_DATABASES: TEST_PG_DATABASE,
+        // Name this child's PG connections after the run (helpers/isolated-pg.js);
+        // a harness connection to a shared database is then attributable in
+        // pg_stat_activity even when it only reads. Inherited as PGAPPNAME too.
+        PGAPPNAME: TEST_APPLICATION_NAME,
       },
-      // Drain output so a large projection cannot block the child on a full
-      // pipe before the test reaches its assertions.
-      stdio: ['ignore', 'ignore', 'ignore'],
+      // Captured to a file rather than drained to /dev/null: a file cannot
+      // block the child on a full pipe, and a boot failure says why.
+      stdio: ['ignore', brokerLogFd, brokerLogFd],
     }
   )
+  brokerLog.close(brokerLogFd)
 
   // Wait for gateway to answer /api/health (up to 30s)
   const deadline = Date.now() + 30_000
   while (Date.now() < deadline) {
     try {
       const res = await fetch(`${BASE}/health`)
-      if (res.ok) return
+      if (res.ok) {
+        // Gateway health is not service readiness: the keychain service
+        // registers when its own started() resolves, and calls before that
+        // return 503. Wait for the endpoint this file actually uses.
+        await waitForKeychainReady(BASE)
+        return
+      }
     } catch {
       /* not up yet */
     }
     await new Promise((r) => setTimeout(r, 500))
   }
-  throw new Error('broker did not become healthy within 30s')
+  throw new Error(brokerLog.describe('broker did not become healthy within 30s', child))
 }
 
 function stopBroker() {
@@ -108,7 +149,7 @@ async function ensureKeychainSeed() {
     port: Number(process.env.PG_PORT || 5432),
     user: process.env.PG_USER || 'pguser',
     password: process.env.PG_PASSWORD || 'pgpass',
-    database: process.env.PG_DB_NAME || 'nexus',
+    database: TEST_PG_DATABASE,
   })
   try {
     await pool.query(
@@ -124,11 +165,11 @@ async function ensureKeychainSeed() {
        ON CONFLICT (id, recorded_on_dt) DO NOTHING`,
     )
     await pool.query(
-      `INSERT INTO resolution.keychain_event_outbox
+      `INSERT INTO ${OUTBOX_TABLE}
          (source_namespace, source_event_id, event_kind, outcome, actor, read_set, payload)
        VALUES ($1, $2, 'sol.e2e.transition.committed', 'committed', 'broker-smoke-seed', '{}', '{}')
        ON CONFLICT (source_namespace, source_event_id) DO NOTHING`,
-      [`broker-smoke-seed-${process.pid}`, randomUUID()],
+              [`${OUTBOX_NAMESPACE_PREFIX}seed-${process.pid}`, randomUUID()],
     )
     const deadline = Date.now() + 20_000
     for (;;) {
@@ -150,13 +191,33 @@ async function ensureKeychainSeed() {
   }
 }
 
-test.before(async () => {
-  await startBroker()
-  await ensureKeychainSeed()
-})
-
-test.after(async () => {
-  await stopBroker()
+// Provision this suite's own outbox table, baseline production's outbox, boot
+// the broker and seed it, then stop it and drop this process's isolated
+// keychain database — with the production-outbox assertion always last.
+registerProductionOutboxGuard({
+  before: test.before,
+  after: test.after,
+  async setup() {
+    // This file's own database, built from the canonical bootstrap — never the
+    // shared `nexus` that an operator or CI step may have seeded.
+    await ensureTestDatabase()
+    // The broker claims from KEYCHAIN_OUTBOX_TABLE; production's outbox table
+    // (resolution.keychain_event_outbox) must stay untouched by the suite.
+    await startBroker()
+    await ensureKeychainSeed()
+  },
+  async teardown() {
+    await stopBroker()
+    // Drop this process's isolated keychain database so repeat runs start
+    // from a clean store instead of inheriting the previous run's checkpoints.
+    const mongo = new MongoClient(mongoUrl())
+    try {
+      await mongo.connect()
+      await dropIsolatedDatabase(mongo)
+    } finally {
+      await mongo.close()
+    }
+  },
 })
 
 test('GET /api/health reports ok with all worker services', async () => {
@@ -257,13 +318,13 @@ test('deny_contract_promotion negative outcomes create immutable decision checkp
   const sourceNamespace = `keychains-negative-${process.pid}-${Date.now()}`
   const sourceEventId = randomUUID()
   const before = await (await fetch(`${BASE}/keychain-snapshot/agent-records/status`)).json()
-  const mongo = new MongoClient(process.env.MONGO_URL || 'mongodb://localhost:27017')
+  const mongo = new MongoClient(mongoUrl())
   let previousActive = null
   let previousEntries = null
   let previousRecordTypeState = null
   await mongo.connect()
   {
-    const db = mongo.db('keychains')
+    const db = mongo.db(TEST_MONGO_DB)
     previousActive = await db.collection('active_checkpoints').findOne({ _id: 'agent-records' })
     previousEntries = await db.collection('entries').find({}).toArray()
     previousRecordTypeState = await db.collection('record_type_state').find({}).toArray()
@@ -348,13 +409,13 @@ test('deny_contract_promotion negative outcomes create immutable decision checkp
   assert.deepEqual(transition.read_set, triggerEvent.read_set)
 
   try {
-    const db = mongo.db('keychains')
+    const db = mongo.db(TEST_MONGO_DB)
     assert.equal(await db.collection('ar_snapshots').countDocuments({
       source_namespace: sourceNamespace,
       source_event_id: sourceEventId,
     }), 1)
   } finally {
-    const db = mongo.db('keychains')
+    const db = mongo.db(TEST_MONGO_DB)
     const checkpoint = await db.collection('ar_snapshots').findOne({
       source_namespace: sourceNamespace,
       source_event_id: sourceEventId,
@@ -385,7 +446,7 @@ test('deny_contract_promotion negative outcomes create immutable decision checkp
 
 test('observation window classifies pre-activation and outside-window evidence without rewriting history', async () => {
   const sourceNamespace = `keychains-window-${process.pid}-${Date.now()}`
-  const mongo = new MongoClient(process.env.MONGO_URL || 'mongodb://localhost:27017')
+  const mongo = new MongoClient(mongoUrl())
   const events = [
     {
       source_event_id: 'pre-activation',
@@ -408,7 +469,7 @@ test('observation window classifies pre-activation and outside-window evidence w
   const checkpointIds = []
   try {
     await mongo.connect()
-    const db = mongo.db('keychains')
+    const db = mongo.db(TEST_MONGO_DB)
     previousActive = await db.collection('active_checkpoints').findOne({ _id: 'agent-records' })
     previousEntries = await db.collection('entries').find({}).toArray()
     previousRecordTypeState = await db.collection('record_type_state').find({}).toArray()
@@ -487,7 +548,7 @@ test('observation window classifies pre-activation and outside-window evidence w
     assert.equal(filtered.items[0].source_namespace, sourceNamespace)
     assert.equal(filtered.items[0].observation_window.phase, 'outside_window')
   } finally {
-    const db = mongo.db('keychains')
+    const db = mongo.db(TEST_MONGO_DB)
     await db.collection('transitions').deleteMany({ source_namespace: sourceNamespace })
     if (checkpointIds.length) {
       await db.collection('ar_drift_findings').deleteMany({ checkpoint_id: { $in: checkpointIds } })
@@ -597,7 +658,7 @@ test('decision checkpoint preserves owner, authorization, and evaluator read-set
       },
     },
   }
-  const mongo = new MongoClient(process.env.MONGO_URL || 'mongodb://localhost:27017')
+  const mongo = new MongoClient(mongoUrl())
   let checkpointId = null
   let previousActive = null
   let previousEntries = null
@@ -605,7 +666,7 @@ test('decision checkpoint preserves owner, authorization, and evaluator read-set
 
   try {
     await mongo.connect()
-    const db = mongo.db('keychains')
+    const db = mongo.db(TEST_MONGO_DB)
     previousActive = await db.collection('active_checkpoints').findOne({ _id: 'agent-records' })
     previousEntries = await db.collection('entries').find({}).toArray()
     previousRecordTypeState = await db.collection('record_type_state').find({}).toArray()
@@ -692,7 +753,7 @@ test('decision checkpoint preserves owner, authorization, and evaluator read-set
     assert.deepEqual(transition.read_set, triggerEvent.read_set)
     assert.equal(transition.checkpoint_status, 'delivered')
   } finally {
-    const db = mongo.db('keychains')
+    const db = mongo.db(TEST_MONGO_DB)
     if (!checkpointId) {
       const checkpoint = await db.collection('ar_snapshots').findOne({
         source_namespace: sourceNamespace,
@@ -739,9 +800,9 @@ test('SOL outbox events are delivered into Keychains and replayed idempotently',
     port: Number(process.env.PG_PORT || 5432),
     user: process.env.PG_USER || 'pguser',
     password: process.env.PG_PASSWORD || 'pgpass',
-    database: process.env.PG_DB_NAME || 'nexus',
+    database: TEST_PG_DATABASE,
   })
-  const sourceNamespace = `sol-e2e-${process.pid}-${Date.now()}`
+      const sourceNamespace = `${OUTBOX_NAMESPACE_PREFIX}sol-e2e-${process.pid}-${Date.now()}`
   const sourceEventId = randomUUID()
   const eventKind = 'sol.e2e.transition.committed'
   const payload = { test_run: sourceNamespace, decision: 'committed' }
@@ -749,7 +810,7 @@ test('SOL outbox events are delivered into Keychains and replayed idempotently',
 
   try {
     await pool.query(
-      `INSERT INTO resolution.keychain_event_outbox
+      `INSERT INTO ${OUTBOX_TABLE}
          (source_namespace, source_event_id, event_kind, outcome, actor, read_set, payload)
        VALUES ($1, $2, $3, 'committed', $4, $5::jsonb, $6::jsonb)`,
       [sourceNamespace, sourceEventId, eventKind, 'broker-smoke', JSON.stringify(readSet), JSON.stringify(payload)],
@@ -758,7 +819,7 @@ test('SOL outbox events are delivered into Keychains and replayed idempotently',
     const delivered = await waitFor(async () => {
       const result = await pool.query(
         `SELECT source_namespace, source_event_id, checkpoint_status, delivery_attempts
-           FROM resolution.keychain_event_outbox
+           FROM ${OUTBOX_TABLE}
           WHERE source_namespace = $1 AND source_event_id = $2`,
         [sourceNamespace, sourceEventId],
       )
@@ -835,7 +896,7 @@ test('SOL outbox events are delivered into Keychains and replayed idempotently',
 
     const afterReplay = await pool.query(
       `SELECT checkpoint_status, delivery_attempts
-         FROM resolution.keychain_event_outbox
+         FROM ${OUTBOX_TABLE}
         WHERE source_namespace = $1 AND source_event_id = $2`,
       [sourceNamespace, sourceEventId],
     )
@@ -843,7 +904,7 @@ test('SOL outbox events are delivered into Keychains and replayed idempotently',
     assert.equal(afterReplay.rows[0].delivery_attempts, delivered.delivery_attempts)
   } finally {
     await pool.query(
-      `DELETE FROM resolution.keychain_event_outbox
+      `DELETE FROM ${OUTBOX_TABLE}
         WHERE source_namespace = $1 AND source_event_id = $2`,
       [sourceNamespace, sourceEventId],
     )

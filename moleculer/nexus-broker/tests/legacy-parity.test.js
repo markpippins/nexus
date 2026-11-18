@@ -20,13 +20,27 @@ const { spawn } = require('node:child_process')
 const path = require('node:path')
 const dotenv = require('dotenv')
 const { getEphemeralPort } = require('./helpers/ephemeral-ports')
+const { createBrokerLog } = require('./helpers/broker-log')
+const { MongoClient } = require('mongodb')
+const {
+  MONGO_DB_NAME,
+  OUTBOX_NAMESPACE_PREFIX,
+  OUTBOX_TABLE,
+  mongoUrl,
+  registerProductionOutboxGuard,
+  dropIsolatedDatabase,
+} = require('./helpers/isolated-mongo')
 
 const BROKER_DIR = path.resolve(__dirname, '..')
 // OS-assigned ports by default (see tests/helpers/ephemeral-ports.js);
 // HARNESS_FIXED_PORTS=1 restores the historical 4088/4089.
 const FIXED_SERVICE_PORT = process.env.TEST_SERVICE_PORT || '4088'
 const FIXED_PTY_WS_PORT = process.env.TEST_PTY_WS_PORT || String(Number(FIXED_SERVICE_PORT) + 1)
-const LEGACY_BASE = process.env.LEGACY_EXECUTION_URL || 'http://localhost:3110'
+const { TEST_PG_DATABASE, ensureTestDatabase, TEST_APPLICATION_NAME } = require('./helpers/isolated-pg')
+
+// Resolved in startLegacySurface(): an operator-provided URL, or a surface this
+// file boots itself against its own per-run database.
+let LEGACY_BASE = process.env.LEGACY_EXECUTION_URL || null
 let TEST_PORT = null
 let TEST_PTY_WS_PORT = null
 let BASE = null
@@ -35,10 +49,15 @@ dotenv.config({ path: path.join(BROKER_DIR, '.env') })
 
 let child = null
 
+// Boot failures must explain themselves: the broker's stdout/stderr go to a
+// file instead of /dev/null (see helpers/broker-log.js).
+const brokerLog = createBrokerLog('legacy-parity')
+
 async function startBroker() {
   TEST_PORT = await getEphemeralPort(FIXED_SERVICE_PORT)
   TEST_PTY_WS_PORT = await getEphemeralPort(FIXED_PTY_WS_PORT)
   BASE = `http://localhost:${TEST_PORT}/api`
+  const brokerLogFd = brokerLog.open()
   child = spawn(
     process.execPath,
     ['node_modules/.bin/moleculer-runner', '--mask', '**/*.js', 'dist/services'],
@@ -49,12 +68,25 @@ async function startBroker() {
         SERVICE_PORT: TEST_PORT,
         PTY_WS_PORT: TEST_PTY_WS_PORT,
         NODE_ENV: 'test',
+        // Isolated keychain store per broker process (helpers/isolated-mongo.js).
+        MONGO_DB_NAME,
+        // Claim only this process's outbox rows, so this broker cannot steal
+        // another test's seed event (production leaves this empty).
+        KEYCHAIN_OUTBOX_NAMESPACE_PREFIX: OUTBOX_NAMESPACE_PREFIX,
+        KEYCHAIN_OUTBOX_TABLE: OUTBOX_TABLE,
+        // The poller reads by DATABASE NAME, not PG_DB_NAME.
+        KEYCHAIN_SOURCE_DATABASES: TEST_PG_DATABASE,
+        // Name this child's PG connections after the run (helpers/isolated-pg.js);
+        // a harness connection to a shared database is then attributable in
+        // pg_stat_activity even when it only reads. Inherited as PGAPPNAME too.
+        PGAPPNAME: TEST_APPLICATION_NAME,
       },
-      // Drain output so a large projection cannot block the child on a full
-      // pipe before the test reaches its assertions.
-      stdio: ['ignore', 'ignore', 'ignore'],
+      // Captured to a file rather than drained to /dev/null: a file cannot
+      // block the child on a full pipe, and a boot failure says why.
+      stdio: ['ignore', brokerLogFd, brokerLogFd],
     }
   )
+  brokerLog.close(brokerLogFd)
 
   // Wait for gateway to answer /api/health (up to 30s)
   const deadline = Date.now() + 30_000
@@ -65,7 +97,7 @@ async function startBroker() {
     } catch {}
     await new Promise((r) => setTimeout(r, 500))
   }
-  throw new Error('broker did not become healthy within 30s')
+  throw new Error(brokerLog.describe('broker did not become healthy within 30s', child))
 }
 
 function stopBroker() {
@@ -76,12 +108,78 @@ function stopBroker() {
   child = null
 }
 
-test.before(async () => {
-  await startBroker()
-})
+// The legacy surface this file compares against has to read the SAME database
+// as the broker and this file's own pool. A server booted separately (by CI or
+// an operator) is attached to whatever database it was started with, so unless
+// one is supplied explicitly this file boots its own — against this run's
+// database — instead of assuming a shared one.
+const EXECUTION_SRV_DIR = path.resolve(BROKER_DIR, '..', '..', 'typescript', 'execution-srv')
+const legacyLog = createBrokerLog('legacy-execution-srv')
+let legacyChild = null
 
-test.after(async () => {
-  stopBroker()
+async function startLegacySurface() {
+  if (process.env.LEGACY_EXECUTION_URL) {
+    LEGACY_BASE = process.env.LEGACY_EXECUTION_URL
+    console.log(`[legacy-parity] using operator-provided execution-srv at ${LEGACY_BASE}`)
+    return
+  }
+  const port = await getEphemeralPort('3110')
+  LEGACY_BASE = `http://localhost:${port}`
+  const logFd = legacyLog.open()
+  legacyChild = spawn(process.execPath, ['dist/index.js'], {
+    cwd: EXECUTION_SRV_DIR,
+    env: {
+      ...process.env,
+      PORT: String(port),
+      PGDATABASE: TEST_PG_DATABASE,
+      PG_DB_NAME: TEST_PG_DATABASE,
+    },
+    stdio: ['ignore', logFd, logFd],
+  })
+  legacyLog.close(logFd)
+
+  const deadline = Date.now() + 30_000
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${LEGACY_BASE}/health`)
+      if (res.ok) return
+    } catch {}
+    await new Promise((r) => setTimeout(r, 250))
+  }
+  throw new Error(legacyLog.describe('legacy execution-srv did not become healthy within 30s', legacyChild))
+}
+
+function stopLegacySurface() {
+  if (!legacyChild) return
+  try {
+    legacyChild.kill('SIGTERM')
+  } catch {}
+  legacyChild = null
+}
+
+// Provision this file's outbox table and baseline production's queue, boot the
+// broker, and assert the queue is still clean after teardown stops it.
+registerProductionOutboxGuard({
+  before: test.before,
+  after: test.after,
+  async setup() {
+    await ensureTestDatabase()
+    await startLegacySurface()
+    await startBroker()
+  },
+  async teardown() {
+    await stopBroker()
+    stopLegacySurface()
+    // Drop this process's isolated keychain database so repeat runs are clean
+    // and the suite leaves no keychains_test_* databases behind.
+    const mongo = new MongoClient(mongoUrl())
+    try {
+      await mongo.connect()
+      await dropIsolatedDatabase(mongo)
+    } finally {
+      await mongo.close()
+    }
+  },
 })
 
 async function jsonOr404(url) {
@@ -171,7 +269,7 @@ test('witnessed-runs parity — shared 200 with identical projection JSON (rulin
     port: Number(process.env.PG_PORT || 5432),
     user: process.env.PG_USER || 'pguser',
     password: process.env.PG_PASSWORD || 'pgpass',
-    database: process.env.PG_DB_NAME || 'nexus',
+    database: TEST_PG_DATABASE,
   })
   const uuid = () => randomUUID()
   const attemptId = uuid()
