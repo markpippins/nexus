@@ -3,9 +3,13 @@ Database connection management for Redis, MongoDB, and MySQL
 """
 
 import asyncio
-from typing import Optional
+from typing import Optional, Any, Callable
 from motor.motor_asyncio import AsyncIOMotorClient
 import redis.asyncio as redis
+from redis.exceptions import (
+    ConnectionError as RedisConnectionError,
+    TimeoutError as RedisTimeoutError,
+)
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from sqlalchemy import text
@@ -33,6 +37,43 @@ async_session_maker = None
 
 # SQLAlchemy base
 Base = declarative_base()
+
+
+async def safe_redis_op(coro_factory: Callable, default: Any = None,
+                         operation: str = "redis_op") -> Any:
+    """Execute a Redis operation with ConnectionError handling.
+
+    Restored from the contract added in 4b5bcfb and removed in 89917512d
+    while its callers remained.  Retries are handled by the client's
+    built-in Retry policy; this function handles errors that survive retry
+    so callers can degrade gracefully instead of propagating exceptions.
+
+    Args:
+        coro_factory: Callable that returns an awaitable (e.g. lambda: client.hget(k, f))
+        default: Value to return on ConnectionError (None = silent degradation)
+        operation: Label for logging on failure
+
+    Returns:
+        Result of the operation, or default on ConnectionError.
+    """
+    try:
+        return await coro_factory()
+    except RedisConnectionError as e:
+        logger.warning("redis_connection_error", operation=operation, error=str(e))
+        return default
+    except RedisTimeoutError as e:
+        logger.warning("redis_timeout", operation=operation, error=str(e))
+        return default
+    except OSError as e:
+        # Lower-level socket errors (e.g. "Connection reset by peer") that
+        # may not be wrapped by redis-py in some transport scenarios.
+        logger.warning("redis_os_error", operation=operation, error=str(e))
+        return default
+    except AttributeError:
+        # guards against redis_client being None during startup or
+        # reconnection — not a normal operational error.
+        logger.error("redis_client_uninitialized", operation=operation)
+        return default
 
 
 async def init_databases():
