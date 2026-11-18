@@ -37,10 +37,12 @@ const {
 } = require('./helpers/isolated-mongo')
 const {
   SHARED_DATABASE,
+  guardApplicationName,
   startHarnessConnectionWatch,
   listHarnessConnectionsOnShared,
   describeHarnessConnection,
 } = require('./helpers/shared-db-guard')
+const { pgBaseConfig } = require('./helpers/isolated-pg')
 const { getEphemeralPort } = require('./helpers/ephemeral-ports')
 const { createBrokerLog } = require('./helpers/broker-log')
 
@@ -198,4 +200,64 @@ test('the correct configuration leaves no harness connection on the shared datab
     [],
     'a correctly configured run must leave no harness connection on the shared database',
   )
+})
+
+/**
+ * Control for the OTHER way this check could go quiet.
+ *
+ * Everything above proves the watch sees a reader while it is connected. The
+ * blind spot is the watch itself: `pg` does not reconnect a dead Client, so a
+ * sampler whose backend is terminated keeps `offenders` empty for the rest of
+ * the file — and an empty list was reported as "no harness connection to nexus".
+ * That is the same silent pass as the bug this guard exists for, one layer up:
+ * the run would go green while nothing was watching.
+ *
+ * So kill the sampler mid-run, the way a server restart, a failover or a
+ * pooler's idle timeout does, and require the run to fail instead.
+ */
+test('a watch whose sampler dies fails the run instead of reporting clean', async (t) => {
+  const watch = startHarnessConnectionWatch({ intervalMs: 100 })
+  await watch.ready()
+  if (!watch.available) {
+    await watch.stop()
+    t.skip(`no shared database to watch: ${watch.reason}`)
+    return
+  }
+  assert.ok(watch.pid, 'the watch must expose its sampler backend id so it can be killed')
+  // The state that used to be the final answer: connected, saw nothing, clean.
+  assert.equal(watch.lost, false)
+  assert.deepEqual(watch.offenders, [], 'nothing has connected yet')
+
+  // Terminate the sampler from a different session.
+  const { Client } = require('pg')
+  const killer = new Client({
+    ...pgBaseConfig(),
+    database: SHARED_DATABASE,
+    application_name: guardApplicationName(TEST_APPLICATION_NAME),
+    connectionTimeoutMillis: 3000,
+  })
+  await killer.connect()
+  try {
+    const res = await killer.query('SELECT pg_terminate_backend($1) AS killed', [watch.pid])
+    assert.equal(res.rows[0].killed, true, 'the sampler must actually die or this control proves nothing')
+  } finally {
+    await killer.end().catch(() => undefined)
+  }
+
+  await waitFor(() => watch.lost, 10_000, 'the watch to notice its sampler was killed')
+
+  const err = await watch.stop().then(
+    () => null,
+    (e) => e,
+  )
+  assert.ok(err, 'stop() must reject — a sampler that stopped looking cannot certify a clean run')
+  assert.match(err.message, /LOST ITS SAMPLER CONNECTION/)
+  assert.ok(err.message.includes(watch.tag), 'the failure must name the tag that went blind')
+  assert.match(err.message, new RegExp(`sampler pid ${watch.pid}`))
+  assert.deepEqual(
+    err.offenders,
+    [],
+    'nothing was seen before the loss — which is precisely why silence must not count as clean',
+  )
+  console.log(`[read-guard] a lost sampler fails the run as expected:\n  ${err.message.split('\n')[0]}`)
 })
