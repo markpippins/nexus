@@ -10,15 +10,25 @@
 # env_file per key). MONGO_URL itself is NOT set here: it carries
 # credentials and is injected by deploy-candidate.yml into the rendered
 # .env (never committed).
+#
+# AUTHORITY HOST: titanium at 192.168.1.71 — the same address the helium
+# override names, and the value ansible/inventory/group_vars/all.yml must
+# carry. This file previously hardcoded 192.168.1.120 (titanium's OLD LAN
+# address) while that inventory variable said the same, so a vanadium deploy
+# pointed PG and Conduit at an address with nothing behind it (verified
+# 2026-11-18: .120 refused both :3100 and :5432; .71 accepted both). The
+# addresses are hand-copied here because compose cannot read ansible vars —
+# keep them in lockstep with authority_host rather than editing one side.
 
 services:
   broker:
     environment:
-      # Workers reach shared infrastructure on the authority host.
-      PG_HOST: "192.168.1.120"
-      CONDUIT_MCP_URL: "http://192.168.1.120:3100"
+      # Workers reach shared infrastructure on the authority host
+      # (titanium; mirrors group_vars/all.yml authority_host).
+      PG_HOST: "192.168.1.71"
+      CONDUIT_MCP_URL: "http://192.168.1.71:3100"
       # REDIS_HOST stays "redis" — in-compose DNS, unchanged.
 
   control-edge:
     environment:
-      PG_HOST: "192.168.1.120"
+      PG_HOST: "192.168.1.71"
