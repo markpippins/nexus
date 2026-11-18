@@ -90,7 +90,9 @@ them.
 4. **`bin/verify-workrequest-disposition.py` asserts that plan 8261650 projects
    `pending`** (row `6217db7f`). Any reconciliation of residual 2 must update that
    ratified ledger/verifier expectation in the same change or it will add a new
-   failure. It is already red for the 49-vs-46 row drift.
+   failure. It is green today: the 49-vs-46 drift is fully classified — the two
+   #8261674 rows and `66b9d2e0` are pinned out-of-window (residual 5) — so the
+   guard exits 0 and names the three pins as warnings, not failures.
 5. **WorkRequest `66b9d2e0-dfd2-4589-9d7f-55192825a9d8`
    (`wr-8261673-1794650830-98004713`, `DRAFT`, created 2026-11-14) has no
    disposition in the ratified ledger.** It postdates the ledger's 2026-11-12
@@ -100,7 +102,10 @@ them.
    naming it with this reason on every run — the pin is a scope statement and does
    not add a verdict. **Owner: the Planner**, via a v3 ledger amendment ratified
    with a fresh `ratified_by` record; a verdict is a ratification act, so it is
-   not a code change an agent may make. Note the two guards classify this row
+   not a code change an agent may make. A proposal is drafted at
+   [`workrequest-disposition-amendment-v3-proposal.md`](../workrequest-disposition-amendment-v3-proposal.md);
+   it is **PROPOSED, not ratified**, asserts no verdict, and the guard ignores it.
+   Note the two guards classify this row
    differently *and correctly*: the AC13 verifier counts it inside its frozen
    47-row baseline, while the ledger window ends at 2026-11-12.
 
