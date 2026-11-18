@@ -105,10 +105,13 @@ CREATE TABLE IF NOT EXISTS resolution.keychain_event_outbox (
   delivered_at timestamptz,
   last_error text,
   created_at timestamptz NOT NULL DEFAULT now(),
-  claimed_at timestamptz
+  claimed_at timestamptz,
+  -- Declared as a table CONSTRAINT, as the canonical schema does: a standalone
+  -- unique index would be equivalent for ON CONFLICT but not for the shape a
+  -- `LIKE ... INCLUDING ALL` clone reproduces, and
+  -- tests/verify-outbox-fixture.js compares constraint semantics.
+  CONSTRAINT keychain_event_outbox_source_event_uq UNIQUE (source_namespace, source_event_id)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS keychain_event_outbox_source_event_uq
-  ON resolution.keychain_event_outbox (source_namespace, source_event_id);
 CREATE INDEX IF NOT EXISTS idx_keychain_event_outbox_pending
   ON resolution.keychain_event_outbox (checkpoint_status, recorded_at)
   WHERE checkpoint_status = ANY (ARRAY['pending','failed']);

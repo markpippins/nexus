@@ -233,6 +233,24 @@ jobs:
           done
           echo "postgres never accepted an authenticated connection"
           exit 1
+      # Fail fast on fixture drift. This job's only outbox schema is
+      # tests/fixtures/keychain-delta-ci-pg.sql, and the harness clones it into
+      # the test queue with `LIKE ... INCLUDING ALL` — so a stale fixture becomes
+      # a missing column in the table the broker polls. It drifted once already
+      # (21 of 23 columns, bigserial id, no created_at) and the only symptom was
+      # a broker 500 inside the delta test, reported as "broker did not become
+      # healthy". This applies the fixture AND the repo-canonical bootstrap to
+      # two scratch databases and diffs the table they define — no broker, no
+      # Mongo, seconds instead of a boot timeout.
+      - name: Verify keychain-delta fixture matches the canonical bootstrap
+        working-directory: moleculer/nexus-broker
+        env:
+          PG_HOST: localhost
+          PG_PORT: '5432'
+          PG_USER: pguser
+          PG_PASSWORD: pgpass
+        run: node tests/verify-outbox-fixture.js
+
       - name: Apply keychain-delta PG shim
         env:
           PGPASSWORD: pgpass
