@@ -64,13 +64,29 @@ VALUES
 ON CONFLICT (id) DO NOTHING;
 
 CREATE SCHEMA IF NOT EXISTS resolution;
+-- Column-for-column copy of production's table (23 columns; same types,
+-- nullability and defaults; same primary key, unique key, partial pending
+-- index and CHECKs).
+--
+-- Fidelity here is not cosmetic. This file is the ONLY outbox schema a CI
+-- database has, and the harness creates its test queue with
+-- `CREATE TABLE ... (LIKE resolution.keychain_event_outbox INCLUDING ALL)` —
+-- so every omission in this fixture becomes a missing column in the table the
+-- broker actually polls. That is exactly what happened: this fixture omitted
+-- `created_at` and `delivered_at` and typed `id` as bigserial, the clone
+-- inherited all three defects, `/keychain-snapshot/status` failed with
+-- `column "created_at" does not exist`, and the delta suite reported only
+-- "broker did not become healthy" because the broker's stderr was discarded.
+-- Keep this in step with `resolution.keychain_event_outbox`.
 CREATE TABLE IF NOT EXISTS resolution.keychain_event_outbox (
-  id bigserial PRIMARY KEY,
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   source_namespace text NOT NULL,
   source_event_id text NOT NULL,
   event_kind text NOT NULL,
-  outcome text,
-  schema_version int DEFAULT 1,
+  outcome text NOT NULL
+    CHECK (outcome = ANY (ARRAY['committed','refused','rejected','unknown','stale',
+                                 'drift','quarantined','superseded','rolled_back','failed'])),
+  schema_version integer NOT NULL DEFAULT 1,
   aggregate_id text,
   causation_id text,
   correlation_id text,
@@ -80,15 +96,22 @@ CREATE TABLE IF NOT EXISTS resolution.keychain_event_outbox (
   law_id text,
   effective_at timestamptz,
   recorded_at timestamptz NOT NULL DEFAULT now(),
-  read_set jsonb,
-  payload jsonb,
-  checkpoint_status text NOT NULL DEFAULT 'pending',
-  claimed_at timestamptz,
-  delivery_attempts int NOT NULL DEFAULT 0,
-  last_error text
+  read_set jsonb NOT NULL DEFAULT '{}'::jsonb,
+  payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+  checkpoint_status text NOT NULL DEFAULT 'pending'
+    CHECK (checkpoint_status = ANY (ARRAY['pending','delivering','delivered',
+                                          'not_applicable','failed'])),
+  delivery_attempts integer NOT NULL DEFAULT 0,
+  delivered_at timestamptz,
+  last_error text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  claimed_at timestamptz
 );
-CREATE UNIQUE INDEX IF NOT EXISTS keychain_event_outbox_event_uq
+CREATE UNIQUE INDEX IF NOT EXISTS keychain_event_outbox_source_event_uq
   ON resolution.keychain_event_outbox (source_namespace, source_event_id);
+CREATE INDEX IF NOT EXISTS idx_keychain_event_outbox_pending
+  ON resolution.keychain_event_outbox (checkpoint_status, recorded_at)
+  WHERE checkpoint_status = ANY (ARRAY['pending','failed']);
 
 CREATE SCHEMA IF NOT EXISTS semantics;
 CREATE TABLE IF NOT EXISTS semantics.canonical_asset (

@@ -245,10 +245,16 @@ jobs:
             "SELECT count(*) FROM nebula.agent_records")
           echo "agent_records rows: $N"
           [ "$N" -eq 5 ] || { echo "shim seed rows missing"; exit 1; }
+      # KEYCHAIN_SOURCE_DATABASES: this job has one PostgreSQL database
+      # (`nexus`). The service defaults to `nexus,sol` and polls every source,
+      # so without this the broker logs "database \"sol\" does not exist" on
+      # every tick — noise, and before the per-source isolation above, a
+      # starved poll for the database that does exist.
       - name: PTY transport E2E (hermetic booting suite)
         working-directory: moleculer/nexus-broker
         env:
           MONGO_URL: mongodb://localhost:28017
+          KEYCHAIN_SOURCE_DATABASES: nexus
         run: node --test tests/pty-transport.e2e.test.js
       - name: Keychain delta E2E (self-seeding anchor)
         working-directory: moleculer/nexus-broker
@@ -259,6 +265,7 @@ jobs:
           PG_USER: pguser
           PG_PASSWORD: pgpass
           PG_DATABASE: nexus
+          KEYCHAIN_SOURCE_DATABASES: nexus
         run: node --test tests/keychain-delta.test.js
 
   pg-integration-e2e:
@@ -303,6 +310,9 @@ jobs:
       PGPASSWORD: pgpass
       PGDATABASE: nexus
       MONGO_URL: mongodb://localhost:28017/nexus
+      # One database in this job; see the hermetic job's note. Without it the
+      # outbox poll spends every tick failing against a `sol` that is not here.
+      KEYCHAIN_SOURCE_DATABASES: nexus
     steps:
       - uses: actions/checkout@v4
 

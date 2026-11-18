@@ -1278,11 +1278,20 @@ export default class KeychainService extends Service {
     if (this.outboxPollInFlight) return;
     this.outboxPollInFlight = true;
     try {
-      for (const pool of this.sourcePools.values()) {
-        for (let count = 0; count < 10; count += 1) {
-          const claim = await this.claimNextOutboxRow(pool);
-          if (!claim) break;
-          await this.processOutboxRow(pool, claim.row, claim.client);
+      // One source's failure must not end the pass for the others. When the
+      // poll had a single try/catch around every source, an unreachable or
+      // absent source database (e.g. KEYCHAIN_SOURCE_DATABASES still defaults
+      // to "nexus,sol" on a host that has no `sol`) aborted the loop and
+      // starved the healthy sources until the next tick.
+      for (const [database, pool] of this.sourcePools.entries()) {
+        try {
+          for (let count = 0; count < 10; count += 1) {
+            const claim = await this.claimNextOutboxRow(pool);
+            if (!claim) break;
+            await this.processOutboxRow(pool, claim.row, claim.client);
+          }
+        } catch (err) {
+          this.logger.error(`Keychains outbox poll failed for source ${database}`, err);
         }
       }
     } catch (err) {
