@@ -32,20 +32,26 @@ log = logging.getLogger("agent-records-to-shrapnel-bridge")
 
 # ── Databases ──────────────────────────────────────────────────────────────
 # Source: nexus.nebula.agent_records (view over agent_records_history)
+#
+# Connection details come from the environment so the test harness can point
+# this at its own per-run database (tests/helpers/isolated-pg.js) — the defaults
+# are the historic titanium values, so a bare invocation behaves as before.
+# Before this, the database name was hardcoded to "nexus", which meant the
+# bridge could only ever be tested against the deployment database.
 NEXUS_DB = {
-    "host": "localhost",
-    "port": 5432,
-    "database": "nexus",
-    "user": "pguser",
-    "password": "pgpass",
+    "host": os.environ.get("PG_HOST", "localhost"),
+    "port": int(os.environ.get("PG_PORT", "5432")),
+    "database": os.environ.get("PG_DB_NAME", "nexus"),
+    "user": os.environ.get("PG_USER", "pguser"),
+    "password": os.environ.get("PG_PASSWORD", "pgpass"),
 }
 # Target: shrapnel EAV schema in the `postgres` database
 SHRAPNEL_DB = {
-    "host": "localhost",
-    "port": 5432,
-    "database": "postgres",
-    "user": "pguser",
-    "password": "pgpass",
+    "host": os.environ.get("SHRAPNEL_PG_HOST", os.environ.get("PG_HOST", "localhost")),
+    "port": int(os.environ.get("SHRAPNEL_PG_PORT", os.environ.get("PG_PORT", "5432"))),
+    "database": os.environ.get("SHRAPNEL_PG_DB", "postgres"),
+    "user": os.environ.get("SHRAPNEL_PG_USER", os.environ.get("PG_USER", "pguser")),
+    "password": os.environ.get("SHRAPNEL_PG_PASSWORD", os.environ.get("PG_PASSWORD", "pgpass")),
 }
 
 # ── Field schema (property_name, field_type_code) ──────────────────────────

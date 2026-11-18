@@ -57,6 +57,63 @@ const {
   dropIsolatedDatabase,
   waitForKeychainReady,
 } = require('./helpers/isolated-mongo')
+const { TEST_PG_DATABASE, ensureTestDatabase, pgConfig } = require('./helpers/isolated-pg')
+
+//
+// PG records THIS test owns.
+//
+// The delta assertions need a non-empty current-state view: the service builds
+// the anchor state vector from `nebula.agent_records` (the view over the
+// temporal `agent_records_history`), and an empty view materializes no
+// `record_type_state` rows, so "rewind reconstructs the materialized current
+// state" has nothing to compare against.
+//
+// Those rows used to be shipped by the CI shim (`keychain-delta-ci-pg.sql`),
+// which is fixture-as-scaffolding: the suite was green because an operator-managed
+// step had prepared the database, and the fixture could drift from the schema it
+// mirrors with nothing to notice. They are created here instead, with ids this
+// test owns, and deleted on the way out. The shapes are the ones that exercise
+// the resolver's grouping rules: an amendment chain (2 -> 1 instance), a
+// supersession chain (2 -> 1) and a standalone (1), i.e. 4 logical instances.
+const PG_RECORD_IDS = [
+  '11111111-1111-4111-8111-111111111111',
+  '22222222-2222-4222-8222-222222222222',
+  '33333333-3333-4333-8333-333333333333',
+  '44444444-4444-4444-8444-444444444444',
+  '55555555-5555-4555-8555-555555555555',
+]
+
+async function seedPgRecords() {
+  const { Pool } = require('pg')
+  const pool = new Pool({ ...pgConfig(), connectionTimeoutMillis: 3000 })
+  try {
+    // Fixed recorded_on_dt so the (id, recorded_on_dt) PK makes a re-seed a no-op.
+    await pool.query(
+      `INSERT INTO nebula.agent_records_history
+         (id, record_type, role, title, content, tags, created_at, level, visibility_scope,
+          recorded_on_dt, recorded_until_dt, valid_from, valid_until)
+       VALUES
+         ('11111111-1111-4111-8111-111111111111', 'report', 'engineer', 'Report 05aa1111: initial issuance', 'initial body', '{}', '2026-01-01T00:29:00Z', 1, 'all', '2026-01-01T00:00:00Z', 'infinity', '2026-01-01T00:00:00Z', 'infinity'),
+         ('22222222-2222-4222-8222-222222222222', 'report', 'engineer', 'Report 05aa1111: amendment one', 'amended body', '{}', '2026-01-01T00:20:00Z', 1, 'all', '2026-01-01T00:00:01Z', 'infinity', '2026-01-01T00:00:01Z', 'infinity'),
+         ('33333333-3333-4333-8333-333333333333', 'analysis', 'analyst', 'Analysis: superseded baseline', 'baseline body', '{supersedes:}', '2026-01-01T00:15:00Z', 2, 'all', '2026-01-01T00:00:02Z', 'infinity', '2026-01-01T00:00:02Z', 'infinity'),
+         ('44444444-4444-4444-8444-444444444444', 'analysis', 'analyst', 'Analysis: superseding revision', 'revision body', '{supersedes:33333333}', '2026-01-01T00:10:00Z', 2, 'all', '2026-01-01T00:00:03Z', 'infinity', '2026-01-01T00:00:03Z', 'infinity'),
+         ('55555555-5555-4555-8555-555555555555', 'inspection', 'inspector', 'Inspection: standalone observation', 'inspection body', '{}', '2026-01-01T00:05:00Z', 3, 'all', '2026-01-01T00:00:04Z', 'infinity', '2026-01-01T00:00:04Z', 'infinity')
+       ON CONFLICT (id, recorded_on_dt) DO NOTHING`,
+    )
+  } finally {
+    await pool.end().catch(() => undefined)
+  }
+}
+
+async function removePgRecords() {
+  const { Pool } = require('pg')
+  const pool = new Pool({ ...pgConfig(), connectionTimeoutMillis: 3000 })
+  try {
+    await pool.query('DELETE FROM nebula.agent_records_history WHERE id = ANY($1::uuid[])', [PG_RECORD_IDS])
+  } finally {
+    await pool.end().catch(() => undefined)
+  }
+}
 
 dotenv.config({ path: path.join(__dirname, '..', '.env') })
 
@@ -101,6 +158,8 @@ async function startBroker() {
           KEYCHAIN_OUTBOX_NAMESPACE_PREFIX: OUTBOX_NAMESPACE_PREFIX,
           // Never production's queue: this suite writes its own outbox table.
           KEYCHAIN_OUTBOX_TABLE: OUTBOX_TABLE,
+          // Poll this run's database by name — see the note in broker-smoke.
+          KEYCHAIN_SOURCE_DATABASES: TEST_PG_DATABASE,
       },
       // Captured, not discarded: see helpers/broker-log.js.
       stdio: ['ignore', brokerLogFd, brokerLogFd],
@@ -181,10 +240,15 @@ registerProductionOutboxGuard({
   before: test.before,
   after: test.after,
   async setup() {
+    await ensureTestDatabase()
+    await seedPgRecords()
     await startBroker()
   },
   async teardown() {
     await stopBroker()
+    // Remove this test's own PG records (the database is dropped right after by
+    // the guard, but leaving them behind would be wrong if it were kept).
+    await removePgRecords().catch((err) => console.warn(`[keychain-delta] pg cleanup skipped: ${err.message}`))
     // Drop this process's isolated keychain database so repeat runs are clean.
     const mongo = new MongoClient(MONGO_URL)
     try {

@@ -251,28 +251,20 @@ jobs:
           PG_PASSWORD: pgpass
         run: node tests/verify-outbox-fixture.js
 
-      - name: Apply keychain-delta PG shim
-        env:
-          PGPASSWORD: pgpass
-        run: |
-          psql -v ON_ERROR_STOP=1 -h localhost -U pguser -d nexus \
-            < moleculer/nexus-broker/tests/fixtures/keychain-delta-ci-pg.sql
-          # Postcondition: the anchor state vector must resolve to exactly
-          # 4 logical instances (2 chains collapse + 1 standalone).
-          N=$(psql -h localhost -U pguser -d nexus -tAc \
-            "SELECT count(*) FROM nebula.agent_records")
-          echo "agent_records rows: $N"
-          [ "$N" -eq 5 ] || { echo "shim seed rows missing"; exit 1; }
-      # KEYCHAIN_SOURCE_DATABASES: this job has one PostgreSQL database
-      # (`nexus`). The service defaults to `nexus,sol` and polls every source,
-      # so without this the broker logs "database \"sol\" does not exist" on
-      # every tick — noise, and before the per-source isolation above, a
-      # starved poll for the database that does exist.
+      # Neither step names a database any more. The harness creates its own
+      # (tests/helpers/isolated-pg.js), applies the canonical bootstrap to it
+      # and tells the broker to poll it via KEYCHAIN_SOURCE_DATABASES — which is
+      # the variable that actually selects the polled database, so pinning it to
+      # `nexus` here used to keep the suite on the shared database no matter
+      # what PG_DB_NAME said. Only credentials remain in the environment.
       - name: PTY transport E2E (hermetic booting suite)
         working-directory: moleculer/nexus-broker
         env:
           MONGO_URL: mongodb://localhost:28017
-          KEYCHAIN_SOURCE_DATABASES: nexus
+          PG_HOST: localhost
+          PG_PORT: '5432'
+          PG_USER: pguser
+          PG_PASSWORD: pgpass
         run: node --test tests/pty-transport.e2e.test.js
       - name: Keychain delta E2E (self-seeding anchor)
         working-directory: moleculer/nexus-broker
@@ -282,8 +274,6 @@ jobs:
           PG_PORT: '5432'
           PG_USER: pguser
           PG_PASSWORD: pgpass
-          PG_DATABASE: nexus
-          KEYCHAIN_SOURCE_DATABASES: nexus
         run: node --test tests/keychain-delta.test.js
 
   pg-integration-e2e:
@@ -328,9 +318,9 @@ jobs:
       PGPASSWORD: pgpass
       PGDATABASE: nexus
       MONGO_URL: mongodb://localhost:28017/nexus
-      # One database in this job; see the hermetic job's note. Without it the
-      # outbox poll spends every tick failing against a `sol` that is not here.
-      KEYCHAIN_SOURCE_DATABASES: nexus
+      # NOTE: the broker suites in this job no longer read these. Each test
+      # creates its own database and polls it by name; the values above serve
+      # the peb-kernel and execution-srv processes only.
     steps:
       - uses: actions/checkout@v4
 
@@ -459,10 +449,15 @@ jobs:
       # final steps emit + upload the artifact with if:always(), so FAILED
       # runs produce evidence too. NOTE: these steps are the only callers;
       # do not duplicate guard logic inline — change the helper instead.
+      # PEB_PG_DATABASE names the database the kernel above was booted against:
+      # it admits the bridge's claim by reading the row the bridge wrote, so
+      # both sides must agree. It is explicit and applies to this file only;
+      # every other suite builds and uses its own per-run database.
       - name: E2E — harness bridge producer cycle + attempt lifecycle
         working-directory: moleculer/nexus-broker
         env:
           PEB_BASE_URL: http://localhost:18099
+          PEB_PG_DATABASE: nexus
         run: |
           set -o pipefail
           node --test --test-reporter=tap \
@@ -503,27 +498,20 @@ jobs:
       # worker surface against the REAL legacy execution-srv over the same PG.
       # execution-srv on a non-standard port (nothing on the runner may already
       # own 3110, but the explicit pair removes the dependence entirely).
+      # The test now boots the legacy execution-srv itself, on an ephemeral
+      # port, against its own per-run database (helpers/isolated-pg.js). The
+      # step only has to produce dist/; a separately booted server would read a
+      # different database than the broker under comparison.
       - name: E2E — legacy execution-srv parity (broker-pg-integration class)
         working-directory: moleculer/nexus-broker
-        env:
-          LEGACY_EXECUTION_URL: http://localhost:32110
         run: |
           set -o pipefail
           pushd ../../typescript/execution-srv
           npm ci && npm run build
-          PGHOST=localhost PGPORT=5432 PGUSER=pguser PGPASSWORD=pgpass PGDATABASE=nexus \
-            PORT=32110 node dist/index.js > /tmp/execution-srv.log 2>&1 &
-          SRV_PID=$!
           popd
-          for i in $(seq 1 30); do
-            curl -sf --max-time 2 http://localhost:32110/health >/dev/null 2>&1 && break
-            sleep 1
-          done
-          curl -sf http://localhost:32110/health >/dev/null || { echo "execution-srv never became healthy"; tail -40 /tmp/execution-srv.log; exit 1; }
           node --test --test-reporter=tap tests/legacy-parity.test.js \
             2>&1 | tee /tmp/tap-legacy-parity.log
           STATUS=$?
-          kill $SRV_PID 2>/dev/null || true
           python3 ../../bin/pgie-evidence.py guard /tmp/tap-legacy-parity.log 8 "legacy-parity" /tmp/pgie-results.tsv
           exit $STATUS
 

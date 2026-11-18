@@ -23,6 +23,7 @@ const assert = require('node:assert/strict')
     registerProductionOutboxGuard,
     dropIsolatedDatabase,
   } = require('./helpers/isolated-mongo')
+const { TEST_PG_DATABASE } = require('./helpers/isolated-pg')
 
 const BROKER_DIR = path.resolve(__dirname, '..')
 const { createBrokerLog } = require('./helpers/broker-log')
@@ -70,6 +71,8 @@ function startBroker() {
           MONGO_DB_NAME,
           KEYCHAIN_OUTBOX_NAMESPACE_PREFIX: OUTBOX_NAMESPACE_PREFIX,
           KEYCHAIN_OUTBOX_TABLE: OUTBOX_TABLE,
+          // Poll this run's database by name — see the note in broker-smoke.
+          KEYCHAIN_SOURCE_DATABASES: TEST_PG_DATABASE,
         },
         stdio: ['ignore', brokerLogFd, brokerLogFd],
       }

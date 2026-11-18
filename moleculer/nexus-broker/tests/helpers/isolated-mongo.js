@@ -41,6 +41,12 @@
  */
 const crypto = require('node:crypto')
 
+// Every PG pool in the harness points at a database that belongs to THIS run
+// and was built from the canonical bootstrap (helpers/isolated-pg.js). It is
+// deliberately not `process.env.PG_DB_NAME`: CI sets that to the shared
+// throwaway database, and inheriting it would put tests back on shared state.
+const { TEST_PG_DATABASE, ensureTestDatabase, dropTestDatabase } = require('./isolated-pg')
+
 function mongoUrl() {
   return process.env.MONGO_URL || 'mongodb://localhost:27017'
 }
@@ -324,7 +330,7 @@ async function ensureOutboxTable(poolOrOptions = {}, tableOverride = null) {
         port: Number(process.env.PG_PORT || 5432),
         user: process.env.PG_USER || 'pguser',
         password: process.env.PG_PASSWORD || 'pgpass',
-        database: process.env.PG_DB_NAME || 'nexus',
+        database: TEST_PG_DATABASE,
         ...(poolOrOptions || {}),
       })
   const owned = pool !== poolOrOptions
@@ -572,7 +578,7 @@ function outboxPool(overrides = {}) {
     port: Number(process.env.PG_PORT || 5432),
     user: process.env.PG_USER || 'pguser',
     password: process.env.PG_PASSWORD || 'pgpass',
-    database: process.env.PG_DB_NAME || 'nexus',
+    database: TEST_PG_DATABASE,
     ...(overrides || {}),
   })
 }
@@ -687,6 +693,12 @@ function registerProductionOutboxGuard({ before, after, setup = null, teardown =
   }
   let baseline = null
   before(async () => {
+    // The per-run database must exist before ANY of the guard's work touches
+    // PG: the sweep, the probe table clone and the production-queue baseline
+    // all connect. It is created here rather than in each file's `setup()`
+    // because `setup()` runs after those three, and a file that forgot the call
+    // would fail with "database ... does not exist" instead of a clear message.
+    await ensureTestDatabase()
     try {
       const swept = await sweepStaleTestOutboxTables()
       if (swept.length) {
@@ -728,6 +740,13 @@ function registerProductionOutboxGuard({ before, after, setup = null, teardown =
     } else {
       try {
         await dropTestOutboxTable()
+      } catch (err) {
+        failures.push(err)
+      }
+      // The run's database goes last, after the leak check has read it — and
+      // not at all when a leak was reported, so the rows stay inspectable.
+      try {
+        await dropTestDatabase()
       } catch (err) {
         failures.push(err)
       }

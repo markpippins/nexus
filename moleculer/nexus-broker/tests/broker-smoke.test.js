@@ -26,6 +26,7 @@ const {
   dropIsolatedDatabase,
   waitForKeychainReady,
 } = require('./helpers/isolated-mongo')
+const { TEST_PG_DATABASE, ensureTestDatabase } = require('./helpers/isolated-pg')
 
 dotenv.config({ path: path.join(__dirname, '..', '.env') })
 
@@ -70,6 +71,11 @@ async function startBroker() {
         KEYCHAIN_OUTBOX_NAMESPACE_PREFIX: OUTBOX_NAMESPACE_PREFIX,
         // This suite's own queue — never production's outbox table.
         KEYCHAIN_OUTBOX_TABLE: OUTBOX_TABLE,
+        // The poller reads its outbox from the PostgreSQL databases NAMED
+        // here, not from PG_DB_NAME. Left unset it defaults to `nexus,sol`,
+        // which would poll the deployment database no matter how isolated the
+        // rest of the harness is.
+        KEYCHAIN_SOURCE_DATABASES: TEST_PG_DATABASE,
       },
       // Captured to a file rather than drained to /dev/null: a file cannot
       // block the child on a full pipe, and a boot failure says why.
@@ -139,7 +145,7 @@ async function ensureKeychainSeed() {
     port: Number(process.env.PG_PORT || 5432),
     user: process.env.PG_USER || 'pguser',
     password: process.env.PG_PASSWORD || 'pgpass',
-    database: process.env.PG_DB_NAME || 'nexus',
+    database: TEST_PG_DATABASE,
   })
   try {
     await pool.query(
@@ -188,6 +194,9 @@ registerProductionOutboxGuard({
   before: test.before,
   after: test.after,
   async setup() {
+    // This file's own database, built from the canonical bootstrap — never the
+    // shared `nexus` that an operator or CI step may have seeded.
+    await ensureTestDatabase()
     // The broker claims from KEYCHAIN_OUTBOX_TABLE; production's outbox table
     // (resolution.keychain_event_outbox) must stay untouched by the suite.
     await startBroker()
@@ -787,7 +796,7 @@ test('SOL outbox events are delivered into Keychains and replayed idempotently',
     port: Number(process.env.PG_PORT || 5432),
     user: process.env.PG_USER || 'pguser',
     password: process.env.PG_PASSWORD || 'pgpass',
-    database: process.env.PG_DB_NAME || 'nexus',
+    database: TEST_PG_DATABASE,
   })
       const sourceNamespace = `${OUTBOX_NAMESPACE_PREFIX}sol-e2e-${process.pid}-${Date.now()}`
   const sourceEventId = randomUUID()

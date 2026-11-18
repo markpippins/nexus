@@ -53,6 +53,7 @@ const {
   QUARANTINE_STATUS,
   QUARANTINE_MARKER,
 } = require('../bin/outbox-quarantine')
+const { TEST_PG_DATABASE, ensureTestDatabase, dropTestDatabase } = require('./helpers/isolated-pg')
 
 dotenv.config({ path: path.join(__dirname, '..', '.env') })
 
@@ -76,7 +77,7 @@ function makePool() {
     port: Number(process.env.PG_PORT || 5432),
     user: process.env.PG_USER || 'pguser',
     password: process.env.PG_PASSWORD || 'pgpass',
-    database: process.env.PG_DB_NAME || 'nexus',
+    database: TEST_PG_DATABASE,
   })
 }
 
@@ -158,6 +159,9 @@ async function startBrokerOn(table) {
         NODE_ENV: 'test',
         MONGO_DB_NAME,
         KEYCHAIN_OUTBOX_TABLE: table,
+        // The poller reads outbox rows from the PostgreSQL databases named
+        // here (not from PG_DB_NAME), so without this it polls `nexus`.
+        KEYCHAIN_SOURCE_DATABASES: TEST_PG_DATABASE,
         // Deliberately NO include-prefix: this broker must behave like
         // production (claim everything except the reserved test namespaces).
         // The quarantined row is excluded by its status, not by its name.
@@ -185,6 +189,7 @@ async function startBrokerOn(table) {
 }
 
 before(async () => {
+  await ensureTestDatabase()
   pool = makePool()
   baseline = await snapshotProductionOutbox()
   await ensureOutboxTable(pool, PROBE_TABLE)
@@ -206,6 +211,7 @@ after(async () => {
       await pool.query(`DROP TABLE IF EXISTS ${E2E_TABLE}`).catch(() => undefined)
       await assertProductionOutboxUnchanged(baseline).finally(() => pool.end().catch(() => undefined))
     }
+    await dropTestDatabase().catch((err) => console.warn(`[outbox-quarantine] drop skipped: ${err.message}`))
   }
 })
 

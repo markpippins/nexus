@@ -20,6 +20,17 @@ const path = require('node:path')
 const fs = require('node:fs')
 const dotenv = require('dotenv')
 const { Pool } = require('pg')
+const { TEST_PG_DATABASE, ensureTestDatabase, dropTestDatabase } = require('./helpers/isolated-pg')
+
+// Per-run database built from the canonical bootstrap (helpers/isolated-pg.js):
+// the lifecycle SQL is exercised against a schema this run owns, not the shared
+// pre-seeded database.
+test.before(async () => {
+  await ensureTestDatabase()
+})
+test.after(async () => {
+  await dropTestDatabase().catch((err) => console.warn(`[attempt-lifecycle] drop skipped: ${err.message}`))
+})
 
 const BROKER_DIR = path.resolve(__dirname, '..')
 dotenv.config({ path: path.join(BROKER_DIR, '.env') })
@@ -192,7 +203,7 @@ describe('lifecycle SQL against live schema (rolled back)', { skip: !mod }, () =
   test('probe: create → terminal → release → receipt → request transitions → recovery', async (t) => {
     if (!process.env.PG_HOST && !process.env.PGUSER && !process.env.NEXUS_PG_DSN) {
       const probe = new Pool({
-        host: 'localhost', port: 5432, user: 'pguser', password: 'pgpass', database: 'nexus',
+        host: 'localhost', port: 5432, user: 'pguser', password: 'pgpass', database: TEST_PG_DATABASE,
         connectionTimeoutMillis: 2000,
       })
       try {
@@ -210,7 +221,7 @@ describe('lifecycle SQL against live schema (rolled back)', { skip: !mod }, () =
       port: Number(process.env.PG_PORT || 5432),
       user: process.env.PG_USER || 'pguser',
       password: process.env.PG_PASSWORD || 'pgpass',
-      database: process.env.PG_DB_NAME || 'nexus',
+      database: TEST_PG_DATABASE,
       connectionTimeoutMillis: 3000,
     })
 

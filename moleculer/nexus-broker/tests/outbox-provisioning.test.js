@@ -45,6 +45,7 @@ const {
   shapesMatch,
   registerProductionOutboxGuard,
 } = require('./helpers/isolated-mongo')
+const { TEST_PG_DATABASE, ensureTestDatabase, dropTestDatabase } = require('./helpers/isolated-pg')
 
 dotenv.config({ path: path.join(__dirname, '..', '.env') })
 
@@ -62,7 +63,7 @@ function makePool() {
     port: Number(process.env.PG_PORT || 5432),
     user: process.env.PG_USER || 'pguser',
     password: process.env.PG_PASSWORD || 'pgpass',
-    database: process.env.PG_DB_NAME || 'nexus',
+    database: TEST_PG_DATABASE,
   })
 }
 
@@ -119,6 +120,9 @@ async function resetProbeTable() {
 }
 
 before(async () => {
+  // Per-run database from the canonical bootstrap: the clone source is this
+  // run's `resolution.keychain_event_outbox`, not a pre-seeded shared one.
+  await ensureTestDatabase()
   pool = makePool()
   productionShapeBefore = await productionShape()
   const sig = await pool.query(
@@ -134,6 +138,7 @@ after(async () => {
     await pool.query(`DROP TABLE IF EXISTS ${PROBE_TABLE}`).catch(() => undefined)
     await pool.end().catch(() => undefined)
   }
+  await dropTestDatabase().catch((err) => console.warn(`[outbox-provisioning] drop skipped: ${err.message}`))
 })
 
 test('a matching table is reported unchanged, with no DDL and no data loss', async () => {
@@ -243,7 +248,10 @@ test('concurrent provisioners neither deadlock nor drop a table in use', async (
   `
   const children = [0, 1, 2].map(() => spawn(process.execPath, ['-e', script], {
     cwd: path.resolve(__dirname, '..'),
-    env: { ...process.env, KEYCHAIN_OUTBOX_TABLE: PROBE_TABLE },
+    // NEXUS_TEST_PG_DATABASE pins the children to THIS run's database. Without
+    // it each child derives its own name (pid-based) and races against a
+    // database nobody created — which is not the contention this test is about.
+    env: { ...process.env, KEYCHAIN_OUTBOX_TABLE: PROBE_TABLE, NEXUS_TEST_PG_DATABASE: TEST_PG_DATABASE },
     stdio: ['ignore', 'pipe', 'pipe'],
   }))
 
