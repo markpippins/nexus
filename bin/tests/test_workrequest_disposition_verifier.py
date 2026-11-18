@@ -7,7 +7,10 @@ SELECT-only contract; the SQL constants are pinned against mutating keywords.
 
 The negative controls are the point: the verifier must fail on a changed
 verdict distribution, a missing MERGE target, a non-PROMOTE target, a live
-status drift, a vanished 8261668 gap, and any mutating SQL.
+status drift, a vanished 8261668 gap, a mutated or unratified extra row, and
+any mutating SQL. The pinned out-of-window rows are the inverse control: they
+must not fail, but must be identity-checked and named — and pinning must never
+be mistaken for a disposition.
 
 Dual-runnable: pytest or python3 bin/tests/test_workrequest_disposition_verifier.py
 """
@@ -20,6 +23,7 @@ import json
 import re
 import unittest
 from pathlib import Path
+from unittest import mock
 
 BIN = Path(__file__).resolve().parents[1]
 REPO = BIN.parent
@@ -122,6 +126,30 @@ class ArtifactValidationTest(unittest.TestCase):
         errors = mod.validate_artifact(doc)
         self.assertTrue(any("6217db7f" in e for e in errors), errors)
 
+    def test_live_queue_expectation_is_one_constant(self):
+        self.assertEqual(
+            {"completed": 30, "archived": 4, "pending": 1, "": 11},
+            mod.EXPECTED_PLAN_STATUS,
+        )
+        self.assertEqual(
+            mod.EXPECTED_PLAN_STATUS,
+            mod.derive_plan_status_counts(mod.LIVE_QUEUE_EXPECTED_STATUS),
+        )
+        # Flipping the constant moves the distribution with it: reconciling
+        # plan 8261650 is one edit, not three.
+        self.assertEqual(
+            {"completed": 31, "archived": 4, "": 11},
+            mod.derive_plan_status_counts("completed"),
+        )
+
+    def test_row_assertion_follows_the_constant(self):
+        doc = _doc()
+        with mock.patch.object(mod, "LIVE_QUEUE_EXPECTED_STATUS", "completed"):
+            errors = mod.validate_artifact(doc)
+        self.assertTrue(
+            any("must project plan 8261650 as completed" in e for e in errors), errors
+        )
+
     def test_architecture_rules_are_pinned(self):
         doc = _doc()
         doc["architecture_rules"]["business_status_mutation"] = True
@@ -154,7 +182,7 @@ class LiveValidationTest(unittest.TestCase):
         rows = _rows(doc)
         rows.append({**rows[0], "row_id": "00000000-0000-4000-8000-000000000000"})
         errors, _ = mod.validate_live(doc, rows, ["8261668"])
-        self.assertTrue(any("not in the artifact" in e for e in errors), errors)
+        self.assertTrue(any("not classified by the ledger" in e for e in errors), errors)
 
     def test_plan_status_drift_fails(self):
         doc = _doc()
@@ -177,6 +205,109 @@ class LiveValidationTest(unittest.TestCase):
         errors, warnings = mod.validate_live(doc, rows, ["8261668"])
         self.assertEqual([], errors)
         self.assertTrue(any("populated on 1/46" in w for w in warnings), warnings)
+
+
+class PinnedRowClassificationTest(unittest.TestCase):
+    """Pins are scope statements, never dispositions."""
+
+    def _pinned_row(self, rid: str, legacy: str, **overrides) -> dict:
+        row = {
+            "row_id": rid,
+            "business_status": "DRAFT",
+            "legacy_id": legacy,
+            "plan_number": "8261674",
+            "plan_status": "pending",
+            "plan_id": "",
+        }
+        row.update(overrides)
+        return row
+
+    def test_8261674_pins_match_the_ac13_guard(self):
+        # The two rows ac13_verify_8261650.py pins as OUT_OF_WINDOW_WORK_REQUESTS
+        # are pinned identically here; no other row may claim that scope.
+        self.assertEqual(
+            {
+                "51d3e506-1bd8-40b5-b77f-4dca2df4dc7f": "wr-8261674-1794954783-7b623473",
+                "6bfebc75-f9e2-4118-a86e-dae9c3ff5a32": (
+                    "vision.work_requests:wr-8261674-1794937465-wb2ticketclass"
+                ),
+            },
+            {
+                rid: legacy
+                for rid, legacy in mod.PINNED_OUT_OF_WINDOW_ROWS.items()
+                if "#8261674" in mod.PINNED_ROW_REASONS[rid]
+            },
+        )
+
+    def test_pins_and_reasons_are_paired(self):
+        self.assertEqual(
+            set(mod.PINNED_OUT_OF_WINDOW_ROWS), set(mod.PINNED_ROW_REASONS)
+        )
+
+    def test_66b9d2e0_is_pinned_as_out_of_window_not_dispositioned(self):
+        # Created 2026-11-14, two days after the ledger's 2026-11-12
+        # ratification: the 46-row snapshot could not have covered it.
+        rid = "66b9d2e0-dfd2-4589-9d7f-55192825a9d8"
+        self.assertEqual(
+            "wr-8261673-1794650830-98004713", mod.PINNED_OUT_OF_WINDOW_ROWS[rid]
+        )
+        self.assertIn("postdates", mod.PINNED_ROW_REASONS[rid])
+        # A pin is a scope statement: the ledger still has no row for it, so
+        # the guard going green did not quietly disposition it.
+        self.assertNotIn(rid, {r["row_id"] for r in _doc()["rows"]})
+        doc = _doc()
+        rows = _rows(doc) + [
+            self._pinned_row(
+                rid, mod.PINNED_OUT_OF_WINDOW_ROWS[rid], plan_number="8261673"
+            )
+        ]
+        errors, warnings = mod.validate_live(doc, rows, ["8261668"])
+        self.assertEqual([], errors)
+        self.assertTrue(
+            any("66b9d2e0" in w and "none dispositioned" in w for w in warnings), warnings
+        )
+
+    def test_pinned_rows_pass_and_are_named(self):
+        doc = _doc()
+        rows = _rows(doc) + [
+            self._pinned_row(rid, legacy)
+            for rid, legacy in mod.PINNED_OUT_OF_WINDOW_ROWS.items()
+        ]
+        errors, warnings = mod.validate_live(doc, rows, ["8261668"])
+        self.assertEqual([], errors)
+        named = [w for w in warnings if "pinned out-of-window" in w]
+        self.assertEqual(1, len(named), warnings)
+        self.assertIn("none dispositioned", named[0])
+        for rid in mod.PINNED_OUT_OF_WINDOW_ROWS:
+            self.assertIn(rid[:8], named[0])
+
+    def test_pinned_legacy_id_mutation_fails(self):
+        doc = _doc()
+        rid, _legacy = next(iter(mod.PINNED_OUT_OF_WINDOW_ROWS.items()))
+        rows = _rows(doc) + [self._pinned_row(rid, "wr-8261674-TAMPERED")]
+        errors, _ = mod.validate_live(doc, rows, ["8261668"])
+        self.assertTrue(any("legacy_id is" in e for e in errors), errors)
+
+    def test_pinned_row_with_plan_id_fails(self):
+        doc = _doc()
+        rid, legacy = next(iter(mod.PINNED_OUT_OF_WINDOW_ROWS.items()))
+        rows = _rows(doc) + [self._pinned_row(rid, legacy, plan_id="8261674")]
+        errors, _ = mod.validate_live(doc, rows, ["8261668"])
+        self.assertTrue(any("expected NULL" in e for e in errors), errors)
+
+    def test_unratified_extra_row_still_fails(self):
+        doc = _doc()
+        rows = _rows(doc) + [
+            self._pinned_row(
+                "aa11bb22-cc33-4d44-8e55-ff66aa77bb88",
+                "wr-9999999-1794650830-00000001",
+                plan_number="9999999",
+            )
+        ]
+        errors, warnings = mod.validate_live(doc, rows, ["8261668"])
+        self.assertTrue(any("not classified by the ledger" in e for e in errors), errors)
+        self.assertTrue(any("aa11bb22" in e for e in errors), errors)
+        self.assertFalse(any("pinned out-of-window" in w for w in warnings), warnings)
 
 
 class ReadOnlyContractTest(unittest.TestCase):

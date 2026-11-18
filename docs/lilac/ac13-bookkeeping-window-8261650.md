@@ -68,7 +68,11 @@ PGPASSWORD=pgpass psql -h localhost -U pguser -d nexus -Atc \
 A `FAIL` from the verifier on `protected resolution counts` is the known
 `wr-8261673` 47-vs-46 drift or the two #8261674 rows; it is not missing AC13
 bookkeeping. The verifier's protected set is identity-pinned (47 baseline rows +
-2 pinned out-of-window rows, `plan_id IS NULL`).
+2 pinned out-of-window rows, `plan_id IS NULL`). The disposition ledger's own
+49-vs-46 drift is now fully classified: both #8261674 rows and `66b9d2e0` are
+pinned out-of-window there (residual 5), so
+`bin/verify-workrequest-disposition.py` reports warnings rather than failures for
+them.
 
 ## Known residuals (deliberately not written inside this window)
 
@@ -87,6 +91,18 @@ bookkeeping. The verifier's protected set is identity-pinned (47 baseline rows +
    `pending`** (row `6217db7f`). Any reconciliation of residual 2 must update that
    ratified ledger/verifier expectation in the same change or it will add a new
    failure. It is already red for the 49-vs-46 row drift.
+5. **WorkRequest `66b9d2e0-dfd2-4589-9d7f-55192825a9d8`
+   (`wr-8261673-1794650830-98004713`, `DRAFT`, created 2026-11-14) has no
+   disposition in the ratified ledger.** It postdates the ledger's 2026-11-12
+   ratification, so the 46-row snapshot could not have covered it: it is *out of
+   window by construction*, not overlooked. The disposition verifier therefore
+   pins it by identity beside the two #8261674 rows and reports it as a warning,
+   naming it with this reason on every run — the pin is a scope statement and does
+   not add a verdict. **Owner: the Planner**, via a v3 ledger amendment ratified
+   with a fresh `ratified_by` record; a verdict is a ratification act, so it is
+   not a code change an agent may make. Note the two guards classify this row
+   differently *and correctly*: the AC13 verifier counts it inside its frozen
+   47-row baseline, while the ledger window ends at 2026-11-12.
 
 ## Bounded follow-on writes (NOT performed; need their own operator approval)
 
