@@ -21,11 +21,16 @@ What this verifies
 Row classification
 ------------------
 Every live row gets exactly one outcome: in the ratified ledger, pinned
-out-of-window, or unclassified. Pinned rows are the #8261674 rows this ledger
-deliberately does not cover; they are identity-pinned by `(id, legacy_id)` with
-a NULL `plan_id`, mirroring `ac13_verify_8261650.py`'s
-`OUT_OF_WINDOW_WORK_REQUESTS` so the two guards agree about the same rows.
-Unclassified rows fail closed and are named.
+out-of-window, or unclassified. Pinned rows are identity-pinned by
+`(id, legacy_id)` with a NULL `plan_id` and carry their reason, so a pinned row
+is reported with its scope instead of as an anonymous "known extra". The two
+#8261674 pins mirror `ac13_verify_8261650.py`'s `OUT_OF_WINDOW_WORK_REQUESTS`,
+so the two guards agree about those rows.
+
+A pin states WHERE a row sits, never what to do with it. `66b9d2e0` postdates
+the ledger's 2026-11-12 ratification, so the 46-row snapshot could not have
+covered it: out of window by construction, and still undispositioned. Unclassified
+rows fail closed and are named.
 
 What this must never do
 -----------------------
@@ -95,19 +100,40 @@ def derive_plan_status_counts(live_queue_status: str) -> dict[str, int]:
 EXPECTED_PLAN_STATUS = derive_plan_status_counts(LIVE_QUEUE_EXPECTED_STATUS)
 
 # Rows present in resolution.work_request but deliberately outside this 46-row
-# ledger. Pinned by identity exactly as ac13_verify_8261650.py pins them: the
-# two 2026-11-17 #8261674 W-B2 rows. A pinned row must keep this legacy_id and
-# a NULL plan_id; any mutation is a failure, and any other unknown row is
-# unclassified and fails closed.
+# ledger. A pinned row must keep this legacy_id and a NULL plan_id; any mutation
+# is a failure, and any other unknown row is unclassified and fails closed.
 #
-# Deliberately NOT pinned: 66b9d2e0 (wr-8261673-...), which the AC13 guard
-# counts inside its frozen 47-row baseline but which this ledger never
-# ratified. Pinning it here would bless an undispositioned row, so it stays
-# unclassified and named until the ledger itself is amended.
+#   51d3e506, 6bfebc75  the 2026-11-17 #8261674 W-B2 rows, identity-pinned
+#                       exactly as ac13_verify_8261650.py pins them.
+#   66b9d2e0            the 2026-11-14 wr-8261673 draft. The ledger was
+#                       ratified 2026-11-12, so its 46-row snapshot could not
+#                       have covered a row created two days later: out of
+#                       window by construction, not missed. Giving it a
+#                       verdict needs a Planner-ratified v3 amendment, so the
+#                       pin is its owner record -- residual 5 of
+#                       docs/lilac/ac13-bookkeeping-window-8261650.md. Left
+#                       unclassified, it was this guard's only red.
 PINNED_OUT_OF_WINDOW_ROWS = {
     "51d3e506-1bd8-40b5-b77f-4dca2df4dc7f": "wr-8261674-1794954783-7b623473",
     "6bfebc75-f9e2-4118-a86e-dae9c3ff5a32": (
         "vision.work_requests:wr-8261674-1794937465-wb2ticketclass"
+    ),
+    "66b9d2e0-dfd2-4589-9d7f-55192825a9d8": "wr-8261673-1794650830-98004713",
+}
+
+# Why each pin exists. Keyed identically to the identities above so a pinned row
+# is never reported anonymously; the pairing is asserted by
+# test_pins_and_reasons_are_paired rather than left to review.
+PINNED_ROW_REASONS = {
+    "51d3e506-1bd8-40b5-b77f-4dca2df4dc7f": (
+        "#8261674 W-B2, pinned with ac13_verify_8261650.py"
+    ),
+    "6bfebc75-f9e2-4118-a86e-dae9c3ff5a32": (
+        "#8261674 W-B2, pinned with ac13_verify_8261650.py"
+    ),
+    "66b9d2e0-dfd2-4589-9d7f-55192825a9d8": (
+        "postdates the 2026-11-12 ratification; undispositioned, owned by a "
+        "Planner ledger v3 (residual 5)"
     ),
 }
 
@@ -352,9 +378,12 @@ def validate_live(
             f"{', '.join(x[:8] for x in unclassified)}"
         )
     if pinned:
+        details = "; ".join(
+            f"{rid[:8]} ({PINNED_ROW_REASONS[rid]})" for rid in pinned
+        )
         warnings.append(
-            f"{len(pinned)} pinned out-of-window #8261674 row(s) present and "
-            f"identity-matched: {', '.join(x[:8] for x in pinned)}"
+            f"{len(pinned)} pinned out-of-window row(s) present and "
+            f"identity-matched, none dispositioned: {details}"
         )
     for rid in pinned:
         want_legacy = PINNED_OUT_OF_WINDOW_ROWS[rid]
