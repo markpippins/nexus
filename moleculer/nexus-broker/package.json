@@ -10,7 +10,8 @@
     "cli": "moleculer connect NATS",
     "typecheck": "tsc --noEmit",
     "test": "node --require ./tests/helpers/env-guard.js --test \"tests/**/*.test.js\"",
-    "verify:outbox-fixture": "node tests/verify-outbox-fixture.js"
+    "verify:outbox-fixture": "node tests/verify-outbox-fixture.js",
+    "quarantine:outbox": "node bin/outbox-quarantine.js"
   },
   "dependencies": {
     "dotenv": "^16.4.0",

@@ -478,6 +478,19 @@ jobs:
             2>&1 | tee /tmp/tap-broker-smoke.log
           python3 ../../bin/pgie-evidence.py guard /tmp/tap-broker-smoke.log 12 "broker-smoke" /tmp/pgie-results.tsv
 
+      # The quarantine is a data disposition, so it has to be provable against a
+      # real broker and not just in SQL: this boots one on a private probe table
+      # and checks that a set-aside row is never claimed while a fresh event
+      # still lands a checkpoint attributable to it. Lives in this job because it
+      # needs the repo-canonical bootstrap (nebula.agent_records) and a broker.
+      - name: E2E — outbox quarantine disposition (fresh event still broadcasts)
+        working-directory: moleculer/nexus-broker
+        run: |
+          set -o pipefail
+          node --test --test-reporter=tap tests/outbox-quarantine.e2e.test.js \
+            2>&1 | tee /tmp/tap-outbox-quarantine.log
+          python3 ../../bin/pgie-evidence.py guard /tmp/tap-outbox-quarantine.log 2 "outbox-quarantine" /tmp/pgie-results.tsv
+
       # execution-srv's file:../heartbeat-client dependency has no committed
       # lock and needs its dist/ built (same two steps as its Dockerfile build
       # stage). Without this, `node dist/index.js` dies with MODULE_NOT_FOUND
