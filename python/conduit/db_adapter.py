@@ -2115,9 +2115,19 @@ class DBAdapter:
     def detect_expired_tickets(self) -> int:
         now = datetime.utcnow().isoformat() + "Z"
         with self._get_connection() as conn:
-            # ADR-016: SELECT affected tickets before UPDATE for kernel transition recording
+            # ADR-016: SELECT affected tickets before UPDATE for kernel transition recording.
+            # W-B2 (plan 8261674): the expiry_detection payload carries the generation
+            # identity (plan_id, role, generation, expires_at) plus implies_completion=false,
+            # so an expired generation is never readable as a completed one. generation is
+            # derived positionally per (plan_id, role) exactly as D1 §7.2 specifies.
             affected = conn.execute(
-                "SELECT id, status FROM tickets WHERE status IN ('open', 'claimed', 'stale') AND expires_at IS NOT NULL AND expires_at < %s",
+                "SELECT t.id, t.status, t.plan_id, t.role, t.expires_at,"
+                " (SELECT count(*) FROM tickets g"
+                "   WHERE g.plan_id = t.plan_id AND g.role = t.role"
+                "     AND (g.created_at, g.id) <= (t.created_at, t.id)) AS generation"
+                " FROM tickets t"
+                " WHERE t.status IN ('open', 'claimed', 'stale')"
+                " AND t.expires_at IS NOT NULL AND t.expires_at < %s",
                 (now,),
             ).fetchall()
             cursor = conn.execute(
@@ -2136,7 +2146,21 @@ class DBAdapter:
                     aggregate_type="ticket",
                     aggregate_id=row[0],
                     event_type="transition.rejected",
-                    payload={"from_status": row[1], "to_status": "expired", "reason": "expiry_detection"},
+                    payload={
+                        "plan_id": row[2],
+                        "role": row[3],
+                        "generation": int(row[5]),
+                        # psycopg2 hands back a datetime; the event payload is
+                        # JSON-serialized by _record_kernel_transition, so it must
+                        # be an ISO-8601 string to match the TS emitter.
+                        "expires_at": (
+                            row[4].isoformat() if hasattr(row[4], "isoformat") else row[4]
+                        ),
+                        "from_status": row[1],
+                        "to_status": "expired",
+                        "reason": "expiry_detection",
+                        "implies_completion": False,
+                    },
                 )
             conn.commit()
             n = cursor.rowcount

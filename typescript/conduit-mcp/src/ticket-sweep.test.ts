@@ -1,6 +1,69 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { TicketExpirySweeper } from "./ticket-sweep";
+import {
+  buildExpiryDetectionPayload,
+  classifyTicketStatus,
+  TicketExpirySweeper,
+} from "./ticket-sweep";
+
+describe("classifyTicketStatus (W-B2)", () => {
+  it("classifies every live status and never folds closed into completed", () => {
+    expect(classifyTicketStatus("completed")).toBe("terminal_outcome");
+    expect(classifyTicketStatus("failed")).toBe("terminal_outcome");
+    expect(classifyTicketStatus("cancelled")).toBe("terminal_outcome");
+    expect(classifyTicketStatus("closed")).toBe("terminal_outcome");
+    expect(classifyTicketStatus("expired")).toBe("attention_lost");
+    expect(classifyTicketStatus("stale")).toBe("attention_lost");
+    expect(classifyTicketStatus("open")).toBe("active");
+    expect(classifyTicketStatus("claimed")).toBe("active");
+  });
+
+  it("throws instead of inventing an implicit bucket", () => {
+    expect(() => classifyTicketStatus("superseded")).toThrow(/Unclassified ticket status/);
+  });
+});
+
+describe("buildExpiryDetectionPayload (W-B2 AC3)", () => {
+  it("emits all eight enriched fields with a typed false implies_completion", () => {
+    const payload = buildExpiryDetectionPayload({
+      id: "ticket-8261674-builder-abc",
+      plan_id: "8261674",
+      role: "builder",
+      status: "claimed",
+      expires_at: "2026-11-18T17:32:35.383+00:00",
+      generation: 2,
+    });
+
+    expect(payload).toEqual({
+      plan_id: "8261674",
+      role: "builder",
+      generation: 2,
+      expires_at: "2026-11-18T17:32:35.383Z",
+      from_status: "claimed",
+      to_status: "expired",
+      reason: "expiry_detection",
+      implies_completion: false,
+    });
+    // Expiry must never be readable as completion — the field is a boolean, and
+    // ticket identity stays in the event's aggregate_id rather than the payload.
+    expect(typeof payload.implies_completion).toBe("boolean");
+    expect(payload).not.toHaveProperty("ticket_id");
+    expect(payload).not.toHaveProperty("to_status", "completed");
+  });
+
+  it("refuses a non-positional generation", () => {
+    expect(() =>
+      buildExpiryDetectionPayload({
+        id: "ticket-8261674-builder-abc",
+        plan_id: "8261674",
+        role: "builder",
+        status: "open",
+        expires_at: null,
+        generation: 0,
+      }),
+    ).toThrow(/positive integer generation/);
+  });
+});
 
 describe("TicketExpirySweeper", () => {
   afterEach(() => {
