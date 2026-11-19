@@ -32,6 +32,11 @@ DEFAULT_DSN = "postgresql://pguser:pgpass@localhost:5432/nexus"
 
 RULING_REF = "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
 COHORT = "wb3_pre_fix_expired_generation"
+# The W-B3 cohort is admissible only under its own architect ruling; the
+# legacy registry ruling above covers just the two gen-1 rows.
+COHORT_RULING_REF = "ea38297d-1f4e-4cc5-8cda-ef8273702bf8"
+COHORT_EXPIRES_FROM = "2026-06-18T00:00:00Z"
+COHORT_EXPIRES_TO = "2026-07-27T00:00:00Z"  # exclusive end, per the ruling
 
 TERMINAL_OUTCOMES = {"completed", "failed", "cancelled", "closed"}
 ATTENTION_LOST = {"expired", "stale"}
@@ -120,7 +125,25 @@ def derive_disposition(
     return "no_disposition_required"
 
 
-def load_waivers(path: Path) -> dict[str, str]:
+def _parse_ts(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    text = str(value)
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    return datetime.fromisoformat(text)
+
+
+def load_cohort(path: Path) -> dict[str, Any]:
+    """Load and validate the ruled W-B3 cohort from the waiver registry.
+
+    The cohort is admissible ONLY under architect ruling ea38297d, ONLY over
+    its exact enumerated ids, and ONLY inside its fixed expires_at window
+    (exclusive end). A broader surface — an unruled ruling ref, an extra or
+    unenumerated row, a post-cutoff expiry — is refused here rather than
+    silently waived. The registry is the only suppression surface, so its
+    contract is enforced at load time, not by convention.
+    """
     data = json.loads(path.read_text(encoding="utf-8"))
     ruling = data.get("ruling", {}).get("decision_record_id")
     if ruling != RULING_REF:
@@ -134,13 +157,45 @@ def load_waivers(path: Path) -> dict[str, str]:
         # script must not try to route around.
         return {}
     cohort_ref = cohort.get("ruling_ref")
-    if not cohort_ref:
-        raise ValueError(f"waiver cohort {COHORT} names no ruling_ref")
-    rows = [w for w in data["waivers"] if w.get("cohort") == COHORT]
-    if len(rows) != cohort.get("count") or len(rows) != BASELINES["s3"]["event_absent_expired"]:
+    if cohort_ref != COHORT_RULING_REF:
         raise ValueError(
-            f"waiver cohort row count mismatch: registry={len(rows)}, "
-            f"declared={cohort.get('count')}, baseline={BASELINES['s3']['event_absent_expired']}"
+            f"waiver cohort {COHORT} ruling_ref {cohort_ref!r} != ruled "
+            f"{COHORT_RULING_REF!r}"
+        )
+    declared = cohort.get("count")
+    ids = cohort.get("ticket_ids")
+    if not isinstance(ids, list) or len(ids) != len(set(ids)) or len(ids) != declared:
+        raise ValueError(
+            f"waiver cohort {COHORT} ticket_ids must enumerate exactly "
+            f"{declared} unique ids"
+        )
+    if declared != BASELINES["s3"]["event_absent_expired"]:
+        raise ValueError(
+            f"waiver cohort {COHORT} count {declared} != S3 baseline "
+            f"{BASELINES['s3']['event_absent_expired']}"
+        )
+    window_from = _parse_ts(cohort.get("expires_at_from"))
+    window_to = _parse_ts(cohort.get("expires_at_to"))
+    if window_from != _parse_ts(COHORT_EXPIRES_FROM) or window_to != _parse_ts(
+        COHORT_EXPIRES_TO
+    ):
+        raise ValueError(
+            f"waiver cohort {COHORT} window {cohort.get('expires_at_from')!r}.."
+            f"{cohort.get('expires_at_to')!r} != ruled {COHORT_EXPIRES_FROM}.."
+            f"{COHORT_EXPIRES_TO} (exclusive end)"
+        )
+    rows = [w for w in data["waivers"] if w.get("cohort") == COHORT]
+    if len(rows) != declared:
+        raise ValueError(
+            f"waiver cohort {COHORT} row count mismatch: registry={len(rows)}, "
+            f"declared={declared}"
+        )
+    row_ids = [w.get("ticket_id") for w in rows]
+    if set(row_ids) != set(ids):
+        raise ValueError(
+            f"waiver cohort {COHORT} is not exactly the enumerated set: "
+            f"unenumerated={sorted(set(row_ids) - set(ids))[:5]}, "
+            f"missing={sorted(set(ids) - set(row_ids))[:5]}"
         )
     out: dict[str, str] = {}
     for row in rows:
@@ -150,8 +205,27 @@ def load_waivers(path: Path) -> dict[str, str]:
                 f"waiver {row.get('ticket_id')} waiver_ref {ref!r} does not name the "
                 f"cohort's ruling {cohort_ref!r}"
             )
+        expires_at = _parse_ts(row.get("expires_at"))
+        if expires_at is None or not (window_from <= expires_at < window_to):
+            raise ValueError(
+                f"waiver {row.get('ticket_id')} expires_at {row.get('expires_at')!r} "
+                f"falls outside the ruled window {COHORT_EXPIRES_FROM}.."
+                f"{COHORT_EXPIRES_TO} (exclusive end)"
+            )
         out[row["ticket_id"]] = ref
-    return out
+    return {
+        "ruling_ref": cohort_ref,
+        "ruling_title": cohort.get("ruling_title", ""),
+        "scope": cohort.get("scope", ""),
+        "rows": len(rows),
+        "ticket_ids": list(ids),
+        "events_synthesized": int(cohort.get("events_synthesized", 0)),
+        "map": out,
+    }
+
+
+def load_waivers(path: Path) -> dict[str, str]:
+    return load_cohort(path).get("map", {})
 
 
 SPINE_SQL = """
@@ -194,7 +268,8 @@ def build_artifact(dsn: str, waivers_path: Path) -> dict[str, Any]:
     import psycopg2
     import psycopg2.extras
 
-    waiver_map = load_waivers(waivers_path)
+    cohort = load_cohort(waivers_path)
+    waiver_map = cohort.get("map", {})
     conn = psycopg2.connect(dsn)
     try:
         conn.set_session(readonly=True, autocommit=True)
@@ -333,12 +408,14 @@ def build_artifact(dsn: str, waivers_path: Path) -> dict[str, Any]:
             "note": "Baselines are the blueprint's 2026-11-17 stamp (R-F12). Ticket rows/plans move with lane history; each delta is reported, never silently absorbed.",
         },
         "waivers": {
-            "ruling_ref": RULING_REF,
-            "ruling_title": "RULING: waive pre-fix terminal gaps; never synthesize historical transition events",
+            "ruling_ref": cohort.get("ruling_ref"),
+            "ruling_title": cohort.get("ruling_title"),
             "surface": "bin/transition-attestation-waivers.json",
             "cohort": COHORT,
             "rows": len(waiver_map),
-            "scope": "expired generations whose expires_at lies in 2026-06-18..2026-07-26, before the emission fix (PR #560); no row created after the fix is admitted, and no transition event was synthesized",
+            "ticket_ids": cohort.get("ticket_ids", []),
+            "scope": cohort.get("scope"),
+            "events_synthesized": cohort.get("events_synthesized", 0),
             "unwaived": sum(
                 1
                 for r in rows
@@ -388,6 +465,14 @@ def build_artifact(dsn: str, waivers_path: Path) -> dict[str, Any]:
             "S3_waiver_refs": {
                 "pass": not unwaived_ids,
                 "unwaived": len(unwaived_ids),
+                "waived": sum(
+                    1
+                    for r in rows
+                    if r["sweep_disposition"] == "expired_without_event_waived"
+                    and r["waiver_ref"]
+                ),
+                "ruling_ref": cohort.get("ruling_ref"),
+                "events_synthesized": cohort.get("events_synthesized", 0),
                 "note": (
                     "expired rows with no expiry_detection event need an architect-ruled "
                     "waiver_ref; without a ruled cohort they are reported here and S3 fails"
