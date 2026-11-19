@@ -60,6 +60,19 @@ _log = logging.getLogger("agent-scheduler")
 
 SLEEP_AFTER_LAUNCH = int(os.environ.get("AGENT_SCHEDULER_SLEEP", "5"))
 
+# Task slugs that name placeholder/smoke work rather than a real queue. A row
+# bound to one of these has no work source behind it: rows 164 (engineer-ii)
+# and 165 (devops) fired every 30 minutes off `test-task`, 30 launches each
+# with zero agent records to show for it.
+PLACEHOLDER_TASK_SLUGS = frozenset({
+    "test",
+    "test-task",
+    "placeholder",
+    "placeholder-task",
+    "smoke",
+    "smoke-test",
+})
+
 
 def _setup_logging():
     handler = logging.StreamHandler()
@@ -193,7 +206,7 @@ class Runner:
             """
             SELECT id, role, model_id, harness, agent_config,
                    schedule_type, schedule_value, cron_expr, event_criteria,
-                   project_dir, last_run_at, metadata
+                   project_dir, last_run_at, metadata, task_slug
             FROM tackle.agent_scheduler
             WHERE enabled = 1
             ORDER BY last_run_at ASC NULLS FIRST
@@ -398,18 +411,36 @@ class Runner:
             )
             return True
 
-    def _has_eligible_work(self, role: str) -> bool:
-        """Check whether a role has any eligible work before launching.
+    def _has_eligible_work(self, role: str, entry: dict | None = None) -> bool:
+        """Check whether a role (and its scheduled entry) has eligible work.
 
         This is the 1285 remediation: the runaway-reviewer incident
         (e6d854da) happened because the scheduler launched reviewer with
         0 eligible plans — the agent burned CPU generating nothing.
 
-        Checks (per role):
+        Checks:
+          - placeholder task_slug on the entry → never eligible, whatever the
+            role. Rows 164/165 (engineer-ii, devops) launched ~30×/hour off
+            `test-task` with no queue behind them.
           - builder  → READY execution.requests count > 0
           - reviewer → open reviewer tickets in vision.tickets > 0
-          - critic / other → assume eligible (conservative fallback)
+          - other    → assume eligible (conservative fallback)
+
+        engineer-ii / devops have no queue check on purpose: neither role has
+        ever held a vision.tickets row (only builder, reviewer, planner and
+        critic do), conduit only ever bootstraps `builder` tickets, wind.titles
+        has no title for them, and their work arrives as interactive prompts
+        rather than as queued rows. The placeholder guard is the whole gate
+        for them — inventing a queue here would be a guess, not a check.
         """
+        slug = ((entry or {}).get("task_slug") or "").strip().lower()
+        if slug in PLACEHOLDER_TASK_SLUGS:
+            _log.warning(
+                "skip (role=%s, task_slug=%r) — placeholder task binding, not a work source",
+                role, slug,
+            )
+            return False
+
         try:
             cur = self._conn.cursor()
             if role == "builder":
@@ -477,7 +508,7 @@ class Runner:
             # This prevents the runaway-reviewer incident: reviewer
             # launched with 0 plans and burned CPU generating nothing.
             # Runs before both shadow and real paths so it's visible in shadow mode.
-            if not self._has_eligible_work(role):
+            if not self._has_eligible_work(role, entry):
                 _log.info("skip (role=%s, eligible=0) — no work to do", role)
                 summary["skipped_empty"] = summary.get("skipped_empty", 0) + 1
                 continue
