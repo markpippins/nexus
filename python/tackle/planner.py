@@ -15,10 +15,10 @@ Events emitted:
   - candidate.escalated — needs human review (risk == CRITICAL OR evidence found)
 
 Usage:
-    source /home/codex/dev/nexus/python/rover/.venv/bin/activate
-    
-    # Full grooming cycle
-    python3 python/tackle/planner.py
+    # The mcp package lives in the user site of the anaconda interpreter,
+    # not in python/rover/.venv, so run with that interpreter explicitly.
+    PYTHONPATH=/home/codex/dev/nexus/python \
+        /home/codex/opt/anaconda3/bin/python3 python/tackle/planner.py
     
     # Assess specific candidate
     python3 python/tackle/planner.py --candidate <uuid>
