@@ -1,0 +1,637 @@
+{
+  "artifact": "WB3-SEEDED-PROOF",
+  "schema": "wb3-seeded-proof/1",
+  "plan_ref": "8261675",
+  "work_request_id": null,
+  "attempt_id": null,
+  "session_id": null,
+  "grant_ref": "d77594c2-e266-467e-81d0-dc6ca207c581",
+  "grant_title": "Operator grant recorded: §9.2 throwaway seed database for W-B3 (nexus_wb3_seed_<epoch>, window 2026-11-19T01:19Z→2026-11-20T01:19Z)",
+  "run_at": "2026-11-19T02:03:43.051Z",
+  "seed_database": "nexus_wb3_seed_1795053820",
+  "credential_handling": "DSN supplied via CONDUIT_PG_DSN only; not recorded in this artifact",
+  "schema_source": "sql/ci-bootstrap/nexus-ci-bootstrap.sql (schema-only repository bootstrap) followed by initDb()/createSchema()/runMigrations() from typescript/conduit-mcp/src/db.ts",
+  "schema_revision": {
+    "ci_bootstrap_sha256": "73a8a5f3404875007990c428334aedd7c5783316e652c5c2d67fd7935a432386",
+    "db_ts_sha256": "5fab800eb5c92f8b7b4d29da112a56f73197cd7b0c0d038de419efdb7e6b44a0",
+    "ticket_sweep_sha256": "9d628f3bf80175c970bda07b439451a9dad687257d66418dc873b8455ff55e80",
+    "max_schema_version": 40
+  },
+  "seed_script": {
+    "path": "typescript/conduit-mcp/scripts/wb3-seeded-proof-runner.ts",
+    "sha256": "19e4b63350b7fffb37a243a9de546ddfd663e48cdb9fd5dbd9f14ec5e20dcd06",
+    "note": "committed harness; invoked by bin/wb3_seeded_proof.py with CONDUIT_PG_DSN pointing only at the throwaway seed DB"
+  },
+  "implementation_under_test": "new TicketExpirySweeper({ detectStaleTickets, detectExpiredTickets }).runOnce() — db.ts detectors, ticket-sweep.ts payload builder; no hand-written UPDATE was used to drive the sweep",
+  "swept_at": "2026-11-19T02:03:43.305Z",
+  "git_head": "f8c07739f19816903865b9d7f138a633ec3e8f51",
+  "git_branch": "wb3-sweep-8261675",
+  "cases": [
+    {
+      "case": "C1",
+      "ticket_id": "ticket-wb3seed-builder-g1",
+      "role": "builder",
+      "derived_generation": 1,
+      "assumed_generation": 1,
+      "generation_matches": true,
+      "seeded_status": "open",
+      "seeded_expires_at": "2026-11-19T00:00:00Z",
+      "expected_disposition": "open_past_expiry_disposed",
+      "observed_disposition": "open_past_expiry_disposed",
+      "disposition_matches": true,
+      "expected_events": 1,
+      "emitted_events": 1,
+      "event_count_matches": true,
+      "emitted_event_ids": [
+        "bf2e7725-0bad-4aff-ae97-f8b02846b94c"
+      ],
+      "events_total_including_pre_existing": 1,
+      "pre_existing_events": 0,
+      "event_payload": {
+        "role": "builder",
+        "reason": "expiry_detection",
+        "plan_id": "WB3SEED",
+        "to_status": "expired",
+        "expires_at": "2026-11-19T00:00:00.000Z",
+        "generation": 1,
+        "from_status": "open",
+        "implies_completion": false
+      },
+      "post_sweep_status": "expired",
+      "post_sweep_disposition": "expired_with_event",
+      "post_sweep_reason_source": "expiry_event",
+      "events_total_after_second_run": 1,
+      "waiver_ref": null
+    },
+    {
+      "case": "C2",
+      "ticket_id": "ticket-wb3seed-builder-g2",
+      "role": "builder",
+      "derived_generation": 2,
+      "assumed_generation": 2,
+      "generation_matches": true,
+      "seeded_status": "claimed",
+      "seeded_expires_at": "2026-11-19T00:00:00Z",
+      "expected_disposition": "open_past_expiry_disposed",
+      "observed_disposition": "open_past_expiry_disposed",
+      "disposition_matches": true,
+      "expected_events": 1,
+      "emitted_events": 1,
+      "event_count_matches": true,
+      "emitted_event_ids": [
+        "05c7a4e7-da67-4958-a79e-055aee681a27"
+      ],
+      "events_total_including_pre_existing": 1,
+      "pre_existing_events": 0,
+      "event_payload": {
+        "role": "builder",
+        "reason": "expiry_detection",
+        "plan_id": "WB3SEED",
+        "to_status": "expired",
+        "expires_at": "2026-11-19T00:00:00.000Z",
+        "generation": 2,
+        "from_status": "claimed",
+        "implies_completion": false
+      },
+      "post_sweep_status": "expired",
+      "post_sweep_disposition": "expired_with_event",
+      "post_sweep_reason_source": "expiry_event",
+      "events_total_after_second_run": 1,
+      "waiver_ref": null
+    },
+    {
+      "case": "C3",
+      "ticket_id": "ticket-wb3seed-builder-g3",
+      "role": "builder",
+      "derived_generation": 3,
+      "assumed_generation": 3,
+      "generation_matches": true,
+      "seeded_status": "stale",
+      "seeded_expires_at": "2026-11-19T00:00:00Z",
+      "expected_disposition": "open_past_expiry_disposed",
+      "observed_disposition": "open_past_expiry_disposed",
+      "disposition_matches": true,
+      "expected_events": 1,
+      "emitted_events": 1,
+      "event_count_matches": true,
+      "emitted_event_ids": [
+        "194c7438-c4c2-4714-b6d0-9800055261ef"
+      ],
+      "events_total_including_pre_existing": 1,
+      "pre_existing_events": 0,
+      "event_payload": {
+        "role": "builder",
+        "reason": "expiry_detection",
+        "plan_id": "WB3SEED",
+        "to_status": "expired",
+        "expires_at": "2026-11-19T00:00:00.000Z",
+        "generation": 3,
+        "from_status": "stale",
+        "implies_completion": false
+      },
+      "post_sweep_status": "expired",
+      "post_sweep_disposition": "expired_with_event",
+      "post_sweep_reason_source": "expiry_event",
+      "events_total_after_second_run": 1,
+      "waiver_ref": null
+    },
+    {
+      "case": "C4",
+      "ticket_id": "ticket-wb3seed-builder-g4",
+      "role": "builder",
+      "derived_generation": 4,
+      "assumed_generation": 4,
+      "generation_matches": true,
+      "seeded_status": "open",
+      "seeded_expires_at": "2026-11-21T00:00:00Z",
+      "expected_disposition": "no_disposition_required",
+      "observed_disposition": "no_disposition_required",
+      "disposition_matches": true,
+      "expected_events": 0,
+      "emitted_events": 0,
+      "event_count_matches": true,
+      "emitted_event_ids": [],
+      "events_total_including_pre_existing": 0,
+      "pre_existing_events": 0,
+      "event_payload": null,
+      "post_sweep_status": "open",
+      "post_sweep_disposition": "no_disposition_required",
+      "post_sweep_reason_source": "status_fallback",
+      "events_total_after_second_run": 0,
+      "waiver_ref": null
+    },
+    {
+      "case": "C5",
+      "ticket_id": "ticket-wb3seed-reviewer-g1",
+      "role": "reviewer",
+      "derived_generation": 1,
+      "assumed_generation": 1,
+      "generation_matches": true,
+      "seeded_status": "completed",
+      "seeded_expires_at": "2026-11-19T00:00:00Z",
+      "expected_disposition": "no_disposition_required",
+      "observed_disposition": "no_disposition_required",
+      "disposition_matches": true,
+      "expected_events": 0,
+      "emitted_events": 0,
+      "event_count_matches": true,
+      "emitted_event_ids": [],
+      "events_total_including_pre_existing": 0,
+      "pre_existing_events": 0,
+      "event_payload": null,
+      "post_sweep_status": "completed",
+      "post_sweep_disposition": "no_disposition_required",
+      "post_sweep_reason_source": "status_fallback",
+      "events_total_after_second_run": 0,
+      "waiver_ref": null
+    },
+    {
+      "case": "C6",
+      "ticket_id": "ticket-wb3seed-builder-g5",
+      "role": "builder",
+      "derived_generation": 5,
+      "assumed_generation": 5,
+      "generation_matches": true,
+      "seeded_status": "cancelled",
+      "seeded_expires_at": "2026-11-19T00:00:00Z",
+      "expected_disposition": "no_disposition_required",
+      "observed_disposition": "no_disposition_required",
+      "disposition_matches": true,
+      "expected_events": 0,
+      "emitted_events": 0,
+      "event_count_matches": true,
+      "emitted_event_ids": [],
+      "events_total_including_pre_existing": 0,
+      "pre_existing_events": 0,
+      "event_payload": null,
+      "post_sweep_status": "cancelled",
+      "post_sweep_disposition": "no_disposition_required",
+      "post_sweep_reason_source": "status_fallback",
+      "events_total_after_second_run": 0,
+      "waiver_ref": null
+    },
+    {
+      "case": "C7",
+      "ticket_id": "ticket-wb3seed-builder-g6",
+      "role": "builder",
+      "derived_generation": 6,
+      "assumed_generation": 6,
+      "generation_matches": true,
+      "seeded_status": "expired",
+      "seeded_expires_at": "2026-11-19T00:00:00Z",
+      "expected_disposition": "expired_without_event_waived",
+      "observed_disposition": "expired_without_event_waived",
+      "disposition_matches": true,
+      "expected_events": 0,
+      "emitted_events": 0,
+      "event_count_matches": true,
+      "emitted_event_ids": [],
+      "events_total_including_pre_existing": 0,
+      "pre_existing_events": 0,
+      "event_payload": null,
+      "post_sweep_status": "expired",
+      "post_sweep_disposition": "expired_without_event_waived",
+      "post_sweep_reason_source": "status_fallback",
+      "events_total_after_second_run": 0,
+      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+    },
+    {
+      "case": "C8",
+      "ticket_id": "ticket-wb3seed-builder-g7",
+      "role": "builder",
+      "derived_generation": 7,
+      "assumed_generation": 7,
+      "generation_matches": true,
+      "seeded_status": "expired",
+      "seeded_expires_at": "2026-11-19T00:00:00Z",
+      "expected_disposition": "expired_with_event",
+      "observed_disposition": "expired_with_event",
+      "disposition_matches": true,
+      "expected_events": 0,
+      "emitted_events": 0,
+      "event_count_matches": true,
+      "emitted_event_ids": [],
+      "events_total_including_pre_existing": 1,
+      "pre_existing_events": 1,
+      "event_payload": null,
+      "post_sweep_status": "expired",
+      "post_sweep_disposition": "expired_with_event",
+      "post_sweep_reason_source": "expiry_event",
+      "events_total_after_second_run": 1,
+      "waiver_ref": null
+    },
+    {
+      "case": "C9",
+      "ticket_id": "ticket-wb3seed-reviewer-g2",
+      "role": "reviewer",
+      "derived_generation": 2,
+      "assumed_generation": 2,
+      "generation_matches": true,
+      "seeded_status": "open",
+      "seeded_expires_at": "2026-11-19T00:00:00Z",
+      "expected_disposition": "open_past_expiry_disposed",
+      "observed_disposition": "open_past_expiry_disposed",
+      "disposition_matches": true,
+      "expected_events": 1,
+      "emitted_events": 1,
+      "event_count_matches": true,
+      "emitted_event_ids": [
+        "2fbca20a-73d2-4581-8364-fdb5b81591a3"
+      ],
+      "events_total_including_pre_existing": 1,
+      "pre_existing_events": 0,
+      "event_payload": {
+        "role": "reviewer",
+        "reason": "expiry_detection",
+        "plan_id": "WB3SEED",
+        "to_status": "expired",
+        "expires_at": "2026-11-19T00:00:00.000Z",
+        "generation": 2,
+        "from_status": "open",
+        "implies_completion": false
+      },
+      "post_sweep_status": "expired",
+      "post_sweep_disposition": "expired_with_event",
+      "post_sweep_reason_source": "expiry_event",
+      "events_total_after_second_run": 1,
+      "waiver_ref": null
+    },
+    {
+      "case": "C10",
+      "ticket_id": "ticket-wb3seed-builder-g8",
+      "role": "builder",
+      "derived_generation": 8,
+      "assumed_generation": 8,
+      "generation_matches": true,
+      "seeded_status": "open",
+      "seeded_expires_at": null,
+      "expected_disposition": "no_disposition_required",
+      "observed_disposition": "no_disposition_required",
+      "disposition_matches": true,
+      "expected_events": 0,
+      "emitted_events": 0,
+      "event_count_matches": true,
+      "emitted_event_ids": [],
+      "events_total_including_pre_existing": 0,
+      "pre_existing_events": 0,
+      "event_payload": null,
+      "post_sweep_status": "open",
+      "post_sweep_disposition": "no_disposition_required",
+      "post_sweep_reason_source": "status_fallback",
+      "events_total_after_second_run": 0,
+      "waiver_ref": null
+    }
+  ],
+  "assertions": {
+    "A1_exact_per_case_counts": {
+      "pass": true,
+      "observed": [
+        {
+          "case": "C1",
+          "ticket_id": "ticket-wb3seed-builder-g1",
+          "derived_generation": 1,
+          "emitted_events": 1,
+          "expected_events": 1,
+          "emitted_event_ids": [
+            "bf2e7725-0bad-4aff-ae97-f8b02846b94c"
+          ],
+          "events_total_including_pre_existing": 1,
+          "pre_existing_events": 0
+        },
+        {
+          "case": "C2",
+          "ticket_id": "ticket-wb3seed-builder-g2",
+          "derived_generation": 2,
+          "emitted_events": 1,
+          "expected_events": 1,
+          "emitted_event_ids": [
+            "05c7a4e7-da67-4958-a79e-055aee681a27"
+          ],
+          "events_total_including_pre_existing": 1,
+          "pre_existing_events": 0
+        },
+        {
+          "case": "C3",
+          "ticket_id": "ticket-wb3seed-builder-g3",
+          "derived_generation": 3,
+          "emitted_events": 1,
+          "expected_events": 1,
+          "emitted_event_ids": [
+            "194c7438-c4c2-4714-b6d0-9800055261ef"
+          ],
+          "events_total_including_pre_existing": 1,
+          "pre_existing_events": 0
+        },
+        {
+          "case": "C4",
+          "ticket_id": "ticket-wb3seed-builder-g4",
+          "derived_generation": 4,
+          "emitted_events": 0,
+          "expected_events": 0,
+          "emitted_event_ids": [],
+          "events_total_including_pre_existing": 0,
+          "pre_existing_events": 0
+        },
+        {
+          "case": "C5",
+          "ticket_id": "ticket-wb3seed-reviewer-g1",
+          "derived_generation": 1,
+          "emitted_events": 0,
+          "expected_events": 0,
+          "emitted_event_ids": [],
+          "events_total_including_pre_existing": 0,
+          "pre_existing_events": 0
+        },
+        {
+          "case": "C6",
+          "ticket_id": "ticket-wb3seed-builder-g5",
+          "derived_generation": 5,
+          "emitted_events": 0,
+          "expected_events": 0,
+          "emitted_event_ids": [],
+          "events_total_including_pre_existing": 0,
+          "pre_existing_events": 0
+        },
+        {
+          "case": "C7",
+          "ticket_id": "ticket-wb3seed-builder-g6",
+          "derived_generation": 6,
+          "emitted_events": 0,
+          "expected_events": 0,
+          "emitted_event_ids": [],
+          "events_total_including_pre_existing": 0,
+          "pre_existing_events": 0
+        },
+        {
+          "case": "C8",
+          "ticket_id": "ticket-wb3seed-builder-g7",
+          "derived_generation": 7,
+          "emitted_events": 0,
+          "expected_events": 0,
+          "emitted_event_ids": [],
+          "events_total_including_pre_existing": 1,
+          "pre_existing_events": 1
+        },
+        {
+          "case": "C9",
+          "ticket_id": "ticket-wb3seed-reviewer-g2",
+          "derived_generation": 2,
+          "emitted_events": 1,
+          "expected_events": 1,
+          "emitted_event_ids": [
+            "2fbca20a-73d2-4581-8364-fdb5b81591a3"
+          ],
+          "events_total_including_pre_existing": 1,
+          "pre_existing_events": 0
+        },
+        {
+          "case": "C10",
+          "ticket_id": "ticket-wb3seed-builder-g8",
+          "derived_generation": 8,
+          "emitted_events": 0,
+          "expected_events": 0,
+          "emitted_event_ids": [],
+          "events_total_including_pre_existing": 0,
+          "pre_existing_events": 0
+        }
+      ]
+    },
+    "A2_payload_completeness": {
+      "pass": true,
+      "observed": [
+        {
+          "case": "C1",
+          "fields_present": true,
+          "to_status_expired": true,
+          "reason_expiry_detection": true,
+          "implies_completion_is_boolean_false": true,
+          "generation_carried": true,
+          "from_status": "open"
+        },
+        {
+          "case": "C2",
+          "fields_present": true,
+          "to_status_expired": true,
+          "reason_expiry_detection": true,
+          "implies_completion_is_boolean_false": true,
+          "generation_carried": true,
+          "from_status": "claimed"
+        },
+        {
+          "case": "C3",
+          "fields_present": true,
+          "to_status_expired": true,
+          "reason_expiry_detection": true,
+          "implies_completion_is_boolean_false": true,
+          "generation_carried": true,
+          "from_status": "stale"
+        },
+        {
+          "case": "C9",
+          "fields_present": true,
+          "to_status_expired": true,
+          "reason_expiry_detection": true,
+          "implies_completion_is_boolean_false": true,
+          "generation_carried": true,
+          "from_status": "open"
+        }
+      ]
+    },
+    "A3_no_completion_implication": {
+      "pass": true,
+      "observed": {
+        "note": "the one completed ticket is C5, seeded completed before the sweep; no ticket moved to completed and the receipt-derived plan projection is byte-identical before/after",
+        "tickets_completed_after_sweep": 1,
+        "plan_projection_unchanged": true,
+        "plan_projection_before": [
+          {
+            "id": "WB3SEED",
+            "title": "W-B3 seeded proof plan (throwaway)",
+            "priority": 0,
+            "created_at": "2026-11-19 02:03:43.292776+00",
+            "updated_at": "2026-11-19 02:03:43.292776+00",
+            "deleted": 0
+          }
+        ]
+      }
+    },
+    "A4_idempotence": {
+      "pass": true,
+      "observed": {
+        "first_run": {
+          "stale": 0,
+          "expired": 4
+        },
+        "second_run": {
+          "stale": 0,
+          "expired": 0
+        },
+        "events_after_first": 5,
+        "events_after_second": 5,
+        "dispositions_stable": true
+      }
+    },
+    "A5_window_respected": {
+      "pass": true,
+      "observed": {
+        "C4": {
+          "expires_at": "2026-11-21T00:00:00Z",
+          "swept_at": "2026-11-19T02:03:43.305Z",
+          "expires_at_after_swept_at": true,
+          "untouched": true,
+          "reason": "not due"
+        },
+        "C10": {
+          "expires_at": null,
+          "expires_at_is_null": true,
+          "untouched": true,
+          "reason": "never due (expires_at IS NULL), distinct from not-yet-due"
+        }
+      }
+    },
+    "A6_one_derivation_two_lanes": {
+      "pass": true,
+      "observed": {
+        "spine": "row_number() OVER (PARTITION BY plan_id, role ORDER BY created_at, id)",
+        "generations": [
+          {
+            "case": "C1",
+            "assumed": 1,
+            "derived": 1
+          },
+          {
+            "case": "C2",
+            "assumed": 2,
+            "derived": 2
+          },
+          {
+            "case": "C3",
+            "assumed": 3,
+            "derived": 3
+          },
+          {
+            "case": "C4",
+            "assumed": 4,
+            "derived": 4
+          },
+          {
+            "case": "C5",
+            "assumed": 1,
+            "derived": 1
+          },
+          {
+            "case": "C6",
+            "assumed": 5,
+            "derived": 5
+          },
+          {
+            "case": "C7",
+            "assumed": 6,
+            "derived": 6
+          },
+          {
+            "case": "C8",
+            "assumed": 7,
+            "derived": 7
+          },
+          {
+            "case": "C9",
+            "assumed": 2,
+            "derived": 2
+          },
+          {
+            "case": "C10",
+            "assumed": 8,
+            "derived": 8
+          }
+        ]
+      }
+    },
+    "A7_report_contract_and_isolation": {
+      "pass": true,
+      "observed": {
+        "seed_database": "nexus_wb3_seed_1795053820",
+        "schema_revision": {
+          "ci_bootstrap_sha256": "73a8a5f3404875007990c428334aedd7c5783316e652c5c2d67fd7935a432386",
+          "db_ts_sha256": "5fab800eb5c92f8b7b4d29da112a56f73197cd7b0c0d038de419efdb7e6b44a0",
+          "ticket_sweep_sha256": "9d628f3bf80175c970bda07b439451a9dad687257d66418dc873b8455ff55e80",
+          "max_schema_version": 40
+        },
+        "seed_script_path": "typescript/conduit-mcp/scripts/wb3-seeded-proof-runner.ts",
+        "seed_script_sha256": "19e4b63350b7fffb37a243a9de546ddfd663e48cdb9fd5dbd9f14ec5e20dcd06",
+        "run_at": "2026-11-19T02:03:43.051Z",
+        "nexus_isolation_before": {
+          "vision_tickets_rows": 847,
+          "vision_tickets_expired": 138,
+          "kernel_transition_event_expiry_events": 91,
+          "resolution_ticket_rows": 0
+        },
+        "nexus_isolation_after": {
+          "vision_tickets_rows": 847,
+          "vision_tickets_expired": 138,
+          "kernel_transition_event_expiry_events": 91,
+          "resolution_ticket_rows": 0
+        },
+        "nexus_isolation_unchanged": true,
+        "nexus_plan_projection_unchanged": true,
+        "teardown": {
+          "dropped": true,
+          "database": "nexus_wb3_seed_1795053820",
+          "remaining_seed_databases": 0
+        },
+        "seed_preparation": [
+          "DROP INDEX vision.idx_vision_tickets_open (throwaway seed only): C1 and C10 both require an open builder generation in the same plan; the production partial unique index forbids two open rows per (plan_id, role). No code path under test inserts tickets, so the drop changes no behaviour under test."
+        ]
+      }
+    }
+  },
+  "no_plan_closure": true,
+  "no_live_ticket_write": true,
+  "no_event_synthesis_on_live": true,
+  "seeded_fixture_event": "C8's expiry_detection event is a fixture inside the throwaway seed DB only; no historical nexus event was manufactured and no event was written to nexus",
+  "teardown": {
+    "dropped": true,
+    "database": "nexus_wb3_seed_1795053820",
+    "remaining_seed_databases": 0
+  }
+}
