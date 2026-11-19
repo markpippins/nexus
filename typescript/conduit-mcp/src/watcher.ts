@@ -124,8 +124,15 @@ export class PipelineWatcher {
     this.cbWatcher = new CircuitBreakerWatcher(baseDir, emit);
     this.agentWatcher = new AgentWatcher(baseDir, emit);
     this.analytics = new AnalyticsEngine();
+    // W-B2 (plan 8261674): expiry is attention lost, never a completion. The
+    // emitter is db.ts::detectExpiredTickets; its payload comes from
+    // ticket-sweep.ts::buildExpiryDetectionPayload, which pins the eight-field
+    // shape (plan_id, role, generation, expires_at, from_status,
+    // to_status='expired', reason='expiry_detection', implies_completion=false).
+    // Wiring it here keeps the sole production detector path explicit.
+    const ticketSweepDetectors = { detectStaleTickets, detectExpiredTickets };
     this.ticketSweeper = new TicketExpirySweeper(
-      { detectStaleTickets, detectExpiredTickets },
+      ticketSweepDetectors,
       {
         onResult: ({ stale, expired }) => {
           console.log(`[ticket-sweep] stale=${stale} expired=${expired}`);

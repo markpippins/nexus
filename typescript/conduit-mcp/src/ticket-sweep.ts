@@ -21,6 +21,84 @@ export interface TicketSweepCallbacks {
   onError?(error: unknown): void;
 }
 
+/**
+ * Ticket-state semantics (W-B2, plan 8261674).
+ *
+ * Every ticket row is classified exactly once:
+ *  - `terminal_outcome` — the generation reached a decision. `closed` is its own
+ *    member and is never folded into `completed` (ruling R-F6).
+ *  - `attention_lost` — the generation was abandoned by expiry or staleness. It
+ *    never implies completion: an `expired` ticket is not a finished one.
+ *  - `active` — the generation is still in flight (`open` / `claimed`).
+ *
+ * An unknown status throws rather than defaulting: the census forbids implicit
+ * buckets, so a new vocabulary member must be ruled on before it can be counted.
+ */
+export type TicketStatusClass = "terminal_outcome" | "attention_lost" | "active";
+
+const TERMINAL_OUTCOME_STATUSES = new Set(["completed", "failed", "cancelled", "closed"]);
+const ATTENTION_LOST_STATUSES = new Set(["expired", "stale"]);
+const ACTIVE_STATUSES = new Set(["open", "claimed"]);
+
+export function classifyTicketStatus(status: string): TicketStatusClass {
+  if (TERMINAL_OUTCOME_STATUSES.has(status)) return "terminal_outcome";
+  if (ATTENTION_LOST_STATUSES.has(status)) return "attention_lost";
+  if (ACTIVE_STATUSES.has(status)) return "active";
+  throw new Error(
+    `Unclassified ticket status (W-B2 census forbids implicit buckets): ${status}`,
+  );
+}
+
+/** Row shape the expiry detector hands to {@link buildExpiryDetectionPayload}. */
+export interface ExpiryDetectionTicketRow {
+  id: string;
+  plan_id: string;
+  role: string;
+  /** The status the ticket held while it was still live — the event's `from_status`. */
+  status: string;
+  expires_at: string | Date | null;
+  /** Derived positional generation (D1 §7.2): 1-based per (plan_id, role). */
+  generation: number;
+}
+
+/**
+ * The payload kernel.transition_event carries for `expiry_detection`.
+ *
+ * Eight fields, fixed shape: `implies_completion` is the typed boolean `false`,
+ * never `"false"` and never absent — expiry must not make a plan look done.
+ * `ticket_id` is deliberately absent; it is the event's `aggregate_id`.
+ */
+export interface ExpiryDetectionPayload {
+  plan_id: string;
+  role: string;
+  generation: number;
+  expires_at: string | null;
+  from_status: string;
+  to_status: "expired";
+  reason: "expiry_detection";
+  implies_completion: false;
+}
+
+export function buildExpiryDetectionPayload(
+  row: ExpiryDetectionTicketRow,
+): ExpiryDetectionPayload {
+  if (!Number.isInteger(row.generation) || row.generation < 1) {
+    throw new Error(
+      `Expiry detection requires a positive integer generation: ${row.generation}`,
+    );
+  }
+  return {
+    plan_id: row.plan_id,
+    role: row.role,
+    generation: row.generation,
+    expires_at: row.expires_at == null ? null : new Date(row.expires_at).toISOString(),
+    from_status: row.status,
+    to_status: "expired",
+    reason: "expiry_detection",
+    implies_completion: false,
+  };
+}
+
 const DEFAULT_SWEEP_INTERVAL_MS = 60_000;
 
 /**

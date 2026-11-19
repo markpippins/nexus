@@ -63,6 +63,7 @@ import { Pool, PoolClient, types } from "pg";
 import { evaluateReleaseGate, ReleaseDecision } from "./release-gate";
 import { RippleAssignment } from "./ripple-classifier";
 import { CompareTarget } from "./compile-compare";
+import { buildExpiryDetectionPayload } from "./ticket-sweep";
 import {
   canonicalizeEventPayload,
   toCanonicalEventType,
@@ -4870,10 +4871,17 @@ export async function detectStaleTickets(): Promise<number> {
 export async function detectExpiredTickets(): Promise<number> {
   return withTransaction(async (client) => {
     const now = new Date().toISOString();
+    // W-B2 (plan 8261674): the expiry_detection event carries the generation
+    // identity, not just the status pair — generation is derived positionally
+    // per (plan_id, role) exactly as D1 §7.2 specifies (created_at, id).
     const affected = await tAll(
       client,
-      `SELECT id, status FROM ${VISION_SCHEMA}.tickets
-      WHERE status IN ('open', 'claimed', 'stale') AND expires_at IS NOT NULL AND expires_at < @now`,
+      `SELECT t.id, t.status, t.plan_id, t.role, t.expires_at,
+        (SELECT count(*) FROM ${VISION_SCHEMA}.tickets g
+          WHERE g.plan_id = t.plan_id AND g.role = t.role
+            AND (g.created_at, g.id) <= (t.created_at, t.id)) AS generation
+      FROM ${VISION_SCHEMA}.tickets t
+      WHERE t.status IN ('open', 'claimed', 'stale') AND t.expires_at IS NOT NULL AND t.expires_at < @now`,
       { now },
     );
     const count = await tRun(
@@ -4890,7 +4898,14 @@ export async function detectExpiredTickets(): Promise<number> {
         eventType: "transition.rejected",
         actor: "conduit-mcp",
         authority: "system",
-        payload: { from_status: t.status, to_status: "expired", reason: "expiry_detection" },
+        payload: buildExpiryDetectionPayload({
+          id: t.id,
+          plan_id: t.plan_id,
+          role: t.role,
+          status: t.status,
+          expires_at: t.expires_at,
+          generation: Number(t.generation),
+        }),
       });
     }
     return count;
