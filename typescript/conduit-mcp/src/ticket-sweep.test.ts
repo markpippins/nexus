@@ -2,8 +2,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildExpiryDetectionPayload,
+  buildSweepLogRow,
   classifyTicketStatus,
+  closureReasonEffective,
+  closureReasonSource,
+  deriveSweepDisposition,
+  isDispositionRequired,
+  isOpenGenerationStatus,
+  SWEEP_DISPOSITIONS,
   TicketExpirySweeper,
+  type SweepGenerationInput,
 } from "./ticket-sweep";
 
 describe("classifyTicketStatus (W-B2)", () => {
@@ -160,5 +168,96 @@ describe("TicketExpirySweeper", () => {
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "stale detector down" }));
 
     sweeper.stop();
+  });
+});
+
+describe("W-B3 sweep-log derivation (plan 8261675)", () => {
+  const SWEPT = "2026-11-19T02:00:00Z";
+  const PAST = "2026-11-18T00:00:00Z";
+  const FUTURE = "2026-11-20T00:00:00Z";
+  const base = (over: Partial<SweepGenerationInput> = {}): SweepGenerationInput => ({
+    ticket_id: "ticket-test-builder-1",
+    plan_id: "8261675",
+    role: "builder",
+    generation: 1,
+    status: "open",
+    created_at: PAST,
+    expires_at: FUTURE,
+    closed_at: null,
+    closure_reason: null,
+    has_expiry_event: false,
+    ...over,
+  });
+
+  it("keeps the disposition vocabulary closed", () => {
+    expect(SWEEP_DISPOSITIONS).toEqual([
+      "expired_with_event",
+      "expired_without_event_waived",
+      "open_past_expiry_disposed",
+      "no_disposition_required",
+    ]);
+  });
+
+  it("derives S2 dispositions without writing to a ticket", () => {
+    expect(deriveSweepDisposition(base({ status: "expired", has_expiry_event: true }), SWEPT)).toBe(
+      "expired_with_event",
+    );
+    expect(deriveSweepDisposition(base({ status: "expired" }), SWEPT)).toBe(
+      "expired_without_event_waived",
+    );
+    expect(deriveSweepDisposition(base({ status: "open", expires_at: PAST }), SWEPT)).toBe(
+      "open_past_expiry_disposed",
+    );
+    expect(deriveSweepDisposition(base({ status: "completed", expires_at: PAST }), SWEPT)).toBe(
+      "no_disposition_required",
+    );
+    expect(() => deriveSweepDisposition(base({ status: "bogus" }), SWEPT)).toThrow(
+      /Unclassified ticket status/,
+    );
+  });
+
+  it("requires a reason_source and never invents a closure reason", () => {
+    expect(closureReasonSource({ closure_reason: "receipt:BLOCK", has_expiry_event: true })).toBe(
+      "ticket",
+    );
+    expect(closureReasonEffective({ status: "expired", closure_reason: "receipt:BLOCK", has_expiry_event: true })).toBe(
+      "receipt:BLOCK",
+    );
+    expect(closureReasonSource({ closure_reason: null, has_expiry_event: true })).toBe(
+      "expiry_event",
+    );
+    expect(closureReasonEffective({ status: "expired", closure_reason: null, has_expiry_event: true })).toBe(
+      "expiry_detection",
+    );
+    expect(closureReasonSource({ closure_reason: null, has_expiry_event: false })).toBe(
+      "status_fallback",
+    );
+    expect(closureReasonEffective({ status: "cancelled", closure_reason: null, has_expiry_event: false })).toBe(
+      "status:cancelled",
+    );
+  });
+
+  it("fails closed when an expired generation has neither event nor waiver", () => {
+    expect(() => buildSweepLogRow(base({ status: "expired" }), SWEPT, 1)).toThrow(
+      /Unwaived event-absent expiry/,
+    );
+  });
+
+  it("treats NULL expiry as never due and distinguishes it from not-yet-due", () => {
+    expect(isDispositionRequired({ status: "open", expires_at: null }, SWEPT)).toBe(false);
+    expect(isDispositionRequired({ status: "open", expires_at: FUTURE }, SWEPT)).toBe(false);
+    expect(isDispositionRequired({ status: "open", expires_at: PAST }, SWEPT)).toBe(true);
+    expect(isOpenGenerationStatus("stale")).toBe(true);
+  });
+
+  it("stamps a waiver ref only on waived expiries", () => {
+    const waiver_ref = "6b42dd3f-ae62-4abf-8cce-fdc01c41032e";
+    const row = buildSweepLogRow(base({ status: "expired", waiver_ref }), SWEPT, 1);
+    expect(row.sweep_disposition).toBe("expired_without_event_waived");
+    expect(row.waiver_ref).toBe(waiver_ref);
+    expect(row.is_newest).toBe(true);
+    const withEvent = buildSweepLogRow(base({ status: "expired", has_expiry_event: true, closure_reason: null }), SWEPT, 2);
+    expect(withEvent.waiver_ref).toBeNull();
+    expect(withEvent.is_newest).toBe(false);
   });
 });

@@ -14,8 +14,8 @@ Canonical owner: `python/conduit/lilac.py` · canonical schema: `resolution`.
 
 | Surface | Production writers | Canonical writers | Coverage |
 |---|---:|---:|---|
-| receipt | 15 | 4 | ok |
-| ticket | 7 | 2 | ok |
+| receipt | 17 | 4 | ok |
+| ticket | 8 | 2 | ok |
 | ticket_transition | 2 | 2 | ok |
 | fan-out | 2 | 2 | ok |
 
@@ -27,15 +27,15 @@ Canonical owner: `python/conduit/lilac.py` · canonical schema: `resolution`.
 
 | Surface | Python writers | TypeScript writers | Classification | Disposition | Replaces |
 |---|---|---|---|---|---|
-| receipt | `python/conduit/db_adapter.py`, `python/conduit/lilac.py`, `python/expression/persistence.py` | `typescript/conduit-mcp/migrations/cleanup-stuck-pending-plans.js`, `typescript/conduit-mcp/src/db.ts`, `typescript/lilac-srv/src/repository.ts`, `typescript/nebula-srv/src/routes.ts`, `typescript/wind-srv/src/routes/instances.js` | stale-or-deprecated | redirect | `python/conduit/lilac.py` |
-| ticket | `python/conduit/lilac.py` | `typescript/conduit-mcp/src/db.ts`, `typescript/lilac-srv/src/repository.ts`, `typescript/wind-srv/src/event-processor.js`, `typescript/wind-srv/src/routes/instances.js` | stale-or-deprecated | redirect | `python/conduit/lilac.py` |
+| receipt | `python/conduit/db_adapter.py`, `python/conduit/lilac.py`, `python/expression/persistence.py` | `typescript/conduit-mcp/migrations/cleanup-stuck-pending-plans.js`, `typescript/conduit-mcp/scripts/wb3-seeded-proof-runner.ts`, `typescript/conduit-mcp/src/db.ts`, `typescript/lilac-srv/src/repository.ts`, `typescript/nebula-srv/src/routes.ts`, `typescript/wind-srv/src/routes/instances.js` | stale-or-deprecated | redirect | `python/conduit/lilac.py` |
+| ticket | `python/conduit/lilac.py` | `typescript/conduit-mcp/scripts/wb3-seeded-proof-runner.ts`, `typescript/conduit-mcp/src/db.ts`, `typescript/lilac-srv/src/repository.ts`, `typescript/wind-srv/src/event-processor.js`, `typescript/wind-srv/src/routes/instances.js` | stale-or-deprecated | redirect | `python/conduit/lilac.py` |
 | ticket_transition | `python/conduit/lilac.py` | `typescript/lilac-srv/src/repository.ts` | intentional-channel | adapter | `typescript/lilac-srv/src/repository.ts` |
 | fan-out | `python/conduit/lilac.py` | `typescript/lilac-srv/src/repository.ts` | intentional-channel | adapter | `typescript/lilac-srv/src/repository.ts` |
 
 ## Live consumers (code that reads the canonical surfaces)
 
 - **receipt** — `bin/census_expiry_exposure.py`, `bin/check_plan_gating.py`, `bin/flow-recorder-v0.py`, `bin/lilac-parity-check.py`, `bin/reconcile_plan_provenance.py`, `python/conduit/app/api/routes_receipts.py`, `python/conduit/cli_executor.py`, `python/conduit/db_adapter.py`, `python/conduit/lilac.py`, `python/conduit/main.py`, `python/expression/persistence.py`, `python/nebula/collect.py`, `python/nebula/wc_consumers.py`, `typescript/conduit-mcp/migrations/migrate-proposed-plans.js`, `typescript/conduit-mcp/src/db.ts`, `typescript/conduit-mcp/src/tools.ts`, `typescript/conduit-srv/src/routes/governance.ts`, `typescript/kernel-srv/src/routes.ts`, `typescript/lilac-srv/src/repository.ts`, `typescript/nebula-mcp/src/conduit-wrp-contract.ts`, `typescript/nebula-srv/src/routes.ts`, `typescript/tackle-seeds/index.ts`, `typescript/wind-srv/src/routes/receipts.js`
-- **ticket** — `bin/census_expiry_exposure.py`, `bin/check_plan_gating.py`, `bin/check_transition_attestation.py`, `bin/pipeline-health-sweep.py`, `bin/reconcile_plan_provenance.py`, `python/conduit/execution_worker.py`, `python/conduit/lilac.py`, `python/nebula/collect.py`, `python/nebula/wc_consumers.py`, `python/tackle/agent_scheduler_runner.py`, `typescript/conduit-mcp/src/db.ts`, `typescript/conduit-mcp/src/watcher.ts`, `typescript/conduit-srv/src/routes/tickets.ts`, `typescript/conduit-srv/src/routes/tokens.ts`, `typescript/lilac-srv/src/repository.ts`, `typescript/nebula-srv/src/routes.ts`, `typescript/tackle-seeds/index.ts`, `typescript/wind-srv/src/routes/instances.js`, `typescript/wind-srv/src/routes/tickets.js`
+- **ticket** — `bin/census_expiry_exposure.py`, `bin/check_plan_gating.py`, `bin/check_transition_attestation.py`, `bin/pipeline-health-sweep.py`, `bin/reconcile_plan_provenance.py`, `bin/wb3_sweep_log.py`, `python/conduit/execution_worker.py`, `python/conduit/lilac.py`, `python/nebula/collect.py`, `python/nebula/wc_consumers.py`, `python/tackle/agent_scheduler_runner.py`, `typescript/conduit-mcp/scripts/wb3-seeded-proof-runner.ts`, `typescript/conduit-mcp/src/db.ts`, `typescript/conduit-mcp/src/watcher.ts`, `typescript/conduit-srv/src/routes/tickets.ts`, `typescript/conduit-srv/src/routes/tokens.ts`, `typescript/lilac-srv/src/repository.ts`, `typescript/nebula-srv/src/routes.ts`, `typescript/tackle-seeds/index.ts`, `typescript/wind-srv/src/routes/instances.js`, `typescript/wind-srv/src/routes/tickets.js`
 - **ticket_transition** — `python/conduit/lilac.py`, `typescript/lilac-srv/src/repository.ts`
 - **fan-out** — `python/conduit/lilac.py`, `typescript/lilac-srv/src/repository.ts`
 

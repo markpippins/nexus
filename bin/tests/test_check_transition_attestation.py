@@ -55,17 +55,31 @@ class TestWaivers:
     suppression surface."""
 
     def test_load_real_waiver_file(self):
-        # The shipped file must parse, carry the ruling reference, and
-        # contain exactly the two ruled gen-1 rows — no more (narrow by
-        # ruling), no less (a silently-empty list would be a hole).
+        # The shipped file must parse, carry the ruling reference, and contain
+        # exactly the ruled rows — no more (narrow by ruling), no less (a
+        # silently-empty list would be a hole).
+        #
+        # Two rulings are in force: 6b42dd3f (the two enrolled gen-1 rows) and
+        # ea38297d (the W-B3 cohort `wb3_pre_fix_expired_generation`, 89
+        # enumerated pre-PR#560 expired generations). The cohort is admissible
+        # ONLY because ea38297d rules it explicitly; a third party adding rows
+        # without a ruling still fails this test.
         data = json.loads(mod.WAIVER_FILE.read_text())
         assert data["ruling"]["decision_record_id"].startswith("6b42dd3f")
         assert data["ruling"]["reason_code"] == "pre_event_emission_fix"
-        ids = {w["ticket_id"] for w in data["waivers"]}
-        assert ids == {
+        cohort = data["cohorts"]["wb3_pre_fix_expired_generation"]
+        assert cohort["ruling_ref"].startswith("ea38297d")
+        assert cohort["count"] == 89
+        cohort_rows = [w for w in data["waivers"] if w.get("cohort") == "wb3_pre_fix_expired_generation"]
+        assert len(cohort_rows) == 89
+        assert {w["waiver_ref"] for w in cohort_rows} == {cohort["ruling_ref"]}
+        legacy = {w["ticket_id"] for w in data["waivers"] if not w.get("cohort")}
+        assert legacy == {
             "ticket-8261654-builder-caea50cc-5bc9-4405-b0c1-8abb5de79ad1",
             "ticket-8261654-reviewer-1790105437937",
         }
+        ids = {w["ticket_id"] for w in data["waivers"]}
+        assert len(ids) == 91
         loaded = mod.load_waiver_ids(mod.WAIVER_FILE)
         assert set(loaded) == ids
         assert loaded["ticket-8261654-reviewer-1790105437937"]["closure_evidence"]
