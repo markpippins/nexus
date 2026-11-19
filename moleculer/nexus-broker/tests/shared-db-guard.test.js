@@ -24,6 +24,7 @@ const {
   GUARD_APPLICATION_SUFFIX,
   guardApplicationName,
   describeHarnessConnection,
+  connectionWatchFailureReason,
   listHarnessConnectionsOnShared,
 } = require('./helpers/shared-db-guard')
 
@@ -127,6 +128,45 @@ test('an empty connection tag is refused rather than read as "clean"', async () 
   // check to nothing. An empty tag matches no session, so it must throw.
   await assert.rejects(() => listHarnessConnectionsOnShared({ tag: '' }), /a connection tag is required/)
   await assert.rejects(() => listHarnessConnectionsOnShared({}), /a connection tag is required/)
+})
+
+test('a watch that never lost its sampler is the only clean verdict', () => {
+  assert.equal(
+    connectionWatchFailureReason({ tag: 'nexus-test-gh1-99', database: 'nexus', samplerPid: 77, losses: [] }),
+    null,
+    'a sampler that answered throughout must not fail the run',
+  )
+
+  const message = connectionWatchFailureReason({
+    tag: 'nexus-test-gh1-99',
+    database: 'nexus',
+    samplerPid: 77,
+    losses: ['Connection terminated unexpectedly'],
+  })
+  assert.match(message, /LOST ITS SAMPLER CONNECTION/)
+  assert.match(message, /tag nexus-test-gh1-99/)
+  assert.match(message, /sampler pid 77/)
+  assert.match(message, /Connection terminated unexpectedly/, 'the cause is the actionable part')
+  assert.match(message, /not something this run can claim/, 'it must say why silence is not a pass')
+})
+
+test('a loss still reports what the watch saw before it went blind', () => {
+  const message = connectionWatchFailureReason({
+    tag: 'nexus-test-gh1-99',
+    database: 'nexus',
+    losses: ['the server closed the sampler connection'],
+    offenders: [
+      {
+        pid: 4242,
+        application_name: 'nexus-test-gh1-99',
+        usename: 'pguser',
+        state: 'idle',
+        query: 'SELECT id FROM resolution.keychain_event_outbox',
+      },
+    ],
+  })
+  assert.match(message, /Seen before the loss/)
+  assert.match(message, /pid=4242/, 'the reader seen before the drop must not be lost with it')
 })
 
 test('predicates name the markers each suite actually uses', () => {

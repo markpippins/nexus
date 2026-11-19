@@ -753,6 +753,9 @@ function registerProductionOutboxGuard({ before, after, setup = null, teardown =
     // visible here.
     if (connectionWatch) {
       try {
+        // `stop()` throws when the sampler lost its backend mid-file: a watch
+        // that stopped looking cannot report "nothing seen". The throw is a
+        // normal guard failure here, so it is collected with the rest below.
         const offenders = await connectionWatch.stop()
         if (!connectionWatch.available) {
           console.warn(`[shared-db] connection watch skipped: ${connectionWatch.reason}`)
@@ -762,7 +765,7 @@ function registerProductionOutboxGuard({ before, after, setup = null, teardown =
         for (const row of offenders) {
           failures.push(new Error(describeHarnessConnection(row, { database: connectionWatch.database })))
         }
-        if (connectionWatch.available && !offenders.length) {
+        if (connectionWatch.available && !connectionWatch.lost && !offenders.length) {
           console.log(
             `[shared-db] no harness connection to ${connectionWatch.database} ` +
               `(tag ${connectionWatch.tag})`,

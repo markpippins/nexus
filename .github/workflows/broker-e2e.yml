@@ -509,16 +509,21 @@ jobs:
       # five seconds), pointed at the per-run database it must see nothing. The
       # control's namespace prefix matches nothing in `nexus`, so the reproduced
       # leak is a read that rolls back — no row there is touched.
-      # It skips itself on a host with no shared database; expecting exactly two
-      # passes is what turns that skip into a failure here, where the database
-      # does exist, so the proof cannot quietly stop running.
+      # The third control covers the watch going quiet instead of catching a
+      # leak: it terminates the sampler's own backend mid-run and requires the
+      # file to FAIL, because a sampler that stopped looking reports an empty
+      # offender list that used to read as "clean".
+      # It skips itself on a host with no shared database; a pass floor of three
+      # (plus pgie-evidence's skip-must-fail rule) is what turns that skip into a
+      # failure here, where the database does exist, so the proofs cannot quietly
+      # stop running.
       - name: E2E — shared-database read guard (historical leak control)
         working-directory: moleculer/nexus-broker
         run: |
           set -o pipefail
           node --test --test-reporter=tap tests/shared-db-read-guard.e2e.test.js \
             2>&1 | tee /tmp/tap-shared-db-read-guard.log
-          python3 ../../bin/pgie-evidence.py guard /tmp/tap-shared-db-read-guard.log 2 "shared-db-read-guard" /tmp/pgie-results.tsv
+          python3 ../../bin/pgie-evidence.py guard /tmp/tap-shared-db-read-guard.log 3 "shared-db-read-guard" /tmp/pgie-results.tsv
 
       # execution-srv's file:../heartbeat-client dependency has no committed
       # lock and needs its dist/ built (same two steps as its Dockerfile build
