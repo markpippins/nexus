@@ -6,9 +6,11 @@ touched behind main(), which is not imported here.
 """
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]  # worktree root
@@ -18,6 +20,11 @@ mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(mod)
 
 import pytest  # noqa: E402
+
+_wb3_spec = importlib.util.spec_from_file_location(
+    "wb3_sweep_log_for_waivers", REPO / "bin" / "wb3_sweep_log.py")
+wb3 = importlib.util.module_from_spec(_wb3_spec)
+_wb3_spec.loader.exec_module(wb3)
 
 
 class TestClassify:
@@ -54,6 +61,26 @@ class TestWaivers:
     attested by closure evidence instead of events; never a broad
     suppression surface."""
 
+    COHORT = "wb3_pre_fix_expired_generation"
+    COHORT_RULING = "ea38297d-1f4e-4cc5-8cda-ef8273702bf8"
+    WINDOW_FROM = datetime.fromisoformat("2026-06-18T00:00:00+00:00")
+    WINDOW_TO = datetime.fromisoformat("2026-07-27T00:00:00+00:00")
+    # sha256 of the sorted 89 ticket ids (newline-joined). Pins exact cohort
+    # membership: adding, dropping, or swapping a row fails even when counts
+    # agree, which is what "enumerated, never broad" means in practice.
+    IDS_SHA256 = "5e2de948a5c71c0fc5d3c19db44de4091291d01ded10dfe7e323bd9aa546a50a"
+
+    def _registry(self):
+        return json.loads(mod.WAIVER_FILE.read_text())
+
+    def _cohort_rows(self, data):
+        return [w for w in data["waivers"] if w.get("cohort") == self.COHORT]
+
+    def _write(self, tmp_path, data):
+        path = tmp_path / "waivers.json"
+        path.write_text(json.dumps(data))
+        return path
+
     def test_load_real_waiver_file(self):
         # The shipped file must parse, carry the ruling reference, and contain
         # exactly the ruled rows — no more (narrow by ruling), no less (a
@@ -64,15 +91,24 @@ class TestWaivers:
         # enumerated pre-PR#560 expired generations). The cohort is admissible
         # ONLY because ea38297d rules it explicitly; a third party adding rows
         # without a ruling still fails this test.
-        data = json.loads(mod.WAIVER_FILE.read_text())
-        assert data["ruling"]["decision_record_id"].startswith("6b42dd3f")
+        data = self._registry()
+        assert data["ruling"]["decision_record_id"] == "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
         assert data["ruling"]["reason_code"] == "pre_event_emission_fix"
-        cohort = data["cohorts"]["wb3_pre_fix_expired_generation"]
-        assert cohort["ruling_ref"].startswith("ea38297d")
+        cohort = data["cohorts"][self.COHORT]
+        assert cohort["ruling_ref"] == self.COHORT_RULING
         assert cohort["count"] == 89
-        cohort_rows = [w for w in data["waivers"] if w.get("cohort") == "wb3_pre_fix_expired_generation"]
+        assert cohort["expires_at_from"] == "2026-06-18T00:00:00Z"
+        assert cohort["expires_at_to"] == "2026-07-27T00:00:00Z"
+        cohort_rows = self._cohort_rows(data)
         assert len(cohort_rows) == 89
-        assert {w["waiver_ref"] for w in cohort_rows} == {cohort["ruling_ref"]}
+        ids = [w["ticket_id"] for w in cohort_rows]
+        assert len(ids) == len(set(ids)) == 89
+        assert set(ids) == set(cohort["ticket_ids"])
+        assert hashlib.sha256("\n".join(sorted(ids)).encode()).hexdigest() == self.IDS_SHA256
+        assert {w["waiver_ref"] for w in cohort_rows} == {self.COHORT_RULING}
+        for w in cohort_rows:
+            expires_at = datetime.fromisoformat(w["expires_at"].replace("Z", "+00:00"))
+            assert self.WINDOW_FROM <= expires_at < self.WINDOW_TO
         legacy = {w["ticket_id"] for w in data["waivers"] if not w.get("cohort")}
         assert legacy == {
             "ticket-8261654-builder-caea50cc-5bc9-4405-b0c1-8abb5de79ad1",
@@ -83,6 +119,22 @@ class TestWaivers:
         loaded = mod.load_waiver_ids(mod.WAIVER_FILE)
         assert set(loaded) == ids
         assert loaded["ticket-8261654-reviewer-1790105437937"]["closure_evidence"]
+
+    def test_cohort_refuses_post_cutoff_row(self, tmp_path):
+        # A row with an enumerated id but an expiry after PR #560's fix must
+        # not ride the cohort: the ruling admits only the closed historical set.
+        data = self._registry()
+        self._cohort_rows(data)[0]["expires_at"] = "2026-08-01T00:00:00+00:00"
+        with pytest.raises(ValueError, match="window"):
+            wb3.load_waivers(self._write(tmp_path, data))
+
+    def test_cohort_refuses_unenumerated_row(self, tmp_path):
+        # Swapping a row for an id outside the ruling's enumeration is broader
+        # than the ruling and must be refused, not silently waived.
+        data = self._registry()
+        self._cohort_rows(data)[0]["ticket_id"] = "ticket-not-enumerated"
+        with pytest.raises(ValueError, match="enumerated"):
+            wb3.load_waivers(self._write(tmp_path, data))
 
     def test_missing_waiver_file_is_fatal(self, tmp_path, monkeypatch):
         monkeypatch.setattr(mod, "WAIVER_FILE", tmp_path / "nope.json")
