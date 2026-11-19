@@ -1,0 +1,9 @@
+import "../core/models.tsp";
+import "./api/models.tsp";
+import "./api/operations.tsp";
+import "./spi/models.tsp";
+import "./spi/operations.tsp";
+import "./registry/models.tsp";
+import "./registry/operations.tsp";
+import "./models.tsp";
+import "./service/operations.tsp";

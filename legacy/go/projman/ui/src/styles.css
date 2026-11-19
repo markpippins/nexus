@@ -1,0 +1,54 @@
+/* Show component based on active tab */
+app-root {
+  display: block;
+}
+
+/* Default: Hide all tab content components */
+dashboard-component {
+  display: none;
+}
+
+projects-component {
+  display: none;
+}
+
+subsystems-component {
+  display: none;
+}
+
+features-component {
+  display: none;
+}
+
+data-dictionary-component {
+  display: none;
+}
+
+requirement-form-component {
+  display: none;
+}
+
+/* Show active tab content */
+:root app-root .show-requirements dashboard-component {
+  display: block;
+}
+
+:root app-root .show-projects projects-component {
+  display: block;
+}
+
+:root app-root .show-subsystems subsystems-component {
+  display: block;
+}
+
+:root app-root .show-features features-component {
+  display: block;
+}
+
+:root app-root .show-data-dictionary data-dictionary-component {
+  display: block;
+}
+
+:root app-root .show-requirement-form requirement-form-component {
+  display: block;
+}

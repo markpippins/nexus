@@ -1,0 +1,10 @@
+{
+  "placeholderImages": [
+    {
+      "id": "user-avatar",
+      "description": "User avatar for the sidebar profile section",
+      "imageUrl": "https://images.unsplash.com/photo-1521146764736-56c929d59c83?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHwyfHxwZXJzb24lMjBmYWNlfGVufDB8fHx8MTc1OTM3NDg3M3ww&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "person face"
+    }
+  ]
+}

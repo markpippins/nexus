@@ -1,0 +1,86 @@
+<div class="fixed inset-0 bg-black bg-opacity-80 z-[70] flex items-center justify-center p-4 sm:p-8" (click)="close.emit()">
+  <div class="bg-[rgb(var(--color-surface))] rounded-lg shadow-xl w-full h-full max-w-4xl flex flex-col" (click)="$event.stopPropagation()">
+    
+    <div class="p-3 border-b border-[rgb(var(--color-border-base))] flex justify-between items-center flex-shrink-0">
+      <h3 class="text-base font-mono font-semibold text-[rgb(var(--color-text-base))] truncate pr-4">{{ title() }}</h3>
+      <button (click)="close.emit()" class="p-1 rounded-full hover:bg-[rgb(var(--color-surface-hover))] text-[rgb(var(--color-text-muted))]">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+    
+    <div class="flex-1 flex flex-col overflow-hidden">
+      <!-- Toolbar -->
+      @if(isMarkdown()) {
+        <div class="flex-shrink-0 flex items-center p-2 border-b border-[rgb(var(--color-border-base))] bg-[rgb(var(--color-surface-muted))] text-sm">
+          <div class="flex items-center gap-2">
+            <!-- Mode Toggles -->
+            <div class="flex items-center rounded-md bg-[rgb(var(--color-surface))] p-0.5 border border-[rgb(var(--color-border-muted))]">
+              <button 
+                (click)="mode.set('edit')" 
+                title="Edit"
+                class="p-1.5 rounded-sm transition-colors"
+                [class.bg-[rgb(var(--color-accent-solid-bg))]]="mode() === 'edit'"
+                [class.text-white]="mode() === 'edit'"
+                [class.text-[rgb(var(--color-text-muted))]]="mode() !== 'edit'"
+                [class.hover:bg-[rgb(var(--color-surface-hover))]]="mode() !== 'edit'">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z" />
+                  <path fill-rule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clip-rule="evenodd" />
+                </svg>
+              </button>
+              <button 
+                (click)="mode.set('preview')" 
+                title="Preview"
+                class="p-1.5 rounded-sm transition-colors"
+                [class.bg-[rgb(var(--color-accent-solid-bg))]]="mode() === 'preview'"
+                [class.text-white]="mode() === 'preview'"
+                [class.text-[rgb(var(--color-text-muted))]]="mode() !== 'preview'"
+                [class.hover:bg-[rgb(var(--color-surface-hover))]]="mode() !== 'preview'">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
+                  <path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd" />
+                </svg>
+              </button>
+            </div>
+
+            <!-- Edit-mode buttons -->
+            @if (mode() === 'edit') {
+              <div class="flex items-center rounded-md bg-[rgb(var(--color-surface))] p-0.5 border border-[rgb(var(--color-border-muted))]">
+                <button (click)="applyMarkdown('**', '**', 'bold')" title="Bold" class="p-1.5 rounded-sm text-[rgb(var(--color-text-muted))] hover:bg-[rgb(var(--color-surface-hover))]">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 4a1 1 0 011-1h6.5a3.5 3.5 0 010 7H8v5a1 1 0 11-2 0V5a1 1 0 01-1-1zm3.5 1.5a2 2 0 100 4h1a2 2 0 100-4h-1z" clip-rule="evenodd" /></svg>
+                </button>
+                <button (click)="applyMarkdown('*', '*', 'italic')" title="Italic" class="p-1.5 rounded-sm text-[rgb(var(--color-text-muted))] hover:bg-[rgb(var(--color-surface-hover))]">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 16 16" fill="currentColor"><path d="M7.991 11.666a5.68 5.68 0 002.251-1.218.75.75 0 10-.9-1.2c-.523.41-1.1.7-1.742.834V5.5h.917a.75.75 0 000-1.5H7.25V3a.75.75 0 00-1.5 0v1H4.5a.75.75 0 000 1.5h1.25v5.521A4.204 4.204 0 013.5 10a.75.75 0 10-.604 1.386 5.68 5.68 0 002.58 1.488.75.75 0 10.516-1.408A4.184 4.184 0 013.75 10.5h.917v1.166a.75.75 0 101.5 0v-1h.917a4.185 4.185 0 01-1.259 1.408.75.75 0 00.516 1.408z"/></svg>
+                </button>
+                <button (click)="addLink()" title="Add Link" class="p-1.5 rounded-sm text-[rgb(var(--color-text-muted))] hover:bg-[rgb(var(--color-surface-hover))]">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M12.586 4.586a2 2 0 112.828 2.828l-3 3a2 2 0 01-2.828 0 1 1 0 00-1.414 1.414 4 4 0 005.656 0l3-3a4 4 0 00-5.656-5.656l-1.5 1.5a1 1 0 101.414 1.414l1.5-1.5zm-5 5a2 2 0 012.828 0 1 1 0 101.414-1.414 4 4 0 00-5.656 0l-3 3a4 4 0 105.656 5.656l1.5-1.5a1 1 0 10-1.414-1.414l-1.5 1.5a2 2 0 11-2.828-2.828l3-3z" clip-rule="evenodd" /></svg>
+                </button>
+                <button (click)="applyCode()" title="Code" class="p-1.5 rounded-sm text-[rgb(var(--color-text-muted))] hover:bg-[rgb(var(--color-surface-hover))]">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
+                </button>
+              </div>
+            }
+          </div>
+        </div>
+      }
+
+       @if (mode() === 'edit' || !isMarkdown()) {
+        <textarea 
+          #editor
+          [value]="contentSignal()()"
+          (input)="onInput($event)"
+          placeholder="Start typing..."
+          class="w-full h-full p-6 bg-[rgb(var(--color-surface))] border-0 resize-none focus:outline-none text-sm text-[rgb(var(--color-text-base))] font-mono leading-relaxed selection:bg-[rgb(var(--color-accent-bg-selected))]">
+        </textarea>
+      } @else if (isMarkdown()) {
+        <div 
+          class="prose max-w-none p-6 overflow-y-auto"
+          [innerHTML]="renderedHtml()">
+        </div>
+      }
+    </div>
+
+  </div>
+</div>

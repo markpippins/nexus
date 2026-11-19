@@ -1,0 +1,154 @@
+{
+  "placeholderImages": [
+    {
+      "id": "avatar1",
+      "description": "User avatar 1",
+      "imageUrl": "https://images.unsplash.com/photo-1600180758890-6b94519a8ba6?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHwxfHxwZXJzb24lMjBwb3J0cmFpdHxlbnwwfHx8fDE3NTkyMDk1OTZ8MA&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "person portrait"
+    },
+    {
+      "id": "avatar2",
+      "description": "User avatar 2",
+      "imageUrl": "https://images.unsplash.com/photo-1580489944761-15a19d654956?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHwxfHx3b21hbiUyMHNtaWxpbmd8ZW58MHx8fHwxNzU5MjMzMTk0fDA&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "woman smiling"
+    },
+    {
+      "id": "avatar3",
+      "description": "User avatar 3",
+      "imageUrl": "https://images.unsplash.com/photo-1557862921-37829c790f19?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw1fHxtYW4lMjBnbGFzc2VzfGVufDB8fHx8MTc1OTIzNDAxOHww&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "man glasses"
+    },
+    {
+      "id": "avatar4",
+      "description": "User avatar 4",
+      "imageUrl": "https://images.unsplash.com/photo-1439789246184-86fd68529829?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw4fHxwZXJzb24lMjBhYnN0cmFjdHxlbnwwfHx8fDE3NTkyMTE2OTl8MA&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "person abstract"
+    },
+    {
+      "id": "forum_general",
+      "description": "General forum cover",
+      "imageUrl": {
+        "status": {
+          "status": "quarantined_CIR4",
+          "reason": "non_replayable_derived_state",
+          "original": {
+            "status": "quarantined_CIR4",
+            "reason": "non_replayable_derived_state",
+            "original": {
+              "status": "quarantined_CIR4",
+              "reason": "non_replayable_derived_state",
+              "original": {
+                "status": "quarantined_CIR4",
+                "reason": "non_replayable_derived_state",
+                "original": {
+                  "status": "quarantined_CIR4",
+                  "reason": "non_replayable_derived_state",
+                  "original": "blocked_by_CIR2"
+                }
+              }
+            }
+          }
+        },
+        "reason": "cross_layer_reference_detected",
+        "original": {
+          "status": {
+            "status": "quarantined_CIR4",
+            "reason": "non_replayable_derived_state",
+            "original": {
+              "status": "quarantined_CIR4",
+              "reason": "non_replayable_derived_state",
+              "original": {
+                "status": "quarantined_CIR4",
+                "reason": "non_replayable_derived_state",
+                "original": {
+                  "status": "quarantined_CIR4",
+                  "reason": "non_replayable_derived_state",
+                  "original": "blocked_by_CIR2"
+                }
+              }
+            }
+          },
+          "reason": "cross_layer_reference_detected",
+          "original": {
+            "status": "blocked_by_CIR2",
+            "reason": "cross_layer_reference_detected",
+            "original": "https://images.unsplash.com/photo-1723202594802-18d01e35f106?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHwxMHx8Y29tbXVuaXR5JTIwcGVvcGxlfGVufDB8fHx8MTc1OTI3NTM4NXww&ixlib=rb-4.1.0&q=80&w=1080"
+          }
+        }
+      },
+      "imageHint": "community people"
+    },
+    {
+      "id": "forum_webdev",
+      "description": "Web development forum cover",
+      "imageUrl": "https://images.unsplash.com/photo-1742072594003-abf6ca86e154?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw3fHxjb2RlJTIwc2NyZWVufGVufDB8fHx8MTc1OTI0MjIyNnww&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "code screen"
+    },
+    {
+      "id": "forum_ai",
+      "description": "AI forum cover",
+      "imageUrl": "https://images.unsplash.com/photo-1694903110330-cc64b7e1d21d?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw1fHxhYnN0cmFjdCUyMGNpcmN1aXR8ZW58MHx8fHwxNzU5Mjc1Mzg1fDA&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "abstract circuit"
+    },
+    {
+      "id": "forum_design",
+      "description": "Design forum cover",
+      "imageUrl": {
+        "status": {
+          "status": "quarantined_CIR4",
+          "reason": "non_replayable_derived_state",
+          "original": {
+            "status": "quarantined_CIR4",
+            "reason": "non_replayable_derived_state",
+            "original": {
+              "status": "quarantined_CIR4",
+              "reason": "non_replayable_derived_state",
+              "original": {
+                "status": "quarantined_CIR4",
+                "reason": "non_replayable_derived_state",
+                "original": {
+                  "status": "quarantined_CIR4",
+                  "reason": "non_replayable_derived_state",
+                  "original": "blocked_by_CIR2"
+                }
+              }
+            }
+          }
+        },
+        "reason": "cross_layer_reference_detected",
+        "original": {
+          "status": {
+            "status": "quarantined_CIR4",
+            "reason": "non_replayable_derived_state",
+            "original": {
+              "status": "quarantined_CIR4",
+              "reason": "non_replayable_derived_state",
+              "original": {
+                "status": "quarantined_CIR4",
+                "reason": "non_replayable_derived_state",
+                "original": {
+                  "status": "quarantined_CIR4",
+                  "reason": "non_replayable_derived_state",
+                  "original": "blocked_by_CIR2"
+                }
+              }
+            }
+          },
+          "reason": "cross_layer_reference_detected",
+          "original": {
+            "status": "blocked_by_CIR2",
+            "reason": "cross_layer_reference_detected",
+            "original": "https://images.unsplash.com/photo-1629480795367-a183d8633e4b?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw0fHxjb2xvcnMlMjBwYWxldHRlfGVufDB8fHx8MTc1OTI3NTM4NXww&ixlib=rb-4.1.0&q=80&w=1080"
+          }
+        }
+      },
+      "imageHint": "colors palette"
+    },
+    {
+      "id": "homepage_banner",
+      "description": "Community of people mingling",
+      "imageUrl": "https://images.unsplash.com/photo-1529156069831-1b1236916518?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHwyfHxjb21tdW5pdHl8ZW58MHx8fHwxNzYzOTk4MjM3fDA&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "community people"
+    }
+  ]
+}

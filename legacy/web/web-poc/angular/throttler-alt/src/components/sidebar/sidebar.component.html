@@ -1,0 +1,230 @@
+<aside 
+  class="relative h-full flex flex-col bg-[rgb(var(--color-surface-sidebar))] border-r border-[rgb(var(--color-border-base))] ease-in-out"
+  [class.transition-width]="!isResizing()"
+  [class.duration-300]="!isResizing()"
+  [style.width.px]="width()"
+  (click)="contextMenu.set(null)">
+
+  <!-- EXPANDED VIEW -->
+  <div class="flex flex-col flex-1 overflow-hidden">
+    <!-- Header -->
+    <div class="flex-shrink-0 flex items-center justify-between h-12 px-4 border-b border-[rgb(var(--color-border-base))]">
+      <h3 class="font-semibold text-lg text-[rgb(var(--color-text-base))]">Explorer</h3>
+    </div>
+
+    <!-- Main vertically stacked content -->
+    <div #contentContainer class="flex-1 flex flex-col overflow-hidden">
+      <!-- Top Pane: Tree View -->
+      @if (isTreeVisible()) {
+        <div 
+          class="flex flex-col overflow-hidden"
+          [class.flex-1]="isTreeFlex()" 
+          [style.height.px]="!isTreeFlex() ? treePaneHeight() : undefined">
+
+            <!-- Tree View Toolbar -->
+            <div class="flex-shrink-0 flex items-center h-12 px-2 border-b border-[rgb(var(--color-border-base))] bg-[rgb(var(--color-surface-muted))]">
+              <button (click)="onRefreshTree()" title="Refresh Tree" class="p-2 rounded-md hover:bg-[rgb(var(--color-surface-hover))]">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-[rgb(var(--color-text-muted))]" viewBox="0 0 20 20" fill="currentColor">
+                  <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm10.899 12.101A7.002 7.002 0 012.399 8.567a1 1 0 011.885-.666A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101z" clip-rule="evenodd" />
+                </svg>
+              </button>
+              <div class="h-6 w-px bg-[rgb(var(--color-border-muted))] mx-1"></div>
+              <button (click)="onExpandAll()" title="Expand All" class="p-2 rounded-md hover:bg-[rgb(var(--color-surface-hover))]">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-[rgb(var(--color-text-muted))]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 5.25 7.5 7.5 7.5-7.5m-15 6 7.5 7.5 7.5-7.5" />
+                </svg>
+              </button>
+              <button (click)="onCollapseAll()" title="Collapse All" class="p-2 rounded-md hover:bg-[rgb(var(--color-surface-hover))]">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-[rgb(var(--color-text-muted))]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 18.75 7.5-7.5 7.5 7.5m-15-6 7.5-7.5 7.5 7.5" />
+                </svg>
+              </button>
+              <div class="flex-grow"></div>
+               <!-- Hamburger Menu -->
+              <div class="relative">
+                  <button (click)="toggleHamburgerMenu($event)" title="More options" class="p-2 rounded-md hover:bg-[rgb(var(--color-surface-hover))]">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-[rgb(var(--color-text-muted))]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" /></svg>
+                  </button>
+                  @if (isHamburgerMenuOpen()) {
+                    <div class="absolute right-0 z-10 mt-2 w-56 origin-top-right rounded-md bg-[rgb(var(--color-surface-dialog))] shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+                        <div class="py-1">
+                             <div (click)="onMenuItemClick('localConfigMenuClick')" class="text-[rgb(var(--color-text-muted))] hover:bg-[rgb(var(--color-surface-hover))] flex items-center px-4 py-2 text-sm cursor-pointer">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="mr-3 h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01-.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" /></svg>
+                                <span>Local Config...</span>
+                            </div>
+                            <div class="my-1 h-px bg-[rgb(var(--color-border-base))]"></div>
+                             <div (click)="onMenuItemClick('importClick')" class="text-[rgb(var(--color-text-muted))] hover:bg-[rgb(var(--color-surface-hover))] flex items-center px-4 py-2 text-sm cursor-pointer">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="mr-3 h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 16.5V9.75m0 0 3 3m-3-3-3 3M6.75 19.5a4.5 4.5 0 0 1-1.41-8.775 5.25 5.25 0 0 1 10.233-2.33 3 3 0 0 1 3.758 3.848A3.752 3.752 0 0 1 18 19.5H6.75Z" />
+                                </svg>
+                                <span>Import...</span>
+                            </div>
+                            <div (click)="onMenuItemClick('exportClick')" class="text-[rgb(var(--color-text-muted))] hover:bg-[rgb(var(--color-surface-hover))] flex items-center px-4 py-2 text-sm cursor-pointer">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="mr-3 h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 9.75v6.75m0 0l3-3m-3 3l-3-3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75Z" />
+                                </svg>
+                                <span>Export...</span>
+                            </div>
+                            <div class="my-1 h-px bg-[rgb(var(--color-border-base))]"></div>
+                            <div (click)="onMenuItemClick('serversMenuClick')" class="text-[rgb(var(--color-text-muted))] hover:bg-[rgb(var(--color-surface-hover))] flex items-center px-4 py-2 text-sm cursor-pointer">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="mr-3 h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M2 5a2 2 0 012-2h12a2 2 0 012 2v2a2 2 0 01-2 2H4a2 2 0 01-2-2V5zm0 8a2 2 0 012-2h12a2 2 0 012 2v2a2 2 0 01-2 2H4a2 2 0 01-2-2v-2z" clip-rule="evenodd" /></svg>
+                                <span>Server Profiles...</span>
+                            </div>
+                        </div>
+                    </div>
+                  }
+              </div>
+            </div>
+
+            <!-- Tree View Content -->
+            <div class="flex-1 overflow-y-auto" (contextmenu)="onSidebarAreaContextMenu($event)">
+              @if (folderTree(); as tree) {
+                <app-tree-view
+                    [rootNode]="tree"
+                    [currentPath]="currentPath()"
+                    [expansionCommand]="treeExpansionCommand()"
+                    [getImageService]="getImageService()"
+                    [getProvider]="getProvider()"
+                    (pathChange)="onTreeViewPathChange($event)"
+                    (loadChildren)="onLoadChildren($event)"
+                    (itemsDropped)="onItemsDropped($event)"
+                    (bookmarkDropped)="onBookmarkDropped($event)"
+                    (contextMenuRequest)="onTreeContextMenu($event)">
+                </app-tree-view>
+              }
+            </div>
+        </div>
+      }
+      
+      @if (isTreeVisible() && (isChatVisible() || isNotesVisible())) {
+        <div (mousedown)="startTreeResize($event)" class="flex-shrink-0 h-1.5 w-full cursor-row-resize group flex items-center justify-center bg-[rgb(var(--color-surface-sidebar))] border-y border-[rgb(var(--color-border-base))]">
+          <div class="h-0.5 w-full bg-[rgb(var(--color-border-base))] group-hover:bg-[rgb(var(--color-accent-ring))] transition-colors duration-200"></div>
+        </div>
+      }
+
+      @if (isChatVisible()) {
+        <!-- Middle Pane: Chat -->
+        <div class="flex flex-col overflow-hidden" 
+          [class.flex-1]="!isChatPaneCollapsed() && (!isNotesVisible() || isNotesPaneCollapsed())"
+          [class.mt-auto]="isChatPaneCollapsed()"
+          [style.height.px]="!isChatPaneCollapsed() && (isTreeVisible() || (isNotesVisible() && !isNotesPaneCollapsed())) ? chatPaneHeight() : undefined">
+          <div class="flex-shrink-0 flex items-center h-12 px-4 border-b border-[rgb(var(--color-border-base))] bg-[rgb(var(--color-surface-muted))]">
+            <h4 class="font-semibold text-[rgb(var(--color-text-base))]">Chat</h4>
+            <div class="flex-grow"></div>
+             <button (click)="toggleChatPaneCollapse()" [title]="isChatPaneCollapsed() ? 'Expand Chat' : 'Collapse Chat'" class="p-2 rounded-md hover:bg-[rgb(var(--color-surface-hover))] text-[rgb(var(--color-text-muted))]">
+                @if (isChatPaneCollapsed()) {
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z" clip-rule="evenodd" />
+                  </svg>
+                } @else {
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                  </svg>
+                }
+            </button>
+          </div>
+          @if (!isChatPaneCollapsed()) {
+            <div class="flex-1 overflow-hidden bg-[rgb(var(--color-surface))]">
+              <app-chat></app-chat>
+            </div>
+          }
+        </div>
+      }
+      
+      @if (isChatVisible() && !isChatPaneCollapsed() && isNotesVisible() && !isNotesPaneCollapsed()) {
+        <!-- Vertical Resizer -->
+        <div (mousedown)="startChatResize($event)" class="flex-shrink-0 h-1.5 w-full cursor-row-resize group flex items-center justify-center bg-[rgb(var(--color-surface-sidebar))] border-y border-[rgb(var(--color-border-base))]">
+          <div class="h-0.5 w-full bg-[rgb(var(--color-border-base))] group-hover:bg-[rgb(var(--color-accent-ring))] transition-colors duration-200"></div>
+        </div>
+      }
+
+      @if (isNotesVisible()) {
+        <!-- Bottom Pane: Notes -->
+        <div class="flex flex-col overflow-hidden" 
+             [class.flex-1]="!isNotesPaneCollapsed()" 
+             [class.mt-auto]="isNotesPaneCollapsed()">
+          <div class="flex-shrink-0 flex items-center h-12 px-4 border-b border-[rgb(var(--color-border-base))] bg-[rgb(var(--color-surface-muted))]">
+            <h4 class="font-semibold text-[rgb(var(--color-text-base))]">Notes</h4>
+            <div class="flex-grow"></div>
+            <button (click)="toggleNotesPaneCollapse()" [title]="isNotesPaneCollapsed() ? 'Expand Notes' : 'Collapse Notes'" class="p-2 rounded-md hover:bg-[rgb(var(--color-surface-hover))] text-[rgb(var(--color-text-muted))]">
+              @if (isNotesPaneCollapsed()) {
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z" clip-rule="evenodd" /></svg>
+              } @else {
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
+              }
+            </button>
+          </div>
+          @if (!isNotesPaneCollapsed()) {
+            <div class="flex-1 overflow-hidden">
+              <app-notes
+                [path]="currentPath()"
+                [provider]="currentProvider()">
+              </app-notes>
+            </div>
+          }
+        </div>
+      }
+    </div>
+  </div>
+
+  <!-- Resizer Handle -->
+  <div 
+    class="absolute top-0 right-0 h-full w-1.5 cursor-col-resize group z-10"
+    (mousedown)="startResize($event)">
+      <div class="w-0.5 h-full mx-auto bg-transparent group-hover:bg-[rgb(var(--color-accent-ring))]/50 transition-colors duration-200"></div>
+  </div>
+
+  <!-- Context Menu -->
+  @if (contextMenu(); as cm) {
+    <div class="fixed w-52 bg-[rgb(var(--color-surface-dialog))] border border-[rgb(var(--color-border-base))] rounded-md shadow-lg py-1 text-sm text-[rgb(var(--color-text-muted))] z-50"
+         [style.left.px]="cm.x"
+         [style.top.px]="cm.y"
+         (click)="$event.stopPropagation()">
+        @if (cm.node.isServerRoot) {
+          @if (!cm.node.connected) {
+            <div class="px-4 py-2 hover:bg-[rgb(var(--color-surface-hover))] cursor-pointer" (click)="handleConnect()">Connect...</div>
+          } @else {
+            <div class="px-4 py-2 hover:bg-[rgb(var(--color-surface-hover))] cursor-pointer" (click)="handleDisconnect()">Disconnect</div>
+          }
+          <div class="my-1 h-px bg-[rgb(var(--color-border-base))]"></div>
+           <div class="px-4 py-2 hover:bg-[rgb(var(--color-surface-hover))] cursor-pointer" (click)="handleEditProfile()">Edit Profile...</div>
+        } @else if (cm.path.length === 0) {
+            <div class="px-4 py-2 hover:bg-[rgb(var(--color-surface-hover))] cursor-pointer" (click)="handleSettings()">Settings...</div>
+        } @else if (cm.path.length === 1 && !cm.node.isServerRoot) {
+            <div class="px-4 py-2 hover:bg-[rgb(var(--color-surface-hover))] cursor-pointer" (click)="handleSettings()">Properties...</div>
+        } @else {
+            @if (isChildOfWritableRoot(cm.path)) {
+              <div class="px-4 py-2 hover:bg-[rgb(var(--color-surface-hover))] cursor-pointer" (click)="handleNewFolder()">New Folder...</div>
+              <div class="px-4 py-2 hover:bg-[rgb(var(--color-surface-hover))] cursor-pointer" (click)="handleNewFile()">New File...</div>
+              <div class="my-1 h-px bg-[rgb(var(--color-border-base))]"></div>
+              <div class="px-4 py-2 hover:bg-[rgb(var(--color-surface-hover))] cursor-pointer" (click)="handleRename()">Rename...</div>
+              <div class="px-4 py-2 hover:bg-[rgb(var(--color-danger-bg-hover))] text-[rgb(var(--color-danger-text))] cursor-pointer" (click)="handleDelete()">Delete</div>
+            } @else {
+               <div class="px-4 py-2 text-[rgb(var(--color-text-disabled))]">New Folder...</div>
+               <div class="px-4 py-2 text-[rgb(var(--color-text-disabled))]">Rename...</div>
+            }
+        }
+    </div>
+  }
+  
+  @if (isInputDialogOpen()) {
+    <app-input-dialog 
+      [title]="inputDialogConfig().title"
+      [message]="inputDialogConfig().message"
+      [initialValue]="inputDialogConfig().initialValue"
+      (submitValue)="onInputDialogSubmit($event)"
+      (close)="isInputDialogOpen.set(false)">
+    </app-input-dialog>
+  }
+  
+  @if (isConfirmDialogOpen()) {
+    <app-confirm-dialog
+      [title]="confirmDialogConfig().title"
+      [message]="confirmDialogConfig().message"
+      [confirmButtonText]="confirmDialogConfig().confirmText"
+      (confirm)="onConfirmDialogConfirm()"
+      (close)="isConfirmDialogOpen.set(false)">
+    </app-confirm-dialog>
+  }
+
+</aside>

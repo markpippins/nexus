@@ -1,0 +1,20 @@
+
+<div class="flex items-center p-2 border-y border-[rgb(var(--color-border-base))] bg-[rgb(var(--color-surface-muted))] gap-2">
+  <input 
+      type="search" 
+      placeholder="Search current location..."
+      class="flex-grow px-3 py-1.5 bg-[rgb(var(--color-surface))] border border-[rgb(var(--color-border-muted))] rounded-md shadow-sm focus:outline-none focus:ring-1 focus:ring-[rgb(var(--color-accent-ring))] sm:text-sm"
+      [value]="query()"
+      (input)="onQueryChange($event)"
+      (keydown.enter)="submitSearch()">
+  
+  <button 
+    (click)="submitSearch()" 
+    [disabled]="!query().trim()"
+    class="px-4 py-1.5 bg-[rgb(var(--color-accent-solid-bg))] text-[rgb(var(--color-text-inverted))] rounded-md hover:bg-[rgb(var(--color-accent-solid-bg-hover))] disabled:bg-[rgb(var(--color-disabled-bg))] disabled:cursor-not-allowed transition-colors font-semibold text-sm flex items-center gap-2">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+        <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd" />
+      </svg>
+      <span>Search</span>
+  </button>
+</div>

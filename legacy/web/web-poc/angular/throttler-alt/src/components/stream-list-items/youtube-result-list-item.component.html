@@ -1,0 +1,35 @@
+<div class="flex items-center p-2 rounded-md group hover:bg-[rgb(var(--color-surface))] transition-colors duration-150">
+  <div class="flex-shrink-0 w-12 h-8 rounded-md overflow-hidden relative bg-[rgb(var(--color-surface-muted))]">
+    <a href="#" (click)="openLink($event)">
+      <img [src]="result().thumbnailUrl" [alt]="result().title" class="w-full h-full object-cover">
+      <div class="absolute inset-0 bg-black/20 flex items-center justify-center">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-white/80" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd" />
+        </svg>
+      </div>
+    </a>
+  </div>
+  
+  <div class="flex-grow min-w-0 mx-3">
+    <a href="#" (click)="openLink($event)" class="font-semibold text-sm truncate text-[rgb(var(--color-text-base))] hover:underline hover:text-[rgb(var(--color-accent-text))]">{{ result().title }}</a>
+    <p class="text-xs text-[rgb(var(--color-text-muted))] truncate">{{ result().channelTitle }}</p>
+  </div>
+
+  <button 
+    (click)="onToggleBookmark()" 
+    [title]="isBookmarked() ? 'Remove bookmark' : 'Save to current folder'" 
+    class="p-1.5 rounded-full transition-all flex-shrink-0"
+    [class.opacity-100]="isBookmarked()"
+    [class.opacity-0]="!isBookmarked()"
+    [class.group-hover:opacity-100]="!isBookmarked()"
+    [class.text-blue-600]="isBookmarked()"
+    [class.dark:text-blue-400]="isBookmarked()"
+    [class.hover:bg-blue-100]="isBookmarked()"
+    [class.dark:hover:bg-blue-900/50]="isBookmarked()"
+    [class.text-[rgb(var(--color-text-muted))]]="!isBookmarked()"
+    [class.hover:bg-[rgb(var(--color-surface-hover))]]="!isBookmarked()">
+    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+      <path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v12l-5-3-5 3V4z" />
+    </svg>
+  </button>
+</div>

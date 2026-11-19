@@ -1,0 +1,5 @@
+{
+  "name": "Google Cloud Search Assistant",
+  "description": "An application to perform Google searches using the Gemini API, display the results with sources, and allow downloading the structured data as a JSON file for local processing.",
+  "requestFramePermissions": []
+}

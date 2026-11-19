@@ -1,0 +1,52 @@
+<div class="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center p-4" (click)="close.emit()">
+  <div class="bg-[rgb(var(--color-surface-dialog))] rounded-lg shadow-xl w-full max-w-lg" (click)="$event.stopPropagation()">
+    
+    <div class="p-4 border-b border-[rgb(var(--color-border-base))] flex justify-between items-center">
+      <h3 class="text-lg font-semibold text-[rgb(var(--color-text-base))]">Local Configuration</h3>
+      <button (click)="close.emit()" class="p-1 rounded-full hover:bg-[rgb(var(--color-surface-hover))] text-[rgb(var(--color-text-muted))]">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+    
+    <div class="p-6 space-y-6">
+      <div>
+        <label for="sessionName" class="block text-sm font-medium text-[rgb(var(--color-text-muted))]">Local Session Name</label>
+        <p class="text-xs text-[rgb(var(--color-text-subtle))] mt-1">The name for the file system stored in this browser session.</p>
+        <input type="text" id="sessionName" [value]="formState().sessionName" (input)="onValueChange($event, 'sessionName')"
+              class="mt-2 block w-full px-3 py-2 bg-[rgb(var(--color-surface))] border border-[rgb(var(--color-border-muted))] rounded-md shadow-sm focus:outline-none focus:ring-[rgb(var(--color-accent-ring))] focus:border-[rgb(var(--color-accent-ring))] sm:text-sm">
+      </div>
+
+      <div>
+        <label for="defaultImageUrl" class="block text-sm font-medium text-[rgb(var(--color-text-muted))]">Default Image Server URL</label>
+        <p class="text-xs text-[rgb(var(--color-text-subtle))] mt-1">The image server used for the Local Session and as a fallback for remote profiles without a specified image server.</p>
+        <input type="text" id="defaultImageUrl" [value]="formState().defaultImageUrl" (input)="onValueChange($event, 'defaultImageUrl')" placeholder="http://..."
+              class="mt-2 block w-full px-3 py-2 bg-[rgb(var(--color-surface))] border border-[rgb(var(--color-border-muted))] rounded-md shadow-sm focus:outline-none focus:ring-[rgb(var(--color-accent-ring))] focus:border-[rgb(var(--color-accent-ring))] sm:text-sm">
+      </div>
+
+      <div class="pt-2">
+        <div class="relative flex items-start">
+          <div class="flex h-6 items-center">
+            <input id="logBrokerMessages" type="checkbox" [checked]="formState().logBrokerMessages" (change)="onCheckboxChange($event, 'logBrokerMessages')"
+                  class="h-4 w-4 rounded border-[rgb(var(--color-border-muted))] text-[rgb(var(--color-accent-text))] focus:ring-[rgb(var(--color-accent-ring))] bg-[rgb(var(--color-surface))]">
+          </div>
+          <div class="ml-3 text-sm leading-6">
+            <label for="logBrokerMessages" class="font-medium text-[rgb(var(--color-text-muted))]">Enable Broker Logging</label>
+            <p class="text-xs text-[rgb(var(--color-text-subtle))]">Log all service broker requests and responses to the developer console.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="px-6 py-3 bg-[rgb(var(--color-surface-muted))] flex justify-end items-center space-x-2 rounded-b-lg">
+      <button (click)="close.emit()" class="px-4 py-2 bg-[rgb(var(--color-surface-hover))] text-[rgb(var(--color-text-base))] rounded-md hover:bg-[rgb(var(--color-border-base))] transition-colors font-semibold text-sm">
+        Cancel
+      </button>
+      <button (click)="onSave()" class="px-4 py-2 bg-[rgb(var(--color-accent-solid-bg))] text-[rgb(var(--color-text-inverted))] rounded-md hover:bg-[rgb(var(--color-accent-solid-bg-hover))] transition-colors font-semibold text-sm disabled:bg-[rgb(var(--color-disabled-bg))]" [disabled]="!formState().sessionName.trim() || !formState().defaultImageUrl.trim()">
+        Save
+      </button>
+    </div>
+
+  </div>
+</div>

@@ -1,0 +1,82 @@
+<div class="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center p-4" (click)="close.emit()">
+  <div class="bg-[rgb(var(--color-surface-dialog))] rounded-lg shadow-xl w-full max-w-4xl h-[500px] flex flex-col" (click)="$event.stopPropagation()">
+    
+    <div class="p-4 border-b border-[rgb(var(--color-border-base))] flex justify-between items-center flex-shrink-0">
+      <h3 class="text-lg font-semibold text-[rgb(var(--color-text-base))]">Manage RSS Feeds</h3>
+      <button (click)="close.emit()" class="p-1 rounded-full hover:bg-[rgb(var(--color-surface-hover))] text-[rgb(var(--color-text-muted))]">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+    
+    <div class="flex-1 flex overflow-hidden">
+      <!-- Left: Feed List -->
+      <div class="w-1/3 border-r border-[rgb(var(--color-border-base))] flex flex-col">
+        <div class="p-2">
+            <button (click)="startAddNew()" class="w-full flex items-center justify-center space-x-2 px-3 py-2 bg-[rgb(var(--color-accent-solid-bg))] text-[rgb(var(--color-text-inverted))] hover:bg-[rgb(var(--color-accent-solid-bg-hover))] rounded-md shadow-sm text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[rgb(var(--color-accent-ring))]">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" /></svg>
+              <span>New Feed</span>
+            </button>
+        </div>
+        <div class="flex-1 overflow-y-auto p-2 space-y-1">
+          @for(feed of rssFeedService.feeds(); track feed.id) {
+            <div (click)="startEdit(feed)"
+                 class="p-3 rounded-md cursor-pointer group"
+                 [class.bg-[rgb(var(--color-accent-bg))]]="selectedFeedId() === feed.id"
+                 [class.hover:bg-[rgb(var(--color-surface-hover-subtle))]]="selectedFeedId() !== feed.id">
+              <p class="font-semibold text-[rgb(var(--color-text-base))] truncate">{{ feed.name }}</p>
+              <p class="text-xs text-[rgb(var(--color-text-subtle))] truncate mt-1">{{ feed.url }}</p>
+            </div>
+          }
+        </div>
+      </div>
+      
+      <!-- Right: Form/Details -->
+      <div class="w-2/3 p-6 overflow-y-auto">
+        @if (formState(); as form) {
+          <div class="space-y-6">
+            <h4 class="text-xl font-bold text-[rgb(var(--color-text-base))]">{{ form.id ? 'Edit Feed' : 'Create New Feed' }}</h4>
+            
+            <div>
+              <label for="feedName" class="block text-sm font-medium text-[rgb(var(--color-text-muted))]">Feed Name</label>
+              <input type="text" id="feedName" [value]="form.name" (input)="onFormValueChange($event, 'name')" placeholder="e.g., Angular Blog"
+                    class="mt-1 block w-full px-3 py-2 bg-[rgb(var(--color-surface))] border border-[rgb(var(--color-border-muted))] rounded-md shadow-sm focus:outline-none focus:ring-[rgb(var(--color-accent-ring))] focus:border-[rgb(var(--color-accent-ring))] sm:text-sm">
+            </div>
+
+            <div>
+              <label for="feedUrl" class="block text-sm font-medium text-[rgb(var(--color-text-muted))]">Feed URL</label>
+              <input type="url" id="feedUrl" [value]="form.url" (input)="onFormValueChange($event, 'url')" placeholder="https://..."
+                    class="mt-1 block w-full px-3 py-2 bg-[rgb(var(--color-surface))] border border-[rgb(var(--color-border-muted))] rounded-md shadow-sm focus:outline-none focus:ring-[rgb(var(--color-accent-ring))] focus:border-[rgb(var(--color-accent-ring))] sm:text-sm">
+            </div>
+            
+            <div class="pt-4 flex items-center justify-start space-x-2">
+                <button (click)="saveFeed()" class="px-4 py-2 bg-[rgb(var(--color-accent-solid-bg))] text-[rgb(var(--color-text-inverted))] rounded-md hover:bg-[rgb(var(--color-accent-solid-bg-hover))] transition-colors font-semibold text-sm disabled:bg-[rgb(var(--color-disabled-bg))]" [disabled]="!form.name.trim() || !form.url.trim()">
+                  Save Changes
+                </button>
+                <button (click)="cancelEdit()" class="px-4 py-2 bg-[rgb(var(--color-surface-hover))] text-[rgb(var(--color-text-base))] rounded-md hover:bg-[rgb(var(--color-border-base))] transition-colors font-semibold text-sm">
+                  Cancel
+                </button>
+
+                @if (form.id) {
+                    <div class="flex-grow"></div>
+                    <button (click)="deleteFeed(form.id!)" class="p-2 text-[rgb(var(--color-text-subtle))] hover:bg-[rgb(var(--color-danger-bg-hover))] hover:text-[rgb(var(--color-danger-text))] rounded-md transition-colors" title="Delete Feed">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                          <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clip-rule="evenodd" />
+                        </svg>
+                    </button>
+                }
+            </div>
+          </div>
+        } @else {
+          <div class="h-full flex flex-col items-center justify-center text-center text-[rgb(var(--color-text-subtle))]">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3m0 0l3-3m-3 3v8m0-13a9 9 0 110 18 9 9 0 010-18z" />
+            </svg>
+            <p class="mt-4 text-lg">Select a feed to edit, or create a new one.</p>
+          </div>
+        }
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,36 @@
+<div 
+  class="w-40 h-40 flex flex-col bg-[rgb(var(--color-surface))] border border-[rgb(var(--color-border-base))] rounded-lg shadow-md group relative hover:shadow-xl transition-shadow duration-300 overflow-hidden"
+  [title]="result().title + '\n\n' + result().description">
+  <a href="#" (click)="openLink($event)" class="block relative flex-shrink-0">
+    <img [src]="result().thumbnailUrl" [alt]="result().title" class="w-full h-20 object-cover">
+    <div class="absolute inset-0 bg-black/20 flex items-center justify-center">
+       <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 text-white/80" viewBox="0 0 20 20" fill="currentColor">
+        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd" />
+      </svg>
+    </div>
+  </a>
+  <div class="p-2 flex-grow flex flex-col overflow-hidden">
+    <a href="#" (click)="openLink($event)">
+      <h3 class="font-semibold text-xs text-[rgb(var(--color-text-base))] hover:text-[rgb(var(--color-accent-text))] line-clamp-2">{{ result().title }}</h3>
+    </a>
+    <p class="text-xs text-[rgb(var(--color-text-subtle))] mt-0.5 truncate">{{ result().channelTitle }}</p>
+  </div>
+   <button 
+    (click)="onToggleBookmark()" 
+    [title]="isBookmarked() ? 'Remove bookmark' : 'Save to current folder'" 
+    class="absolute top-1 right-1 p-1.5 rounded-full transition-all duration-300"
+    [class.opacity-100]="isBookmarked()"
+    [class.opacity-0]="!isBookmarked()"
+    [class.group-hover:opacity-100]="!isBookmarked()"
+    [class.bg-blue-500]="isBookmarked()"
+    [class.text-white]="isBookmarked()"
+    [class.hover:bg-blue-600]="isBookmarked()"
+    [class.bg-black/50]="!isBookmarked()"
+    [class.text-white]="!isBookmarked()"
+    [class.hover:bg-white]="!isBookmarked()"
+    [class.hover:text-black]="!isBookmarked()">
+    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+      <path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v12l-5-3-5 3V4z" />
+    </svg>
+  </button>
+</div>

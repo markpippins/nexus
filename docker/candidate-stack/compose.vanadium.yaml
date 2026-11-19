@@ -15,10 +15,10 @@ services:
   broker:
     environment:
       # Workers reach shared infrastructure on the authority host.
-      PG_HOST: "192.168.1.120"
-      CONDUIT_MCP_URL: "http://192.168.1.120:3100"
+      PG_HOST: "192.168.1.71"
+      CONDUIT_MCP_URL: "http://192.168.1.71:3100"
       # REDIS_HOST stays "redis" — in-compose DNS, unchanged.
 
   control-edge:
     environment:
-      PG_HOST: "192.168.1.120"
+      PG_HOST: "192.168.1.71"

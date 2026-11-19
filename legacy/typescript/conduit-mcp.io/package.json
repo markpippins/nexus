@@ -1,0 +1,32 @@
+{
+  "name": "conduit-mcp",
+  "version": "1.0.0",
+  "description": "MCP server that watches nexus/.conduit-data/ filesystem and exposes SSE + MCP tools",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "daemon": "bash scripts/mcp-daemon.sh start",
+    "daemon-stop": "bash scripts/mcp-daemon.sh stop",
+    "daemon-status": "bash scripts/mcp-daemon.sh status"
+  },
+  "dependencies": {
+    "@temporalio/client": "^1.18.1",
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
+    "pg": "^8.21.0",
+    "uuid": "^10.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.20.0",
+    "@types/uuid": "^10.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.8"
+  }
+}

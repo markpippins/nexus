@@ -62,8 +62,7 @@
         },
         "serve": {
           "builder": "@angular-devkit/build-angular:dev-server",
-          "options": { "host": "0.0.0.0",
-            "disableHostCheck": true,
+          "options": { "host": "0.0.0.0", "disableHostCheck": true,
             "proxyConfig": "proxy.conf.json"
           },
           "configurations": {

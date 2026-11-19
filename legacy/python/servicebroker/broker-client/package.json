@@ -1,0 +1,26 @@
+{
+  "name": "@atomic-broker/python-sdk",
+  "version": "1.0.0",
+  "description": "Lightweight Python client for Atomic Broker Gateway",
+  "main": "atomic_broker_sdk.py",
+  "keywords": ["broker", "gateway", "microservices", "sdk"],
+  "author": "Atomic Broker Team",
+  "license": "MIT",
+  "dependencies": {
+    "requests": "^2.28.0"
+  },
+  "python_requires": ">=3.7",
+  "classifiers": [
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Intended Audience :: Developers"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/atomic/broker-sdk.git"
+  },
+  "readme": "README.md",
+  "install_requires": [
+    "requests>=2.28.0"
+  ]
+}

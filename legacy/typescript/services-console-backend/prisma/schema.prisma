@@ -1,0 +1,231 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Language {
+  id              String   @id @default(cuid())
+  name            String
+  description     String?
+  url             String?
+  current_version String?
+  lts_version     String?
+  active_flag     Boolean  @default(true)
+  
+  // Relations
+  frameworks Framework[]
+  
+  @@map("languages")
+}
+
+model Category {
+  id          String   @id @default(cuid())
+  name        String
+  active_flag Boolean  @default(true)
+  
+  // Relations
+  frameworks Framework[]
+  
+  @@map("categories")
+}
+
+model Vendor {
+  id          String   @id @default(cuid())
+  name        String
+  url         String?
+  active_flag Boolean  @default(true)
+  
+  // Relations
+  frameworks      Framework[]
+  operatingSystems OperatingSystem[]
+  
+  @@map("vendors")
+}
+
+model Framework {
+  id              String   @id @default(cuid())
+  vendor_id       String
+  name            String
+  description     String?
+  category_id     String
+  language_id     String
+  current_version String?
+  lts_version     String?
+  url             String?
+  active_flag     Boolean  @default(true)
+  
+  // Relations
+  vendor       Vendor       @relation(fields: [vendor_id], references: [id])
+  category     Category     @relation(fields: [category_id], references: [id])
+  language     Language     @relation(fields: [language_id], references: [id])
+  services     Service[]
+  
+  @@map("frameworks")
+}
+
+model OperatingSystem {
+  id              String   @id @default(cuid())
+  vendor_id       String
+  name            String
+  description     String?
+  current_version String?
+  lts_version     String?
+  active_flag     Boolean  @default(true)
+  
+  // Relations
+  vendor  Vendor   @relation(fields: [vendor_id], references: [id])
+  servers Server[]
+  
+  @@map("operating_systems")
+}
+
+model EnvironmentType {
+  id          String   @id @default(cuid())
+  name        String
+  active_flag Boolean  @default(true)
+  
+  // Relations
+  servers      Server[]
+  deployments  Deployment[]
+  serviceConfigs ServiceConfig[]
+  
+  @@map("environment_types")
+}
+
+model ServerType {
+  id          String   @id @default(cuid())
+  name        String
+  active_flag Boolean  @default(true)
+  
+  // Relations
+  servers Server[]
+  
+  @@map("server_types")
+}
+
+model Server {
+  id                    String   @id @default(cuid())
+  hostname              String
+  ip_address            String
+  server_type_id        String
+  environment_type_id   String
+  operating_system_id  String
+  cpu_cores             Int
+  memory                String
+  disk                  String
+  status                String
+  description           String?
+  active_flag           Boolean  @default(true)
+  
+  // Relations
+  serverType        ServerType        @relation(fields: [server_type_id], references: [id])
+  environmentType   EnvironmentType   @relation(fields: [environment_type_id], references: [id])
+  operatingSystem   OperatingSystem   @relation(fields: [operating_system_id], references: [id])
+  deployments       Deployment[]
+  
+  @@map("servers")
+}
+
+model ServiceType {
+  id          String   @id @default(cuid())
+  name        String
+  active_flag Boolean  @default(true)
+  
+  // Relations
+  services Service[]
+  
+  @@map("service_types")
+}
+
+model Service {
+  id              String   @id @default(cuid())
+  name            String
+  description     String?
+  framework_id    String
+  service_type_id String
+  default_port    Int
+  api_base_path   String
+  repository_url  String?
+  version         String
+  status          String
+  active_flag     Boolean  @default(true)
+  
+  // Relations
+  framework        Framework        @relation(fields: [framework_id], references: [id])
+  serviceType      ServiceType      @relation(fields: [service_type_id], references: [id])
+  serviceConfigs   ServiceConfig[]
+  serviceDependenciesAsConsumer ServiceDependency[] @relation("ServiceConsumer")
+  serviceDependenciesAsProvider ServiceDependency[] @relation("ServiceProvider")
+  deployments      Deployment[]
+  
+  @@map("services")
+}
+
+model ConfigType {
+  id          String   @id @default(cuid())
+  name        String
+  active_flag Boolean  @default(true)
+  
+  // Relations
+  serviceConfigs ServiceConfig[]
+  
+  @@map("config_types")
+}
+
+model ServiceConfig {
+  id              String   @id @default(cuid())
+  service_id      String
+  config_type_id  String
+  description     String?
+  config_key      String
+  config_value    String
+  environment_id  String
+  active_flag     Boolean  @default(true)
+  
+  // Relations
+  service       Service       @relation(fields: [service_id], references: [id])
+  configType    ConfigType    @relation(fields: [config_type_id], references: [id])
+  environment   EnvironmentType @relation(fields: [environment_id], references: [id])
+  
+  @@map("service_configs")
+}
+
+model ServiceDependency {
+  id                 String   @id @default(cuid())
+  service_id         String
+  target_service_id  String
+  criticality        String
+  description        String?
+  active_flag        Boolean  @default(true)
+  
+  // Relations
+  service        Service @relation("ServiceConsumer", fields: [service_id], references: [id])
+  targetService  Service @relation("ServiceProvider", fields: [target_service_id], references: [id])
+  
+  @@map("service_dependencies")
+}
+
+model Deployment {
+  id            String   @id @default(cuid())
+  service_id    String
+  environment_id String
+  server_id     String
+  version       String
+  deployed_at   DateTime
+  status        String
+  active_flag   Boolean  @default(true)
+  
+  // Relations
+  service      Service        @relation(fields: [service_id], references: [id])
+  environment  EnvironmentType @relation(fields: [environment_id], references: [id])
+  server       Server         @relation(fields: [server_id], references: [id])
+  
+  @@map("deployments")
+}

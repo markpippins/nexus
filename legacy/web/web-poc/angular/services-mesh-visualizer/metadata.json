@@ -1,0 +1,5 @@
+{
+  "name": "Service Broker 3D Visualizer",
+  "description": "A 3D interactive visualization of the Service Broker architecture pattern using Three.js.",
+  "requestFramePermissions": []
+}

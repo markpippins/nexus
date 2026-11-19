@@ -20,9 +20,9 @@ export default defineConfig({
       // makes LAN access look like an outage. Hosts come from the
       // environment so no machine name is baked into the repo.
       allowedHosts: (process.env.NEXUS_UI_ALLOWED_HOSTS ?? '')
-      .split(',')
-      .map((h) => h.trim())
-      .filter(Boolean),
+        .split(',')
+        .map((h) => h.trim())
+        .filter(Boolean),
       port: devPort,
       strictPort: true,
       host: true,

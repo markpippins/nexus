@@ -1,0 +1,19 @@
+{
+  "name": "file-system-server",
+  "version": "1.0.0",
+  "description": "Node.js file system proxy server",
+  "main": "fs-serv.ts",
+  "scripts": {
+    "start": "npx tsx fs-serv.ts",
+    "dev": "npx tsx --watch fs-serv.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.0",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}

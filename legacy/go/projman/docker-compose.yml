@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: projman-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: projman_service
+      MYSQL_USER: root
+      MYSQL_PASSWORD: rootpass
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./init-mysql.sql:/docker-entrypoint-initdb.d/init.sql
+    command: --default-authentication-plugin=mysql_native_password
+
+  projman:
+    build: .
+    container_name: projman-service
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: rootpass
+      DB_NAME: projman_service
+      PORT: 8073
+      SERVICE_HOST: projman
+      SERVICE_REGISTRY_URL: http://host-server:8085/api/registry
+    ports:
+      - "8073:8073"
+    depends_on:
+      - mysql
+    networks:
+      - projman-network
+
+volumes:
+  mysql_data:
+
+networks:
+  projman-network:
+    driver: bridge

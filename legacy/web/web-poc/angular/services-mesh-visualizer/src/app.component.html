@@ -1,0 +1,288 @@
+
+<div class="relative w-full h-screen bg-slate-950 overflow-hidden font-sans text-slate-200 flex flex-col" 
+     (window:click)="closeContextMenu()">
+  
+  <!-- Main Header / Tab Bar -->
+  <div class="h-12 border-b border-slate-800 bg-slate-950 flex justify-between items-center px-4 shrink-0 z-30 relative">
+    <div class="flex items-center gap-6">
+      <div class="flex items-center gap-2">
+         <h1 class="text-lg font-bold text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.6)]">
+          Service Broker Viz
+         </h1>
+      </div>
+      
+      <!-- Tabs -->
+      <div class="flex bg-slate-900 rounded p-1 border border-slate-800">
+        <button (click)="switchTab('canvas')" 
+                [class.bg-slate-700]="activeTab() === 'canvas'"
+                [class.text-white]="activeTab() === 'canvas'"
+                [class.text-slate-400]="activeTab() !== 'canvas'"
+                class="px-4 py-1 rounded text-xs font-medium transition hover:text-white">
+           Architecture Canvas
+        </button>
+        <button (click)="switchTab('creator')"
+                [class.bg-slate-700]="activeTab() === 'creator'"
+                [class.text-white]="activeTab() === 'creator'"
+                [class.text-slate-400]="activeTab() !== 'creator'"
+                class="px-4 py-1 rounded text-xs font-medium transition hover:text-white flex items-center gap-2">
+           Component Creator
+        </button>
+      </div>
+    </div>
+
+    <!-- Right Controls (Only visible in Canvas Mode) -->
+    @if (activeTab() === 'canvas') {
+      <div class="flex gap-4 items-center">
+         <!-- Mode Switcher -->
+         <div class="flex bg-slate-800 rounded p-1 border border-slate-700">
+           <button (click)="setMode('camera')" 
+                   [class.bg-slate-600]="currentMode() === 'camera' && !isSimulationActive()"
+                   [class.text-white]="currentMode() === 'camera' && !isSimulationActive()"
+                   class="px-3 py-1 rounded text-xs text-slate-400 hover:text-white transition flex items-center gap-2">
+             <span>🎥</span> Camera
+           </button>
+           <button (click)="setMode('edit')" 
+                   [class.bg-cyan-700]="currentMode() === 'edit'"
+                   [class.text-white]="currentMode() === 'edit'"
+                   class="px-3 py-1 rounded text-xs text-slate-400 hover:text-white transition flex items-center gap-2">
+             <span>✋</span> Move
+           </button>
+         </div>
+         
+         <!-- Simulation -->
+         <button (click)="toggleSimulation()" 
+                 [class.bg-amber-600]="isSimulationActive()"
+                 [class.border-amber-500]="isSimulationActive()"
+                 [class.text-white]="isSimulationActive()"
+                 class="px-3 py-1 bg-slate-800 border border-slate-700 rounded text-xs text-amber-500 hover:text-white hover:bg-amber-600 transition flex items-center gap-2">
+           <span>⚡</span> {{ isSimulationActive() ? 'Stop' : 'Simulate' }}
+         </button>
+  
+         <!-- File Operations -->
+         <div class="flex gap-1 border-l border-slate-700 pl-4">
+            <button (click)="saveJson()" class="px-3 py-1 bg-slate-800 border border-slate-700 rounded text-xs text-blue-300 hover:bg-slate-700 transition flex items-center gap-1">
+               <span>💾</span> Save
+            </button>
+            <button (click)="triggerLoad()" class="px-3 py-1 bg-slate-800 border border-slate-700 rounded text-xs text-blue-300 hover:bg-slate-700 transition flex items-center gap-1">
+               <span>📂</span> Load
+            </button>
+         </div>
+         
+         <!-- Camera & Scene Controls -->
+         <div class="flex gap-2 border-l border-slate-700 pl-4 items-center">
+             <!-- Bg Color -->
+             <div class="flex items-center gap-1 bg-slate-800 rounded px-2 py-1 border border-slate-700" title="Background Color">
+                <input type="color" [ngModel]="bgColor" (ngModelChange)="updateBgColor($event)" 
+                       class="w-4 h-4 rounded cursor-pointer bg-transparent border-none p-0">
+             </div>
+             
+             <!-- Camera Controls -->
+             <div class="flex bg-slate-800 rounded border border-slate-700">
+                <button (click)="zoomOut()" class="px-2 py-1 hover:bg-slate-700 text-slate-400 hover:text-white border-r border-slate-700 text-xs" title="Zoom Out">-</button>
+                <button (click)="zoomIn()" class="px-2 py-1 hover:bg-slate-700 text-slate-400 hover:text-white border-r border-slate-700 text-xs" title="Zoom In">+</button>
+                <button (click)="rotateLeft()" class="px-2 py-1 hover:bg-slate-700 text-slate-400 hover:text-white border-r border-slate-700 text-xs" title="Rotate Left">↺</button>
+                <button (click)="rotateRight()" class="px-2 py-1 hover:bg-slate-700 text-slate-400 hover:text-white text-xs" title="Rotate Right">↻</button>
+             </div>
+         </div>
+
+         <div class="flex gap-2 border-l border-slate-700 pl-4">
+           <button (click)="resetDemo()" class="px-3 py-1 bg-slate-800 border border-slate-700 rounded text-xs hover:bg-slate-700 transition">
+             Reset
+           </button>
+           <button (click)="clearCanvas()" class="px-3 py-1 bg-red-900/50 border border-red-800 rounded text-xs text-red-200 hover:bg-red-900/80 transition">
+             Clear
+           </button>
+         </div>
+      </div>
+    }
+  </div>
+
+  <!-- Content Area -->
+  <div class="flex-1 relative overflow-hidden">
+    
+    <!-- CANVAS TAB CONTENT -->
+    <div [class.invisible]="activeTab() !== 'canvas'" class="absolute inset-0 w-full h-full" 
+         (contextmenu)="onContextMenu($event)">
+         
+        <!-- 3D Canvas (Background) -->
+        <div #canvasContainer class="w-full h-full absolute top-0 left-0 z-0"></div>
+
+        <!-- Context Menu -->
+        @if (contextMenu().visible) {
+            <div class="fixed bg-slate-800 border border-slate-600 rounded shadow-xl z-50 py-1 min-w-[150px] flex flex-col"
+                 [style.left.px]="contextMenu().x"
+                 [style.top.px]="contextMenu().y">
+                 
+                 <!-- NEW Submenu -->
+                 <div class="group relative px-4 py-2 hover:bg-slate-700 cursor-pointer flex justify-between items-center text-xs text-white">
+                    <span>New...</span>
+                    <span class="text-[10px] text-slate-400">▶</span>
+                    
+                    <!-- Nested Submenu -->
+                    <div class="absolute left-full top-0 ml-1 bg-slate-800 border border-slate-600 rounded shadow-xl py-1 min-w-[160px] hidden group-hover:block max-h-64 overflow-y-auto">
+                        @for (tool of toolItems(); track tool.type) {
+                           <button (click)="$event.stopPropagation(); onContextAction('new', tool.type)" 
+                                   class="w-full text-left px-4 py-2 hover:bg-slate-700 text-xs text-slate-200 flex items-center gap-2">
+                               <div [class]="tool.colorClass + ' ' + tool.iconClass" class="w-2 h-2"></div>
+                               {{ tool.label }}
+                           </button>
+                        }
+                    </div>
+                 </div>
+
+                 <div class="h-px bg-slate-700 my-1"></div>
+
+                 <button disabled class="w-full text-left px-4 py-2 text-xs text-slate-500 cursor-not-allowed">
+                     Edit...
+                 </button>
+
+                 <button (click)="onContextAction('delete')" 
+                         [disabled]="!contextMenu().targetNodeId"
+                         [class.opacity-50]="!contextMenu().targetNodeId"
+                         class="w-full text-left px-4 py-2 hover:bg-red-900/50 text-xs text-red-300 hover:text-red-200">
+                     Delete
+                 </button>
+            </div>
+        }
+
+        <!-- Hidden File Input -->
+        <input type="file" #fileInput (change)="onFileSelected($event)" accept=".json" class="hidden">
+
+        <!-- Left Sidebar: Palette -->
+        <div class="absolute left-4 top-4 bottom-8 w-64 flex flex-col pointer-events-none z-20 transition-transform duration-300"
+             [style.transform]="!isPaletteOpen() ? 'translateX(-110%)' : 'translateX(0)'">
+          
+          <button (click)="togglePalette()" class="pointer-events-auto absolute -right-8 top-0 bg-slate-800 p-2 rounded-r border-y border-r border-slate-700 text-slate-400 hover:text-white">
+            <span [class.rotate-180]="!isPaletteOpen()" class="block transition-transform">◀</span>
+          </button>
+
+          <div class="flex-1 bg-slate-900/90 backdrop-blur-md border border-slate-700 rounded-lg shadow-xl overflow-y-auto pointer-events-auto p-4 flex flex-col gap-4">
+            <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-700 pb-2">Component Palette</h2>
+            
+            <div class="grid grid-cols-1 gap-2">
+              @for (tool of toolItems(); track tool.type) {
+                <button (click)="addNode(tool.type)" 
+                        class="group flex items-center gap-3 p-2 rounded hover:bg-slate-800 border border-transparent hover:border-slate-600 transition-all text-left">
+                  <div class="w-8 h-8 flex items-center justify-center bg-slate-950 rounded border border-slate-800 group-hover:border-slate-500">
+                     <div [class]="tool.colorClass + ' ' + tool.iconClass" class="w-4 h-4 shadow-lg"></div>
+                  </div>
+                  <div class="min-w-0">
+                    <div class="text-sm font-medium text-slate-200 truncate">{{ tool.label }}</div>
+                    <div class="text-[10px] text-slate-500 capitalize truncate">{{ tool.category || 'Standard' }}</div>
+                  </div>
+                  <div class="ml-auto opacity-0 group-hover:opacity-100 text-cyan-400 text-lg">+</div>
+                </button>
+              }
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Sidebar: Inspector -->
+        <div class="absolute right-4 top-4 bottom-8 w-72 flex flex-col pointer-events-none z-20 transition-transform duration-300"
+             [style.transform]="!isInspectorOpen() ? 'translateX(110%)' : 'translateX(0)'">
+             
+          <button (click)="toggleInspector()" class="pointer-events-auto absolute -left-8 top-0 bg-slate-800 p-2 rounded-l border-y border-l border-slate-700 text-slate-400 hover:text-white">
+            <span [class.rotate-180]="!isInspectorOpen()" class="block transition-transform">▶</span>
+          </button>
+
+          <div class="flex-1 bg-slate-900/90 backdrop-blur-md border border-slate-700 rounded-lg shadow-xl overflow-y-auto pointer-events-auto">
+            @if (selectedNode(); as node) {
+              <div class="p-4 flex flex-col gap-4">
+                <div class="flex justify-between items-start border-b border-slate-700 pb-2">
+                  <h2 class="text-sm font-semibold text-cyan-400 uppercase tracking-wider">Object Inspector</h2>
+                  <button (click)="deleteSelected()" class="text-red-400 hover:text-red-300 text-xs underline">Delete</button>
+                </div>
+
+                <!-- General Props -->
+                <div class="space-y-3">
+                  <div>
+                    <label class="block text-xs text-slate-400 mb-1">Label</label>
+                    <input #labelInput type="text" [ngModel]="formLabel" (ngModelChange)="formLabel=$event; onFormChange()" 
+                           class="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm focus:border-cyan-500 outline-none">
+                  </div>
+                  <div>
+                    <label class="block text-xs text-slate-400 mb-1">Description</label>
+                    <textarea [ngModel]="formDesc" (ngModelChange)="formDesc=$event; onFormChange()" rows="3"
+                              class="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm focus:border-cyan-500 outline-none resize-none"></textarea>
+                  </div>
+                  <div>
+                     <label class="block text-xs text-slate-400 mb-1">Color</label>
+                     <div class="flex gap-2">
+                       <input type="color" [ngModel]="formColor" (ngModelChange)="formColor=$event; onFormChange()" 
+                              class="h-8 w-12 bg-transparent cursor-pointer rounded border border-slate-700">
+                       <input type="text" [ngModel]="formColor" (ngModelChange)="formColor=$event; onFormChange()"
+                              class="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm font-mono uppercase">
+                     </div>
+                  </div>
+                </div>
+
+                <!-- Transform -->
+                <div class="border-t border-slate-700 pt-4 space-y-3">
+                   <h3 class="text-xs font-semibold text-slate-500">TRANSFORM</h3>
+                   <div class="grid grid-cols-3 gap-2">
+                     <div>
+                       <label class="text-[10px] text-red-400 block text-center">X</label>
+                       <input type="number" [ngModel]="formX" (ngModelChange)="formX=$event; onFormChange()" 
+                              class="w-full bg-slate-950 border border-slate-700 rounded px-1 py-1 text-xs text-center">
+                     </div>
+                     <div>
+                       <label class="text-[10px] text-green-400 block text-center">Y</label>
+                       <input type="number" [ngModel]="formY" (ngModelChange)="formY=$event; onFormChange()" 
+                              class="w-full bg-slate-950 border border-slate-700 rounded px-1 py-1 text-xs text-center">
+                     </div>
+                     <div>
+                       <label class="text-[10px] text-blue-400 block text-center">Z</label>
+                       <input type="number" [ngModel]="formZ" (ngModelChange)="formZ=$event; onFormChange()" 
+                              class="w-full bg-slate-950 border border-slate-700 rounded px-1 py-1 text-xs text-center">
+                     </div>
+                   </div>
+                </div>
+
+                <!-- Connections -->
+                <div class="border-t border-slate-700 pt-4 space-y-3">
+                  <h3 class="text-xs font-semibold text-slate-500">CONNECTIONS</h3>
+                  
+                  <div class="flex gap-2">
+                    <select [(ngModel)]="selectedTargetId" class="flex-1 bg-slate-950 border border-slate-700 rounded text-xs px-2 py-1 outline-none focus:border-cyan-500">
+                      <option value="" disabled selected>Connect to...</option>
+                      @for (target of availableTargets(); track target.id) {
+                        <option [value]="target.id">{{ target.label }}</option>
+                      }
+                    </select>
+                    <button (click)="addConnection()" [disabled]="!selectedTargetId" 
+                            class="bg-cyan-600 hover:bg-cyan-500 text-white px-2 rounded disabled:opacity-50 text-xs font-bold">
+                      +
+                    </button>
+                  </div>
+
+                  <div class="space-y-1">
+                    @for (conn of currentConnections(); track conn.id) {
+                      <div class="flex justify-between items-center bg-slate-800/50 px-2 py-1 rounded border border-slate-700/50">
+                        <span class="text-xs text-slate-300">{{ conn.label }}</span>
+                        <button (click)="removeConnection(conn.id)" class="text-red-400 hover:text-white text-[10px] px-1">✕</button>
+                      </div>
+                    }
+                    @if (currentConnections().length === 0) {
+                       <div class="text-[10px] text-slate-600 text-center py-2">No outbound connections</div>
+                    }
+                  </div>
+                </div>
+              </div>
+            } @else {
+              <div class="h-full flex flex-col items-center justify-center text-slate-500 p-6 text-center">
+                <div class="text-4xl mb-2 opacity-30">⬚</div>
+                <p class="text-sm">No object selected</p>
+                <p class="text-xs mt-2 opacity-60">Click to Select</p>
+              </div>
+            }
+          </div>
+        </div>
+    </div>
+
+    <!-- CREATOR TAB CONTENT -->
+    <div [class.hidden]="activeTab() !== 'creator'" class="absolute inset-0 w-full h-full bg-slate-900">
+        <app-component-creator></app-component-creator>
+    </div>
+
+  </div>
+</div>

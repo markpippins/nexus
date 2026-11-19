@@ -1,0 +1,80 @@
+<div class="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center p-4" (click)="close.emit()">
+  <div class="bg-[rgb(var(--color-surface-dialog))] rounded-lg shadow-xl w-full max-w-2xl h-[70vh] flex flex-col" (click)="$event.stopPropagation()">
+    <!-- Header -->
+    <div class="p-4 border-b border-[rgb(var(--color-border-base))] flex justify-between items-center flex-shrink-0">
+      <h3 class="text-lg font-semibold text-[rgb(var(--color-text-base))]">Preferences</h3>
+      <button (click)="close.emit()" class="p-1 rounded-full hover:bg-[rgb(var(--color-surface-hover))] text-[rgb(var(--color-text-muted))]">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+      </button>
+    </div>
+    
+    <!-- Body with Tabs -->
+    <div class="flex-1 flex overflow-hidden">
+      <!-- Tab navigation -->
+      <div class="w-48 border-r border-[rgb(var(--color-border-base))] p-4 space-y-2 bg-[rgb(var(--color-surface-muted))]">
+        <button (click)="activeTab.set('appearance')" class="w-full text-left px-3 py-2 rounded-md text-sm font-medium transition-colors" [class.bg-[rgb(var(--color-accent-bg))]]="activeTab() === 'appearance'" [class.text-[rgb(var(--color-accent-text))]]="activeTab() === 'appearance'">Appearance</button>
+        <button (click)="activeTab.set('panels')" class="w-full text-left px-3 py-2 rounded-md text-sm font-medium transition-colors" [class.bg-[rgb(var(--color-accent-bg))]]="activeTab() === 'panels'" [class.text-[rgb(var(--color-accent-text))]]="activeTab() === 'panels'">Panels</button>
+      </div>
+      
+      <!-- Tab Content -->
+      <div class="flex-1 p-6 overflow-y-auto">
+        @if (formState(); as prefs) {
+          @if (activeTab() === 'appearance') {
+            <div class="space-y-8">
+              <!-- Theme Section -->
+              <div>
+                <h4 class="text-base font-semibold text-[rgb(var(--color-text-base))]">Theme</h4>
+                <p class="text-sm text-[rgb(var(--color-text-subtle))]">Select the application color scheme.</p>
+                <div class="mt-4 space-y-3">
+                  @for (theme of themes; track theme.id) {
+                    <label class="flex items-center space-x-3 cursor-pointer">
+                      <input type="radio" name="theme" [value]="theme.id" [checked]="prefs.theme === theme.id" (change)="onValueChange('theme', theme.id)" class="h-4 w-4 text-[rgb(var(--color-accent-text))] focus:ring-[rgb(var(--color-accent-ring))] border-[rgb(var(--color-border-muted))] bg-[rgb(var(--color-surface))]">
+                      <span class="text-sm text-[rgb(var(--color-text-muted))]">{{ theme.name }}</span>
+                    </label>
+                  }
+                </div>
+              </div>
+              <!-- Font Size Section -->
+              <div>
+                <h4 class="text-base font-semibold text-[rgb(var(--color-text-base))]">Font Size</h4>
+                <p class="text-sm text-[rgb(var(--color-text-subtle))]">Adjust the global font size for the application.</p>
+                <div class="mt-4 space-y-3">
+                  @for (size of fontSizes; track size.id) {
+                    <label class="flex items-center space-x-3 cursor-pointer">
+                      <input type="radio" name="font-size" [value]="size.id" [checked]="prefs.fontSize === size.id" (change)="onValueChange('fontSize', size.id)" class="h-4 w-4 text-[rgb(var(--color-accent-text))] focus:ring-[rgb(var(--color-accent-ring))] border-[rgb(var(--color-border-muted))] bg-[rgb(var(--color-surface))]">
+                      <span class="text-sm text-[rgb(var(--color-text-muted))]">{{ size.name }}</span>
+                    </label>
+                  }
+                </div>
+              </div>
+            </div>
+          }
+          @if (activeTab() === 'panels') {
+            <div class="space-y-6">
+              <div>
+                <h4 class="text-base font-semibold text-[rgb(var(--color-text-base))]">Default Panel Visibility</h4>
+                <p class="text-sm text-[rgb(var(--color-text-subtle))]">Choose which panels are visible when the application starts.</p>
+              </div>
+              @for (panel of panels; track panel.key) {
+                <div class="relative flex items-start">
+                  <div class="flex h-6 items-center">
+                    <input [id]="panel.key" type="checkbox" [checked]="prefs[panel.key]" (change)="onCheckboxChange($event, panel.key)" class="h-4 w-4 rounded border-[rgb(var(--color-border-muted))] text-[rgb(var(--color-accent-text))] focus:ring-[rgb(var(--color-accent-ring))] bg-[rgb(var(--color-surface))]">
+                  </div>
+                  <div class="ml-3 text-sm leading-6">
+                    <label [for]="panel.key" class="font-medium text-[rgb(var(--color-text-muted))]">{{ panel.label }}</label>
+                  </div>
+                </div>
+              }
+            </div>
+          }
+        }
+      </div>
+    </div>
+    
+    <!-- Footer -->
+    <div class="px-6 py-4 bg-[rgb(var(--color-surface-muted))] flex justify-end items-center space-x-2 rounded-b-lg flex-shrink-0 border-t border-[rgb(var(--color-border-base))]">
+      <button (click)="close.emit()" class="px-4 py-2 bg-[rgb(var(--color-surface-hover))] text-[rgb(var(--color-text-base))] rounded-md hover:bg-[rgb(var(--color-border-base))] transition-colors font-semibold text-sm">Cancel</button>
+      <button (click)="onSave()" class="px-4 py-2 bg-[rgb(var(--color-accent-solid-bg))] text-[rgb(var(--color-text-inverted))] rounded-md hover:bg-[rgb(var(--color-accent-solid-bg-hover))] transition-colors font-semibold text-sm">Save Preferences</button>
+    </div>
+  </div>
+</div>

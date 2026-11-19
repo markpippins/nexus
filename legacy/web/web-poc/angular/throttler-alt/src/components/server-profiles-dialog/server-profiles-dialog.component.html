@@ -1,0 +1,152 @@
+<div class="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center p-4" (click)="close.emit()">
+  <div class="bg-[rgb(var(--color-surface-dialog))] rounded-lg shadow-xl w-full max-w-4xl h-[620px] flex flex-col" (click)="$event.stopPropagation()">
+    
+    <div class="p-4 border-b border-[rgb(var(--color-border-base))] flex justify-between items-center flex-shrink-0">
+      <h3 class="text-lg font-semibold text-[rgb(var(--color-text-base))]">Server Connection Profiles</h3>
+      <button (click)="close.emit()" class="p-1 rounded-full hover:bg-[rgb(var(--color-surface-hover))] text-[rgb(var(--color-text-muted))]">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+    
+    <div class="flex-1 flex overflow-hidden">
+      <!-- Left: Profile List -->
+      <div class="w-1/3 border-r border-[rgb(var(--color-border-base))] flex flex-col">
+        <div class="p-2">
+            <button (click)="startAddNew()" class="w-full flex items-center justify-center space-x-2 px-3 py-2 bg-[rgb(var(--color-accent-solid-bg))] text-[rgb(var(--color-text-inverted))] hover:bg-[rgb(var(--color-accent-solid-bg-hover))] rounded-md shadow-sm text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[rgb(var(--color-accent-ring))]">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" />
+              </svg>
+              <span>New Profile</span>
+            </button>
+        </div>
+        <div class="flex-1 overflow-y-auto p-2 space-y-1">
+          @for(profile of profileService.profiles(); track profile.id) {
+            <div (click)="startEdit(profile)"
+                 class="p-3 rounded-md cursor-pointer group"
+                 [class.bg-[rgb(var(--color-accent-bg))]]="selectedProfileId() === profile.id"
+                 [class.hover:bg-[rgb(var(--color-surface-hover-subtle))]]="selectedProfileId() !== profile.id">
+              <div class="flex justify-between items-center">
+                <span class="font-semibold text-[rgb(var(--color-text-base))] truncate">{{ profile.name }}</span>
+                <div class="flex items-center space-x-2">
+                  @if(mountedProfileIds().includes(profile.id)) {
+                    <span class="text-xs font-bold text-[rgb(var(--color-status-blue-text))] bg-[rgb(var(--color-status-blue-bg))] px-2 py-0.5 rounded-full">MOUNTED</span>
+                  }
+                  @if(profileService.activeProfileId() === profile.id) {
+                    <span class="text-xs font-bold text-[rgb(var(--color-status-green-text))] bg-[rgb(var(--color-status-green-bg))] px-2 py-0.5 rounded-full">ACTIVE</span>
+                  }
+                </div>
+              </div>
+              <p class="text-xs text-[rgb(var(--color-text-subtle))] truncate mt-1">
+                @if(mountedProfileIds().includes(profile.id) && mountedProfileUsers().get(profile.id); as user) {
+                  Logged in as {{ user.alias }}
+                } @else {
+                  {{ profile.brokerUrl }}
+                }
+              </p>
+            </div>
+          }
+        </div>
+      </div>
+      
+      <!-- Right: Form/Details -->
+      <div class="w-2/3 p-6 overflow-y-auto">
+        @if (formState(); as form) {
+          <div class="space-y-6">
+            <h4 class="text-xl font-bold text-[rgb(var(--color-text-base))]">{{ form.id ? 'Edit Profile' : 'Create New Profile' }}</h4>
+            
+            <div>
+              <label for="profileName" class="block text-sm font-medium text-[rgb(var(--color-text-muted))]">Profile Name</label>
+              <input type="text" id="profileName" [value]="form.name" (input)="onFormValueChange($event, 'name')" placeholder="e.g., Production Environment"
+                    class="mt-1 block w-full px-3 py-2 bg-[rgb(var(--color-surface))] border border-[rgb(var(--color-border-muted))] rounded-md shadow-sm focus:outline-none focus:ring-[rgb(var(--color-accent-ring))] focus:border-[rgb(var(--color-accent-ring))] sm:text-sm">
+            </div>
+
+            <div>
+              <label for="brokerUrl" class="block text-sm font-medium text-[rgb(var(--color-text-muted))]">Broker Address</label>
+              <input type="text" id="brokerUrl" [value]="form.brokerUrl" (input)="onFormValueChange($event, 'brokerUrl')" placeholder="e.g., localhost:8080"
+                    class="mt-1 block w-full px-3 py-2 bg-[rgb(var(--color-surface))] border border-[rgb(var(--color-border-muted))] rounded-md shadow-sm focus:outline-none focus:ring-[rgb(var(--color-accent-ring))] focus:border-[rgb(var(--color-accent-ring))] sm:text-sm">
+              <p class="mt-1 text-xs text-[rgb(var(--color-text-subtle))]">The path "/api/broker/submitRequest" will be appended automatically.</p>
+            </div>
+
+            <div>
+              <label for="imageUrl" class="block text-sm font-medium text-[rgb(var(--color-text-muted))]">Image Server URL</label>
+              <input type="text" id="imageUrl" [value]="form.imageUrl" (input)="onFormValueChange($event, 'imageUrl')" placeholder="http://..."
+                    class="mt-1 block w-full px-3 py-2 bg-[rgb(var(--color-surface))] border border-[rgb(var(--color-border-muted))] rounded-md shadow-sm focus:outline-none focus:ring-[rgb(var(--color-accent-ring))] focus:border-[rgb(var(--color-accent-ring))] sm:text-sm">
+            </div>
+
+            <div>
+              <label for="searchUrl" class="block text-sm font-medium text-[rgb(var(--color-text-muted))]">Search Service URL</label>
+              <input type="text" id="searchUrl" [value]="form.searchUrl" (input)="onFormValueChange($event, 'searchUrl')" placeholder="http://..."
+                    class="mt-1 block w-full px-3 py-2 bg-[rgb(var(--color-surface))] border border-[rgb(var(--color-border-muted))] rounded-md shadow-sm focus:outline-none focus:ring-[rgb(var(--color-accent-ring))] focus:border-[rgb(var(--color-accent-ring))] sm:text-sm">
+            </div>
+
+            <div class="flex items-center mt-4">
+              <input type="checkbox" id="autoConnect" [checked]="form.autoConnect" (change)="onCheckboxChange($event, 'autoConnect')"
+                    class="h-4 w-4 rounded border-[rgb(var(--color-border-muted))] text-[rgb(var(--color-accent-text))] focus:ring-[rgb(var(--color-accent-ring))]">
+              <label for="autoConnect" class="ml-2 block text-sm font-medium text-[rgb(var(--color-text-muted))]">
+                Auto-connect on startup
+              </label>
+            </div>
+            
+            <div class="pt-4 flex items-center justify-start space-x-2">
+                <button (click)="saveProfile()" class="px-4 py-2 bg-[rgb(var(--color-accent-solid-bg))] text-[rgb(var(--color-text-inverted))] rounded-md hover:bg-[rgb(var(--color-accent-solid-bg-hover))] transition-colors font-semibold text-sm disabled:bg-[rgb(var(--color-disabled-bg))]" [disabled]="!form.name.trim()">
+                  Save Changes
+                </button>
+                <button (click)="cancelEdit()" class="px-4 py-2 bg-[rgb(var(--color-surface-hover))] text-[rgb(var(--color-text-base))] rounded-md hover:bg-[rgb(var(--color-border-base))] transition-colors font-semibold text-sm">
+                  Cancel
+                </button>
+
+                @if (form.id && selectedProfile(); as profile) {
+                  @if (!mountedProfileIds().includes(profile.id)) {
+                    <button (click)="openLoginDialog(profile)" class="px-4 py-2 border border-blue-500 text-blue-600 dark:text-blue-400 rounded-md hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors font-semibold text-sm">
+                      Connect...
+                    </button>
+                  }
+                }
+
+                @if (form.id) {
+                    <div class="flex-grow"></div>
+                    <button (click)="deleteProfile(form.id!)" class="p-2 text-[rgb(var(--color-text-subtle))] hover:bg-[rgb(var(--color-danger-bg-hover))] hover:text-[rgb(var(--color-danger-text))] rounded-md transition-colors" title="Delete Profile" [disabled]="profileService.profiles().length <= 1">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                          <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clip-rule="evenodd" />
+                        </svg>
+                    </button>
+                }
+            </div>
+
+            @if (form.id && selectedProfile(); as profile) {
+              @if (mountedProfileIds().includes(profile.id) && mountedProfileUsers().get(profile.id); as user) {
+                <div class="mt-6 pt-6 border-t border-[rgb(var(--color-border-base))] space-y-4">
+                    <h5 class="text-lg font-bold text-[rgb(var(--color-text-base))]">Connection Status</h5>
+                    <div class="p-3 bg-[rgb(var(--color-surface))] rounded-md border border-[rgb(var(--color-border-base))]">
+                        <p class="text-sm">Logged in as: <span class="font-semibold">{{ user.alias }}</span></p>
+                    </div>
+                    <button (click)="handleUnmount(profile)" class="px-4 py-2 border border-orange-500 text-orange-600 dark:text-orange-400 rounded-md hover:bg-orange-50 dark:hover:bg-orange-900/30 transition-colors font-semibold text-sm">
+                        Unmount
+                    </button>
+                </div>
+              }
+            }
+          </div>
+        } @else {
+          <div class="h-full flex flex-col items-center justify-center text-center text-[rgb(var(--color-text-subtle))]">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3m0 0l3-3m-3 3v8m0-13a9 9 0 110 18 9 9 0 010-18z" />
+            </svg>
+            <p class="mt-4 text-lg">Select a profile to view or edit.</p>
+            <p>Or, create a new profile to get started.</p>
+          </div>
+        }
+      </div>
+    </div>
+  </div>
+
+  @if (isLoginDialogOpen() && profileToLogin(); as profile) {
+    <app-login-dialog 
+      [profile]="profile"
+      (close)="closeLoginDialog()"
+      (submitLogin)="onLoginSubmitted($event)">
+    </app-login-dialog>
+  }
+</div>

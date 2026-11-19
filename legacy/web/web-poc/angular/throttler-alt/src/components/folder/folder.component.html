@@ -1,0 +1,61 @@
+<div 
+  data-is-selectable-item="true"
+  draggable="true"
+  (contextmenu)="onContextMenu($event)"
+  (dragover)="onDragOver($event)"
+  (dragleave)="onDragLeave($event)"
+  (drop)="onDrop($event)"
+  class="flex flex-col items-center p-2 rounded-md hover:bg-[rgb(var(--color-accent-bg))] cursor-pointer transition-colors duration-150 group"
+  [class.bg-[rgb(var(--color-accent-bg-selected))]]="isSelected() && !isDragOver()"
+  [class.bg-[rgb(var(--color-accent-bg-dragover))]]="isDragOver()">
+  
+  <div class="relative h-16 w-16 flex items-center justify-center">
+    @if(iconUrl() && !hasFailedToLoadImage()) {
+      <!-- Custom Image -->
+      <img [src]="iconUrl()!" 
+          [alt]="item().type" 
+          class="h-16 w-16 object-cover pointer-events-none transition-opacity duration-300 rounded-md"
+          [class.opacity-0]="!imageIsLoaded()"
+          [class.opacity-50]="item().isServerRoot && !item().connected"
+          (load)="onImageLoad()"
+          (error)="onImageError()" />
+      
+      <!-- Loading spinner for the image -->
+      @if (!imageIsLoaded()) {
+        <svg class="animate-spin h-6 w-6 text-[rgb(var(--color-text-subtle))] absolute" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+      }
+    } @else {
+      <!-- Default Folder Icon -->
+      <svg xmlns="http://www.w3.org/2000/svg" 
+           class="h-16 w-16 text-yellow-500 pointer-events-none"
+           [class.opacity-50]="item().isServerRoot && !item().connected"
+           viewBox="0 0 20 20" fill="currentColor">
+        <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+      </svg>
+    }
+
+    @if (item().isServerRoot && !item().connected) {
+      <div class="absolute inset-0 bg-black/30 dark:bg-black/50 rounded-md flex items-center justify-center pointer-events-none">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+        </svg>
+      </div>
+    }
+  </div>
+  
+  @if (isEditing()) {
+    <input type="text" [value]="displayName()"
+           autoFocusSelect
+           (blur)="rename.emit($event.target.value)"
+           (keydown.enter)="$event.target.blur()"
+           (keydown.escape)="cancelRename.emit()"
+           (mousedown)="$event.stopPropagation()"
+           (click)="$event.stopPropagation()"
+           class="mt-2 text-center text-xs w-full bg-[rgb(var(--color-surface))] text-[rgb(var(--color-text-base))] border border-[rgb(var(--color-accent-ring))] rounded p-0.5 focus:outline-none rename-input">
+  } @else {
+    <span class="mt-2 text-center text-xs break-all truncate w-full text-[rgb(var(--color-text-muted))] group-hover:text-[rgb(var(--color-accent-text))] pointer-events-none">{{ displayName() }}</span>
+  }
+</div>

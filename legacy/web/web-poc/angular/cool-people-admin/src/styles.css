@@ -1,0 +1,97 @@
+:root {
+  --primary-color: #3b82f6;
+  --primary-hover: #2563eb;
+  --bg-color: #f8fafc;
+  --surface-color: #ffffff;
+  --text-primary: #1e293b;
+  --text-secondary: #64748b;
+  --border-color: #e2e8f0;
+  --sidebar-bg: #0f172a;
+  --sidebar-text: #94a3b8;
+  --sidebar-active: #3b82f6;
+  --sidebar-hover: #1e293b;
+  --danger-color: #ef4444;
+  --success-color: #22c55e;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-primary);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Utility Classes */
+.flex { display: flex; }
+.flex-col { flex-direction: column; }
+.items-center { align-items: center; }
+.justify-center { justify-content: center; }
+.justify-between { justify-content: space-between; }
+.gap-2 { gap: 0.5rem; }
+.gap-4 { gap: 1rem; }
+.p-4 { padding: 1rem; }
+.p-6 { padding: 1.5rem; }
+.mb-4 { margin-bottom: 1rem; }
+.mt-4 { margin-top: 1rem; }
+.w-full { width: 100%; }
+.h-screen { height: 100vh; }
+
+.card {
+  background: var(--surface-color);
+  border-radius: 0.75rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  border: 1px solid var(--border-color);
+}
+
+.btn {
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s;
+}
+
+.btn-primary {
+  background-color: var(--primary-color);
+  color: white;
+}
+
+.btn-primary:hover {
+  background-color: var(--primary-hover);
+}
+
+.input-field {
+  width: 100%;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  outline: none;
+}
+
+.input-field:focus {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.material-icons {
+  font-family: 'Material Icons';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  display: inline-block;
+  line-height: 1;
+  text-transform: none;
+  letter-spacing: normal;
+  word-wrap: normal;
+  white-space: nowrap;
+  direction: ltr;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'liga';
+}

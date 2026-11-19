@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Throttler</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" type="image/x-icon" href="favicon.ico" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
+  <!-- Xterm.js -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+  <style>
+    :root { /* Default Light Theme */
+      --color-background: 243 244 246; /* gray-100 */
+      --color-surface: 255 255 255; /* white */
+      --color-surface-muted: 249 250 251; /* gray-50 */
+      --color-surface-sidebar: 243 244 246; /* gray-100 */
+      --color-surface-dialog: 255 255 255; /* white */
+      --color-surface-hover: 229 231 235; /* gray-200 */
+      --color-surface-hover-subtle: 243 244 246; /* gray-100 */
+
+      --color-text-base: 17 24 39; /* gray-900 */
+      --color-text-muted: 55 65 81; /* gray-700 */
+      --color-text-subtle: 107 114 128; /* gray-500 */
+      --color-text-inverted: 255 255 255; /* white */
+      --color-text-disabled: 156 163 175; /* gray-400 */
+
+      --color-border-base: 229 231 235; /* gray-200 */
+      --color-border-muted: 209 213 219; /* gray-300 */
+
+      --color-accent-text: 37 99 235; /* blue-600 */
+      --color-accent-text-hover: 29 78 216; /* blue-700 */
+      --color-accent-ring: 59 130 246; /* blue-500 */
+      --color-accent-bg: 219 234 254; /* blue-100 */
+      --color-accent-bg-selected: 191 219 254; /* blue-200 */
+      --color-accent-bg-dragover: 147 197 253; /* blue-300 */
+      --color-accent-solid-bg: 37 99 235; /* blue-600 */
+      --color-accent-solid-bg-hover: 29 78 216; /* blue-700 */
+
+      --color-danger-text: 220 38 38; /* red-600 */
+      --color-danger-text-hover: 185 28 28; /* red-700 */
+      --color-danger-bg-hover: 254 226 226; /* red-100 */
+
+      --color-status-green-text: 22 101 52; /* green-800 */
+      --color-status-green-bg: 209 250 229; /* green-100 */
+      --color-status-blue-text: 30 64 175; /* blue-800 */
+      --color-status-blue-bg: 219 234 254; /* blue-100 */
+      --color-status-yellow-text: 202 138 4; /* yellow-600 */
+
+      --color-disabled-bg: 229 231 235; /* gray-200 */
+    }
+    body.theme-steel {
+      --color-background: 17 24 39; /* gray-900 */
+      --color-surface: 17 24 39; /* gray-900 */
+      --color-surface-muted: 31 41 55; /* gray-800 */
+      --color-surface-sidebar: 31 41 55 / 0.5;
+      --color-surface-dialog: 31 41 55; /* gray-800 */
+      --color-surface-hover: 55 65 81; /* gray-700 */
+      --color-surface-hover-subtle: 31 41 55; /* gray-800 */
+
+      --color-text-base: 243 244 246; /* gray-100 */
+      --color-text-muted: 209 213 219; /* gray-300 */
+      --color-text-subtle: 156 163 175; /* gray-400 */
+      --color-text-inverted: 255 255 255; /* white */
+      --color-text-disabled: 107 114 128; /* gray-500 */
+      
+      --color-border-base: 55 65 81; /* gray-700 */
+      --color-border-muted: 75 85 99; /* gray-600 */
+      
+      --color-accent-text: 96 165 250; /* blue-400 */
+      --color-accent-text-hover: 147 197 253; /* blue-300 */
+      --color-accent-ring: 96 165 250; /* blue-400 */
+      --color-accent-bg: 30 64 175 / 0.5; /* blue-800/50 */
+      --color-accent-bg-selected: 30 64 175 / 0.5; /* blue-800/50 */
+      --color-accent-bg-dragover: 29 78 216; /* blue-700 */
+      --color-accent-solid-bg: 59 130 246; /* blue-500 */
+      --color-accent-solid-bg-hover: 37 99 235; /* blue-600 */
+      
+      --color-danger-text: 239 68 68; /* red-500 */
+      --color-danger-text-hover: 248 113 113; /* red-400 */
+      --color-danger-bg-hover: 153 27 27 / 0.3; /* red-900/30 */
+      
+      --color-status-green-text: 74 222 128; /* green-400 */
+      --color-status-green-bg: 22 101 52 / 0.5; /* green-900/50 */
+      --color-status-blue-text: 96 165 250; /* blue-400 */
+      --color-status-blue-bg: 30 58 138 / 0.5; /* blue-900/50 */
+      --color-status-yellow-text: 250 204 21; /* yellow-400 */
+      
+      --color-disabled-bg: 75 85 99; /* gray-600 */
+    }
+    body.theme-dark {
+      --color-background: 0 0 0; /* black */
+      --color-surface: 19 19 19; /* near black */
+      --color-surface-muted: 28 28 28; /* dark gray */
+      --color-surface-sidebar: 19 19 19;
+      --color-surface-dialog: 28 28 28;
+      --color-surface-hover: 43 43 43;
+      --color-surface-hover-subtle: 28 28 28;
+
+      --color-text-base: 229 231 235; /* gray-200 */
+      --color-text-muted: 156 163 175; /* gray-400 */
+      --color-text-subtle: 107 114 128; /* gray-500 */
+      --color-text-inverted: 255 255 255;
+      --color-text-disabled: 107 114 128; /* gray-500 */
+      
+      --color-border-base: 43 43 43;
+      --color-border-muted: 56 56 56;
+      
+      --color-accent-text: 96 165 250; /* blue-400 */
+      --color-accent-text-hover: 147 197 253; /* blue-300 */
+      --color-accent-ring: 96 165 250; /* blue-400 */
+      --color-accent-bg: 37 99 235 / 0.2; /* blue-600/20% */
+      --color-accent-bg-selected: 37 99 235 / 0.3; /* blue-600/30% */
+      --color-accent-bg-dragover: 37 99 235 / 0.4; /* blue-600/40% */
+      --color-accent-solid-bg: 59 130 246; /* blue-500 */
+      --color-accent-solid-bg-hover: 37 99 235; /* blue-600 */
+      
+      --color-danger-text: 239 68 68; /* red-500 */
+      --color-danger-text-hover: 248 113 113; /* red-400 */
+      --color-danger-bg-hover: 153 27 27 / 0.4; /* red-900/40 */
+      
+      --color-status-green-text: 74 222 128; /* green-400 */
+      --color-status-green-bg: 22 101 52 / 0.4; /* green-900/40 */
+      --color-status-blue-text: 96 165 250; /* blue-400 */
+      --color-status-blue-bg: 30 58 138 / 0.4; /* blue-900/40 */
+      --color-status-yellow-text: 250 204 21; /* yellow-400 */
+
+      --color-disabled-bg: 56 56 56;
+    }
+    @keyframes slide-in-right {
+      from { transform: translateX(100%); }
+      to { transform: translateX(0); }
+    }
+    .animate-slide-in-right {
+      animation: slide-in-right 0.2s ease-out;
+    }
+
+    /* Basic markdown styling */
+    .prose {
+        line-height: 1.6;
+    }
+    .prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 {
+        color: rgb(var(--color-text-base));
+        font-weight: 600;
+        margin-top: 1.5em;
+        margin-bottom: 0.5em;
+    }
+    .prose h1 { font-size: 1.875rem; }
+    .prose h2 { font-size: 1.5rem; }
+    .prose h3 { font-size: 1.25rem; }
+    .prose p {
+        margin-bottom: 1em;
+        color: rgb(var(--color-text-muted));
+    }
+    .prose ul, .prose ol {
+        margin-left: 1.5em;
+        margin-bottom: 1em;
+        color: rgb(var(--color-text-muted));
+    }
+    .prose ul { list-style-type: disc; }
+    .prose ol { list-style-type: decimal; }
+    .prose li > p, .prose li > ul, .prose li > ol {
+        margin-bottom: 0.5em;
+    }
+    .prose a {
+        color: rgb(var(--color-accent-text));
+        text-decoration: underline;
+    }
+    .prose code {
+        background-color: rgb(var(--color-surface-muted));
+        padding: 0.2em 0.4em;
+        margin: 0;
+        font-size: 85%;
+        border-radius: 6px;
+        font-family: monospace;
+    }
+    .prose pre {
+        background-color: rgb(var(--color-surface-muted));
+        padding: 1em;
+        border-radius: 6px;
+        overflow-x: auto;
+    }
+    .prose pre code {
+        background-color: transparent;
+        padding: 0;
+    }
+    .prose blockquote {
+        border-left: 4px solid rgb(var(--color-border-muted));
+        padding-left: 1em;
+        color: rgb(var(--color-text-subtle));
+        font-style: italic;
+    }
+    .prose hr {
+        border-top: 1px solid rgb(var(--color-border-base));
+        margin: 2em 0;
+    }
+    .prose strong {
+        color: rgb(var(--color-text-base));
+        font-weight: 600;
+    }
+
+    body.theme-steel .prose h1, body.theme-steel .prose h2, body.theme-steel .prose h3, body.theme-steel .prose h4, body.theme-steel .prose h5, body.theme-steel .prose h6, body.theme-steel .prose strong,
+    body.theme-dark .prose h1, body.theme-dark .prose h2, body.theme-dark .prose h3, body.theme-dark .prose h4, body.theme-dark .prose h5, body.theme-dark .prose h6, body.theme-dark .prose strong {
+        color: rgb(var(--color-text-base));
+    }
+    body.theme-steel .prose p, body.theme-steel .prose ul, body.theme-steel .prose ol,
+    body.theme-dark .prose p, body.theme-dark .prose ul, body.theme-dark .prose ol {
+        color: rgb(var(--color-text-muted));
+    }
+    body.theme-steel .prose blockquote,
+    body.theme-dark .prose blockquote {
+        border-left-color: rgb(var(--color-border-muted));
+        color: rgb(var(--color-text-subtle));
+    }
+    body.theme-steel .prose a,
+    body.theme-dark .prose a {
+        color: rgb(var(--color-accent-text));
+    }
+  </style>
+<script type="importmap">
+{
+  "imports": {
+    "rxjs": "https://aistudiocdn.com/rxjs@^7.8.2?conditions=es2015",
+    "rxjs/operators": "https://aistudiocdn.com/rxjs@^7.8.2/operators?conditions=es2015",
+    "rxjs/ajax": "https://aistudiocdn.com/rxjs@^7.8.2/ajax?conditions=es2015",
+    "rxjs/webSocket": "https://aistudiocdn.com/rxjs@^7.8.2/webSocket?conditions=es2015",
+    "rxjs/testing": "https://aistudiocdn.com/rxjs@^7.8.2/testing?conditions=es2015",
+    "rxjs/fetch": "https://aistudiocdn.com/rxjs@^7.8.2/fetch?conditions=es2015",
+    "@angular/compiler": "https://next.esm.sh/@angular/compiler@^20.3.7?external=rxjs",
+    "@angular/platform-browser": "https://next.esm.sh/@angular/platform-browser@^20.3.7?external=rxjs",
+    "@angular/core": "https://next.esm.sh/@angular/core@^20.3.7?external=rxjs",
+    "@angular/common/http": "https://next.esm.sh/@angular/common@^20.3.7/http?external=rxjs",
+    "@angular/common": "https://next.esm.sh/@angular/common@^20.3.7?external=rxjs",
+    "@google/genai": "https://next.esm.sh/@google/genai@^1.27.0?external=rxjs",
+    "idb": "https://next.esm.sh/idb@8"
+  }
+}
+</script>
+</head>
+<body class="font-sans">
+  <app-root></app-root>
+  <script type="module" src="./index.js"></script>
+</body>
+</html>

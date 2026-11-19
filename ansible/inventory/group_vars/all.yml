@@ -14,7 +14,7 @@
 # ── Host topology ─────────────────────────────────────────────────────
 # titanium owns PostgreSQL + Redis + Conduit. Every other host is a client
 # of those services over LAN.
-authority_host: 192.168.1.120
+authority_host: 192.168.1.71
 
 # ── Code checkout ─────────────────────────────────────────────────────
 nexus_root: /home/codex/dev/nexus

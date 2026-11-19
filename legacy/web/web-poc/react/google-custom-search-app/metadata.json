@@ -1,0 +1,5 @@
+{
+  "name": "Google Custom Search App",
+  "description": "An application to perform Google searches using the Google Custom Search API, display the results, and allow downloading the structured data as a JSON file.",
+  "requestFramePermissions": []
+}

@@ -1,0 +1,37 @@
+{
+    "name": "root",
+    "type": "directory",
+    "items": [
+        {
+            "name": "documents",
+            "type": "directory",
+            "items": [
+                {
+                    "name": "work",
+                    "type": "directory",
+                    "items": [
+                        { "name": "report.docx", "type": "file" },
+                        { "name": "presentation.pptx", "type": "file" }
+                    ]
+                },
+                {
+                    "name": "personal",
+                    "type": "directory",
+                    "items": [
+                        { "name": "todo.txt", "type": "file" }
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "images",
+            "type": "directory",
+            "items": [
+                { "name": "vacation.jpg", "type": "file" },
+                { "name": "logo.png", "type": "file" }
+            ]
+        },
+        { "name": "config.json", "type": "file" },
+        { "name": "README.md", "type": "file" }
+    ]
+}

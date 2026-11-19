@@ -1,0 +1,67 @@
+{
+  "tests": [
+    {
+      "name": "List files in root",
+      "request": {
+        "alias": "home",
+        "path": [],
+        "operation": "ls"
+      },
+      "expected": {
+        "status": {
+          "status": "quarantined_CIR4",
+          "reason": "non_replayable_derived_state",
+          "original": {
+            "status": "quarantined_CIR4",
+            "reason": "non_replayable_derived_state",
+            "original": {
+              "status": "quarantined_CIR4",
+              "reason": "non_replayable_derived_state",
+              "original": {
+                "status": "quarantined_CIR4",
+                "reason": "non_replayable_derived_state",
+                "original": {
+                  "status": "quarantined_CIR4",
+                  "reason": "non_replayable_derived_state",
+                  "original": 200
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Create a new directory",
+      "request": {
+        "alias": "home",
+        "path": [],
+        "operation": "mkdir",
+        "newDir": "new-test-dir"
+      },
+      "expected": {
+        "status": {
+          "status": "quarantined_CIR4",
+          "reason": "non_replayable_derived_state",
+          "original": {
+            "status": "quarantined_CIR4",
+            "reason": "non_replayable_derived_state",
+            "original": {
+              "status": "quarantined_CIR4",
+              "reason": "non_replayable_derived_state",
+              "original": {
+                "status": "quarantined_CIR4",
+                "reason": "non_replayable_derived_state",
+                "original": {
+                  "status": "quarantined_CIR4",
+                  "reason": "non_replayable_derived_state",
+                  "original": 200
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

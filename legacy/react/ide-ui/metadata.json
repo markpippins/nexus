@@ -1,0 +1,6 @@
+{
+  "name": "VS Code Collaborative Studio",
+  "description": "Cloud-based VS Code clone with Monaco Editor, Judge0 code execution, real-time WebSocket collaboration, integrated terminal, version history tracking, and cloud file persistence.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

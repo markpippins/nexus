@@ -1,0 +1,584 @@
+<div class="flex flex-col h-screen antialiased text-[rgb(var(--color-text-base))] bg-[rgb(var(--color-background))]">
+  <!-- Main Content -->
+  <main class="flex-1 flex flex-row overflow-hidden">
+    @if (isSidebarVisible()) {
+      <app-sidebar 
+        [folderTree]="folderTree()"
+        [currentPath]="activePanePath()"
+        [getImageService]="getImageService"
+        [getProvider]="getProvider"
+        [isTreeVisible]="isTreeVisible()"
+        [isChatVisible]="isChatVisible()"
+        [isNotesVisible]="isNotesVisible()"
+        (pathChange)="onSidebarNavigation($event)"
+        (refreshTree)="loadFolderTree()"
+        (loadChildren)="onLoadChildren($event)"
+        (itemsMoved)="onSidebarItemsMoved($event)"
+        (bookmarkDropped)="onBookmarkDroppedOnSidebar($event)"
+        (serversMenuClick)="openServerProfilesDialog()"
+        (localConfigMenuClick)="openLocalConfigDialog()"
+        (importClick)="isImportDialogOpen.set(true)"
+        (exportClick)="isExportDialogOpen.set(true)"
+        (renameItemInTree)="onSidebarRenameItem($event)"
+        (deleteItemInTree)="onSidebarDeleteItem($event)"
+        (createFolderInTree)="onSidebarNewFolder($event)"
+        (createFileInTree)="onSidebarNewFile($event)"
+        (connectToServer)="onConnectToServer($event)"
+        (disconnectFromServer)="onDisconnectFromServer($event)"
+        (editServerProfile)="onEditServerProfile($event)">
+      </app-sidebar>
+    }
+
+    <div class="flex-1 flex flex-col overflow-hidden min-w-0">
+      <!-- Address Bar -->
+      <div class="h-12 px-4 border-b border-[rgb(var(--color-border-base))] flex items-center space-x-2 flex-shrink-0 bg-[rgb(var(--color-surface-muted))]">
+        <button (click)="goUpActivePane()" [disabled]="!canGoUpActivePane()" title="Up (Backspace)" class="p-2 rounded-md hover:bg-[rgb(var(--color-surface-hover-subtle))] disabled:opacity-50 disabled:cursor-not-allowed">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-[rgb(var(--color-text-muted))]" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clip-rule="evenodd" />
+          </svg>
+        </button>
+        <div class="flex-grow flex items-center bg-[rgb(var(--color-background))] rounded-md border border-[rgb(var(--color-border-muted))] px-2 py-1 text-sm">
+          <button (click)="navigatePathActivePane(-1)" class="text-[rgb(var(--color-accent-text))] hover:underline cursor-pointer">{{ activeRootName() }}</button>
+          @if (activeDisplayPath().length > 0) {
+            <span class="mx-1 text-[rgb(var(--color-text-subtle))]">\</span>
+          }
+          @for (segment of activeDisplayPath(); track segment; let i = $index) {
+            <button (click)="navigatePathActivePane(i)" class="text-[rgb(var(--color-accent-text))] hover:underline cursor-pointer">{{ segment }}</button>
+            @if (!$last) {
+              <span class="mx-1 text-[rgb(var(--color-text-subtle))]">\</span>
+            }
+          }
+        </div>
+        <!-- Refresh Button -->
+        <button (click)="triggerRefresh()" title="Refresh (F5)" class="p-2 rounded-md hover:bg-[rgb(var(--color-surface-hover-subtle))]">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-[rgb(var(--color-text-muted))]" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm10.899 12.101A7.002 7.002 0 012.399 8.567a1 1 0 011.885-.666A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101z" clip-rule="evenodd" />
+          </svg>
+        </button>
+      </div>
+
+      <app-toolbar
+        [canCut]="canCutCopyShareDelete()"
+        [canCopy]="canCutCopyShareDelete()"
+        [canCopyToMoveTo]="canCutCopyShareDelete()"
+        [canPaste]="canPaste()"
+        [canRename]="canRename()"
+        [canShare]="canCutCopyShareDelete()"
+        [canDelete]="canCutCopyShareDelete()"
+        [currentSort]="activeSortCriteria()"
+        [folderTree]="folderTree()"
+        [currentPath]="activePanePath()"
+        [displayMode]="activeDisplayMode()"
+        [filterQuery]="activeFilterQuery()"
+        [isSplitViewActive]="isSplitView()"
+        [isDetailPaneActive]="isDetailPaneOpen()"
+        [isSidebarVisible]="isSidebarVisible()"
+        [isTreeVisible]="isTreeVisible()"
+        [isChatVisible]="isChatVisible()"
+        [isNotesVisible]="isNotesVisible()"
+        [isSavedItemsVisible]="isSavedItemsVisible()"
+        [isRssFeedVisible]="isRssFeedVisible()"
+        [isStreamVisible]="isStreamVisible()"
+        (newFolderClick)="onToolbarAction('newFolder')"
+        (newFileClick)="onToolbarAction('newFile')"
+        (filesUploaded)="onToolbarAction('upload', $event)"
+        (cutClick)="onToolbarAction('cut')"
+        (copyClick)="onToolbarAction('copy')"
+        (copyItemsTo)="onToolbarAction('copyTo', $event)"
+        (moveItemsTo)="onToolbarAction('moveTo', $event)"
+        (pasteClick)="onToolbarAction('paste')"
+        (renameClick)="onToolbarAction('rename')"
+        (shareClick)="onToolbarAction('share')"
+        (deleteClick)="onToolbarAction('delete')"
+        (searchClick)="onToolbarAction('search')"
+        (sortChange)="onSortChange($event)"
+        (displayModeChange)="onDisplayModeChange($event)"
+        (filterChange)="onFilterChange($event)"
+        (splitViewClick)="toggleSplitView()"
+        (detailPaneClick)="toggleDetailPane()"
+        (themeMenuClick)="openThemeMenu($event)"
+        (rssFeedsMenuClick)="openRssFeedsDialog()"
+        (preferencesMenuClick)="openPreferencesDialog()"
+        (toggleSidebar)="toggleSidebar()"
+        (toggleTree)="toggleTree()"
+        (toggleChat)="toggleChat()"
+        (toggleNotes)="toggleNotes()"
+        (toggleSavedItems)="toggleSavedItems()"
+        (toggleRssFeed)="toggleRssFeed()"
+        (toggleStream)="toggleStream()">
+      </app-toolbar>
+
+      <div class="flex-1 flex flex-row overflow-hidden">
+        <div #mainContentWrapper class="flex-1 flex flex-col overflow-hidden min-w-0">
+          <div class="flex-1 flex flex-row overflow-hidden">
+            <div #paneContainer class="flex-1 flex bg-[rgb(var(--color-background))] overflow-hidden">
+              <div 
+                class="h-full"
+                [class.flex-1]="!isSplitView()"
+                [class.flex-shrink-0]="isSplitView()"
+                [style.width.%]="isSplitView() ? pane1Width() : undefined">
+                <app-file-explorer 
+                  [id]="1"
+                  [path]="pane1Path()"
+                  [isActive]="activePaneId() === 1"
+                  [isSplitView]="isSplitView()"
+                  [fileSystemProvider]="pane1Provider()"
+                  [imageService]="pane1ImageService()"
+                  [folderTree]="folderTree()"
+                  [refresh]="refreshPanes()"
+                  [toolbarAction]="toolbarAction()"
+                  [sortCriteria]="pane1SortCriteria()"
+                  [displayMode]="pane1DisplayMode()"
+                  [filterQuery]="pane1FilterQuery()"
+                  (activated)="setActivePane($event)"
+                  (pathChanged)="onPane1PathChanged($event)"
+                  (itemSelected)="onItemSelectedInPane($event)"
+                  (directoryChanged)="loadFolderTree()"
+                  (statusChanged)="onPane1StatusChanged($event)"
+                  (sortChange)="onSortChange($event)"
+                  (bookmarkDropped)="onBookmarkDroppedOnPane($event)"
+                  (itemRenamed)="onPaneItemRenamed($event, pane1Path())"
+                  (itemsDeleted)="onItemsDeleted($event)"
+                  (itemsMoved)="onItemsMoved($event)">
+                </app-file-explorer>
+              </div>
+
+              @if (isSplitView()) {
+                <div 
+                  (mousedown)="startPaneResize($event)" 
+                  class="w-1.5 h-full flex-shrink-0 cursor-col-resize group flex items-center justify-center">
+                  <div class="w-0.5 h-full bg-[rgb(var(--color-border-base))] group-hover:bg-[rgb(var(--color-accent-ring))] transition-colors duration-200"></div>
+                </div>
+                <div class="flex-1 h-full">
+                  <app-file-explorer 
+                    [id]="2"
+                    [path]="pane2Path()"
+                    [isActive]="activePaneId() === 2"
+                    [isSplitView]="isSplitView()"
+                    [fileSystemProvider]="pane2Provider()"
+                    [imageService]="pane2ImageService()"
+                    [folderTree]="folderTree()"
+                    [refresh]="refreshPanes()"
+                    [toolbarAction]="toolbarAction()"
+                    [sortCriteria]="pane2SortCriteria()"
+                    [displayMode]="pane2DisplayMode()"
+                    [filterQuery]="pane2FilterQuery()"
+                    (activated)="setActivePane($event)"
+                    (pathChanged)="onPane2PathChanged($event)"
+                    (itemSelected)="onItemSelectedInPane($event)"
+                    (directoryChanged)="loadFolderTree()"
+                    (statusChanged)="onPane2StatusChanged($event)"
+                    (sortChange)="onSortChange($event)"
+                    (bookmarkDropped)="onBookmarkDroppedOnPane($event)"
+                    (itemRenamed)="onPaneItemRenamed($event, pane2Path())"
+                    (itemsDeleted)="onItemsDeleted($event)"
+                    (itemsMoved)="onItemsMoved($event)">
+                  </app-file-explorer>
+                </div>
+              }
+            </div>
+          </div>
+
+          @if (isStreamVisible()) {
+            @if (!isStreamPaneCollapsed()) {
+              <!-- Resizer for Panes vs Stream -->
+              <div (mousedown)="startBottomPaneResize($event)" class="h-1.5 w-full flex-shrink-0 cursor-row-resize group flex items-center justify-center bg-[rgb(var(--color-surface-muted))] border-y border-[rgb(var(--color-border-base))]">
+                <div class="h-0.5 w-full bg-[rgb(var(--color-border-muted))] group-hover:bg-[rgb(var(--color-accent-ring))] transition-colors duration-200"></div>
+              </div>
+            }
+          
+            <!-- Bottom Pane: Idea Stream -->
+            <div 
+              class="flex flex-col flex-shrink-0 bg-[rgb(var(--color-surface-muted))]"
+              [style.height.%]="isStreamPaneCollapsed() ? undefined : bottomPaneHeight()"
+              [class.h-7]="isStreamPaneCollapsed()"
+              [class.border-t]="isStreamPaneCollapsed()"
+              [class.border-[rgb(var(--color-border-base))]]="isStreamPaneCollapsed()">
+              <!-- Bottom Pane Toolbar -->
+              <div class="flex-shrink-0 flex items-center justify-between p-2 border-b border-[rgb(var(--color-border-base))] bg-[rgb(var(--color-surface))] text-sm"
+                  [class.h-12]="!isStreamPaneCollapsed()"
+                  [class.h-7]="isStreamPaneCollapsed()">
+                @if (isStreamPaneCollapsed()) {
+                  <span class="text-xs text-[rgb(var(--color-text-muted))] px-2">Idea Stream</span>
+                } @else {
+                  <div class="flex items-center gap-2">
+                    <!-- View Toggles -->
+                    <div class="flex items-center rounded-md bg-[rgb(var(--color-surface))] p-0.5 border border-[rgb(var(--color-border-muted))]">
+                      <button (click)="streamDisplayMode.set('grid')" title="Grid View" 
+                              class="p-1.5 rounded-sm transition-colors"
+                              [class.bg-[rgb(var(--color-accent-solid-bg))]]="streamDisplayMode() === 'grid'"
+                              [class.text-white]="streamDisplayMode() === 'grid'"
+                              [class.text-[rgb(var(--color-text-muted))]]="streamDisplayMode() !== 'grid'"
+                              [class.hover:bg-[rgb(var(--color-surface-hover))]]="streamDisplayMode() !== 'grid'">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                          <path d="M5 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H5zM5 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2H5zM11 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2h-2zM11 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2h-2z" />
+                        </svg>
+                      </button>
+                      <button (click)="streamDisplayMode.set('list')" title="List View"
+                              class="p-1.5 rounded-sm transition-colors"
+                              [class.bg-[rgb(var(--color-accent-solid-bg))]]="streamDisplayMode() === 'list'"
+                              [class.text-white]="streamDisplayMode() === 'list'"
+                              [class.text-[rgb(var(--color-text-muted))]]="streamDisplayMode() !== 'list'"
+                              [class.hover:bg-[rgb(var(--color-surface-hover))]]="streamDisplayMode() !== 'list'">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                          <path fill-rule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clip-rule="evenodd" />
+                        </svg>
+                      </button>
+                    </div>
+
+                    @if (isSplitView()) {
+                      <div class="flex items-center rounded-md bg-[rgb(var(--color-surface))] p-0.5 border border-[rgb(var(--color-border-muted))] text-xs font-medium">
+                        <button (click)="streamSourceToggle.set('all')" title="Show from all panes" class="px-2 py-1 rounded-sm" [class.bg-[rgb(var(--color-accent-bg))]]="streamSourceToggle() === 'all'" [class.text-[rgb(var(--color-accent-text))]]="streamSourceToggle() === 'all'">All</button>
+                        <button (click)="streamSourceToggle.set('active')" title="Show from active pane" class="px-2 py-1 rounded-sm" [class.bg-[rgb(var(--color-accent-bg))]]="streamSourceToggle() === 'active'" [class.text-[rgb(var(--color-accent-text))]]="streamSourceToggle() === 'active'">Active</button>
+                        <button (click)="streamSourceToggle.set('left')" title="Show from left pane" class="px-2 py-1 rounded-sm" [class.bg-[rgb(var(--color-accent-bg))]]="streamSourceToggle() === 'left'" [class.text-[rgb(var(--color-accent-text))]]="streamSourceToggle() === 'left'">Left</button>
+                        <button (click)="streamSourceToggle.set('right')" title="Show from right pane" class="px-2 py-1 rounded-sm" [class.bg-[rgb(var(--color-accent-bg))]]="streamSourceToggle() === 'right'" [class.text-[rgb(var(--color-accent-text))]]="streamSourceToggle() === 'right'">Right</button>
+                      </div>
+                    }
+
+                    <!-- Filter Buttons -->
+                    <div class="flex items-center rounded-md bg-[rgb(var(--color-surface))] p-0.5 border border-[rgb(var(--color-border-muted))] space-x-0.5">
+                        <button (click)="toggleAllStreamFilters()" title="Toggle All Filters" 
+                                class="p-1.5 rounded-sm transition-colors text-[rgb(var(--color-text-muted))]"
+                                [class.bg-[rgb(var(--color-accent-solid-bg))]]="activeStreamFilters().size === streamFilterTypes.length"
+                                [class.text-white]="activeStreamFilters().size === streamFilterTypes.length"
+                                [class.hover:bg-[rgb(var(--color-surface-hover))]]="activeStreamFilters().size !== streamFilterTypes.length">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+                            </svg>
+                        </button>
+                        <div class="w-px h-5 bg-[rgb(var(--color-border-muted))] mx-1"></div>
+                        @for(filter of streamFilterTypes; track filter.type) {
+                            <button (click)="toggleStreamFilter(filter.type)" [title]="filter.label"
+                                    class="p-1.5 rounded-sm transition-colors"
+                                    [class.bg-[rgb(var(--color-accent-bg))]]="activeStreamFilters().has(filter.type)"
+                                    [class.text-[rgb(var(--color-accent-text))]]="activeStreamFilters().has(filter.type)"
+                                    [class.text-[rgb(var(--color-text-muted))]]="!activeStreamFilters().has(filter.type)"
+                                    [class.hover:bg-[rgb(var(--color-surface-hover))]]="!activeStreamFilters().has(filter.type)">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" [attr.d]="filter.iconPath" clip-rule="evenodd" />
+                                </svg>
+                            </button>
+                        }
+                    </div>
+                    
+                    <!-- Sort Dropdown -->
+                    <div class="relative inline-block text-left">
+                      <button (click)="toggleStreamSortDropdown($event)" type="button" title="Sort Stream" class="p-2 rounded-md text-[rgb(var(--color-text-muted))] hover:bg-[rgb(var(--color-surface-hover))]">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M3 4h13M3 8h9M3 12h9m-9 4h9m5-4v.01M18 8v.01M18 4v.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      </button>
+                      @if(isStreamSortDropdownOpen()) {
+                        <div class="absolute left-0 bottom-full z-10 mb-2 w-48 origin-bottom-left rounded-md bg-[rgb(var(--color-surface-dialog))] shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none stream-sort-menu" role="menu">
+                          <div class="py-1" role="none">
+                            @let current = streamSortCriteria();
+                            <div (click)="onStreamSortChange('relevance')" class="text-[rgb(var(--color-text-muted))] hover:bg-[rgb(var(--color-surface-hover))] flex items-center px-4 py-2 text-sm cursor-pointer" role="menuitem">
+                              <span class="w-5">@if(current.key === 'relevance') { <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" /></svg> }</span>
+                              <span>Relevance</span>
+                            </div>
+                            <div class="my-1 h-px bg-[rgb(var(--color-border-base))]"></div>
+                            <div (click)="onStreamSortChange('title')" class="text-[rgb(var(--color-text-muted))] hover:bg-[rgb(var(--color-surface-hover))] flex items-center px-4 py-2 text-sm cursor-pointer" role="menuitem">
+                              <span class="w-5">@if(current.key === 'title') { <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" /></svg> }</span>
+                              <span>Title</span>
+                            </div>
+                            <div (click)="onStreamSortChange('source')" class="text-[rgb(var(--color-text-muted))] hover:bg-[rgb(var(--color-surface-hover))] flex items-center px-4 py-2 text-sm cursor-pointer" role="menuitem">
+                              <span class="w-5">@if(current.key === 'source') { <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" /></svg> }</span>
+                              <span>Source</span>
+                            </div>
+                            <div (click)="onStreamSortChange('date')" class="text-[rgb(var(--color-text-muted))] hover:bg-[rgb(var(--color-surface-hover))] flex items-center px-4 py-2 text-sm cursor-pointer" role="menuitem">
+                              <span class="w-5">@if(current.key === 'date') { <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" /></svg> }</span>
+                              <span>Date</span>
+                            </div>
+                          </div>
+                        </div>
+                      }
+                    </div>
+                  </div>
+                }
+                <div class="flex items-center gap-2">
+                  @if (!isStreamPaneCollapsed()) {
+                    <!-- Search Input -->
+                    <div class="relative">
+                        <input type="search" placeholder="Search stream..." 
+                          [value]="streamSearchQuery()"
+                          (input)="onStreamSearchChange($event)"
+                          class="w-48 pl-8 pr-2 py-1 rounded-md border border-[rgb(var(--color-border-muted))] bg-[rgb(var(--color-surface))] focus:ring-1 focus:ring-[rgb(var(--color-accent-ring))] focus:outline-none">
+                        <div class="absolute inset-y-0 left-0 pl-2 flex items-center pointer-events-none">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-[rgb(var(--color-text-subtle))]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                        </div>
+                    </div>
+                  }
+
+                  <button (click)="toggleStreamPaneCollapse()" [title]="isStreamPaneCollapsed() ? 'Expand Stream' : 'Collapse Stream'" class="p-2 rounded-md hover:bg-[rgb(var(--color-surface-hover))] text-[rgb(var(--color-text-muted))]">
+                      @if(isStreamPaneCollapsed()) {
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z" clip-rule="evenodd" />
+                        </svg>
+                      } @else {
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                        </svg>
+                      }
+                  </button>
+                </div>
+              </div>
+
+              @if (!isStreamPaneCollapsed()) {
+                @if (processedStreamResults(); as results) {
+                  <div class="flex-grow p-4 overflow-y-auto">
+                    <!-- Grid View -->
+                    <div class="grid grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] gap-4" [class.hidden]="streamDisplayMode() !== 'grid'">
+                      @for (item of results; track getStreamItemLink(item)) {
+                        @switch (item.type) {
+                          @case ('web') {
+                            <app-web-result-card 
+                              [result]="item" 
+                              [isBookmarked]="bookmarkedLinks().has(getStreamItemLink(item))"
+                              (bookmarkToggled)="onBookmarkToggled(item)"></app-web-result-card>
+                          }
+                          @case ('image') {
+                            <app-image-result-card 
+                              [result]="item"
+                              [isBookmarked]="bookmarkedLinks().has(getStreamItemLink(item))"
+                              (bookmarkToggled)="onBookmarkToggled(item)"></app-image-result-card>
+                          }
+                          @case ('youtube') {
+                            <app-youtube-result-card 
+                              [result]="item"
+                              [isBookmarked]="bookmarkedLinks().has(getStreamItemLink(item))"
+                              (bookmarkToggled)="onBookmarkToggled(item)"></app-youtube-result-card>
+                          }
+                          @case ('academic') {
+                            <app-academic-result-card 
+                              [result]="item"
+                              [isBookmarked]="bookmarkedLinks().has(getStreamItemLink(item))"
+                              (bookmarkToggled)="onBookmarkToggled(item)"></app-academic-result-card>
+                          }
+                          @case ('gemini') {
+                            <app-gemini-result-card 
+                              [result]="item"
+                              [isBookmarked]="bookmarkedLinks().has(getStreamItemLink(item))"
+                              (bookmarkToggled)="onBookmarkToggled(item)"></app-gemini-result-card>
+                          }
+                        }
+                      }
+                    </div>
+                    
+                    <!-- List View -->
+                    <div class="space-y-1" [class.hidden]="streamDisplayMode() !== 'list'">
+                      @for (item of results; track getStreamItemLink(item)) {
+                        @switch (item.type) {
+                          @case ('web') {
+                            <app-web-result-list-item 
+                              [result]="item"
+                              [isBookmarked]="bookmarkedLinks().has(getStreamItemLink(item))"
+                              (bookmarkToggled)="onBookmarkToggled(item)"></app-web-result-list-item>
+                          }
+                          @case ('image') {
+                            <app-image-result-list-item 
+                              [result]="item"
+                              [isBookmarked]="bookmarkedLinks().has(getStreamItemLink(item))"
+                              (bookmarkToggled)="onBookmarkToggled(item)"></app-image-result-list-item>
+                          }
+                          @case ('youtube') {
+                            <app-youtube-result-list-item 
+                              [result]="item"
+                              [isBookmarked]="bookmarkedLinks().has(getStreamItemLink(item))"
+                              (bookmarkToggled)="onBookmarkToggled(item)"></app-youtube-result-list-item>
+                          }
+                          @case ('academic') {
+                            <app-academic-result-list-item 
+                              [result]="item"
+                              [isBookmarked]="bookmarkedLinks().has(getStreamItemLink(item))"
+                              (bookmarkToggled)="onBookmarkToggled(item)"></app-academic-result-list-item>
+                          }
+                          @case ('gemini') {
+                            <app-gemini-result-list-item 
+                              [result]="item"
+                              [isBookmarked]="bookmarkedLinks().has(getStreamItemLink(item))"
+                              (bookmarkToggled)="onBookmarkToggled(item)"></app-gemini-result-list-item>
+                          }
+                        }
+                      }
+                    </div>
+                  </div>
+                } @else {
+                  <div class="h-full flex items-center justify-center text-center text-sm text-[rgb(var(--color-text-subtle))] p-4">
+                    @if (visibleStreamResults().length > 0) {
+                      <div>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="mx-auto h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                        <p class="mt-2 font-semibold">No Results Found</p>
+                        <p>Your search and filter criteria did not match any items.</p>
+                      </div>
+                    } @else {
+                      <svg class="animate-spin h-8 w-8 text-[rgb(var(--color-accent-text))]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                    }
+                  </div>
+                }
+              }
+            </div>
+          }
+
+          @if (!isConsoleCollapsed()) {
+            <!-- Resizer for Stream vs Console -->
+            <div data-console-resizer (mousedown)="startConsolePaneResize($event)" class="h-1.5 w-full flex-shrink-0 cursor-row-resize group flex items-center justify-center bg-[rgb(var(--color-surface-muted))] border-y border-[rgb(var(--color-border-base))]">
+              <div class="h-0.5 w-full bg-[rgb(var(--color-border-muted))] group-hover:bg-[rgb(var(--color-accent-ring))] transition-colors duration-200"></div>
+            </div>
+          }
+
+          <!-- Console Pane -->
+          <div
+            data-console-pane
+            class="flex flex-col flex-shrink-0 bg-[rgb(var(--color-surface-muted))]"
+            [style.height.%]="!isConsoleCollapsed() ? consolePaneHeight() : undefined"
+            [class.h-7]="isConsoleCollapsed()"
+            [class.border-t]="isConsoleCollapsed()"
+            [class.border-[rgb(var(--color-border-base))]]="isConsoleCollapsed()">
+            <!-- Console Header -->
+            <div class="flex items-center justify-between border-b border-[rgb(var(--color-border-base))] px-4"
+                 [class.h-12]="!isConsoleCollapsed()"
+                 [class.h-7]="isConsoleCollapsed()">
+              @if (!isConsoleCollapsed()) {
+                <span class="text-sm font-medium text-[rgb(var(--color-text-muted))]">Console</span>
+              } @else {
+                <span class="text-xs text-[rgb(var(--color-text-muted))]">Console</span>
+              }
+              <button (click)="toggleConsole()" [title]="isConsoleCollapsed() ? 'Expand Console' : 'Collapse Console (Ctrl + `)'" class="p-2 -mr-2 rounded-md text-[rgb(var(--color-text-muted))] hover:bg-[rgb(var(--color-surface-hover))] transition-colors">
+                @if (isConsoleCollapsed()) {
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z" clip-rule="evenodd" />
+                  </svg>
+                } @else {
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                  </svg>
+                }
+              </button>
+            </div>
+            <!-- Console Content -->
+            @if (!isConsoleCollapsed()) {
+              <div class="flex-1 overflow-hidden p-2">
+                <app-terminal></app-terminal>
+              </div>
+            }
+          </div>
+        </div>
+        
+        @if (isDetailPaneOpen()) {
+          <app-detail-pane
+            [path]="activePanePath()"
+            [isSavedItemsVisible]="isSavedItemsVisible()"
+            [isRssFeedVisible]="isRssFeedVisible()"
+            (close)="toggleDetailPane()"
+            (manageRssFeeds)="openRssFeedsDialog()">
+          </app-detail-pane>
+        }
+      </div>
+    </div>
+  </main>
+
+  <!-- Footer/Status Bar -->
+  <div class="h-7 p-1 px-3 border-t border-[rgb(var(--color-border-base))] text-xs text-[rgb(var(--color-text-muted))] flex-shrink-0 bg-[rgb(var(--color-surface))] flex items-center">
+    <span class="truncate">{{ statusBarSelectionInfo() }}</span>
+  </div>
+
+  @if(isServerProfilesDialogOpen()) {
+    <app-server-profiles-dialog 
+      [mountedProfileIds]="mountedProfileIds()"
+      [mountedProfileUsers]="mountedProfileUsers()"
+      [initialProfileForEdit]="profileForEdit()"
+      (close)="closeServerProfilesDialog()"
+      (loginAndMount)="onLoginAndMount($event)"
+      (profileRenamed)="onServerProfileRenamed($event)"
+      (unmountProfile)="onUnmountProfile($event)">
+    </app-server-profiles-dialog>
+  }
+
+  @if(isLocalConfigDialogOpen()) {
+    <app-local-config-dialog 
+      (close)="closeLocalConfigDialog()"
+      (save)="onLocalConfigSaved($event)">
+    </app-local-config-dialog>
+  }
+  
+  @if(isRssFeedsDialogOpen()) {
+    <app-rss-feeds-dialog (close)="closeRssFeedsDialog()"></app-rss-feeds-dialog>
+  }
+
+  @if(isImportDialogOpen()) {
+    <app-import-dialog 
+        [localSessionNode]="localSessionNode()"
+        [getImageService]="getImageService"
+        [getProvider]="getProvider"
+        (close)="isImportDialogOpen.set(false)"
+        (importData)="handleImport($event)">
+    </app-import-dialog>
+  }
+
+  @if(isExportDialogOpen()) {
+      <app-export-dialog
+          [localSessionNode]="localSessionNode()"
+          [getImageService]="getImageService"
+          [getProvider]="getProvider"
+          (close)="isExportDialogOpen.set(false)"
+          (exportData)="handleExport($event)">
+      </app-export-dialog>
+  }
+
+  @if (profileForLogin(); as profile) {
+    <app-login-dialog 
+      [profile]="profile"
+      (close)="profileForLogin.set(null)"
+      (submitLogin)="onLoginSubmittedFromSidebar($event)">
+    </app-login-dialog>
+  }
+  
+  @if (isPreferencesDialogOpen()) {
+    <app-preferences-dialog
+      (close)="closePreferencesDialog()"
+      (save)="onPreferencesSaved($event)">
+    </app-preferences-dialog>
+  }
+
+  <app-toasts></app-toasts>
+
+  @if (webviewContent(); as content) {
+    <app-webview-dialog
+      [url]="content.url"
+      [title]="content.title"
+      (close)="webviewService.close()">
+    </app-webview-dialog>
+  }
+
+  @if (textEditorContent(); as content) {
+    <app-text-editor-dialog
+      [contentSignal]="content.contentSignal"
+      [title]="content.title"
+      [fileName]="content.fileName"
+      (close)="textEditorService.close()">
+    </app-text-editor-dialog>
+  }
+
+  <!-- Theme Dropdown -->
+  @if (isThemeDropdownOpen()) {
+    <div 
+        class="fixed z-20 w-36 origin-top-left rounded-md bg-[rgb(var(--color-surface-dialog))] shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none theme-menu"
+        [style.top]="themeMenuPosition().top"
+        [style.left]="themeMenuPosition().left"
+        (click)="$event.stopPropagation()">
+        <div class="py-1">
+            @for(theme of themes; track theme.id) {
+            <div (click)="setTheme(theme.id)" class="text-[rgb(var(--color-text-muted))] hover:bg-[rgb(var(--color-surface-hover))] flex items-center px-4 py-2 text-sm cursor-pointer">
+                <span class="w-5">
+                @if(currentTheme() === theme.id) { <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" /></svg> }
+                </span>
+                <span>{{ theme.name }}</span>
+            </div>
+            }
+        </div>
+    </div>
+  }
+</div>

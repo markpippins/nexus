@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Edit UI</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/x-icon" href="favicon.ico" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Material Icons -->
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet" />
+    <style>
+      :root {
+        --color-background: 243 244 246;
+        --color-surface: 255 255 255;
+        --color-surface-muted: 249 250 251;
+        --color-surface-sidebar: 243 244 246;
+        --color-surface-dialog: 255 255 255;
+        --color-surface-hover: 229 231 235;
+        --color-surface-hover-subtle: 243 244 246;
+        --color-surface-input: 255 255 255;
+
+        --color-text-base: 17 24 39;
+        --color-text-muted: 55 65 81;
+        --color-text-subtle: 107 114 128;
+        --color-text-inverted: 255 255 255;
+
+        --color-border-base: 229 231 235;
+        --color-border-muted: 209 213 219;
+
+        --color-accent-text: 37 99 235;
+        --color-accent-text-hover: 29 78 216;
+        --color-accent-ring: 59 130 246;
+        --color-accent-bg: 219 234 254;
+        --color-accent-bg-selected: 191 219 254;
+        --color-accent-solid-bg: 37 99 235;
+
+        --color-primary-500: 59 130 246;
+        --color-primary-600: 37 99 235;
+        --color-primary-700: 29 78 216;
+      }
+      body.theme-steel {
+        --color-background: 17 24 39;
+        --color-surface: 17 24 39;
+        --color-surface-muted: 31 41 55;
+        --color-surface-sidebar: 31 41 55 / 0.5;
+        --color-surface-dialog: 31 41 55;
+        --color-surface-hover: 55 65 81;
+        --color-surface-hover-subtle: 31 41 55;
+        --color-surface-input: 31 41 55;
+
+        --color-text-base: 243 244 246;
+        --color-text-muted: 209 213 219;
+        --color-text-subtle: 156 163 175;
+        --color-text-inverted: 255 255 255;
+
+        --color-border-base: 55 65 81;
+        --color-border-muted: 75 85 99;
+
+        --color-accent-text: 96 165 250;
+        --color-accent-text-hover: 147 197 253;
+        --color-accent-ring: 96 165 250;
+        --color-accent-bg: 30 64 175 / 0.5;
+        --color-accent-bg-selected: 30 64 175 / 0.5;
+        --color-accent-solid-bg: 59 130 246;
+
+        --color-primary-500: 96 165 250;
+        --color-primary-600: 59 130 246;
+        --color-primary-700: 37 99 235;
+      }
+      body.theme-dark {
+        --color-background: 0 0 0;
+        --color-surface: 19 19 19;
+        --color-surface-muted: 28 28 28;
+        --color-surface-sidebar: 19 19 19;
+        --color-surface-dialog: 28 28 28;
+        --color-surface-hover: 43 43 43;
+        --color-surface-hover-subtle: 28 28 28;
+        --color-surface-input: 28 28 28;
+
+        --color-text-base: 229 231 235;
+        --color-text-muted: 156 163 175;
+        --color-text-subtle: 107 114 128;
+        --color-text-inverted: 255 255 255;
+
+        --color-border-base: 43 43 43;
+        --color-border-muted: 56 56 56;
+
+        --color-accent-text: 96 165 250;
+        --color-accent-text-hover: 147 197 253;
+        --color-accent-ring: 96 165 250;
+        --color-accent-bg: 37 99 235 / 0.2;
+        --color-accent-bg-selected: 37 99 235 / 0.3;
+        --color-accent-solid-bg: 59 130 246;
+
+        --color-primary-500: 96 165 250;
+        --color-primary-600: 59 130 246;
+        --color-primary-700: 37 99 235;
+      }
+      body {
+        background-color: rgb(var(--color-background));
+      }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "rxjs": "https://aistudiocdn.com/rxjs@^7.8.2?conditions=es2015",
+          "rxjs/operators": "https://aistudiocdn.com/rxjs@^7.8.2/operators?conditions=es2015",
+          "@angular/compiler": "https://next.esm.sh/@angular/compiler@^20.3.7?external=rxjs",
+          "@angular/platform-browser": "https://next.esm.sh/@angular/platform-browser@^20.3.7?external=rxjs",
+          "@angular/core": "https://next.esm.sh/@angular/core@^20.3.7?external=rxjs",
+          "@angular/common/http": "https://next.esm.sh/@angular/common@^20.3.7/http?external=rxjs",
+          "@angular/common": "https://next.esm.sh/@angular/common@^20.3.7?external=rxjs",
+          "@angular/forms": "https://next.esm.sh/@angular/forms@^20.3.7?external=rxjs"
+        }
+      }
+    </script>
+  </head>
+  <body class="font-sans theme-steel">
+    <app-root></app-root>
+    <script type="module" src="./index.js"></script>
+  </body>
+</html>

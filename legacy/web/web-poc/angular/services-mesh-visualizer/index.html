@@ -1,0 +1,52 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Service Broker Viz</title>
+  <base href="/">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { margin: 0; overflow: hidden; background-color: #000510; }
+    app-root { display: block; width: 100vw; height: 100vh; }
+    /* CSS2DLabel styles */
+    .label {
+      color: #fff;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      font-size: 12px;
+      font-weight: bold;
+      text-shadow: 0 0 5px #000;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 4px 8px;
+      border-radius: 4px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      pointer-events: none; /* Let clicks pass through to canvas */
+      user-select: none;
+    }
+  </style>
+<script type="importmap">
+{
+  "imports": {
+    "rxjs": "https://esm.sh/rxjs@^7.8.2?conditions=es2015",
+    "rxjs/operators": "https://esm.sh/rxjs@^7.8.2/operators?conditions=es2015",
+    "rxjs/ajax": "https://esm.sh/rxjs@^7.8.2/ajax?conditions=es2015",
+    "rxjs/webSocket": "https://esm.sh/rxjs@^7.8.2/webSocket?conditions=es2015",
+    "rxjs/testing": "https://esm.sh/rxjs@^7.8.2/testing?conditions=es2015",
+    "rxjs/fetch": "https://esm.sh/rxjs@^7.8.2/fetch?conditions=es2015",
+    "@angular/core": "https://esm.sh/@angular/core@^21.0.6?external=rxjs",
+    "@angular/common": "https://esm.sh/@angular/common@^21.0.6?external=rxjs",
+    "three": "https://esm.sh/three@0.170.0?external=rxjs",
+    "three/examples/jsm/controls/OrbitControls": "https://esm.sh/three@0.170.0/examples/jsm/controls/OrbitControls?external=rxjs&deps=three@0.170.0",
+    "three/examples/jsm/renderers/CSS2DRenderer": "https://esm.sh/three@0.170.0/examples/jsm/renderers/CSS2DRenderer?external=rxjs&deps=three@0.170.0",
+    "@angular/compiler": "https://esm.sh/@angular/compiler@^21.0.6?external=rxjs",
+    "@angular/platform-browser": "https://esm.sh/@angular/platform-browser@^21.0.6?external=rxjs",
+    "@angular/forms": "https://esm.sh/@angular/forms@^21.0.6?external=rxjs"
+  }
+}
+</script>
+</head>
+<body>
+  <app-root></app-root>
+</body>
+</html>

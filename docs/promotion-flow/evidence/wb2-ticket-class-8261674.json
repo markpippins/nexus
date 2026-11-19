@@ -1,0 +1,6022 @@
+{
+  "slot": "WB2-TICKET-CLASS",
+  "schema": "wb2-ticket-class/v1",
+  "plan_ref": "8261674",
+  "work_request_id": "wr-8261674-1794954783-7b623473",
+  "attempt_id": "a3e1a549-7d3f-4825-bef8-6be8c091bdeb",
+  "session_id": "worker-conduit-worker-20261117-173303-0488d84d",
+  "run_at": "2026-11-17T17:38:05.293345Z",
+  "mode": "observed-not-assigned",
+  "classification_vocabulary": {
+    "terminal_outcome": [
+      "completed",
+      "failed",
+      "cancelled",
+      "closed"
+    ],
+    "attention_lost": [
+      "expired",
+      "stale"
+    ],
+    "active": [
+      "open",
+      "claimed"
+    ],
+    "rule": "terminal_outcome = the generation reached a decision; attention_lost = the generation was abandoned by expiry or staleness (never implies completion); active = still in flight. `closed` is its own terminal_outcome member and is never folded into `completed` (R-F6).",
+    "classifier": "typescript/conduit-mcp/src/ticket-sweep.ts::classifyTicketStatus"
+  },
+  "source": {
+    "census": "select plan_id, role, status, count(*) from vision.tickets group by 1,2,3",
+    "bucket_query": "WITH b AS ( SELECT t.plan_id, t.role, t.status, count(*)::int AS row_count, array_agg(t.id) AS ids FROM vision.tickets t GROUP BY 1, 2, 3 ) SELECT coalesce(jsonb_agg(jsonb_build_object( 'plan_id', b.plan_id, 'role', b.role, 'status', b.status, 'count', b.row_count, 'transition_events', ( SELECT count(*)::int FROM kernel.transition_event e WHERE e.aggregate_type = 'ticket' AND e.aggregate_id = ANY(b.ids)), 'expiry_detection_events', ( SELECT count(*)::int FROM kernel.transition_event e WHERE e.aggregate_type = 'ticket' AND e.aggregate_id = ANY(b.ids) AND e.payload->>'reason' = 'expiry_detection') ) ORDER BY b.plan_id, b.role, b.status), '[]'::jsonb) FROM b",
+    "event_join": "kernel.transition_event.aggregate_id = vision.tickets.id (aggregate_type='ticket'); payload carries no ticket_id",
+    "terminal_plan_source": "conduit GET /state plans.completed[] (derivedStatus REVIEW_PASS)"
+  },
+  "completeness": {
+    "live_rows": 844,
+    "bucket_count": 632,
+    "distinct_statuses": [
+      "cancelled",
+      "claimed",
+      "closed",
+      "completed",
+      "expired",
+      "failed"
+    ],
+    "unclassified_statuses": [],
+    "rows_equal_bucket_sum": true
+  },
+  "class_totals": {
+    "terminal_outcome": {
+      "rows": 705,
+      "buckets": 509
+    },
+    "attention_lost": {
+      "rows": 138,
+      "buckets": 122
+    },
+    "active": {
+      "rows": 1,
+      "buckets": 1
+    }
+  },
+  "buckets": [
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0001",
+      "transition_events": 2,
+      "expiry_detection_events": 1,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0002",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0002",
+      "transition_events": 2,
+      "expiry_detection_events": 1,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0003",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0004",
+      "transition_events": 1,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0005",
+      "transition_events": 2,
+      "expiry_detection_events": 1,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0006",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0007",
+      "transition_events": 2,
+      "expiry_detection_events": 1,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0008",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0009",
+      "transition_events": 2,
+      "expiry_detection_events": 1,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0010",
+      "transition_events": 2,
+      "expiry_detection_events": 1,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0011",
+      "transition_events": 2,
+      "expiry_detection_events": 1,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0012",
+      "transition_events": 2,
+      "expiry_detection_events": 1,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0013",
+      "transition_events": 2,
+      "expiry_detection_events": 1,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0014",
+      "transition_events": 2,
+      "expiry_detection_events": 1,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0015",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0016",
+      "transition_events": 2,
+      "expiry_detection_events": 1,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "planner",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0124",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0124",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 11,
+      "status": "cancelled",
+      "plan_id": "0125",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0125",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 11,
+      "status": "cancelled",
+      "plan_id": "0126",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0126",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 10,
+      "status": "cancelled",
+      "plan_id": "0127",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0127",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 5,
+      "status": "cancelled",
+      "plan_id": "0128",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0128",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0129",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 6,
+      "status": "cancelled",
+      "plan_id": "0130",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0131",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0131",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0132",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0132",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0133",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0133",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0134",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0134",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0135",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0135",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0136",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0136",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0137",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0137",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0138",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0138",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0139",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0139",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0140",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0140",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0141",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0141",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0142",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0143",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0143",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0144",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0144",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0145",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0145",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0146",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "completed",
+      "plan_id": "0146",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 2,
+      "status": "cancelled",
+      "plan_id": "0146",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0147",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0147",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0148",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "failed",
+      "plan_id": "0148",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0149",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0149",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0150",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0150",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0151",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "failed",
+      "plan_id": "0151",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0152",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0152",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0153",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0153",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0154",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0154",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0155",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0155",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0156",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0156",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0157",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0157",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0158",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0158",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "cancelled",
+      "plan_id": "0159",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "completed",
+      "plan_id": "0159",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 2,
+      "status": "cancelled",
+      "plan_id": "0159",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0160",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0160",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 4,
+      "status": "failed",
+      "plan_id": "0160",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0160",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0161",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0161",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 4,
+      "status": "failed",
+      "plan_id": "0161",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0162",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0162",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 4,
+      "status": "failed",
+      "plan_id": "0162",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0163",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0163",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 4,
+      "status": "failed",
+      "plan_id": "0163",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0164",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0164",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 4,
+      "status": "failed",
+      "plan_id": "0164",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0164",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 5,
+      "status": "cancelled",
+      "plan_id": "0165",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0165",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0165",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0166",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0166",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 4,
+      "status": "failed",
+      "plan_id": "0166",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0167",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0167",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "failed",
+      "plan_id": "0167",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0167",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "cancelled",
+      "plan_id": "0168",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0169",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "failed",
+      "plan_id": "0169",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0169",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "failed",
+      "plan_id": "0169",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "cancelled",
+      "plan_id": "0170",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "failed",
+      "plan_id": "0170",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "failed",
+      "plan_id": "0170",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0171",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "failed",
+      "plan_id": "0171",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0171",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0172",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "failed",
+      "plan_id": "0172",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0172",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0173",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0173",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0174",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0174",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0175",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0177",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0178",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0179",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0180",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "completed",
+      "plan_id": "0181",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0181",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "failed",
+      "plan_id": "0181",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "0182",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "0183",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "0999",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1000",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1000",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1001",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "failed",
+      "plan_id": "1001",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1001",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "cancelled",
+      "plan_id": "1002",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "completed",
+      "plan_id": "1002",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1002",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "failed",
+      "plan_id": "1002",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 2,
+      "status": "completed",
+      "plan_id": "1002",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1004",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 4,
+      "status": "cancelled",
+      "plan_id": "1005",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1005",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1005",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1005",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "cancelled",
+      "plan_id": "1009",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1009",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1009",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1009",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1010",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "failed",
+      "plan_id": "1010",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1010",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1011",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1011",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1011",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1012",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1012",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1013",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1013",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1014",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1014",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1015",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1015",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1017",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1017",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1019",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1022",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1023",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1028",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1029",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1030",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "cancelled",
+      "plan_id": "1031",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1031",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1032",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1032",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1033",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1033",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1034",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1034",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1035",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1036",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1040",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1041",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1041",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1042",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1042",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1043",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1043",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1044",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1044",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1045",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1045",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1046",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1046",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1047",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1047",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1048",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1048",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1049",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1049",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1050",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1050",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1051",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1051",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1052",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1052",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1052",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1053",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1053",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1054",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1054",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1055",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1055",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1056",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1056",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1057",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1057",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1058",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1058",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1059",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1059",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "failed",
+      "plan_id": "1059",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1060",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1060",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1061",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 3,
+      "status": "cancelled",
+      "plan_id": "1062",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1062",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 3,
+      "status": "cancelled",
+      "plan_id": "1063",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1063",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 3,
+      "status": "cancelled",
+      "plan_id": "1064",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1064",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 3,
+      "status": "cancelled",
+      "plan_id": "1065",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1065",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 3,
+      "status": "cancelled",
+      "plan_id": "1066",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1066",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 7,
+      "status": "cancelled",
+      "plan_id": "1067",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "expired",
+      "plan_id": "1067",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1067",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 3,
+      "status": "failed",
+      "plan_id": "1067",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 6,
+      "status": "cancelled",
+      "plan_id": "1068",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1068",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1068",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 4,
+      "status": "failed",
+      "plan_id": "1068",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 5,
+      "status": "cancelled",
+      "plan_id": "1069",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1069",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1069",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1069",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 2,
+      "status": "failed",
+      "plan_id": "1069",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 4,
+      "status": "cancelled",
+      "plan_id": "1070",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1070",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "expired",
+      "plan_id": "1070",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 2,
+      "status": "failed",
+      "plan_id": "1070",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 4,
+      "status": "cancelled",
+      "plan_id": "1071",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1071",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1071",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 2,
+      "status": "failed",
+      "plan_id": "1071",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 3,
+      "status": "cancelled",
+      "plan_id": "1072",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1072",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1072",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "failed",
+      "plan_id": "1072",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 3,
+      "status": "cancelled",
+      "plan_id": "1073",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1073",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1073",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 2,
+      "status": "failed",
+      "plan_id": "1073",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 4,
+      "status": "cancelled",
+      "plan_id": "1074",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1074",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 2,
+      "status": "failed",
+      "plan_id": "1074",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 4,
+      "status": "cancelled",
+      "plan_id": "1075",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1075",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 2,
+      "status": "failed",
+      "plan_id": "1075",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 4,
+      "status": "cancelled",
+      "plan_id": "1076",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1076",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1076",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "failed",
+      "plan_id": "1076",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 4,
+      "status": "cancelled",
+      "plan_id": "1077",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1077",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 2,
+      "status": "failed",
+      "plan_id": "1077",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 4,
+      "status": "cancelled",
+      "plan_id": "1078",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1078",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 2,
+      "status": "failed",
+      "plan_id": "1078",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 4,
+      "status": "cancelled",
+      "plan_id": "1079",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1079",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1079",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "failed",
+      "plan_id": "1079",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 4,
+      "status": "cancelled",
+      "plan_id": "1080",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1080",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 2,
+      "status": "failed",
+      "plan_id": "1080",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 3,
+      "status": "cancelled",
+      "plan_id": "1081",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1081",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "failed",
+      "plan_id": "1081",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1082",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "completed",
+      "plan_id": "1082",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1082",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 3,
+      "status": "failed",
+      "plan_id": "1082",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "cancelled",
+      "plan_id": "1083",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1083",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 2,
+      "status": "failed",
+      "plan_id": "1083",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "cancelled",
+      "plan_id": "1084",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1084",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 2,
+      "status": "failed",
+      "plan_id": "1084",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "cancelled",
+      "plan_id": "1085",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1085",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1085",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "failed",
+      "plan_id": "1085",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "cancelled",
+      "plan_id": "1086",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1086",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1086",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "failed",
+      "plan_id": "1086",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1087",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1087",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1088",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1089",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1090",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1091",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1092",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1093",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1094",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1095",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1096",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1097",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1098",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1099",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1100",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1101",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1102",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1103",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1104",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1105",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1106",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1107",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1108",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1109",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1110",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1111",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1112",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1113",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1114",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1115",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1116",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1117",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1118",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1119",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1120",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1121",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1122",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1123",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1124",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1125",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1126",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1127",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1128",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1129",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1130",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1131",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1132",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1133",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1134",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1135",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1136",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1137",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1138",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1139",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1140",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1141",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1142",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1143",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1144",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1145",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1146",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1147",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1148",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1149",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1150",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1151",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1152",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1153",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1154",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1155",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1156",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1157",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1158",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1159",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1160",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1161",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1162",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1163",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1164",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1165",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1166",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1167",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1168",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1169",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1170",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1171",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1172",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1173",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1174",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1175",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1176",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1177",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1178",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1179",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1180",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1181",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1182",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1183",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1184",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1185",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1186",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1187",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1188",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1189",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1190",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1191",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1192",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1193",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1194",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1195",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1196",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1197",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1198",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1199",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1200",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1201",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1202",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1203",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1204",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1205",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1206",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1207",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1208",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1209",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1210",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1211",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1212",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1213",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1214",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1215",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1216",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1217",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1218",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1219",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1220",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1221",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1222",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1223",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1224",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1225",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1226",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1227",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1228",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1229",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1230",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1231",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1232",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1233",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1234",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1235",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1236",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1237",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1238",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1239",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1240",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1241",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1242",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1243",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1244",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1245",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1246",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1247",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1248",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1249",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1250",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1251",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1252",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1253",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1254",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1255",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1256",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1257",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1258",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1259",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1260",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1261",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1262",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1263",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1264",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1265",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1266",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1267",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1268",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1269",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1270",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1271",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1272",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1273",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 9,
+      "status": "expired",
+      "plan_id": "1274",
+      "transition_events": 8,
+      "expiry_detection_events": 8,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "failed",
+      "plan_id": "1274",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 7,
+      "status": "expired",
+      "plan_id": "1275",
+      "transition_events": 7,
+      "expiry_detection_events": 7,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "failed",
+      "plan_id": "1275",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1276",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1276",
+      "transition_events": 1,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1277",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1277",
+      "transition_events": 1,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1278",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1279",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1280",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1281",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1282",
+      "transition_events": 1,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1283",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1284",
+      "transition_events": 1,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "closed",
+      "plan_id": "1285",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1286",
+      "transition_events": 1,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "1287",
+      "transition_events": 1,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1287",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1288",
+      "transition_events": 1,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1289",
+      "transition_events": 1,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1290",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "closed",
+      "plan_id": "1291",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1292",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1293",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1294",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1295",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1296",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1297",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1298",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1299",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1300",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1301",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1302",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "closed",
+      "plan_id": "1303",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1304",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1305",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "1306",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "1307",
+      "transition_events": 1,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "closed",
+      "plan_id": "1308",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261638",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "8261638",
+      "transition_events": 3,
+      "expiry_detection_events": 2,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "cancelled",
+      "plan_id": "8261639",
+      "transition_events": 8,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "8261639",
+      "transition_events": 2,
+      "expiry_detection_events": 2,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261640",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261640",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261641",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261641",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261642",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261642",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261643",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261643",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261644",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "8261644",
+      "transition_events": 2,
+      "expiry_detection_events": 1,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "8261645",
+      "transition_events": 3,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261645",
+      "transition_events": 2,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "8261645",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261645",
+      "transition_events": 2,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "8261646",
+      "transition_events": 2,
+      "expiry_detection_events": 1,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "8261647",
+      "transition_events": 2,
+      "expiry_detection_events": 1,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "8261648",
+      "transition_events": 2,
+      "expiry_detection_events": 1,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "8261649",
+      "transition_events": 2,
+      "expiry_detection_events": 1,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261649",
+      "transition_events": 4,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261649",
+      "transition_events": 4,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "8261650",
+      "transition_events": 3,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "8261650",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261651",
+      "transition_events": 2,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "8261651",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261651",
+      "transition_events": 1,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "8261652",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 4,
+      "status": "cancelled",
+      "plan_id": "8261653",
+      "transition_events": 7,
+      "expiry_detection_events": 3,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261653",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261653",
+      "transition_events": 1,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "8261654",
+      "transition_events": 11,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "completed",
+      "plan_id": "8261654",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261654",
+      "transition_events": 3,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "failed",
+      "plan_id": "8261654",
+      "transition_events": 0,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "8261655",
+      "transition_events": 1,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261655",
+      "transition_events": 2,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "8261655",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "critic",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "8261655",
+      "transition_events": 1,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "8261655",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "8261656",
+      "transition_events": 3,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261656",
+      "transition_events": 2,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "8261656",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261656",
+      "transition_events": 1,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "8261657",
+      "transition_events": 2,
+      "expiry_detection_events": 1,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "8261658",
+      "transition_events": 2,
+      "expiry_detection_events": 1,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "8261659",
+      "transition_events": 2,
+      "expiry_detection_events": 1,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "8261660",
+      "transition_events": 2,
+      "expiry_detection_events": 1,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "cancelled",
+      "plan_id": "8261661",
+      "transition_events": 5,
+      "expiry_detection_events": 1,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261661",
+      "transition_events": 2,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 13,
+      "status": "cancelled",
+      "plan_id": "8261662",
+      "transition_events": 27,
+      "expiry_detection_events": 12,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261662",
+      "transition_events": 2,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "8261662",
+      "transition_events": 2,
+      "expiry_detection_events": 1,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "8261663",
+      "transition_events": 5,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261663",
+      "transition_events": 2,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261663",
+      "transition_events": 3,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "8261664",
+      "transition_events": 3,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "8261664",
+      "transition_events": 2,
+      "expiry_detection_events": 1,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 11,
+      "status": "cancelled",
+      "plan_id": "8261665",
+      "transition_events": 37,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261665",
+      "transition_events": 2,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "cancelled",
+      "plan_id": "8261665",
+      "transition_events": 2,
+      "expiry_detection_events": 1,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261666",
+      "transition_events": 2,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261666",
+      "transition_events": 3,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 2,
+      "status": "completed",
+      "plan_id": "8261667",
+      "transition_events": 2,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261667",
+      "transition_events": 1,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "failed",
+      "plan_id": "8261667",
+      "transition_events": 1,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261668",
+      "transition_events": 1,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261668",
+      "transition_events": 2,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261669",
+      "transition_events": 3,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261669",
+      "transition_events": 1,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 3,
+      "status": "completed",
+      "plan_id": "8261670",
+      "transition_events": 6,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261670",
+      "transition_events": 1,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 2,
+      "status": "failed",
+      "plan_id": "8261670",
+      "transition_events": 2,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261671",
+      "transition_events": 2,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "expired",
+      "plan_id": "8261671",
+      "transition_events": 1,
+      "expiry_detection_events": 1,
+      "class": "attention_lost"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "failed",
+      "plan_id": "8261671",
+      "transition_events": 1,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261672",
+      "transition_events": 2,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "reviewer",
+      "count": 1,
+      "status": "completed",
+      "plan_id": "8261672",
+      "transition_events": 1,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "failed",
+      "plan_id": "8261673",
+      "transition_events": 2,
+      "expiry_detection_events": 0,
+      "class": "terminal_outcome"
+    },
+    {
+      "role": "builder",
+      "count": 1,
+      "status": "claimed",
+      "plan_id": "8261674",
+      "transition_events": 1,
+      "expiry_detection_events": 0,
+      "class": "active"
+    }
+  ],
+  "no_completion_implication": {
+    "rule": "a terminal plan (derived REVIEW_PASS) must not present status='expired' as its outcome; every exception is enumerated with a waiver",
+    "terminal_plan_count": 44,
+    "terminal_plan_source": "conduit GET /state plans.completed[]",
+    "expired_rows_on_terminal_plans": 5,
+    "exceptions_newest_generation_expired": [
+      {
+        "role": "builder",
+        "status": "expired",
+        "plan_id": "8261671",
+        "closed_at": null,
+        "ticket_id": "ticket-8261671-builder-1794408317408",
+        "created_at": "2026-11-11T14:45:17.408+00:00",
+        "expires_at": "2026-11-12T14:45:17.408+00:00",
+        "generation": 2,
+        "closure_reason": null,
+        "expiry_event_at": "2026-11-12T14:45:56.859817+00:00",
+        "generations_total": 2,
+        "plan_derived_status": "REVIEW_PASS",
+        "plan_completed_at": "2026-11-12 10:10:36.999351+00",
+        "disposition": "post_terminal_expiry_not_outcome",
+        "waiver_ref": "wb2-waiver-8261671-builder-gen2",
+        "waiver_basis": "temporal: plan reached its terminal status at 2026-11-12 10:10:36.999351+00, expiry_detection event fired at 2026-11-12T14:45:56.859817+00:00 (after the terminal status), so the plan's outcome is its terminal receipt, not the later expiry",
+        "requires_reviewer_ratification": true
+      }
+    ],
+    "historical_expired_generations": [
+      {
+        "role": "builder",
+        "status": "expired",
+        "plan_id": "8261645",
+        "closed_at": null,
+        "ticket_id": "ticket-8261645-builder-24e41f47-7bcf-40ba-a747-6f494accc66d",
+        "created_at": "2026-09-13T01:34:01.719+00:00",
+        "expires_at": "2026-09-23T18:20:49.343373+00:00",
+        "generation": 1,
+        "closure_reason": null,
+        "expiry_event_at": "2026-09-23T18:34:03.379042+00:00",
+        "generations_total": 3,
+        "plan_derived_status": "REVIEW_PASS",
+        "plan_completed_at": "2026-11-12 10:10:36.999351+00",
+        "disposition": "historical_generation_not_outcome"
+      },
+      {
+        "role": "builder",
+        "status": "expired",
+        "plan_id": "8261650",
+        "closed_at": null,
+        "ticket_id": "ticket-8261650-builder-7de850ac-23c7-4fc1-9277-7718dd2afd1a",
+        "created_at": "2026-09-19T22:42:46.763+00:00",
+        "expires_at": "2026-09-23T18:20:49.343373+00:00",
+        "generation": 1,
+        "closure_reason": null,
+        "expiry_event_at": "2026-09-23T18:34:03.379042+00:00",
+        "generations_total": 2,
+        "plan_derived_status": "REVIEW_PASS",
+        "plan_completed_at": "2026-11-16 07:00:11.726+00",
+        "disposition": "historical_generation_not_outcome"
+      },
+      {
+        "role": "builder",
+        "status": "expired",
+        "plan_id": "8261651",
+        "closed_at": null,
+        "ticket_id": "ticket-8261651-builder-a44d5d95-0762-4afa-b92c-915e5dbda774",
+        "created_at": "2026-09-21T16:24:10.859+00:00",
+        "expires_at": "2026-09-23T18:20:49.343373+00:00",
+        "generation": 1,
+        "closure_reason": null,
+        "expiry_event_at": "2026-09-23T18:34:03.379042+00:00",
+        "generations_total": 2,
+        "plan_derived_status": "REVIEW_PASS",
+        "plan_completed_at": "2026-11-12 10:10:36.999351+00",
+        "disposition": "historical_generation_not_outcome"
+      },
+      {
+        "role": "builder",
+        "status": "expired",
+        "plan_id": "8261656",
+        "closed_at": null,
+        "ticket_id": "ticket-8261656-builder-286a82d4-616f-4ed1-9c64-68b0f9a3e41e",
+        "created_at": "2026-09-25T13:22:34.832+00:00",
+        "expires_at": "2026-09-26T13:22:34.834+00:00",
+        "generation": 1,
+        "closure_reason": null,
+        "expiry_event_at": "2026-09-28T17:37:27.514843+00:00",
+        "generations_total": 3,
+        "plan_derived_status": "REVIEW_PASS",
+        "plan_completed_at": "2026-11-12 10:10:36.999351+00",
+        "disposition": "historical_generation_not_outcome"
+      }
+    ],
+    "unwaived_exceptions": [],
+    "verdict": "no terminal plan presents expired as its outcome"
+  },
+  "newest_generation_census": {
+    "note": "supporting read: newest generation per (plan_id, role); expired rows here are attention_lost for plans that are not terminal. Not a completion claim.",
+    "rows": [
+      {
+        "role": "builder",
+        "plans": 206,
+        "newest_status": "cancelled"
+      },
+      {
+        "role": "builder",
+        "plans": 1,
+        "newest_status": "claimed"
+      },
+      {
+        "role": "builder",
+        "plans": 4,
+        "newest_status": "closed"
+      },
+      {
+        "role": "builder",
+        "plans": 88,
+        "newest_status": "completed"
+      },
+      {
+        "role": "builder",
+        "plans": 101,
+        "newest_status": "expired"
+      },
+      {
+        "role": "builder",
+        "plans": 6,
+        "newest_status": "failed"
+      },
+      {
+        "role": "critic",
+        "plans": 1,
+        "newest_status": "cancelled"
+      },
+      {
+        "role": "planner",
+        "plans": 1,
+        "newest_status": "cancelled"
+      },
+      {
+        "role": "reviewer",
+        "plans": 17,
+        "newest_status": "cancelled"
+      },
+      {
+        "role": "reviewer",
+        "plans": 66,
+        "newest_status": "completed"
+      },
+      {
+        "role": "reviewer",
+        "plans": 11,
+        "newest_status": "expired"
+      },
+      {
+        "role": "reviewer",
+        "plans": 22,
+        "newest_status": "failed"
+      }
+    ]
+  },
+  "event_enrichment": {
+    "status": "implemented",
+    "required_fields": [
+      "plan_id",
+      "role",
+      "generation",
+      "expires_at",
+      "from_status",
+      "to_status",
+      "reason",
+      "implies_completion"
+    ],
+    "fixed_values": {
+      "to_status": "expired",
+      "reason": "expiry_detection",
+      "implies_completion": false
+    },
+    "implies_completion_type": "boolean (typed false \u2014 not \"false\", not absent)",
+    "generation_derivation": "positional row count per (plan_id, role) ordered by (created_at, id), D1 \u00a77.2",
+    "before": {
+      "sample_payload": {
+        "reason": "expiry_detection",
+        "to_status": "expired",
+        "from_status": "open"
+      },
+      "distinct_ticket_ids": 89,
+      "observed_payload_keys": [
+        "from_status",
+        "reason",
+        "to_status"
+      ],
+      "expiry_detection_events": 91
+    },
+    "emitters": [
+      "typescript/conduit-mcp/src/db.ts::detectExpiredTickets (wired via typescript/conduit-mcp/src/watcher.ts)",
+      "python/conduit/db_adapter.py::detect_expired_tickets"
+    ],
+    "shared_builder": "typescript/conduit-mcp/src/ticket-sweep.ts::buildExpiryDetectionPayload",
+    "hermetic_test": "typescript/conduit-mcp/src/ticket-sweep.test.ts",
+    "apply_note": "new payload applies to events emitted after this lane; historical rows keep the 3-field shape and are never backfilled (AC5)"
+  },
+  "attestation_baseline": {
+    "invocation": "python3 bin/check_transition_attestation.py --dsn \"$CONDUIT_PG_DSN\" --since 2026-09-22T00:00:00Z --json",
+    "cutoff": "2026-09-22T00:00:00Z",
+    "draft_time_baseline_post_cutoff_rows": 4,
+    "result": {
+      "verdict": "DRIFT",
+      "cutoff": "2026-09-22T00:00:00Z",
+      "terminal_scanned": 105,
+      "unattested_recent": 2,
+      "historical_silent": 571,
+      "waivers_honored": [
+        "ticket-8261654-builder-caea50cc-5bc9-4405-b0c1-8abb5de79ad1",
+        "ticket-8261654-reviewer-1790105437937"
+      ],
+      "waivers_contradicted": [],
+      "by_status": {
+        "completed": 2
+      },
+      "unattested_ids": [
+        "ticket-8261653-builder-0f68e14f-29f1-4b35-94b7-6ab1d12e3d31",
+        "ticket-8261654-builder-restart-v078"
+      ],
+      "unattested_truncated": 0
+    },
+    "post_cutoff_drift_rows": 2,
+    "exceeds_draft_baseline": false,
+    "verdict": "baseline unchanged (no new post-cutoff DRIFT beyond the 4 rows measured at draft time)"
+  },
+  "code_changes": [
+    {
+      "path": "typescript/conduit-mcp/src/ticket-sweep.ts",
+      "what": "added classifyTicketStatus() (terminal_outcome / attention_lost / active, closed its own member) and buildExpiryDetectionPayload() (eight-field expiry payload, typed implies_completion=false)"
+    },
+    {
+      "path": "typescript/conduit-mcp/src/db.ts",
+      "what": "detectExpiredTickets() now selects plan_id/role/expires_at plus the derived positional generation and emits buildExpiryDetectionPayload() instead of the three-field literal"
+    },
+    {
+      "path": "typescript/conduit-mcp/src/watcher.ts",
+      "what": "pins the production detector wiring to a named constant and documents the payload contract at the composition root"
+    },
+    {
+      "path": "typescript/conduit-mcp/src/ticket-sweep.test.ts",
+      "what": "hermetic assertions: vocabulary complete, unknown status throws, payload has all eight fields with boolean false"
+    },
+    {
+      "path": "python/conduit/db_adapter.py",
+      "what": "detect_expired_tickets() mirrors the enriched payload and derives the same positional generation (the emitting set must not diverge)"
+    },
+    {
+      "path": "docs/promotion-flow/evidence/wb2-ticket-class-8261674.json",
+      "what": "this census"
+    }
+  ],
+  "scope_note": "The plan named watcher.ts for the expiry payload enrichment; detectExpiredTickets actually lives in db.ts, so the enrichment lands there (the emitter) and watcher.ts carries the wiring contract. Without the db.ts edit the runtime would keep emitting the three-field payload (R-F3 refuses a fixture-only claim).",
+  "no_terminal_mutation": {
+    "statement": "the lane writes no ticket status, closes no plan, and backfills no transition event; classification is observed, not assigned",
+    "guard_reads": {
+      "expired_rows": 138,
+      "vision_tickets_rows": 844,
+      "terminal_status_rows": 705,
+      "expiry_detection_events": 91,
+      "ticket_transition_events": 325
+    },
+    "ddl_or_dml_executed": false,
+    "artifacts_written": [
+      "docs/promotion-flow/evidence/wb2-ticket-class-8261674.json"
+    ]
+  }
+}

@@ -1,0 +1,66 @@
+import type { Requirement } from './types';
+
+export let requirementsData: Requirement[] = [
+  {
+    id: 'REQ-1',
+    name: 'User Authentication API',
+    description: 'Develop a secure RESTful API for user registration, login, and profile management. It should support JWT-based authentication and password hashing.',
+    status: 'complete',
+    technologies: ['Go', 'JWT', 'PostgreSQL', 'bcrypt'],
+    subItems: [
+      { id: 'SUB-1-1', name: 'Registration Endpoint', status: 'complete' },
+      { id: 'SUB-1-2', name: 'Login Endpoint with JWT', status: 'complete' },
+      { id: 'SUB-1-3', name: 'Get User Profile Endpoint', status: 'complete' },
+    ],
+    createdAt: new Date('2023-10-01T10:00:00Z').toISOString(),
+    updatedAt: new Date('2023-10-25T14:30:00Z').toISOString(),
+  },
+  {
+    id: 'REQ-2',
+    name: 'Frontend Dashboard UI',
+    description: 'Create a responsive and interactive dashboard using React to display system analytics and user activity. The dashboard must be performant and visually appealing.',
+    status: 'in-progress',
+    technologies: ['React', 'Next.js', 'Tailwind CSS', 'Recharts'],
+    subItems: [
+      { id: 'SUB-2-1', name: 'Main layout and navigation', status: 'complete' },
+      { id: 'SUB-2-2', name: 'Analytics chart components', status: 'in-progress' },
+      { id: 'SUB-2-3', name: 'Real-time activity feed', status: 'pending' },
+    ],
+    createdAt: new Date('2023-11-05T09:00:00Z').toISOString(),
+    updatedAt: new Date('2023-11-20T11:00:00Z').toISOString(),
+  },
+  {
+    id: 'REQ-3',
+    name: 'Database Migration Service',
+    description: 'Build a service to migrate data from the legacy MySQL database to the new PostgreSQL instance. The service needs to ensure data integrity and minimize downtime.',
+    status: 'pending',
+    technologies: ['Go', 'MySQL', 'PostgreSQL'],
+    subItems: [],
+    createdAt: new Date('2023-12-01T15:00:00Z').toISOString(),
+    updatedAt: new Date('2023-12-01T15:00:00Z').toISOString(),
+  },
+    {
+    id: 'REQ-4',
+    name: 'Payment Gateway Integration',
+    description: 'Integrate Stripe API to handle subscription payments and one-time purchases. Must support credit card and ACH payments.',
+    status: 'in-progress',
+    technologies: ['React', 'Go', 'Stripe API'],
+    subItems: [
+      { id: 'SUB-4-1', name: 'Setup Stripe webhook handler', status: 'complete' },
+      { id: 'SUB-4-2', name: 'Implement checkout flow UI', status: 'in-progress' },
+      { id: 'SUB-4-3', name: 'Handle subscription lifecycle events', status: 'pending' },
+    ],
+    createdAt: new Date('2024-01-10T11:00:00Z').toISOString(),
+    updatedAt: new Date('2024-01-22T16:45:00Z').toISOString(),
+  },
+    {
+    id: 'REQ-5',
+    name: 'Automated E2E Testing Suite',
+    description: 'Develop an end-to-end testing suite using Cypress to ensure application stability and catch regressions before deployment.',
+    status: 'pending',
+    technologies: ['Cypress', 'TypeScript', 'CI/CD'],
+    subItems: [],
+    createdAt: new Date('2024-02-01T12:00:00Z').toISOString(),
+    updatedAt: new Date('2024-02-01T12:00:00Z').toISOString(),
+  },
+];

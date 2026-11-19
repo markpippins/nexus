@@ -35,6 +35,7 @@ export {
 
 const execFileAsync = promisify(execFile);
 
+
 // ── Color Palette (matches client) ────────────────────────────────
 const COLOR_PALETTE = [
   '#EF4444', '#F97316', '#F59E0B', '#10B981', '#06B6D4',
@@ -4107,7 +4108,7 @@ export function createRoutes(pool: Pool): Router {
         pool.query(
           `SELECT DISTINCT ON (wr.id) wr.*
            FROM nebula.work_requests wr
-           LEFT JOIN nebula.requirements req ON req.id = wr.source_requirement_id
+           JOIN nebula.v_work_request_requirement req ON req.request_id = wr.id AND req.relation = 'source'
            LEFT JOIN nebula.specifications spec ON spec.id = wr.source_specification_id
            LEFT JOIN nebula.agenda_items ai ON ai.agenda_id = spec.agenda_id AND ai.included = true
            WHERE req.system_id = $1
@@ -4116,9 +4117,9 @@ export function createRoutes(pool: Pool): Router {
           [id, pageSize, offset]
         ),
         pool.query(
-          `SELECT COUNT(*)::int AS total
+          `SELECT COUNT(DISTINCT wr.id)::int AS total
            FROM nebula.work_requests wr
-           LEFT JOIN nebula.requirements req ON req.id = wr.source_requirement_id
+           JOIN nebula.v_work_request_requirement req ON req.request_id = wr.id AND req.relation = 'source'
            LEFT JOIN nebula.specifications spec ON spec.id = wr.source_specification_id
            LEFT JOIN nebula.agenda_items ai ON ai.agenda_id = spec.agenda_id AND ai.included = true
            WHERE req.system_id = $1`,
@@ -4142,7 +4143,7 @@ export function createRoutes(pool: Pool): Router {
         pool.query(
           `SELECT DISTINCT ON (wr.id) wr.*
            FROM nebula.work_requests wr
-           LEFT JOIN nebula.requirements req ON req.id = wr.source_requirement_id
+           JOIN nebula.v_work_request_requirement req ON req.request_id = wr.id AND req.relation = 'source'
            LEFT JOIN nebula.specifications spec ON spec.id = wr.source_specification_id
            LEFT JOIN nebula.agenda_items ai ON ai.agenda_id = spec.agenda_id AND ai.included = true
            WHERE req.subsystem_id = $1
@@ -4151,9 +4152,9 @@ export function createRoutes(pool: Pool): Router {
           [id, pageSize, offset]
         ),
         pool.query(
-          `SELECT COUNT(*)::int AS total
+          `SELECT COUNT(DISTINCT wr.id)::int AS total
            FROM nebula.work_requests wr
-           LEFT JOIN nebula.requirements req ON req.id = wr.source_requirement_id
+           JOIN nebula.v_work_request_requirement req ON req.request_id = wr.id AND req.relation = 'source'
            LEFT JOIN nebula.specifications spec ON spec.id = wr.source_specification_id
            LEFT JOIN nebula.agenda_items ai ON ai.agenda_id = spec.agenda_id AND ai.included = true
            WHERE req.subsystem_id = $1`,
@@ -4177,7 +4178,7 @@ export function createRoutes(pool: Pool): Router {
         pool.query(
           `SELECT DISTINCT ON (wr.id) wr.*
            FROM nebula.work_requests wr
-           LEFT JOIN nebula.requirements req ON req.id = wr.source_requirement_id
+           JOIN nebula.v_work_request_requirement req ON req.request_id = wr.id AND req.relation = 'source'
            LEFT JOIN nebula.specifications spec ON spec.id = wr.source_specification_id
            LEFT JOIN nebula.agenda_items ai ON ai.agenda_id = spec.agenda_id AND ai.included = true
            WHERE req.feature_id = $1
@@ -4186,9 +4187,9 @@ export function createRoutes(pool: Pool): Router {
           [id, pageSize, offset]
         ),
         pool.query(
-          `SELECT COUNT(*)::int AS total
+          `SELECT COUNT(DISTINCT wr.id)::int AS total
            FROM nebula.work_requests wr
-           LEFT JOIN nebula.requirements req ON req.id = wr.source_requirement_id
+           JOIN nebula.v_work_request_requirement req ON req.request_id = wr.id AND req.relation = 'source'
            LEFT JOIN nebula.specifications spec ON spec.id = wr.source_specification_id
            LEFT JOIN nebula.agenda_items ai ON ai.agenda_id = spec.agenda_id AND ai.included = true
            WHERE req.feature_id = $1`,

@@ -1,0 +1,5 @@
+{
+  "name": "Throttler B",
+  "description": "A web-based file explorer clone that allows you to navigate a virtual file system, inspired by the Windows Explorer interface.",
+  "requestFramePermissions": []
+}

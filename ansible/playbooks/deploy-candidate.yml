@@ -61,7 +61,7 @@
     # client.db("keychains") explicitly, so the driver ignores it.
     - name: Derive candidate MONGO_URL (host-local mongod, credential-free)
       ansible.builtin.set_fact:
-        cand_mongo_url: "mongodb://host.docker.internal:27017/keychains"
+        cand_mongo_url: "mongodb://{{ authority_host }}:27017/keychains"
       when: candidate_mongo_source == 'local'
 
     - name: Fail if no MONGO_URL could be derived

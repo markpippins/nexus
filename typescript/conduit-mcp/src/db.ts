@@ -63,6 +63,7 @@ import { Pool, PoolClient, types } from "pg";
 import { evaluateReleaseGate, ReleaseDecision } from "./release-gate";
 import { RippleAssignment } from "./ripple-classifier";
 import { CompareTarget } from "./compile-compare";
+import { buildExpiryDetectionPayload } from "./ticket-sweep";
 import {
   canonicalizeEventPayload,
   toCanonicalEventType,
@@ -4870,10 +4871,17 @@ export async function detectStaleTickets(): Promise<number> {
 export async function detectExpiredTickets(): Promise<number> {
   return withTransaction(async (client) => {
     const now = new Date().toISOString();
+    // W-B2 (plan 8261674): the expiry_detection event carries the generation
+    // identity, not just the status pair — generation is derived positionally
+    // per (plan_id, role) exactly as D1 §7.2 specifies (created_at, id).
     const affected = await tAll(
       client,
-      `SELECT id, status FROM ${VISION_SCHEMA}.tickets
-      WHERE status IN ('open', 'claimed', 'stale') AND expires_at IS NOT NULL AND expires_at < @now`,
+      `SELECT t.id, t.status, t.plan_id, t.role, t.expires_at,
+        (SELECT count(*) FROM ${VISION_SCHEMA}.tickets g
+          WHERE g.plan_id = t.plan_id AND g.role = t.role
+            AND (g.created_at, g.id) <= (t.created_at, t.id)) AS generation
+      FROM ${VISION_SCHEMA}.tickets t
+      WHERE t.status IN ('open', 'claimed', 'stale') AND t.expires_at IS NOT NULL AND t.expires_at < @now`,
       { now },
     );
     const count = await tRun(
@@ -4890,7 +4898,14 @@ export async function detectExpiredTickets(): Promise<number> {
         eventType: "transition.rejected",
         actor: "conduit-mcp",
         authority: "system",
-        payload: { from_status: t.status, to_status: "expired", reason: "expiry_detection" },
+        payload: buildExpiryDetectionPayload({
+          id: t.id,
+          plan_id: t.plan_id,
+          role: t.role,
+          status: t.status,
+          expires_at: t.expires_at,
+          generation: Number(t.generation),
+        }),
       });
     }
     return count;
@@ -5125,6 +5140,49 @@ export interface WorkRequestRow {
   recorded_until_dt: string | null;
 }
 
+/**
+ * vision.work_requests has had two shapes in this database's life. Migration 951
+ * in this file creates it as a BASE TABLE; the LOSM/V187 layout instead exposes
+ * it as a read-only VIEW over
+ *   resolution.work_request  ⋈  vision.work_request_legacy_id_map
+ *     (resolution.work_request.legacy_id = 'vision.work_requests:' || m.wr_id)
+ * with no INSTEAD OF trigger, so writes fail with "cannot insert into view".
+ * Detect once per process and target whichever shape actually exists.
+ */
+let visionWorkRequestsIsView: boolean | undefined;
+
+async function workRequestsIsProjectionView(): Promise<boolean> {
+  if (visionWorkRequestsIsView === undefined) {
+    const row = await qOne(
+      `SELECT c.relkind::text AS relkind
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = @schema AND c.relname = 'work_requests'`,
+      { schema: VISION_SCHEMA },
+    );
+    visionWorkRequestsIsView = row?.relkind === "v";
+  }
+  return visionWorkRequestsIsView;
+}
+
+/** Runtime WR status -> resolution.work_request.business_status (CHECK-constrained). */
+const WR_BUSINESS_STATUS: Record<string, string> = {
+  draft: "DRAFT",
+  proposed: "DRAFT",
+  pending: "DRAFT",
+  validated: "APPROVED",
+  approved: "APPROVED",
+  queued: "APPROVED",
+  dispatched: "DISPATCHED",
+  claimed: "DISPATCHED",
+  acked: "DISPATCHED",
+  settled: "COMPLETED",
+  completed: "COMPLETED",
+  rejected: "CANCELLED",
+  failed: "CANCELLED",
+  cancelled: "CANCELLED",
+};
+
 export async function createWorkRequest(wr: {
   id: string;
   work_request_uuid?: string;
@@ -5138,28 +5196,115 @@ export async function createWorkRequest(wr: {
   const ctx = wr.context ?? {};
   // Ensure plan_id is in context for backwards-compatible lookups
   if (!ctx.plan_id) ctx.plan_id = wr.id;
-  const uuid = wr.work_request_uuid || crypto.randomUUID();
+
+  const projectionView = await workRequestsIsProjectionView();
+  const legacyId = `vision.work_requests:${wr.id}`;
+  let uuid = wr.work_request_uuid || crypto.randomUUID();
+  if (projectionView && !wr.work_request_uuid) {
+    // Re-submitting the same wrId must reuse its row, not mint a second identity.
+    const existing = await qOne(
+      `SELECT id FROM resolution.work_request
+        WHERE legacy_id = @legacy_id
+        ORDER BY created_at
+        LIMIT 1`,
+      { legacy_id: legacyId },
+    );
+    if (existing?.id) uuid = existing.id;
+  }
   if (!ctx.work_request_uuid) ctx.work_request_uuid = uuid;
-  await qRun(
-    `INSERT INTO ${VISION_SCHEMA}.work_requests (wr_id, work_request_uuid, dco_json, context, status, title, recorded_on_dt, entity_key)
-     VALUES (@wr_id, @work_request_uuid, @dco_json, @context::jsonb, @status, @title, @now, @entity_key)
-     ON CONFLICT (wr_id) DO UPDATE SET
-       dco_json = EXCLUDED.dco_json,
-       context = EXCLUDED.context,
-       status = EXCLUDED.status,
-       title = COALESCE(EXCLUDED.title, ${VISION_SCHEMA}.work_requests.title),
-       entity_key = COALESCE(EXCLUDED.entity_key, ${VISION_SCHEMA}.work_requests.entity_key)`,
-    {
-      wr_id: wr.id,
-      work_request_uuid: uuid,
-      dco_json: wr.dco_json,
-      context: JSON.stringify(ctx),
-      status: wr.status ?? "pending",
-      title: wr.title ?? "",
-      entity_key: wr.entity_key ?? null,
-      now,
-    }
-  );
+
+  if (!projectionView) {
+    // Base-table shape (older databases, and schema tests that create it).
+    await qRun(
+      `INSERT INTO ${VISION_SCHEMA}.work_requests (wr_id, work_request_uuid, dco_json, context, status, title, recorded_on_dt, entity_key)
+       VALUES (@wr_id, @work_request_uuid, @dco_json, @context::jsonb, @status, @title, @now, @entity_key)
+       ON CONFLICT (wr_id) DO UPDATE SET
+         dco_json = EXCLUDED.dco_json,
+         context = EXCLUDED.context,
+         status = EXCLUDED.status,
+         title = COALESCE(EXCLUDED.title, ${VISION_SCHEMA}.work_requests.title),
+         entity_key = COALESCE(EXCLUDED.entity_key, ${VISION_SCHEMA}.work_requests.entity_key)`,
+      {
+        wr_id: wr.id,
+        work_request_uuid: uuid,
+        dco_json: wr.dco_json,
+        context: JSON.stringify(ctx),
+        status: wr.status ?? "pending",
+        title: wr.title ?? "",
+        entity_key: wr.entity_key ?? null,
+        now,
+      }
+    );
+    return { ok: true, id: wr.id, work_request_uuid: uuid };
+  }
+
+  // View shape: the canonical row lives in resolution.work_request, and the
+  // legacy-id-map row is what makes vision.work_requests project it. Both, or
+  // neither — one transaction so a half-written WR can never be visible.
+  await withTransaction(async (client) => {
+    // plan_id is FK-constrained to resolution.implementation_plan. A plan that
+    // exists only in nebula.implementation_plans must not fail the WR write.
+    const requestedPlan = ctx.plan_id ? String(ctx.plan_id) : null;
+    const planRow = requestedPlan
+      ? await tOne(
+          client,
+          `SELECT plan_number FROM resolution.implementation_plan WHERE plan_number = @plan_number`,
+          { plan_number: requestedPlan },
+        )
+      : undefined;
+    const planId = planRow?.plan_number ?? null;
+    const businessStatus =
+      WR_BUSINESS_STATUS[(wr.status ?? "draft").toLowerCase()] ?? "DRAFT";
+
+    await tRun(
+      client,
+      `INSERT INTO resolution.work_request
+         (id, title, business_status, intent, context, constraints, created_by,
+          dco_json, legacy_id, plan_id, entity_key, recorded_on_dt, updated_at)
+       VALUES
+         (@id::uuid, @title, @business_status, @intent, @context::jsonb, @constraints::jsonb,
+          'conduit-mcp', @dco_json, @legacy_id, @plan_id, @entity_key,
+          @now::timestamptz, @now::timestamptz)
+       ON CONFLICT (id) DO UPDATE SET
+         title = EXCLUDED.title,
+         business_status = EXCLUDED.business_status,
+         intent = COALESCE(EXCLUDED.intent, resolution.work_request.intent),
+         context = EXCLUDED.context,
+         constraints = EXCLUDED.constraints,
+         dco_json = EXCLUDED.dco_json,
+         legacy_id = EXCLUDED.legacy_id,
+         plan_id = COALESCE(EXCLUDED.plan_id, resolution.work_request.plan_id),
+         entity_key = COALESCE(EXCLUDED.entity_key, resolution.work_request.entity_key),
+         updated_at = EXCLUDED.updated_at`,
+      {
+        id: uuid,
+        title: wr.title || wr.id,
+        business_status: businessStatus,
+        intent: ctx.intent ? JSON.stringify(ctx.intent) : null,
+        context: JSON.stringify(ctx),
+        constraints: JSON.stringify(ctx.constraints ?? {}),
+        dco_json: wr.dco_json,
+        legacy_id: legacyId,
+        plan_id: planId,
+        entity_key: wr.entity_key ?? null,
+        now,
+      },
+    );
+
+    // vision.work_request_legacy_id_map.id has no default and no sequence:
+    // allocate explicitly, and stay idempotent on wrId.
+    await tRun(
+      client,
+      `INSERT INTO vision.work_request_legacy_id_map (id, wr_id, work_request_uuid, mapped_at)
+       SELECT COALESCE(MAX(id), 0) + 1, @wr_id, @uuid::uuid, @now::timestamptz
+         FROM vision.work_request_legacy_id_map
+        WHERE NOT EXISTS (
+          SELECT 1 FROM vision.work_request_legacy_id_map WHERE wr_id = @wr_id
+        )`,
+      { wr_id: wr.id, uuid, now },
+    );
+  });
+
   return { ok: true, id: wr.id, work_request_uuid: uuid };
 }
 
@@ -5293,11 +5438,27 @@ export async function appendEvent(
     };
     const newStatus =
       statusMap[eventType] || statusMap[canonicalEventType] || "pending";
-    await tQuery(
-      client,
-      `UPDATE ${VISION_SCHEMA}.work_requests SET status = @newStatus WHERE work_request_uuid = @uuid`,
-      { newStatus, uuid },
-    );
+    if (await workRequestsIsProjectionView()) {
+      // The view is not updatable; project the runtime status onto the
+      // CHECK-constrained business_status of the canonical row. The runtime's
+      // own event fold stays the authority for WR state.
+      const businessStatus = WR_BUSINESS_STATUS[newStatus];
+      if (businessStatus) {
+        await tQuery(
+          client,
+          `UPDATE resolution.work_request
+              SET business_status = @businessStatus, updated_at = now()
+            WHERE id = @uuid::uuid`,
+          { businessStatus, uuid },
+        );
+      }
+    } else {
+      await tQuery(
+        client,
+        `UPDATE ${VISION_SCHEMA}.work_requests SET status = @newStatus WHERE work_request_uuid = @uuid`,
+        { newStatus, uuid },
+      );
+    }
 
     const kernelEventTypeMap: Record<string, string> = {
       WR_SUBMITTED: "work_request.created",

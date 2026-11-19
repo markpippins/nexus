@@ -1,0 +1,54 @@
+<div class="flex flex-col h-full">
+  <!-- Tab Headers -->
+  <div 
+    class="flex border-b border-[rgb(var(--color-border-base))] px-2"
+    [class.h-12]="!isCollapsed()"
+    [class.h-7]="isCollapsed()"
+    [class.items-end]="!isCollapsed()"
+    [class.pb-1]="!isCollapsed()"
+    [class.items-center]="isCollapsed()">
+
+    @if (isCollapsed()) {
+      <span class="text-xs text-[rgb(var(--color-text-muted))]">Console</span>
+    } @else {
+      <div class="flex">
+        @for(tab of tabs(); track tab; let i = $index) {
+          <button 
+            (click)="selectTab(i)"
+            [class.border-[rgb(var(--color-accent-ring))]]="activeTabIndex() === i"
+            [class.text-[rgb(var(--color-accent-text))]]="activeTabIndex() === i"
+            [class.border-transparent]="activeTabIndex() !== i"
+            [class.text-[rgb(var(--color-text-subtle))]]="activeTabIndex() !== i"
+            [class.hover:text-[rgb(var(--color-text-muted))]]="activeTabIndex() !== i"
+            [class.hover:border-[rgb(var(--color-border-muted))]]="activeTabIndex() !== i"
+            class="py-2 px-4 text-sm font-medium text-center border-b-2 -mb-px"
+          >
+            {{ tab.title() }}
+          </button>
+        }
+      </div>
+      <!-- Filter input projected here -->
+      <ng-content select="[filter]"></ng-content>
+      <!-- Actions projected here -->
+      <ng-content select="[actions]"></ng-content>
+    }
+
+    <button (click)="toggleCollapse.emit()" [title]="isCollapsed() ? 'Expand Console' : 'Collapse Console (Ctrl + `)'" class="ml-auto p-2 rounded-md text-[rgb(var(--color-text-muted))] hover:bg-[rgb(var(--color-surface-hover))] transition-colors">
+      @if (isCollapsed()) {
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z" clip-rule="evenodd" />
+        </svg>
+      } @else {
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+        </svg>
+      }
+    </button>
+  </div>
+  <!-- Tab Content -->
+  @if (!isCollapsed()) {
+    <div class="flex-1 overflow-hidden">
+      <ng-content></ng-content>
+    </div>
+  }
+</div>

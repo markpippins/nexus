@@ -1,0 +1,30 @@
+<div 
+  class="w-40 h-40 flex flex-col bg-[rgb(var(--color-surface))] border border-[rgb(var(--color-border-base))] rounded-lg shadow-md p-3 group relative hover:shadow-xl transition-shadow duration-300"
+  [title]="result().title + '\n' + result().authors.join(', ') + '\n\n' + result().snippet">
+  <div class="flex-grow flex flex-col overflow-hidden">
+    <a href="#" (click)="openLink($event)">
+      <h3 class="font-semibold text-blue-700 dark:text-blue-400 text-sm hover:underline line-clamp-3">{{ result().title }}</h3>
+      <p class="text-xs text-green-700 dark:text-green-400 mt-1 truncate">{{ result().authors.join(', ') }}</p>
+    </a>
+    <p class="mt-1 text-xs text-[rgb(var(--color-text-muted))] line-clamp-3 flex-grow">{{ result().snippet }}</p>
+  </div>
+  <button 
+    (click)="onToggleBookmark()" 
+    [title]="isBookmarked() ? 'Remove bookmark' : 'Save to current folder'" 
+    class="absolute top-1 right-1 p-1.5 rounded-full transition-all"
+    [class.opacity-100]="isBookmarked()"
+    [class.opacity-0]="!isBookmarked()"
+    [class.group-hover:opacity-100]="!isBookmarked()"
+    [class.bg-blue-100]="isBookmarked()"
+    [class.dark:bg-blue-900/50]="isBookmarked()"
+    [class.text-blue-600]="isBookmarked()"
+    [class.dark:text-blue-400]="isBookmarked()"
+    [class.bg-black/10]="!isBookmarked()"
+    [class.dark:bg-white/10]="!isBookmarked()"
+    [class.text-[rgb(var(--color-text-muted))]]="!isBookmarked()"
+    [class.hover:bg-[rgb(var(--color-surface-hover))]]="!isBookmarked()">
+    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+      <path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v12l-5-3-5 3V4z" />
+    </svg>
+  </button>
+</div>

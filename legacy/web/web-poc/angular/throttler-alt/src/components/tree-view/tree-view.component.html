@@ -1,0 +1,17 @@
+<div class="h-full">
+  @if (rootNode(); as root) {
+    <app-tree-node
+      [node]="root"
+      [path]="[]"
+      [currentPath]="currentPath()"
+      [expansionCommand]="expansionCommand()"
+      [getImageService]="getImageService()"
+      [getProvider]="getProvider()"
+      (pathChange)="onPathChange($event)"
+      (loadChildren)="onLoadChildren($event)"
+      (itemsDropped)="onItemsDropped($event)"
+      (bookmarkDropped)="onBookmarkDropped($event)"
+      (contextMenuRequest)="onContextMenuRequest($event)">
+    </app-tree-node>
+  }
+</div>

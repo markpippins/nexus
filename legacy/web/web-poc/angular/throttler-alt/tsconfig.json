@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "experimentalDecorators": true,
+    "sourceMap": true,
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "declaration": false
+  },
+  "include": [
+    "index.tsx",
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "src/lib"
+  ]
+}

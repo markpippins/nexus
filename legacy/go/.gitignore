@@ -1,0 +1,4 @@
+projman/.env
+projman/ui/package-lock.json
+projman/ui/.bolt/config.json
+projman/ui/bun.lock

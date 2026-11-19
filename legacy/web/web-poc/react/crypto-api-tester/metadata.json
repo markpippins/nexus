@@ -1,0 +1,5 @@
+{
+  "name": "CryptoGuard: Client-Server Encryption Demo",
+  "description": "A web application to demonstrate parameterized encryption and decryption between a client (React) and a simulated server, showcasing secure data handling patterns.",
+  "requestFramePermissions": []
+}

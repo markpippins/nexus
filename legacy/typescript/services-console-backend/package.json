@@ -1,0 +1,28 @@
+{
+  "name": "services-console-backend",
+  "version": "1.0.0",
+  "description": "Node.js backend for Services Console with MySQL and Prisma",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "build": "prisma generate",
+    "db:push": "prisma db push",
+    "db:seed": "node src/utils/seed.js",
+    "db:studio": "prisma studio"
+  },
+  "keywords": ["nodejs", "express", "prisma", "mysql", "rest-api"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@prisma/client": "^5.7.1",
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "mysql2": "^3.6.5",
+    "dotenv": "^16.3.1",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "prisma": "^5.7.1"
+  }
+}

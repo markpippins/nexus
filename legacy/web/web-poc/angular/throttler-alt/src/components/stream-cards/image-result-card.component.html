@@ -1,0 +1,30 @@
+<div 
+  class="w-40 h-40 group relative rounded-lg shadow-md overflow-hidden"
+  [title]="result().description + '\nby ' + result().photographer">
+  <a href="#" (click)="openLink($event)">
+    <img [src]="result().thumbnailUrl" [alt]="result().description" class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105">
+  </a>
+  <div class="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent pointer-events-none"></div>
+  <div class="absolute bottom-0 left-0 p-2 text-white pointer-events-none">
+    <p class="text-xs font-semibold truncate">{{ result().description }}</p>
+    <p class="text-xs opacity-80">by {{ result().photographer }}</p>
+  </div>
+  <button 
+    (click)="onToggleBookmark()" 
+    [title]="isBookmarked() ? 'Remove bookmark' : 'Save to current folder'" 
+    class="absolute top-1 right-1 p-1.5 rounded-full transition-all duration-300"
+    [class.opacity-100]="isBookmarked()"
+    [class.opacity-0]="!isBookmarked()"
+    [class.group-hover:opacity-100]="!isBookmarked()"
+    [class.bg-blue-500]="isBookmarked()"
+    [class.text-white]="isBookmarked()"
+    [class.hover:bg-blue-600]="isBookmarked()"
+    [class.bg-black/50]="!isBookmarked()"
+    [class.text-white]="!isBookmarked()"
+    [class.hover:bg-white]="!isBookmarked()"
+    [class.hover:text-black]="!isBookmarked()">
+    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+      <path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v12l-5-3-5 3V4z" />
+    </svg>
+  </button>
+</div>

@@ -1,0 +1,20 @@
+services:
+  python-broker-gateway:
+    container_name: python-broker-gateway
+    build: .
+    ports:
+      - "8050:8050"
+    volumes:
+      - ./app:/app/app
+    environment:
+      - PYTHONPATH=/app
+      - PORT=8050
+      - SERVICE_REGISTRY_URL=http://localhost:8085/api/registry
+      - SERVICE_HOST=localhost
+    restart: unless-stopped
+    networks:
+      - atomic-network
+
+networks:
+  atomic-network:
+    driver: bridge

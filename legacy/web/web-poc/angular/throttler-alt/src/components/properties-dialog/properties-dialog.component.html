@@ -1,0 +1,67 @@
+<div class="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center p-4" (click)="close.emit()">
+  <div class.component.html="bg-[rgb(var(--color-surface-dialog))] rounded-lg shadow-xl w-full max-w-md flex flex-col" (click)="$event.stopPropagation()">
+    
+    <!-- Header -->
+    <div class="p-4 border-b border-[rgb(var(--color-border-base))] flex items-center space-x-3">
+      @if (getIconUrl(item()); as iconUrl) {
+        <img [src]="iconUrl" [alt]="item().type" class="h-8 w-8 object-contain">
+      }
+      <h3 class="text-lg font-semibold text-[rgb(var(--color-text-base))] truncate">{{ displayName() }} Properties</h3>
+    </div>
+    
+    <!-- Body -->
+    <div class="p-6 space-y-4 text-sm">
+        <div class="flex">
+            <span class="w-1/3 text-[rgb(var(--color-text-subtle))]">Type:</span>
+            <span class="w-2/3 text-[rgb(var(--color-text-base))] capitalize">{{ item().type === 'folder' ? 'File folder' : 'File' }}</span>
+        </div>
+        <div class="flex items-center">
+            <span class="w-1/3 text-[rgb(var(--color-text-subtle))]">Name:</span>
+            <span class.component.html="w-2/3 text-[rgb(var(--color-text-base))] break-all">{{ item().name }}</span>
+        </div>
+        @if (item().type === 'folder') {
+            <div>
+                <label for="displayName" class="block text-sm font-medium text-[rgb(var(--color-text-muted))] mt-4">Display Name</label>
+                <input type="text" id="displayName" [value]="formState().displayName" (input)="onValueChange($event, 'displayName')" placeholder="Leave blank to use folder name"
+                    class="mt-1 block w-full px-3 py-2 bg-[rgb(var(--color-surface))] border border-[rgb(var(--color-border-muted))] rounded-md shadow-sm focus:outline-none focus:ring-[rgb(var(--color-accent-ring))] focus:border-[rgb(var(--color-accent-ring))] sm:text-sm">
+            </div>
+            <div>
+                <label for="imageName" class="block text-sm font-medium text-[rgb(var(--color-text-muted))] mt-4">Image Name</label>
+                <input type="text" id="imageName" [value]="formState().imageName" (input)="onValueChange($event, 'imageName')" placeholder="Leave blank to use folder name"
+                    class="mt-1 block w-full px-3 py-2 bg-[rgb(var(--color-surface))] border border-[rgb(var(--color-border-muted))] rounded-md shadow-sm focus:outline-none focus:ring-[rgb(var(--color-accent-ring))] focus:border-[rgb(var(--color-accent-ring))] sm:text-sm">
+            </div>
+        }
+         <div class="flex mt-4">
+            <span class="w-1/3 text-[rgb(var(--color-text-subtle))]">Location:</span>
+            <span class.component.html="w-2/3 text-[rgb(var(--color-text-base))]">N/A (mocked)</span>
+        </div>
+        <div class="flex">
+            <span class="w-1/3 text-[rgb(var(--color-text-subtle))]">Size:</span>
+            <span class.component.html="w-2/3 text-[rgb(var(--color-text-base))]">N/A (mocked)</span>
+        </div>
+        <div class="my-2 h-px bg-[rgb(var(--color-border-base))]"></div>
+        <div class="flex">
+            <span class="w-1/3 text-[rgb(var(--color-text-subtle))]">Modified:</span>
+            <span class.component.html="w-2/3 text-[rgb(var(--color-text-base))]">{{ item().modified || 'Unknown' }}</span>
+        </div>
+
+    </div>
+
+    <!-- Footer -->
+    <div class="px-4 py-3 bg-[rgb(var(--color-surface-muted))] flex justify-end rounded-b-lg space-x-2">
+      @if (item().type === 'folder') {
+        <button (click)="close.emit()" class="px-4 py-2 bg-[rgb(var(--color-surface-hover))] text-[rgb(var(--color-text-base))] rounded-md hover:bg-[rgb(var(--color-border-base))] transition-colors font-semibold text-sm">
+          Cancel
+        </button>
+        <button (click)="onSave()" class="px-4 py-2 bg-[rgb(var(--color-accent-solid-bg))] text-[rgb(var(--color-text-inverted))] rounded-md hover:bg-[rgb(var(--color-accent-solid-bg-hover))] transition-colors font-semibold text-sm">
+          Save
+        </button>
+      } @else {
+        <button (click)="onSave()" class="px-4 py-2 bg-[rgb(var(--color-accent-solid-bg))] text-[rgb(var(--color-text-inverted))] rounded-md hover:bg-[rgb(var(--color-accent-solid-bg-hover))] transition-colors font-semibold text-sm">
+          Close
+        </button>
+      }
+    </div>
+
+  </div>
+</div>

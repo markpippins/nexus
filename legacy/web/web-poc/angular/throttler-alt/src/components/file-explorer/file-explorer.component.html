@@ -1,0 +1,383 @@
+<div 
+  class="flex flex-col h-full font-sans antialiased bg-[rgb(var(--color-surface))] overflow-hidden rounded-md ring-2 ring-inset"
+  [class.ring-[rgb(var(--color-accent-ring))]]="isHighlighted()"
+  [class.ring-transparent]="!isHighlighted()"
+  (click)="closeAllMenus()"
+  (mousedown)="activated.emit(id())"
+  (dragend)="onDragEnd($event)">
+
+  <!-- File Open Loading Spinner -->
+  @if (isLoading()) {
+    <div class="absolute inset-0 flex items-center justify-center bg-[rgb(var(--color-surface))]/50 z-30">
+      <svg class="animate-spin h-10 w-10 text-[rgb(var(--color-accent-text))]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+      </svg>
+    </div>
+  }
+
+  <!-- Main Area Wrapper -->
+  <div class="flex-1 flex flex-col overflow-hidden">
+    <!-- Top Pane: File Browser -->
+    <div #topPane
+      class="overflow-y-auto relative transition-colors duration-200 focus:outline-none flex-grow"
+      tabindex="0"
+      (contextmenu)="onContextMenu($event)"
+      (dragover)="onMainAreaDragOver($event)"
+      (dragleave)="isDragOverMainArea.set(false)"
+      (drop)="onMainAreaDrop($event)"
+      (mousedown)="onMainAreaMouseDown($event)">
+      
+      <!-- README Banner -->
+      @if (isReadmeLoading()) {
+        <div class="p-4 border-b border-[rgb(var(--color-border-base))] bg-[rgb(var(--color-surface-muted))]">
+          <div class="h-24 bg-[rgb(var(--color-surface))] rounded animate-pulse"></div>
+        </div>
+      } @else if (renderedReadmeHtml(); as readmeHtml) {
+        <div class="p-4 border-b border-[rgb(var(--color-border-base))] bg-[rgb(var(--color-surface-muted))]">
+            <div class="prose prose-sm max-w-none" [innerHTML]="readmeHtml"></div>
+        </div>
+      }
+
+      @switch (state().status) {
+        @case ('loading') {
+          <div class="absolute inset-0 flex items-center justify-center bg-[rgb(var(--color-surface))]/50 z-30">
+            <svg class="animate-spin h-10 w-10 text-[rgb(var(--color-accent-text))]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          </div>
+        }
+        @case ('error') {
+          <div class="col-span-full text-center py-12 text-[rgb(var(--color-danger-text))]">
+            <p>Error loading files: {{ state().error }}</p>
+          </div>
+        }
+        @case ('success') {
+          @if (displayMode() === 'grid') {
+            <div class="p-4"
+              [class.bg-[rgb(var(--color-accent-bg))]/50]="isDragOverMainArea()"
+              [class.ring-2]="isDragOverMainArea()"
+              [class.ring-inset]="isDragOverMainArea()"
+              [class.ring-[rgb(var(--color-accent-ring))]/50]="isDragOverMainArea()">
+              <div class="grid grid-cols-[repeat(auto-fill,minmax(8rem,1fr))] gap-4">
+                @for (item of filteredItems(); track item.name) {
+                  @if (item.type === 'folder') {
+                    <app-folder #selectableItem
+                      [item]="item"
+                      [displayName]="getDisplayName(item)"
+                      [iconUrl]="getIconUrl(item)"
+                      [hasFailedToLoadImage]="failedImageItems().has(item.name)"
+                      [isSelected]="selectedItems().has(item.name)"
+                      [isEditing]="editingItemName() === item.name"
+                      [attr.data-item-name]="item.name"
+                      (click)="onItemClick($event, item)"
+                      (dragstart)="onItemDragStart($event, item)"
+                      (itemContextMenu)="onContextMenu($event.event, $event.item)"
+                      (itemDrop)="onFolderDrop($event)"
+                      (internalItemDrop)="onInternalDropOnFolder($event)"
+                      (bookmarkDropped)="onBookmarkDropOnFolder($event)"
+                      (imageError)="onImageError($event)"
+                      (rename)="commitRename($event)"
+                      (cancelRename)="cancelRename()">
+                    </app-folder>
+                  } @else {
+                    <div #selectableItem
+                      data-is-selectable-item
+                      draggable="true"
+                      [attr.data-item-name]="item.name"
+                      (click)="onItemClick($event, item)" 
+                      (dragstart)="onItemDragStart($event, item)"
+                      (contextmenu)="onContextMenu($event, item)" 
+                      class="flex flex-col items-center p-2 rounded-md hover:bg-[rgb(var(--color-accent-bg))] cursor-pointer transition-colors duration-150 group"
+                      [class.bg-[rgb(var(--color-accent-bg-selected))]]="selectedItems().has(item.name)">
+                      
+                      @let thumbInfo = thumbnailCache().get(item.name);
+                      @if(isImageFile(item.name) && thumbInfo) {
+                        <div class="h-16 w-16 relative flex items-center justify-center pointer-events-none">
+                          @if (thumbInfo.isLoading) {
+                            <svg class="animate-spin h-6 w-6 text-[rgb(var(--color-text-subtle))]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                          } @else if (thumbInfo.url) {
+                            <img [src]="thumbInfo.url" [alt]="item.name" class="h-16 w-16 object-cover rounded-md pointer-events-none" />
+                          } @else {
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 text-[rgb(var(--color-text-subtle))] pointer-events-none" viewBox="0 0 20 20" fill="currentColor">
+                              <path fill-rule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4V5h12v10zM14 8a1 1 0 10-2 0v1a1 1 0 102 0V8zm-2 2a1 1 0 112 0v3a1 1 0 11-2 0v-3zM8 9a1 1 0 100-2 1 1 0 000 2zm-1 3a1 1 0 112 0v2a1 1 0 11-2 0v-2z" clip-rule="evenodd" />
+                            </svg>
+                          }
+                        </div>
+                      } @else {
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 text-[rgb(var(--color-text-subtle))] pointer-events-none" viewBox="0 0 20 20" fill="currentColor">
+                          <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 1h8a1 1 0 011 1v10a1 1 0 01-1 1H6a1 1 0 01-1-1V6a1 1 0 011-1z" clip-rule="evenodd" />
+                        </svg>
+                      }
+
+                      @if (editingItemName() === item.name) {
+                        <input type="text" [value]="item.name"
+                               autoFocusSelect
+                               (blur)="commitRename($event.target.value)"
+                               (keydown.enter)="$event.target.blur()"
+                               (keydown.escape)="cancelRename()"
+                               (mousedown)="$event.stopPropagation()"
+                               (click)="$event.stopPropagation()"
+                               class="mt-2 text-center text-xs w-full bg-[rgb(var(--color-surface))] text-[rgb(var(--color-text-base))] border border-[rgb(var(--color-accent-ring))] rounded p-0.5 focus:outline-none rename-input">
+                      } @else {
+                        <span class="mt-2 text-center text-xs break-all truncate w-full text-[rgb(var(--color-text-muted))] group-hover:text-[rgb(var(--color-accent-text))] pointer-events-none">{{ item.name }}</span>
+                      }
+                    </div>
+                  }
+                } @empty {
+                  <div class="col-span-full text-center py-12 text-[rgb(var(--color-text-subtle))]">
+                      @if (filterQuery()) {
+                        <p>No items match your filter.</p>
+                      } @else if (!isCurrentRootConnected()) {
+                        <svg xmlns="http://www.w3.org/2000/svg" class="mx-auto h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                        </svg>
+                        <p class="mt-2 font-semibold">Server Not Connected</p>
+                        <p>Connect to this server profile to view its contents.</p>
+                      } @else {
+                        <svg xmlns="http://www.w3.org/2000/svg" class="mx-auto h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+                        </svg>
+                        <p class="mt-2">This folder is empty.</p>
+                      }
+                  </div>
+                }
+              </div>
+            </div>
+            @if (isLassoing() && lassoRect(); as rect) {
+              <div class="absolute border border-[rgb(var(--color-accent-ring))] bg-[rgb(var(--color-accent-ring))]/20 z-20 pointer-events-none"
+                  [style.left.px]="rect.x"
+                  [style.top.px]="rect.y"
+                  [style.width.px]="rect.width"
+                  [style.height.px]="rect.height">
+              </div>
+            }
+          } @else {
+            <!-- List View -->
+            <table class="w-full text-sm text-left border-collapse">
+              <thead class="bg-[rgb(var(--color-surface-muted))] text-xs text-[rgb(var(--color-text-muted))] uppercase sticky top-0 z-10">
+                <tr>
+                  <th class="p-2 w-10 font-semibold"></th>
+                  <th (click)="onColumnHeaderClick('name')" class="p-2 font-semibold cursor-pointer hover:bg-[rgb(var(--color-surface-hover))]">
+                    <div class="flex items-center">
+                      <span>Name</span>
+                      @if (sortCriteria().key === 'name') {
+                        @if (sortCriteria().direction === 'asc') {
+                          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 ml-1 opacity-80" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z" clip-rule="evenodd" /></svg>
+                        } @else {
+                          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 ml-1 opacity-80" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
+                        }
+                      }
+                    </div>
+                  </th>
+                  <th (click)="onColumnHeaderClick('modified')" class="p-2 font-semibold cursor-pointer hover:bg-[rgb(var(--color-surface-hover))]">
+                    <div class="flex items-center">
+                      <span>Date Modified</span>
+                       @if (sortCriteria().key === 'modified') {
+                        @if (sortCriteria().direction === 'asc') {
+                          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 ml-1 opacity-80" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z" clip-rule="evenodd" /></svg>
+                        } @else {
+                          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 ml-1 opacity-80" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
+                        }
+                      }
+                    </div>
+                  </th>
+                  <th class="p-2 font-semibold">Type</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (item of filteredItems(); track item.name) {
+                  <tr (click)="onItemClick($event, item)" 
+                      (contextmenu)="onContextMenu($event, item)"
+                      draggable="true"
+                      (dragstart)="onItemDragStart($event, item)"
+                      (dragover)="onListItemDragOver($event, item)"
+                      (dragleave)="onListItemDragLeave($event)"
+                      (drop)="onListItemDrop($event, item)"
+                      class="border-b border-[rgb(var(--color-border-base))] hover:bg-[rgb(var(--color-surface-hover))] cursor-pointer group"
+                      [class.bg-[rgb(var(--color-accent-bg-selected))]]="selectedItems().has(item.name)"
+                      [class.bg-[rgb(var(--color-accent-bg-dragover))]]="dragOverListItemName() === item.name"
+                      data-is-selectable-item="true"
+                      [attr.data-item-name]="item.name">
+                    <td class="px-2 py-1.5">
+                      @if (item.type === 'folder') {
+                        <div class="relative h-5 w-5">
+                          <svg xmlns="http://www.w3.org/2000/svg" class="absolute inset-0 h-5 w-5 text-yellow-500" [class.opacity-50]="item.isServerRoot && !item.connected" viewBox="0 0 20 20" fill="currentColor">
+                            <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+                          </svg>
+                          @if(item.isServerRoot && !item.connected) {
+                            <div class="absolute -bottom-0.5 -right-0.5 bg-[rgb(var(--color-surface))] rounded-full">
+                              <svg xmlns="http://www.w3.org/2000/svg" class="h-2.5 w-2.5 text-red-500" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+                              </svg>
+                            </div>
+                          }
+                        </div>
+                      } @else {
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-[rgb(var(--color-text-subtle))]" viewBox="0 0 20 20" fill="currentColor">
+                          <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 1h8a1 1 0 011 1v10a1 1 0 01-1 1H6a1 1 0 01-1-1V6a1 1 0 011-1z" clip-rule="evenodd" />
+                        </svg>
+                      }
+                    </td>
+                    <td class="px-2 py-1.5 w-full">
+                      @if (editingItemName() === item.name) {
+                        <input type="text" [value]="getDisplayName(item)"
+                              autoFocusSelect
+                              (blur)="commitRename($event.target.value)"
+                              (keydown.enter)="$event.target.blur()"
+                              (keydown.escape)="cancelRename()"
+                              (mousedown)="$event.stopPropagation()"
+                              (click)="$event.stopPropagation()"
+                              class="w-full bg-[rgb(var(--color-surface))] text-[rgb(var(--color-text-base))] border border-[rgb(var(--color-accent-ring))] rounded p-0.5 focus:outline-none rename-input">
+                      } @else {
+                        <span class="truncate">{{ getDisplayName(item) }}</span>
+                      }
+                    </td>
+                    <td class="px-2 py-1.5 whitespace-nowrap">{{ item.modified | date:'short' }}</td>
+                    <td class="px-2 py-1.5 whitespace-nowrap">{{ item.type === 'folder' ? 'File folder' : (getFileExtension(item.name) ?? 'File') }}</td>
+                  </tr>
+                } @empty {
+                  <tr>
+                    <td colspan="4" class="text-center py-12 text-[rgb(var(--color-text-subtle))]">
+                       @if (filterQuery()) {
+                        <p>No items match your filter.</p>
+                      } @else if (!isCurrentRootConnected()) {
+                         <svg xmlns="http://www.w3.org/2000/svg" class="mx-auto h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                        </svg>
+                        <p class="mt-2 font-semibold">Server Not Connected</p>
+                        <p>Connect to this server profile to view its contents.</p>
+                      } @else {
+                        <svg xmlns="http://www.w3.org/2000/svg" class="mx-auto h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+                        </svg>
+                        <p class="mt-2">This folder is empty.</p>
+                      }
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          }
+        }
+      }
+    </div>
+  </div>
+
+  <!-- Context Menu -->
+  @if (contextMenu(); as cm) {
+    <div 
+      class="fixed w-52 bg-[rgb(var(--color-surface-dialog))] border border-[rgb(var(--color-border-base))] rounded-md shadow-lg py-1 text-sm text-[rgb(var(--color-text-muted))] z-50"
+      [style.left.px]="cm.x"
+      [style.top.px]="cm.y"
+      (click)="$event.stopPropagation()">
+      @if (cm.item) {
+        <div class="px-3 py-1.5 hover:bg-[rgb(var(--color-surface-hover))] cursor-pointer" (click)="openItem(cm.item)">Open</div>
+        <div class="my-1 h-px bg-[rgb(var(--color-border-base))]"></div>
+      }
+      <div class="px-3 py-1.5 hover:bg-[rgb(var(--color-surface-hover))] cursor-pointer" [class.text-[rgb(var(--color-text-disabled))]]="!clipboardService.clipboard()" [class.cursor-not-allowed]="!clipboardService.clipboard()" (click)="onPaste()">Paste</div>
+      <div class="my-1 h-px bg-[rgb(var(--color-border-base))]"></div>
+      <div class="px-3 py-1.5 hover:bg-[rgb(var(--color-surface-hover))] cursor-pointer" [class.text-[rgb(var(--color-text-disabled))]]="selectedItems().size === 0" [class.cursor-not-allowed]="selectedItems().size === 0" (click)="onCut()">Cut</div>
+      <div class="px-3 py-1.5 hover:bg-[rgb(var(--color-surface-hover))] cursor-pointer" [class.text-[rgb(var(--color-text-disabled))]]="selectedItems().size === 0" [class.cursor-not-allowed]="selectedItems().size === 0" (click)="onCopy()">Copy</div>
+      <div class="px-3 py-1.5 hover:bg-[rgb(var(--color-surface-hover))] cursor-pointer relative" (mouseenter)="openDestinationSubMenu('copy', $event)" (mouseleave)="onDestinationSubMenuLeave()">Copy to...</div>
+      <div class="px-3 py-1.5 hover:bg-[rgb(var(--color-surface-hover))] cursor-pointer relative" (mouseenter)="openDestinationSubMenu('move', $event)" (mouseleave)="onDestinationSubMenuLeave()">Move to...</div>
+      <div class="my-1 h-px bg-[rgb(var(--color-border-base))]"></div>
+      <div class="px-3 py-1.5 hover:bg-[rgb(var(--color-danger-bg-hover))] text-[rgb(var(--color-danger-text))]" [class.text-opacity-50]="selectedItems().size === 0" [class.cursor-not-allowed]="selectedItems().size === 0" (click)="onDelete()">Delete</div>
+      <div class="px-3 py-1.5 hover:bg-[rgb(var(--color-surface-hover))] cursor-pointer" [class.text-[rgb(var(--color-text-disabled))]]="selectedItems().size !== 1" [class.cursor-not-allowed]="selectedItems().size !== 1" (click)="onRename()">Rename</div>
+       @if (cm.item && cm.item.type === 'folder' && !cm.item.isMagnet) {
+        <div class="px-3 py-1.5 hover:bg-[rgb(var(--color-surface-hover))] cursor-pointer" (click)="onMagnetizeFromContextMenu()">Magnetize</div>
+      }
+      <div class="my-1 h-px bg-[rgb(var(--color-border-base))]"></div>
+      <div class="px-3 py-1.5 hover:bg-[rgb(var(--color-surface-hover))] cursor-pointer" [class.text-[rgb(var(--color-text-disabled))]]="selectedItems().size !== 1" [class.cursor-not-allowed]="selectedItems().size !== 1" (click)="onPropertiesFromContextMenu()">Properties</div>
+    </div>
+  }
+  
+  @if (destinationSubMenu(); as dsm) {
+    <div class="fixed w-48 bg-[rgb(var(--color-surface-dialog))] border border-[rgb(var(--color-border-base))] rounded-md shadow-lg py-1 text-sm text-[rgb(var(--color-text-muted))] z-50"
+         [style.left.px]="dsm.x" [style.top.px]="dsm.y" (mouseenter)="onDestinationSubMenuEnter()" (mouseleave)="onDestinationSubMenuLeave()">
+        @if (folderTree(); as tree) {
+          @for (child of tree.children; track child.name) {
+            @if (child.type === 'folder') {
+              <app-destination-node 
+                [node]="child" 
+                [path]="[child.name]" 
+                [currentSourcePath]="path()"
+                (destinationSelected)="executeCopyToMoveTo(dsm.operation, $event)">
+              </app-destination-node>
+            }
+          }
+        }
+    </div>
+  }
+
+  @if (isPropertiesDialogOpen() && propertiesItem(); as item) {
+    <app-properties-dialog 
+      [item]="item" 
+      [parentPath]="path()"
+      [imageService]="imageService()"
+      (close)="closePropertiesDialog()"
+      (save)="onPropertiesSaved($event)">
+    </app-properties-dialog>
+  }
+  
+  @if (isInputDialogOpen()) {
+    <app-input-dialog 
+      [title]="inputDialogConfig().title"
+      [message]="inputDialogConfig().message"
+      [initialValue]="inputDialogConfig().initialValue"
+      (submitValue)="onInputDialogSubmit($event)"
+      (close)="closeInputDialog()">
+    </app-input-dialog>
+  }
+
+  @if (isConfirmDialogOpen()) {
+    <app-confirm-dialog 
+      [title]="confirmDialogConfig().title"
+      [message]="confirmDialogConfig().message"
+      [confirmButtonText]="confirmDialogConfig().confirmText"
+      (confirm)="onConfirmDialogConfirm()"
+      (close)="closeConfirmDialog()">
+    </app-confirm-dialog>
+  }
+
+  <!-- Preview Dialog -->
+  @if(previewItem(); as item) {
+    <div class="fixed inset-0 bg-black/80 z-40 flex items-center justify-center p-8" (click)="closePreview()">
+      <div class="max-w-4xl max-h-full bg-[rgb(var(--color-surface-dialog))] rounded-lg shadow-xl flex flex-col" (click)="$event.stopPropagation()">
+        <div class="p-2 border-b border-[rgb(var(--color-border-base))] flex justify-between items-center">
+          <h3 class="font-semibold text-[rgb(var(--color-text-base))] truncate">{{ item.name }}</h3>
+          <button (click)="closePreview()" class="p-1 rounded-full text-[rgb(var(--color-text-muted))] hover:bg-[rgb(var(--color-surface-hover))]">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div class="p-4 flex-grow overflow-auto">
+          @if (isPreviewLoading()) {
+            <div class="h-full flex items-center justify-center">
+              <svg class="animate-spin h-8 w-8 text-[rgb(var(--color-accent-text))]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+            </div>
+          } @else if(isImageFile(item.name) && item.content) {
+            <img [src]="item.content" [alt]="item.name" class="max-w-full max-h-full object-contain mx-auto">
+          } @else {
+            <pre class="whitespace-pre-wrap text-[rgb(var(--color-text-muted))]">{{ item.content ?? 'No content to display.' }}</pre>
+          }
+        </div>
+      </div>
+    </div>
+  }
+  
+  @if (conflictState(); as conflict) {
+    <app-conflict-dialog 
+      [itemName]="conflict.conflictingItem.name"
+      [itemType]="conflict.conflictingItem.type"
+      (resolve)="conflict.callback($event)"
+      (close)="conflict.callback('cancel')">
+    </app-conflict-dialog>
+  }
+</div>

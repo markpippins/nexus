@@ -2234,7 +2234,18 @@ export function registerToolHandlers(
       await createWorkRequest({
         id: event.wrId,
         dco_json: JSON.stringify(args),
-        context: { intent: args.intent, constraints: args.constraints, opTrace: args.opTrace, normalization_pending: args.normalization_pending },
+        context: {
+          intent: args.intent,
+          constraints: args.constraints,
+          opTrace: args.opTrace,
+          normalization_pending: args.normalization_pending,
+          // A WR emitted for a specific plan must be findable by it
+          // (listWorkRequests({planId})); createWorkRequest otherwise falls
+          // back to ctx.plan_id = wr.id.
+          plan_id: args.intent?.inputs?.plan_id
+            ? String(args.intent.inputs.plan_id)
+            : undefined,
+        },
         status: "draft",
         title: args.intent?.objective || "",
       });

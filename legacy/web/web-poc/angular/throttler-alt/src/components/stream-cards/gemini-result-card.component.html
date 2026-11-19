@@ -1,0 +1,32 @@
+<div 
+  class="w-40 h-40 flex flex-col bg-gradient-to-br from-blue-50 to-purple-50 dark:from-gray-800 dark:to-indigo-900/50 border border-[rgb(var(--color-border-base))] rounded-lg shadow-md p-3 group relative hover:shadow-xl transition-shadow duration-300 overflow-hidden"
+  [title]="result().text">
+  <div class="flex items-center space-x-2 flex-shrink-0">
+    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-indigo-500" viewBox="0 0 20 20" fill="currentColor">
+      <path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd" />
+    </svg>
+    <h3 class="font-semibold text-sm text-[rgb(var(--color-text-base))]">Gemini</h3>
+  </div>
+  <div class="mt-2 text-xs text-[rgb(var(--color-text-muted))] flex-grow">
+    <p>{{ truncatedText() }}</p>
+  </div>
+  <button 
+    (click)="onToggleBookmark()" 
+    [title]="isBookmarked() ? 'Remove bookmark' : 'Save to current folder'" 
+    class="absolute top-1 right-1 p-1.5 rounded-full transition-all"
+    [class.opacity-100]="isBookmarked()"
+    [class.opacity-0]="!isBookmarked()"
+    [class.group-hover:opacity-100]="!isBookmarked()"
+    [class.bg-blue-100]="isBookmarked()"
+    [class.dark:bg-blue-900/50]="isBookmarked()"
+    [class.text-blue-600]="isBookmarked()"
+    [class.dark:text-blue-400]="isBookmarked()"
+    [class.bg-black/10]="!isBookmarked()"
+    [class.dark:bg-white/10]="!isBookmarked()"
+    [class.text-[rgb(var(--color-text-muted))]]="!isBookmarked()"
+    [class.hover:bg-[rgb(var(--color-surface-hover))]]="!isBookmarked()">
+    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+      <path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v12l-5-3-5 3V4z" />
+    </svg>
+  </button>
+</div>
