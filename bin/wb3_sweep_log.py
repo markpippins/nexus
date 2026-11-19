@@ -124,7 +124,14 @@ def load_waivers(path: Path) -> dict[str, str]:
     if ruling != RULING_REF:
         raise ValueError(f"waiver registry ruling mismatch: {ruling!r} != {RULING_REF!r}")
     cohort = data.get("cohorts", {}).get(COHORT)
-    if not cohort or cohort.get("ruling_ref") != RULING_REF:
+    if not cohort:
+        # No ruled cohort for this lane: nothing is waived. That is a REPORTED
+        # gap (S3), never an implementer's decision — the waiver surface grows
+        # only by an explicit architect ruling, and the guard that pins it to
+        # the two ruled rows (bin/tests/test_check_transition_attestation.py)
+        # is the contract this script must not try to route around.
+        return {}
+    if cohort.get("ruling_ref") != RULING_REF:
         raise ValueError(f"missing/invalid waiver cohort {COHORT}")
     rows = [w for w in data["waivers"] if w.get("cohort") == COHORT]
     if len(rows) != cohort.get("count") or len(rows) != BASELINES["s3"]["event_absent_expired"]:
@@ -197,16 +204,18 @@ def build_artifact(dsn: str, waivers_path: Path) -> dict[str, Any]:
         conn.close()
 
     rows: list[dict[str, Any]] = []
+    unwaived_ids: list[str] = []
     for src in spine:
         status = src["status"]
         has_event = int(src["expiry_events"]) > 0
         waiver_ref = waiver_map.get(src["ticket_id"])
         disposition = derive_disposition(status, src["expires_at"], has_event, swept_at)
         if disposition == "expired_without_event_waived" and not waiver_ref:
-            raise ValueError(
-                f"Unwaived event-absent expiry (S3): ticket {src['ticket_id']} has no "
-                "expiry_detection event and no architect waiver_ref"
-            )
+            # No ruled waiver: the row has no vocabulary-bound disposition.
+            # Report it (null disposition + named ticket) so S2/S3 fail loudly
+            # instead of inventing a waiver the architect never granted.
+            unwaived_ids.append(src["ticket_id"])
+            disposition = None
         stamped_waiver = waiver_ref if disposition == "expired_without_event_waived" else None
         rows.append(
             {
@@ -247,7 +256,7 @@ def build_artifact(dsn: str, waivers_path: Path) -> dict[str, Any]:
     disp_by_status: dict[str, dict[str, int]] = defaultdict(dict)
     for status in sorted(status_census):
         by_disp = Counter(r["sweep_disposition"] for r in rows if r["status"] == status)
-        disp_by_status[status] = dict(sorted(by_disp.items()))
+        disp_by_status[status] = dict(sorted(by_disp.items(), key=lambda kv: str(kv[0])))
     open_rows = [r for r in rows if r["is_open_generation"]]
     open_past = [r for r in open_rows if r["disposition_required"]]
 
@@ -350,16 +359,30 @@ def build_artifact(dsn: str, waivers_path: Path) -> dict[str, Any]:
                 "pass": bool(rows) and duplicate_keys == 0 and unlogged == 0 and extra == 0
             },
             "S2_disposition_vocabulary": {
-                "pass": all(r["sweep_disposition"] in DISPOSITIONS for r in rows),
-                "nulls": 0,
-                "out_of_vocabulary": 0,
+                "pass": (
+                    sum(1 for r in rows if r["sweep_disposition"] is None) == 0
+                    and all(
+                        r["sweep_disposition"] in DISPOSITIONS
+                        for r in rows
+                        if r["sweep_disposition"] is not None
+                    )
+                ),
+                "nulls": sum(1 for r in rows if r["sweep_disposition"] is None),
+                "null_ticket_ids": sorted(unwaived_ids),
+                "out_of_vocabulary": sum(
+                    1
+                    for r in rows
+                    if r["sweep_disposition"] is not None
+                    and r["sweep_disposition"] not in DISPOSITIONS
+                ),
             },
             "S3_waiver_refs": {
-                "pass": all(
-                    r["waiver_ref"] is not None
-                    for r in rows
-                    if r["sweep_disposition"] == "expired_without_event_waived"
-                )
+                "pass": not unwaived_ids,
+                "unwaived": len(unwaived_ids),
+                "note": (
+                    "expired rows with no expiry_detection event need an architect-ruled "
+                    "waiver_ref; without a ruled cohort they are reported here and S3 fails"
+                ),
             },
             "S4_reason_provenance": {
                 "pass": all(

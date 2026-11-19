@@ -8,9 +8,9 @@
   "database": "nexus",
   "source_reference": "vision.tickets + kernel.transition_event",
   "verification_owner": "planner",
-  "swept_at": "2026-11-19T02:03:33.077998+00:00",
-  "generated_at": "2026-11-19T02:03:33.100671+00:00",
-  "git_head": "f8c07739f19816903865b9d7f138a633ec3e8f51",
+  "swept_at": "2026-11-19T02:32:26.795214+00:00",
+  "generated_at": "2026-11-19T02:32:26.819627+00:00",
+  "git_head": "0e8ae62ad3b7d1e03f9961154b2d35df709b809c",
   "git_branch": "wb3-sweep-8261675",
   "derivation": {
     "generation": "row_number() OVER (PARTITION BY plan_id, role ORDER BY created_at, id) \u2014 the D1 \u00a77.2 spine, shared with W-B6",
@@ -61,7 +61,7 @@
   },
   "disposition_census": {
     "expired_with_event": 49,
-    "expired_without_event_waived": 89,
+    "expired_without_event_waived": 0,
     "open_past_expiry_disposed": 0,
     "no_disposition_required": 709
   },
@@ -76,8 +76,8 @@
       "no_disposition_required": 178
     },
     "expired": {
-      "expired_with_event": 49,
-      "expired_without_event_waived": 89
+      "null": 89,
+      "expired_with_event": 49
     },
     "failed": {
       "no_disposition_required": 91
@@ -95,7 +95,7 @@
     "rows": 4,
     "plans": 2,
     "disposition_required": 0,
-    "event_absent_expired": 0,
+    "event_absent_expired": -89,
     "reason": {
       "ticket": 1,
       "expiry_event": 0,
@@ -108,13 +108,13 @@
     "ruling_title": "RULING: waive pre-fix terminal gaps; never synthesize historical transition events",
     "surface": "bin/transition-attestation-waivers.json",
     "cohort": "wb3_pre_fix_expired_generation",
-    "rows": 89,
+    "rows": 0,
     "scope": "expired generations whose expires_at lies in 2026-06-18..2026-07-26, before the emission fix (PR #560); no row created after the fix is admitted, and no transition event was synthesized",
     "unwaived": 0
   },
   "live_open_generations": 1,
   "live_open_generations_detail": {
-    "swept_at": "2026-11-19T02:03:33.077998+00:00",
+    "swept_at": "2026-11-19T02:32:26.795214+00:00",
     "live_open_generations": 1,
     "live_open_generations_past_expiry": 0,
     "live_open_generation_rows": [
@@ -133,12 +133,105 @@
       "pass": true
     },
     "S2_disposition_vocabulary": {
-      "pass": true,
-      "nulls": 0,
+      "pass": false,
+      "nulls": 89,
+      "null_ticket_ids": [
+        "ticket-0125-builder-1781678234",
+        "ticket-0126-builder-1781678234",
+        "ticket-0127-builder-1781678234",
+        "ticket-0128-builder-1781678234",
+        "ticket-0139-reviewer-1781947306",
+        "ticket-0142-builder-25f01e73-7565-47f8-9a40-b609a0b39b8e",
+        "ticket-0154-reviewer-1782033686",
+        "ticket-0155-reviewer-1782033724",
+        "ticket-0156-builder-c950aa11-ef4d-471c-b530-6976c1974254",
+        "ticket-0157-builder-ceddeb7c-085c-437c-a258-d2cd0be3ab42",
+        "ticket-0158-builder-feacf743-48db-49b5-ad6d-5295c327c28d",
+        "ticket-0161-builder-f21527b4-bf69-42af-b8b3-ee6f6e1519b2",
+        "ticket-0162-builder-2cc0ec70-9454-4fa9-8779-c424994bbd15",
+        "ticket-0163-builder-f6f91438-f349-4319-9764-d725afd43c7e",
+        "ticket-0164-reviewer-1782539101",
+        "ticket-0166-builder-c5bd45e4-a0f7-4f0f-af52-51dd6c01634a",
+        "ticket-0173-reviewer-1782541118",
+        "ticket-0175-builder-5677297f-f7ff-43b8-b9f1-cf83babfc1c9",
+        "ticket-0177-builder-4e03ccba-663c-42cb-a7b5-e91650cd268b",
+        "ticket-0178-builder-6505ba28-7f73-49bc-8f74-26df5bc2ef0e",
+        "ticket-0179-builder-4667dea6-4d15-41c7-9959-faf692e12e37",
+        "ticket-0180-builder-70d4c16f-9171-47b5-bfba-909a61d5e7a9",
+        "ticket-0182-builder-a0844af0-ac28-4c16-8513-18b18b110080",
+        "ticket-1000-builder-1782167750",
+        "ticket-1002-builder-1782171749",
+        "ticket-1004-builder-a99d2838-2957-4fe2-a7df-c618ff799a45",
+        "ticket-1005-builder-380029ab-47cc-4595-ae8f-df50842b40bd",
+        "ticket-1009-builder-c2953f70-e568-4995-a51b-5b777574fd7e",
+        "ticket-1017-reviewer-1782467582",
+        "ticket-1022-builder-23123645-b80a-4b17-bba5-18c0069e0e69",
+        "ticket-1023-builder-1a980eea-f860-4699-942f-65b106b21e72",
+        "ticket-1028-builder-47544754-3417-419a-b9ae-c4c862d688ff",
+        "ticket-1029-builder-fd7ed22f-0a0e-4f7c-993b-d7c4372fcf45",
+        "ticket-1031-builder-f2adc16e-f831-42ef-b45b-89cdd900d906",
+        "ticket-1032-builder-f94d5dd5-c3c0-4c0f-a043-5d906f8b79bf",
+        "ticket-1033-builder-70ea7571-3e31-48f0-81a4-0431f51b7ea4",
+        "ticket-1034-builder-6b179a4a-2d78-439d-8f57-4c2f9abf5295",
+        "ticket-1035-builder-40462c9a-0bb1-49a5-909d-c881ae2d2992",
+        "ticket-1036-builder-64a60139-da5a-4cce-bc1e-b6e6f1fc03c4",
+        "ticket-1040-builder-2b47a5e4-9851-4ab4-b7ea-45a34caf4f99",
+        "ticket-1059-builder-1783073096",
+        "ticket-1060-builder-ae0a9141-c736-47d4-8b8a-04971a8660f4",
+        "ticket-1062-builder-0d8d46c4-91ab-4107-b095-fffcffd76d13",
+        "ticket-1063-builder-453d7f2e-5799-4324-91d8-2f517912f2bc",
+        "ticket-1064-builder-fa983b27-9d0d-4fca-abc2-a663e6d7fe9c",
+        "ticket-1065-builder-786cb9d7-0dd9-4a44-ab83-cf3ed122c5ad",
+        "ticket-1066-builder-09e85cea-207a-495f-912e-6725de665218",
+        "ticket-1067-builder-1783109334",
+        "ticket-1067-builder-72e9586a-0583-41f8-b2e5-860280646fb2",
+        "ticket-1068-builder-1783110838",
+        "ticket-1069-builder-bb4bc6a3-e830-482b-89fd-b2b27a5a3ae8",
+        "ticket-1069-reviewer-1783112199",
+        "ticket-1070-builder-1783103119",
+        "ticket-1070-builder-1ee942f9-6f85-4304-9b79-8d64f0a77331",
+        "ticket-1071-builder-1783103171",
+        "ticket-1072-builder-1783103222",
+        "ticket-1073-builder-1783103274",
+        "ticket-1074-builder-1783103334",
+        "ticket-1075-builder-1783104413",
+        "ticket-1076-builder-1783104465",
+        "ticket-1077-builder-1783104775",
+        "ticket-1078-builder-1783105979",
+        "ticket-1079-builder-1783106031",
+        "ticket-1080-builder-1783106394",
+        "ticket-1081-builder-1783107714",
+        "ticket-1082-builder-1783109385",
+        "ticket-1083-builder-1783109438",
+        "ticket-1084-builder-1783110890",
+        "ticket-1085-builder-257b33b3-dc1c-4dc4-a804-0daeb9effc7e",
+        "ticket-1085-reviewer-1783112199",
+        "ticket-1086-reviewer-1783112816",
+        "ticket-1087-builder-b6628307-0148-4d65-b02a-eab3f467deca",
+        "ticket-1258-builder-e6a7713c-cf02-4223-b90d-4cbe18f6ddeb",
+        "ticket-1259-builder-75a2fc7f-d0a8-4c4e-8aee-347971a4c54c",
+        "ticket-1260-builder-d75179ce-aed9-4f9b-8929-bec0f7bed4e9",
+        "ticket-1261-builder-90c26b2e-21bf-44ee-a1bb-c1c3dc02cde3",
+        "ticket-1262-builder-18ac66c7-94e3-4af6-b483-b0f3545655ab",
+        "ticket-1263-builder-85d811e8-ea87-447c-ac25-ee0e379c7684",
+        "ticket-1264-builder-bb77d5f7-d975-4a33-af1b-e633542d4c7c",
+        "ticket-1265-builder-3ef62dd5-893d-402f-b368-1de26485cb67",
+        "ticket-1266-builder-c082c140-2542-4aa6-8594-a4521aac34ae",
+        "ticket-1267-builder-12c30e5b-f2ff-49e4-a281-4aef3e3e0686",
+        "ticket-1268-builder-a2426b1c-21de-4e65-bd8a-34ead30bd81f",
+        "ticket-1269-builder-a836903e-c9d8-4f60-b2bc-4eaf5d5b9685",
+        "ticket-1270-builder-3632e996-abfe-4967-a546-c08441a69c57",
+        "ticket-1271-builder-41929327-a9c7-4312-b436-ceb962f7596e",
+        "ticket-1272-builder-680c497a-e483-4fdb-9022-10fcd3d08134",
+        "ticket-1273-builder-bb6b5f94-b18b-44f9-aa7c-1698058331db",
+        "ticket-1274-builder-cb35c3be-34b9-4ef9-8b18-3454c00c6cf2"
+      ],
       "out_of_vocabulary": 0
     },
     "S3_waiver_refs": {
-      "pass": true
+      "pass": false,
+      "unwaived": 89,
+      "note": "expired rows with no expiry_detection event need an architect-ruled waiver_ref; without a ruled cohort they are reported here and S3 fails"
     },
     "S4_reason_provenance": {
       "pass": true
@@ -734,9 +827,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "0126",
@@ -962,9 +1055,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "0127",
@@ -1171,9 +1264,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "0128",
@@ -1285,9 +1378,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "0129",
@@ -1760,9 +1853,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "0140",
@@ -1855,9 +1948,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "0143",
@@ -2368,9 +2461,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "0155",
@@ -2406,9 +2499,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "0156",
@@ -2444,9 +2537,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "0157",
@@ -2482,9 +2575,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "0158",
@@ -2520,9 +2613,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "0159",
@@ -2881,9 +2974,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "0162",
@@ -2995,9 +3088,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "0163",
@@ -3109,9 +3202,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "0164",
@@ -3242,9 +3335,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "0165",
@@ -3489,9 +3582,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "0167",
@@ -4002,9 +4095,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "0174",
@@ -4059,9 +4152,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "0177",
@@ -4078,9 +4171,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "0178",
@@ -4097,9 +4190,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "0179",
@@ -4116,9 +4209,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "0180",
@@ -4135,9 +4228,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "0181",
@@ -4230,9 +4323,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "0183",
@@ -4306,9 +4399,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1001",
@@ -4420,9 +4513,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1002",
@@ -4553,9 +4646,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1005",
@@ -4572,9 +4665,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1005",
@@ -4705,9 +4798,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1009",
@@ -5104,9 +5197,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1019",
@@ -5142,9 +5235,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1023",
@@ -5161,9 +5254,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1028",
@@ -5180,9 +5273,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1029",
@@ -5199,9 +5292,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1030",
@@ -5275,9 +5368,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1032",
@@ -5313,9 +5406,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1033",
@@ -5351,9 +5444,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1034",
@@ -5389,9 +5482,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1035",
@@ -5408,9 +5501,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1036",
@@ -5427,9 +5520,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1040",
@@ -5446,9 +5539,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1041",
@@ -6187,9 +6280,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1059",
@@ -6244,9 +6337,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1061",
@@ -6339,9 +6432,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1063",
@@ -6415,9 +6508,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1064",
@@ -6491,9 +6584,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1065",
@@ -6567,9 +6660,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1066",
@@ -6643,9 +6736,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1067",
@@ -6795,9 +6888,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1067",
@@ -6814,9 +6907,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1067",
@@ -7042,9 +7135,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1068",
@@ -7251,9 +7344,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1069",
@@ -7308,9 +7401,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1070",
@@ -7422,9 +7515,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1070",
@@ -7441,9 +7534,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1070",
@@ -7593,9 +7686,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1071",
@@ -7726,9 +7819,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1072",
@@ -7840,9 +7933,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1073",
@@ -7973,9 +8066,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1074",
@@ -8106,9 +8199,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1075",
@@ -8239,9 +8332,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1076",
@@ -8372,9 +8465,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1077",
@@ -8505,9 +8598,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1078",
@@ -8638,9 +8731,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1079",
@@ -8771,9 +8864,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1080",
@@ -8885,9 +8978,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1081",
@@ -8980,9 +9073,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1082",
@@ -9094,9 +9187,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1083",
@@ -9189,9 +9282,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1084",
@@ -9284,9 +9377,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1085",
@@ -9322,9 +9415,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1086",
@@ -9417,9 +9510,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1087",
@@ -9455,9 +9548,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1088",
@@ -12704,9 +12797,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1259",
@@ -12723,9 +12816,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1260",
@@ -12742,9 +12835,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1261",
@@ -12761,9 +12854,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1262",
@@ -12780,9 +12873,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1263",
@@ -12799,9 +12892,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1264",
@@ -12818,9 +12911,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1265",
@@ -12837,9 +12930,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1266",
@@ -12856,9 +12949,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1267",
@@ -12875,9 +12968,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1268",
@@ -12894,9 +12987,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1269",
@@ -12913,9 +13006,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1270",
@@ -12932,9 +13025,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1271",
@@ -12951,9 +13044,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1272",
@@ -12970,9 +13063,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1273",
@@ -12989,9 +13082,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1274",
@@ -13008,9 +13101,9 @@
       "closure_reason": null,
       "reason_source": "status_fallback",
       "closure_reason_effective": "status:expired",
-      "sweep_disposition": "expired_without_event_waived",
+      "sweep_disposition": null,
       "disposition_required": true,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": null
     },
     {
       "plan_id": "1274",

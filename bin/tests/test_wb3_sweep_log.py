@@ -70,6 +70,10 @@ def test_open_generation_statuses() -> None:
 
 
 def test_waiver_registry_cohort_shape() -> None:
+    # The shipped waiver surface is pinned to the two architect-ruled rows
+    # (bin/tests/test_check_transition_attestation.py enforces that), so W-B3
+    # has NO ruled cohort to lean on. load_waivers must report that as empty
+    # rather than inventing 89 waivers the architect never granted: the gap
+    # belongs in S3, which then fails loudly.
     waivers = wb3.load_waivers(wb3.DEFAULT_WAIVERS)
-    assert len(waivers) == 89
-    assert set(waivers.values()) == {wb3.RULING_REF}
+    assert waivers == {}
