@@ -135,3 +135,72 @@ class TestEventCriteria:
         r = Runner()
         assert hasattr(r, "_matching_events")
         assert hasattr(r, "_stamp_consumed")
+
+
+# ── eligibility gate (1285 remediation) ───────────────────────────────
+
+
+class _FakeCursor:
+    def __init__(self, count, sink):
+        self._count = count
+        self._sink = sink
+
+    def execute(self, sql, params=None):
+        self._sink["sql"] = " ".join(sql.split())
+        self._sink["params"] = params
+
+    def fetchone(self):
+        return (self._count,)
+
+
+class _FakeConn:
+    """Records the queries the eligibility gate issues."""
+
+    def __init__(self, count):
+        self._count = count
+        self.queries = []
+
+    def cursor(self):
+        sink = {}
+        self.queries.append(sink)
+        return _FakeCursor(self._count, sink)
+
+
+class TestEligibilityGate:
+    def test_placeholder_task_slug_never_launches(self):
+        # No connection attached: a DB touch would raise into the fail-open
+        # branch and return True. False proves the placeholder guard runs
+        # first — this is the `test-task` row 164/165 runaway.
+        runner = Runner()
+        for slug in ("test-task", "TEST-TASK", " test-task ", "placeholder"):
+            assert runner._has_eligible_work("engineer-ii", {"task_slug": slug}) is False
+            assert runner._has_eligible_work("devops", {"task_slug": slug}) is False
+
+    def test_non_placeholder_rows_skip_the_guard(self):
+        # A real task_slug must reach the role checks, not be swallowed by
+        # the placeholder guard (fail-open here because no DB is attached).
+        runner = Runner()
+        assert runner._has_eligible_work("engineer-ii", {"task_slug": "wire-up-x"}) is True
+        assert runner._has_eligible_work("devops", {"task_slug": "containerize-srv"}) is True
+
+    def test_reviewer_without_open_tickets_is_ineligible(self):
+        runner = Runner()
+        runner._conn = _FakeConn(0)
+        assert runner._has_eligible_work("reviewer", {}) is False
+        assert "vision.tickets" in runner._conn.queries[0]["sql"]
+
+    def test_reviewer_with_open_tickets_is_eligible(self):
+        runner = Runner()
+        runner._conn = _FakeConn(1)
+        assert runner._has_eligible_work("reviewer", {}) is True
+
+    def test_builder_query_unchanged(self):
+        runner = Runner()
+        runner._conn = _FakeConn(2)
+        assert runner._has_eligible_work("builder", {}) is True
+        assert "execution.requests" in runner._conn.queries[0]["sql"]
+
+    def test_unknown_role_still_falls_back_to_eligible(self):
+        # No connection attached: unclassified roles must not touch the DB.
+        runner = Runner()
+        assert runner._has_eligible_work("critic", {}) is True
