@@ -20,8 +20,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import psycopg2
-import psycopg2.extras
+# psycopg2 is imported lazily inside build_artifact(). The bin/tests guards job
+# deliberately does not install it (a guard that touches a database imports the
+# driver behind a guard and skips), so a module-level import made this script's
+# pure helpers unimportable there and failed the whole guard suite.
 
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_OUT = REPO / "docs/promotion-flow/evidence/wb3-sweep-log-8261675.json"
@@ -189,6 +191,9 @@ def _git(*args: str) -> str:
 
 
 def build_artifact(dsn: str, waivers_path: Path) -> dict[str, Any]:
+    import psycopg2
+    import psycopg2.extras
+
     waiver_map = load_waivers(waivers_path)
     conn = psycopg2.connect(dsn)
     try:
