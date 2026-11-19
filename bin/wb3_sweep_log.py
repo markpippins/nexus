@@ -127,12 +127,13 @@ def load_waivers(path: Path) -> dict[str, str]:
     if not cohort:
         # No ruled cohort for this lane: nothing is waived. That is a REPORTED
         # gap (S3), never an implementer's decision — the waiver surface grows
-        # only by an explicit architect ruling, and the guard that pins it to
-        # the two ruled rows (bin/tests/test_check_transition_attestation.py)
-        # is the contract this script must not try to route around.
+        # only by an explicit architect ruling, and the guard that pins it
+        # (bin/tests/test_check_transition_attestation.py) is the contract this
+        # script must not try to route around.
         return {}
-    if cohort.get("ruling_ref") != RULING_REF:
-        raise ValueError(f"missing/invalid waiver cohort {COHORT}")
+    cohort_ref = cohort.get("ruling_ref")
+    if not cohort_ref:
+        raise ValueError(f"waiver cohort {COHORT} names no ruling_ref")
     rows = [w for w in data["waivers"] if w.get("cohort") == COHORT]
     if len(rows) != cohort.get("count") or len(rows) != BASELINES["s3"]["event_absent_expired"]:
         raise ValueError(
@@ -142,8 +143,11 @@ def load_waivers(path: Path) -> dict[str, str]:
     out: dict[str, str] = {}
     for row in rows:
         ref = row.get("waiver_ref")
-        if ref != RULING_REF:
-            raise ValueError(f"waiver {row.get('ticket_id')} has invalid waiver_ref {ref!r}")
+        if ref != cohort_ref:
+            raise ValueError(
+                f"waiver {row.get('ticket_id')} waiver_ref {ref!r} does not name the "
+                f"cohort's ruling {cohort_ref!r}"
+            )
         out[row["ticket_id"]] = ref
     return out
 

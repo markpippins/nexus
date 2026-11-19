@@ -7,8 +7,8 @@
   "session_id": null,
   "grant_ref": "d77594c2-e266-467e-81d0-dc6ca207c581",
   "grant_title": "Operator grant recorded: §9.2 throwaway seed database for W-B3 (nexus_wb3_seed_<epoch>, window 2026-11-19T01:19Z→2026-11-20T01:19Z)",
-  "run_at": "2026-11-19T02:03:43.051Z",
-  "seed_database": "nexus_wb3_seed_1795053820",
+  "run_at": "2026-11-19T02:38:03.898Z",
+  "seed_database": "nexus_wb3_seed_1795055881",
   "credential_handling": "DSN supplied via CONDUIT_PG_DSN only; not recorded in this artifact",
   "schema_source": "sql/ci-bootstrap/nexus-ci-bootstrap.sql (schema-only repository bootstrap) followed by initDb()/createSchema()/runMigrations() from typescript/conduit-mcp/src/db.ts",
   "schema_revision": {
@@ -19,12 +19,12 @@
   },
   "seed_script": {
     "path": "typescript/conduit-mcp/scripts/wb3-seeded-proof-runner.ts",
-    "sha256": "19e4b63350b7fffb37a243a9de546ddfd663e48cdb9fd5dbd9f14ec5e20dcd06",
+    "sha256": "3bb3f9a2640a8ff9b750f0b35d85dd341e7798f1f77eed742e9457376eaace37",
     "note": "committed harness; invoked by bin/wb3_seeded_proof.py with CONDUIT_PG_DSN pointing only at the throwaway seed DB"
   },
   "implementation_under_test": "new TicketExpirySweeper({ detectStaleTickets, detectExpiredTickets }).runOnce() — db.ts detectors, ticket-sweep.ts payload builder; no hand-written UPDATE was used to drive the sweep",
-  "swept_at": "2026-11-19T02:03:43.305Z",
-  "git_head": "f8c07739f19816903865b9d7f138a633ec3e8f51",
+  "swept_at": "2026-11-19T02:38:04.154Z",
+  "git_head": "b8b04a348d4615d1461f2ddc48edf1e8721c1e0f",
   "git_branch": "wb3-sweep-8261675",
   "cases": [
     {
@@ -43,7 +43,7 @@
       "emitted_events": 1,
       "event_count_matches": true,
       "emitted_event_ids": [
-        "bf2e7725-0bad-4aff-ae97-f8b02846b94c"
+        "02a1b291-b20d-4f2f-8e06-03f75ed4c779"
       ],
       "events_total_including_pre_existing": 1,
       "pre_existing_events": 0,
@@ -79,7 +79,7 @@
       "emitted_events": 1,
       "event_count_matches": true,
       "emitted_event_ids": [
-        "05c7a4e7-da67-4958-a79e-055aee681a27"
+        "3160fcba-d400-4cd7-b0ac-b2a3714a2071"
       ],
       "events_total_including_pre_existing": 1,
       "pre_existing_events": 0,
@@ -115,7 +115,7 @@
       "emitted_events": 1,
       "event_count_matches": true,
       "emitted_event_ids": [
-        "194c7438-c4c2-4714-b6d0-9800055261ef"
+        "95ec81ca-8bf1-41a2-befc-1439c59a6c69"
       ],
       "events_total_including_pre_existing": 1,
       "pre_existing_events": 0,
@@ -233,7 +233,7 @@
       "post_sweep_disposition": "expired_without_event_waived",
       "post_sweep_reason_source": "status_fallback",
       "events_total_after_second_run": 0,
-      "waiver_ref": "6b42dd3f-ae62-4abf-8cce-fdc01c41032e"
+      "waiver_ref": "ea38297d-1f4e-4cc5-8cda-ef8273702bf8"
     },
     {
       "case": "C8",
@@ -276,7 +276,7 @@
       "emitted_events": 1,
       "event_count_matches": true,
       "emitted_event_ids": [
-        "2fbca20a-73d2-4581-8364-fdb5b81591a3"
+        "78e1e483-5bfb-4efd-ac8c-0f8396895ebf"
       ],
       "events_total_including_pre_existing": 1,
       "pre_existing_events": 0,
@@ -333,7 +333,7 @@
           "emitted_events": 1,
           "expected_events": 1,
           "emitted_event_ids": [
-            "bf2e7725-0bad-4aff-ae97-f8b02846b94c"
+            "02a1b291-b20d-4f2f-8e06-03f75ed4c779"
           ],
           "events_total_including_pre_existing": 1,
           "pre_existing_events": 0
@@ -345,7 +345,7 @@
           "emitted_events": 1,
           "expected_events": 1,
           "emitted_event_ids": [
-            "05c7a4e7-da67-4958-a79e-055aee681a27"
+            "3160fcba-d400-4cd7-b0ac-b2a3714a2071"
           ],
           "events_total_including_pre_existing": 1,
           "pre_existing_events": 0
@@ -357,7 +357,7 @@
           "emitted_events": 1,
           "expected_events": 1,
           "emitted_event_ids": [
-            "194c7438-c4c2-4714-b6d0-9800055261ef"
+            "95ec81ca-8bf1-41a2-befc-1439c59a6c69"
           ],
           "events_total_including_pre_existing": 1,
           "pre_existing_events": 0
@@ -419,7 +419,7 @@
           "emitted_events": 1,
           "expected_events": 1,
           "emitted_event_ids": [
-            "2fbca20a-73d2-4581-8364-fdb5b81591a3"
+            "78e1e483-5bfb-4efd-ac8c-0f8396895ebf"
           ],
           "events_total_including_pre_existing": 1,
           "pre_existing_events": 0
@@ -488,8 +488,8 @@
             "id": "WB3SEED",
             "title": "W-B3 seeded proof plan (throwaway)",
             "priority": 0,
-            "created_at": "2026-11-19 02:03:43.292776+00",
-            "updated_at": "2026-11-19 02:03:43.292776+00",
+            "created_at": "2026-11-19 02:38:04.141328+00",
+            "updated_at": "2026-11-19 02:38:04.141328+00",
             "deleted": 0
           }
         ]
@@ -516,7 +516,7 @@
       "observed": {
         "C4": {
           "expires_at": "2026-11-21T00:00:00Z",
-          "swept_at": "2026-11-19T02:03:43.305Z",
+          "swept_at": "2026-11-19T02:38:04.154Z",
           "expires_at_after_swept_at": true,
           "untouched": true,
           "reason": "not due"
@@ -590,7 +590,7 @@
     "A7_report_contract_and_isolation": {
       "pass": true,
       "observed": {
-        "seed_database": "nexus_wb3_seed_1795053820",
+        "seed_database": "nexus_wb3_seed_1795055881",
         "schema_revision": {
           "ci_bootstrap_sha256": "73a8a5f3404875007990c428334aedd7c5783316e652c5c2d67fd7935a432386",
           "db_ts_sha256": "5fab800eb5c92f8b7b4d29da112a56f73197cd7b0c0d038de419efdb7e6b44a0",
@@ -598,8 +598,8 @@
           "max_schema_version": 40
         },
         "seed_script_path": "typescript/conduit-mcp/scripts/wb3-seeded-proof-runner.ts",
-        "seed_script_sha256": "19e4b63350b7fffb37a243a9de546ddfd663e48cdb9fd5dbd9f14ec5e20dcd06",
-        "run_at": "2026-11-19T02:03:43.051Z",
+        "seed_script_sha256": "3bb3f9a2640a8ff9b750f0b35d85dd341e7798f1f77eed742e9457376eaace37",
+        "run_at": "2026-11-19T02:38:03.898Z",
         "nexus_isolation_before": {
           "vision_tickets_rows": 847,
           "vision_tickets_expired": 138,
@@ -616,7 +616,7 @@
         "nexus_plan_projection_unchanged": true,
         "teardown": {
           "dropped": true,
-          "database": "nexus_wb3_seed_1795053820",
+          "database": "nexus_wb3_seed_1795055881",
           "remaining_seed_databases": 0
         },
         "seed_preparation": [
@@ -631,7 +631,7 @@
   "seeded_fixture_event": "C8's expiry_detection event is a fixture inside the throwaway seed DB only; no historical nexus event was manufactured and no event was written to nexus",
   "teardown": {
     "dropped": true,
-    "database": "nexus_wb3_seed_1795053820",
+    "database": "nexus_wb3_seed_1795055881",
     "remaining_seed_databases": 0
   }
 }

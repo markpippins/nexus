@@ -18,7 +18,10 @@ const REPO = path.resolve(__dirname, "../../..");
 const OUT = path.join(REPO, "docs/promotion-flow/evidence/wb3-seeded-proof-8261675.json");
 const SCRIPT_REL = "typescript/conduit-mcp/scripts/wb3-seeded-proof-runner.ts";
 const SCRIPT_ABS = path.join(REPO, SCRIPT_REL);
-const WAIVER_REF = "6b42dd3f-ae62-4abf-8cce-fdc01c41032e";
+// C7 is an expired row with no kernel event: waiving it needs a ruling that
+// actually admits it. 6b42dd3f authorized only two enumerated gen-1 rows, so
+// the W-B3 cohort waiver is ea38297d instead.
+const WAIVER_REF = "ea38297d-1f4e-4cc5-8cda-ef8273702bf8";
 const GRANT_REF = "d77594c2-e266-467e-81d0-dc6ca207c581";
 const GRANT_WINDOW_START = Date.parse("2026-11-19T01:19:00Z");
 const GRANT_WINDOW_END = Date.parse("2026-11-20T01:19:00Z");
