@@ -21,7 +21,12 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# src/index.ts reads PORT (default 3100); MCP_PORT is only this launcher's name
+# for it. Export BOTH so the child binds exactly the port the health checks
+# probe. Without this the child inherited an ambient PORT (e.g. PORT=0 in a
+# non-interactive agent shell) and bound :0 while the daemon polled :3100.
 export MCP_PORT="${MCP_PORT:-3100}"
+export PORT="$MCP_PORT"
 export MCP_LOG="${MCP_LOG:-/tmp/mcp-daemon.log}"
 export MCP_PID_FILE="${MCP_PID_FILE:-/tmp/mcp-daemon.pid}"
 export MCP_RESTART_DELAY="${MCP_RESTART_DELAY:-3}"
