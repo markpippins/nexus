@@ -53,14 +53,22 @@
 --     so both derivations are valid and no candidate link is lost.
 --   * `compilation_status` has no legacy equivalent -> 'draft'.
 --   * `sol_ir_expression_id` has no legacy equivalent -> NULL.
---   * `work_request_dco` (jsonb) has NO target column. It is non-null on 0 rows
---     and read by no code, so it is exposed as NULL in the compatibility view;
---     a non-null write to it raises instead of being silently dropped.
+--   * `work_request_dco` (jsonb) has no canonical equivalent yet. It is carried
+--     across as a nullable legacy column on `resolution.requirement` rather than
+--     retired, because `bin/compiler_processInProgress.py` writes it and gates
+--     recompilation on it; the compatibility view maps it 1:1. Retire the
+--     column once compiled output lives in `sol_ir_expression_id`.
 --   * `recorded_until_dt` becomes 'infinity' (the target's current-row marker);
 --     the legacy '9999-12-31 23:59:59+00' was that table's marker for "current".
 --
--- Idempotent: re-running inserts nothing (ON CONFLICT DO NOTHING), re-verifies
--- the ledger, replaces the view and recreates the triggers.
+-- Idempotent, with a precise contract:
+--   * first application ports, proves each row against the ledger CHECK and
+--     refuses on any drift, gap or vocabulary mismatch;
+--   * later applications adopt only ids the ledger does not already hold, so
+--     rows the application has since edited are left exactly as they are. They
+--     still replace the view and recreate the triggers.
+-- The ledger is port-time proof, not a live assertion: it records the digests
+-- verified at port, and never rewrites them.
 -- =============================================================================
 
 BEGIN;
@@ -229,6 +237,64 @@ BEGIN
     END IF;
 END $$;
 
+-- ── carry the legacy compiled-DCO column ──────────────────────────────────
+-- `work_request_dco` has no canonical equivalent yet: the canonical home for
+-- compiled output is `sol_ir_expression_id` + `compilation_status`, and that
+-- pipeline does not exist. Retiring the column here would break a live writer:
+-- `bin/compiler_processInProgress.py` persists the compiled WorkRequest DCO into
+-- it and gates recompilation on `work_request_dco IS NOT NULL`, so dropping it
+-- would make every requirement look uncompiled and the DCO invisible.
+--
+-- So the column is carried across (nullable, additive, metadata-only in PG 11+)
+-- rather than lost, and stays a legacy carry-over: when the expression pipeline
+-- lands, backfill `sol_ir_expression_id`, then drop this column and the
+-- projection column with it.
+ALTER TABLE resolution.requirement
+    ADD COLUMN IF NOT EXISTS work_request_dco jsonb;
+
+COMMENT ON COLUMN resolution.requirement.work_request_dco IS
+    'P4a (V222) legacy carry-over: the compiled WorkRequest DCO previously held by nebula.requirements.work_request_dco. Written by bin/compiler_processInProgress.py. Retire this column once compiled output lives in sol_ir_expression_id and compilation_status.';
+
+-- ── identity ledger ────────────────────────────────────────────────────────
+-- The audit record for the port. `source_id = target_id` is a CHECK, not a
+-- convention: a future re-key would have to rewrite the ledger deliberately.
+CREATE TABLE IF NOT EXISTS resolution.requirement_port_ledger (
+    id                uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+    source_relation   text        NOT NULL,
+    source_id         uuid        NOT NULL,
+    target_id         uuid        NOT NULL
+                      REFERENCES resolution.requirement (id) ON DELETE RESTRICT,
+    source_digest     text        NOT NULL,
+    target_digest     text        NOT NULL,
+    fields_preserved  jsonb       NOT NULL DEFAULT '[]'::jsonb,
+    provenance        text        NOT NULL,
+    ported_at         timestamptz NOT NULL DEFAULT now(),
+    verified_at       timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT requirement_port_ledger_identity_check
+        CHECK (source_id = target_id),
+    CONSTRAINT requirement_port_ledger_digest_check
+        CHECK (source_digest = target_digest),
+    CONSTRAINT requirement_port_ledger_unique
+        UNIQUE (source_relation, source_id)
+);
+
+COMMENT ON TABLE resolution.requirement_port_ledger IS
+    'P4a (V222): one row per requirement ported from nebula.requirements_history into resolution.requirement. Records the source identity, both content digests and the preserved field set so the port is auditable rather than asserted.';
+COMMENT ON COLUMN resolution.requirement_port_ledger.source_relation IS
+    'Legacy surface the row came from, e.g. nebula.requirements (the current-row projection of nebula.requirements_history).';
+COMMENT ON COLUMN resolution.requirement_port_ledger.provenance IS
+    'Why/how the port happened, e.g. v222:port-p4a.';
+
+-- ── what the ledger already proves (pre-run snapshot) ──────────────────────
+-- Re-application must distinguish rows this run adopts from rows an earlier run
+-- already ported and proved. Capture that set before anything is written.
+CREATE TEMP TABLE _v222_already ON COMMIT DROP AS
+SELECT source_id
+  FROM resolution.requirement_port_ledger
+ WHERE source_relation = 'nebula.requirements';
+COMMENT ON TABLE _v222_already IS
+    'V222 scratch: source ids the ledger already holds before this run. Dropped at COMMIT.';
+
 -- ── the source identity set, hashed once ───────────────────────────────────
 -- SHA-256 over a canonical JSON rendering. Timestamps are rendered explicitly
 -- in UTC so the digest does not depend on the session TimeZone, and jsonb sorts
@@ -253,9 +319,16 @@ SELECT
         'acceptance_criteria', h.acceptance_criteria::text,
         'candidate_id',        h.candidate_id::text,
         'conduit_plan_id',     h.conduit_plan_id,
+        'work_request_dco',    h.work_request_dco::text,
         'asset_id',            h.asset_id::text,
         'valid_from',          to_char(h.valid_from AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US'),
-        'valid_until',         to_char(h.valid_until AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US')
+        -- Open-ended business time is rendered as 'infinity' on BOTH sides: the
+        -- legacy sentinel ('9999-12-31 00:00:00+00') and the target's marker
+        -- mean the same thing, and the port normalizes the stored value, so
+        -- hashing the raw literal would fail every open row on identity.
+        'valid_until',         CASE WHEN h.valid_until >= '9999-12-31'::timestamptz
+                                    THEN 'infinity'
+                                    ELSE to_char(h.valid_until AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') END
     )::text, 'sha256'), 'hex') AS source_digest
   FROM nebula.requirements h;
 
@@ -290,10 +363,17 @@ BEGIN
                'acceptance_criteria', r.acceptance_criteria::text,
                'candidate_id',        r.candidate_id::text,
                'conduit_plan_id',     r.conduit_plan_id,
+               'work_request_dco',    r.work_request_dco::text,
                'asset_id',            r.asset_id::text,
                'valid_from',          to_char(r.valid_from AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US'),
-               'valid_until',         to_char(r.valid_until AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US')
-           )::text, 'sha256'), 'hex') <> s.source_digest;
+               'valid_until',         CASE WHEN r.valid_until >= '9999-12-31'::timestamptz
+                                           THEN 'infinity'
+                                           ELSE to_char(r.valid_until AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') END
+           )::text, 'sha256'), 'hex') <> s.source_digest
+       -- Rows the ledger already holds were ported and proven at port time;
+       -- later edits through the projection are the application working, not
+       -- drift, so a re-run must not re-litigate them.
+       AND s.id NOT IN (SELECT source_id FROM _v222_already);
 
     IF v_drift > 0 THEN
         RAISE EXCEPTION
@@ -302,35 +382,6 @@ BEGIN
     END IF;
 END $$;
 
--- ── identity ledger ────────────────────────────────────────────────────────
--- The audit record for the port. `source_id = target_id` is a CHECK, not a
--- convention: a future re-key would have to rewrite the ledger deliberately.
-CREATE TABLE IF NOT EXISTS resolution.requirement_port_ledger (
-    id                uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
-    source_relation   text        NOT NULL,
-    source_id         uuid        NOT NULL,
-    target_id         uuid        NOT NULL
-                      REFERENCES resolution.requirement (id) ON DELETE RESTRICT,
-    source_digest     text        NOT NULL,
-    target_digest     text        NOT NULL,
-    fields_preserved  jsonb       NOT NULL DEFAULT '[]'::jsonb,
-    provenance        text        NOT NULL,
-    ported_at         timestamptz NOT NULL DEFAULT now(),
-    verified_at       timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT requirement_port_ledger_identity_check
-        CHECK (source_id = target_id),
-    CONSTRAINT requirement_port_ledger_digest_check
-        CHECK (source_digest = target_digest),
-    CONSTRAINT requirement_port_ledger_unique
-        UNIQUE (source_relation, source_id)
-);
-
-COMMENT ON TABLE resolution.requirement_port_ledger IS
-    'P4a (V222): one row per requirement ported from nebula.requirements_history into resolution.requirement. Records the source identity, both content digests and the preserved field set so the port is auditable rather than asserted.';
-COMMENT ON COLUMN resolution.requirement_port_ledger.source_relation IS
-    'Legacy surface the row came from, e.g. nebula.requirements (the current-row projection of nebula.requirements_history).';
-COMMENT ON COLUMN resolution.requirement_port_ledger.provenance IS
-    'Why/how the port happened, e.g. v222:port-p4a.';
 
 -- ── the port ──────────────────────────────────────────────────────────────
 INSERT INTO resolution.requirement (
@@ -352,6 +403,7 @@ INSERT INTO resolution.requirement (
     completion_date,
     acceptance_criteria,
     conduit_plan_id,
+    work_request_dco,
     created_at,
     valid_from,
     valid_until,
@@ -377,9 +429,15 @@ SELECT
     h.completion_date,
     h.acceptance_criteria,
     h.conduit_plan_id,
+    h.work_request_dco,
     h.created_at,
     h.valid_from,
-    h.valid_until,
+    -- Canonical open-ended business time is 'infinity'; the legacy sentinel is
+    -- the same statement in a different vocabulary. The view maps it back, so
+    -- no consumer sees the change.
+    CASE WHEN h.valid_until >= '9999-12-31'::timestamptz
+         THEN 'infinity'::timestamptz
+         ELSE h.valid_until END,
     h.recorded_on_dt,
     'infinity'::timestamptz
   FROM nebula.requirements h
@@ -406,9 +464,12 @@ SELECT
         'acceptance_criteria', r.acceptance_criteria::text,
         'candidate_id',        r.candidate_id::text,
         'conduit_plan_id',     r.conduit_plan_id,
+        'work_request_dco',    r.work_request_dco::text,
         'asset_id',            r.asset_id::text,
         'valid_from',          to_char(r.valid_from AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US'),
-        'valid_until',         to_char(r.valid_until AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US')
+        'valid_until',         CASE WHEN r.valid_until >= '9999-12-31'::timestamptz
+                                    THEN 'infinity'
+                                    ELSE to_char(r.valid_until AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') END
     )::text, 'sha256'), 'hex') AS target_digest
   FROM resolution.requirement r
  WHERE r.id IN (SELECT id FROM _v222_source);
@@ -436,9 +497,12 @@ SELECT
     'v222:port-p4a'
   FROM _v222_source s
   JOIN _v222_target t ON t.id = s.id
-ON CONFLICT (source_relation, source_id) DO UPDATE
-   SET target_digest = EXCLUDED.target_digest,
-       verified_at   = now();
+ -- The ledger is port-time proof, not a live assertion: the first application
+ -- records the digests it verified, later applications leave them alone (and
+ -- leave the ported rows alone) so re-applying after the application has
+ -- written to those rows is a no-op instead of a false mismatch.
+ WHERE s.id NOT IN (SELECT source_id FROM _v222_already)
+ON CONFLICT (source_relation, source_id) DO NOTHING;
 
 -- ── postconditions: the port must be complete and faithful ─────────────────
 DO $$
@@ -464,7 +528,10 @@ BEGIN
     SELECT count(*) INTO v_mismatch
       FROM _v222_source s
       JOIN _v222_target t ON t.id = s.id
-     WHERE s.source_digest <> t.target_digest;
+     WHERE s.source_digest <> t.target_digest
+       -- Verify only the rows this run adopted. Rows an earlier run proved are
+       -- its record, and the application may have changed them since.
+       AND s.id NOT IN (SELECT source_id FROM _v222_already);
     IF v_mismatch > 0 THEN
         RAISE EXCEPTION
             'V222-POST-002: % of % ported requirement(s) differ from their source; identity is not preserved',
@@ -529,23 +596,37 @@ SELECT id,
        completion_date,
        created_at,
        recorded_on_dt,
-       recorded_until_dt,
+       -- Open-ended segments are stored as 'infinity' canonically and presented
+       -- with the legacy sentinels, which is what the pre-port view emitted and
+       -- what SCD-style consumers compare against.
+       CASE WHEN recorded_until_dt >= '9999-12-31'::timestamptz
+            THEN '9999-12-31 23:59:59+00'::timestamptz
+            ELSE recorded_until_dt END AS recorded_until_dt,
        valid_from,
-       valid_until,
+       CASE WHEN valid_until >= '9999-12-31'::timestamptz
+            THEN '9999-12-31 23:59:59+00'::timestamptz
+            ELSE valid_until END AS valid_until,
        parent_id,
        req_type,
        acceptance_criteria,
        candidate_id,
        conduit_plan_id,
-       NULL::jsonb AS work_request_dco,
+       work_request_dco,
        asset_id
-  FROM resolution.requirement;
+  FROM resolution.requirement
+ -- The pre-port view was a current-segment view: it hid closed recordings and
+ -- expired business windows. Preserve that visibility exactly, so a consumer
+ -- cannot start seeing history rows it never saw before.
+ WHERE now() >= recorded_on_dt
+   AND now() < recorded_until_dt
+   AND now() >= valid_from
+   AND now() < valid_until;
 
 COMMENT ON VIEW nebula.requirements IS
-    'P4a (V222) compatibility projection over canonical resolution.requirement. Retention window for consumers not yet repointed (conduit-mcp, moleculer, adonisjs, planner MCP). Writes pass through INSTEAD OF triggers to resolution.requirement; work_request_dco is retired and always NULL. Do not add canonical logic here.';
+    'P4a (V222) compatibility projection over canonical resolution.requirement. Same 22 columns, column order and open-segment sentinels as the pre-port view; same current-segment visibility. Writes pass through INSTEAD OF triggers to resolution.requirement. Do not add canonical logic here.';
 
 COMMENT ON COLUMN nebula.requirements.work_request_dco IS
-    'Retired legacy column. Always NULL; has no canonical target column. A non-null write raises V222-COMPAT-001.';
+    'Legacy carry-over; maps 1:1 onto resolution.requirement.work_request_dco (to be retired with the expression pipeline).';
 
 -- ── write-through so un-repointed services write the canonical table ──────
 CREATE OR REPLACE FUNCTION nebula.requirements_compat_write()
@@ -556,11 +637,6 @@ DECLARE
     v_id uuid;
 BEGIN
     IF TG_OP = 'INSERT' THEN
-        IF NEW.work_request_dco IS NOT NULL THEN
-            RAISE EXCEPTION
-                'V222-COMPAT-001: nebula.requirements.work_request_dco is retired; no canonical column exists to receive it';
-        END IF;
-
         v_id := COALESCE(NEW.id, gen_random_uuid());
 
         INSERT INTO resolution.requirement (
@@ -568,6 +644,7 @@ BEGIN
             system_id, subsystem_id, feature_id, title, description,
             status, priority, req_type, compilation_status,
             start_date, completion_date, acceptance_criteria, conduit_plan_id,
+            work_request_dco,
             created_at, valid_from, valid_until, recorded_on_dt, recorded_until_dt
         ) VALUES (
             v_id,
@@ -588,9 +665,13 @@ BEGIN
             NEW.completion_date,
             NEW.acceptance_criteria,
             NEW.conduit_plan_id,
+            NEW.work_request_dco,
             COALESCE(NEW.created_at, now()),
             COALESCE(NEW.valid_from, now()),
-            COALESCE(NEW.valid_until, 'infinity'::timestamptz),
+            CASE WHEN NEW.valid_until IS NULL
+                   OR NEW.valid_until >= '9999-12-31'::timestamptz
+                 THEN 'infinity'::timestamptz
+                 ELSE NEW.valid_until END,
             COALESCE(NEW.recorded_on_dt, now()),
             'infinity'::timestamptz
         );
@@ -602,18 +683,15 @@ BEGIN
         NEW.priority            := COALESCE(NEW.priority, 'Medium');
         NEW.created_at          := COALESCE(NEW.created_at, now());
         NEW.valid_from          := COALESCE(NEW.valid_from, now());
-        NEW.valid_until         := COALESCE(NEW.valid_until, 'infinity'::timestamptz);
+        NEW.valid_until         := CASE WHEN NEW.valid_until IS NULL
+                                           OR NEW.valid_until >= '9999-12-31'::timestamptz
+                                         THEN '9999-12-31 23:59:59+00'::timestamptz
+                                         ELSE NEW.valid_until END;
         NEW.recorded_on_dt      := COALESCE(NEW.recorded_on_dt, now());
-        NEW.recorded_until_dt   := 'infinity'::timestamptz;
-        NEW.work_request_dco    := NULL;
+        NEW.recorded_until_dt   := '9999-12-31 23:59:59+00'::timestamptz;
         RETURN NEW;
 
     ELSIF TG_OP = 'UPDATE' THEN
-        IF NEW.work_request_dco IS NOT NULL THEN
-            RAISE EXCEPTION
-                'V222-COMPAT-001: nebula.requirements.work_request_dco is retired; no canonical column exists to receive it';
-        END IF;
-
         UPDATE resolution.requirement SET
             asset_id            = NEW.asset_id,
             candidate_id        = NEW.candidate_id,
@@ -631,14 +709,29 @@ BEGIN
             completion_date     = NEW.completion_date,
             acceptance_criteria = NEW.acceptance_criteria,
             conduit_plan_id     = NEW.conduit_plan_id,
+            work_request_dco    = NEW.work_request_dco,
             created_at          = COALESCE(NEW.created_at, created_at),
             valid_from          = COALESCE(NEW.valid_from, valid_from),
-            valid_until         = COALESCE(NEW.valid_until, valid_until),
-            recorded_until_dt   = 'infinity'::timestamptz
+            valid_until         = CASE WHEN NEW.valid_until IS NULL
+                                         OR NEW.valid_until >= '9999-12-31'::timestamptz
+                                       THEN 'infinity'::timestamptz
+                                       ELSE NEW.valid_until END,
+            -- A caller may close a recording explicitly (SCD writers do); only
+            -- the open marker is normalized.
+            recorded_until_dt   = CASE WHEN NEW.recorded_until_dt IS NULL
+                                         OR NEW.recorded_until_dt >= '9999-12-31'::timestamptz
+                                       THEN 'infinity'::timestamptz
+                                       ELSE NEW.recorded_until_dt END
          WHERE id = OLD.id;
 
-        NEW.work_request_dco  := NULL;
-        NEW.recorded_until_dt := 'infinity'::timestamptz;
+        NEW.valid_until       := CASE WHEN NEW.valid_until IS NULL
+                                         OR NEW.valid_until >= '9999-12-31'::timestamptz
+                                       THEN '9999-12-31 23:59:59+00'::timestamptz
+                                       ELSE NEW.valid_until END;
+        NEW.recorded_until_dt := CASE WHEN NEW.recorded_until_dt IS NULL
+                                         OR NEW.recorded_until_dt >= '9999-12-31'::timestamptz
+                                       THEN '9999-12-31 23:59:59+00'::timestamptz
+                                       ELSE NEW.recorded_until_dt END;
         RETURN NEW;
 
     ELSE
@@ -707,18 +800,48 @@ ON CONFLICT (schema_name, migration_label) DO NOTHING;
 COMMIT;
 
 -- =============================================================================
--- ROLLBACK (rehearsal only; NOT executed by this file)
+-- ROLLBACK (documented; NOT executed by this file)
 -- =============================================================================
--- The port is reversible because nothing is deleted:
---   1. DROP TRIGGER trg_requirements_compat_write ON nebula.requirements;
---   2. CREATE OR REPLACE VIEW nebula.requirements AS <the pre-V222 definition
---      over nebula.requirements_history — see
---      sql/ci-bootstrap/nexus-ci-bootstrap.sql: requirements>;
---   3. DELETE FROM resolution.requirement
---       WHERE id IN (SELECT source_id FROM resolution.requirement_port_ledger
---                     WHERE provenance = 'v222:port-p4a');
---   4. DELETE FROM resolution.requirement_port_ledger WHERE provenance = 'v222:port-p4a';
---   5. DELETE FROM resolution.migration_ledger
---       WHERE migration_label = 'V222__port_requirements_to_resolution';
--- Rehearse on a throwaway database. The legacy history rows were never touched.
+-- Safe only while no requirement has been created through the projection since
+-- the apply. Those rows would exist only in resolution.requirement and would
+-- disappear from the restored legacy view. Precheck, expect 0:
+--
+--   SELECT count(*) FROM resolution.requirement r
+--    WHERE NOT EXISTS (SELECT 1 FROM resolution.requirement_port_ledger l
+--                       WHERE l.target_id = r.id);
+--
+-- Then, in one transaction, in this order (the ledger's FK is ON DELETE
+-- RESTRICT, so it must go before the rows it points at):
+--
+--   BEGIN;
+--   CREATE TEMP TABLE _v222_rb ON COMMIT DROP AS
+--   SELECT source_id FROM resolution.requirement_port_ledger
+--    WHERE provenance = 'v222:port-p4a';
+--
+--   -- CREATE OR REPLACE, not DROP: other objects depend on this view (for
+--   -- example nebula.v_work_request_requirement) and a DROP would need
+--   -- CASCADE, taking them with it.
+--   CREATE OR REPLACE VIEW nebula.requirements AS   -- the pre-V222 definition
+--   SELECT id, system_id, subsystem_id, feature_id, title, description, status,
+--          priority, start_date, completion_date, created_at, recorded_on_dt,
+--          recorded_until_dt, valid_from, valid_until, parent_id, req_type,
+--          acceptance_criteria, candidate_id, conduit_plan_id, work_request_dco,
+--          asset_id
+--     FROM nebula.requirements_history
+--    WHERE now() >= recorded_on_dt AND now() < recorded_until_dt
+--      AND now() >= valid_from AND now() < valid_until;
+--
+--   -- Replacing the view keeps its triggers; the write-through must go.
+--   DROP TRIGGER IF EXISTS trg_requirements_compat_write ON nebula.requirements;
+--
+--   DROP TABLE resolution.requirement_port_ledger;
+--   DELETE FROM resolution.requirement
+--    WHERE id IN (SELECT source_id FROM _v222_rb);
+--   ALTER TABLE resolution.requirement DROP COLUMN IF EXISTS work_request_dco;
+--   DELETE FROM resolution.migration_ledger
+--    WHERE migration_label = 'V222__port_requirements_to_resolution';
+--   COMMIT;
+--
+-- The legacy history rows were never modified, so this restores the pre-port
+-- surface exactly. Rehearse on a throwaway database first.
 -- =============================================================================

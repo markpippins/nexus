@@ -476,6 +476,45 @@ def test_direct_producer_writes_the_transition_surface():
     assert "INSERT INTO resolution.requirement" not in text
 
 
+# Runtime roots that hold live services, jobs and scripts. Migrations, the CI
+# bootstrap, SQL archives, docs and tests are excluded: they are history, not a
+# live read path.
+RUNTIME_ROOTS = ("typescript", "python", "adonisjs", "moleculer", "bin", "scripts")
+SKIP_PARTS = (
+    "node_modules", ".git", "dist", "build", "migrations", "__tests__",
+    "/tests/", ".test.", ".spec.", ".md",
+)
+# A live consumer must name the transition surface; naming the frozen store is
+# how a reader silently starts serving stale rows (or a writer silently stops
+# being visible to the application).
+FROZEN_REF = re.compile(
+    r"\b(?:FROM|JOIN|INTO|UPDATE|DELETE\s+FROM|TRUNCATE)\s+(?:nebula\.)?requirements_history\b",
+    re.IGNORECASE,
+)
+
+
+def test_no_runtime_consumer_reads_or_writes_the_frozen_store():
+    repo = Path(__file__).resolve().parent.parent.parent
+    offenders = []
+    for root in RUNTIME_ROOTS:
+        base = repo / root
+        if not base.is_dir():
+            continue
+        for path in base.rglob("*"):
+            if not path.is_file() or path.suffix not in {".ts", ".js", ".py", ".sh"}:
+                continue
+            posix = "/" + path.relative_to(repo).as_posix()
+            if any(part in posix for part in SKIP_PARTS):
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            if FROZEN_REF.search(text):
+                offenders.append(posix)
+    assert offenders == [], (
+        "runtime code still reads or writes nebula.requirements_history, which "
+        "V222 freezes; target nebula.requirements instead: " + ", ".join(offenders)
+    )
+
+
 # ── the port ──────────────────────────────────────────────────────────────
 
 def test_port_preserves_ids_lifecycle_hierarchy_and_refs(ported):
@@ -508,10 +547,40 @@ def test_port_preserves_timestamps_and_bitemporal_window(ported):
     created, valid_from, valid_until, recorded_on, recorded_until = row.split("|")
     assert created.startswith("2026-09-09 10:00:00")
     assert valid_from.startswith("2026-09-01 00:00:00")
-    assert valid_until.startswith("9999-12-31 23:59:59")
     assert recorded_on.startswith("2026-09-09 10:00:00")
-    # The target's current-row marker, and never the legacy one.
+    # Canonical stores open-ended segments with its own marker, on both axes.
+    assert valid_until == "infinity"
     assert recorded_until == "infinity"
+
+
+def test_projection_presents_the_legacy_open_segment_sentinels(ported):
+    """Consumers compare these literals, so the projection must emit them.
+
+    All 27 live rows carry '9999-12-31 23:59:59+00' on both open axes. A view
+    that leaked the canonical 'infinity' would silently change every such
+    comparison from true to false.
+    """
+    row = psql(ported, f"""
+        select valid_until at time zone 'UTC', recorded_until_dt at time zone 'UTC'
+          from nebula.requirements where id = '{R1}'
+    """)
+    assert row == "9999-12-31 23:59:59|9999-12-31 23:59:59"
+
+
+def test_projection_keeps_the_legacy_current_segment_visibility(ported):
+    """The pre-port view hid closed recordings and expired business windows."""
+    psql(ported, f"""
+        insert into resolution.requirement
+            (id, source_type, system_id, title, status, recorded_until_dt)
+        values ('77777777-7777-4777-8777-777777777777', 'manual', '{SYS}',
+                'closed recording', 'Backlog', '2026-01-01 00:00:00+00')
+    """)
+    assert psql(ported, """
+        select count(*) from resolution.requirement where title = 'closed recording'
+    """) == "1"
+    assert psql(ported, """
+        select count(*) from nebula.requirements where title = 'closed recording'
+    """) == "0"
 
 
 def test_source_type_is_derived_without_losing_candidate_links(ported):
@@ -653,15 +722,44 @@ def test_writes_through_the_view_land_on_the_canonical_table(ported):
     assert psql(ported, f"select count(*) from resolution.requirement where id = '{new_id}'") == "0"
 
 
-def test_retired_column_write_raises_instead_of_dropping_data(ported):
-    message = psql(ported, f"""
+def test_legacy_dco_column_is_carried_and_round_trips(ported):
+    """`work_request_dco` has a live writer, so it must not be dropped.
+
+    bin/compiler_processInProgress.py writes the compiled DCO into this column and
+    gates recompilation on it being non-null. Losing it would make every
+    requirement look uncompiled and hide the DCO from the application.
+    """
+    psql(ported, f"""
         insert into nebula.requirements (system_id, title, work_request_dco)
-        values ('{SYS}', 'retired column write', '{{"x":1}}'::jsonb)
-    """, expect_fail=True)
-    assert "V222-COMPAT-001" in message
+        values ('{SYS}', 'dco write', '{{"x":1}}'::jsonb)
+    """)
     assert psql(ported, """
-        select count(*) from resolution.requirement where title = 'retired column write'
-    """) == "0"
+        select work_request_dco::text from resolution.requirement where title = 'dco write'
+    """) == '{"x": 1}'
+    assert psql(ported, """
+        select work_request_dco::text from nebula.requirements where title = 'dco write'
+    """) == '{"x": 1}'
+    # And an update through the projection reaches the canonical row too.
+    psql(ported, """
+        update nebula.requirements set work_request_dco = '{"y":2}'::jsonb
+         where title = 'dco write'
+    """)
+    assert psql(ported, """
+        select work_request_dco::text from resolution.requirement where title = 'dco write'
+    """) == '{"y": 2}'
+
+
+def test_canonical_gains_the_legacy_dco_column_idempotently(ported):
+    assert psql(ported, """
+        select count(*) from information_schema.columns
+         where table_schema = 'resolution' and table_name = 'requirement'
+           and column_name = 'work_request_dco' and data_type = 'jsonb'
+    """) == "1"
+    # Re-applying must not fail on the ADD COLUMN IF NOT EXISTS.
+    apply_migration(ported)
+    assert psql(ported, """
+        select count(*) from resolution.requirement where title = 'dco write'
+    """) == "1"
 
 
 # ── idempotency and refusals ──────────────────────────────────────────────
@@ -676,6 +774,100 @@ def test_second_apply_is_a_no_op():
         after = psql(db, "select count(*) || '|' || (select count(*) from resolution.requirement_port_ledger) from resolution.requirement")
         assert before == after == "3|3"
         assert psql(db, "select count(*) from resolution.migration_ledger") == "1"
+    finally:
+        drop_db(db)
+
+
+def test_reapplying_after_the_application_has_written_is_still_a_no_op():
+    """The ledger is port-time proof, so live edits must not look like drift.
+
+    A re-apply that re-litigated the ledger would either fail on a legitimate
+    status move or rewrite the proof it is supposed to keep. The operator needs
+    re-apply to be safe after go-live (and after restoring a pre-V222 dump).
+    """
+    db = new_db("e2e_p4a_v222_idem_edits")
+    try:
+        apply_script(db, SKELETON)
+        apply_migration(db)
+        ported_at = psql(db, "select min(ported_at)::text from resolution.requirement_port_ledger")
+
+        psql(db, "update nebula.requirements set status = 'Done' where status = 'Backlog'")
+        psql(db, """
+            update nebula.requirements set work_request_dco = '{"a":1}'::jsonb
+             where id = (select id from nebula.requirements order by created_at limit 1)
+        """)
+        done_before = psql(db, "select count(*) from nebula.requirements where status = 'Done'")
+        assert done_before != "0"
+
+        apply_migration(db)  # must not raise
+        assert psql(db, """
+            select count(*) || '|' || (select count(*) from resolution.requirement_port_ledger)
+              from resolution.requirement
+        """) == "3|3"
+        # The proof keeps its port-time timestamp and the edits survive untouched.
+        assert psql(db, "select min(ported_at)::text from resolution.requirement_port_ledger") == ported_at
+        assert psql(db, "select count(*) from nebula.requirements where status = 'Done'") == done_before
+        assert psql(db, "select count(*) from resolution.requirement where work_request_dco is not null") == "1"
+    finally:
+        drop_db(db)
+
+
+ROLLBACK_SQL = """
+BEGIN;
+CREATE TEMP TABLE _v222_rb ON COMMIT DROP AS
+SELECT source_id FROM resolution.requirement_port_ledger
+ WHERE provenance = 'v222:port-p4a';
+CREATE OR REPLACE VIEW nebula.requirements AS
+SELECT id, system_id, subsystem_id, feature_id, title, description, status,
+       priority, start_date, completion_date, created_at, recorded_on_dt,
+       recorded_until_dt, valid_from, valid_until, parent_id, req_type,
+       acceptance_criteria, candidate_id, conduit_plan_id, work_request_dco,
+       asset_id
+  FROM nebula.requirements_history
+ WHERE now() >= recorded_on_dt AND now() < recorded_until_dt
+   AND now() >= valid_from AND now() < valid_until;
+DROP TRIGGER IF EXISTS trg_requirements_compat_write ON nebula.requirements;
+DROP TABLE resolution.requirement_port_ledger;
+DELETE FROM resolution.requirement
+ WHERE id IN (SELECT source_id FROM _v222_rb);
+ALTER TABLE resolution.requirement DROP COLUMN IF EXISTS work_request_dco;
+DELETE FROM resolution.migration_ledger
+ WHERE migration_label = 'V222__port_requirements_to_resolution';
+COMMIT;
+"""
+
+
+def test_documented_rollback_restores_the_pre_port_surface():
+    """The operator rollback in V222's footer must actually run.
+
+    The legacy history table is never modified, so reversing the port has to
+    leave the pre-port view in place with the original rows, and nothing of the
+    port behind. Exercised here rather than asserted in a comment.
+    """
+    db = new_db("e2e_p4a_v222_rollback")
+    try:
+        apply_script(db, SKELETON)
+        apply_migration(db)
+        statuses_before = psql(db, "select string_agg(status, ',' order by status) from nebula.requirements_history")
+
+        psql(db, ROLLBACK_SQL)
+
+        assert psql(db, "select count(*) from nebula.requirements") == "3"
+        assert psql(db, "select count(*) from resolution.requirement") == "0"
+        assert psql(db, """
+            select count(*) from information_schema.tables
+             where table_schema = 'resolution' and table_name = 'requirement_port_ledger'
+        """) == "0"
+        assert psql(db, """
+            select count(*) from information_schema.columns
+             where table_schema = 'resolution' and table_name = 'requirement'
+               and column_name = 'work_request_dco'
+        """) == "0"
+        assert psql(db, "select count(*) from resolution.migration_ledger") == "0"
+        # History was the pre-port audit record and is byte-identical after the
+        # round trip; the view serves it again.
+        assert psql(db, "select string_agg(status, ',' order by status) from nebula.requirements_history") == statuses_before
+        assert psql(db, "select count(*) from pg_trigger where tgname = 'trg_requirements_compat_write'") == "0"
     finally:
         drop_db(db)
 

@@ -7,7 +7,7 @@ and no blocking open questions:
 
   1. Checks no blocking questions remain
   2. Runs req_compiler.py (two-stage compilation)
-  3. Attaches the compiled WorkRequest DCO to requirements_history
+  3. Attaches the compiled WorkRequest DCO to the requirements surface
   4. Moves requirement to Active
 
 Usage:
@@ -135,7 +135,7 @@ def count_blocking_questions(req_id: str) -> int:
 def has_compiled_wr(req_id: str) -> bool:
     """Check if a WorkRequest DCO already exists for this requirement."""
     sql = f"""
-        SELECT count(*) FROM nebula.requirements_history
+        SELECT count(*) FROM nebula.requirements
         WHERE id = '{req_id}'::uuid
         AND work_request_dco IS NOT NULL
         AND valid_until > now();
@@ -161,7 +161,7 @@ def update_status(req_id: str, new_status: str, dry_run: bool = False) -> bool:
         log.info("  [DRY RUN] Would move to %s", new_status)
         return True
     sql = f"""
-        UPDATE nebula.requirements_history
+        UPDATE nebula.requirements
         SET status = '{new_status}'
         WHERE id = '{req_id}'::uuid
         AND valid_until > now();
@@ -217,7 +217,7 @@ def compile_requirement(req_id: str, dry_run: bool = False) -> dict:
 
 def write_work_request_dco(req_id: str, compiled_ir: dict,
                             dry_run: bool = False) -> bool:
-    """Persist compiled WorkRequest DCO to requirements_history.work_request_dco."""
+    """Persist the compiled WorkRequest DCO through the requirements surface."""
     if dry_run:
         log.info("  [DRY RUN] Would write WorkRequest DCO")
         return True
@@ -225,7 +225,7 @@ def write_work_request_dco(req_id: str, compiled_ir: dict,
     ir_json = json.dumps(compiled_ir).replace("'", "''")
 
     sql = f"""
-        UPDATE nebula.requirements_history
+        UPDATE nebula.requirements
         SET work_request_dco = '{ir_json}'::jsonb
         WHERE id = '{req_id}'::uuid
         AND valid_until > now();
@@ -235,7 +235,7 @@ def write_work_request_dco(req_id: str, compiled_ir: dict,
         log.error("  Failed to write DCO: %s", (err or out)[:100])
         return False
 
-    log.info("  DCO written to requirements_history.work_request_dco")
+    log.info("  DCO written to requirements.work_request_dco")
     return True
 
 
