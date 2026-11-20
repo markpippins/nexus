@@ -85,6 +85,36 @@ below), never the live conduit DB.
    - **Failing PRs bounce to the Planner as rework** (Planner regroups),
      not directly back to the Builder.
 
+## Scheduling (2026-11-20)
+
+The night-shift evaluator (`nexus-nightshift-scheduler.timer`, one-minute tick,
+`nexus_nightshift` only) runs the four cycle entries on a **staggered cron
+cadence**, not four equal intervals:
+
+| Stage | Fires (each hour) | Responsibility |
+|---|---|---|
+| Planner | `:00`, `:30` | Sonar triage and batching |
+| Builder | `:05`, `:35` | implement a batch in a worktree + PR |
+| Critic | `:10`, `:40` | gate the PR as a change |
+| Reviewer | `:15`, `:45` | CI/CD-adjacent merge judgement |
+
+Four `interval 1800` rows with a NULL `last_run_at` were all due on the same
+tick and every 30 minutes thereafter, so Builder/Critic/Reviewer raced the
+Planner's output instead of following it.
+
+Each launch resolves its bound `task_slug` against `tackle.tasks` +
+`tackle.prompts`; the task template body and acceptance criteria become the
+agent's prompt. An unbound entry falls back to the `agent_config` title (the
+pre-2026-11-20 behaviour, where a bound row launched with only that title as
+its instruction).
+
+The Planner is additionally gated on its **work source**: the runner probes
+SonarQube read-only (`/api/system/status`, then
+`/api/issues/search?projectKeys=nexus&resolved=false`) and refuses to launch
+when the server is unreachable, no token is configured, or zero findings are
+open. Builder and Reviewer keep their queue gates
+(`execution.requests`, `vision.tickets`). The probe performs no Sonar writeback.
+
 ## Receipt isolation (architect decision 2026-09-04, option A)
 
 Night shift makes agent-driven Conduit runs scheduled and frequent —
