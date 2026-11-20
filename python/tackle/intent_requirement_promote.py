@@ -50,10 +50,23 @@ logging.basicConfig(
 )
 
 
-def psql(sql: str, timeout: int = 30) -> tuple[int, str, str]:
+def psql(
+    sql: str,
+    timeout: int = 30,
+    variables: dict[str, str] | None = None,
+) -> tuple[int, str, str]:
+    """Run SQL through psql.
+
+    `variables` are passed with psql's own `-v` and referenced as `:'name'`,
+    which psql quotes as a literal. That keeps caller-supplied values out of the
+    SQL text (used by the promotion INSERT), instead of interpolating them.
+    """
     try:
+        args = DOCKER_PSQL + ["-t", "-A"]
+        for key, value in (variables or {}).items():
+            args += ["-v", f"{key}={value}"]
         result = subprocess.run(
-            DOCKER_PSQL + ["-t", "-A"],
+            args,
             input=sql, capture_output=True, text=True, timeout=timeout,
         )
         return result.returncode, result.stdout.strip(), result.stderr.strip()
@@ -176,8 +189,8 @@ def create_requirement(candidate: dict, dry_run: bool = False) -> str | None:
     Returns the requirement UUID or None on failure.
     """
     req_id = str(uuidlib.uuid4())
-    title = candidate["title"].replace("'", "''")
-    description = (candidate.get("intent_description") or "").replace("'", "''")
+    title = candidate["title"]
+    description = candidate.get("intent_description") or ""
     candidate_id = candidate["id"]
     system_id = candidate.get("system_id")
     subsystem_id = candidate.get("subsystem_id")
@@ -193,42 +206,48 @@ def create_requirement(candidate: dict, dry_run: bool = False) -> str | None:
 
     now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    def sql_val(v):
-        if v is None:
-            return "NULL"
-        if isinstance(v, str):
-            return f"'{v}'"
-        return str(v)
-
-    sql = f"""
+    # Values go in as psql variables, not as SQL text: the statement is static so
+    # a candidate title or description cannot change its shape.
+    sql = """
         INSERT INTO nebula.requirements
             (id, title, description, status, priority, req_type,
              system_id, subsystem_id, feature_id, candidate_id,
              acceptance_criteria, created_at, valid_from, valid_until)
         VALUES (
-            '{req_id}'::uuid,
-            '{title}',
-            '{description}',
+            :'id'::uuid,
+            :'title',
+            :'description',
             'Backlog',
             'Medium',
             'Story',
-            {sql_val(system_id)}::uuid,
-            {sql_val(subsystem_id)}::uuid,
-            {sql_val(feature_id)}::uuid,
-            {sql_val(candidate_id)}::uuid,
-            {sql_val(acceptance_criteria)}::jsonb,
-            '{now}',
-            '{now}',
+            NULLIF(:'system_id', '')::uuid,
+            NULLIF(:'subsystem_id', '')::uuid,
+            NULLIF(:'feature_id', '')::uuid,
+            NULLIF(:'candidate_id', '')::uuid,
+            NULLIF(:'acceptance_criteria', '')::jsonb,
+            :'now',
+            :'now',
             '9999-12-31T00:00:00Z'
         )
         RETURNING id;
     """
+    variables = {
+        "id": req_id,
+        "title": candidate["title"],
+        "description": description,
+        "system_id": system_id or "",
+        "subsystem_id": subsystem_id or "",
+        "feature_id": feature_id or "",
+        "candidate_id": candidate_id or "",
+        "acceptance_criteria": acceptance_criteria or "",
+        "now": now,
+    }
 
     if dry_run:
         log.info("  [DRY RUN] Would create requirement: %s", title[:60])
         return req_id
 
-    rc, out, err = psql(sql)
+    rc, out, err = psql(sql, variables=variables)
     if rc != 0 or not out:
         details = err[:200] if err else out[:200]
         log.error("  Failed to create requirement: %s", details)
