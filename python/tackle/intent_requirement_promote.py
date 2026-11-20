@@ -201,10 +201,10 @@ def create_requirement(candidate: dict, dry_run: bool = False) -> str | None:
         return str(v)
 
     sql = f"""
-        INSERT INTO nebula.requirements_history
+        INSERT INTO nebula.requirements
             (id, title, description, status, priority, req_type,
              system_id, subsystem_id, feature_id, candidate_id,
-             acceptance_criteria, created_at, recorded_on_dt, valid_from, valid_until)
+             acceptance_criteria, created_at, valid_from, valid_until)
         VALUES (
             '{req_id}'::uuid,
             '{title}',
@@ -217,7 +217,6 @@ def create_requirement(candidate: dict, dry_run: bool = False) -> str | None:
             {sql_val(feature_id)}::uuid,
             {sql_val(candidate_id)}::uuid,
             {sql_val(acceptance_criteria)}::jsonb,
-            '{now}',
             '{now}',
             '{now}',
             '9999-12-31T00:00:00Z'

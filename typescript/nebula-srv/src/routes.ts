@@ -12,7 +12,7 @@ import { fetchSubstance, substanceToCamel } from './substance-proxy';
 import { CrossReferenceType } from './crossref-taxonomy';
 import { normalizeTags } from './tagNormalizer';
 import { expandTags } from './tagExpansion';
-import { attestationsLimiter, requirementCompileLimiter } from './limiter';
+import { attestationsLimiter, requirementCompileLimiter, requirementMoveLimiter } from './limiter';
 import { routingTagErrorMessage, routingCaseErrorMessage } from './routing-tags';
 import { blankRecordError, bodyRequiredError, normalizeHarnessJobId } from './agent-record-write-guard';
 import {
@@ -225,6 +225,76 @@ function parsePagination(query: any): { offset: number; limit: number; page: num
   const page = Math.max(1, parseInt(String(query.page || '1'), 10));
   const pageSize = Math.min(100, Math.max(1, parseInt(String(query.pageSize || '100'), 10)));
   return { offset: (page - 1) * pageSize, limit: pageSize, page, pageSize };
+}
+
+// ── Blueprint governance refs (P4a) ───────────────────────────────────
+// A Blueprint instance may name the Requirement it implements and the
+// Specification that governs it. Both are resolved before the row exists, so a
+// blueprint cannot point at nothing. This matters beyond tidiness:
+// `nebula.implementation_plans` casts these payload values to uuid on read, so
+// unvalidated text would poison that projection.
+//
+// The requirement lookup targets `nebula.requirements` — the TRANSITION surface —
+// not `resolution.requirement`. V222 re-points that relation at the canonical
+// table, so the same query is correct before the operator applies the port
+// (legacy rows) and after it (ported rows). Querying the base table directly
+// would return nothing until the port is applied.
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+class BlueprintRefError extends Error {
+  status: number;
+  constructor(message: string, status = 400) {
+    super(message);
+    this.name = 'BlueprintRefError';
+    this.status = status;
+  }
+}
+
+function coerceBlueprintRef(value: unknown, label: string): string | null {
+  if (value === undefined || value === null) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  if (!UUID_PATTERN.test(text)) {
+    throw new BlueprintRefError(`${label} must be a uuid`);
+  }
+  return text.toLowerCase();
+}
+
+async function resolveBlueprintRefs(
+  db: Pick<Pool, 'query'>,
+  raw: { requirementRef?: unknown; specRef?: unknown }
+): Promise<{ requirementRef: string | null; specRef: string | null }> {
+  const requirementRef = coerceBlueprintRef(raw.requirementRef, 'requirementRef');
+  const specRef = coerceBlueprintRef(raw.specRef, 'specRef');
+
+  if (requirementRef) {
+    const { rows } = await db.query(
+      'SELECT id FROM nebula.requirements WHERE id = $1',
+      [requirementRef]
+    );
+    if (rows.length === 0) {
+      throw new BlueprintRefError(`requirementRef does not exist: ${requirementRef}`);
+    }
+  }
+
+  if (specRef) {
+    const { rows: [spec] } = await db.query(
+      'SELECT id, requirement_id FROM resolution.specification WHERE id = $1',
+      [specRef]
+    );
+    if (!spec) {
+      throw new BlueprintRefError(`specRef does not exist: ${specRef}`);
+    }
+    // A Specification governs at most one Requirement; a blueprint that names
+    // both must name a consistent pair.
+    if (requirementRef && spec.requirement_id && spec.requirement_id !== requirementRef) {
+      throw new BlueprintRefError(
+        `specRef ${specRef} governs requirement ${spec.requirement_id}, not ${requirementRef}`
+      );
+    }
+  }
+
+  return { requirementRef, specRef };
 }
 
 // ── Role lifecycle event emitter (D-2026-08-16-009 R3) ─────────────
@@ -1133,7 +1203,7 @@ export function createRoutes(pool: Pool): Router {
   // ════════════════════════════════════════════════════════════════
 
   // POST /api/requirements/:id/move — kanban-friendly single-id status move (Plan 0131)
-  router.post('/requirements/:id/move', async (req: Request, res: Response) => {
+  router.post('/requirements/:id/move', requirementMoveLimiter, async (req: Request, res: Response) => {
     const client = await pool.connect();
     try {
       const { id } = req.params;
@@ -1149,9 +1219,15 @@ export function createRoutes(pool: Pool): Router {
         return res.status(400).json({ error: `expectedCurrentStatus, if provided, must be one of: ${allowedList}` });
       }
       await client.query('BEGIN');
-      // Lock the row to detect concurrent moves
+      // Serialize concurrent moves, then read the current status.
+      // The read deliberately goes through `requirements` — the transition
+      // surface V222 re-points — and not `requirements_history` (frozen once the
+      // port is applied, so new requirements would 404) nor a `FOR UPDATE` on the
+      // view (PostgreSQL cannot lock rows through an INSTEAD OF view). An
+      // advisory lock gives the same concurrency guarantee in both states.
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', [id]);
       const { rows: [currentRow] } = await client.query(
-        'SELECT id, status FROM nebula.requirements_history WHERE id = $1 AND recorded_until_dt = \'9999-12-31 23:59:59+00\' FOR UPDATE',
+        'SELECT id, status FROM requirements WHERE id = $1',
         [id]
       );
       if (!currentRow) {
@@ -1629,6 +1705,10 @@ export function createRoutes(pool: Pool): Router {
               acceptanceCriteria: acceptanceForPlan,
               filesAffected,
               dependencies,
+              // P4a: carry the requirement into the Blueprint so the
+              // Specification → Requirement → Blueprint → WorkRequest chain is
+              // reconstructable from the blueprint payload alone.
+              requirementRef: id,
               deliverable: typeof deliverable === 'string' && deliverable.trim() ? deliverable : undefined,
             }),
           });
@@ -2145,10 +2225,20 @@ export function createRoutes(pool: Pool): Router {
   // POST /api/plans — create a new implementation plan
   // Writes directly to nebula.implementation_plans (the TABLE, not the view).
   // Receipts and tickets are handled downstream by conduit-mcp.
+  // P4a: the blueprint may carry `requirementRef` and/or `specRef`; both are
+  // validated before the row exists.
   router.post('/plans', async (req: Request, res: Response) => {
     try {
-      const { title, project = 'nexus', goal = '', filesAffected = [], acceptanceCriteria = [], dependencies = [], promptRef = '' } = req.body;
+      const { title, project = 'nexus', goal = '', filesAffected = [], acceptanceCriteria = [], dependencies = [], promptRef = '',
+              requirementRef, requirementId, specRef, specificationRef, specificationId } = req.body;
       if (!title) return res.status(400).json({ error: 'title is required' });
+
+      // Accept the canonical names plus the Blueprint-payload spellings so the
+      // compile path and hand-authored callers converge on one validation gate.
+      const refs = await resolveBlueprintRefs(pool, {
+        requirementRef: requirementRef ?? requirementId ?? null,
+        specRef: specRef ?? specificationRef ?? specificationId ?? null,
+      });
 
       // Slugify title into a filename-safe slug (computed once, reused in retry loop)
       const slug = title
@@ -2185,8 +2275,8 @@ export function createRoutes(pool: Pool): Router {
             acceptance_criteria: acceptanceCriteria,
             dependencies,
             tags: [],
-            spec_ref: null,
-            requirement_ref: null,
+            spec_ref: refs.specRef,
+            requirement_ref: refs.requirementRef,
             project,
             ...(promptRef ? { prompt_ref: promptRef } : {}),
           };
@@ -2206,6 +2296,8 @@ export function createRoutes(pool: Pool): Router {
             title: plan.title,
             goal: plan.payload?.goal ?? goal,
             status: plan.status,
+            requirementRef: refs.requirementRef,
+            specRef: refs.specRef,
             timestamp: now,
           });
         } catch (insertErr: any) {
@@ -2220,6 +2312,9 @@ export function createRoutes(pool: Pool): Router {
       // Should never reach here (last attempt throws), but satisfy TypeScript
       throw new Error('Failed to create plan after max retries');
     } catch (err: any) {
+      if (err instanceof BlueprintRefError) {
+        return res.status(err.status).json({ error: err.message });
+      }
       res.status(500).json({ error: err.message });
     }
   });
@@ -2835,7 +2930,7 @@ export function createRoutes(pool: Pool): Router {
           await client.query(
             `INSERT INTO requirements (id, system_id, subsystem_id, feature_id, title, description, status, priority, start_date, completion_date, candidate_id)
              SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
-             WHERE NOT EXISTS (SELECT 1 FROM nebula.requirements_history WHERE id = $1 AND recorded_until_dt = '9999-12-31 23:59:59+00')`,
+             WHERE NOT EXISTS (SELECT 1 FROM requirements WHERE id = $1)`,
             [r.id, r.systemId, r.subsystemId, r.featureId || null, r.title, r.description || '', r.status || 'Backlog', r.priority || 'Medium', r.startDate || null, r.completionDate || null, r.candidateId || null]
           );
         }

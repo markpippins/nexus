@@ -1135,9 +1135,13 @@ export function createRoutes(pool: Pool): Router {
         return res.status(400).json({ error: `expectedCurrentStatus, if provided, must be one of: ${allowedList}` });
       }
       await client.query('BEGIN');
-      // Lock the row to detect concurrent moves
+      // Serialize concurrent moves, then read the current status through the
+      // transition surface (V222 re-points `requirements`; the history table is
+      // frozen after the port, and a view with INSTEAD OF triggers cannot be
+      // locked with FOR UPDATE).
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', [id]);
       const { rows: [currentRow] } = await client.query(
-        'SELECT id, status FROM nebula.requirements_history WHERE id = $1 AND recorded_until_dt = \'9999-12-31 23:59:59+00\' FOR UPDATE',
+        'SELECT id, status FROM requirements WHERE id = $1',
         [id]
       );
       if (!currentRow) {
@@ -2604,7 +2608,7 @@ export function createRoutes(pool: Pool): Router {
           await client.query(
             `INSERT INTO requirements (id, system_id, subsystem_id, feature_id, title, description, status, priority, start_date, completion_date, candidate_id)
              SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
-             WHERE NOT EXISTS (SELECT 1 FROM nebula.requirements_history WHERE id = $1 AND recorded_until_dt = '9999-12-31 23:59:59+00')`,
+             WHERE NOT EXISTS (SELECT 1 FROM requirements WHERE id = $1)`,
             [r.id, r.systemId, r.subsystemId, r.featureId || null, r.title, r.description || '', r.status || 'Backlog', r.priority || 'Medium', r.startDate || null, r.completionDate || null, r.candidateId || null]
           );
         }

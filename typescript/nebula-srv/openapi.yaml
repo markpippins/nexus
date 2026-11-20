@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: nebula-srv — Nebula Knowledge-Graph API
-  version: 1.0.826e9926
+  version: 1.0.451f7998
   description: 'Canonical asset graph: systems, subsystems, features, documents, harvests, agent records, projections, knowledge
     graph, and cross-references.
 

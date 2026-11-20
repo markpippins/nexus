@@ -15,6 +15,7 @@
    "test_v219_request_kind_migration.py",
       "test_v220_work_request_links_migration.py",
       "test_v221_ac11_cutover.py",
+      "test_v222_requirements_port.py",
       "test_roles_registry_parity.py",
       "test_verify_roles_transitional.py"
     ],

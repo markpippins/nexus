@@ -141,7 +141,7 @@ Canonical asset graph: systems, subsystems, features, documents, harvests, agent
 | PUT | `/api/open-questions/:id/resolve` | PUT /api/open-questions/:id/resolve |
 | GET | `/api/open-questions/:id/timeline` | GET /api/open-questions/:id/timeline — deliberation history |
 | GET | `/api/plans` | PLANS DISPLAY (Plan 0134) GET /api/plans — list implementation plans with pagination ?status=archived\|pending\|... & ?page=N & ?pageSize=N |
-| POST | `/api/plans` | POST /api/plans — create a new implementation plan Writes directly to nebula.implementation_plans (the TABLE, not the view). Receipts and tickets are handled downstream by conduit-mcp. |
+| POST | `/api/plans` | POST /api/plans — create a new implementation plan Writes directly to nebula.implementation_plans (the TABLE, not the view). Receipts and tickets are handled downstream by conduit-mcp. P4a: the blueprint may carry `requirementRef` and/or `specRef`; both are validated before the row exists. |
 | GET | `/api/plans/:id` | GET /api/plans/:id — fetch a single implementation plan by plan_number |
 | GET | `/api/plans/:planRef/candidates` | HARVEST CANDIDATES — normalized relational access to harvest data GET /api/plans/:planRef/candidates — reverse lookup: find all harvest_candidates linked to a given conduit plan via cross_references. |
 | GET | `/api/preferences` | USER PREFERENCES GET /api/preferences — get all preferences for the default user |

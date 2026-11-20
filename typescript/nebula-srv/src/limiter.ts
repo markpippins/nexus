@@ -40,3 +40,23 @@ export const requirementCompileLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: "nebula-srv requirement-compile rate limit exceeded" },
 });
+
+/**
+ * Limiter for the kanban status-move endpoint
+ * (POST /api/requirements/:id/move).
+ *
+ * Scoped to this route, 300 req/min/IP, same posture as the two above. It is a
+ * transaction that takes an advisory lock and rewrites lifecycle state, so a
+ * flood here contends on rows other callers need; the advisory lock that
+ * replaced the FOR UPDATE in P4a makes the endpoint's own serialization
+ * explicit, which is exactly why it should not be reachable unbounded.
+ *
+ * CodeQL js/missing-rate-limiting remediation (P4a).
+ */
+export const requirementMoveLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "nebula-srv requirement move rate limit exceeded" },
+});

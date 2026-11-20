@@ -750,9 +750,13 @@ export default class NebulaHierarchyController {
         response.status(400).json({ error: `expectedCurrentStatus, if provided, must be one of: ${allowedList}` })
         return
       }
+      // Serialize concurrent moves, then read through the transition surface
+      // (V222 re-points `requirements`; the history table is frozen after the
+      // port, and an INSTEAD OF view cannot be locked with FOR UPDATE).
+      await qT(trx, `SELECT pg_advisory_xact_lock(hashtext(?)::bigint)`, [id])
       const { rows: [currentRow] } = await qT(
         trx,
-        `SELECT id, status FROM nebula.requirements_history WHERE id = ? AND recorded_until_dt = '9999-12-31 23:59:59+00' FOR UPDATE`,
+        `SELECT id, status FROM requirements WHERE id = ?`,
         [id]
       )
       if (!currentRow) {
