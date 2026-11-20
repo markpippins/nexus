@@ -3884,7 +3884,7 @@
           "disposition": null,
           "language": "python",
           "lifecycle": "live",
-          "line": 648,
+          "line": 654,
           "path": "python/tackle/agent_scheduler_runner.py",
           "role": "legacy",
           "route": null,

@@ -79,7 +79,6 @@ SLEEP_AFTER_LAUNCH = int(os.environ.get("AGENT_SCHEDULER_SLEEP", "5"))
 # `interval` rows did — a Planner every 30 minutes whether or not there was
 # anything to triage, and even when SonarQube was unreachable.
 SONAR_PROJECT_KEY = os.environ.get("NIGHT_SHIFT_SONAR_PROJECT", "nexus")
-SONAR_DEFAULT_BASE_URL = "http://vanadium:9000"
 SONAR_STATUS_PATH = "/api/system/status"
 SONAR_ISSUES_PATH = "/api/issues/search"
 SONAR_TCP_TIMEOUT = 3.0
@@ -145,6 +144,11 @@ def sonar_settings() -> tuple[str, str | None]:
     sonar-mcp server already uses (`typescript/sonar-mcp/.env`, then the
     repo `.env`) are read, so the systemd unit does not have to carry the
     token. Values are never logged.
+
+    There is deliberately no built-in URL default: the deployment declares
+    where SonarQube lives (`SONAR_HOST_URL`/`SONAR_BASE_URL`), and an
+    unconfigured host makes the Planner refuse rather than silently assume
+    an endpoint.
     """
     base_url = (os.environ.get("SONAR_HOST_URL") or os.environ.get("SONAR_BASE_URL") or "").strip()
     token = (os.environ.get("SONAR_TOKEN") or os.environ.get("SONAR_LOGIN") or "").strip()
@@ -161,7 +165,7 @@ def sonar_settings() -> tuple[str, str | None]:
         base_url = base_url or (values.get("SONAR_HOST_URL") or values.get("SONAR_BASE_URL") or "").strip()
         token = token or (values.get("SONAR_TOKEN") or values.get("SONAR_LOGIN") or "").strip()
 
-    return (base_url or SONAR_DEFAULT_BASE_URL).rstrip("/"), (token or None)
+    return base_url.rstrip("/"), (token or None)
 
 
 def probe_sonar_findings(
@@ -181,7 +185,9 @@ def probe_sonar_findings(
         resolved_url, resolved_token = sonar_settings()
         base_url = base_url or resolved_url
         token = token or resolved_token
-    base_url = base_url.rstrip("/")
+    base_url = (base_url or "").rstrip("/")
+    if not base_url:
+        return SonarProbe(False, None, "no Sonar host configured (SONAR_HOST_URL)")
 
     headers = {"Accept": "application/json"}
     try:

@@ -353,9 +353,9 @@ class TestPlannerEligibility:
             return _Resp({"total": 42, "issues": []})
 
         monkeypatch.setattr(asr.urllib.request, "urlopen", fake_urlopen)
-        probe = asr.probe_sonar_findings(base_url="http://sonar.test", token="t")
+        probe = asr.probe_sonar_findings(base_url="https://sonar.test", token="t")
         assert probe == asr.SonarProbe(True, 42, "42 open finding(s) for project nexus")
-        assert calls[1].startswith("http://sonar.test/api/issues/search?")
+        assert calls[1].startswith("https://sonar.test/api/issues/search?")
         assert "resolved=false" in calls[1]
 
     def test_probe_without_token_is_not_ready(self, monkeypatch):
@@ -371,6 +371,13 @@ class TestPlannerEligibility:
         monkeypatch.setattr(asr.urllib.request, "urlopen", lambda req, timeout=None: _Resp())
         # Empty string (not None) means "explicitly no token": passing None
         # would fall back to the checkout .env credential surface.
-        probe = asr.probe_sonar_findings(base_url="http://sonar.test", token="")
+        probe = asr.probe_sonar_findings(base_url="https://sonar.test", token="")
         assert probe.ready is False
         assert "token" in probe.reason
+
+    def test_probe_without_host_is_not_ready(self):
+        # No built-in default host: an unconfigured deployment must refuse
+        # rather than assume an endpoint.
+        probe = asr.probe_sonar_findings(base_url="", token="t")
+        assert probe.ready is False
+        assert "host" in probe.reason
