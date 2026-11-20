@@ -62,6 +62,7 @@ let base: string;
 beforeEach(async () => {
   pool = new FakePool();
   const app = express();
+  app.disable('x-powered-by');
   app.use(express.json());
   app.use('/api', createRoutes(pool as never));
   server = await new Promise<Server>((resolve) => {
@@ -90,6 +91,7 @@ describe('POST /api/plans blueprint governance refs', () => {
     const { response, body } = await createPlan({ title: 'Wire the emitter', requirementRef: REQUIREMENT_ID });
 
     expect(response.status).toBe(201);
+    expect(response.headers.get('x-powered-by')).toBeNull();
     expect(body.requirementRef).toBe(REQUIREMENT_ID);
     expect(body.specRef).toBeNull();
     expect(pool.insertedPayloads).toHaveLength(1);
