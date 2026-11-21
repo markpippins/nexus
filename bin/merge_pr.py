@@ -14,11 +14,16 @@ This tool makes the R8 merge conditions mechanically enforceable:
 
 Check-only is the DEFAULT and never mutates anything; exit 0 means "every
 gate passed". ``--merge`` performs the squash merge only after all gates
-pass. ``--record-refusals`` (opt-in; the attestation janitor passes it) adds
+pass.
+
+``--record-refusals`` (opt-in; the attestation janitor passes it) adds the
 two attestation-bookkeeping writes described under "Gate 3 bookkeeping":
 the refused row is tagged status:refused + gate-code:<CODE>, and a refused
 row is retired under an accepted successor for the same PR and head. Those
-writes never change a gate result; without the flag the gate stays read-only. The attestation gate (and only that gate) may be bypassed by the
+writes never change a gate result; without the flag the gate stays
+read-only.
+
+The attestation gate (and only that gate) may be bypassed by the
 OPERATOR via NEXUS_ALLOW_UNATTESTED_MERGE=1 -- the bypass is reported
 loudly in the gate output. Agents must not set it.
 
@@ -902,7 +907,7 @@ def record_refusal(
     if not rid:
         return False, "row has no id"
     tags = [str(t) for t in (record.get("tags") or [])]
-    if REFUSAL_STATUS in tags and f"gate-code:{code}" in tags:
+    if code and REFUSAL_STATUS in tags and f"gate-code:{code}" in tags:
         return True, "already recorded"
     try:
         http_patch(f"{NEBULA_BASE}/api/agent-records/{rid}",
@@ -937,7 +942,7 @@ def attestation_bookkeeping(
     gate detail (empty when nothing was written)."""
 
     def run(records, pr_number, ok, code, head_sha) -> str:
-        newest, _mentions, live = select_attestation(records, pr_number)
+        newest, _, live = select_attestation(records, pr_number)
         if ok:
             if newest is None:
                 return ""
@@ -1330,12 +1335,10 @@ def evaluate(
     http_get: Callable[[str], Any] = _http_get_json,
     env: Optional[Dict[str, str]] = None,
     record_refusals: bool = False,
-    bookkeeping: Optional[Callable[..., str]] = None,
 ) -> Tuple[List[GateResult], Dict[str, Any]]:
     env = os.environ if env is None else env
     gates: List[GateResult] = []
-    if bookkeeping is None and record_refusals:
-        bookkeeping = attestation_bookkeeping()
+    bookkeeping = attestation_bookkeeping() if record_refusals else None
 
     try:
         pr = fetch_pr_state(pr_number, run_json)
