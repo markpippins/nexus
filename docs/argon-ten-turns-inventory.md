@@ -110,13 +110,14 @@ and the apply looks clean. The first requirement delete, cascade pre-check
 call then raises `column w.source_requirement_id does not exist` — a 500, not the
 intended `P4A01` refusal — for every delete, not only conflicting ones.
 
-**Required before any apply** (not done here: the migration is frozen):
-replace that branch with the normalized link, mirroring `V221`'s own view
-(`sql/V221…:73`–`:79`), e.g. `resolution.request_requirement_link` where
-`relation = 'source'`, or drop the branch entirely; and add a test that applies
-`V221` before `V222`. Until then, the delete-guard behaviour claimed by the
-runbook and the consumer inventory is **demonstrated only against a schema the
-plan says will not exist**.
+**Resolved 2026-11-21 (operator-approved).** V222's guard now reads
+`resolution.request_requirement_link` where `relation = 'source'` (mirroring
+`V221`'s own view, `sql/V221…:73`–`:79`) and keeps the legacy column visible
+through `to_jsonb`, so the function is valid on both sides of V221.
+`test_delete_guard_is_v221_safe` drops the column before applying the port and
+proves both the `P4A01` refusal and a clean unreferenced delete; the full module
+passes 40/40. The delete-guard behaviour is therefore demonstrated on the schema
+V221 leaves behind, not only on the pre-V221 fixture.
 
 ## 5. Out-of-scope inventory
 
@@ -270,7 +271,7 @@ and its consumer repoint (P1), its column drop; the `V187`/`V220`/`V216`–`V218
 migrations; the 46-row amendment and verifier (P4); the inert Track A evaluator;
 `ballerina/`'s 2026-09-19 boundary; the JVM stubs (`InMemorySolStorage`,
 `BrokerWriteController`, `SearchWriteController`); the absence of a
-`gestalt.pressure_signals` table; and the `V221`/`V222` column conflict (§4).
+`gestalt.pressure_signals` table; and the `V221`/`V222` column conflict and its fix (§4).
 
 **Asserted only** (no artifact can confirm or refute it here): every live-database
 claim — `V215`–`V221` and `V187` applied, `V216`/`V217` executable

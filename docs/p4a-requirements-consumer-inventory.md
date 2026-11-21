@@ -207,11 +207,12 @@ the drop (not after the apply):
    `column w.source_requirement_id does not exist` instead of returning blockers
    — a 500 on every delete and cascade, not a 409. The V222 fixture recreates the
    column on purpose (`bin/tests/test_v222_requirements_port.py:221`–`:226`), so
-   the suite cannot catch it. A staged fix is prepared in
-   `sql/patches/V222-v221-safe-delete-guard.patch` (NOT applied); the order test
-   `test_delete_guard_is_v221_safe` is xfailed until it lands. Apply the patch —
-   or an equivalent reading of `resolution.request_requirement_link`
-   (`relation = 'source'`) — before any database where V221 has run.
+   the original suite could not catch it. **Fixed in V222 (2026-11-21,
+   operator-approved):** the guard reads `resolution.request_requirement_link`
+   where `relation = 'source'` and keeps the legacy column visible through
+   `to_jsonb`, so it is valid on both sides of V221.
+   `test_delete_guard_is_v221_safe` drops the column before applying the port and
+   proves both the `P4A01` refusal and a clean unreferenced delete.
 
 ---
 

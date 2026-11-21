@@ -49,15 +49,7 @@ pytestmark = skip_unless_host_tools(
     "createdb", "dropdb", "psql", doing="these tests create a throwaway database"
 )
 
-# The staged V221-safety patch is verified by pointing this suite at a patched
-# copy: V222_MIGRATION_PATH=/tmp/v222_patched.sql pytest --runxfail. The default
-# stays the committed migration, so the suite continues to guard it.
-V222 = Path(
-    os.environ.get(
-        "V222_MIGRATION_PATH",
-        REPO_ROOT / "sql" / "V222__port_requirements_to_resolution.sql",
-    )
-)
+V222 = REPO_ROOT / "sql" / "V222__port_requirements_to_resolution.sql"
 NEBULA_ROUTES = REPO_ROOT / "typescript" / "nebula-srv" / "src" / "routes.ts"
 PROMOTE = REPO_ROOT / "python" / "tackle" / "intent_requirement_promote.py"
 
@@ -1129,14 +1121,6 @@ def test_every_referencing_surface_blocks_the_delete(fresh_port):
         assert psql(fresh_port, f"select count(*) from resolution.requirement where id = '{rid}'") == "1"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "V222 still reads resolution.work_request.source_requirement_id, which "
-        "V221 drops; sql/patches/V222-v221-safe-delete-guard.patch fixes it and "
-        "removes this marker when applied"
-    ),
-)
 def test_delete_guard_is_v221_safe():
     """The guard must work on the schema V221 leaves behind.
 

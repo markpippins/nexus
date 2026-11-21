@@ -827,21 +827,23 @@ must pass before consumers resume writing through the compatibility view. Until
 it does, treat `nebula.requirements` as read-only infrastructure under the DBA's
 control, not as a surface to hand back to the services.
 
-> **Ordering hazard — V221 vs the delete guard (found 2026-11-21, before any
-> live apply).** `resolution.requirement_delete_blockers()` makes a live
-> `resolution.work_request.source_requirement_id` a delete blocker
-> (`sql/V222__port_requirements_to_resolution.sql:712`–`:716`), but V221 drops
-> that column (`sql/V221__ac11_drop_source_requirement_shortcut.sql:104`) and
-> asserts it is gone (`:247`). If V221 is applied first — the plan-of-record
-> order — the function is still created (plpgsql resolves column references at
-> first execution), so §7's postconditions pass, and the failure appears on the
-> first requirement delete or cascade as `column w.source_requirement_id does
-> not exist`. Add an explicit delete-and-cascade probe to §7, and fix the branch
-> (read `resolution.request_requirement_link` where `relation = 'source'`, or
-> drop it) before applying V222 on any database where V221 has run. The V222
-> test fixture recreates the pre-V221 column
-> (`bin/tests/test_v222_requirements_port.py:221`–`:226`), so CI will not catch
-> this.
+> **Ordering hazard — V221 vs the delete guard (found 2026-11-21, fixed in V222
+> the same day, before any live apply).** The guard originally read
+> `resolution.work_request.source_requirement_id` as a delete blocker, but V221
+> drops that column (`sql/V221__ac11_drop_source_requirement_shortcut.sql:104`)
+> and asserts it is gone (`:247`). In the plan-of-record order the function is
+> still created (plpgsql resolves column references at first execution), so the
+> apply's postconditions pass and the failure appears on the first delete or
+> cascade as `column w.source_requirement_id does not exist` — a 500, not the
+> intended 409. **It is now fixed:** the guard reads
+> `resolution.request_requirement_link` where `relation = 'source'` and keeps the
+> legacy column visible through `to_jsonb`, so it is valid on both sides of V221.
+> `test_delete_guard_is_v221_safe` drops the column before applying the port and
+> proves both the `P4A01` refusal and a clean unreferenced delete. The V222 test
+> fixture recreates the pre-V221 column, which is why the original suite could
+> not catch it; the order test is the regression guard. §7's target probe should
+> still delete and cascade once, to confirm the installed function behaves the
+> same on the real schema.
 
 The projection is a transition, not the destination. Every consumer below
 resolves through `nebula.requirements` today and is served by the write-through
