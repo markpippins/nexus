@@ -123,6 +123,7 @@ let base: string;
 beforeEach(async () => {
   db = new FakeDb();
   const app = express();
+  app.disable('x-powered-by');
   app.use(express.json());
   app.use('/api', createRoutes(db as never));
   server = await new Promise<Server>((resolve) => {
@@ -271,6 +272,7 @@ describe('plan reads expose the Blueprint refs', () => {
     const body = await response.json() as any;
 
     expect(response.status).toBe(200);
+    expect(response.headers.get('x-powered-by')).toBeNull();
     expect(body.items[0].requirementRef).toBe(REQUIREMENT_ID);
     expect(body.items[0].specRef).toBe(SPEC_ID);
   });
