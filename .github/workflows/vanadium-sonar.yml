@@ -12,6 +12,21 @@ on:
 permissions:
   contents: read
 
+# One in-flight scan per pull request (per ref for push / workflow_dispatch): a
+# new push supersedes its predecessor instead of queueing behind it. The
+# vanadium runner is a single slot, so without this block rapid pushes to one
+# PR ran strictly back-to-back — four runs on 2026-11-21 spanned 17:08:15 →
+# 18:03:21, each starting the second the previous job released the runner, and
+# the final scan reported on a commit ~55 minutes stale. Grouping by PR number
+# rather than one global group keeps the cancellation scoped to the branch that
+# moved: a push to PR A must never kill the in-flight scan for PR B, which would
+# leave B with no Sonar verdict on its own head. Cancelling a superseded run is
+# safe here — the scan holds no state, the quality gate is re-evaluated by the
+# run that replaces it, and the newer commit is the one that matters.
+concurrency:
+  group: vanadium-sonar-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   sonar:
     runs-on: [self-hosted, vanadium]
