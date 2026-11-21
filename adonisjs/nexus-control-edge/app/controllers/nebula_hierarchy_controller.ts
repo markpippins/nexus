@@ -1,6 +1,13 @@
 import type { HttpContext } from '@adonisjs/core/http'
 import db from '@adonisjs/lucid/services/db'
-import { q, qT, toEpochMs, parsePagination, normalizeStatus, STATUS_CANONICAL, REQ_TYPES, getUnusedColor, randomUUID } from '../services/nebula_helpers.js'
+import { q, qT, asQueryable, toEpochMs, parsePagination, normalizeStatus, STATUS_CANONICAL, REQ_TYPES, getUnusedColor, randomUUID } from '../services/nebula_helpers.js'
+import {
+  REQUIREMENT_DELETE_BLOCKED_CODE,
+  deleteRequirementSet,
+  requirementDeleteConflict,
+  requirementDeleteSuccess,
+  requirementIdsInScope,
+} from '../services/requirement_delete_guard.js'
 import { CrossReferenceType } from '../services/crossref_taxonomy.js'
 
 /**
@@ -107,17 +114,38 @@ export default class NebulaHierarchyController {
     }
   }
 
-  /** DELETE /api/systems/:id — cascade delete */
+  /**
+   * DELETE /api/systems/:id — cascade delete.
+   *
+   * P4a: the requirement cascade is explicit (the hierarchy relations are views
+   * with no FK to cascade from) and runs in one transaction, leaf-first through
+   * the canonical delete guard. A requirement that a specification, plan,
+   * request or blueprint still names refuses the whole cascade with 409 instead
+   * of leaving it half done. Same contract as nebula-srv and moleculer/nebula.
+   */
   async deleteSystem({ request, response }: HttpContext) {
+    const trx = await db.connection('nebula').transaction()
     try {
       const { id } = request.params()
-      const { rowCount } = await q('DELETE FROM systems WHERE id = ?', [id])
+      const run = asQueryable(trx)
+      const requirementIds = await requirementIdsInScope(run, 'system_id', id)
+      const deleted = await deleteRequirementSet(run, requirementIds, `System ${id}`)
+      await qT(trx, 'DELETE FROM work_sessions WHERE parent_id = ?', [id])
+      const { rowCount } = await qT(trx, 'DELETE FROM systems WHERE id = ?', [id])
       if (rowCount === 0) {
+        await trx.rollback()
         response.status(404).json({ error: 'System not found' })
         return
       }
-      response.json({ ok: true })
+      await trx.commit()
+      response.json(requirementDeleteSuccess(deleted))
     } catch (e: any) {
+      await trx.rollback()
+      const conflict = requirementDeleteConflict(e)
+      if (conflict) {
+        response.status(409).json({ code: REQUIREMENT_DELETE_BLOCKED_CODE, ...conflict })
+        return
+      }
       const { status, body } = err(e)
       response.status(status).json(body)
     }
@@ -211,16 +239,27 @@ export default class NebulaHierarchyController {
 
   /** DELETE /api/subsystems/:id — cascade deletes features and requirements */
   async deleteSubsystem({ request, response }: HttpContext) {
+    const trx = await db.connection('nebula').transaction()
     try {
       const { id } = request.params()
-      await q('DELETE FROM requirements WHERE subsystem_id = ?', [id])
-      const { rowCount } = await q('DELETE FROM subsystems WHERE id = ?', [id])
+      const run = asQueryable(trx)
+      const requirementIds = await requirementIdsInScope(run, 'subsystem_id', id)
+      const deleted = await deleteRequirementSet(run, requirementIds, `Subsystem ${id}`)
+      const { rowCount } = await qT(trx, 'DELETE FROM subsystems WHERE id = ?', [id])
       if (rowCount === 0) {
+        await trx.rollback()
         response.status(404).json({ error: 'Subsystem not found' })
         return
       }
-      response.json({ ok: true })
+      await trx.commit()
+      response.json(requirementDeleteSuccess(deleted))
     } catch (e: any) {
+      await trx.rollback()
+      const conflict = requirementDeleteConflict(e)
+      if (conflict) {
+        response.status(409).json({ code: REQUIREMENT_DELETE_BLOCKED_CODE, ...conflict })
+        return
+      }
       const { status, body } = err(e)
       response.status(status).json(body)
     }
@@ -303,16 +342,27 @@ export default class NebulaHierarchyController {
 
   /** DELETE /api/features/:id — cascade deletes requirements with feature_id */
   async deleteFeature({ request, response }: HttpContext) {
+    const trx = await db.connection('nebula').transaction()
     try {
       const { id } = request.params()
-      await q('DELETE FROM requirements WHERE feature_id = ?', [id])
-      const { rowCount } = await q('DELETE FROM features WHERE id = ?', [id])
+      const run = asQueryable(trx)
+      const requirementIds = await requirementIdsInScope(run, 'feature_id', id)
+      const deleted = await deleteRequirementSet(run, requirementIds, `Feature ${id}`)
+      const { rowCount } = await qT(trx, 'DELETE FROM features WHERE id = ?', [id])
       if (rowCount === 0) {
+        await trx.rollback()
         response.status(404).json({ error: 'Feature not found' })
         return
       }
-      response.json({ ok: true })
+      await trx.commit()
+      response.json(requirementDeleteSuccess(deleted))
     } catch (e: any) {
+      await trx.rollback()
+      const conflict = requirementDeleteConflict(e)
+      if (conflict) {
+        response.status(409).json({ code: REQUIREMENT_DELETE_BLOCKED_CODE, ...conflict })
+        return
+      }
       const { status, body } = err(e)
       response.status(status).json(body)
     }
@@ -713,17 +763,32 @@ export default class NebulaHierarchyController {
     }
   }
 
-  /** DELETE /api/requirements/:id */
+  /**
+   * DELETE /api/requirements/:id — refused with 409 while any governance
+   * surface still names the requirement; the DB enforces the same rule for
+   * callers that bypass this action, so the refusal payload is identical to
+   * nebula-srv's.
+   */
   async deleteRequirement({ request, response }: HttpContext) {
+    const trx = await db.connection('nebula').transaction()
     try {
       const { id } = request.params()
-      const { rowCount } = await q('DELETE FROM requirements WHERE id = ?', [id])
-      if (rowCount === 0) {
+      const run = asQueryable(trx)
+      const deleted = await deleteRequirementSet(run, [id], `Requirement ${id}`)
+      if (deleted === 0) {
+        await trx.rollback()
         response.status(404).json({ error: 'Requirement not found' })
         return
       }
-      response.json({ ok: true })
+      await trx.commit()
+      response.json(requirementDeleteSuccess(deleted))
     } catch (e: any) {
+      await trx.rollback()
+      const conflict = requirementDeleteConflict(e)
+      if (conflict) {
+        response.status(409).json({ code: REQUIREMENT_DELETE_BLOCKED_CODE, ...conflict })
+        return
+      }
       const { status, body } = err(e)
       response.status(status).json(body)
     }
@@ -731,7 +796,7 @@ export default class NebulaHierarchyController {
 
   /** POST /api/requirements/:id/move — kanban-friendly single-id status move */
   async moveRequirement({ request, response }: HttpContext) {
-    const trx = await db.transaction()
+    const trx = await db.connection('nebula').transaction()
     try {
       const { id } = request.params()
       const body = request.body()
@@ -933,7 +998,7 @@ export default class NebulaHierarchyController {
 
   /** POST /api/features/move */
   async moveFeature({ request, response }: HttpContext) {
-    const trx = await db.transaction()
+    const trx = await db.connection('nebula').transaction()
     try {
       const body = request.body()
       const { featureId, targetSystemId, targetSubsystemId } = body
@@ -960,7 +1025,7 @@ export default class NebulaHierarchyController {
 
   /** POST /api/subsystems/move */
   async moveSubsystem({ request, response }: HttpContext) {
-    const trx = await db.transaction()
+    const trx = await db.connection('nebula').transaction()
     try {
       const body = request.body()
       const { subsystemId, targetSystemId } = body
@@ -987,7 +1052,7 @@ export default class NebulaHierarchyController {
 
   /** POST /api/systems/demote/:id */
   async demoteSystem({ request, response }: HttpContext) {
-    const trx = await db.transaction()
+    const trx = await db.connection('nebula').transaction()
     try {
       const { id: sourceId } = request.params()
       const body = request.body()
@@ -1035,6 +1100,14 @@ export default class NebulaHierarchyController {
         'UPDATE requirements SET system_id = ?, subsystem_id = ?, feature_id = NULL WHERE system_id = ? AND subsystem_id IS NULL',
         [targetSystemId, newSub.id, sourceId]
       )
+      // The hierarchy tables have no cascading foreign keys. Requirements now
+      // point at the destination rows, so remove the demoted source subtree too.
+      await qT(
+        trx,
+        'DELETE FROM features WHERE subsystem_id IN (SELECT id FROM subsystems WHERE system_id = ?)',
+        [sourceId]
+      )
+      await qT(trx, 'DELETE FROM subsystems WHERE system_id = ?', [sourceId])
       await qT(trx, 'DELETE FROM systems WHERE id = ?', [sourceId])
       await trx.commit()
       response.json({ ok: true, newSubsystemId: newSub.id })

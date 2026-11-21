@@ -15,6 +15,13 @@ import {
   AGENT_RECORD_LIST_COLUMNS,
   AGENT_RECORD_LIST_COLUMNS_FULL,
 } from './agent-record-projection';
+import {
+  REQUIREMENT_DELETE_BLOCKED_CODE,
+  deleteRequirementSet,
+  requirementDeleteConflict,
+  requirementDeleteSuccess,
+  requirementIdsInScope,
+} from './requirement-delete';
 
 export {
   camelCaseRow,
@@ -475,16 +482,34 @@ export function createRoutes(pool: Pool): Router {
   });
 
   // DELETE /api/systems/:id — cascade deletes subsystems, features, folders, requirements
+  // P4a: the requirement cascade is explicit (the hierarchy relations are views
+  // with no FK to cascade from) and runs in one transaction, leaf-first through
+  // the canonical delete guard. A requirement that a specification, plan,
+  // request or blueprint still names refuses the whole cascade with 409 instead
+  // of leaving it half done. Same contract as nebula-srv and the control edge.
   router.delete('/systems/:id', async (req: Request, res: Response) => {
+    const client = await pool.connect();
     try {
-      const { id } = req.params;
+      const id = String(req.params.id);
+      await client.query('BEGIN');
+      const requirementIds = await requirementIdsInScope(client, 'system_id', id);
+      const deleted = await deleteRequirementSet(client, requirementIds, `System ${id}`);
       // Also delete associated work_sessions (parentId matches)
-      await pool.query('DELETE FROM work_sessions WHERE parent_id = $1', [id]);
-      const { rowCount } = await pool.query('DELETE FROM systems WHERE id = $1', [id]);
-      if (rowCount === 0) return res.status(404).json({ error: 'System not found' });
-      res.json({ ok: true });
+      await client.query('DELETE FROM work_sessions WHERE parent_id = $1', [id]);
+      const { rowCount } = await client.query('DELETE FROM systems WHERE id = $1', [id]);
+      if (rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'System not found' });
+      }
+      await client.query('COMMIT');
+      res.json(requirementDeleteSuccess(deleted));
     } catch (err: any) {
+      await client.query('ROLLBACK');
+      const conflict = requirementDeleteConflict(err);
+      if (conflict) return res.status(409).json({ code: REQUIREMENT_DELETE_BLOCKED_CODE, ...conflict });
       res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
     }
   });
 
@@ -601,14 +626,26 @@ export function createRoutes(pool: Pool): Router {
 
   // DELETE /api/subsystems/:id — cascade deletes features and requirements
   router.delete('/subsystems/:id', async (req: Request, res: Response) => {
+    const client = await pool.connect();
     try {
-      const { id } = req.params;
-      await pool.query('DELETE FROM requirements WHERE subsystem_id = $1', [id]);
-      const { rowCount } = await pool.query('DELETE FROM subsystems WHERE id = $1', [id]);
-      if (rowCount === 0) return res.status(404).json({ error: 'Subsystem not found' });
-      res.json({ ok: true });
+      const id = String(req.params.id);
+      await client.query('BEGIN');
+      const requirementIds = await requirementIdsInScope(client, 'subsystem_id', id);
+      const deleted = await deleteRequirementSet(client, requirementIds, `Subsystem ${id}`);
+      const { rowCount } = await client.query('DELETE FROM subsystems WHERE id = $1', [id]);
+      if (rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Subsystem not found' });
+      }
+      await client.query('COMMIT');
+      res.json(requirementDeleteSuccess(deleted));
     } catch (err: any) {
+      await client.query('ROLLBACK');
+      const conflict = requirementDeleteConflict(err);
+      if (conflict) return res.status(409).json({ code: REQUIREMENT_DELETE_BLOCKED_CODE, ...conflict });
       res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
     }
   });
 
@@ -681,14 +718,26 @@ export function createRoutes(pool: Pool): Router {
 
   // DELETE /api/features/:id — cascade deletes requirements with feature_id
   router.delete('/features/:id', async (req: Request, res: Response) => {
+    const client = await pool.connect();
     try {
-      const { id } = req.params;
-      await pool.query('DELETE FROM requirements WHERE feature_id = $1', [id]);
-      const { rowCount } = await pool.query('DELETE FROM features WHERE id = $1', [id]);
-      if (rowCount === 0) return res.status(404).json({ error: 'Feature not found' });
-      res.json({ ok: true });
+      const id = String(req.params.id);
+      await client.query('BEGIN');
+      const requirementIds = await requirementIdsInScope(client, 'feature_id', id);
+      const deleted = await deleteRequirementSet(client, requirementIds, `Feature ${id}`);
+      const { rowCount } = await client.query('DELETE FROM features WHERE id = $1', [id]);
+      if (rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Feature not found' });
+      }
+      await client.query('COMMIT');
+      res.json(requirementDeleteSuccess(deleted));
     } catch (err: any) {
+      await client.query('ROLLBACK');
+      const conflict = requirementDeleteConflict(err);
+      if (conflict) return res.status(409).json({ code: REQUIREMENT_DELETE_BLOCKED_CODE, ...conflict });
       res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
     }
   });
 
@@ -1103,14 +1152,28 @@ export function createRoutes(pool: Pool): Router {
   });
 
   // DELETE /api/requirements/:id
+  // P4a: refused with 409 while any governance surface still names the
+  // requirement; the DB enforces the same rule for callers that bypass this
+  // route, so the refusal payload is identical to nebula-srv's.
   router.delete('/requirements/:id', async (req: Request, res: Response) => {
+    const client = await pool.connect();
     try {
-      const { id } = req.params;
-      const { rowCount } = await pool.query('DELETE FROM requirements WHERE id = $1', [id]);
-      if (rowCount === 0) return res.status(404).json({ error: 'Requirement not found' });
-      res.json({ ok: true });
+      const id = String(req.params.id);
+      await client.query('BEGIN');
+      const deleted = await deleteRequirementSet(client, [id], `Requirement ${id}`);
+      if (deleted === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Requirement not found' });
+      }
+      await client.query('COMMIT');
+      res.json(requirementDeleteSuccess(deleted));
     } catch (err: any) {
+      await client.query('ROLLBACK');
+      const conflict = requirementDeleteConflict(err);
+      if (conflict) return res.status(409).json({ code: REQUIREMENT_DELETE_BLOCKED_CODE, ...conflict });
       res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
     }
   });
 

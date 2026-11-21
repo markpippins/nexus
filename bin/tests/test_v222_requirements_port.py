@@ -219,7 +219,10 @@ CREATE TABLE resolution.requirement (
 );
 
 CREATE TABLE resolution.work_request (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid()
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    -- Live V020+ column: the single-source shortcut V220 supersedes but does not
+    -- drop yet. The delete guard must treat it as a reference.
+    source_requirement_id uuid REFERENCES resolution.requirement (id)
 );
 
 -- The candidate store the canonical FK points at. Live it is EMPTY while the
@@ -406,12 +409,20 @@ def test_migration_is_additive_and_keeps_the_legacy_store():
     assert not re.search(r"\b(TRUNCATE|DROP\s+TABLE)\b", code, re.IGNORECASE)
     assert not re.search(r"DROP\s+COLUMN", code, re.IGNORECASE)
 
-    # The port itself deletes nothing. The single DELETE is the identity-scoped
-    # write-through branch for DELETE on the compatibility view (so a legacy
-    # caller's delete still means what it meant), not a port-time wipe.
-    deletes = re.findall(r"DELETE\s+FROM\s+[A-Za-z_.]+", code, re.IGNORECASE)
-    assert deletes == ["DELETE FROM resolution.requirement"], deletes
+    # The port itself deletes nothing and never touches the legacy store. The
+    # DELETEs that exist are the delete guard's ledger release (proof about a
+    # row that is going away), the ordered cascade helper and the legacy delete
+    # branch of the write-through — none of them a port-time wipe.
+    deletes = set(re.findall(r"DELETE\s+FROM\s+[A-Za-z_.]+", code, re.IGNORECASE))
+    assert deletes == {
+        "DELETE FROM resolution.requirement",
+        "DELETE FROM resolution.requirement_port_ledger",
+    }, deletes
+    assert not re.search(
+        r"DELETE\s+FROM\s+(?:nebula\.)?requirements_history", code, re.IGNORECASE
+    )
     assert "WHERE id = OLD.id" in code
+    assert "WHERE target_id = OLD.id" in code
     # The legacy bitemporal store is the pre-port audit record.
     assert "nebula.requirements_history" in code
     assert "resolution.requirement_port_ledger" in code
@@ -436,6 +447,8 @@ def test_migration_refuses_partial_and_unrepresentable_ports():
         "V222-POST-003",
         "V222-POST-004",
         "V222-POST-005",
+        "V222-POST-013",
+        "V222-POST-014",
     ):
         assert marker in code, marker
 
@@ -463,7 +476,14 @@ def test_nebula_srv_targets_the_transition_surface_not_the_unported_table():
     code = "\n".join(
         line for line in text.splitlines() if not line.lstrip().startswith("//")
     )
-    assert "resolution.requirement" not in code
+    # The delete guard is reached by name (`resolution.delete_requirements`, the
+    # `resolution.requirement_delete_blockers` function), never as a table read
+    # or write: those would serve zero rows until the operator applies V222.
+    assert not re.search(
+        r"\b(?:FROM|JOIN|INTO|UPDATE|DELETE\s+FROM)\s+resolution\.requirement\b",
+        code,
+        re.IGNORECASE,
+    )
     assert "nebula.requirements" in code
     # The frozen legacy store is not a live read surface.
     assert "FROM nebula.requirements_history" not in code
@@ -637,6 +657,55 @@ def test_candidate_preflight_refuses_when_the_canonical_store_is_populated():
         """) == "1"
     finally:
         drop_db(db)
+
+
+def test_asset_preflight_refuses_a_legacy_link_with_no_canonical_asset():
+    db = new_db("e2e_p4a_v222_asset")
+    try:
+        apply_script(db, SKELETON)
+        # The legacy store points at semantics.canonical_asset; this id exists
+        # nowhere in resolution.canonical_asset, so the port's FK could never
+        # accept it. That is an operator stop, not a mid-insert FK abort.
+        rogue = "dddddddd-4444-4444-8444-ddddddddddd4"
+        psql(db, f"""
+            insert into nebula.requirements_history
+              (id, system_id, title, asset_id)
+            values (gen_random_uuid(), '{SYS}', 'asset that was never ported', '{rogue}')
+        """)
+        assert psql(db, "select count(*) from nebula.requirements") == "4"
+
+        message = apply_migration(db, expect_fail=True)
+        assert "V222-PREFLIGHT-018" in message
+        # Named with the count, not just the constraint: one of two links.
+        assert "1 of 2 legacy asset link(s)" in message
+        assert "requirement_asset_id_fkey" not in message
+
+        # Nothing was written and the pre-state is intact: no canonical rows, no
+        # ledger, the projection is still the legacy view, and the FK survives.
+        assert psql(db, "select count(*) from resolution.requirement") == "0"
+        assert psql(db, """
+            select count(*) from information_schema.tables
+             where table_schema = 'resolution' and table_name = 'requirement_port_ledger'
+        """) == "0"
+        assert psql(db, "select count(*) from nebula.requirements") == "4"
+        assert psql(db, """
+            select count(*) from pg_constraint
+             where conrelid = 'resolution.requirement'::regclass
+               and conname = 'requirement_asset_id_fkey'
+        """) == "1"
+    finally:
+        drop_db(db)
+
+
+def test_asset_preflight_passes_when_every_legacy_link_resolves(ported):
+    # R1 carries ASSET and resolution.canonical_asset holds it, so the guard
+    # must not fire on a representable port.
+    assert psql(ported, f"select asset_id::text from resolution.requirement where id = '{R1}'") == ASSET
+    assert psql(ported, """
+        select count(*) from nebula.requirements r
+         where r.asset_id is not null
+           and not exists (select 1 from resolution.canonical_asset a where a.id = r.asset_id)
+    """) == "0"
 
 
 def test_ledger_proves_identity_row_by_row(ported):
@@ -827,6 +896,10 @@ SELECT id, system_id, subsystem_id, feature_id, title, description, status,
  WHERE now() >= recorded_on_dt AND now() < recorded_until_dt
    AND now() >= valid_from AND now() < valid_until;
 DROP TRIGGER IF EXISTS trg_requirements_compat_write ON nebula.requirements;
+DROP TRIGGER IF EXISTS trg_requirement_delete_guard ON resolution.requirement;
+DROP FUNCTION IF EXISTS resolution.delete_requirements(uuid[]);
+DROP FUNCTION IF EXISTS resolution.requirement_delete_guard();
+DROP FUNCTION IF EXISTS resolution.requirement_delete_blockers(uuid, uuid[]);
 DROP TABLE resolution.requirement_port_ledger;
 DELETE FROM resolution.requirement
  WHERE id IN (SELECT source_id FROM _v222_rb);
@@ -868,6 +941,14 @@ def test_documented_rollback_restores_the_pre_port_surface():
         # round trip; the view serves it again.
         assert psql(db, "select string_agg(status, ',' order by status) from nebula.requirements_history") == statuses_before
         assert psql(db, "select count(*) from pg_trigger where tgname = 'trg_requirements_compat_write'") == "0"
+        # The delete guard is port-only machinery and must not outlive the port.
+        assert psql(db, "select count(*) from pg_trigger where tgname = 'trg_requirement_delete_guard'") == "0"
+        assert psql(db, """
+            select count(*) from pg_proc
+             where pronamespace = 'resolution'::regnamespace
+               and proname in ('requirement_delete_blockers', 'requirement_delete_guard',
+                               'delete_requirements')
+        """) == "0"
     finally:
         drop_db(db)
 
@@ -927,3 +1008,196 @@ def test_transactional_rollback_leaves_the_legacy_surface_intact():
         """) == "0"
     finally:
         drop_db(db)
+
+
+# ── delete semantics ──────────────────────────────────────────────────────
+# After the port a requirement is a reference target, so "delete" has to mean
+# something specific: hard delete only while nothing governance-relevant names
+# the row, otherwise refuse and name the blockers. Cascades go through the same
+# guard and are all-or-nothing.
+
+@pytest.fixture
+def fresh_port():
+    """A ported database per test: the delete tests mutate rows."""
+    db = new_db("e2e_p4a_v222_delete")
+    apply_script(db, SKELETON)
+    apply_migration(db)
+    try:
+        yield db
+    finally:
+        drop_db(db)
+
+
+def _insert_requirement(db: str, title: str, parent_id: str | None = None) -> str:
+    parent = f"'{parent_id}'" if parent_id else "NULL"
+    return psql(db, f"""
+        insert into nebula.requirements (system_id, title, parent_id)
+        values ('{SYS}', '{title}', {parent})
+        returning id
+    """)
+
+
+def test_delete_guard_is_part_of_the_port(fresh_port):
+    assert psql(fresh_port, """
+        select count(*) from pg_trigger
+         where tgrelid = 'resolution.requirement'::regclass
+           and tgname = 'trg_requirement_delete_guard'
+           and not tgisinternal
+    """) == "1"
+    assert psql(fresh_port, """
+        select count(*) from pg_proc
+         where pronamespace = 'resolution'::regnamespace
+           and proname in ('requirement_delete_blockers', 'requirement_delete_guard',
+                           'delete_requirements')
+    """) == "3"
+
+
+def test_unreferenced_requirement_deletes_and_releases_its_port_ledger(fresh_port):
+    """The ledger is proof about a live row, not a veto on deleting it.
+
+    R2 is ported (one ledger row) and nothing references it. A hard delete must
+    succeed — otherwise no system or feature holding any of the 27 ported
+    requirements could ever be deleted — and must not leave the RESTRICT ledger
+    row behind to fail the statement.
+    """
+    assert psql(fresh_port, f"select count(*) from resolution.requirement_port_ledger where target_id = '{R2}'") == "1"
+    assert psql(fresh_port, f"select resolution.requirement_delete_blockers('{R2}')::text") == "{}"
+
+    psql(fresh_port, f"delete from nebula.requirements where id = '{R2}'")
+
+    assert psql(fresh_port, f"select count(*) from resolution.requirement where id = '{R2}'") == "0"
+    assert psql(fresh_port, f"select count(*) from resolution.requirement_port_ledger where target_id = '{R2}'") == "0"
+    # The legacy history row is audit for the pre-port state and stays.
+    assert psql(fresh_port, f"select count(*) from nebula.requirements_history where id = '{R2}'") == "1"
+
+
+def test_delete_guard_refuses_a_requirement_a_live_blueprint_names(fresh_port):
+    """Deleting R1 would strand blueprint B1's `requirement_ref`."""
+    message = psql(fresh_port, f"delete from nebula.requirements where id = '{R1}'", expect_fail=True)
+    assert "P4A-DELETE-BLOCKED" in message
+    assert B1 in message
+    assert psql(fresh_port, f"select count(*) from nebula.requirements where id = '{R1}'") == "1"
+    assert psql(fresh_port, f"select count(*) from resolution.requirement where id = '{R1}'") == "1"
+
+
+def test_delete_guard_refuses_a_requirement_with_a_child(fresh_port):
+    """R1 is R2's parent: removing it alone is a parent_id violation, not a delete."""
+    assert psql(fresh_port, f"""
+        select resolution.requirement_delete_blockers('{R1}')->'child_requirements' ? '{R2}'
+    """) == "t"
+    message = psql(fresh_port, f"delete from nebula.requirements where id = '{R1}'", expect_fail=True)
+    assert "P4A-DELETE-BLOCKED" in message
+
+
+def test_every_referencing_surface_blocks_the_delete(fresh_port):
+    """The guard covers the schema's references, not just the one test that hit first."""
+    work_request_id = psql(fresh_port, "insert into resolution.work_request default values returning id")
+    cases = [
+        ("specifications",
+         "insert into resolution.specification (agenda_id, requirement_id) "
+         "values (gen_random_uuid(), '{rid}')"),
+        ("implementation_plans",
+         "insert into resolution.implementation_plan (requirement_id) values ('{rid}')"),
+        ("requirement_segment_sets",
+         "insert into resolution.requirement_segment_set (requirement_id, segment_set_id) "
+         "values ('{rid}', gen_random_uuid())"),
+        ("request_requirement_links",
+         "insert into resolution.request_requirement_link "
+         f"(request_id, requirement_id, relation, provenance) "
+         f"values ('{work_request_id}', '{{rid}}', 'source', 'v222:test')"),
+        ("work_requests",
+         "insert into resolution.work_request (source_requirement_id) values ('{rid}')"),
+    ]
+
+    for index, (surface, statement) in enumerate(cases):
+        rid = _insert_requirement(fresh_port, f"blocked by {surface}")
+        psql(fresh_port, statement.format(rid=rid))
+
+        blockers = psql(fresh_port, f"select resolution.requirement_delete_blockers('{rid}')::text")
+        assert surface in blockers, (surface, blockers)
+
+        message = psql(fresh_port, f"delete from nebula.requirements where id = '{rid}'", expect_fail=True)
+        assert "P4A-DELETE-BLOCKED" in message
+        assert psql(fresh_port, f"select count(*) from resolution.requirement where id = '{rid}'") == "1"
+
+
+def test_historical_blueprint_versions_do_not_block_a_delete(fresh_port):
+    """A closed blueprint recording is instance data, like requirements_history."""
+    rid = _insert_requirement(fresh_port, "only named by a closed blueprint")
+    psql(fresh_port, f"""
+        insert into nebula.blueprints_history
+            (plan_number, title, payload, recorded_on_dt, recorded_until_dt,
+             valid_from, valid_until)
+        values ('8200100', 'closed version',
+                '{{"requirement_ref": "{rid}"}}'::jsonb,
+                now() - interval '2 days', now() - interval '1 day',
+                now() - interval '2 days', now() - interval '1 day')
+    """)
+
+    assert psql(fresh_port, f"select resolution.requirement_delete_blockers('{rid}')::text") == "{}"
+    psql(fresh_port, f"delete from nebula.requirements where id = '{rid}'")
+    assert psql(fresh_port, f"select count(*) from resolution.requirement where id = '{rid}'") == "0"
+
+
+def test_blockers_ignore_children_inside_the_delete_set(fresh_port):
+    """A cascade names the children it is removing so they are not "blockers"."""
+    parent = _insert_requirement(fresh_port, "cascade parent")
+    child = _insert_requirement(fresh_port, "cascade child", parent_id=parent)
+
+    assert psql(fresh_port, f"""
+        select resolution.requirement_delete_blockers('{parent}')->'child_requirements' ? '{child}'
+    """) == "t"
+    assert psql(fresh_port, f"""
+        select resolution.requirement_delete_blockers(
+                   '{parent}', array['{parent}', '{child}']::uuid[])::text
+    """) == "{}"
+
+
+def test_cascade_helper_deletes_a_subtree_children_first(fresh_port):
+    """The parent_id self-FK makes the caller's id order irrelevant."""
+    parent = _insert_requirement(fresh_port, "tree root")
+    child = _insert_requirement(fresh_port, "tree child", parent_id=parent)
+    grandchild = _insert_requirement(fresh_port, "tree grandchild", parent_id=child)
+
+    # Deliberately the worst order: parents before their children.
+    assert psql(fresh_port, f"""
+        select resolution.delete_requirements(
+                   array['{parent}', '{child}', '{grandchild}']::uuid[])
+    """) == "3"
+    assert psql(fresh_port, f"""
+        select count(*) from resolution.requirement
+         where id in ('{parent}', '{child}', '{grandchild}')
+    """) == "0"
+
+
+def test_cascade_is_all_or_nothing_when_one_member_is_referenced(fresh_port):
+    parent = _insert_requirement(fresh_port, "atomic root")
+    child = _insert_requirement(fresh_port, "atomic child", parent_id=parent)
+    psql(fresh_port, f"""
+        insert into resolution.specification (agenda_id, requirement_id)
+        values (gen_random_uuid(), '{child}')
+    """)
+
+    message = psql(fresh_port, f"""
+        select resolution.delete_requirements(array['{parent}', '{child}']::uuid[])
+    """, expect_fail=True)
+    assert "P4A-DELETE-BLOCKED" in message
+    # The parent had already been removed inside the function; the aborted
+    # statement puts it back, so a refused cascade leaves no half-deleted tree.
+    assert psql(fresh_port, f"""
+        select count(*) from resolution.requirement where id in ('{parent}', '{child}')
+    """) == "2"
+
+
+def test_cascade_helper_refuses_a_hierarchy_cycle(fresh_port):
+    first = _insert_requirement(fresh_port, "cycle a")
+    second = _insert_requirement(fresh_port, "cycle b", parent_id=first)
+    psql(fresh_port, f"update nebula.requirements set parent_id = '{second}' where id = '{first}'")
+
+    message = psql(fresh_port, f"""
+        select resolution.delete_requirements(array['{first}', '{second}']::uuid[])
+    """, expect_fail=True)
+    assert "P4A-DELETE-ORDER-001" in message
+    assert psql(fresh_port, f"""
+        select count(*) from resolution.requirement where id in ('{first}', '{second}')
+    """) == "2"

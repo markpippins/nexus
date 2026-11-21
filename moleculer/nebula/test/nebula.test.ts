@@ -28,7 +28,10 @@ import { requirementCompileUrl } from "../src/routes.js";
  */
 
 jest.mock("pg", () => {
-  const mPool = { query: jest.fn(), end: jest.fn() };
+  // One dispatch point: the pool and every checked-out client share `query`,
+  // so a transaction test observes exactly the statements the route runs.
+  const mPool: any = { query: jest.fn(), end: jest.fn() };
+  mPool.connect = jest.fn(async () => ({ query: mPool.query, release: jest.fn() }));
   return { Pool: jest.fn(() => mPool) };
 });
 
@@ -237,5 +240,160 @@ describe("requirementCompileUrl (CodeQL js/request-forgery fix)", () => {
     expect(requirementCompileUrl("a/b")).toBe(
       "http://localhost:3101/api/requirements/a%2Fb/compile",
     );
+  });
+});
+
+describe("requirement delete guard (P4a) — same contract as nebula-srv", () => {
+  const REQ = "804b3f87-fe84-4167-b5a7-15eaa35c2d4c";
+  const OTHER = "5fcf5826-b7ad-48bd-900a-c8ed54b95970";
+  const BLOCKED = "11111111-2222-4333-8444-555555555555";
+  const SPEC = "22222222-3333-4444-8555-666666666666";
+  const SYS = "99999999-9999-4999-8999-999999999991";
+  const FEAT = "77777777-6666-4555-8444-333333333333";
+
+  type State = {
+    deleted: string[][];
+    parents: string[];
+    committed: boolean;
+    rolledBack: boolean;
+  };
+
+  function fakeDb(opts: { guardInstalled?: boolean; blocked?: string[]; throwOnDelete?: any } = {}): State {
+    const guardInstalled = opts.guardInstalled ?? true;
+    const blocked = new Set(opts.blocked ?? []);
+    const state: State = { deleted: [], parents: [], committed: false, rolledBack: false };
+
+    poolMock.query.mockImplementation(async (sql: string, values: any[] = []) => {
+      const s = String(sql).replace(/\s+/g, " ").trim();
+
+      if (s === "BEGIN" || s === "COMMIT" || s === "ROLLBACK") {
+        if (s === "COMMIT") state.committed = true;
+        if (s === "ROLLBACK") state.rolledBack = true;
+        return { rows: [], rowCount: null };
+      }
+      if (s.includes("to_regprocedure")) {
+        return { rows: [{ installed: guardInstalled }], rowCount: 1 };
+      }
+      if (s.startsWith("SELECT id FROM nebula.requirements WHERE")) {
+        return { rows: [{ id: REQ }, { id: OTHER }, { id: BLOCKED }], rowCount: 3 };
+      }
+      if (s.includes("FROM unnest(")) {
+        const ids = values[0] as string[];
+        return {
+          rows: ids
+            .filter((id) => blocked.has(id))
+            .map((id) => ({ id, blockers: { specifications: [SPEC] } })),
+          rowCount: 1,
+        };
+      }
+      if (s.includes("SELECT resolution.delete_requirements(")) {
+        if (opts.throwOnDelete) throw opts.throwOnDelete;
+        state.deleted.push(values[0]);
+        return { rows: [{ deleted: (values[0] as string[]).length }], rowCount: 1 };
+      }
+      if (s.includes("DELETE FROM requirements WHERE id = ANY(")) {
+        state.deleted.push(values[0]);
+        return { rows: (values[0] as string[]).map((id) => ({ id })), rowCount: 1 };
+      }
+      if (/DELETE FROM (systems|subsystems|features) WHERE id/.test(s)) {
+        state.parents.push(s.split(" ")[2]);
+        return { rows: [], rowCount: 1 };
+      }
+      if (s.startsWith("DELETE FROM work_sessions")) {
+        return { rows: [], rowCount: 0 };
+      }
+      throw new Error(`Unexpected query: ${s}`);
+    });
+
+    return state;
+  }
+
+  it("refuses a referenced requirement with 409 + blockers (never 500)", async () => {
+    const state = fakeDb({ blocked: [BLOCKED] });
+
+    const res = await request(app).delete(`/api/requirements/${BLOCKED}`);
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe("requirement_delete_blocked");
+    expect(res.body.blockers).toEqual([
+      { requirementId: BLOCKED, blockers: { specifications: [SPEC] } },
+    ]);
+    expect(state.deleted).toEqual([]);
+    expect(state.committed).toBe(false);
+    expect(state.rolledBack).toBe(true);
+  });
+
+  it("reports what a successful delete removed", async () => {
+    const state = fakeDb();
+
+    const res = await request(app).delete(`/api/requirements/${REQ}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, deletedRequirements: 1 });
+    expect(state.deleted).toEqual([[REQ]]);
+    expect(state.committed).toBe(true);
+  });
+
+  it("refuses the whole feature cascade and deletes nothing", async () => {
+    const state = fakeDb({ blocked: [BLOCKED] });
+
+    const res = await request(app).delete(`/api/features/${FEAT}`);
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe("requirement_delete_blocked");
+    expect(res.body.blockers).toEqual([
+      { requirementId: BLOCKED, blockers: { specifications: [SPEC] } },
+    ]);
+    expect(state.deleted).toEqual([]);
+    expect(state.parents).toEqual([]);
+    expect(state.committed).toBe(false);
+  });
+
+  it("cascades a system's requirements before the system row", async () => {
+    const state = fakeDb();
+
+    const res = await request(app).delete(`/api/systems/${SYS}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, deletedRequirements: 3 });
+    expect(state.deleted).toEqual([[REQ, OTHER, BLOCKED]]);
+    expect(state.parents).toEqual(["systems"]);
+    expect(state.committed).toBe(true);
+  });
+
+  it("maps a racing guard refusal (P4A01) to 409 with the trigger's detail", async () => {
+    const err: any = new Error("P4A-DELETE-BLOCKED: requirement x still has dependants");
+    err.code = "P4A01";
+    err.detail = JSON.stringify({ requirementId: REQ, blockers: { specifications: [SPEC] } });
+    fakeDb({ throwOnDelete: err });
+
+    const res = await request(app).delete(`/api/requirements/${REQ}`);
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe("requirement_delete_blocked");
+    expect(res.body.blockers).toEqual([
+      { requirementId: REQ, blockers: { specifications: [SPEC] } },
+    ]);
+  });
+
+  it("maps a residual FK violation (23503) to 409, not 500", async () => {
+    const err: any = new Error("update or delete violates foreign key constraint");
+    err.code = "23503";
+    fakeDb({ throwOnDelete: err });
+
+    const res = await request(app).delete(`/api/requirements/${REQ}`);
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe("requirement_delete_blocked");
+  });
+
+  it("still deletes through the transition view before V222 is applied", async () => {
+    const state = fakeDb({ guardInstalled: false });
+
+    const res = await request(app).delete(`/api/requirements/${REQ}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.deletedRequirements).toBe(1);
+    expect(state.deleted).toEqual([[REQ]]);
   });
 });

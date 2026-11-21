@@ -40,11 +40,25 @@
 -- `resolution.requirement` with INSTEAD OF write-through triggers. That keeps
 -- every existing reader (nebula-srv search/counts/hierarchy, conduit-mcp,
 -- moleculer, adonisjs, the planner MCP server) coherent on the canonical table
--- even before each service is repointed. nebula-srv itself is repointed to the
--- base table in the same change, so the shim is not load-bearing for it.
+-- without a lockstep deploy. nebula-srv's requirement statements deliberately
+-- target `nebula.requirements` — the transition relation this file re-points —
+-- rather than `resolution.requirement` directly: the same SQL is then correct
+-- both before the operator-gated apply (legacy rows) and after it (ported rows),
+-- and its delete paths reach the canonical table only through the guard
+-- functions below. The projection therefore stays load-bearing for every
+-- consumer, nebula-srv included, until each is repointed to the base table.
 --
 -- `nebula.requirements_history` is RETAINED untouched as the pre-port audit
 -- record. This file performs no DELETE, TRUNCATE, DROP TABLE or column drop.
+--
+-- Delete semantics are settled here too, because the port turns the requirement
+-- into a real reference target: a requirement is hard-deleted only while no
+-- specification, implementation plan, segment set, request link, work request,
+-- child requirement or live blueprint names it. Otherwise the delete is refused
+-- with the blocking surfaces named (a BEFORE DELETE guard on
+-- `resolution.requirement`, so the projection's write-through cannot route
+-- around it). Cascades remove the set leaf-first through that guard — see the
+-- guard section below. This file still performs no DELETE of its own.
 --
 -- Field mapping / representation decisions (no silent coercion):
 --   * `source_type` (NOT NULL, no default on the target) is derived:
@@ -234,6 +248,47 @@ BEGIN
 
         COMMENT ON COLUMN resolution.requirement.candidate_id IS
             'Candidate this requirement derives from. P4a (V222): cross-domain reference until resolution.candidate is populated — the legacy links (and the application write paths) name nebula.harvest_candidates ids, which the former requirement_candidate_id_fkey could never satisfy. RESTORE that FK after a resolution.candidate port backfills and validates these ids.';
+    END IF;
+END $$;
+
+-- ── preflight: every legacy asset link must be representable ──────────────
+-- `resolution.requirement.asset_id` carries `requirement_asset_id_fkey` to
+-- `resolution.canonical_asset`, but the legacy link points at a DIFFERENT
+-- store: `semantics.canonical_asset`. The two stores are populated
+-- independently, so a legacy id need not have a resolution counterpart.
+--
+-- Copying such an id aborts the insert on `requirement_asset_id_fkey`, which
+-- names the constraint but not the rows, after the compatibility view and
+-- triggers were already replaced inside this transaction. The asset link is
+-- identity — the stable asset a requirement is about — so it is neither NULLed
+-- nor backfilled with a fabricated `resolution.canonical_asset` row. Refuse by
+-- name and count, and let an operator populate `resolution.canonical_asset`
+-- (or deliberately clear the link) and re-run.
+DO $$
+DECLARE
+    v_with_asset    bigint;
+    v_unrepresented bigint;
+BEGIN
+    IF to_regclass('resolution.canonical_asset') IS NULL THEN
+        RAISE EXCEPTION
+            'V222-PREFLIGHT-017: resolution.canonical_asset is missing; legacy asset links cannot be represented';
+    END IF;
+
+    SELECT count(*) INTO v_with_asset
+      FROM nebula.requirements
+     WHERE asset_id IS NOT NULL;
+
+    SELECT count(*) INTO v_unrepresented
+      FROM nebula.requirements r
+     WHERE r.asset_id IS NOT NULL
+       AND NOT EXISTS (
+           SELECT 1 FROM resolution.canonical_asset a WHERE a.id = r.asset_id
+       );
+
+    IF v_unrepresented > 0 THEN
+        RAISE EXCEPTION
+            'V222-PREFLIGHT-018: % of % legacy asset link(s) have no resolution.canonical_asset row; the legacy links name semantics.canonical_asset, a separate store — populate resolution.canonical_asset for them, or clear the link deliberately, before porting requirements',
+            v_unrepresented, v_with_asset;
     END IF;
 END $$;
 
@@ -578,6 +633,224 @@ BEGIN
     END IF;
 END $$;
 
+-- ── what a requirement delete means after the port ────────────────────────
+-- Before V222, `nebula.requirements` was a view over `requirements_history`, so
+-- a delete removed the current history row. Nothing in `resolution` pointed at
+-- a requirement yet, which is why a delete could not fail; and because a
+-- blueprint names its requirement in JSONB rather than through an FK, a delete
+-- could also strand `payload->>'requirement_ref'` without anybody noticing.
+--
+-- After the port the canonical row is a real reference target:
+--   * FK dependants — resolution.specification, resolution.implementation_plan,
+--     resolution.requirement_segment_set, resolution.request_requirement_link
+--     (ON DELETE RESTRICT) and resolution.work_request.source_requirement_id;
+--   * hierarchy — resolution.requirement.parent_id (self-FK);
+--   * by-value references — live blueprint payloads (`requirement_ref`);
+--   * this file's own identity ledger (ON DELETE RESTRICT).
+-- A bare hard delete would therefore either fail part-way through a
+-- system/feature cascade or succeed and strand blueprint refs.
+--
+-- The ruling encoded here: a requirement is HARD-deleted, atomically, only
+-- while nothing governance-relevant depends on it. Dependants are never
+-- cascaded away silently and payload references are never rewritten — the
+-- caller is told exactly which surfaces block the delete (a 409 up the stack)
+-- and retires or repoints them deliberately.
+--
+-- The port ledger is not a blocker: its row is proof about a row that exists,
+-- so the guard removes it in the same statement as the requirement. Keeping the
+-- FK at RESTRICT makes that removal an explicit step in the guard instead of a
+-- silent cascade. `nebula.requirements_history` is untouched audit and keeps
+-- the pre-port row.
+
+-- Which surfaces still reference this requirement, as a JSONB object of arrays.
+-- An empty object means "deletable". `p_also_deleting` lets a cascade exclude
+-- the children it is removing in the same call, so a subtree delete does not
+-- report its own leaves as blockers.
+CREATE OR REPLACE FUNCTION resolution.requirement_delete_blockers(
+    p_id uuid,
+    p_also_deleting uuid[] DEFAULT ARRAY[]::uuid[]
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+AS $fn$
+DECLARE
+    v_blockers jsonb := '{}'::jsonb;
+    v_ids jsonb;
+BEGIN
+    IF p_id IS NULL THEN
+        RETURN v_blockers;
+    END IF;
+
+    SELECT jsonb_agg(s.id::text ORDER BY s.id) INTO v_ids
+      FROM resolution.specification s
+     WHERE s.requirement_id = p_id;
+    IF v_ids IS NOT NULL THEN
+        v_blockers := v_blockers || jsonb_build_object('specifications', v_ids);
+    END IF;
+
+    SELECT jsonb_agg(p.id::text ORDER BY p.id) INTO v_ids
+      FROM resolution.implementation_plan p
+     WHERE p.requirement_id = p_id;
+    IF v_ids IS NOT NULL THEN
+        v_blockers := v_blockers || jsonb_build_object('implementation_plans', v_ids);
+    END IF;
+
+    SELECT jsonb_agg(ss.segment_set_id::text ORDER BY ss.segment_set_id) INTO v_ids
+      FROM resolution.requirement_segment_set ss
+     WHERE ss.requirement_id = p_id;
+    IF v_ids IS NOT NULL THEN
+        v_blockers := v_blockers || jsonb_build_object('requirement_segment_sets', v_ids);
+    END IF;
+
+    SELECT jsonb_agg(l.id::text ORDER BY l.id) INTO v_ids
+      FROM resolution.request_requirement_link l
+     WHERE l.requirement_id = p_id;
+    IF v_ids IS NOT NULL THEN
+        v_blockers := v_blockers || jsonb_build_object('request_requirement_links', v_ids);
+    END IF;
+
+    SELECT jsonb_agg(w.id::text ORDER BY w.id) INTO v_ids
+      FROM resolution.work_request w
+     WHERE w.source_requirement_id = p_id;
+    IF v_ids IS NOT NULL THEN
+        v_blockers := v_blockers || jsonb_build_object('work_requests', v_ids);
+    END IF;
+
+    SELECT jsonb_agg(c.id::text ORDER BY c.id) INTO v_ids
+      FROM resolution.requirement c
+     WHERE c.parent_id = p_id
+       AND c.id <> ALL (COALESCE(p_also_deleting, ARRAY[]::uuid[]));
+    IF v_ids IS NOT NULL THEN
+        v_blockers := v_blockers || jsonb_build_object('child_requirements', v_ids);
+    END IF;
+
+    -- Blueprints are the by-value reference JSONB cannot enforce. Only the
+    -- current segment is checked: historical versions are frozen instance data,
+    -- exactly like requirements_history, and readers resolve through the
+    -- current-segment view. The CASE keeps a non-uuid payload from raising a
+    -- cast error instead of being reported.
+    SELECT jsonb_agg(b.id::text ORDER BY b.id) INTO v_ids
+      FROM nebula.blueprints_history b
+     WHERE (CASE
+                WHEN b.payload ->> 'requirement_ref'
+                     ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+                THEN (b.payload ->> 'requirement_ref')::uuid
+            END) = p_id
+       AND now() >= b.recorded_on_dt
+       AND now() <  b.recorded_until_dt
+       AND now() >= b.valid_from
+       AND now() <  b.valid_until;
+    IF v_ids IS NOT NULL THEN
+        v_blockers := v_blockers || jsonb_build_object('blueprints', v_ids);
+    END IF;
+
+    RETURN v_blockers;
+END
+$fn$;
+
+COMMENT ON FUNCTION resolution.requirement_delete_blockers(uuid, uuid[]) IS
+    'P4a (V222): the governance surfaces that still reference a requirement (FK dependants, child requirements and live blueprint refs). Empty object means the requirement is deletable. Called by the delete guard and by nebula-srv to explain a refused cascade.';
+
+-- The authority for DELETE: it runs for direct canonical deletes and for the
+-- compatibility projection's INSTEAD OF DELETE branch, so no consumer can
+-- route around it.
+CREATE OR REPLACE FUNCTION resolution.requirement_delete_guard()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $fn$
+DECLARE
+    v_blockers jsonb;
+BEGIN
+    v_blockers := resolution.requirement_delete_blockers(OLD.id);
+
+    IF v_blockers <> '{}'::jsonb THEN
+        RAISE EXCEPTION
+            'P4A-DELETE-BLOCKED: requirement % still has dependants', OLD.id
+            USING ERRCODE = 'P4A01',
+                  DETAIL = jsonb_build_object(
+                               'requirementId', OLD.id,
+                               'blockers', v_blockers
+                           )::text;
+    END IF;
+
+    -- Port-time proof refers to a row that is about to stop existing. Remove it
+    -- here, deliberately, rather than letting the RESTRICT FK surface as an
+    -- opaque constraint error part-way through a cascade.
+    DELETE FROM resolution.requirement_port_ledger WHERE target_id = OLD.id;
+
+    RETURN OLD;
+END
+$fn$;
+
+COMMENT ON FUNCTION resolution.requirement_delete_guard() IS
+    'P4a (V222) BEFORE DELETE guard on resolution.requirement: refuses a delete while any governance surface still references the requirement (SQLSTATE P4A01, DETAIL names them), and releases the requirement_port_ledger row in the same statement.';
+
+DROP TRIGGER IF EXISTS trg_requirement_delete_guard ON resolution.requirement;
+CREATE TRIGGER trg_requirement_delete_guard
+    BEFORE DELETE ON resolution.requirement
+    FOR EACH ROW EXECUTE FUNCTION resolution.requirement_delete_guard();
+
+-- ── cascade deletes in dependency order ───────────────────────────────────
+-- `resolution.requirement.parent_id` is a self-FK, so a system/feature cascade
+-- must remove children before parents or PostgreSQL refuses mid-statement.
+-- Rather than trust the caller's id order, remove the leaves of the requested
+-- set repeatedly. A set the schema will not let go of (a hierarchy cycle) is
+-- reported and nothing is removed, so a cascade is all-or-nothing.
+CREATE OR REPLACE FUNCTION resolution.delete_requirements(p_ids uuid[])
+RETURNS integer
+LANGUAGE plpgsql
+AS $fn$
+DECLARE
+    v_deleted integer := 0;
+    v_batch   integer;
+    v_left    uuid[];
+BEGIN
+    IF p_ids IS NULL OR cardinality(p_ids) = 0 THEN
+        RETURN 0;
+    END IF;
+
+    LOOP
+        WITH removable AS (
+            SELECT r.id
+              FROM resolution.requirement r
+             WHERE r.id = ANY (p_ids)
+               AND NOT EXISTS (
+                   SELECT 1
+                     FROM resolution.requirement c
+                    WHERE c.parent_id = r.id
+                      AND c.id = ANY (p_ids)
+               )
+        ), gone AS (
+            DELETE FROM resolution.requirement r
+             USING removable m
+             WHERE r.id = m.id
+            RETURNING r.id
+        )
+        SELECT count(*) INTO v_batch FROM gone;
+
+        EXIT WHEN v_batch = 0;
+        v_deleted := v_deleted + v_batch;
+    END LOOP;
+
+    SELECT array_agg(w.id) INTO v_left
+      FROM unnest(p_ids) AS w(id)
+     WHERE EXISTS (SELECT 1 FROM resolution.requirement r WHERE r.id = w.id);
+
+    IF v_left IS NOT NULL THEN
+        RAISE EXCEPTION
+            'P4A-DELETE-ORDER-001: % of % requirement(s) could not be removed; the hierarchy may contain a cycle',
+            cardinality(v_left), cardinality(p_ids)
+            USING DETAIL = jsonb_build_object('remaining', v_left)::text;
+    END IF;
+
+    RETURN v_deleted;
+END
+$fn$;
+
+COMMENT ON FUNCTION resolution.delete_requirements(uuid[]) IS
+    'P4a (V222): deletes a requirement set leaf-first so the parent_id self-FK is satisfied, through the delete guard. Returns the number of rows removed; raises if any requested row survives (cycle).';
+
 -- ── compatibility projection ──────────────────────────────────────────────
 -- Column list and order are unchanged from the legacy view (which is required
 -- by CREATE OR REPLACE VIEW and keeps `SELECT *` consumers stable).
@@ -735,6 +1008,10 @@ BEGIN
         RETURN NEW;
 
     ELSE
+        -- The canonical BEFORE DELETE guard decides whether this is allowed: a
+        -- legacy caller's delete keeps meaning "remove the requirement", and an
+        -- referenced requirement is refused here instead of being hard-deleted
+        -- through the projection.
         DELETE FROM resolution.requirement WHERE id = OLD.id;
         RETURN OLD;
     END IF;
@@ -756,6 +1033,7 @@ DECLARE
     v_source_rows bigint;
     v_cols bigint;
     v_triggers bigint;
+    v_guard_functions bigint;
 BEGIN
     SELECT count(*) INTO v_view_rows FROM nebula.requirements;
     SELECT count(*) INTO v_source_rows FROM _v222_source;
@@ -781,6 +1059,30 @@ BEGIN
     IF v_triggers <> 1 THEN
         RAISE EXCEPTION
             'V222-POST-012: write-through trigger is missing on nebula.requirements';
+    END IF;
+
+    -- Deleting a requirement without its guard would let a cascade strip a row
+    -- that a specification, plan, request or blueprint still names.
+    SELECT count(*) INTO v_triggers
+      FROM pg_trigger
+     WHERE tgrelid = 'resolution.requirement'::regclass
+       AND tgname = 'trg_requirement_delete_guard'
+       AND NOT tgisinternal;
+    IF v_triggers <> 1 THEN
+        RAISE EXCEPTION
+            'V222-POST-013: delete guard trigger is missing on resolution.requirement';
+    END IF;
+
+    SELECT count(*) INTO v_guard_functions
+      FROM pg_proc
+     WHERE pronamespace = 'resolution'::regnamespace
+       AND proname IN ('requirement_delete_blockers',
+                       'requirement_delete_guard',
+                       'delete_requirements');
+    IF v_guard_functions <> 3 THEN
+        RAISE EXCEPTION
+            'V222-POST-014: delete guard is incomplete (% of 3 functions present)',
+            v_guard_functions;
     END IF;
 END $$;
 
@@ -833,6 +1135,17 @@ COMMIT;
 --
 --   -- Replacing the view keeps its triggers; the write-through must go.
 --   DROP TRIGGER IF EXISTS trg_requirements_compat_write ON nebula.requirements;
+--
+--   -- The delete guard is port-only machinery; remove it before the rows it
+--   -- protects. (Its trigger would otherwise refuse the DELETE below while any
+--   -- specification, plan, segment set, request link, work request or live
+--   -- blueprint still names a ported requirement. Those FKs block the rollback
+--   -- either way: a rollback is only safe while nothing references the port, so
+--   -- the precheck above is not the only condition.)
+--   DROP TRIGGER IF EXISTS trg_requirement_delete_guard ON resolution.requirement;
+--   DROP FUNCTION IF EXISTS resolution.delete_requirements(uuid[]);
+--   DROP FUNCTION IF EXISTS resolution.requirement_delete_guard();
+--   DROP FUNCTION IF EXISTS resolution.requirement_delete_blockers(uuid, uuid[]);
 --
 --   DROP TABLE resolution.requirement_port_ledger;
 --   DELETE FROM resolution.requirement

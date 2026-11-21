@@ -45,6 +45,21 @@ export async function qT(trx: DbLike, sql: string, params: any[] = []) {
   return trx.rawQuery(c, values)
 }
 
+/**
+ * Adapt a Lucid connection or transaction to the requirement-delete guard's
+ * executor shape. The guard module is framework-free on purpose, so the same
+ * file (and the same SQL) is carried by nebula-srv, moleculer/nebula and this
+ * service; only this adapter is Adonis-specific.
+ */
+export function asQueryable(client: DbLike) {
+  return {
+    query: async (sql: string, params: any[] = []) => {
+      const result: any = await qT(client, sql, params)
+      return { rows: result?.rows ?? [], rowCount: result?.rowCount ?? 0 }
+    },
+  }
+}
+
 // ── Pagination ────────────────────────────────────────────────────────
 export function parsePagination(query: Record<string, any>): {
   offset: number
