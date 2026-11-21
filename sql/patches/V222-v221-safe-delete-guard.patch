@@ -1,0 +1,52 @@
+--- a/sql/V222__port_requirements_to_resolution.sql
++++ b/sql/V222__port_requirements_to_resolution.sql
+@@ -53,8 +53,9 @@
+ --
+ -- Delete semantics are settled here too, because the port turns the requirement
+ -- into a real reference target: a requirement is hard-deleted only while no
+--- specification, implementation plan, segment set, request link, work request,
+--- child requirement or live blueprint names it. Otherwise the delete is refused
++-- specification, implementation plan, segment set, request link (including a
++-- linked work request), child requirement or live blueprint names it. Otherwise
++-- the delete is refused
+ -- with the blocking surfaces named (a BEFORE DELETE guard on
+ -- `resolution.requirement`, so the projection's write-through cannot route
+ -- around it). Cascades remove the set leaf-first through that guard — see the
+@@ -643,7 +644,9 @@
+ -- After the port the canonical row is a real reference target:
+ --   * FK dependants — resolution.specification, resolution.implementation_plan,
+ --     resolution.requirement_segment_set, resolution.request_requirement_link
+---     (ON DELETE RESTRICT) and resolution.work_request.source_requirement_id;
++--     (ON DELETE RESTRICT), and work requests reached through that link table
++--     (`relation = 'source'`) — never the legacy direct column, which V221
++--     drops;
+ --   * hierarchy — resolution.requirement.parent_id (self-FK);
+ --   * by-value references — live blueprint payloads (`requirement_ref`);
+ --   * this file's own identity ledger (ON DELETE RESTRICT).
+@@ -710,9 +713,23 @@
+         v_blockers := v_blockers || jsonb_build_object('request_requirement_links', v_ids);
+     END IF;
+ 
+-    SELECT jsonb_agg(w.id::text ORDER BY w.id) INTO v_ids
+-      FROM resolution.work_request w
+-     WHERE w.source_requirement_id = p_id;
++    -- A work request names its requirement through the normalized link table.
++    -- V221 drops `resolution.work_request.source_requirement_id`, so a static
++    -- read of that column raises 42703 on the first delete after V221. `to_jsonb`
++    -- keeps the legacy shortcut visible while it still exists (V222 may be
++    -- applied before V221), and the link table keeps the reference visible once
++    -- it is gone. The to_jsonb leg can be deleted when V221 is universal.
++    SELECT jsonb_agg(s.id ORDER BY s.id) INTO v_ids
++      FROM (
++          SELECT DISTINCT w.id::text AS id
++            FROM resolution.work_request w
++           WHERE (to_jsonb(w) ->> 'source_requirement_id')::uuid = p_id
++              OR EXISTS (SELECT 1
++                           FROM resolution.request_requirement_link l
++                          WHERE l.request_id = w.id
++                            AND l.requirement_id = p_id
++                            AND l.relation = 'source')
++      ) AS s;
+     IF v_ids IS NOT NULL THEN
+         v_blockers := v_blockers || jsonb_build_object('work_requests', v_ids);
+     END IF;

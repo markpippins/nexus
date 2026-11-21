@@ -1008,7 +1008,45 @@ rm -rf "$WORKDIR"
 ```
 
 The backup file survives only if `BACKUP_DIR` was set outside `$WORKDIR`; keep
-it until the window closes and the R9 replication decision is recorded.
+it until the window closes and the R9 replication decision is recorded
+(checklist in §12).
+
+---
+
+## 12. R9 — vanadium replication checklist (V222 objects)
+
+R9 replicates the **result**, not the migration: vanadium receives the approved
+PG backup / live-sync stream, so **V222 must not be re-run there** (the file is
+STAGED; its preflight would refuse or double-port). The operator decides whether
+this apply is replicated — never automatically — then verifies every object
+below on vanadium after the sync completes and records the result against this
+window.
+
+| # | Object | Verification on vanadium | Expected |
+|---|---|---|---|
+| 1 | `resolution.migration_ledger` row | `SELECT count(*) … WHERE migration_label = 'V222__port_requirements_to_resolution'` | `1` |
+| 2 | `resolution.requirement_port_ledger` | `to_regclass(...)`; `count(*)`; `count(DISTINCT source_id)` | table; `27`; `27` |
+| 3 | ledger identity + digests | `SELECT count(*) … WHERE source_id <> target_id OR source_digest <> target_digest` | `0` |
+| 4 | `resolution.requirement.work_request_dco` | `information_schema.columns` where `data_type = 'jsonb'` | `1` |
+| 5 | `resolution.requirement_candidate_id_fkey` | `pg_constraint` by name | `0` (see note) |
+| 6 | `resolution.requirement_delete_blockers(uuid,uuid[])` | `to_regprocedure(...) IS NOT NULL` | `t` |
+| 7 | `resolution.requirement_delete_guard()` | `pg_proc` in schema `resolution` | `1` |
+| 8 | `trg_requirement_delete_guard` | `pg_trigger` on `resolution.requirement`, `NOT tgisinternal` | `1` |
+| 9 | `resolution.delete_requirements(uuid[])` | `pg_proc` in schema `resolution` | `1` |
+| 10 | `nebula.requirements` projection | `pg_class.relkind`; `information_schema.columns` count | `v`; `22` |
+| 11 | `nebula.requirements_compat_write()` + `trg_requirements_compat_write` | `pg_proc`; `pg_trigger` (INSTEAD OF) | `1`; `1` |
+| 12 | ported rows present | `resolution.requirement r JOIN resolution.requirement_port_ledger l ON l.target_id = r.id` | `27` |
+| 13 | column provenance comments | `col_description` for `requirement.candidate_id` and `requirement.work_request_dco` | both non-null and name P4a |
+
+**Item 5 note.** V222 drops `requirement_candidate_id_fkey` only when
+`resolution.candidate` is empty and legacy links are cross-domain
+(`V222-PREFLIGHT-016`); if the candidate store is populated first, the port
+refuses. `0` is therefore expected — record `1` with the reason if the apply
+legitimately took the other branch.
+
+Do not treat a restoring backup as verification: run the queries after the sync
+completes. Record the date, the operator decision (replicate / decline), the
+backup or sync run id, the per-item result, and the ledger count.
 
 ---
 

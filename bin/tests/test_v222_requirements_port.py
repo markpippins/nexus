@@ -49,7 +49,15 @@ pytestmark = skip_unless_host_tools(
     "createdb", "dropdb", "psql", doing="these tests create a throwaway database"
 )
 
-V222 = REPO_ROOT / "sql" / "V222__port_requirements_to_resolution.sql"
+# The staged V221-safety patch is verified by pointing this suite at a patched
+# copy: V222_MIGRATION_PATH=/tmp/v222_patched.sql pytest --runxfail. The default
+# stays the committed migration, so the suite continues to guard it.
+V222 = Path(
+    os.environ.get(
+        "V222_MIGRATION_PATH",
+        REPO_ROOT / "sql" / "V222__port_requirements_to_resolution.sql",
+    )
+)
 NEBULA_ROUTES = REPO_ROOT / "typescript" / "nebula-srv" / "src" / "routes.ts"
 PROMOTE = REPO_ROOT / "python" / "tackle" / "intent_requirement_promote.py"
 
@@ -1119,6 +1127,55 @@ def test_every_referencing_surface_blocks_the_delete(fresh_port):
         message = psql(fresh_port, f"delete from nebula.requirements where id = '{rid}'", expect_fail=True)
         assert "P4A-DELETE-BLOCKED" in message
         assert psql(fresh_port, f"select count(*) from resolution.requirement where id = '{rid}'") == "1"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "V222 still reads resolution.work_request.source_requirement_id, which "
+        "V221 drops; sql/patches/V222-v221-safe-delete-guard.patch fixes it and "
+        "removes this marker when applied"
+    ),
+)
+def test_delete_guard_is_v221_safe():
+    """The guard must work on the schema V221 leaves behind.
+
+    V221 drops the legacy single-source shortcut, so a work request names its
+    requirement only through resolution.request_requirement_link. Applying V222
+    in the plan-of-record order must still block on that link instead of raising
+    `column w.source_requirement_id does not exist` on the first delete.
+    """
+    db = new_db("e2e_p4a_v222_v221_order")
+    try:
+        apply_script(db, SKELETON)
+        # V221's postcondition, applied to the fixture before V222 runs.
+        psql(db, "alter table resolution.work_request drop column source_requirement_id")
+        apply_migration(db)
+
+        rid = _insert_requirement(db, "guarded after the V221 order")
+        wid = psql(db, "insert into resolution.work_request default values returning id")
+        psql(db, f"""
+            insert into resolution.request_requirement_link
+                (request_id, requirement_id, relation, provenance)
+            values ('{wid}', '{rid}', 'source', 'v221:order-test')
+        """)
+
+        blockers = psql(db, f"select resolution.requirement_delete_blockers('{rid}')::text")
+        assert "work_requests" in blockers, blockers
+        assert wid in blockers, blockers
+
+        message = psql(
+            db, f"delete from nebula.requirements where id = '{rid}'", expect_fail=True
+        )
+        assert "P4A-DELETE-BLOCKED" in message
+        assert psql(db, f"select count(*) from resolution.requirement where id = '{rid}'") == "1"
+
+        # The guard must not over-block: an unreferenced requirement still goes.
+        free = _insert_requirement(db, "no references after V221")
+        psql(db, f"delete from nebula.requirements where id = '{free}'")
+        assert psql(db, f"select count(*) from resolution.requirement where id = '{free}'") == "0"
+    finally:
+        drop_db(db)
 
 
 def test_historical_blueprint_versions_do_not_block_a_delete(fresh_port):
