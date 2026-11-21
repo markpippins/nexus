@@ -1,0 +1,35 @@
+# Source of truth for ~/.config/systemd/user/pg-wal-archive-push.service
+#
+# Deploy:
+#   cp bin/pg-wal-archive-push.service ~/.config/systemd/user/
+#   cp bin/pg-wal-archive-push.timer   ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now pg-wal-archive-push.timer
+#
+# Why this unit exists: archive_command writes WAL segments into a local spool
+# (pgsql/pg_archive, bind-mounted into the container). That keeps the archive
+# path network-free — a vanadium outage must never pin WAL, which is how
+# incident e7a15424 filled the disk. This timer performs the second stage:
+# push finished segments to vanadium and prune both ends of the retention
+# window. Runbook: docs/runbook-pg-pitr.md.
+#
+# ExecStart resolves through the repo working tree, matching pg-wal-guard.service
+# (host-only units drift from the corpus).
+#
+# Ordering: this timer is independent of pg-wal-guard.timer. The guard watches
+# for pinned WAL and disk headroom; this unit moves bytes. If the target is
+# unreachable the run fails loudly in the journal and the local spool simply
+# keeps accumulating (bounded by LOCAL_KEEP_HOURS once the target returns).
+
+[Unit]
+Description=Push archived WAL segments to vanadium and prune both retention windows (15 min)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash %h/dev/nexus/bin/pg-wal-archive-push.sh
+TimeoutStartSec=600
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=default.target
