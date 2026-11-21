@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: nebula-srv — Nebula Knowledge-Graph API
-  version: 1.0.451f7998
+  version: 1.0.4769a112
   description: 'Canonical asset graph: systems, subsystems, features, documents, harvests, agent records, projections, knowledge
     graph, and cross-references.
 
@@ -5107,7 +5107,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-      summary: DELETE /api/requirements/:id
+      summary: 'DELETE /api/requirements/:id P4a: refused with 409 while any governance surface still names the requirement
+        (see the delete guard above); th'
       parameters:
       - name: id
         in: path
@@ -7158,7 +7159,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-      summary: DELETE /api/systems/:id — cascade deletes subsystems, features, folders, requirements
+      summary: 'DELETE /api/systems/:id — cascade deletes subsystems, features, folders, requirements P4a: the requirement
+        cascade is explicit (requirements'
       parameters:
       - name: id
         in: path

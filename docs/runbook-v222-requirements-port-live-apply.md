@@ -29,13 +29,20 @@
 | Expected ledger row | `resolution.migration_ledger`, `schema_name='sql'`, `migration_label='V222__port_requirements_to_resolution'` |
 | Identity ledger | `resolution.requirement_port_ledger` (one row per ported requirement) |
 | Rehearsal record | §10 of this document (executed on throwaway databases) |
+| Staged PR | **#1035** (draft) — branch `req-port-p4a` |
+| Staged commits | `54dad12d9e3f1ce751148ed6a0f597bccb5d8686` (P4a port + endpoint validation) + CI-fix follow-up(s) on branch `req-port-p4a` — authoritative list is the PR #1035 commit history at merge time |
+| Migration blob | V222 `2cbe02e9200407849b8cdf11936d1f030fcf95a2`; V220 prerequisite `b5fcac09b0660d812d1df29e111a9c9293a4a00a` |
+| Merge commit | _pending — PR #1035 is draft, unmerged; record here at merge time_ |
+| DBA ratification | _pending_ |
+| Architect ratification | _pending_ |
+| Tester attestation | _pending (R8: merge needs tester `can_verify_work_requests` attestation with evidence, not author self-declaration)_ |
 
-V222 is currently **staged in the worktree `req-port-p4a` and unmerged**. There
-is therefore no merge commit, blob ratification, or architect/DBA record to
-check; the operator window is the only gate, and this runbook is the procedure
-that window follows once the change set is committed and merged. Add the merge
-commit, blob hash and ratification record UUIDs to this table at merge time —
-do not treat their absence today as an authorization of the contrary.
+V222 is currently **staged in the worktree `req-port-p4a` and unmerged**
+(PR #1035, draft). There is therefore no merge commit or architect/DBA/tester
+record to check; the operator window is the only gate, and this runbook is the
+procedure that window follows once the change set is merged. Fill the pending
+rows at merge time — do not treat their absence today as an authorization of
+the contrary.
 
 ---
 

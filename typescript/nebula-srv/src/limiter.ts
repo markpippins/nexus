@@ -60,3 +60,25 @@ export const requirementMoveLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: "nebula-srv requirement move rate limit exceeded" },
 });
+
+/**
+ * Limiter for the P4a requirement-delete cascade endpoints
+ * (DELETE /api/systems/:id, /api/subsystems/:id, /api/features/:id,
+ *  DELETE /api/requirements/:id).
+ *
+ * Scoped to these four routes, 300 req/min/IP, same posture as the three
+ * above. Each handler opens a transaction that walks the governance scope
+ * and deletes leaf-first through the canonical delete guard, so a flood
+ * here contends on rows other callers need; the P4a rewrite made these the
+ * expensive delete paths, which is exactly why they should not be reachable
+ * unbounded.
+ *
+ * CodeQL js/missing-rate-limiting remediation (P4a).
+ */
+export const requirementDeleteCascadeLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "nebula-srv requirement delete rate limit exceeded" },
+});

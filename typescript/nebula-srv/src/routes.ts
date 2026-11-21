@@ -12,7 +12,7 @@ import { fetchSubstance, substanceToCamel } from './substance-proxy';
 import { CrossReferenceType } from './crossref-taxonomy';
 import { normalizeTags } from './tagNormalizer';
 import { expandTags } from './tagExpansion';
-import { attestationsLimiter, requirementCompileLimiter, requirementMoveLimiter } from './limiter';
+import { attestationsLimiter, requirementCompileLimiter, requirementDeleteCascadeLimiter, requirementMoveLimiter } from './limiter';
 import { routingTagErrorMessage, routingCaseErrorMessage } from './routing-tags';
 import { blankRecordError, bodyRequiredError, normalizeHarnessJobId } from './agent-record-write-guard';
 import {
@@ -766,7 +766,7 @@ export function createRoutes(pool: Pool): Router {
   // delete, leaf-first through the canonical delete guard. A requirement that
   // a specification, plan, request or blueprint still names refuses the whole
   // cascade with 409 instead of leaving it half done.
-  router.delete('/systems/:id', async (req: Request, res: Response) => {
+  router.delete('/systems/:id', requirementDeleteCascadeLimiter, async (req: Request, res: Response) => {
     const client = await pool.connect();
     try {
       const id = String(req.params.id);
@@ -904,7 +904,7 @@ export function createRoutes(pool: Pool): Router {
   });
 
   // DELETE /api/subsystems/:id — cascade deletes features and requirements
-  router.delete('/subsystems/:id', async (req: Request, res: Response) => {
+  router.delete('/subsystems/:id', requirementDeleteCascadeLimiter, async (req: Request, res: Response) => {
     const client = await pool.connect();
     try {
       const id = String(req.params.id);
@@ -996,7 +996,7 @@ export function createRoutes(pool: Pool): Router {
   });
 
   // DELETE /api/features/:id — cascade deletes requirements with feature_id
-  router.delete('/features/:id', async (req: Request, res: Response) => {
+  router.delete('/features/:id', requirementDeleteCascadeLimiter, async (req: Request, res: Response) => {
     const client = await pool.connect();
     try {
       const id = String(req.params.id);
@@ -1437,7 +1437,7 @@ export function createRoutes(pool: Pool): Router {
   // P4a: refused with 409 while any governance surface still names the
   // requirement (see the delete guard above); the DB enforces the same rule for
   // callers that bypass this route.
-  router.delete('/requirements/:id', async (req: Request, res: Response) => {
+  router.delete('/requirements/:id', requirementDeleteCascadeLimiter, async (req: Request, res: Response) => {
     const client = await pool.connect();
     try {
       const id = String(req.params.id);

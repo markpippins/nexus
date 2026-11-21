@@ -156,7 +156,7 @@ Canonical asset graph: systems, subsystems, features, documents, harvests, agent
 | POST | `/api/refresh-stats` | POST /api/refresh-stats — refresh materialized views SECURITY: matviewname is validated against a strict PostgreSQL identifier pattern before interpolation. REFRESH MATERIALIZED VIEW does not accept parameterized identifiers ($1), so we sanitize via regex instead. |
 | GET | `/api/requirements` | REQUIREMENTS GET /api/requirements — filterable with pagination |
 | POST | `/api/requirements` | POST /api/requirements |
-| DELETE | `/api/requirements/:id` | DELETE /api/requirements/:id |
+| DELETE | `/api/requirements/:id` | DELETE /api/requirements/:id P4a: refused with 409 while any governance surface still names the requirement (see the delete guard above); the DB enforces the same rule for callers that bypass this route. |
 | GET | `/api/requirements/:id` | GET /api/requirements/:id — single requirement by ID |
 | PATCH | `/api/requirements/:id` | PATCH /api/requirements/:id |
 | GET | `/api/requirements/:id/children` | GET /api/requirements/:id/children — fetch direct child requirements with pagination |
@@ -215,7 +215,7 @@ Canonical asset graph: systems, subsystems, features, documents, harvests, agent
 | POST | `/api/subsystems/move` | POST /api/subsystems/move — re-parent a subsystem to a different system |
 | GET | `/api/systems` | SYSTEMS GET /api/systems — full nested hierarchy with pagination |
 | POST | `/api/systems` | POST /api/systems |
-| DELETE | `/api/systems/:id` | DELETE /api/systems/:id — cascade deletes subsystems, features, folders, requirements |
+| DELETE | `/api/systems/:id` | DELETE /api/systems/:id — cascade deletes subsystems, features, folders, requirements P4a: the requirement cascade is explicit (requirements live on views with no FK to the hierarchy) and runs in the same transaction as the system delete, leaf-first through the canonical delete guard. A requirement  |
 | GET | `/api/systems/:id` | GET /api/systems/:id — single system with full nested hierarchy |
 | PATCH | `/api/systems/:id` | PATCH /api/systems/:id — name, description, readme, architecture |
 | GET | `/api/systems/:id/agendas` | GET /api/systems/:id/agendas — list agendas scoped to a system, with nested items |
