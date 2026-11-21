@@ -45,7 +45,12 @@ One cycle:
 Safety rails (all non-negotiable):
   - --merge is passed to the gate only after an immediately-preceding
     check-only run of the SAME gate exited 0 for the SAME head.
-  - Default mode is check-only: without --apply nothing is mutated.
+  - Default mode is check-only: without --apply nothing merges, promotes,
+    repairs, reruns, posts, or changes any verdict. The gate's two
+    attestation-bookkeeping writes (--record-refusals) ARE check-only by
+    design: tagging a refusal onto the refused row, and retiring a refused
+    row under an accepted successor, touch only attestation records — never
+    a branch, a PR, a workflow run, or the gate outcome.
   - Per-cycle merge cap (default 3) bounds blast radius.
   - PRs already recorded as merged in the state file are skipped (idempotent
     across timer ticks).
