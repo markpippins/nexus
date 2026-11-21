@@ -19,9 +19,9 @@ pass.
 ``--record-refusals`` (opt-in; the attestation janitor passes it) adds the
 two attestation-bookkeeping writes described under "Gate 3 bookkeeping":
 the refused row is tagged status:refused + gate-code:<CODE>, and a refused
-row is retired under an accepted successor for the same PR and head. Those
-writes never change a gate result; without the flag the gate stays
-read-only.
+row is retired under an accepted successor for the same PR, whatever head it
+was attested at. Those writes never change a gate result; without the flag
+the gate stays read-only.
 
 The attestation gate (and only that gate) may be bypassed by the
 OPERATOR via NEXUS_ALLOW_UNATTESTED_MERGE=1 -- the bypass is reported
@@ -799,10 +799,11 @@ def fetch_pr_files(
 # Two writes close that, both opt-in via --record-refusals:
 #   1. a refused row is tagged status:refused + gate-code:<CODE>, so the
 #      refusal is durable and machine-readable ON the row; and
-#   2. when gate 3 later passes, refused rows for the same PR at the same
-#      head are superseded under the accepted row through
-#      bin/supersede-record.sh (its archive-before-mutate and round-trip
-#      verify are reused, not reimplemented).
+#   2. when gate 3 later passes, refused rows for the same PR are superseded
+#      under the accepted row through bin/supersede-record.sh (its
+#      archive-before-mutate and round-trip verify are reused, not
+#      reimplemented). Not scoped by head: an ATT_STALE_HEAD row can never
+#      match the successor's head tag, so head scoping left it live forever.
 #
 # Neither write can change a gate result: every failure is reported in the
 # detail line, never raised.
