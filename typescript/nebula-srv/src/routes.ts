@@ -12,9 +12,16 @@ import { fetchSubstance, substanceToCamel } from './substance-proxy';
 import { CrossReferenceType } from './crossref-taxonomy';
 import { normalizeTags } from './tagNormalizer';
 import { expandTags } from './tagExpansion';
-import { attestationsLimiter, requirementCompileLimiter } from './limiter';
+import { attestationsLimiter, requirementCompileLimiter, requirementDeleteCascadeLimiter, requirementMoveLimiter } from './limiter';
 import { routingTagErrorMessage, routingCaseErrorMessage } from './routing-tags';
 import { blankRecordError, bodyRequiredError, normalizeHarnessJobId } from './agent-record-write-guard';
+import {
+  REQUIREMENT_DELETE_BLOCKED_CODE,
+  deleteRequirementSet,
+  requirementDeleteConflict,
+  requirementDeleteSuccess,
+  requirementIdsInScope,
+} from './requirement-delete';
 import {
   enforceTagAddressPolicy,
   addressPolicyErrorMessage,
@@ -225,6 +232,274 @@ function parsePagination(query: any): { offset: number; limit: number; page: num
   const page = Math.max(1, parseInt(String(query.page || '1'), 10));
   const pageSize = Math.min(100, Math.max(1, parseInt(String(query.pageSize || '100'), 10)));
   return { offset: (page - 1) * pageSize, limit: pageSize, page, pageSize };
+}
+
+// ── Blueprint governance refs (P4a) ───────────────────────────────────
+// A Blueprint instance may name the Requirement it implements and the
+// Specification that governs it. Both are resolved before the row exists, so a
+// blueprint cannot point at nothing. This matters beyond tidiness:
+// `nebula.implementation_plans` casts these payload values to uuid on read, so
+// unvalidated text would poison that projection.
+//
+// The requirement lookup targets `nebula.requirements` — the TRANSITION surface —
+// not `resolution.requirement`. V222 re-points that relation at the canonical
+// table, so the same query is correct before the operator applies the port
+// (legacy rows) and after it (ported rows). Querying the base table directly
+// would return nothing until the port is applied.
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// A rejected ref names its field and classification so a caller can act on it
+// without string-matching the message. `code` is stable; `field` points at the
+// exact body path (`requirement_ids[2]`), not just the property name.
+type BlueprintRefErrorOptions = { status?: number; code?: string; field?: string };
+
+class BlueprintRefError extends Error {
+  status: number;
+  code: string;
+  field?: string;
+  constructor(message: string, options: BlueprintRefErrorOptions = {}) {
+    super(message);
+    this.name = 'BlueprintRefError';
+    this.status = options.status ?? 400;
+    this.code = options.code ?? 'invalid_blueprint_ref';
+    this.field = options.field;
+  }
+}
+
+function coerceBlueprintRef(value: unknown, label: string): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'object') {
+    throw new BlueprintRefError(`${label} must be a uuid`, { code: 'malformed_id', field: label });
+  }
+  const text = String(value).trim();
+  if (!text) return null;
+  if (!UUID_PATTERN.test(text)) {
+    throw new BlueprintRefError(`${label} must be a uuid`, { code: 'malformed_id', field: label });
+  }
+  return text.toLowerCase();
+}
+
+/**
+ * Coerce one of the Blueprint's plural reference lists.
+ *
+ * Throws by index (`requirement_ids[2]`) so the caller learns which entry is
+ * wrong. Transcripts of the same id collapse to one reference: a repeat is the
+ * same reference, not a second one.
+ */
+function coerceBlueprintRefList(value: unknown, label: string): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new BlueprintRefError(`${label} must be an array of uuids`, {
+      code: 'invalid_field_type',
+      field: label,
+    });
+  }
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  value.forEach((entry, index) => {
+    const field = `${label}[${index}]`;
+    if (entry === null || entry === undefined || typeof entry === 'object') {
+      throw new BlueprintRefError(`${field} must be a uuid`, { code: 'malformed_id', field });
+    }
+    const text = String(entry).trim();
+    if (!text || !UUID_PATTERN.test(text)) {
+      throw new BlueprintRefError(`${field} must be a uuid`, { code: 'malformed_id', field });
+    }
+    const id = text.toLowerCase();
+    if (!seen.has(id)) {
+      seen.add(id);
+      ids.push(id);
+    }
+  });
+  return ids;
+}
+
+interface BlueprintRefs {
+  requirementRef: string | null;
+  specRef: string | null;
+  requirementIds: string[];
+  specificationIds: string[];
+  requirementIdsSupplied: boolean;
+  specificationIdsSupplied: boolean;
+}
+
+/**
+ * Resolve and validate every Requirement / Specification a Blueprint names.
+ *
+ * The singular `requirementRef` / `specRef` are the blueprint's primary pair
+ * (what the Specification → Requirement → Blueprint chain reconstructs from
+ * `payload.requirement_ref` / `payload.spec_ref`); the plural lists are the
+ * full set the blueprint carries. Both are resolved against the database in
+ * one pass each, so field names never decide entity type: a Specification id
+ * sent as a requirement is reported as the wrong entity, not as "missing".
+ */
+async function resolveBlueprintRefs(
+  db: Pick<Pool, 'query'>,
+  raw: {
+    requirementRef?: unknown;
+    specRef?: unknown;
+    requirementIds?: unknown;
+    specificationIds?: unknown;
+  }
+): Promise<BlueprintRefs> {
+  const requirementRef = coerceBlueprintRef(raw.requirementRef, 'requirementRef');
+  const specRef = coerceBlueprintRef(raw.specRef, 'specRef');
+  const requirementIds = coerceBlueprintRefList(raw.requirementIds, 'requirement_ids');
+  const specificationIds = coerceBlueprintRefList(raw.specificationIds, 'specification_ids');
+
+  const named = Array.from(new Set([
+    ...requirementIds,
+    ...specificationIds,
+    ...(requirementRef ? [requirementRef] : []),
+    ...(specRef ? [specRef] : []),
+  ]));
+
+  if (named.length === 0) {
+    return {
+      requirementRef,
+      specRef,
+      requirementIds,
+      specificationIds,
+      requirementIdsSupplied: raw.requirementIds !== undefined && raw.requirementIds !== null,
+      specificationIdsSupplied: raw.specificationIds !== undefined && raw.specificationIds !== null,
+    };
+  }
+  const [requirementRows, specificationRows] = await Promise.all([
+    db.query(
+      'SELECT id::text AS id FROM nebula.requirements WHERE id = ANY($1::uuid[])',
+      [named]
+    ),
+    db.query(
+      `SELECT id::text AS id, requirement_id::text AS requirement_id
+         FROM resolution.specification WHERE id = ANY($1::uuid[])`,
+      [named]
+    ),
+  ]);
+
+  const knownRequirements = new Set((requirementRows.rows as any[]).map((row) => row.id as string));
+  const knownSpecifications = new Map<string, string | null>(
+    (specificationRows.rows as any[]).map((row) => [row.id as string, row.requirement_id ?? null])
+  );
+
+  if (requirementRef) {
+    if (knownSpecifications.has(requirementRef)) {
+      throw new BlueprintRefError(
+        `requirementRef is a Specification id, not a Requirement: ${requirementRef}`,
+        { code: 'wrong_entity_type', field: 'requirementRef' }
+      );
+    }
+    if (!knownRequirements.has(requirementRef)) {
+      throw new BlueprintRefError(`requirementRef does not exist: ${requirementRef}`, {
+        code: 'unknown_requirement_id',
+        field: 'requirementRef',
+      });
+    }
+  }
+
+  if (specRef) {
+    if (knownRequirements.has(specRef)) {
+      throw new BlueprintRefError(
+        `specRef is a Requirement id, not a Specification: ${specRef}`,
+        { code: 'wrong_entity_type', field: 'specRef' }
+      );
+    }
+    if (!knownSpecifications.has(specRef)) {
+      throw new BlueprintRefError(`specRef does not exist: ${specRef}`, {
+        code: 'unknown_specification_id',
+        field: 'specRef',
+      });
+    }
+    // A Specification governs at most one Requirement; a blueprint that names
+    // both must name a consistent pair.
+    const governed = knownSpecifications.get(specRef) ?? null;
+    if (requirementRef && governed && governed !== requirementRef) {
+      throw new BlueprintRefError(
+        `specRef ${specRef} governs requirement ${governed}, not ${requirementRef}`,
+        { code: 'specification_governs_other_requirement', field: 'specRef' }
+      );
+    }
+  }
+
+  // One helper for both lists: the entity-type check comes first so a valid
+  // id sent under the wrong key is reported as misfiled, never as missing.
+  const checkRefList = (
+    ids: string[],
+    label: string,
+    known: Set<string> | Map<string, string | null>,
+    other: Set<string> | Map<string, string | null>,
+    otherNoun: string,
+    unknownCode: string,
+  ): void => {
+    ids.forEach((id, index) => {
+      const field = `${label}[${index}]`;
+      if (other.has(id)) {
+        throw new BlueprintRefError(`${field} is a ${otherNoun} id, not a ${label === 'requirement_ids' ? 'Requirement' : 'Specification'}: ${id}`, {
+          code: 'wrong_entity_type',
+          field,
+        });
+      }
+      if (!known.has(id)) {
+        throw new BlueprintRefError(`${field} does not exist: ${id}`, { code: unknownCode, field });
+      }
+    });
+  };
+  checkRefList(requirementIds, 'requirement_ids', knownRequirements, knownSpecifications, 'Specification', 'unknown_requirement_id');
+  checkRefList(specificationIds, 'specification_ids', knownSpecifications, knownRequirements, 'Requirement', 'unknown_specification_id');
+
+  // The two spellings of "the requirements this blueprint carries" must agree,
+  // and likewise for specifications: a primary ref left out of its list is an
+  // incoherent request, not a second way to name it.
+  if (requirementRef && requirementIds.length > 0 && !requirementIds.includes(requirementRef)) {
+    throw new BlueprintRefError(
+      `requirementRef ${requirementRef} is not listed in requirement_ids`,
+      { code: 'incoherent_blueprint_refs', field: 'requirement_ids' }
+    );
+  }
+  if (specRef && specificationIds.length > 0 && !specificationIds.includes(specRef)) {
+    throw new BlueprintRefError(
+      `specRef ${specRef} is not listed in specification_ids`,
+      { code: 'incoherent_blueprint_refs', field: 'specification_ids' }
+    );
+  }
+
+  // A Specification is in scope only through a Requirement this blueprint
+  // names. This is the cross-scope check the data model can express: an id
+  // that resolves, but governs a Requirement belonging to some other
+  // blueprint's chain, is not this blueprint's to carry. The check is
+  // unconditional: a governed Specification named with no Requirements at all
+  // is an orphan, not an unscoped pass. Only a Specification governing nothing
+  // (requirement_id NULL) may stand alone.
+  const blueprintRequirements = new Set(requirementIds);
+  if (requirementRef) blueprintRequirements.add(requirementRef);
+  specificationIds.forEach((id, index) => {
+    const governed = knownSpecifications.get(id) ?? null;
+    if (governed && !blueprintRequirements.has(governed)) {
+      throw new BlueprintRefError(
+        `specification_ids[${index}] governs requirement ${governed}, which this blueprint does not name`,
+        { code: 'specification_outside_blueprint', field: `specification_ids[${index}]` }
+      );
+    }
+  });
+  // The primary specRef obeys the same scope rule. When requirementRef names
+  // the governed Requirement the pair check above already passed, so this only
+  // fires for a specRef whose Requirement the blueprint never names — including
+  // the orphan case where it names no Requirement at all.
+  const governedByPrimarySpec = specRef ? knownSpecifications.get(specRef) ?? null : null;
+  if (governedByPrimarySpec && !blueprintRequirements.has(governedByPrimarySpec)) {
+    throw new BlueprintRefError(
+      `specRef ${specRef} governs requirement ${governedByPrimarySpec}, which this blueprint does not name`,
+      { code: 'specification_outside_blueprint', field: 'specRef' }
+    );
+  }
+
+  return {
+    requirementRef,
+    specRef,
+    requirementIds,
+    specificationIds,
+    requirementIdsSupplied: raw.requirementIds !== undefined && raw.requirementIds !== null,
+    specificationIdsSupplied: raw.specificationIds !== undefined && raw.specificationIds !== null,
+  };
 }
 
 // ── Role lifecycle event emitter (D-2026-08-16-009 R3) ─────────────
@@ -486,16 +761,34 @@ export function createRoutes(pool: Pool): Router {
   });
 
   // DELETE /api/systems/:id — cascade deletes subsystems, features, folders, requirements
-  router.delete('/systems/:id', async (req: Request, res: Response) => {
+  // P4a: the requirement cascade is explicit (requirements live on views with
+  // no FK to the hierarchy) and runs in the same transaction as the system
+  // delete, leaf-first through the canonical delete guard. A requirement that
+  // a specification, plan, request or blueprint still names refuses the whole
+  // cascade with 409 instead of leaving it half done.
+  router.delete('/systems/:id', requirementDeleteCascadeLimiter, async (req: Request, res: Response) => {
+    const client = await pool.connect();
     try {
-      const { id } = req.params;
+      const id = String(req.params.id);
+      await client.query('BEGIN');
+      const requirementIds = await requirementIdsInScope(client, 'system_id', id);
+      const deleted = await deleteRequirementSet(client, requirementIds, `System ${id}`);
       // Also delete associated work_sessions (parentId matches)
-      await pool.query('DELETE FROM work_sessions WHERE parent_id = $1', [id]);
-      const { rowCount } = await pool.query('DELETE FROM systems WHERE id = $1', [id]);
-      if (rowCount === 0) return res.status(404).json({ error: 'System not found' });
-      res.json({ ok: true });
+      await client.query('DELETE FROM work_sessions WHERE parent_id = $1', [id]);
+      const { rowCount } = await client.query('DELETE FROM systems WHERE id = $1', [id]);
+      if (rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'System not found' });
+      }
+      await client.query('COMMIT');
+      res.json(requirementDeleteSuccess(deleted));
     } catch (err: any) {
+      await client.query('ROLLBACK');
+      const conflict = requirementDeleteConflict(err);
+      if (conflict) return res.status(409).json({ code: REQUIREMENT_DELETE_BLOCKED_CODE, ...conflict });
       res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
     }
   });
 
@@ -611,15 +904,27 @@ export function createRoutes(pool: Pool): Router {
   });
 
   // DELETE /api/subsystems/:id — cascade deletes features and requirements
-  router.delete('/subsystems/:id', async (req: Request, res: Response) => {
+  router.delete('/subsystems/:id', requirementDeleteCascadeLimiter, async (req: Request, res: Response) => {
+    const client = await pool.connect();
     try {
-      const { id } = req.params;
-      await pool.query('DELETE FROM requirements WHERE subsystem_id = $1', [id]);
-      const { rowCount } = await pool.query('DELETE FROM subsystems WHERE id = $1', [id]);
-      if (rowCount === 0) return res.status(404).json({ error: 'Subsystem not found' });
-      res.json({ ok: true });
+      const id = String(req.params.id);
+      await client.query('BEGIN');
+      const requirementIds = await requirementIdsInScope(client, 'subsystem_id', id);
+      const deleted = await deleteRequirementSet(client, requirementIds, `Subsystem ${id}`);
+      const { rowCount } = await client.query('DELETE FROM subsystems WHERE id = $1', [id]);
+      if (rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Subsystem not found' });
+      }
+      await client.query('COMMIT');
+      res.json(requirementDeleteSuccess(deleted));
     } catch (err: any) {
+      await client.query('ROLLBACK');
+      const conflict = requirementDeleteConflict(err);
+      if (conflict) return res.status(409).json({ code: REQUIREMENT_DELETE_BLOCKED_CODE, ...conflict });
       res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
     }
   });
 
@@ -691,15 +996,27 @@ export function createRoutes(pool: Pool): Router {
   });
 
   // DELETE /api/features/:id — cascade deletes requirements with feature_id
-  router.delete('/features/:id', async (req: Request, res: Response) => {
+  router.delete('/features/:id', requirementDeleteCascadeLimiter, async (req: Request, res: Response) => {
+    const client = await pool.connect();
     try {
-      const { id } = req.params;
-      await pool.query('DELETE FROM requirements WHERE feature_id = $1', [id]);
-      const { rowCount } = await pool.query('DELETE FROM features WHERE id = $1', [id]);
-      if (rowCount === 0) return res.status(404).json({ error: 'Feature not found' });
-      res.json({ ok: true });
+      const id = String(req.params.id);
+      await client.query('BEGIN');
+      const requirementIds = await requirementIdsInScope(client, 'feature_id', id);
+      const deleted = await deleteRequirementSet(client, requirementIds, `Feature ${id}`);
+      const { rowCount } = await client.query('DELETE FROM features WHERE id = $1', [id]);
+      if (rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Feature not found' });
+      }
+      await client.query('COMMIT');
+      res.json(requirementDeleteSuccess(deleted));
     } catch (err: any) {
+      await client.query('ROLLBACK');
+      const conflict = requirementDeleteConflict(err);
+      if (conflict) return res.status(409).json({ code: REQUIREMENT_DELETE_BLOCKED_CODE, ...conflict });
       res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
     }
   });
 
@@ -1117,14 +1434,28 @@ export function createRoutes(pool: Pool): Router {
   });
 
   // DELETE /api/requirements/:id
-  router.delete('/requirements/:id', async (req: Request, res: Response) => {
+  // P4a: refused with 409 while any governance surface still names the
+  // requirement (see the delete guard above); the DB enforces the same rule for
+  // callers that bypass this route.
+  router.delete('/requirements/:id', requirementDeleteCascadeLimiter, async (req: Request, res: Response) => {
+    const client = await pool.connect();
     try {
-      const { id } = req.params;
-      const { rowCount } = await pool.query('DELETE FROM requirements WHERE id = $1', [id]);
-      if (rowCount === 0) return res.status(404).json({ error: 'Requirement not found' });
-      res.json({ ok: true });
+      const id = String(req.params.id);
+      await client.query('BEGIN');
+      const deleted = await deleteRequirementSet(client, [id], `Requirement ${id}`);
+      if (deleted === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Requirement not found' });
+      }
+      await client.query('COMMIT');
+      res.json(requirementDeleteSuccess(deleted));
     } catch (err: any) {
+      await client.query('ROLLBACK');
+      const conflict = requirementDeleteConflict(err);
+      if (conflict) return res.status(409).json({ code: REQUIREMENT_DELETE_BLOCKED_CODE, ...conflict });
       res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
     }
   });
 
@@ -1133,7 +1464,7 @@ export function createRoutes(pool: Pool): Router {
   // ════════════════════════════════════════════════════════════════
 
   // POST /api/requirements/:id/move — kanban-friendly single-id status move (Plan 0131)
-  router.post('/requirements/:id/move', async (req: Request, res: Response) => {
+  router.post('/requirements/:id/move', requirementMoveLimiter, async (req: Request, res: Response) => {
     const client = await pool.connect();
     try {
       const { id } = req.params;
@@ -1149,9 +1480,15 @@ export function createRoutes(pool: Pool): Router {
         return res.status(400).json({ error: `expectedCurrentStatus, if provided, must be one of: ${allowedList}` });
       }
       await client.query('BEGIN');
-      // Lock the row to detect concurrent moves
+      // Serialize concurrent moves, then read the current status.
+      // The read deliberately goes through `requirements` — the transition
+      // surface V222 re-points — and not `requirements_history` (frozen once the
+      // port is applied, so new requirements would 404) nor a `FOR UPDATE` on the
+      // view (PostgreSQL cannot lock rows through an INSTEAD OF view). An
+      // advisory lock gives the same concurrency guarantee in both states.
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', [id]);
       const { rows: [currentRow] } = await client.query(
-        'SELECT id, status FROM nebula.requirements_history WHERE id = $1 AND recorded_until_dt = \'9999-12-31 23:59:59+00\' FOR UPDATE',
+        'SELECT id, status FROM requirements WHERE id = $1',
         [id]
       );
       if (!currentRow) {
@@ -1629,6 +1966,10 @@ export function createRoutes(pool: Pool): Router {
               acceptanceCriteria: acceptanceForPlan,
               filesAffected,
               dependencies,
+              // P4a: carry the requirement into the Blueprint so the
+              // Specification → Requirement → Blueprint → WorkRequest chain is
+              // reconstructable from the blueprint payload alone.
+              requirementRef: id,
               deliverable: typeof deliverable === 'string' && deliverable.trim() ? deliverable : undefined,
             }),
           });
@@ -2093,12 +2434,19 @@ export function createRoutes(pool: Pool): Router {
 
       const [dataResult, countResult] = await Promise.all([
         pool.query(
+          // P4a: the plural Requirement/Specification sets live in the blueprint
+          // payload. The compat view exposes only the singular refs, so the list
+          // joins the canonical blueprint row to project the arrays.
           `SELECT p.plan_number AS id, p.title, p.goal, p.content,
                   p.files_affected, p.acceptance_criteria, p.dependencies,
+                  p.requirement_id AS requirement_ref, p.spec_id AS spec_ref,
+                  COALESCE(b.payload -> 'requirement_ids', '[]'::jsonb) AS requirement_ids,
+                  COALESCE(b.payload -> 'specification_ids', '[]'::jsonb) AS specification_ids,
                   p.status, p.metadata, p.created_at, p.updated_at,
                   char_length(p.content)::int AS "sizeBytes",
                   p.updated_at AS "modifiedAt"
            FROM nebula.implementation_plans p
+           JOIN nebula.blueprints_history b ON b.id = p.id
            ${where}
            ORDER BY p.updated_at DESC, p.id DESC
            LIMIT $${i} OFFSET $${i+1}`,
@@ -2128,10 +2476,14 @@ export function createRoutes(pool: Pool): Router {
       const { rows: [plan] } = await pool.query(
         `SELECT p.plan_number AS id, p.title, p.goal, p.content,
                 p.files_affected, p.acceptance_criteria, p.dependencies,
+                p.requirement_id AS "requirementRef", p.spec_id AS "specRef",
+                COALESCE(b.payload -> 'requirement_ids', '[]'::jsonb) AS "requirementIds",
+                COALESCE(b.payload -> 'specification_ids', '[]'::jsonb) AS "specificationIds",
                 p.status, p.metadata, p.created_at, p.updated_at,
                 char_length(p.content)::int AS "sizeBytes",
                 p.updated_at AS "modifiedAt"
          FROM nebula.implementation_plans p
+         JOIN nebula.blueprints_history b ON b.id = p.id
          WHERE p.plan_number = $1`,
         [id]
       );
@@ -2145,10 +2497,25 @@ export function createRoutes(pool: Pool): Router {
   // POST /api/plans — create a new implementation plan
   // Writes directly to nebula.implementation_plans (the TABLE, not the view).
   // Receipts and tickets are handled downstream by conduit-mcp.
+  // P4a: the blueprint may carry `requirementRef` and/or `specRef`; both are
+  // validated before the row exists.
   router.post('/plans', async (req: Request, res: Response) => {
     try {
-      const { title, project = 'nexus', goal = '', filesAffected = [], acceptanceCriteria = [], dependencies = [], promptRef = '' } = req.body;
+      const { title, project = 'nexus', goal = '', filesAffected = [], acceptanceCriteria = [], dependencies = [], promptRef = '',
+              requirementRef, requirementId, specRef, specificationRef, specificationId,
+              requirementIds, specificationIds } = req.body;
       if (!title) return res.status(400).json({ error: 'title is required' });
+
+      // Accept the canonical names plus the Blueprint-payload spellings so the
+      // compile path and hand-authored callers converge on one validation gate.
+      // The plural lists accept both wire spellings too: the payload's snake_case
+      // (`requirement_ids`) and the API's camelCase (`requirementIds`).
+      const refs = await resolveBlueprintRefs(pool, {
+        requirementRef: requirementRef ?? requirementId ?? null,
+        specRef: specRef ?? specificationRef ?? specificationId ?? null,
+        requirementIds: requirementIds ?? req.body.requirement_ids ?? null,
+        specificationIds: specificationIds ?? req.body.specification_ids ?? null,
+      });
 
       // Slugify title into a filename-safe slug (computed once, reused in retry loop)
       const slug = title
@@ -2185,8 +2552,13 @@ export function createRoutes(pool: Pool): Router {
             acceptance_criteria: acceptanceCriteria,
             dependencies,
             tags: [],
-            spec_ref: null,
-            requirement_ref: null,
+            spec_ref: refs.specRef,
+            requirement_ref: refs.requirementRef,
+            // The blueprint's full Requirement/Specification sets. Written only
+            // when the caller named them, so blueprints that carry none keep
+            // exactly the payload shape they had before this field existed.
+            ...(refs.requirementIdsSupplied ? { requirement_ids: refs.requirementIds } : {}),
+            ...(refs.specificationIdsSupplied ? { specification_ids: refs.specificationIds } : {}),
             project,
             ...(promptRef ? { prompt_ref: promptRef } : {}),
           };
@@ -2206,6 +2578,10 @@ export function createRoutes(pool: Pool): Router {
             title: plan.title,
             goal: plan.payload?.goal ?? goal,
             status: plan.status,
+            requirementRef: refs.requirementRef,
+            specRef: refs.specRef,
+            requirementIds: refs.requirementIds,
+            specificationIds: refs.specificationIds,
             timestamp: now,
           });
         } catch (insertErr: any) {
@@ -2220,6 +2596,13 @@ export function createRoutes(pool: Pool): Router {
       // Should never reach here (last attempt throws), but satisfy TypeScript
       throw new Error('Failed to create plan after max retries');
     } catch (err: any) {
+      if (err instanceof BlueprintRefError) {
+        return res.status(err.status).json({
+          error: err.message,
+          code: err.code,
+          ...(err.field ? { field: err.field } : {}),
+        });
+      }
       res.status(500).json({ error: err.message });
     }
   });
@@ -2835,7 +3218,7 @@ export function createRoutes(pool: Pool): Router {
           await client.query(
             `INSERT INTO requirements (id, system_id, subsystem_id, feature_id, title, description, status, priority, start_date, completion_date, candidate_id)
              SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
-             WHERE NOT EXISTS (SELECT 1 FROM nebula.requirements_history WHERE id = $1 AND recorded_until_dt = '9999-12-31 23:59:59+00')`,
+             WHERE NOT EXISTS (SELECT 1 FROM requirements WHERE id = $1)`,
             [r.id, r.systemId, r.subsystemId, r.featureId || null, r.title, r.description || '', r.status || 'Backlog', r.priority || 'Medium', r.startDate || null, r.completionDate || null, r.candidateId || null]
           );
         }

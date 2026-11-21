@@ -886,6 +886,59 @@ All docs endpoints read from disk within `/home/codex/dev/nexus`. Known files: `
 
 **Response `200`:** Single plan object.
 
+### `POST /api/plans`
+
+**Purpose:** Create an implementation plan (Blueprint) row in
+`nebula.blueprints_history` and return its `plan_number`.
+
+**Body:**
+```json
+{
+  "title": "string (required)",
+  "project": "string (default nexus)",
+  "goal": "string",
+  "filesAffected": ["string"],
+  "acceptanceCriteria": ["string"],
+  "dependencies": ["string"],
+  "promptRef": "string",
+  "requirementRef": "uuid|null",
+  "specRef": "uuid|null"
+}
+```
+
+`requirementRef` / `specRef` are stored as `payload.requirement_ref` and
+`payload.spec_ref`. They are validated before the row is written: the requirement
+against `nebula.requirements` (the transition surface V222 re-points at the
+canonical `resolution.requirement` table, so the check is correct both before and
+after the operator applies the port), and the specification against
+`resolution.specification`.
+
+- a non-uuid value is rejected (`must be a uuid`) — the
+  `nebula.implementation_plans` view casts these values to uuid on read, so
+  unvalidated text would poison the projection;
+- an unknown id is rejected (`does not exist`);
+- when both are supplied, the specification must govern that requirement.
+
+`requirementId`, `specificationRef` and `specificationId` are accepted as
+aliases of `requirementRef` and `specRef`.
+
+**Response `201`:**
+```json
+{
+  "created": true,
+  "planNumber": "0089",
+  "fileName": "slug-v0089.md",
+  "title": "string",
+  "goal": "string",
+  "status": "pending",
+  "requirementRef": "uuid|null",
+  "specRef": "uuid|null",
+  "timestamp": "ISO timestamp"
+}
+```
+
+**Response `400`:** ref validation failure; nothing is written.
+
 ### `GET /api/implementation-plans/statuses`
 
 **Purpose:** Get distinct status values for filter tabs.

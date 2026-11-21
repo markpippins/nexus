@@ -162,6 +162,34 @@ jobs:
             -Dsonar.qualitygate.wait=true \
             -Dsonar.qualitygate.timeout=600
 
+      - name: Report quality gate conditions (diagnostic on failure)
+        if: failure() && steps.sonar-preflight.outputs.ready == 'true'
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        # The scanner reports only "QUALITY GATE STATUS: FAILED" plus a redacted
+        # dashboard link, so a red sonar check is not actionable from CI alone
+        # (cost two full scan cycles on PR #1035 to establish that the failure
+        # was a specific new-code condition and not the scan itself). Query the
+        # gate API and print every condition. Read-only: this step cannot change
+        # the verdict, it only makes the failing metric visible in the log.
+        run: |
+          set +e
+          echo "── quality gate conditions (project nexus) ──"
+          curl -sS -u "$SONAR_TOKEN": \
+            "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=nexus" \
+            -o /tmp/qg.json || echo "gate API unreachable"
+          python3 -c 'import json; d=json.load(open("/tmp/qg.json")).get("projectStatus", {}); print("status:", d.get("status")); [print("  %-6s %s=%s (threshold %s)" % (c.get("status"), c.get("metricKey"), c.get("actualValue"), c.get("errorThreshold"))) for c in d.get("conditions", [])]' || echo "gate status unreadable"
+          # A failed gate is often a single unreviewed security hotspot. Name them
+          # so the fix is a code change rather than a dashboard hunt.
+          echo "── security hotspots awaiting review (new-code period) ──"
+          # Match the quality-gate denominator: list only hotspots in Sonar's
+          # configured new-code period, not every open hotspot in the project.
+          curl -sS -u "$SONAR_TOKEN": \
+            "$SONAR_HOST_URL/api/hotspots/search?projectKey=nexus&status=TO_REVIEW&inNewCodePeriod=true&ps=100" \
+            -o /tmp/hot.json || echo "hotspot API unreachable"
+          python3 -c 'import json; d=json.load(open("/tmp/hot.json")); print("new-code TO_REVIEW total:", d.get("paging", {}).get("total", "unknown")); [print("  %s:%s %s — %s" % (h["component"].split(":")[-1], h.get("line"), h.get("ruleKey"), h.get("message", "")[:120])) for h in d.get("hotspots", [])]' || echo "hotspots unreadable"
+
       - name: Skip notice (server unreachable)
         if: steps.sonar-preflight.outputs.ready != 'true'
         # The pre-flight script also emits its own ::warning:: with the

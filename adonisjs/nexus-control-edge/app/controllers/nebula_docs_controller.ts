@@ -808,7 +808,7 @@ export default class NebulaDocsController {
             trx,
             `INSERT INTO requirements (id, system_id, subsystem_id, feature_id, title, description, status, priority, start_date, completion_date)
              SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-             WHERE NOT EXISTS (SELECT 1 FROM nebula.requirements_history WHERE id = ? AND recorded_until_dt = '9999-12-31 23:59:59+00')`,
+             WHERE NOT EXISTS (SELECT 1 FROM requirements WHERE id = ?)`,
             [r.id, r.systemId, r.subsystemId, r.featureId || null, r.title, r.description || '', r.status || 'Backlog', r.priority || 'Medium', r.startDate || null, r.completionDate || null, r.id]
           )
         }

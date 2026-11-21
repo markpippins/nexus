@@ -41,8 +41,23 @@ import { createRoutes } from './routes';
 
 const COMPILE_PATH = '/v1/capabilities/requirement-compile/compile';
 
-/** Never queried: the probe is rejected before any pool access. */
-const pool = { async query() { return { rows: [] }; } } as never;
+/**
+ * Never meaningfully queried: the compile probe is rejected before any pool
+ * access, and the delete-cascade probes below run against empty stub rows.
+ * `connect` exists so the DELETE handlers (which transact via
+ * `pool.connect()`) reach their own logic instead of hanging on Express 4's
+ * uncaught async throw; every stub query answers empty, so the probes finish
+ * as 404/500 from the handler — never 429 — with the limiter headers stamped.
+ */
+const pool = {
+  async query() { return { rows: [] }; },
+  async connect() {
+    return {
+      async query() { return { rows: [], rowCount: 0 }; },
+      release() {},
+    };
+  },
+} as never;
 
 let server: Server;
 let base = '';
@@ -120,5 +135,25 @@ describe('requirement-compile rate limiter (#749)', () => {
     // would correctly answer 429 here and prove nothing about scope.
     const res = await fetch(`${base}/v1/agent-records?limit=1`);
     expect(res.status).not.toBe(429);
+  });
+});
+
+describe('requirement delete-cascade rate limiter (P4a)', () => {
+  it('runs ahead of the cascade handlers (RateLimit headers stamped, not throttled)', async () => {
+    // Presence-only CodeQL is satisfied by the middleware being mounted; this
+    // proves it actually runs. The stub answers empty rows, so each handler
+    // finishes on its own terms (404/500) — the assertions are only that the
+    // request was not throttled at this volume and carries the advertised
+    // draft-7 policy headers.
+    for (const path of [
+      '/systems/00000000-0000-0000-0000-000000000000',
+      '/requirements/00000000-0000-0000-0000-000000000000',
+    ]) {
+      const res = await fetch(`${base}${path}`, { method: 'DELETE' });
+      expect(res.status).not.toBe(429);
+      expect(res.headers.get('ratelimit')).toMatch(/limit=\d+/);
+      expect(res.headers.get('ratelimit-policy')).toMatch(/\d+/);
+      await res.arrayBuffer();
+    }
   });
 });

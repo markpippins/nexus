@@ -22,6 +22,7 @@ const pool = new Pool({
 
 // ── Express Setup ──────────────────────────────────────────────────
 const app = express();
+app.disable('x-powered-by');
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3101;
 
 app.use(cors());
