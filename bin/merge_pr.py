@@ -859,26 +859,18 @@ def select_attestation(
     return newest, mentions, live
 
 
-def _head_tag(record: Dict[str, Any]) -> Optional[str]:
-    for t in record.get("tags") or []:
-        s = str(t)
-        if s.lower().startswith("head:"):
-            return s.split(":", 1)[1].strip().lower()
-    return None
-
-
 def refused_predecessors(
     records: List[Dict[str, Any]], pr_number: int, accepted: Dict[str, Any]
 ) -> List[Dict[str, Any]]:
     """Refused attestation rows an accepted row supersedes (pure).
 
     Same PR, attestation-shaped, tagged status:refused, not the accepted row
-    itself. Head-scoped when both rows carry a head: tag, so a refusal at an
-    older head is never retired under approval of different code; a legacy
-    row with no head: tag is included (it binds by timestamp only).
+    itself. Deliberately NOT scoped by head: the head-differs case is exactly
+    ATT_STALE_HEAD (a row attested before a push), so head scoping left those
+    refusals live forever. The successor's acceptance of this PR is the
+    authority; the refused row is bookkeeping about a row the gate rejected.
     """
     acc_id = str(accepted.get("id") or "")
-    acc_head = _head_tag(accepted)
     out: List[Dict[str, Any]] = []
     for r in records or []:
         if str(r.get("id") or "") == acc_id:
@@ -886,11 +878,6 @@ def refused_predecessors(
         if REFUSAL_STATUS not in {str(t) for t in (r.get("tags") or [])}:
             continue
         if not is_attestation_record(r) or not attestation_mentions_pr(r, pr_number):
-            continue
-        row_head = _head_tag(r)
-        if acc_head and row_head and not (
-            row_head.startswith(acc_head[:8]) or acc_head.startswith(row_head[:8])
-        ):
             continue
         out.append(r)
     return out

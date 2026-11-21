@@ -1882,7 +1882,7 @@ def test_select_attestation_none_when_only_mentions():
     assert newest is None and len(mentions) == 1
 
 
-def test_refused_predecessors_scopes_to_same_head():
+def test_refused_predecessors_retires_every_refused_row_for_the_pr():
     acc = rec(rec_id="acc00001",
               tags=["type:attestation", "status:done", "pr:487", "head:a8b1dfc6"])
     same_head = rec(rec_id="ref00001",
@@ -1896,7 +1896,28 @@ def test_refused_predecessors_scopes_to_same_head():
                             "head:a8b1dfc6"])
     out = merge_pr.refused_predecessors(
         [acc, same_head, other_head, not_refused], 487, acc)
-    assert [r["id"] for r in out] == ["ref00001"]
+    assert [r["id"] for r in out] == ["ref00001", "ref00002"]
+
+
+def test_refused_predecessors_retires_a_stale_head_refusal():
+    """ATT_STALE_HEAD is the common case: the row attested a head that a push
+    has since replaced, so its head: tag can never match the successor's.
+    Head scoping left exactly these refusals live forever."""
+    acc = rec(rec_id="acc00001",
+              tags=["type:attestation", "status:done", "pr:487",
+                    "head:a8b1dfc6"])
+    stale = rec(rec_id="ref00003",
+                tags=["type:attestation", "status:refused",
+                      "gate-code:ATT_STALE_HEAD", "pr:487", "head:0000aaaa"])
+    out = merge_pr.refused_predecessors([acc, stale], 487, acc)
+    assert [r["id"] for r in out] == ["ref00003"]
+    calls = []
+    bk = merge_pr.attestation_bookkeeping(
+        http_patch=lambda url, payload: None,
+        supersede=lambda old, new, why: (calls.append((old, new)) or (True, "")))
+    note = bk([acc, stale], 487, True, None, BOUND_HEAD)
+    assert calls == [("ref00003", "acc00001")]
+    assert "retired 1 refused predecessor(s) ref00003" in note
 
 
 def test_record_refusal_patches_the_row_and_never_raises():
