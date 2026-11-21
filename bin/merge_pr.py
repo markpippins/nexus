@@ -14,7 +14,16 @@ This tool makes the R8 merge conditions mechanically enforceable:
 
 Check-only is the DEFAULT and never mutates anything; exit 0 means "every
 gate passed". ``--merge`` performs the squash merge only after all gates
-pass. The attestation gate (and only that gate) may be bypassed by the
+pass.
+
+``--record-refusals`` (opt-in; the attestation janitor passes it) adds the
+two attestation-bookkeeping writes described under "Gate 3 bookkeeping":
+the refused row is tagged status:refused + gate-code:<CODE>, and a refused
+row is retired under an accepted successor for the same PR, whatever head it
+was attested at. Those writes never change a gate result; without the flag
+the gate stays read-only.
+
+The attestation gate (and only that gate) may be bypassed by the
 OPERATOR via NEXUS_ALLOW_UNATTESTED_MERGE=1 -- the bypass is reported
 loudly in the gate output. Agents must not set it.
 
@@ -51,6 +60,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 NEBULA_BASE = os.environ.get("NEBULA_BASE", "http://localhost:3101")
+BIN_DIR = os.path.dirname(os.path.abspath(__file__))
 NEBULA_RECORD_LIMIT = 200
 BYPASS_ENV = "NEXUS_ALLOW_UNATTESTED_MERGE"
 
@@ -90,6 +100,22 @@ def _http_get_json(url: str) -> Any:
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=15) as resp:
         return json.load(resp)
+
+
+def _http_patch_json(url: str, payload: Dict[str, Any]) -> Any:
+    req = urllib.request.Request(
+        url, data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json",
+                 "Accept": "application/json"},
+        method="PATCH",
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        raw = resp.read().decode()
+        return json.loads(raw) if raw.strip() else {}
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # ── Gate 1/2: GitHub PR state and CI checks ─────────────────────────────
@@ -335,6 +361,7 @@ def attestation_check(
     run_json: Callable[..., Any] = _gh_json,
     pr_state: Optional[Dict[str, Any]] = None,
     files_getter: Optional[Callable[[int], Optional[List[str]]]] = None,
+    bookkeeping: Optional[Callable[..., str]] = None,
 ) -> Tuple[bool, str, Optional[str]]:
     """Gate 3 lookup, exact by preference: the indexed /api/attestations
     endpoint when it returns rows (server-side shape filter + GIN tags index),
@@ -422,6 +449,8 @@ def attestation_check(
             head_sha=head_sha, run_json=run_json,
             pr_state=pr_state, files_getter=files_getter,
         )
+        detail = _apply_bookkeeping(
+            bookkeeping, rows, pr_number, ok, code, head_sha, detail)
         return ok, detail + " (indexed lookup)", code
     scan_note = (
         "/api/attestations returned no rows, which is inconclusive"
@@ -434,6 +463,8 @@ def attestation_check(
         head_sha=head_sha, run_json=run_json,
         pr_state=pr_state, files_getter=files_getter,
     )
+    detail = _apply_bookkeeping(
+        bookkeeping, records, pr_number, ok, code, head_sha, detail)
     return ok, detail + f" (scan fallback: {scan_note})", code
 
 
@@ -759,6 +790,189 @@ def fetch_pr_files(
     return [str(f.get("filename") or "") for f in data if isinstance(f, dict)]
 
 
+# ── Gate 3 bookkeeping: record the refusal, retire it under a successor ──
+# A refusal used to live only in this process's stdout: the row that was
+# refused kept status:done, so it stayed indistinguishable from an accepted
+# successor and Decision 24 retirement remained a manual post-step. Measured
+# 2026-11-21: 76 accepted predecessors were still live across the fleet.
+#
+# Two writes close that, both opt-in via --record-refusals:
+#   1. a refused row is tagged status:refused + gate-code:<CODE>, so the
+#      refusal is durable and machine-readable ON the row; and
+#   2. when gate 3 later passes, refused rows for the same PR are superseded
+#      under the accepted row through bin/supersede-record.sh (its
+#      archive-before-mutate and round-trip verify are reused, not
+#      reimplemented). Not scoped by head: an ATT_STALE_HEAD row can never
+#      match the successor's head tag, so head scoping left it live forever.
+#
+# Neither write can change a gate result: every failure is reported in the
+# detail line, never raised.
+REFUSAL_STATUS = "status:refused"
+
+
+def refusal_tags(tags: List[str], code: Optional[str], at_iso: str) -> List[str]:
+    """Tags for a refused attestation row (pure).
+
+    Drops every status:* tag (the same rule as supersede-record.sh, which
+    exists because "status:done AND status:retired" still reads as live), and
+    adds status:refused + the gate's own code. ``type:attestation`` is added
+    when the row did not carry it: the canonical shape needs status:done, so
+    dropping lifecycle tags would otherwise make a refused canonical row
+    invisible to the shape test and turn the gate's diagnosis into a generic
+    ATT_SHAPE_UNSEEN. The row WAS an attestation when this ran; the marker
+    keeps saying so.
+    """
+    # Rebuild the bookkeeping tags from scratch (rather than appending only
+    # what is missing) so a second pass is byte-identical: re-annotating must
+    # not stack gate-code:/gate-refusal-at: entries or shuffle their order.
+    out = [
+        str(t) for t in (tags or [])
+        if not (str(t).startswith("status:")
+                or str(t).startswith("gate-code:")
+                or str(t).startswith("gate-refusal-at:"))
+    ]
+    if "type:attestation" not in {t.lower() for t in out}:
+        out.append("type:attestation")
+    out.append(REFUSAL_STATUS)
+    if code:
+        out.append(f"gate-code:{code}")
+    out.append(f"gate-refusal-at:{at_iso}")
+    return out
+
+
+def select_attestation(
+    records: List[Dict[str, Any]], pr_number: int
+) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """(newest attestation, tester mentions, live records) — pure.
+
+    Withdrawn rows (status:retired / status:superseded) are dropped first:
+    they keep their shape tags, so they would otherwise still count.
+    """
+    live = [r for r in (records or []) if not is_withdrawn(r)]
+    mentions = [
+        r
+        for r in live
+        if str(r.get("role") or "").lower() == "tester"
+        and attestation_mentions_pr(r, pr_number)
+    ]
+    matches = [r for r in mentions if is_attestation_record(r)]
+    newest = max(matches, key=lambda r: _created_ms_of(r) or 0) if matches else None
+    return newest, mentions, live
+
+
+def refused_predecessors(
+    records: List[Dict[str, Any]], pr_number: int, accepted: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    """Refused attestation rows an accepted row supersedes (pure).
+
+    Same PR, attestation-shaped, tagged status:refused, not the accepted row
+    itself. Deliberately NOT scoped by head: the head-differs case is exactly
+    ATT_STALE_HEAD (a row attested before a push), so head scoping left those
+    refusals live forever. The successor's acceptance of this PR is the
+    authority; the refused row is bookkeeping about a row the gate rejected.
+    """
+    acc_id = str(accepted.get("id") or "")
+    out: List[Dict[str, Any]] = []
+    for r in records or []:
+        if str(r.get("id") or "") == acc_id:
+            continue
+        if REFUSAL_STATUS not in {str(t) for t in (r.get("tags") or [])}:
+            continue
+        if not is_attestation_record(r) or not attestation_mentions_pr(r, pr_number):
+            continue
+        out.append(r)
+    return out
+
+
+def record_refusal(
+    http_patch: Callable[[str, Dict[str, Any]], Any],
+    record: Dict[str, Any],
+    code: Optional[str],
+    at_iso: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """PATCH the refusal onto the refused row. Never raises."""
+    rid = str(record.get("id") or "")
+    if not rid:
+        return False, "row has no id"
+    tags = [str(t) for t in (record.get("tags") or [])]
+    if code and REFUSAL_STATUS in tags and f"gate-code:{code}" in tags:
+        return True, "already recorded"
+    try:
+        http_patch(f"{NEBULA_BASE}/api/agent-records/{rid}",
+                   {"tags": refusal_tags(tags, code, at_iso or _now_iso())})
+    except Exception as exc:  # bookkeeping must never fail the gate
+        return False, _exc_brief(exc)
+    return True, ""
+
+
+def supersede_record(old_id: str, new_id: str, reason: str) -> Tuple[bool, str]:
+    """Run bin/supersede-record.sh (Decision 24 lives there)."""
+    try:
+        proc = subprocess.run(
+            ["bash", os.path.join(BIN_DIR, "supersede-record.sh"), "supersede",
+             "--old", str(old_id), "--new", str(new_id),
+             "--reason", reason, "--role", "tester"],
+            capture_output=True, text=True, timeout=120,
+        )
+    except Exception as exc:
+        return False, _exc_brief(exc)
+    if proc.returncode != 0:
+        out = (proc.stdout + proc.stderr).strip()
+        return False, (out or f"exit {proc.returncode}")[-160:]
+    return True, ""
+
+
+def attestation_bookkeeping(
+    http_patch: Callable[[str, Dict[str, Any]], Any] = _http_patch_json,
+    supersede: Callable[[str, str, str], Tuple[bool, str]] = supersede_record,
+) -> Callable[..., str]:
+    """Bookkeeping applied after a gate-3 evaluation; returns a note for the
+    gate detail (empty when nothing was written)."""
+
+    def run(records, pr_number, ok, code, head_sha) -> str:
+        newest, _, live = select_attestation(records, pr_number)
+        if ok:
+            if newest is None:
+                return ""
+            refused = refused_predecessors(live, pr_number, newest)
+            if not refused:
+                return ""
+            why = (f"gate accepted {str(newest.get('id'))[:8]} for PR "
+                   f"#{pr_number} at head {str(head_sha or '')[:8]}; refusal "
+                   "superseded automatically")
+            done, failed = [], []
+            for r in refused:
+                ok_s, err = supersede(str(r.get("id")), str(newest.get("id")), why)
+                if ok_s:
+                    done.append(str(r.get("id"))[:8])
+                else:
+                    failed.append(f"{str(r.get('id'))[:8]} ({err})")
+            note = (f"retired {len(done)} refused predecessor(s) "
+                    f"{', '.join(done)}" if done else "")
+            if failed:
+                note += ("; " if note else "") + "retirement failed for " + ", ".join(failed)
+            return note
+        if newest is None or not str(code or "").startswith("ATT_"):
+            return ""
+        wrote, err = record_refusal(http_patch, newest, code)
+        if wrote:
+            return f"refusal {code} recorded on {str(newest.get('id'))[:8]}"
+        return f"refusal {code} NOT recorded on {str(newest.get('id'))[:8]} ({err})"
+
+    return run
+
+
+def _apply_bookkeeping(bookkeeping, records, pr_number, ok, code, head_sha, detail):
+    """Append the bookkeeping note; never change the gate result."""
+    if bookkeeping is None:
+        return detail
+    try:
+        note = bookkeeping(records, pr_number, ok, code, head_sha)
+    except Exception as exc:
+        return f"{detail}; bookkeeping skipped ({_exc_brief(exc)})"
+    return f"{detail}; {note}" if note else detail
+
+
 def evaluate_attestation(
     records: List[Dict[str, Any]],
     pr_number: int,
@@ -787,15 +1001,8 @@ def evaluate_attestation(
     clear code ATT_MISSING into noisy ATT_SHAPE_UNSEEN — the same nag the
     withdrawal was meant to end.
     """
-    records = [r for r in records if not is_withdrawn(r)]
-    mentions = [
-        r
-        for r in records
-        if str(r.get("role") or "").lower() == "tester"
-        and attestation_mentions_pr(r, pr_number)
-    ]
-    matches = [r for r in mentions if is_attestation_record(r)]
-    if not matches:
+    newest, mentions, records = select_attestation(records, pr_number)
+    if newest is None:
         detail = (
             f"no tester attestation record for PR #{pr_number} found in the "
             f"{len(records)} most recent agent records"
@@ -809,7 +1016,6 @@ def evaluate_attestation(
             )
         code = gate_codes.ATT_SHAPE_UNSEEN if mentions else gate_codes.ATT_MISSING
         return (False, detail, code)
-    newest = max(matches, key=lambda r: _created_ms_of(r) or 0)
     # Verdict first: it is the tester's actual decision and it outranks every
     # mechanical check below. Reporting it ahead of freshness/CI means a
     # refused PR says "the tester rejected this" instead of whichever lesser
@@ -1116,9 +1322,11 @@ def evaluate(
     run_json: Callable[..., Any] = _gh_json,
     http_get: Callable[[str], Any] = _http_get_json,
     env: Optional[Dict[str, str]] = None,
+    record_refusals: bool = False,
 ) -> Tuple[List[GateResult], Dict[str, Any]]:
     env = os.environ if env is None else env
     gates: List[GateResult] = []
+    bookkeeping = attestation_bookkeeping() if record_refusals else None
 
     try:
         pr = fetch_pr_state(pr_number, run_json)
@@ -1159,6 +1367,7 @@ def evaluate(
             head_sha=pr.get("headRefOid"), run_json=run_json,
             pr_state=pr,
             files_getter=lambda n: fetch_pr_files(n, run_json),
+            bookkeeping=bookkeeping,
         )
     except Exception as exc:  # fail closed on any lookup failure
         att_detail = f"attestation lookup failed: {exc!r} (fail closed)"
@@ -1240,9 +1449,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         action="store_true",
         help="print the machine-readable report (gates_to_json) instead of text",
     )
+    parser.add_argument(
+        "--record-refusals",
+        action="store_true",
+        help="record a gate-3 refusal on the refused row (status:refused + "
+             "gate-code) and retire refused rows under an accepted successor; "
+             "never changes the gate result",
+    )
     args = parser.parse_args(argv)
 
-    gates, pr = evaluate(args.pr_number)
+    gates, pr = evaluate(args.pr_number, record_refusals=args.record_refusals)
     if args.json:
         print(json.dumps(gates_to_json(args.pr_number, gates, pr), indent=1))
     else:
