@@ -13,7 +13,10 @@ One cycle:
      (Decision 8 fix A — an empty index proves "no canonical rows", not "no
      tester approval"; defect 5c798810). Unreachable/404/ambiguous ->
      evaluate anyway (fail-safe; the gate's own scan fallback still decides).
-  3. Run bin/merge_pr.py <N> in CHECK-ONLY mode. Only if every gate passes:
+  3. Run bin/merge_pr.py <N> --record-refusals in CHECK-ONLY mode (the flag
+     only lets the gate record a refusal on the refused row and retire a
+     refused row under an accepted successor; it never changes the verdict).
+     Only if every gate passes:
      if --apply, merge via bin/merge_pr.py <N> --merge (the gate re-runs all
      checks at merge time), then post a change-log entry. If the sole failing
      gate is "pr open & ready" (draft state), promote with `gh pr ready` once
@@ -42,7 +45,12 @@ One cycle:
 Safety rails (all non-negotiable):
   - --merge is passed to the gate only after an immediately-preceding
     check-only run of the SAME gate exited 0 for the SAME head.
-  - Default mode is check-only: without --apply nothing is mutated.
+  - Default mode is check-only: without --apply nothing merges, promotes,
+    repairs, reruns, posts, or changes any verdict. The gate's two
+    attestation-bookkeeping writes (--record-refusals) ARE check-only by
+    design: tagging a refusal onto the refused row, and retiring a refused
+    row under an accepted successor, touch only attestation records — never
+    a branch, a PR, a workflow run, or the gate outcome.
   - Per-cycle merge cap (default 3) bounds blast radius.
   - PRs already recorded as merged in the state file are skipped (idempotent
     across timer ticks).
@@ -246,7 +254,7 @@ def attestation_prefilter(
 
 def run_gate(pr_number: int, runner: Callable) -> "subprocess.CompletedProcess":
     return runner(
-        [sys.executable, str(MERGE_PR), str(pr_number)],
+        [sys.executable, str(MERGE_PR), str(pr_number), "--record-refusals"],
         capture_output=True, text=True, timeout=180,
     )
 

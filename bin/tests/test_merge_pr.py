@@ -1825,3 +1825,163 @@ def test_incident_rows_still_reject_a_genuinely_wrong_head_binding():
     assert code == merge_pr.gate_codes.ATT_STALE_HEAD, (detail, code)
     assert "attestation head binding" in detail, detail
     assert "1970" not in detail, detail
+
+
+# ── gate 3e: refusal bookkeeping (--record-refusals) ─────────────────────
+#
+# A refusal used to exist only in the gate's stdout: the refused row kept
+# status:done, so it stayed indistinguishable from an accepted successor and
+# Decision 24 retirement was manual (76 accepted predecessors were still live
+# when this was added). These tests pin the two halves: the refusal lands on
+# the row, and a later accepted row retires it — without either write being
+# able to change the gate result.
+
+BOUND_HEAD = "a8b1dfc6" + "0" * 32
+
+
+def test_refusal_tags_replace_lifecycle_and_preserve_binding():
+    tags = ["type:approval", "status:done", "pr:487", "head:a8b1dfc6",
+            "policy:attestation/v2", "verdict:approved"]
+    out = merge_pr.refusal_tags(tags, "ATT_CI_COVERAGE", "2026-11-21T00:00:00Z")
+    assert "status:done" not in out
+    assert [t for t in out if t.startswith("status:")] == ["status:refused"]
+    assert "gate-code:ATT_CI_COVERAGE" in out
+    assert "gate-refusal-at:2026-11-21T00:00:00Z" in out
+    # Binding tags survive: the refusal is about the same row, not a new one.
+    assert "pr:487" in out and "head:a8b1dfc6" in out
+    assert "verdict:approved" in out
+    # The canonical shape needs status:done, so the marker keeps the row
+    # recognisably an attestation instead of turning it invisible.
+    assert "type:attestation" in out
+    assert merge_pr.refusal_tags(out, "ATT_CI_COVERAGE",
+                                 "2026-11-21T00:00:00Z") == out
+
+
+def test_refusal_tags_leaves_exactly_one_status():
+    out = merge_pr.refusal_tags(["status:blocked", "status:done", "pr:487"],
+                               "ATT_VERDICT_HOLD", "T0")
+    assert [t for t in out if t.startswith("status:")] == ["status:refused"]
+
+
+def test_select_attestation_picks_newest_and_drops_withdrawn():
+    older = rec(rec_id="old00001", created_ms=NOW_MS - 7200_000)
+    newer = rec(rec_id="new00001", created_ms=NOW_MS - 60_000)
+    gone = rec(rec_id="gone0001", created_ms=NOW_MS,
+               tags=["type:attestation", "status:superseded", "pr:487"])
+    newest, mentions, live = merge_pr.select_attestation([older, newer, gone], 487)
+    assert newest["id"] == "new00001"
+    assert [r["id"] for r in live] == ["old00001", "new00001"]
+    assert all(r["id"] != "gone0001" for r in mentions)
+
+
+def test_select_attestation_none_when_only_mentions():
+    intent = {"id": "intent01", "role": "tester", "createdAt": NOW_MS,
+              "tags": ["pr:487", "type:status-update"], "title": "PR #487",
+              "content": "", "recordType": "engineering_log"}
+    newest, mentions, _live = merge_pr.select_attestation([intent], 487)
+    assert newest is None and len(mentions) == 1
+
+
+def test_refused_predecessors_retires_every_refused_row_for_the_pr():
+    acc = rec(rec_id="acc00001",
+              tags=["type:attestation", "status:done", "pr:487", "head:a8b1dfc6"])
+    same_head = rec(rec_id="ref00001",
+                    tags=["type:attestation", "status:refused",
+                          "gate-code:ATT_CI_COVERAGE", "pr:487", "head:a8b1dfc6"])
+    other_head = rec(rec_id="ref00002",
+                     tags=["type:attestation", "status:refused", "pr:487",
+                           "head:ffff0000"])
+    not_refused = rec(rec_id="ok000001",
+                      tags=["type:attestation", "status:done", "pr:487",
+                            "head:a8b1dfc6"])
+    out = merge_pr.refused_predecessors(
+        [acc, same_head, other_head, not_refused], 487, acc)
+    assert [r["id"] for r in out] == ["ref00001", "ref00002"]
+
+
+def test_refused_predecessors_retires_a_stale_head_refusal():
+    """ATT_STALE_HEAD is the common case: the row attested a head that a push
+    has since replaced, so its head: tag can never match the successor's.
+    Head scoping left exactly these refusals live forever."""
+    acc = rec(rec_id="acc00001",
+              tags=["type:attestation", "status:done", "pr:487",
+                    "head:a8b1dfc6"])
+    stale = rec(rec_id="ref00003",
+                tags=["type:attestation", "status:refused",
+                      "gate-code:ATT_STALE_HEAD", "pr:487", "head:0000aaaa"])
+    out = merge_pr.refused_predecessors([acc, stale], 487, acc)
+    assert [r["id"] for r in out] == ["ref00003"]
+    calls = []
+    bk = merge_pr.attestation_bookkeeping(
+        http_patch=lambda url, payload: None,
+        supersede=lambda old, new, why: (calls.append((old, new)) or (True, "")))
+    note = bk([acc, stale], 487, True, None, BOUND_HEAD)
+    assert calls == [("ref00003", "acc00001")]
+    assert "retired 1 refused predecessor(s) ref00003" in note
+
+
+def test_record_refusal_patches_the_row_and_never_raises():
+    calls = []
+    row = rec(rec_id="bbbb2222",
+              tags=["type:approval", "status:done", "pr:487"])
+    ok, err = merge_pr.record_refusal(
+        lambda url, payload: calls.append((url, payload)),
+        row, "ATT_CI_COVERAGE", "2026-11-21T00:00:00Z")
+    assert ok and not err
+    assert calls[0][0].endswith("/api/agent-records/bbbb2222")
+    assert merge_pr.REFUSAL_STATUS in calls[0][1]["tags"]
+
+    def down(url, payload):
+        raise RuntimeError("nebula unreachable")
+    ok2, err2 = merge_pr.record_refusal(down, row, "ATT_CI_COVERAGE")
+    assert not ok2 and "nebula unreachable" in err2
+
+
+def test_bookkeeping_retires_refused_row_under_accepted_successor():
+    acc = rec(rec_id="acc00001",
+              tags=["type:attestation", "status:done", "pr:487", "head:a8b1dfc6"])
+    ref = rec(rec_id="ref00001",
+              tags=["type:attestation", "status:refused",
+                    "gate-code:ATT_CI_COVERAGE", "pr:487", "head:a8b1dfc6"])
+    calls = []
+
+    def supersede(old, new, why):
+        calls.append((old, new, why))
+        return True, ""
+
+    bk = merge_pr.attestation_bookkeeping(
+        http_patch=lambda url, payload: None, supersede=supersede)
+    note = bk([acc, ref], 487, True, None, BOUND_HEAD)
+    assert [(c[0], c[1]) for c in calls] == [("ref00001", "acc00001")]
+    assert "accepted acc00001" in calls[0][2]
+    assert "retired 1 refused predecessor(s) ref00001" in note
+
+
+def test_bookkeeping_records_refusal_but_keeps_the_gate_verdict():
+    row = rec(rec_id="cccc3333",
+              tags=["type:approval", "status:done", "pr:487"])
+    patched = []
+    bk = merge_pr.attestation_bookkeeping(
+        http_patch=lambda url, payload: patched.append(payload),
+        supersede=lambda *a: (True, ""))
+    note = bk([row], 487, False, "ATT_CI_COVERAGE", BOUND_HEAD)
+    assert "refusal ATT_CI_COVERAGE recorded on cccc3333" in note
+    assert patched and merge_pr.REFUSAL_STATUS in patched[0]["tags"]
+
+
+def test_bookkeeping_is_silent_when_no_row_or_no_code():
+    bk = merge_pr.attestation_bookkeeping()
+    assert bk([], 487, False, "ATT_MISSING", BOUND_HEAD) == ""
+    row = rec(rec_id="dddd4444")
+    assert bk([row], 487, False, "CI_FAIL", BOUND_HEAD) == ""
+
+
+def test_apply_bookkeeping_swallows_failures_and_keeps_detail():
+    def boom(*args):
+        raise RuntimeError("bookkeeping exploded")
+    detail = merge_pr._apply_bookkeeping(
+        boom, [], 487, False, "ATT_MISSING", BOUND_HEAD, "base detail")
+    assert detail.startswith("base detail")
+    assert "bookkeeping skipped" in detail
+    assert merge_pr._apply_bookkeeping(
+        None, [], 487, False, None, None, "base detail") == "base detail"
