@@ -824,8 +824,24 @@ writing through the projection this section has not yet cleared.
 
 The prerequisite for everything in this section is §7: post-apply verification
 must pass before consumers resume writing through the compatibility view. Until
-it does, treat `nebula.requirements` as read-only infrastructure under the
-DBA's control, not as a surface to hand back to the services.
+it does, treat `nebula.requirements` as read-only infrastructure under the DBA's
+control, not as a surface to hand back to the services.
+
+> **Ordering hazard — V221 vs the delete guard (found 2026-11-21, before any
+> live apply).** `resolution.requirement_delete_blockers()` makes a live
+> `resolution.work_request.source_requirement_id` a delete blocker
+> (`sql/V222__port_requirements_to_resolution.sql:712`–`:716`), but V221 drops
+> that column (`sql/V221__ac11_drop_source_requirement_shortcut.sql:104`) and
+> asserts it is gone (`:247`). If V221 is applied first — the plan-of-record
+> order — the function is still created (plpgsql resolves column references at
+> first execution), so §7's postconditions pass, and the failure appears on the
+> first requirement delete or cascade as `column w.source_requirement_id does
+> not exist`. Add an explicit delete-and-cascade probe to §7, and fix the branch
+> (read `resolution.request_requirement_link` where `relation = 'source'`, or
+> drop it) before applying V222 on any database where V221 has run. The V222
+> test fixture recreates the pre-V221 column
+> (`bin/tests/test_v222_requirements_port.py:221`–`:226`), so CI will not catch
+> this.
 
 The projection is a transition, not the destination. Every consumer below
 resolves through `nebula.requirements` today and is served by the write-through
@@ -892,11 +908,15 @@ queries also list `nebula.v_requirements_with_questions` (035),
 | 16 | `python/nebula/wc_consumers.py` | Audit aggregates (`requirements_total`, candidate-linked, plan-linked) | Relation (counts are over current rows; keep the predicate) |
 | 17 | `bin/architect_process_todo.py` | `SELECT`/`UPDATE`/`INSERT` on requirements (including a recursive descendant walk) | Relation + predicate; INSERT must supply `source_type` |
 | 18 | `bin/compiler_processInProgress.py` | `InProgress` sweep, `work_request_dco` read and update | Relation only; `work_request_dco` is a canonical column after V222 |
-| 19 | `bin/transcript_rebuild.py` | Names `nebula.requirements` in a table allowlist, emits no SQL | No read-path change; update the label only if the surface is renamed |
+| 19 | `bin/transcript_rebuild.py` | Names `nebula.requirements` in a table allowlist **and emits an unconditional `DELETE FROM nebula.requirements` per row** in `wipe_pg()` | Behaviour change: after the port each delete reaches the canonical guard, so the whole `BEGIN … COMMIT` wipe rolls back if any requirement is still referenced (spec, plan, segment set, request link, work request, child, live blueprint). Run it only after those are retired, or repoint the requirements step at `resolution.delete_requirements(ids)` and report a refusal instead of crashing |
 | 20 | `typescript/conduit-mcp/src/db.ts` | Two `NOT EXISTS (SELECT 1 FROM nebula.requirements ... conduit_plan_id = ...)` audits | Relation (the plan-link column is canonical) |
 | 21 | `nebula.assess_ripple(uuid)` (migration 038) | plpgsql body reads `nebula.requirements` (descendant walk, hierarchy, ripple) | `CREATE OR REPLACE FUNCTION` against `resolution.requirement` with the current-segment predicate (body references are not tracked by `pg_depend`, which is why §8 checks `pg_proc.prosrc`) |
 | 22 | `nebula.v_requirements_with_questions` (035), `nebula.v_requirements_full_status` (036), `nebula.v_work_request_requirement` (V221) | Views selecting from the projection | Recreate each `CREATE OR REPLACE VIEW` over `resolution.requirement` (+ predicate) before the projection is dropped |
 | 23 | `typescript/nebula-srv/API-SPEC.md` | Documents reads against the transition surface | Documentation update in the same change as row 1 |
+| 24 | `scripts/bash/restore-nebula.sh` | Post-restore `count(*)` verification | No read-path change, but a restore from a pre-V222 dump recreates the legacy view and silently un-ports the surface: re-apply V222 and assert the compat trigger, not just the count |
+| 25 | `bin/legacy/bin/substance_segment_backfill.py` | Requirement-by-candidate read, `valid_until > now()` filter, `requirement_segment_sets` backfill | Relation; the legacy filter is redundant (the projection already hides closed segments) but harmless because the sentinel is preserved |
+| 26 | `typescript/nebula-mcp/src/api/nebulaClient.ts` | HTTP client of row 1 (list, create, patch, delete, batch, move) | No SQL; no change at apply. `DELETE` can now return the 409 blocker body, which tool callers must expect |
+| 27 | `angular/nexus-console/src/services/nebula.service.ts` (+ `nebula-panel`) | HTTP client of row 1 (`GET /api/requirements`, `PATCH /api/requirements/:id`) | No SQL; no change at apply while row 1 keeps its JSON shape |
 
 **Drop condition.** The projection may be dropped only when all of the
 following hold, in one reviewed change:
