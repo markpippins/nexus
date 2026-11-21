@@ -1,0 +1,27 @@
+# Source of truth for ~/.config/systemd/user/pg-wal-archive-push.timer
+#
+# Every 15 minutes, offset five minutes past the quarter hour so it does not
+# coincide with pg-wal-guard.timer (*:0/15) — the guard's alarm and this
+# unit's transfers should not compete for the same instant or the same journal
+# window.
+#
+# Cadence rationale: archive_timeout=300 forces a segment switch at least every
+# five minutes, so a 15-minute push bounds off-machine WAL lag to about 20
+# minutes / ~3 segments at the current ~3.2 GB/day (~67 MB per 5-minute
+# segment). Tighter cadence buys nothing at this write rate and only adds ssh
+# churn; the local spool is the durable archive, vanadium is the DR copy.
+#
+# Persistent=true catches up after downtime. RandomizedDelaySec keeps a fleet
+# of similar timers off the same boundary.
+
+[Unit]
+Description=Run the WAL archive spool push every 15 minutes
+
+[Timer]
+OnCalendar=*:5/15
+Persistent=true
+RandomizedDelaySec=20
+Unit=pg-wal-archive-push.service
+
+[Install]
+WantedBy=timers.target
