@@ -47,6 +47,7 @@ import io
 import json
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -1171,9 +1172,15 @@ DISCOVERY_600 = {"returncode": 0, "stdout": json.dumps([
 ]), "stderr": ""}
 
 
-def _rec(rid, tags, record_type="report", title="", created=1000):
+HEAD = "b" * 40  # DISCOVERY_600's headRefOid
+
+
+def _rec(rid, tags, record_type="report", title="", created=None):
+    """`created` defaults to NOW: only rows without a head tag are age-bounded,
+    and a 1970 default would make every untagged fixture look stale."""
     return {"id": rid, "recordType": record_type, "tags": tags,
-            "title": title, "content": "", "createdAt": created}
+            "title": title, "content": "",
+            "createdAt": int(time.time() * 1000) if created is None else created}
 
 
 REQUEST_OPEN = _rec(
@@ -1373,6 +1380,75 @@ def test_close_out_ignores_rows_that_are_not_requests():
     assert rc == 0, out
     assert not _supersede_calls(calls), calls
     assert not io_calls["patch"]
+
+
+def test_close_out_refuses_request_for_a_different_head():
+    """An ask pinned to an old head is not serviced by a later head's gate."""
+    stale = _rec("req-0004-oldhead",
+                 ["to:tester", "type:verification-request", "pr:600",
+                  "head:" + "9" * 40],
+                 title="Tester verification requested: PR #600 at 9999999")
+    get, patch, io_calls = make_records_io([stale], [ATT_LIVE])
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        [("pr list", DISCOVERY_600),
+         ("merge_pr.py 600", {"returncode": 0, "stdout": PASSING, "stderr": ""}),
+         ("merge_pr.py 600 --merge", {"returncode": 0, "stdout": PASSING, "stderr": ""})],
+        apply=True, close_out_get=get, close_out_patch=patch)
+    assert rc == 0, out
+    assert not _supersede_calls(calls), "must not close an ask for another head"
+    assert not io_calls["patch"]
+    assert "different head" in out, out
+
+
+def test_close_out_closes_request_whose_head_tag_matches():
+    """Short head tags match the gated head by prefix."""
+    short = _rec("req-0005-head",
+                 ["to:tester", "type:verification-request", "pr:600",
+                  "head:" + HEAD[:7]],
+                 title="Tester verification requested: PR #600")
+    get, patch, io_calls = make_records_io([short], [ATT_LIVE])
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        [("pr list", DISCOVERY_600),
+         ("merge_pr.py 600", {"returncode": 0, "stdout": PASSING, "stderr": ""}),
+         ("supersede-record.sh", {"returncode": 0, "stdout": "OK", "stderr": ""}),
+         ("merge_pr.py 600 --merge", {"returncode": 0, "stdout": PASSING, "stderr": ""})],
+        apply=True, close_out_get=get, close_out_patch=patch)
+    assert rc == 0, out
+    assert len(_supersede_calls(calls)) == 1, calls
+    assert len(io_calls["patch"]) == 1
+
+
+def test_close_out_refuses_untagged_request_older_than_window():
+    """No head tag -> age is the only bound, and a stale ask stays open."""
+    old = _rec("req-0006-stale",
+               ["to:tester", "type:verification-request", "pr:600"],
+               title="Tester verification requested: PR #600",
+               created=int(time.time() * 1000) - 30 * 86400 * 1000)
+    get, patch, io_calls = make_records_io([old], [ATT_LIVE])
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        [("pr list", DISCOVERY_600),
+         ("merge_pr.py 600", {"returncode": 0, "stdout": PASSING, "stderr": ""}),
+         ("merge_pr.py 600 --merge", {"returncode": 0, "stdout": PASSING, "stderr": ""})],
+        apply=True, close_out_get=get, close_out_patch=patch)
+    assert rc == 0, out
+    assert not _supersede_calls(calls), "stale untagged ask must not close"
+    assert not io_calls["patch"]
+    assert "older than" in out and "no head tag" in out, out
+
+
+def test_request_bounds_helper():
+    mp = janitor._merge_pr()
+    now = int(time.time() * 1000)
+    ok, why = janitor.request_bounds({"tags": ["head:" + HEAD[:12]]}, HEAD, now, mp._created_ms_of)
+    assert (ok, why) == (True, "head-match")
+    ok, why = janitor.request_bounds({"tags": ["head:" + "9" * 12]}, HEAD, now, mp._created_ms_of)
+    assert (ok, why) == (False, "head-mismatch")
+    ok, why = janitor.request_bounds({"tags": [], "createdAt": now - 86400 * 1000}, HEAD, now, mp._created_ms_of)
+    assert (ok, why) == (True, "age-ok")
+    ok, why = janitor.request_bounds({"tags": []}, HEAD, now, mp._created_ms_of)
+    assert (ok, why) == (False, "undated"), "fail closed when freshness is unknowable"
+    ok, why = janitor.request_bounds({"tags": ["head:abc"]}, HEAD, now, mp._created_ms_of)
+    assert (ok, why) == (False, "head-mismatch"), "a 3-char head is not a match"
 
 
 def test_close_out_can_be_disabled():
