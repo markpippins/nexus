@@ -14,6 +14,12 @@ One cycle:
      tester approval"; defect 5c798810). Unreachable/404/ambiguous ->
      evaluate anyway (fail-safe; the gate's own scan fallback still decides).
   3. Run bin/merge_pr.py <N> in CHECK-ONLY mode. Only if every gate passes:
+     close the `to:tester` request rows that asked for this attestation (the
+     Decision 24 supersede convention — archive-before-mutation — applied by
+     bin/supersede-record.sh, plus a `supersedes:<req8>` back-link on the
+     answering attestation). A request is left open when no live attestation
+     services it: a withdrawn (retired/superseded) attestation is never a
+     successor. Check-only cycles run the tool with --dry-run. Then:
      if --apply, merge via bin/merge_pr.py <N> --merge (the gate re-runs all
      checks at merge time), then post a change-log entry. If the sole failing
      gate is "pr open & ready" (draft state), promote with `gh pr ready` once
@@ -59,6 +65,9 @@ Safety rails (all non-negotiable):
     rungs; exhausting the cap is surfaced once and left for a human.
   - The janitor never edits branches, never forces anything, never bypasses
     a gate: a BYPASS line in the gate report is treated as failure.
+  - Request close-out never targets a withdrawn attestation and never
+    re-closes an already-superseded request row; --no-request-close turns it
+    off entirely.
 
 Change-log audit trail — every ACTION is logged to the Assembly change-log
 forum via bin/post-change-log.sh, individually:
@@ -296,6 +305,214 @@ def _sole_fail_is_pending_ci(proc: "subprocess.CompletedProcess") -> bool:
         and fails[0].startswith("ci green")
         and f"({gate_codes.CI_PENDING})" in fails[0]
     )
+
+
+SUPERSEDE_TOOL = BIN_DIR / "supersede-record.sh"
+REQUEST_INBOX_TAG = "to:tester"
+
+_merge_pr_module: Any = None
+
+
+def _merge_pr() -> Any:
+    """Load bin/merge_pr.py by path (once) to reuse its attestation
+    predicates. The close-out must agree with the gate on what counts as an
+    attestation and on what a withdrawal means; re-deriving either here is
+    how the two drifted apart before."""
+    global _merge_pr_module
+    if _merge_pr_module is None:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("merge_pr_for_janitor", MERGE_PR)
+        mod = importlib.util.module_from_spec(spec)
+        # Register before executing: merge_pr.py defines @dataclass rows and
+        # dataclasses resolves string annotations via sys.modules[cls.__module__],
+        # which is None for a module loaded by path that was never registered.
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+        _merge_pr_module = mod
+    return _merge_pr_module
+
+
+def _http_json_request(url: str, payload: Dict[str, Any], method: str, timeout: int = 15) -> Any:
+    """JSON request that MUTATES (PATCH). Kept separate from _urlopen_json so
+    read-only callers cannot accidentally acquire write behaviour."""
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method=method,
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8") or "{}")
+
+
+def _records_by_tag(
+    base_url: str,
+    tag: str,
+    http_get: Optional[Callable[[str], Any]] = None,
+    limit: int = 200,
+) -> List[Dict[str, Any]]:
+    """Rows carrying `tag` (nebula-srv filters this server-side)."""
+    fetch = http_get or _urlopen_json
+    url = f"{base_url.rstrip('/')}/api/agent-records?tag={tag}&limit={limit}"
+    data = fetch(url)
+    if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+        raise RuntimeError(f"unexpected agent-records payload for tag {tag!r}")
+    return [r for r in data["items"] if isinstance(r, dict)]
+
+
+def open_request_rows(
+    records: Iterable[Dict[str, Any]], pr_number: int, mentions: Callable[[Dict[str, Any], int], bool]
+) -> List[Dict[str, Any]]:
+    """`to:tester` request rows for this PR that are still asking.
+
+    Requires type:request AND status:open AND to:tester AND a PR mention. A
+    row already at status:superseded/status:retired is never re-closed.
+    """
+    out = []
+    for rec in records:
+        tags = {str(t or "").lower() for t in (rec.get("tags") or [])}
+        if "type:request" not in tags or "status:open" not in tags:
+            continue
+        if REQUEST_INBOX_TAG not in tags:
+            continue
+        if not mentions(rec, pr_number):
+            continue
+        out.append(rec)
+    return out
+
+
+def select_servicing_attestation(
+    attestations: Iterable[Dict[str, Any]],
+    is_attestation: Callable[[Dict[str, Any]], bool],
+    is_withdrawn: Callable[[Dict[str, Any]], bool],
+) -> "tuple[Optional[Dict[str, Any]], str]":
+    """Pick the attestation that serviced the request, or explain why none did.
+
+    Only attestation-SHAPED, non-withdrawn rows qualify. The newest such row
+    wins (the last to land is the authoritative servicing); every other one is
+    reported to the caller so the pointer reason can name it.
+
+    A request whose only attestation-shaped rows are withdrawn returns
+    (None, "withdrawn") — a retirement or supersession is not a service, and a
+    pointer must never name a tombstone.
+    """
+    shaped = [r for r in attestations if is_attestation(r)]
+    live = [r for r in shaped if not is_withdrawn(r)]
+    if not live:
+        return None, ("only-withdrawn" if shaped else "no-attestation")
+    live.sort(key=lambda r: _parse_float(r.get("createdAt")))
+    return live[-1], "serviced"
+
+
+def close_serviced_requests(
+    pr_number: int,
+    base_url: str,
+    apply: bool,
+    *,
+    http_get: Optional[Callable[[str], Any]] = None,
+    http_patch: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
+    runner: Optional[Callable] = None,
+    out: Any = sys.stdout,
+) -> List[Dict[str, Any]]:
+    """Close the `to:tester` request rows this PR's passing gate serviced.
+
+    Returns one outcome dict per request row considered. Never raises: a
+    lookup or tool failure is reported and returned (the merge decision is
+    independent of request bookkeeping), but the caller treats a "failed"
+    outcome as a tool error.
+    """
+    runner = runner or subprocess.run
+    mp = _merge_pr()
+    outcomes: List[Dict[str, Any]] = []
+    # One lookup, keyed the same way the gate keys attestations: the PR's own
+    # tags. Scanning the `to:tester` inbox instead would be both wider and
+    # weaker — the endpoint pages, so an old request row falls outside the
+    # newest window (that is how #674 was missed on the first live dry-run)
+    # while every row it did return still needs PR matching by hand.
+    try:
+        rows: Dict[str, Dict[str, Any]] = {}
+        for tag in (f"pr:{pr_number}", f"gate:{pr_number}"):
+            for rec in _records_by_tag(base_url, tag, http_get):
+                if rec.get("id"):
+                    rows[str(rec["id"])] = rec
+    except Exception as exc:  # lookup failure must not block a merge
+        print(f"  #{pr_number}: close-out skipped — record lookup failed ({exc})", file=out)
+        return [{"pr": pr_number, "outcome": "lookup-failed", "detail": str(exc)}]
+
+    requests_ = open_request_rows(rows.values(), pr_number, mp.attestation_mentions_pr)
+    if not requests_:
+        return outcomes
+
+    chosen, why = select_servicing_attestation(
+        rows.values(), mp.is_attestation_record, mp.is_withdrawn
+    )
+    for req in requests_:
+        req_id = str(req.get("id") or "")
+        if not req_id:
+            continue
+        if chosen is None:
+            detail = (
+                "only withdrawn attestation(s) — left open (a retirement is not a service)"
+                if why == "only-withdrawn"
+                else "no attestation record — left open"
+            )
+            print(f"  #{pr_number}: request {req_id[:8]} {detail}", file=out)
+            outcomes.append({"pr": pr_number, "request": req_id, "outcome": "kept-open",
+                             "reason": why})
+            continue
+
+        att_id = str(chosen.get("id"))
+        others = [str(r.get("id"))[:8] for r in rows.values()
+                  if r.get("id") != att_id
+                  and mp.is_attestation_record(r) and not mp.is_withdrawn(r)]
+        reason = f"serviced: PR #{pr_number} attested (gate pass){'' if not others else '; also ' + ', '.join(others)}"
+        cmd = ["bash", str(SUPERSEDE_TOOL), "supersede", "--old", req_id,
+               "--new", att_id, "--reason", reason]
+        if not apply:
+            cmd.append("--dry-run")
+        proc = runner(cmd, capture_output=True, text=True, timeout=120)
+        if proc.returncode != 0:
+            print(
+                f"  #{pr_number}: request {req_id[:8]} supersede FAILED "
+                f"({(proc.stderr or proc.stdout).strip()[:160]}) — left as-is",
+                file=out,
+            )
+            outcomes.append({"pr": pr_number, "request": req_id, "attestation": att_id,
+                             "outcome": "failed"})
+            continue
+        if not apply:
+            print(f"  #{pr_number}: request {req_id[:8]} would be superseded by {att_id[:8]} (check-only)", file=out)
+            outcomes.append({"pr": pr_number, "request": req_id, "attestation": att_id,
+                             "outcome": "planned"})
+            continue
+
+        # Back-link on the successor: `supersedes:<req8>`. The catalog's
+        # terminal-successor exemption applies — a status:done attestation
+        # keeps that status (two lifecycle statuses on one row would be
+        # false), so only the provenance tag is added.
+        backlink = f"supersedes:{req_id[:8]}"
+        tags = list(chosen.get("tags") or [])
+        if backlink not in tags:
+            try:
+                patch = http_patch or (
+                    lambda url, body: _http_json_request(url, body, "PATCH")
+                )
+                patch(f"{base_url.rstrip('/')}/api/agent-records/{att_id}",
+                      {"tags": tags + [backlink]})
+            except Exception as exc:
+                print(
+                    f"  #{pr_number}: request {req_id[:8]} superseded, but back-link "
+                    f"{backlink} on {att_id[:8]} FAILED ({exc})",
+                    file=out,
+                )
+                outcomes.append({"pr": pr_number, "request": req_id, "attestation": att_id,
+                                 "outcome": "failed"})
+                continue
+        print(f"  #{pr_number}: request {req_id[:8]} superseded by {att_id[:8]} ({backlink})", file=out)
+        outcomes.append({"pr": pr_number, "request": req_id, "attestation": att_id,
+                         "outcome": "superseded"})
+    return outcomes
 
 
 def find_stale_checkrun(
@@ -824,6 +1041,9 @@ def run_cycle(
     extra_authors: Sequence[str] = (),
     runner: Optional[Callable] = None,
     out: Any = sys.stdout,
+    close_requests: bool = True,
+    close_out_get: Optional[Callable[[str], Any]] = None,
+    close_out_patch: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
 ) -> int:
     """One janitor cycle. Returns process exit code (0 = no tool errors)."""
     runner = runner or subprocess.run
@@ -975,6 +1195,18 @@ def run_cycle(
             held.append(num)
             continue
 
+        # Gates pass: the ask these request rows carry is answered. Closing
+        # them here (rather than leaving the queue to a human sweep) is the
+        # mechanical form of the 2026-11-22 close-out convention.
+        if close_requests:
+            close_out = close_serviced_requests(
+                num, base_url, apply,
+                http_get=close_out_get, http_patch=close_out_patch,
+                runner=runner, out=out,
+            )
+            if any(o.get("outcome") == "failed" for o in close_out):
+                tool_error = True
+
         if not apply:
             print(f"  #{num}: ALL GATES PASS — check-only, no action (use --apply to merge)", file=out)
             continue
@@ -1045,6 +1277,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--cap", type=int, default=3, help="max merges per cycle (default 3)")
     ap.add_argument("--base-url", default=DEFAULT_NEBULA_BASE, help="nebula-srv base URL for attestation prefilter")
     ap.add_argument("--state", default=DEFAULT_STATE, help="state file path")
+    ap.add_argument(
+        "--no-request-close", action="store_true",
+        help="do not supersede serviced to:tester request rows when a gate passes",
+    )
     ap.add_argument("--author", default=os.environ.get("JANITOR_AUTHOR"), help="PR author filter (default: gh api user)")
     ap.add_argument(
         "--extra-author", action="append", default=None,
@@ -1065,6 +1301,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         apply=args.apply, cap=max(1, args.cap), author=author,
         base_url=args.base_url, state_path=Path(args.state), only_pr=args.pr,
         extra_authors=tuple(args.extra_author or ()),
+        close_requests=not args.no_request_close,
     )
 
 
