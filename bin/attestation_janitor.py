@@ -21,8 +21,13 @@ One cycle:
      archive-before-mutation — applied by bin/supersede-record.sh, plus a
      `supersedes:<req8>` back-link on the answering attestation). A request
      is left open when no live attestation services it: a withdrawn
-     (retired/superseded) attestation is never a successor. Check-only cycles
-     run the tool with --dry-run. Then:
+     (retired/superseded) attestation is never a successor. The request
+     shapes recognised are those in use — type:request,
+     type:approval-request, type:verification-request and
+     type:attestation-request — and a row counts as still asking unless it
+     carries status:superseded/retired/done (so an untagged row is included;
+     most of the backlog is untagged). Check-only cycles run the tool with
+     --dry-run. Then:
      if --apply, merge via bin/merge_pr.py <N> --merge (the gate re-runs all
      checks at merge time), then post a change-log entry. If the sole failing
      gate is "pr open & ready" (draft state), promote with `gh pr ready` once
@@ -318,6 +323,33 @@ def _sole_fail_is_pending_ci(proc: "subprocess.CompletedProcess") -> bool:
 SUPERSEDE_TOOL = BIN_DIR / "supersede-record.sh"
 REQUEST_INBOX_TAG = "to:tester"
 
+# Request shapes actually in use (2026-11-22 census of to:tester rows):
+#   type:request             the original shape (11 open)
+#   type:approval-request    tester's older ask (#623/#628 family, #674)
+#   type:verification-request  "Tester verification requested: PR #N" (#1035)
+#   type:attestation-request  "Attestation requested" (#550, #668, #848, #855)
+# A close-out keyed on `type:request` alone could never close the last two,
+# which is the majority of the still-asking backlog.
+REQUEST_TYPE_TAGS = frozenset({
+    "type:request",
+    "type:approval-request",
+    "type:verification-request",
+    "type:attestation-request",
+})
+
+# A request stops asking when it is superseded, retired, or explicitly done.
+# Everything else — status:open, status:claimed, status:in_progress, a
+# non-terminal marker like status:action-needed, or (very often) NO status tag
+# at all — still asks. The no-status case is not an edge: 40 of the 67
+# request-shaped rows carry no status tag, including the #1035
+# type:verification-request row, so requiring status:open would leave the
+# exact row this widening exists for permanently open.
+REQUEST_CLOSED_STATUS_TAGS = frozenset({
+    "status:superseded",
+    "status:retired",
+    "status:done",
+})
+
 _merge_pr_module: Any = None
 
 
@@ -374,13 +406,15 @@ def open_request_rows(
 ) -> List[Dict[str, Any]]:
     """`to:tester` request rows for this PR that are still asking.
 
-    Requires type:request AND status:open AND to:tester AND a PR mention. A
-    row already at status:superseded/status:retired is never re-closed.
+    Requires a request type (REQUEST_TYPE_TAGS), to:tester, a PR mention, and
+    NO closed status. A row already superseded/retired/done is never re-closed.
     """
     out = []
     for rec in records:
         tags = {str(t or "").lower() for t in (rec.get("tags") or [])}
-        if "type:request" not in tags or "status:open" not in tags:
+        if not (tags & REQUEST_TYPE_TAGS):
+            continue
+        if tags & REQUEST_CLOSED_STATUS_TAGS:
             continue
         if REQUEST_INBOX_TAG not in tags:
             continue

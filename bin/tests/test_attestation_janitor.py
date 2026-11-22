@@ -33,7 +33,11 @@ Pins the safety rails from the janitor docstring:
     back-link that preserves the successor's terminal status. A request is
     LEFT OPEN when no live attestation services it — in particular when its
     only attestation is retired/superseded — and check-only cycles only
-    dry-run the tool. already-closed rows are never re-closed.
+    dry-run the tool. already-closed rows are never re-closed. All four ask
+    shapes in use close (type:request, type:approval-request,
+    type:verification-request, type:attestation-request), and a row counts as
+    asking unless it carries status:superseded/retired/done — including rows
+    with no status tag at all.
 """
 
 from __future__ import annotations
@@ -1305,6 +1309,70 @@ def test_close_out_failure_marks_tool_error_but_merge_proceeds():
     assert any("--merge" in c for c in calls), "the merge must still be attempted"
     assert "supersede FAILED" in out, out
     assert not io_calls["patch"], "no back-link when the supersede failed"
+
+
+def test_close_out_covers_every_request_shape_in_use():
+    """Every to:tester ask shape closes, with a status tag or without one.
+
+    type:request alone left type:verification-request (#1035) and
+    type:attestation-request rows permanently open, and requiring status:open
+    excluded the 40 untagged rows — including #1035's own row.
+    """
+    shapes = ["type:request", "type:approval-request",
+              "type:verification-request", "type:attestation-request"]
+    rows = []
+    for i, shape in enumerate(shapes):
+        rows.append(_rec(f"req-open-{i}",
+                         ["to:tester", shape, "pr:600", "status:open"],
+                         title="Ask for PR #600"))
+        rows.append(_rec(f"req-notag-{i}",
+                         ["to:tester", shape, "pr:600"],
+                         title="Ask for PR #600"))
+    get, patch, io_calls = make_records_io(rows, [ATT_LIVE])
+    plan = [("pr list", DISCOVERY_600),
+            ("merge_pr.py 600", {"returncode": 0, "stdout": PASSING, "stderr": ""})]
+    plan += [("supersede-record.sh", {"returncode": 0, "stdout": "OK", "stderr": ""})] * len(rows)
+    plan += [("merge_pr.py 600 --merge", {"returncode": 0, "stdout": PASSING, "stderr": ""})]
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        plan, apply=True, close_out_get=get, close_out_patch=patch)
+    assert rc == 0, out
+    sup = _supersede_calls(calls)
+    assert len(sup) == len(rows), f"closed {len(sup)} of {len(rows)} shapes: {sup}"
+    for shape in shapes:
+        assert any("--old req-open-" in c for c in sup)  # sanity on ids
+    assert len(io_calls["patch"]) == len(rows), "each close must back-link"
+
+
+def test_close_out_skips_answered_request_row():
+    """status:done is a closed request: never re-closed."""
+    done = _rec("req-0003-done",
+                ["to:tester", "type:verification-request", "pr:600", "status:done"],
+                title="Ask for PR #600")
+    get, patch, io_calls = make_records_io([done], [ATT_LIVE])
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        [("pr list", DISCOVERY_600),
+         ("merge_pr.py 600", {"returncode": 0, "stdout": PASSING, "stderr": ""}),
+         ("merge_pr.py 600 --merge", {"returncode": 0, "stdout": PASSING, "stderr": ""})],
+        apply=True, close_out_get=get, close_out_patch=patch)
+    assert rc == 0, out
+    assert not _supersede_calls(calls), calls
+    assert not io_calls["patch"]
+
+
+def test_close_out_ignores_rows_that_are_not_requests():
+    """A to:tester status update mentioning the PR is not an ask."""
+    update = _rec("rep-0001-update",
+                  ["to:tester", "type:status-update", "pr:600", "status:open"],
+                  title="Status on PR #600")
+    get, patch, io_calls = make_records_io([update], [ATT_LIVE])
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        [("pr list", DISCOVERY_600),
+         ("merge_pr.py 600", {"returncode": 0, "stdout": PASSING, "stderr": ""}),
+         ("merge_pr.py 600 --merge", {"returncode": 0, "stdout": PASSING, "stderr": ""})],
+        apply=True, close_out_get=get, close_out_patch=patch)
+    assert rc == 0, out
+    assert not _supersede_calls(calls), calls
+    assert not io_calls["patch"]
 
 
 def test_close_out_can_be_disabled():
