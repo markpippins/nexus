@@ -49,12 +49,10 @@ One sweep (READ-ONLY over records — it never mutates anything):
        PR UNKNOWN       -> HOLD-pr-unknown (cannot establish it is dead)
        no number        -> HOLD-no-pr (needs a human decision, not a guess)
        MERGED/CLOSED    -> SUPERSEDE under a live attestation for that PR
-                           (gate contract: merge_pr.py's attestation-shape +
-                           withdrawn + mention predicates), else RETIRE
-     Every plan is validated read-only through supersede-record.sh --dry-run
-     in BOTH modes, so the printed verdict is a checked one, not a guess.
-     Title parsing is a fallback of last resort: it can only mis-attribute a
-     row that names no pr: tag AND no real PR in its title.
+                           (gate contract: merge_pr.py's shape + withdrawn +
+                           mention predicates), else RETIRE
+     Plans are validated read-only through supersede-record.sh --dry-run in
+     BOTH modes, so the printed verdict is checked, not guessed.
 
 Modes: default is a pure classification print (no state write, no forum
 post). --apply runs the full validation + evidence post. NOTE: --apply never
@@ -87,6 +85,7 @@ import sys
 import time
 import urllib.request
 from datetime import datetime, timezone
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -203,17 +202,28 @@ def classify(record: dict, age_days: Optional[float]) -> str:
 
 # ── rule 5: ask rows whose PR is merged or closed ───────────────────────
 
+def is_ask_row(record: dict) -> bool:
+    """Still ASKING the tester: request-shaped, addressed, non-terminal.
+
+    This predicate is both the scan filter and the TOCTOU guard, because the
+    selection it encodes is the one that matters: 42 of the 53 live ask rows
+    carry no status:open tag, so a status:open test would reject almost all.
+    """
+    tags = {str(t or "").lower() for t in (record.get("tags") or [])}
+    return (ASK_INBOX_TAG in tags and bool(tags & ASK_TYPE_TAGS)
+            and not (tags & ASK_CLOSED_STATUS_TAGS))
+
+
 def ask_rows(records: List[dict]) -> List[dict]:
-    """Rows that are still ASKING the tester (request-shaped, no terminal status)."""
-    out = []
-    for r in records:
-        tags = {str(t or "").lower() for t in (r.get("tags") or [])}
-        if ASK_INBOX_TAG not in tags:
-            continue
-        if not (tags & ASK_TYPE_TAGS) or (tags & ASK_CLOSED_STATUS_TAGS):
-            continue
-        out.append(r)
-    return out
+    """Rows satisfying is_ask_row."""
+    return [r for r in records if is_ask_row(r)]
+
+
+def _pr_state(pr_states: Dict[int, str], number: int) -> str:
+    """OPEN / MERGED / CLOSED, or a fail-closed NOT-FOUND / UNKNOWN."""
+    if not pr_states:
+        return "UNKNOWN"          # gh unavailable: hold everything
+    return pr_states.get(int(number), "NOT-FOUND")   # never assume dead
 
 
 def pr_numbers(record: dict) -> "tuple[List[int], str]":
@@ -233,7 +243,7 @@ def pr_numbers(record: dict) -> "tuple[List[int], str]":
 
 def ask_plan(
     record: dict,
-    pr_state: Callable[[int], str],
+    pr_states: Dict[int, str],
     attestations_for: Callable[[int], "tuple[Optional[dict], str]"],
     now_s: float,
 ) -> Dict[str, Any]:
@@ -253,7 +263,7 @@ def ask_plan(
         plan["verdict"] = "HOLD-no-pr"
         plan["reason"] = "no pr: tag and no '#<N>' in the title"
         return plan
-    states = {p: (pr_state(p) or "UNKNOWN") for p in prs}
+    states = {p: _pr_state(pr_states, p) for p in prs}
     plan["states"] = states
     open_prs = sorted(p for p, s in states.items() if s == "OPEN")
     unknown = sorted(p for p, s in states.items() if s not in NON_OPEN_PR_STATES and s != "OPEN")
@@ -287,53 +297,31 @@ def ask_plan(
     return plan
 
 
-def dry_run_ask_close(plan: Dict[str, Any], supersede_path: Path, runner: Callable) -> Dict[str, Any]:
-    """Validate one ask-close plan read-only (supersede-record.sh --dry-run).
+def dry_run_close(
+    record_id: str,
+    supersede_path: Path,
+    runner: Callable,
+    note: str,
+    successor: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Validate one close read-only through supersede-record.sh --dry-run.
 
-    Supersede when a live attestation exists (the pointer must name it),
-    retire otherwise. Exit code is the oracle, exactly as in dry_run_retire.
+    `successor` names the record that REPLACED this one (supersede: verbatim
+    archive, then a pointer); None retires it (a status transition, no
+    archive). The dry-run writes NOTHING (script contract); its exit code is
+    the oracle: 0 actionable, 2 policy-refused (already closed/resolved),
+    1 tool error. Both rules close records through this one path.
     """
-    att = plan.get("attestation")
-    note = f"record-hygiene sweep (ask-close): {plan.get('reason')}"
-    if att:
-        cmd = ["bash", str(supersede_path), "supersede", "--old", str(plan["id"]),
-               "--new", str(att.get("id")), "--reason", note]
+    if successor:
+        cmd = ["supersede", "--old", record_id, "--new", str(successor), "--reason", note]
     else:
-        cmd = ["bash", str(supersede_path), "retire", "--old", str(plan["id"]), "--note", note]
-    proc = runner(cmd + ["--role", ROLE, "--model", MODEL, "--dry-run"],
+        cmd = ["retire", "--old", record_id, "--note", note]
+    proc = runner(["bash", str(supersede_path), *cmd, "--role", ROLE,
+                   "--model", MODEL, "--dry-run"],
                   capture_output=True, text=True, timeout=60)
     return {
         "exit": proc.returncode,
         "oracle": {0: "ACTIONABLE", 2: "SELF-RESOLVED"}.get(proc.returncode, "TOOL-ERROR"),
-        "stderr": (proc.stderr or "").strip()[:300],
-    }
-
-
-def dry_run_retire(
-    record_id: str,
-    supersede_path: Path,
-    min_age_days: float,
-    runner: Callable,
-) -> Dict[str, Any]:
-    """Validate a retire proposal via supersede-record.sh --dry-run.
-
-    The dry-run writes NOTHING (script contract); its exit code is the oracle:
-    0 actionable, 2 policy-refused (self-resolved), 1 tool error.
-    """
-    note = (
-        f"record-hygiene sweep: status:open older than {min_age_days:g}d; "
-        "act is complete or ask resolved — retire with this note, or supersede "
-        "explicitly if a successor exists"
-    )
-    proc = runner([
-        "bash", str(supersede_path), "retire",
-        "--old", record_id,
-        "--note", note,
-        "--role", ROLE, "--model", MODEL,
-        "--dry-run",
-    ], capture_output=True, text=True, timeout=60)
-    return {
-        "exit": proc.returncode,
         "stderr": (proc.stderr or "").strip()[:300],
     }
 
@@ -362,31 +350,24 @@ def post_change_log(title: str, body: str) -> bool:
         return False
 
 
-def _still_open(record_id: str, fetch: Callable[[str], Any]) -> bool:
-    """TOCTOU guard: re-read the record right before reporting it."""
-    try:
-        rec = fetch(f"/api/agent-records/{record_id}")
-    except Exception:
-        return True  # probe failed -> keep (fail-safe toward reporting)
-    return isinstance(rec, dict) and "status:open" in (rec.get("tags") or [])
+def _still_eligible(record_id: str, fetch: Callable[[str], Any],
+                    eligible: Callable[[dict], bool]) -> bool:
+    """TOCTOU guard: re-read the record right before reporting it.
 
-
-def _still_asking(record_id: str, fetch: Callable[[str], Any]) -> bool:
-    """TOCTOU guard for ask rows: still request-shaped, still no terminal status.
-
-    Deliberately NOT _still_open: 42 of the 53 live ask rows carry no
-    status:open tag, so a status:open test would silently discard almost every
-    row the rule exists to close.
+    `eligible` is the predicate the row was SELECTED by, so a row that stopped
+    qualifying between scan and post is dropped rather than nagged: status:open
+    for the stale-record rule, is_ask_row for the ask rule (which must not use
+    status:open — most ask rows never carried it).
     """
     try:
         rec = fetch(f"/api/agent-records/{record_id}")
     except Exception:
         return True  # probe failed -> keep (fail-safe toward reporting)
-    if not isinstance(rec, dict):
-        return False
-    tags = {str(t or "").lower() for t in (rec.get("tags") or [])}
-    return (ASK_INBOX_TAG in tags and bool(tags & ASK_TYPE_TAGS)
-            and not (tags & ASK_CLOSED_STATUS_TAGS))
+    return isinstance(rec, dict) and eligible(rec)
+
+
+def _has_status_open(record: dict) -> bool:
+    return "status:open" in (record.get("tags") or [])
 
 
 def run_sweep(
@@ -399,7 +380,7 @@ def run_sweep(
     state_path: Path,
     fetch: Callable[[str], Any],
     runner: Callable,
-    pr_state: Optional[Callable[[int], str]] = None,
+    pr_states: Optional[Dict[int, str]] = None,
     attestations_for: Optional[Callable[[int], "tuple[Optional[dict], str]"]] = None,
     ask_close: bool = True,
     out: Any = sys.stdout,
@@ -432,9 +413,9 @@ def run_sweep(
 
     # ── rule 5: plan every open ask row (read-only in both modes) ───────
     ask_plans: List[Dict[str, Any]] = []
-    if ask_close and pr_state is not None and attestations_for is not None:
+    if ask_close and pr_states is not None and attestations_for is not None:
         try:
-            ask_plans = [ask_plan(r, pr_state, attestations_for, now_s)
+            ask_plans = [ask_plan(r, pr_states, attestations_for, now_s)
                          for r in ask_rows(scan_by_tag(fetch, ASK_INBOX_TAG))]
         except Exception as exc:  # a secondary rule never aborts the sweep
             print(f"record-hygiene-sweep: WARNING — ask scan failed: {exc}", file=out)
@@ -442,7 +423,11 @@ def run_sweep(
         closable = [p for p in ask_plans if p["verdict"] in ("SUPERSEDE", "RETIRE")]
         # validated in check-only mode too: the printed verdict is a checked one
         for p in closable[:MAX_ASK_VALIDATIONS]:
-            p["dry_run"] = dry_run_ask_close(p, supersede_path, runner)
+            att = p["attestation"]
+            p["dry_run"] = dry_run_close(
+                str(p["id"]), supersede_path, runner,
+                f"record-hygiene sweep (ask-close): {p['reason']}",
+                successor=str(att["id"]) if att else None)
             if p["dry_run"]["oracle"] == "TOOL-ERROR":
                 tool_errors += 1
 
@@ -452,16 +437,18 @@ def run_sweep(
         cands = buckets["RETIRE-PROPOSE"][:max_candidates]
         overflow = len(buckets["RETIRE-PROPOSE"]) - len(cands)
         for r in cands:
-            rid = r["id"]
-            res = dry_run_retire(rid, supersede_path, min_age_days, runner)
-            verdict = {0: "ACTIONABLE", 2: "SELF-RESOLVED"}.get(res["exit"], "TOOL-ERROR")
-            if verdict == "TOOL-ERROR":
+            res = dry_run_close(
+                r["id"], supersede_path, runner,
+                f"record-hygiene sweep: status:open older than {min_age_days:g}d; "
+                "act is complete or ask resolved — retire with this note, or supersede "
+                "explicitly if a successor exists")
+            if res["oracle"] == "TOOL-ERROR":
                 tool_errors += 1
-            results[rid] = {"verdict": verdict, **res}
+            results[r["id"]] = res
         new_ids = [r["id"] for r in cands
-                   if results[r["id"]]["verdict"] == "ACTIONABLE" and r["id"] not in state["candidates"]]
+                   if results[r["id"]]["oracle"] == "ACTIONABLE" and r["id"] not in state["candidates"]]
         # TOCTOU guard: drop candidates that went terminal between scan and post
-        new_ids = [i for i in new_ids if _still_open(i, fetch)]
+        new_ids = [i for i in new_ids if _still_eligible(i, fetch, _has_status_open)]
 
         if new_ids:
             now_iso = _now_iso()
@@ -483,7 +470,7 @@ def run_sweep(
         ask_new = [p for p in ask_plans
                    if p.get("dry_run") and p["dry_run"]["oracle"] == "ACTIONABLE"
                    and "ask:" + str(p["id"]) not in state["candidates"]
-                   and _still_asking(str(p["id"]), fetch)]
+                   and _still_eligible(str(p["id"]), fetch, is_ask_row)]
         if ask_new:
             now_iso = _now_iso()
             for p in ask_new:
@@ -506,13 +493,13 @@ def run_sweep(
 
     # ── human-readable summary ──────────────────────────────────────────
     for r in stale:
-        rid, verdict = r["id"][:8], results.get(r["id"], {}).get("verdict")
+        rid, oracle = r["id"][:8], results.get(r["id"], {}).get("oracle")
         age = _age_days(r.get("createdAt"), now_s)
         age_s = f"{age:.0f}d" if age is not None else "AGE-UNKNOWN"
         bucket = classify(r, age)
         line = f"  {bucket:<14} {rid} {r.get('role') or '?'}:{r.get('recordType')} {age_s} \"{(r.get('title') or '')[:70]}\""
-        if verdict:
-            line += f" [dry-run: {verdict}]"
+        if oracle:
+            line += f" [dry-run: {oracle}]"
         print(line, file=out)
 
     # ── rule 5 summary: one verdict per ask row ─────────────────────────
@@ -605,7 +592,7 @@ def _report_body(new_ids, buckets, results, by_role, stale, records,
             f"`bin/supersede-record.sh retire --old {i} --note \"<outcome>\"` "
             "(or supersede with a successor if one exists)"
         )
-    resolved = [rid for rid, v in results.items() if v["verdict"] == "SELF-RESOLVED"]
+    resolved = [rid for rid, v in results.items() if v["oracle"] == "SELF-RESOLVED"]
     if resolved:
         lines.append(f"\n**Self-resolved during validation** (dry-run refused, exit 2 — convention already closed them): " +
                      ", ".join(f"`{i[:8]}`" for i in resolved) + ".")
@@ -644,66 +631,46 @@ def _merge_pr() -> Any:
     return _merge_pr_module
 
 
-def make_pr_state() -> Callable[[int], str]:
-    """PR number -> OPEN / MERGED / CLOSED from one cached gh listing.
+def load_pr_states() -> Dict[int, str]:
+    """PR number -> OPEN / MERGED / CLOSED from one gh listing.
 
-    A number gh does not report becomes NOT-FOUND (never "assume dead"); an
-    unavailable gh becomes UNKNOWN for every row. Both fail closed.
+    Empty on failure, which makes _pr_state answer UNKNOWN for every row: the
+    rule then holds everything instead of assuming PRs are dead.
     """
-    cache: Dict[int, str] = {}
     try:
         proc = subprocess.run(
             ["gh", "pr", "list", "--state", "all", "--limit", "3000",
              "--json", "number,state"],
             capture_output=True, text=True, timeout=180, cwd=str(BIN_DIR.parent),
         )
-        for row in json.loads(proc.stdout or "[]"):
-            if isinstance(row, dict) and row.get("number") is not None:
-                cache[int(row["number"])] = str(row.get("state") or "UNKNOWN").upper()
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        cache = {}
-
-    def pr_state(number: int) -> str:
-        if not cache:
-            return "UNKNOWN"
-        return cache.get(int(number), "NOT-FOUND")
-
-    pr_state.cache = cache  # type: ignore[attr-defined]
-    return pr_state
+        return {int(r["number"]): str(r.get("state") or "UNKNOWN").upper()
+                for r in json.loads(proc.stdout or "[]")
+                if isinstance(r, dict) and r.get("number") is not None}
+    except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):
+        return {}
 
 
-def make_attestations_for(
-    fetch: Callable[[str], Any],
-) -> Callable[[int], "tuple[Optional[dict], str]"]:
-    """PR number -> (newest live attestation naming it, why none qualifies).
+def live_attestations(fetch: Callable[[str], Any], pr: int) -> "tuple[Optional[dict], str]":
+    """(newest live attestation naming this PR, why none qualifies).
 
     Shape and withdrawal tests come from the gate (merge_pr.py), and the row
     must actually mention the PR, so a tester row about a DIFFERENT PR can
-    never become the successor pointer. Withdrawn-only returns no attestation
+    never become the successor pointer. Withdrawn-only yields no attestation
     (a tombstone is not a service) and the ask row retires instead.
     """
     mp = _merge_pr()
-    cache: Dict[int, "tuple[Optional[dict], str]"] = {}
-
-    def attestations_for(pr: int) -> "tuple[Optional[dict], str]":
-        if pr in cache:
-            return cache[pr]
-        seen: Dict[str, dict] = {}
-        for tag in (f"pr:{pr}", f"gate:{pr}"):
-            for r in scan_by_tag(fetch, tag):
-                if isinstance(r, dict) and r.get("id"):
-                    seen[str(r["id"])] = r
-        shaped = [r for r in seen.values() if mp.is_attestation_record(r)]
-        live = [r for r in shaped
-                if not mp.is_withdrawn(r) and mp.attestation_mentions_pr(r, pr)]
-        if live:
-            live.sort(key=lambda r: _age_key(r, time.time()))
-            cache[pr] = (live[0], "serviced")
-        else:
-            cache[pr] = (None, "only-withdrawn" if shaped else "no-attestation")
-        return cache[pr]
-
-    return attestations_for
+    seen: Dict[str, dict] = {}
+    for tag in (f"pr:{pr}", f"gate:{pr}"):
+        for r in scan_by_tag(fetch, tag):
+            if isinstance(r, dict) and r.get("id"):
+                seen[str(r["id"])] = r
+    shaped = [r for r in seen.values() if mp.is_attestation_record(r)]
+    live = [r for r in shaped
+            if not mp.is_withdrawn(r) and mp.attestation_mentions_pr(r, pr)]
+    if not live:
+        return None, ("only-withdrawn" if shaped else "no-attestation")
+    live.sort(key=lambda r: _age_key(r, time.time()))
+    return live[0], "serviced"
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -729,8 +696,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 raise RuntimeError(f"HTTP {resp.status} for {url_suffix}")
             return json.loads(resp.read().decode("utf-8"))
 
-    pr_state = make_pr_state()
-    if not pr_state.cache:  # type: ignore[attr-defined]
+    pr_states = load_pr_states()
+    if not pr_states:
         print("record-hygiene-sweep: WARNING — gh PR state unavailable; "
               "every ask row will HOLD (fail-closed)", file=sys.stderr)
 
@@ -743,8 +710,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         state_path=Path(args.state),
         fetch=fetch,
         runner=subprocess.run,
-        pr_state=pr_state,
-        attestations_for=make_attestations_for(fetch),
+        pr_states=pr_states,
+        attestations_for=partial(live_attestations, fetch),
         ask_close=not args.no_ask_close,
     )
 
