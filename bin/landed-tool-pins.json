@@ -4,20 +4,20 @@
   "pins": [
     {
       "path": "bin/supersede-record.sh",
-      "digest": "0a4b32371587f514d5904829fcf9f2db8da0356bceb120c1d4f0bec3f864a901",
-      "provenance": "PIN ADVANCE 2026-10-10 (Ruling 38D D3.1): PR #691 landed (1da39fddb) — 'drop ALL lifecycle statuses, not just non-terminal ones'. INTENDED post-pin change; prior pin bd39b5e6… was advanced 2026-09-30 via #673 and is now stale. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2. Landing identified at step 1. Tier 1 audit-chain tool. Guard classification: intended drift, runbook branch 1.",
+                  "digest": "187c1cad9d31392c701374a5067cf80c7dc993af5d10df94a7134aa41f4f29be",
+            "provenance": "PIN ADVANCE 2026-11-22: PR #1039 landed (squash 7598cc556) with tester attestation 093608c6 at head a7fdcd32 — the supersede pointer note no longer asserts status:active on the successor; a terminal successor (e.g. a status:done attestation) keeps its own lifecycle status, enforced by the tag-catalog pairing test. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 after git cat-file -e. Previous pinned digest 0a4b3237… (#691, 1da39fddb). Tier 1 audit-chain tool. Guard classification: intended drift, runbook branch 1.",
       "queued_prs": []
     },
     {
       "path": "bin/attestation_janitor.py",
-      "digest": "03fcbcd7eb6000b1f2adb5709a9e710cc5f08771255666e4c2fb69dde69d6675",
-      "provenance": "PIN ADVANCE 2026-11-05: PR #866 landed (squash c002f369c) with tester attestation c142899e at head ba20a41c2 — ATT_CI_COVERAGE janitor branch (rollup-coverage refusal wording); previous pinned digest a3c9d3d3b6c2f09a… (digest captured from the origin/main blob, existence checked before hashing). QUEUE ADJUDICATED 2026-11-05: the PR #695 entry was CLEARED, not consumed by this advance — #695 merged 2026-10-08 at head 856ccd474, and the digest captured for it on 2026-10-01 (15295414…) is exactly that merged blob, so the expectation was already met at merge time and simply never dequeued. The bytes pinned here are later (#866's c002f369c); re-queueing #695 would assert a digest that has been superseded.",
+                  "digest": "8af7f1f4056903538a1ac2d8d89de530d8c36aa8957eb70d6e880272515f490c",
+            "provenance": "PIN ADVANCE 2026-11-22: two attested landings since #866's c002f369c — PR #1037 (squash 199985a17, tester attestation 067d2f83 at head 966b9bb) records attestation refusals on the refused row and retires them, and PR #1040 (squash 9a79e81f8, tester attestation ccba1b04) closes serviced to:tester request rows for every ask shape, bounded to the gated head. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 after git cat-file -e. Previous pinned digest 03fcbcd7… (#866, c002f369c). Tier 1 audit-chain tool.",
       "queued_prs": []
     },
     {
       "path": "bin/merge_pr.py",
-      "digest": "ff29601e58f86841c8d165e66fc187b9267f79cf37c28c9f8176b50b5e417609",
-      "provenance": "PIN ADVANCE 2026-11-05: PR #873 landed — attestation_verdict prefers the last RECOGNIZED declaration, so prose after the label cannot shadow a row's own verdict (rows f2949cbf/#872 and 4214d9ca/#873 were both refused ATT_VERDICT_INVALID on a clean `Verdict: approved.`); digest computed from this PR's committed blob on base 31f28a66e, which is the post-squash blob because no other change touched the file; previous pinned digest e86506bc63c47e08… (captured from the origin/main blob, existence checked before hashing)",
+                  "digest": "5af13cf3af87d31de52b5c0ed29e9065865d9c22c5097982527964454604cb62",
+            "provenance": "PIN ADVANCE 2026-11-22: PR #1037 landed (squash 199985a17) with tester attestation 067d2f83 at head 966b9bb — gate-3 refusals are now recorded on the refused row and that row is retired, and the retirement text is head-agnostic. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 after git cat-file -e. Previous pinned digest ff29601e… (#873, e9aafe220). Tier 1 audit-chain tool.",
       "queued_prs": []
     },
     {
@@ -28,8 +28,8 @@
     },
     {
       "path": "bin/record_hygiene_sweep.py",
-      "digest": "e32e04b79bc833bb65499a0ff290269a46da65dc0d84adb4753ecc8f3b3438cc",
-      "provenance": "TIER-2 CAPTURE 2026-10-01 @ origin/main ead7ff59a: Decision-24 hygiene engine, landed #678 (squash 7191ea9d9), byte-stable since; existence positively verified via git cat-file -e before digest",
+                  "digest": "9cde8757b891d0df938bfea9579a80b38457c77d79ece2d693d98dd5fa7a7e1f",
+            "provenance": "PIN ADVANCE 2026-11-22: PR #1042 landed (squash 6de95b004) with tester attestation dfbe343c at head be8aa6ee — rule ASK-CLOSE closes to:tester ask rows whose named PR is merged or closed (is_ask_row/ask_rows/ask_plan/dry_run_close, fail-closed PR states so a mis-parsed title can only hold). Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 after git cat-file -e. Previous pinned digest e32e04b7… (TIER-2 CAPTURE 2026-10-01 @ ead7ff59a, #678, 7191ea9d9).",
       "queued_prs": []
     },
     {
