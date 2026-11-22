@@ -25,6 +25,11 @@ One cycle:
      carries status:superseded/retired/done (so an untagged row is included;
      most of the backlog is untagged). Check-only cycles run the tool with
      --dry-run. Then:
+     A row only closes if its ask refers to the head being gated: a
+     head:<sha> tag must match (prefix, >=7 hex), and a row without one must
+     be no older than REQUEST_MAX_AGE_DAYS. An ask for a head that has since
+     moved on stays open — otherwise a later head's attestation would
+     retroactively "service" a request it never answered. Then:
      if --apply, merge via bin/merge_pr.py <N> --merge (the gate re-runs all
      checks at merge time), then post a change-log entry. If the sole failing
      gate is "pr open & ready" (draft state), promote with `gh pr ready` once
@@ -72,7 +77,9 @@ Safety rails (all non-negotiable):
     a gate: a BYPASS line in the gate report is treated as failure.
   - Request close-out never targets a withdrawn attestation and never
     re-closes an already-superseded request row; --no-request-close turns it
-    off entirely.
+    off entirely. It also refuses rows whose head tag does not match the
+    gated head, and untagged rows older than REQUEST_MAX_AGE_DAYS (14d), so a
+    stale ask cannot be closed by an unrelated later attestation.
 
 Change-log audit trail — every ACTION is logged to the Assembly change-log
 forum via bin/post-change-log.sh, individually:
@@ -342,6 +349,55 @@ REQUEST_CLOSED_STATUS_TAGS = frozenset({
     "status:done",
 })
 
+# A request only services the gate that answered THAT ask. Rows that pin a
+# head (`head:<sha>`, which the tester's verification-request shape does)
+# must match the gated head; rows without one can only be bounded by age.
+# Without a bound, an old ask would be closed because a LATER head passed —
+# recording a service that never happened. #1035's row names head 99b4b4e2
+# from weeks ago while the PR has moved on; the old code would have closed it
+# the moment anything attested the current head.
+REQUEST_MAX_AGE_DAYS = 14  # mirrors record_hygiene_sweep's staleness horizon
+MIN_HEAD_PREFIX = 7
+
+
+def _head_shas(record: Dict[str, Any]) -> List[str]:
+    return [
+        str(t)[len("head:"):].strip().lower()
+        for t in (record.get("tags") or [])
+        if str(t).lower().startswith("head:") and len(str(t)) > len("head:")
+    ]
+
+
+def _head_matches(tag_sha: str, head: str) -> bool:
+    """Prefix match either direction, never on fewer than 7 hex chars."""
+    a, b = (tag_sha or "").strip().lower(), (head or "").strip().lower()
+    if len(a) < MIN_HEAD_PREFIX or len(b) < MIN_HEAD_PREFIX:
+        return False
+    return a[: min(len(a), len(b))] == b[: min(len(a), len(b))]
+
+
+def request_bounds(
+    record: Dict[str, Any],
+    head: str,
+    now_ms: float,
+    created_ms_of: Callable[[Dict[str, Any]], Optional[int]],
+) -> "tuple[bool, str]":
+    """(may_close, reason) — does this ask refer to the head being gated?
+
+    A head-tagged row must match `head`. Untagged rows fall back to age; a row
+    with neither a usable head tag nor a usable createdAt is refused
+    (fail-closed): its freshness cannot be established at all.
+    """
+    shas = _head_shas(record)
+    if shas:
+        return (True, "head-match") if any(_head_matches(s, head) for s in shas) else (False, "head-mismatch")
+    created = created_ms_of(record)
+    if created is None:
+        return False, "undated"
+    if now_ms - created > REQUEST_MAX_AGE_DAYS * 86400 * 1000:
+        return False, "stale-age"
+    return True, "age-ok"
+
 _merge_pr_module: Any = None
 
 
@@ -448,6 +504,8 @@ def close_serviced_requests(
     http_patch: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
     runner: Optional[Callable] = None,
     out: Any = sys.stdout,
+    head: str = "",
+    now_ms: Optional[float] = None,
 ) -> List[Dict[str, Any]]:
     """Close the `to:tester` request rows this PR's passing gate serviced.
 
@@ -459,6 +517,8 @@ def close_serviced_requests(
     runner = runner or subprocess.run
     mp = _merge_pr()
     outcomes: List[Dict[str, Any]] = []
+    if now_ms is None:
+        now_ms = time.time() * 1000
     # One lookup, keyed the same way the gate keys attestations: the PR's own
     # tags. Scanning the `to:tester` inbox instead would be both wider and
     # weaker — the endpoint pages, so an old request row falls outside the
@@ -494,6 +554,18 @@ def close_serviced_requests(
             print(f"  #{pr_number}: request {req_id[:8]} {detail}", file=out)
             outcomes.append({"pr": pr_number, "request": req_id, "outcome": "kept-open",
                              "reason": why})
+            continue
+
+        may_close, bound = request_bounds(req, head, now_ms, mp._created_ms_of)
+        if not may_close:
+            detail = {
+                "head-mismatch": f"ask names a different head than {(head or '?')[:8]} — left open",
+                "stale-age": f"older than {REQUEST_MAX_AGE_DAYS}d and carries no head tag — left open",
+                "undated": "no usable head tag or createdAt — left open",
+            }[bound]
+            print(f"  #{pr_number}: request {req_id[:8]} {detail}", file=out)
+            outcomes.append({"pr": pr_number, "request": req_id, "outcome": "kept-open",
+                             "reason": bound})
             continue
 
         att_id = str(chosen.get("id"))
@@ -1237,6 +1309,7 @@ def run_cycle(
                 num, base_url, apply,
                 http_get=close_out_get, http_patch=close_out_patch,
                 runner=runner, out=out,
+                head=pr.get("headRefOid", ""),
             )
             if any(o.get("outcome") == "failed" for o in close_out):
                 tool_error = True
