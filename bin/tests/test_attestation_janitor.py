@@ -1345,8 +1345,8 @@ def test_close_out_covers_every_request_shape_in_use():
     assert rc == 0, out
     sup = _supersede_calls(calls)
     assert len(sup) == len(rows), f"closed {len(sup)} of {len(rows)} shapes: {sup}"
-    for shape in shapes:
-        assert any("--old req-open-" in c for c in sup)  # sanity on ids
+    closed = {c.split("--old ", 1)[1].split()[0] for c in sup}
+    assert closed == {r["id"] for r in rows}, f"closed {sorted(closed)}"
     assert len(io_calls["patch"]) == len(rows), "each close must back-link"
 
 
@@ -1437,18 +1437,13 @@ def test_close_out_refuses_untagged_request_older_than_window():
 
 
 def test_request_bounds_helper():
-    mp = janitor._merge_pr()
     now = int(time.time() * 1000)
-    ok, why = janitor.request_bounds({"tags": ["head:" + HEAD[:12]]}, HEAD, now, mp._created_ms_of)
-    assert (ok, why) == (True, "head-match")
-    ok, why = janitor.request_bounds({"tags": ["head:" + "9" * 12]}, HEAD, now, mp._created_ms_of)
-    assert (ok, why) == (False, "head-mismatch")
-    ok, why = janitor.request_bounds({"tags": [], "createdAt": now - 86400 * 1000}, HEAD, now, mp._created_ms_of)
-    assert (ok, why) == (True, "age-ok")
-    ok, why = janitor.request_bounds({"tags": []}, HEAD, now, mp._created_ms_of)
-    assert (ok, why) == (False, "undated"), "fail closed when freshness is unknowable"
-    ok, why = janitor.request_bounds({"tags": ["head:abc"]}, HEAD, now, mp._created_ms_of)
-    assert (ok, why) == (False, "head-mismatch"), "a 3-char head is not a match"
+    b = lambda **kw: janitor.request_bounds(dict(kw), HEAD, now)  # noqa: E731
+    assert b(tags=["head:" + HEAD[:12]]) == (True, "head-match")
+    assert b(tags=["head:" + "9" * 12]) == (False, "head-mismatch")
+    assert b(tags=[], createdAt=now - 86400 * 1000) == (True, "age-ok")
+    assert b(tags=[]) == (False, "undated"), "fail closed when freshness is unknowable"
+    assert b(tags=["head:abc"]) == (False, "head-mismatch"), "a 3-char head is not a match"
 
 
 def test_close_out_can_be_disabled():

@@ -27,7 +27,7 @@ One cycle:
      type:attestation-request — and a row counts as still asking unless it
      carries status:superseded/retired/done (so an untagged row is included;
      most of the backlog is untagged). Check-only cycles run the tool with
-     --dry-run. Then:
+     --dry-run.
      A row only closes if its ask refers to the head being gated: a
      head:<sha> tag must match (prefix, >=7 hex), and a row without one must
      be no older than REQUEST_MAX_AGE_DAYS. An ask for a head that has since
@@ -366,30 +366,25 @@ REQUEST_CLOSED_STATUS_TAGS = frozenset({
 # the moment anything attested the current head.
 REQUEST_MAX_AGE_DAYS = 14  # mirrors record_hygiene_sweep's staleness horizon
 MIN_HEAD_PREFIX = 7
+HEAD_TAG = "head:"
 
 
 def _head_shas(record: Dict[str, Any]) -> List[str]:
-    return [
-        str(t)[len("head:"):].strip().lower()
-        for t in (record.get("tags") or [])
-        if str(t).lower().startswith("head:") and len(str(t)) > len("head:")
-    ]
+    """Every `head:<sha>` tag on the row, lowercased."""
+    tags = (str(t).strip().lower() for t in record.get("tags") or [])
+    return [t[len(HEAD_TAG):] for t in tags
+            if t.startswith(HEAD_TAG) and len(t) > len(HEAD_TAG)]
 
 
 def _head_matches(tag_sha: str, head: str) -> bool:
     """Prefix match either direction, never on fewer than 7 hex chars."""
     a, b = (tag_sha or "").strip().lower(), (head or "").strip().lower()
-    if len(a) < MIN_HEAD_PREFIX or len(b) < MIN_HEAD_PREFIX:
+    if min(len(a), len(b)) < MIN_HEAD_PREFIX:
         return False
-    return a[: min(len(a), len(b))] == b[: min(len(a), len(b))]
+    return a.startswith(b) or b.startswith(a)
 
 
-def request_bounds(
-    record: Dict[str, Any],
-    head: str,
-    now_ms: float,
-    created_ms_of: Callable[[Dict[str, Any]], Optional[int]],
-) -> "tuple[bool, str]":
+def request_bounds(record: Dict[str, Any], head: str, now_ms: float) -> "tuple[bool, str]":
     """(may_close, reason) — does this ask refer to the head being gated?
 
     A head-tagged row must match `head`. Untagged rows fall back to age; a row
@@ -399,7 +394,7 @@ def request_bounds(
     shas = _head_shas(record)
     if shas:
         return (True, "head-match") if any(_head_matches(s, head) for s in shas) else (False, "head-mismatch")
-    created = created_ms_of(record)
+    created = _merge_pr()._created_ms_of(record)
     if created is None:
         return False, "undated"
     if now_ms - created > REQUEST_MAX_AGE_DAYS * 86400 * 1000:
@@ -457,14 +452,13 @@ def _records_by_tag(
     return [r for r in data["items"] if isinstance(r, dict)]
 
 
-def open_request_rows(
-    records: Iterable[Dict[str, Any]], pr_number: int, mentions: Callable[[Dict[str, Any], int], bool]
-) -> List[Dict[str, Any]]:
+def open_request_rows(records: Iterable[Dict[str, Any]], pr_number: int) -> List[Dict[str, Any]]:
     """`to:tester` request rows for this PR that are still asking.
 
     Requires a request type (REQUEST_TYPE_TAGS), to:tester, a PR mention, and
     NO closed status. A row already superseded/retired/done is never re-closed.
     """
+    mentions = _merge_pr().attestation_mentions_pr
     out = []
     for rec in records:
         tags = {str(t or "").lower() for t in (rec.get("tags") or [])}
@@ -482,8 +476,6 @@ def open_request_rows(
 
 def select_servicing_attestation(
     attestations: Iterable[Dict[str, Any]],
-    is_attestation: Callable[[Dict[str, Any]], bool],
-    is_withdrawn: Callable[[Dict[str, Any]], bool],
 ) -> "tuple[Optional[Dict[str, Any]], str]":
     """Pick the attestation that serviced the request, or explain why none did.
 
@@ -492,11 +484,12 @@ def select_servicing_attestation(
     reported to the caller so the pointer reason can name it.
 
     A request whose only attestation-shaped rows are withdrawn returns
-    (None, "withdrawn") — a retirement or supersession is not a service, and a
+    (None, "only-withdrawn") — a retirement or supersession is not a service, and a
     pointer must never name a tombstone.
     """
-    shaped = [r for r in attestations if is_attestation(r)]
-    live = [r for r in shaped if not is_withdrawn(r)]
+    mp = _merge_pr()
+    shaped = [r for r in attestations if mp.is_attestation_record(r)]
+    live = [r for r in shaped if not mp.is_withdrawn(r)]
     if not live:
         return None, ("only-withdrawn" if shaped else "no-attestation")
     live.sort(key=lambda r: _parse_float(r.get("createdAt")))
@@ -542,13 +535,11 @@ def close_serviced_requests(
         print(f"  #{pr_number}: close-out skipped — record lookup failed ({exc})", file=out)
         return [{"pr": pr_number, "outcome": "lookup-failed", "detail": str(exc)}]
 
-    requests_ = open_request_rows(rows.values(), pr_number, mp.attestation_mentions_pr)
+    requests_ = open_request_rows(rows.values(), pr_number)
     if not requests_:
         return outcomes
 
-    chosen, why = select_servicing_attestation(
-        rows.values(), mp.is_attestation_record, mp.is_withdrawn
-    )
+    chosen, why = select_servicing_attestation(rows.values())
     for req in requests_:
         req_id = str(req.get("id") or "")
         if not req_id:
@@ -564,7 +555,7 @@ def close_serviced_requests(
                              "reason": why})
             continue
 
-        may_close, bound = request_bounds(req, head, now_ms, mp._created_ms_of)
+        may_close, bound = request_bounds(req, head, now_ms)
         if not may_close:
             detail = {
                 "head-mismatch": f"ask names a different head than {(head or '?')[:8]} — left open",
