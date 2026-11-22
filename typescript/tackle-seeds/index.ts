@@ -465,13 +465,15 @@ BEGIN
         '\n'
         '| Tag | Purpose |\n'
         '|-----|---------|\n'
-        '| \`supersedes:<short-id>\` | On the SUCCESSOR record: names the stale record it replaces (pair with \`status:active\`). |\n'
+        '| \`supersedes:<short-id>\` | On the SUCCESSOR record: names the stale record it replaces. Pair with \`status:active\` ONLY when the successor is itself a mutable live record; a TERMINAL successor (e.g. a tester attestation already at \`status:done\`) is exempt — it keeps its terminal status and carries only the \`supersedes:\` back-link (see the clarification below). |\n'
         '| \`superseded-by:<short-id>\` | On the OLD record''s pointer tombstone: names the successor (pair with \`status:superseded\`). |\n'
         '| \`status:superseded\` | OLD record whose content was replaced — strictly "successor exists". Title prefixed \`[SUPERSEDED → <id>]\`; exactly one pointer mutation, preceded by a \`type:archive\` verbatim capture (sha256 round-trip verified). |\n'
         '| \`status:retired\` | OLD record retired WITHOUT a successor (Decision 24 Amendment 1): short closure note stating what completed it and when; NO \`superseded-by:\`, NO archive, NO placeholder successor. |\n'
         '| \`type:archive\` | Append-only verbatim capture of a record body taken BEFORE any mutation; header states what/when/sha256 of the original body. |\n'
         '\n'
         'Sequence invariant (ratified): archive-first-then-pointer; if the archive creation or its sha256 round-trip fails, the pointer mutation must not run.\n'
+        '\n'
+        '**Terminal-successor exemption (clarification, 2026-11-22).** \`supersedes:<short-id>\` on a successor is a PROVENANCE back-link, not a lifecycle assertion. Pairing it with \`status:active\` is correct only for a successor that is a live mutable record. A serviced attestation-request row is superseded by the attestation that already closed it at \`status:done\`; tagging that attestation \`status:active\` would (a) give one record two lifecycle statuses, and (b) misreport a finished, merge-gating attestation as live. So the exemption follows observed practice: in the 2026-11-22 serviced-request close-out, successors \`b8ea8928\`, \`ad343852\`, \`6c213e06\`, \`03ff81f1\`, \`a931f46e\`, \`766526be\` and \`62e2db98\` each kept \`status:done\` (or carried no status tag) and gained only \`supersedes:<req8>\`. Neither consumer depends on the pairing: gate 3 in \`bin/merge_pr.py\` recognises an attestation by \`type:attestation\`, or \`assessment\` + \`type:approval\` + \`status:done\`, and \`is_withdrawn\` reads only \`status:retired\`/\`status:superseded\` — so \`status:active\` would be inert wherever it would also be false. Wording ratification sits with the architect (Decision 24 lineage, record cfcc9d65).\n'
         '',
         ARRAY['messaging', 'reference', 'tags', 'routing'],
         ARRAY['tag routing', 'message format', 'tag convention', 'what tags'],
