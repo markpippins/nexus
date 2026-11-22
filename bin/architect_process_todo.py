@@ -275,28 +275,15 @@ def write_implementation_plan(req_id: str, spec_id: str, title: str,
 # ── Update Status ──────────────────────────────────────────────────────
 
 def update_status(req_id: str, new_status: str, dry_run: bool = False) -> bool:
-    """Update requirement status in requirements_history."""
+    """Update requirement status through the requirements surface (V222 re-points it)."""
     if dry_run:
         log.info("  [DRY RUN] Would move to %s", new_status)
         return True
 
+    # SCD close-then-insert was tried here and abandoned: the surface holds one
+    # current row per id, so update it in place (V222 routes this to canonical).
     sql = f"""
-        UPDATE nebula.requirements_history
-        SET valid_until = now()
-        WHERE id = '{req_id}'::uuid
-        AND valid_until > now();
-
-        INSERT INTO nebula.requirements_history
-        SELECT *, now(), '9999-12-31T23:59:59+00'
-        FROM nebula.requirements_history
-        WHERE id = '{req_id}'::uuid
-        AND valid_until = now()
-        ORDER BY valid_from DESC
-        LIMIT 1;
-    """
-    # Simpler approach: just update the current row's status
-    sql = f"""
-        UPDATE nebula.requirements_history
+        UPDATE nebula.requirements
         SET status = '{new_status}'
         WHERE id = '{req_id}'::uuid
         AND valid_until > now();
@@ -339,7 +326,7 @@ def decompose_requirement(req: dict, dry_run: bool = False) -> list[dict]:
         child_id = str(uuidlib.uuid4())
 
         sql = f"""
-            INSERT INTO nebula.requirements_history
+            INSERT INTO nebula.requirements
                 (id, title, description, status, priority, req_type,
                  system_id, subsystem_id, feature_id, parent_id,
                  candidate_id, acceptance_criteria,
@@ -492,7 +479,7 @@ def _insert_children(children: list[dict], dry_run: bool = False) -> list[dict]:
         cand_id = f"'{child['candidate_id']}'" if child.get("candidate_id") else "NULL"
 
         sql = f"""
-            INSERT INTO nebula.requirements_history
+            INSERT INTO nebula.requirements
                 (id, title, description, status, priority, req_type,
                  system_id, subsystem_id, feature_id, parent_id,
                  candidate_id, acceptance_criteria,
