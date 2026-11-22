@@ -34,13 +34,20 @@ export function camelCaseRow(row: Record<string, any>): Record<string, any> {
 // harness_job_id is projected because it is the only field that ties a record
 // to the harness run that wrote it, and the run-vs-record audit
 // (bin/check_harness_silent_success.py) reads it from list queries.
-export const AGENT_RECORD_LIST_COLUMNS = `id, record_type, role, model, title, source_path, tags,
+//
+// metadata is projected because it carries correction provenance
+// (metadata.corrections[], metadata.residue_closed) written alongside the
+// corrected-by:/residue-closed-by: tags. Omitting it left the correction note
+// readable only through psql, so an auditor reading the record's tags could
+// see that it had been corrected but not by what — the same reader-side blind
+// spot the contentLength contract above closes for bodies.
+export const AGENT_RECORD_LIST_COLUMNS = `id, record_type, role, model, title, source_path, tags, metadata,
          octet_length(content)::int AS content_length,
          system_id, subsystem_id, feature_id, plan_ref, created_at, recorded_on_dt,
          level, visibility_scope, harness_job_id`;
 
 /** Full projection (?full=1 / legacy includeContent=true): adds content. */
-export const AGENT_RECORD_LIST_COLUMNS_FULL = `id, record_type, role, model, title, source_path, tags,
+export const AGENT_RECORD_LIST_COLUMNS_FULL = `id, record_type, role, model, title, source_path, tags, metadata,
          octet_length(content)::int AS content_length, content,
          system_id, subsystem_id, feature_id, plan_ref, created_at, recorded_on_dt,
          level, visibility_scope, harness_job_id`;

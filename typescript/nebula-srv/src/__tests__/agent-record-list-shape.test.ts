@@ -26,6 +26,7 @@ function row(overrides: Record<string, unknown> = {}) {
     title: "t",
     source_path: null,
     tags: ["a"],
+    metadata: null,
     content: "hello world",
     content_length: 11,
     system_id: null,
@@ -82,5 +83,46 @@ describe("agent-record list projection (contentLength contract)", () => {
   it("camelCaseRow converts timestamps to epoch ms", () => {
     const item = camelCaseRow(row());
     expect(item.createdAt).toBe(Date.parse("2026-09-28T00:00:00Z"));
+  });
+});
+
+// Provenance contract: a record corrected via the `corrected-by:` /
+// `residue-closed-by:` tags keeps its body, so the correction itself lives in
+// metadata (corrections[], residue_closed) plus the appended `annotates:`
+// record. If the list projection drops metadata, an auditor can see THAT the
+// record was corrected but not BY WHAT without psql — decision 76582d4a is the
+// live case (correction b3fabb0d, PR #906).
+describe("agent-record list projection (correction provenance contract)", () => {
+  it("default projection includes metadata", () => {
+    expect(AGENT_RECORD_LIST_COLUMNS).toMatch(/\btags, metadata,/);
+  });
+
+  it("full projection includes metadata", () => {
+    expect(AGENT_RECORD_LIST_COLUMNS_FULL).toMatch(/\btags, metadata,/);
+  });
+
+  it("metadata survives camelCaseRow with its corrections[] intact", () => {
+    const item = camelCaseRow(
+      row({
+        metadata: {
+          corrections: [
+            {
+              by: "engineer",
+              claim: "the satisfaction-based predicate fix needs its own PR",
+              note: "Operative rulings unchanged; decision not superseded.",
+            },
+          ],
+        },
+        tags: ["corrected-by:b3fabb0d"],
+      })
+    );
+    expect(item.metadata.corrections[0].claim).toBe(
+      "the satisfaction-based predicate fix needs its own PR"
+    );
+    expect(item.tags).toContain("corrected-by:b3fabb0d");
+  });
+
+  it("metadata is null-preserving for uncorrected records", () => {
+    expect(camelCaseRow(row()).metadata).toBeNull();
   });
 });
