@@ -337,7 +337,12 @@ def test_repo_registry_wellformed_and_pinned_digests_stable():
     verified: digest protocol + squash-of-head). Tier-2 pins captured
     2026-10-01 @ origin/main ead7ff59a (existence positively verified).
     Tier 1 advanced again 2026-11-05 when PR #866 (gate 3 rollup coverage)
-    landed c002f369c; digests from that blob.
+    landed c002f369c; digests from that blob. Advanced 2026-11-22 for four
+    attested landings: #1039 (7598cc556, supersede pointer note), #1040
+    (9a79e81f8, serviced-request close-out), #1037 (199985a17, refusal
+    bookkeeping — also the merge_pr.py landing) and #1042 (6de95b004, rule
+    ASK-CLOSE). Every digest captured from the origin/main blob after a
+    positive cat-file -e existence check.
     The queue is empty as of 2026-11-05: the PR #695 entry (CIR-5 janitor
     rung) was cleared, because #695 MERGED 2026-10-08 and its captured digest
     was the merged blob — the expectation was met and never dequeued, then
@@ -348,24 +353,29 @@ def test_repo_registry_wellformed_and_pinned_digests_stable():
     data = json.loads(reg.read_text())
     assert data["version"] == 1 and len(data["pins"]) >= 8
     by_path = {p["path"]: p for p in data["pins"]}
-    # ADVANCED 2026-10-10 (Ruling 38D D3.1): PR #691 landed 1da39fddb.
+    # ADVANCED 2026-11-22: PR #1039 landed 7598cc556 (supersede pointer note
+    # stops asserting status:active on a terminal successor); was #691
+    # 1da39fddb.
     assert by_path["bin/supersede-record.sh"]["digest"] == (
-        "0a4b32371587f514d5904829fcf9f2db8da0356bceb120c1d4f0bec3f864a901")
-    # ADVANCED 2026-11-05: PR #866 landed c002f369c (ATT_CI_COVERAGE).
+        "187c1cad9d31392c701374a5067cf80c7dc993af5d10df94a7134aa41f4f29be")
+    # ADVANCED 2026-11-22: PR #1040 landed 9a79e81f8 (serviced-request
+    # close-out) on top of #1037's refusal bookkeeping; was #866 c002f369c.
     assert by_path["bin/attestation_janitor.py"]["digest"] == (
-        "03fcbcd7eb6000b1f2adb5709a9e710cc5f08771255666e4c2fb69dde69d6675")
+        "8af7f1f4056903538a1ac2d8d89de530d8c36aa8957eb70d6e880272515f490c")
     # Adjudicated 2026-11-05: #695 merged at the queued digest and was never
     # dequeued; the entry is closed, not pending.
     assert by_path["bin/attestation_janitor.py"]["queued_prs"] == []
-    # Advanced 2026-11-05 with the verdict-phrase ordering fix (PR #873): a
-    # recognized declaration now outranks unrecognized prose.
+    # ADVANCED 2026-11-22: PR #1037 landed 199985a17 (gate-3 refusals are
+    # recorded on the refused row and the row is retired, head-agnostic
+    # wording); was #873 e9aafe220 (verdict-phrase ordering fix).
     assert by_path["bin/merge_pr.py"]["digest"] == (
-        "ff29601e58f86841c8d165e66fc187b9267f79cf37c28c9f8176b50b5e417609")
+        "5af13cf3af87d31de52b5c0ed29e9065865d9c22c5097982527964454604cb62")
     assert by_path["bin/gate_codes.py"]["digest"] == (
         "b25bdef712a62ac5867d04b61272da6dfb4cd5f31a1c028db8dcdfaa3d080689")
-    # Tier-2 (2026-10-01 capture @ ead7ff59a)
+    # ADVANCED 2026-11-22: PR #1042 landed 6de95b004 (rule ASK-CLOSE); was
+    # the 2026-10-01 tier-2 capture @ ead7ff59a / #678 7191ea9d9.
     assert by_path["bin/record_hygiene_sweep.py"]["digest"] == (
-        "e32e04b79bc833bb65499a0ff290269a46da65dc0d84adb4753ecc8f3b3438cc")
+        "9cde8757b891d0df938bfea9579a80b38457c77d79ece2d693d98dd5fa7a7e1f")
     # ADVANCED 2026-11-06: the pin had gone stale at PR #878 (c96dfb5c0,
     # run attribution) — the open DRIFT incident 30186d3b — and this PR also
     # gives --model the $NEXUS_AGENT_MODEL default. Prior pin e548f405… was
