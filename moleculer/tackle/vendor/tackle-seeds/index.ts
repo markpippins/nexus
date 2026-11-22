@@ -474,6 +474,18 @@ BEGIN
         'Sequence invariant (ratified): archive-first-then-pointer; if the archive creation or its sha256 round-trip fails, the pointer mutation must not run.\n'
         '\n'
         '**Terminal-successor exemption (clarification, 2026-11-22).** \`supersedes:<short-id>\` on a successor is a PROVENANCE back-link, not a lifecycle assertion. Pairing it with \`status:active\` is correct only for a successor that is a live mutable record. A serviced attestation-request row is superseded by the attestation that already closed it at \`status:done\`; tagging that attestation \`status:active\` would (a) give one record two lifecycle statuses, and (b) misreport a finished, merge-gating attestation as live. So the exemption follows observed practice: in the 2026-11-22 serviced-request close-out, successors \`b8ea8928\`, \`ad343852\`, \`6c213e06\`, \`03ff81f1\`, \`a931f46e\`, \`766526be\` and \`62e2db98\` each kept \`status:done\` (or carried no status tag) and gained only \`supersedes:<req8>\`. Neither consumer depends on the pairing: gate 3 in \`bin/merge_pr.py\` recognises an attestation by \`type:attestation\`, or \`assessment\` + \`type:approval\` + \`status:done\`, and \`is_withdrawn\` reads only \`status:retired\`/\`status:superseded\` — so \`status:active\` would be inert wherever it would also be false. Wording ratification sits with the architect (Decision 24 lineage, record cfcc9d65).\n'
+        '\n'
+        '### Provenance & Correction Tags (registered 2026-11-22)\n'
+        '\n'
+        'Append-only vocabulary for corrections. Every tag below carries a SHORT-ID pointer and leaves the named record untouched: no body rewrite, no status change. The correction itself lives in the \`annotates:\` record, and the target only gains a back-link. Registered after the 2026-11-22 reconciliation (R5 \`99254b41\` retired; decision \`76582d4a\` corrected by \`b3fabb0d\`; R2 \`53bca2d9\` residue closed by \`b3fabb0d\`).\n'
+        '\n'
+        '| Tag | Purpose |\n'
+        '|-----|---------|\n'
+        '| \`annotates:<short-id>\` | On the APPEND-ONLY annotation record: names the record it corrects or supplements. Pair with \`status:done\` (or no status tag); an annotation that already exists is not an open request. |\n'
+        '| \`corrected-by:<short-id>\` | On the TARGET record: points at the annotation that corrects a claim the target made. Body and status stay intact. Distinct from \`superseded-by:\`: a correction replaces nothing, so it never pairs with \`status:superseded\`. |\n'
+        '| \`residue-closed-by:<short-id>\` | On a record that is neither superseded nor retired: its operative content still stands, but leftover work it listed is finished by the named record. Use when only the residue note is stale. |\n'
+        '\n'
+        'Reading a correction: agent-records LIST/SEARCH responses project \`metadata\` (2026-11-22) alongside \`tags\`, so \`metadata.corrections[]\` and \`metadata.residue_closed\` are readable from the API instead of only through psql.\n'
         '',
         ARRAY['messaging', 'reference', 'tags', 'routing'],
         ARRAY['tag routing', 'message format', 'tag convention', 'what tags'],
