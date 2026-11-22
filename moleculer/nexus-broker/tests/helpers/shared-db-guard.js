@@ -59,6 +59,20 @@
  * project's PostgreSQL instances (checked: `pg_available_extensions` lists it,
  * the view does not exist), so nothing depends on it.
  *
+ * The sampler itself can die
+ * --------------------------
+ * A watch that loses its backend mid-run (server restart, failover, a
+ * `pg_terminate_backend`, an idle timeout at a pooler) can no longer see
+ * anything, and an empty offender list from a blind sampler is indistinguishable
+ * from a clean run — the exact silent-pass shape this guard exists to remove.
+ * So losses are recorded (`error`/`end` events and every failed sample) and
+ * `stop()` THROWS when any were seen, naming the lost sampler instead of
+ * returning a clean result. It is deliberately a throw rather than a flag a
+ * caller has to remember to check: forgetting to check a flag is how a check
+ * degrades to nothing, which is the same footgun the empty-tag and
+ * missing-signature cases already had. `stop()` is the only way to end a watch,
+ * so no caller can skip the verdict.
+ *
  * What stays legitimate: the tag must match THIS file's tag exactly. Live
  * production traffic on a developer machine carries the service's own name
  * (`nexus-broker`, or nothing on older builds), never `nexus-test-*`, so it is
@@ -84,6 +98,9 @@ const STRICT = String(process.env.NEXUS_TEST_STRICT_SHARED_DB || '') === '1'
 // shared database, and reporting it would make the check fail on itself.
 const GUARD_APPLICATION_SUFFIX = '-guard'
 const CONNECTION_SAMPLE_MS = Number(process.env.NEXUS_TEST_CONNECTION_SAMPLE_MS || 400)
+// Enough to identify a fault without growing a megabyte of duplicate errors when
+// the connection is gone and every 400 ms tick reports the same thing.
+const MAX_RECORDED_LOSSES = 5
 
 /** This run's tag, plus the guard suffix, for the guard's own connections. */
 function guardApplicationName(tag = TEST_APPLICATION_NAME) {
@@ -288,13 +305,39 @@ function describeHarnessConnection(row, { database = SHARED_DATABASE } = {}) {
 }
 
 /**
+ * Verdict for a finished watch: `null` when the sampler stayed connected and
+ * answered for the whole file, otherwise the failure message.
+ *
+ * Pure so the decision table is testable without a database: no losses is the
+ * only clean answer, because a lost sampler's empty offender list is evidence of
+ * nothing except that nobody was looking.
+ */
+function connectionWatchFailureReason({ tag, database = SHARED_DATABASE, samplerPid = null, losses = [], offenders = [] } = {}) {
+  if (!losses.length) return null
+  const seen = offenders.map((row) => `  - ${describeHarnessConnection(row, { database })}`)
+  return (
+    `shared database guard: the connection watch LOST ITS SAMPLER CONNECTION to ${database} ` +
+    `(tag ${tag}${samplerPid ? `, sampler pid ${samplerPid}` : ''}) — ` +
+    `${losses.length} failed sample(s), first: ${losses[0]}\n` +
+    '  It stopped looking part-way through this file, so "no harness connection" is not something ' +
+    'this run can claim: a reader that appeared after the sampler died would be invisible.\n' +
+    (seen.length ? `  Seen before the loss:\n${seen.join('\n')}\n` : '') +
+    '  The read guard reports clean only from a sampler that answered through to the end of the file. ' +
+    'Re-run; if the sampler keeps dying, something is terminating or failing over its backend.'
+  )
+}
+
+/**
  * Watch the shared database for this file's tagged connections while it runs.
  *
- * Returns `{ tag, available, reason, offenders, stop() }`. `stop()` clears the
- * sampler, ends the connection and resolves to the offenders seen (deduplicated
- * by pid, latest state kept). When the shared database is unreachable there is
- * nothing to watch, so `available` is false and `offenders` stays empty — an
- * environment with no shared database must not fail for the absence of one.
+ * Returns `{ tag, database, pid, available, reason, lost, losses, offenders,
+ * stop() }`. `stop()` clears the sampler, ends the connection and resolves to the
+ * offenders seen (deduplicated by pid, latest state kept). It REJECTS when the
+ * sampler lost its connection at any point, because a blind watch cannot testify
+ * that the run was clean (see the header). When the shared database is
+ * unreachable there is nothing to watch, so `available` is false, `offenders`
+ * stays empty and `stop()` resolves — an environment with no shared database
+ * must not fail for the absence of one.
  */
 function startHarnessConnectionWatch({
   tag = TEST_APPLICATION_NAME,
@@ -306,9 +349,12 @@ function startHarnessConnectionWatch({
     database,
     available: false,
     reason: null,
+    samplerPid: null,
     // pid -> row
     offenders: new Map(),
-    errors: [],
+    // Why the sampler stopped being able to answer. Non-empty means this watch
+    // cannot certify anything, so `stop()` throws.
+    losses: [],
   }
   const { Client } = require('pg')
   const client = new Client({
@@ -320,6 +366,23 @@ function startHarnessConnectionWatch({
   let timer = null
   let stopped = false
   let inFlight = null
+
+  /** Record a lost sample. Beyond the first few these are the same fault. */
+  const noteLoss = (message) => {
+    if (state.losses.length < MAX_RECORDED_LOSSES) state.losses.push(message)
+  }
+
+  // node-postgres does not reconnect a dead Client, and it emits 'error' on the
+  // client itself — with no listener that is an uncaught exception that kills the
+  // test process mid-file. Listen for it so the drop becomes the named failure
+  // below instead of an opaque crash, and so a dropped socket can never be read
+  // as "the file ended quietly, so the sampler must have been fine".
+  client.on('error', (err) => {
+    if (!stopped) noteLoss(`connection error: ${err.message}`)
+  })
+  client.on('end', () => {
+    if (!stopped) noteLoss('the server closed the sampler connection')
+  })
 
   const sample = async () => {
     const res = await client.query(CONNECTION_QUERY, [database, tag])
@@ -333,9 +396,10 @@ function startHarnessConnectionWatch({
     if (stopped || inFlight) return inFlight
     inFlight = sample()
       .catch((err) => {
-        // One lost sample must not end the watch; the connection drop below is
-        // reported once, and `stop()` still returns what was already seen.
-        if (state.errors.length < 5) state.errors.push(err.message)
+        // One lost sample does not end the watch (the leak may already be in
+        // `offenders`), but it does mean the watch can no longer certify the
+        // run — `stop()` refuses to report clean once this list is non-empty.
+        noteLoss(err.message)
       })
       .finally(() => {
         inFlight = null
@@ -347,6 +411,10 @@ function startHarnessConnectionWatch({
     .connect()
     .then(async () => {
       state.available = true
+      // The sampler's own backend id, so a control (or an operator) can kill it
+      // and so the failure message names the session that died.
+      const self = await client.query('SELECT pg_backend_pid()::int AS pid')
+      state.samplerPid = self.rows[0].pid
       await tick() // sample once immediately: a broker that leaked at boot is already visible
       timer = setInterval(() => void tick(), intervalMs)
       if (typeof timer.unref === 'function') timer.unref()
@@ -367,18 +435,51 @@ function startHarnessConnectionWatch({
     get reason() {
       return state.reason
     },
+    /** Backend id of the sampler session, once connected. */
+    get pid() {
+      return state.samplerPid
+    },
+    /** True once the sampler could no longer answer — the watch is blind. */
+    get lost() {
+      return state.losses.length > 0
+    },
+    get losses() {
+      return [...state.losses]
+    },
     get offenders() {
       return [...state.offenders.values()]
     },
+    /**
+     * End the watch and return the offenders seen. Rejects if the sampler lost
+     * its connection: an unseeing watch must not be reported as a clean one.
+     * The rejection carries `.offenders` so a caller can still report what it
+     * did see before the loss.
+     */
     async stop() {
       stopped = true
       await ready
       if (timer) clearInterval(timer)
       if (inFlight) await inFlight.catch(() => undefined)
-      // One last look, so a leak that appeared between samples is not lost.
-      if (state.available) await tick()
+      // One last look, so a leak that appeared between samples is not lost —
+      // unless the sampler is already blind, where another tick would only
+      // repeat the same failure.
+      if (state.available && !state.losses.length) await tick()
       await client.end().catch(() => undefined)
-      return [...state.offenders.values()]
+      const offenders = [...state.offenders.values()]
+      const failure = connectionWatchFailureReason({
+        tag,
+        database,
+        samplerPid: state.samplerPid,
+        losses: state.losses,
+        offenders,
+      })
+      if (failure) {
+        const err = new Error(failure)
+        err.offenders = offenders
+        err.watch = { tag, database, samplerPid: state.samplerPid, losses: [...state.losses] }
+        throw err
+      }
+      return offenders
     },
   }
 }
@@ -399,5 +500,6 @@ module.exports = {
   assertSharedDatabaseUnchanged,
   listHarnessConnectionsOnShared,
   describeHarnessConnection,
+  connectionWatchFailureReason,
   startHarnessConnectionWatch,
 }

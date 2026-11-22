@@ -236,10 +236,24 @@ after(async () => {
         await snapshotSharedDatabase({ outboxSignature: PRODUCTION_TEST_SIGNATURE }),
       )
       for (const warning of diff.warnings) console.warn(`[shared-db] ${warning}`)
-      const offenders = connectionWatch ? await connectionWatch.stop() : []
+      // `stop()` rejects when the sampler lost its backend: an unseeing watch
+      // must fail the file rather than report clean. Keep both the offenders it
+      // did see and the reason it went blind, so one failure does not mask the
+      // other (the outbox result is reported below regardless).
+      let offenders = []
+      let watchFailure = null
+      if (connectionWatch) {
+        try {
+          offenders = await connectionWatch.stop()
+        } catch (err) {
+          watchFailure = err
+          offenders = err.offenders || []
+        }
+      }
       const connectionFailures = offenders.map((row) =>
         describeHarnessConnection(row, { database: connectionWatch.database }),
       )
+      if (watchFailure) connectionFailures.push(watchFailure.message)
       if (!connectionFailures.length) {
         console.log(`[shared-db] no harness connection to ${connectionWatch?.database ?? 'nexus'} (tag ${TEST_APPLICATION_NAME})`)
       }
