@@ -27,7 +27,13 @@ logging.basicConfig(
 log = logging.getLogger("planner-mcp")
 
 # ── server ───────────────────────────────────────────────────────────
-mcp = FastMCP("planner-mcp")
+# Transport is env-driven: planner.py imports this module in-process (stdio
+# default, never started), while systemd runs it as a standalone daemon.
+TRANSPORT = os.getenv("PLANNER_MCP_TRANSPORT", "stdio")
+HOST = os.getenv("PLANNER_MCP_HOST", "127.0.0.1")
+PORT = int(os.getenv("PLANNER_MCP_PORT", "8000"))
+
+mcp = FastMCP("planner-mcp", host=HOST, port=PORT)
 
 # ── DB config ────────────────────────────────────────────────────────
 DB_CONFIG = {
@@ -917,4 +923,5 @@ def check_completion_status(candidate_id: str) -> str:
 # ── Main ─────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    mcp.run()
+    log.info("starting planner-mcp (transport=%s, host=%s, port=%d)", TRANSPORT, HOST, PORT)
+    mcp.run(transport=TRANSPORT)
