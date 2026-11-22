@@ -1,0 +1,627 @@
+{
+  "artifact": "nexus.specification_derivation",
+  "version": 1,
+  "status": "proposed_awaiting_planner_ratification",
+  "authored_by": {
+    "role": "engineer",
+    "agent_record": "b4ec5765-2892-40d9-9007-4f433718e709",
+    "date": "2026-11-20"
+  },
+  "authority": {
+    "specification_owner": "planner",
+    "type_authority": "architect",
+    "data_authority": "dba",
+    "note": "Engineer-authored derivation mechanics. Specifications and their requirement sets are Planner-owned (AGENTS.md I2 origin gating); nothing here creates a row, plan, or WorkRequest."
+  },
+  "derived_from": {
+    "record_id": "584d2e75-5308-48f7-991a-481b79c0ed57",
+    "record_title": "R2: Cross-System High-Leverage Next Steps Synthesis (Repo, Pending WRs, PRs #1006-#1017, Migrations V186-V221, and Forum/Transcripts)",
+    "role": "analyst",
+    "created_at": "2026-11-17T00:37:40Z",
+    "r1_record": "72cf4fbc-0ab5-42b0-b7db-c75f2d1408ec"
+  },
+  "captured_state": {
+    "captured_at": "2026-11-20T06:00:00Z",
+    "method": "read-only: conduit GET /state, nebula-srv REST, psql SELECT against nexus (pguser, search_path per service)",
+    "facts": {
+      "conduit_plans": { "completed": 44, "active": 2, "blocked": 0, "pending": 0 },
+      "conduit_active_plan_numbers": ["8261674", "8261675"],
+      "plan_8261650_status": "completed",
+      "resolution_work_request_rows": 50,
+      "resolution_request_requirement_link_rows": 0,
+      "resolution_requirement_rows": 0,
+      "resolution_specification_rows": 0,
+      "nebula_requirements_current_rows": 27,
+      "nebula_requirements_status": { "ToDo": 24, "Backlog": 3 },
+      "nebula_requirements_with_parent_id": 0,
+      "nebula_requirements_req_type": { "Story": 4, "null": 23 },
+      "nebula_specifications_history_rows": 2,
+      "nebula_specifications_current_rows": 1,
+      "nebula_spec_requirements_rows": 0,
+      "nebula_blueprints_current_rows": 54,
+      "nebula_blueprints_status": { "completed": 41, "archived": 8, "pending": 5 },
+      "blueprints_with_resolvable_requirement_ref": 4,
+      "pending_blueprints_with_empty_requirement_ref": 5,
+      "migration_ledger_rows": 38,
+      "sql_migration_files": 184,
+      "ledger_missing_in_V215_V221_range": ["V187"]
+    },
+    "analyst_claims_not_reverified_here": [
+      "19 compiled WorkRequest drafts / 8 intent cards awaiting ratification (Planner package 3dd1987d)",
+      "82 linked worktrees, ~40+ merged",
+      "7 thallium-* services probing UP while manifest says OFFLINE",
+      "36/102 Terrain services unbound to canonical assets; stage-0 mapping scored 0/25 at sim >= 0.8",
+      "archive_mode=off with a 2026-11-17 revisit deadline",
+      "pg-backup-to-vanadium intermittent SSH/reachability alerts"
+    ]
+  },
+  "type_gaps": [
+    {
+      "id": "G1",
+      "title": "No Specification can group Requirements",
+      "evidence": "resolution.specification = 0 rows; its shape requires agenda_id NOT NULL and a single requirement_id, so it is a per-agenda revision of one requirement, not a container. nebula.spec_requirements = 0 rows and its spec_id FK targets nebula.spec_documents_history (a document table), not a specification grouping. nebula.specifications is a view over 2 history rows (1 current, an agenda 'probe').",
+      "consequence": "A derived Specification (goal + N requirements) has no table, no id, and no membership edge to write to.",
+      "severity": "blocking"
+    },
+    {
+      "id": "G2",
+      "title": "The live Requirement surface is not the one the link tables reference",
+      "evidence": "nebula.requirements (view over nebula.requirements_history) holds the 27 in-use rows; resolution.requirement holds 0. V220's resolution.request_requirement_link FKs to resolution.requirement(id), so it cannot reference any live requirement.",
+      "consequence": "Even if a link were authored it would be unwritable or dangling; the canonical landing (plan 8261650) canonicalized WorkRequests but not Requirements.",
+      "severity": "blocking"
+    },
+    {
+      "id": "G3",
+      "title": "Blueprint → Requirement parentage is not representable through the authoring API",
+      "evidence": "POST /api/plans writes nebula.blueprints_history with payload.spec_ref and payload.requirement_ref hardcoded to null (typescript/nebula-srv/src/routes.ts, blueprintPayload literal). No request field sets them, and no FK validates them. 4 of 54 blueprints happen to carry a resolvable requirement_ref (imported rows); the 5 pending blueprints carry empty refs.",
+      "consequence": "'For each Requirement, create a Blueprint' cannot be expressed: the blueprint is born parentless and the link is advisory JSON at best.",
+      "severity": "blocking"
+    },
+    {
+      "id": "G4",
+      "title": "Requirement → WorkRequest provenance is unpopulated and its shortcut is gone",
+      "evidence": "resolution.work_request = 50 rows, resolution.request_requirement_link = 0 rows. resolution.work_request.source_requirement_id no longer exists (V221 cutover), so the dropped shortcut left no backfilled link behind.",
+      "consequence": "A WorkRequest compiled today cannot state which Requirement it implements; the chain breaks at the last hop.",
+      "severity": "blocking"
+    },
+    {
+      "id": "G5",
+      "title": "Compilation binds a plan by column, not by Blueprint identity",
+      "evidence": "POST /api/requirements/:id/compile optionally creates a Conduit plan and links it via UPDATE requirements SET conduit_plan_id (routes.ts). The Blueprint row (blueprints_history) is not part of that path, and no Specification context participates.",
+      "consequence": "Requirement → plan exists; Requirement → Blueprint → WorkRequest does not. The two plan notions are joined only by plan_number convention.",
+      "severity": "blocking"
+    },
+    {
+      "id": "G6",
+      "title": "There is no existing grouped-Requirement instance to imitate",
+      "evidence": "0 of 27 current requirements have parent_id set; req_type is null for 23 (4 Story). nebula.assess_ripple already traverses requirement parent/child hierarchy, so the traversal exists but has never had a tree.",
+      "consequence": "The cheapest interim representation (Specification = Epic root with child Requirements) is available structurally but has zero precedent, and would be a convention rather than a type.",
+      "severity": "shaping"
+    }
+  ],
+  "representations": {
+    "interim_convention_available": {
+      "description": "Specification as a root requirement with req_type='Epic' and Requirements as children via parent_id; Blueprint parentage carried in payload.requirement_ref.",
+      "limits": "Convention only: no Specification identity, no goal/status lifecycle, no FK on blueprint parentage, and nothing prevents a childless or multi-parent tree.",
+      "recommended_for": "unblocking one pilot Specification only, if the operator wants immediate authoring before the type work lands."
+    },
+    "proposed_minimal_types": [
+      {
+        "id": "P1",
+        "name": "Specification container",
+        "shape": "resolution.specification_set(id uuid PK, title, goal, status in (draft,ratified,retired), source_record_id uuid -> nebula.agent_records, system_id uuid NULL, valid_from/valid_until/recorded_on_dt/recorded_until_dt, created_at) with partial unique index on current rows; existing per-agenda rows renamed or viewed as specification_revision.",
+        "why": "Named, goal-bearing grouping with its own lifecycle; does not overload the revision table.",
+        "open_question": "Does the Architect's 'Specification' equal this container, or the revision artifact? Naming and ownership must be ratified before DDL."
+      },
+      {
+        "id": "P2",
+        "name": "Specification→Requirement membership",
+        "shape": "resolution.specification_requirement(specification_id FK, requirement_id FK, ordinal int, role in (primary,supporting), valid_from/valid_until/recorded_on_dt/recorded_until_dt) with PK/unique on (specification_id, requirement_id) among current rows.",
+        "why": "Makes 'grouped collection' a real edge with order, without duplicating requirement text.",
+        "open_question": "Membership must target whichever requirement surface is declared canonical (see P4)."
+      },
+      {
+        "id": "P3",
+        "name": "Blueprint parentage",
+        "shape": "blueprints_history gains specification_id uuid NULL and requirement_id uuid NULL (FK-validated), populated by POST /api/plans from explicit request fields; payload refs become projections of the columns.",
+        "why": "Turns the advisory JSON refs into an enforceable edge at authoring time.",
+        "open_question": "Add columns (schema change) vs validate-then-write payload only (no schema change, weaker)."
+      },
+      {
+        "id": "P4",
+        "name": "Single Requirement authority",
+        "shape": "Either (a) port nebula.requirements_history rows into resolution.requirement identity-preserving and repoint nebula-srv, or (b) declare nebula.requirements canonical for the requirement layer and retarget V220's FK.",
+        "why": "Every other edge depends on this; with two surfaces, links are either dangling or unrepresentable.",
+        "open_question": "This is the load-bearing authority decision. (a) matches the Architect's declared target and V220; (b) is cheaper but contradicts the canonical landing."
+      },
+      {
+        "id": "P5",
+        "name": "Compile provenance",
+        "shape": "On Requirement→plan compilation, insert resolution.request_requirement_link(request_id, requirement_id, relation='implements', provenance='compile:<receiptId>') in the same transaction as the plan link.",
+        "why": "Closes the last hop and makes the chain auditable end to end.",
+        "open_question": "Depends on P4 and on the WorkRequest TypeSpec contract question left open in 4fb5f9b4."
+      }
+    ],
+    "sequencing": ["P4 (authority)", "P1 + P2 (grouping)", "P3 (blueprint parentage)", "P5 (compile provenance)", "import this derivation"]
+  },
+  "specifications": [
+    {
+      "id": "SPC-1",
+      "title": "WorkRequest canonicalization is closed and provable",
+      "goal": "Finish the residual ledger, replication and reader-proof work so the canonical WorkRequest landing can be depended on rather than merely declared complete.",
+      "outcome": "V187 is ledgered, the four recent migrations are replicated to vanadium, and no consumer still depends on the dropped source_requirement shortcut.",
+      "source": "Analyst R2 Tier 1 (steps 1A-1C), re-verified: plan 8261650 is completed; V219/V220/V221 are ledgered; V187 is not.",
+      "scope_boundary": "Documentary ledger row, replication evidence and reader audits only. No schema change, no data repair, no new canonical surface.",
+      "requirements": [
+        {
+          "id": "SPC-1.R1",
+          "title": "Ledger V187",
+          "outcome": "resolution.migration_ledger contains exactly one documentary row for V187__work_request_view_demotion.",
+          "acceptance_criteria": [
+            "SELECT count(*) FROM resolution.migration_ledger WHERE migration_label LIKE 'V187%' returns 1.",
+            "The row names the merge commit, the observed apply window, and states that the apply predates the ledger entry.",
+            "The change performs no schema or data mutation beyond the ledger INSERT, and is idempotent (WHERE NOT EXISTS on label)."
+          ],
+          "evidence": ["ledger SELECT output", "reviewed SQL file diff", "idempotent second run output"],
+          "depends_on": [],
+          "verification_owner": "tester",
+          "representable_today": true,
+          "blocked_by": [],
+          "blueprint_intent": {
+            "approach": "DBA-authored idempotent INSERT in a reviewed SQL file under an operator-gated ledger path; no migration runner involvement.",
+            "deliverable": "sql/ledger/V187_migration_ledger_backfill.sql",
+            "tests": "throwaway-DB test applying schema skeleton + file twice, asserting one row"
+          },
+          "work_request_intent": {
+            "request_kind": "build",
+            "deliverable": "ledger row present and queryable",
+            "compile_via": "conduit plan (small, single-artifact) — this requirement is documentary and does not need a Blueprint parent"
+          }
+        },
+        {
+          "id": "SPC-1.R2",
+          "title": "Replicate the recent resolution migrations to vanadium",
+          "outcome": "V187, V219, V220 and V221 are replicated off-machine with matching checksums.",
+          "acceptance_criteria": [
+            "The pg-backup run covering the four migrations exits 0 and its log names each one.",
+            "Per-table checksums for resolution.work_request, resolution.request_requirement_link and the V187-demoted views match between source and vanadium.",
+            "An R9 record cites the run id, timestamps and checksum output; any unreplicated item is named explicitly rather than implied."
+          ],
+          "evidence": ["backup log excerpt", "checksum comparison", "R9 agent record"],
+          "depends_on": ["SPC-1.R1"],
+          "verification_owner": "dba",
+          "representable_today": true,
+          "blocked_by": [],
+          "blueprint_intent": {
+            "approach": "Reuse the existing pg-backup timer; add a verification step that asserts the four migration labels are present on the target.",
+            "deliverable": "bin/verify_replication_manifest.sh (read-only target check) + run record",
+            "tests": "hermetic test over a fixture manifest, plus one live run recorded as evidence"
+          },
+          "work_request_intent": {
+            "request_kind": "verify",
+            "deliverable": "replication manifest match",
+            "compile_via": "conduit plan"
+          }
+        },
+        {
+          "id": "SPC-1.R3",
+          "title": "Prove no reader depends on the dropped source_requirement shortcut",
+          "outcome": "Every runtime reader of Requirement→WorkRequest provenance uses resolution.request_requirement_link, and a guard fails if the dropped column reappears in a query.",
+          "acceptance_criteria": [
+            "A repo-wide search finds source_requirement_id only in migrations, historical docs, or explicit deprecation comments — never in a runtime query.",
+            "A hermetic guard test fails when a runtime query string references source_requirement_id.",
+            "The five previously identified consumer suites (moleculer routes, nebula-srv routes, cascade kg_impact, adonisjs harvest controller) pass unchanged."
+          ],
+          "evidence": ["grep transcript", "guard test name and failing fixture", "consumer suite results"],
+          "depends_on": [],
+          "verification_owner": "tester",
+          "representable_today": true,
+          "blocked_by": [],
+          "blueprint_intent": {
+            "approach": "Static scan over runtime source globs (excluding sql/ and docs/) wired into the existing guards job; allowlist entries require a deprecation comment on the same line.",
+            "deliverable": "bin/check_dropped_wr_shortcut.py + bin/tests/test_check_dropped_wr_shortcut.py",
+            "tests": "positive fixture (runtime query) fails; migration/docs fixture passes"
+          },
+          "work_request_intent": {
+            "request_kind": "build",
+            "deliverable": "guard in CI",
+            "compile_via": "conduit plan"
+          }
+        }
+      ]
+    },
+    {
+      "id": "SPC-2",
+      "title": "WorkRequest dispatch runs without a human at the keyboard",
+      "goal": "Turn the ratified queue from something a human starts into something that claims, executes and reduces work on its own, with evidence at each transition.",
+      "outcome": "One queued WorkRequest is claimed, executed and completed by the loop, twice in a row, with receipts and no manual /run.",
+      "source": "Analyst R2 Tier 2, including the 19 compiled drafts / 8 intent cards and the builder-grant / reviewer-ROLE_EXPIRED blockers.",
+      "scope_boundary": "Admission and capability grants are ratified artifacts first; this Specification does not authorize batch admission of all drafts.",
+      "requirements": [
+        {
+          "id": "SPC-2.R1",
+          "title": "Ratify the derivation admission package",
+          "outcome": "A Planner/Architect decision record accepts, amends or rejects the 19 drafts and 8 intent cards, with per-item disposition.",
+          "acceptance_criteria": [
+            "Every draft and intent card has exactly one disposition (accept, amend, reject) in a single ratified artifact.",
+            "No resolution.work_request row and no Conduit plan is created by the ratification itself.",
+            "Accepted items name the WorkRequest they will become and the evidence that will close them."
+          ],
+          "evidence": ["decision record id", "disposition artifact", "row-count check proving zero new WRs"],
+          "depends_on": [],
+          "verification_owner": "reviewer",
+          "representable_today": true,
+          "blocked_by": [],
+          "blueprint_intent": {
+            "approach": "Ratify as a document-level decision with a machine-readable disposition table, following the 46-row disposition precedent.",
+            "deliverable": "docs/derivations/wr-admission-disposition.v1.json + read-only verifier",
+            "tests": "verifier asserts 27 rows, one disposition each, no duplicate ids"
+          },
+          "work_request_intent": {
+            "request_kind": "verify",
+            "deliverable": "ratified admission artifact",
+            "compile_via": "decision, not a build WorkRequest"
+          }
+        },
+        {
+          "id": "SPC-2.R2",
+          "title": "Apply the builder grant and prove one claim",
+          "outcome": "A builder capability grant is live and one QUEUED WorkRequest moves to EXECUTING under a lease and to COMPLETED with a receipt.",
+          "acceptance_criteria": [
+            "The grant row exists with the ratified key set and is cited by record id.",
+            "A claim records actor, lease expiry and generation; a second concurrent claim is refused.",
+            "Completion writes a receipt naming the WorkRequest, the head sha and the verification that closed it."
+          ],
+          "evidence": ["grant row", "claim/refusal output", "completion receipt"],
+          "depends_on": ["SPC-2.R1"],
+          "verification_owner": "tester",
+          "representable_today": false,
+          "blocked_by": ["G4"],
+          "blueprint_intent": {
+            "approach": "Grant application is DBA-owned; the claim path is exercised through the existing kernel with a single seeded WR and a negative concurrent claim.",
+            "deliverable": "grant SQL (DBA) + python/conduit/tests/test_claim_lease.py",
+            "tests": "double-claim refusal; lease expiry sweep; receipt on completion"
+          },
+          "work_request_intent": {
+            "request_kind": "build",
+            "deliverable": "grant + claim proof",
+            "compile_via": "conduit plan"
+          }
+        },
+        {
+          "id": "SPC-2.R3",
+          "title": "Renew reviewer admission and prove one review reduction",
+          "outcome": "The reviewer's expired admission is resolved and a review request reduces to a review_judgement bound to a head sha.",
+          "acceptance_criteria": [
+            "The ROLE_EXPIRED condition is cleared by a recorded decision, not by relaxing the check.",
+            "A REVIEW_REQUEST resolves to exactly one review_judgement citing head sha and the criteria it applied.",
+            "A stale-head review is refused with a structured reason."
+          ],
+          "evidence": ["decision record", "judgement record", "stale-head refusal output"],
+          "depends_on": ["SPC-2.R2"],
+          "verification_owner": "reviewer",
+          "representable_today": false,
+          "blocked_by": ["G4"],
+          "blueprint_intent": {
+            "approach": "Re-grant through the capability path with a head-sha binding; add the stale-head negative test at the reducer boundary.",
+            "deliverable": "reviewer grant decision + reducer test",
+            "tests": "stale head refused; self-review excluded; duplicate judgement impossible"
+          },
+          "work_request_intent": {
+            "request_kind": "build",
+            "deliverable": "reviewer reduction proven",
+            "compile_via": "conduit plan"
+          }
+        },
+        {
+          "id": "SPC-2.R4",
+          "title": "Unattended dispatch drill",
+          "outcome": "The scheduler claims and completes two consecutive WorkRequests with no manual /run, and a mid-claim kill leaves no orphaned lease.",
+          "acceptance_criteria": [
+            "Three consecutive scheduler ticks produce exactly one claim per due WorkRequest.",
+            "Killing the runner mid-claim and restarting leaves the lease reclaimable after expiry and produces no duplicate execution.",
+            "The drill record cites both completions, the tick ids and the recovery evidence."
+          ],
+          "evidence": ["scheduler log", "kill/restart transcript", "two completion receipts"],
+          "depends_on": ["SPC-2.R2", "SPC-2.R3"],
+          "verification_owner": "tester",
+          "representable_today": false,
+          "blocked_by": ["G4", "G5"],
+          "blueprint_intent": {
+            "approach": "Drive the existing night-shift scheduler in shadow mode against a seeded queue, then flip only for the drill window.",
+            "deliverable": "drill runbook + evidence record",
+            "tests": "idempotent tick test; orphan-lease recovery test"
+          },
+          "work_request_intent": {
+            "request_kind": "build",
+            "deliverable": "unattended completion evidence",
+            "compile_via": "conduit plan"
+          }
+        }
+      ]
+    },
+    {
+      "id": "SPC-3",
+      "title": "Migration ledger and worktree state are trustworthy",
+      "goal": "Make the ledger a reliable preflight signal and stop the worktree backlog from hiding ready work.",
+      "outcome": "Every verified-live migration has a ledger row, the preflight guard fails closed, and the worktree inventory is pruned to live branches only.",
+      "source": "Analyst R2 Tier 3, re-verified: 38 ledger rows against 184 sql/V*.sql files; V187 is the only gap in V215-V221.",
+      "scope_boundary": "Documentary backfill and inventory only. No migration is applied or reverted by this Specification.",
+      "requirements": [
+        {
+          "id": "SPC-3.R1",
+          "title": "Backfill documentary ledger entries for verified-live migrations",
+          "outcome": "Every migration in V187-V214 that is verified live has exactly one ledger row citing its apply evidence.",
+          "acceptance_criteria": [
+            "A generated coverage report lists each migration file, live-object evidence, and ledger status.",
+            "Each new row cites a merge commit or apply record and states whether the apply predates the ledger entry.",
+            "Re-running the backfill inserts nothing (idempotent)."
+          ],
+          "evidence": ["coverage report", "ledger count before/after", "idempotent rerun"],
+          "depends_on": ["SPC-1.R1"],
+          "verification_owner": "dba",
+          "representable_today": true,
+          "blocked_by": [],
+          "blueprint_intent": {
+            "approach": "Generate a reviewed SQL batch from the coverage report; DBA applies under the ledger path; no migration runner.",
+            "deliverable": "bin/ledger_coverage_report.py + generated SQL batch",
+            "tests": "report correctness against a fixture schema; idempotency test"
+          },
+          "work_request_intent": {
+            "request_kind": "build",
+            "deliverable": "ledger coverage complete for the range",
+            "compile_via": "conduit plan"
+          }
+        },
+        {
+          "id": "SPC-3.R2",
+          "title": "Fail-closed ledger preflight",
+          "outcome": "Preflight refuses to proceed when a live schema object has no ledger row, and passes on the repaired state.",
+          "acceptance_criteria": [
+            "With a deliberately unledgered live table, preflight exits non-zero and names the object.",
+            "On the repaired state it exits zero and prints the counted evidence.",
+            "Both behaviours are covered by a throwaway-DB test."
+          ],
+          "evidence": ["negative run output", "positive run output", "test name"],
+          "depends_on": ["SPC-3.R1"],
+          "verification_owner": "tester",
+          "representable_today": true,
+          "blocked_by": [],
+          "blueprint_intent": {
+            "approach": "Compare information_schema objects introduced by migration files against ledger labels; unknown provenance fails closed.",
+            "deliverable": "bin/check_ledger_preflight.py",
+            "tests": "throwaway DB with one unledgered table fails; repaired DB passes"
+          },
+          "work_request_intent": {
+            "request_kind": "build",
+            "deliverable": "preflight guard wired into CI",
+            "compile_via": "conduit plan"
+          }
+        },
+        {
+          "id": "SPC-3.R3",
+          "title": "Worktree and branch inventory with a safe prune",
+          "outcome": "The 82-worktree backlog is inventoried with merge status, and only merged, clean worktrees are pruned.",
+          "acceptance_criteria": [
+            "The inventory lists every worktree with branch, merge status, dirty state and associated PR.",
+            "Prune refuses any dirty worktree or unmerged branch and reports why.",
+            "Before/after counts and the exact pruned list are recorded."
+          ],
+          "evidence": ["inventory output", "prune refusal cases", "before/after counts"],
+          "depends_on": [],
+          "verification_owner": "reviewer",
+          "representable_today": true,
+          "blocked_by": [],
+          "blueprint_intent": {
+            "approach": "Read git worktree list + gh pr list; delete only when merged and clean; dry-run by default.",
+            "deliverable": "bin/worktree_inventory.py",
+            "tests": "hermetic fixture with merged/dirty/unmerged cases"
+          },
+          "work_request_intent": {
+            "request_kind": "build",
+            "deliverable": "pruned inventory with evidence",
+            "compile_via": "conduit plan"
+          }
+        }
+      ]
+    },
+    {
+      "id": "SPC-4",
+      "title": "Ingestion and infrastructure drift are closed",
+      "goal": "Restore transcript ingestion and make the deployment manifest agree with what is actually running.",
+      "outcome": "Absorb is ingesting again, WAL/PITR posture is decided and recorded, and Terrain no longer reports services offline while they answer.",
+      "source": "Analyst R2 Tier 4, including the WAL deadline, the 7 thallium services and the two absorb worktrees.",
+      "scope_boundary": "Configuration and deployment repair only. No new service is introduced and no data model changes.",
+      "requirements": [
+        {
+          "id": "SPC-4.R1",
+          "title": "Decide and record WAL/PITR posture",
+          "outcome": "archive_mode and archive_command are recorded, and either PITR is proven by a restore test or its absence is explicitly accepted with a dated decision.",
+          "acceptance_criteria": [
+            "SHOW archive_mode / archive_command output is recorded.",
+            "If archiving is enabled, a restore-to-timestamp test succeeds and is cited.",
+            "If it remains off, a decision record names the risk owner and a revisit date."
+          ],
+          "evidence": ["SHOW output", "restore test or decision record"],
+          "depends_on": [],
+          "verification_owner": "dba",
+          "representable_today": true,
+          "blocked_by": [],
+          "blueprint_intent": {
+            "approach": "Configuration audit first; restore rehearsal on a throwaway instance; decision record either way.",
+            "deliverable": "runbook + evidence record",
+            "tests": "restore rehearsal checklist with named target database (Ruling 29)"
+          },
+          "work_request_intent": {
+            "request_kind": "build",
+            "deliverable": "recorded posture with evidence",
+            "compile_via": "conduit plan"
+          }
+        },
+        {
+          "id": "SPC-4.R2",
+          "title": "Reconcile Terrain manifest with live probes",
+          "outcome": "The 7 thallium services' manifest state matches their probe result, and the IPv6 probe misconfiguration is fixed.",
+          "acceptance_criteria": [
+            "Manifest state and probe state agree for all 7 services.",
+            "nexus-console, nebula-ui and cascade-ui probe over the configured address family and report UP.",
+            "The topology view shows zero false-OFFLINE entries."
+          ],
+          "evidence": ["probe transcript", "manifest diff", "topology view counts"],
+          "depends_on": [],
+          "verification_owner": "tester",
+          "representable_today": true,
+          "blocked_by": [],
+          "blueprint_intent": {
+            "approach": "Fix probe address resolution, then update manifest rows to observed state with a validator that fails on disagreement.",
+            "deliverable": "probe config change + manifest reconciliation script",
+            "tests": "validator test with UP/OFFLINE fixtures"
+          },
+          "work_request_intent": {
+            "request_kind": "build",
+            "deliverable": "zero manifest/probe disagreements",
+            "compile_via": "conduit plan"
+          }
+        },
+        {
+          "id": "SPC-4.R3",
+          "title": "Resume transcript ingestion",
+          "outcome": "The absorb timeout and model fixes are landed and a new transcript is ingested end to end.",
+          "acceptance_criteria": [
+            "Both absorb worktrees are merged or explicitly closed with a reason.",
+            "A transcript posted after deployment appears in the transcripts surface.",
+            "Ingestion lag is below 24h at the time of verification."
+          ],
+          "evidence": ["merge/close links", "new transcript id", "lag query output"],
+          "depends_on": [],
+          "verification_owner": "tester",
+          "representable_today": true,
+          "blocked_by": [],
+          "blueprint_intent": {
+            "approach": "Land the two existing fixes, then prove ingestion with a single known transcript rather than a bulk replay.",
+            "deliverable": "merged fixes + ingestion proof",
+            "tests": "absorb unit tests + one live ingestion check"
+          },
+          "work_request_intent": {
+            "request_kind": "build",
+            "deliverable": "ingestion resumed with evidence",
+            "compile_via": "conduit plan"
+          }
+        }
+      ]
+    },
+    {
+      "id": "SPC-5",
+      "title": "Service inventory is bound to the semantic spine",
+      "goal": "Give the service estate one canonical, deterministic binding to assets, and resume the promotion path that feeds the cockpit.",
+      "outcome": "The unmapped services are bound or queued with reasons, the Stage-3 promotion pipeline runs again, and one SOLScript widget is proven end to end.",
+      "source": "Analyst R2 Tier 5, including 36/102 unbound services, the 0/25 stage-0 score and the throttler convergence goal.",
+      "scope_boundary": "Binding and one pilot widget. Do not attempt the full cockpit convergence in this Specification.",
+      "requirements": [
+        {
+          "id": "SPC-5.R1",
+          "title": "Deterministic service→asset binding",
+          "outcome": "Unmapped Terrain services are bound by a deterministic rule or queued for review with a stated reason.",
+          "acceptance_criteria": [
+            "A binding report accounts for all 102 services: bound, queued, or excluded with reason.",
+            "No binding is created below the declared similarity floor; below-floor cases go to the review queue.",
+            "Re-running the binder is idempotent."
+          ],
+          "evidence": ["binding report receipt", "review queue count", "idempotent rerun"],
+          "depends_on": [],
+          "verification_owner": "analyst",
+          "representable_today": true,
+          "blocked_by": [],
+          "blueprint_intent": {
+            "approach": "Deterministic name/path rules first; embedding similarity only as a ranked suggestion, never as an automatic bind.",
+            "deliverable": "bin/bind_services_to_assets.py + report",
+            "tests": "fixture services bound/excluded correctly; idempotency"
+          },
+          "work_request_intent": {
+            "request_kind": "build",
+            "deliverable": "100% accounted-for inventory",
+            "compile_via": "conduit plan"
+          }
+        },
+        {
+          "id": "SPC-5.R2",
+          "title": "Resume the Stage-3 promotion pipeline",
+          "outcome": "One promotion run completes with a receipt and no manual database writes.",
+          "acceptance_criteria": [
+            "A promotion run produces a receipt naming inputs, gate results and outputs.",
+            "No row is written outside the promotion service's canonical path.",
+            "The run is reproducible from the receipt alone."
+          ],
+          "evidence": ["promotion receipt", "write-audit check", "replay output"],
+          "depends_on": ["SPC-5.R1"],
+          "verification_owner": "tester",
+          "representable_today": true,
+          "blocked_by": [],
+          "blueprint_intent": {
+            "approach": "Unblock the halted pipeline rather than rebuilding it; add the write-audit check as the acceptance instrument.",
+            "deliverable": "pipeline run + write-audit report",
+            "tests": "replay from receipt matches outputs"
+          },
+          "work_request_intent": {
+            "request_kind": "build",
+            "deliverable": "pipeline resumed with receipt",
+            "compile_via": "conduit plan"
+          }
+        },
+        {
+          "id": "SPC-5.R3",
+          "title": "First SOLScript-backed throttler widget",
+          "outcome": "One of nebula-*, barbie or atlas-ui renders from a SOLScript contract instead of imperative fetch logic, with parity evidence.",
+          "acceptance_criteria": [
+            "The widget's data comes from one SOLScript contract with no parallel hand-written fetch path.",
+            "Old and new render the same data for a fixed fixture (parity test).",
+            "Removing the legacy path does not change the rendered output."
+          ],
+          "evidence": ["contract file", "parity test result", "before/after fixture diff"],
+          "depends_on": ["SPC-5.R1"],
+          "verification_owner": "reviewer",
+          "representable_today": true,
+          "blocked_by": [],
+          "blueprint_intent": {
+            "approach": "Pick the smallest widget, express its projection as a SOLScript contract, keep the legacy path behind a flag until parity passes.",
+            "deliverable": "one widget + contract + parity test",
+            "tests": "fixture parity; flag-off legacy equivalence"
+          },
+          "work_request_intent": {
+            "request_kind": "build",
+            "deliverable": "one widget on the semantic spine",
+            "compile_via": "conduit plan"
+          }
+        }
+      ]
+    }
+  ],
+  "open_decision": {
+    "id": "D1",
+    "question": "Which Requirement surface is canonical for the Specification/Blueprint/WorkRequest chain: port nebula.requirements into resolution.requirement (P4a), or declare nebula.requirements canonical and retarget V220's FK (P4b)?",
+    "why_it_blocks": "P1/P2/P3/P5 all reference Requirements. With resolution.requirement at 0 rows and the live 27 in nebula, either choice is a real authority move with migration consequences; neither can be inferred from the code.",
+    "options": [
+      {
+        "id": "P4a",
+        "label": "Port into resolution.requirement (matches V220 and the canonical landing)",
+        "cost": "identity-preserving port of 27 rows + nebula-srv read/write repoint + compatibility view window",
+        "benefit": "one authority, existing link tables become usable as designed"
+      },
+      {
+        "id": "P4b",
+        "label": "Declare nebula.requirements canonical and retarget the link FKs",
+        "cost": "V220 FK retarget migration + diverges from plan 8261650's declared target",
+        "benefit": "no data port; smaller immediate change"
+      }
+    ],
+    "recommendation": "P4a, because V220/V221 already landed on the resolution side and a second retarget would re-open the cutover plan 8261650 just closed.",
+    "deciders": ["architect", "planner", "dba", "operator"]
+  },
+  "non_goals": [
+    "No schema mutation or migration apply in this artifact",
+    "No Requirement, Specification, Blueprint or WorkRequest row creation",
+    "No Conduit plan creation",
+    "No Sonar writeback",
+    "No claim that the Analyst's unverified figures are measured facts (see captured_state.analyst_claims_not_reverified_here)"
+  ]
+}
