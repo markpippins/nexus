@@ -27,6 +27,17 @@ Pins the safety rails from the janitor docstring:
     verified, head-unchanged first, cooldown 30m + 3 lifetime attempts per
     (PR, head), --apply only, never merges; genuinely running runs and
     nothing-stale probes stay on the silent CI_PENDING path
+  - serviced-request close-out: on a passing gate the open `to:tester`
+    request row for that PR is superseded under the answering attestation
+    (Decision 24, via bin/supersede-record.sh) with a `supersedes:<req8>`
+    back-link that preserves the successor's terminal status. A request is
+    LEFT OPEN when no live attestation services it — in particular when its
+    only attestation is retired/superseded — and check-only cycles only
+    dry-run the tool. already-closed rows are never re-closed. All four ask
+    shapes in use close (type:request, type:approval-request,
+    type:verification-request, type:attestation-request), and a row counts as
+    asking unless it carries status:superseded/retired/done — including rows
+    with no status tag at all.
 """
 
 from __future__ import annotations
@@ -36,6 +47,7 @@ import io
 import json
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -151,16 +163,30 @@ def run_cycle(**overrides):
     state_path = kwargs["state_path"]
     saved = (janitor.attestation_prefilter, janitor.post_change_log)
     pre_calls, log_calls = [], []
+    # Request close-out talks to the records API and then shells out to
+    # supersede-record.sh. Tests that do not inject records IO must stay
+    # hermetic, so the real implementation only runs when a caller supplies
+    # close_out_get; every other test gets a no-op (the close-out has its own
+    # tests below that DO inject it).
+    real_close = janitor.close_serviced_requests
+
+    def _close_no_io(pr, base_url, apply, **kw):
+        if kw.get("http_get") is None:
+            return []
+        return real_close(pr, base_url, apply, **kw)
+
     # Default: every PR looks attested (True) so gate-focused tests reach the
     # gate; _prefilter=False/None inject the definitive-empty/unknown cases.
     janitor.attestation_prefilter = lambda n, b: (
         pre_calls.append(n) or (True if pre_val is _sentinel else pre_val)
     )
     janitor.post_change_log = lambda t, b: (log_calls.append(t) or True)
+    janitor.close_serviced_requests = _close_no_io
     try:
         rc = janitor.run_cycle(**kwargs)
     finally:
         janitor.attestation_prefilter, janitor.post_change_log = saved
+        janitor.close_serviced_requests = real_close
     return rc, buf.getvalue(), json.loads(Path(state_path).read_text()), pre_calls, log_calls
 
 
@@ -1137,6 +1163,300 @@ def _probe_runner(result):
 
     runner.calls = calls
     return runner
+
+
+# ── serviced-request close-out ──────────────────────────────────────────────
+
+DISCOVERY_600 = {"returncode": 0, "stdout": json.dumps([
+    {"number": 600, "isDraft": False, "headRefOid": "b" * 40, "title": "A"},
+]), "stderr": ""}
+
+
+HEAD = "b" * 40  # DISCOVERY_600's headRefOid
+
+
+def _rec(rid, tags, record_type="report", title="", created=None):
+    """`created` defaults to NOW: only rows without a head tag are age-bounded,
+    and a 1970 default would make every untagged fixture look stale."""
+    return {"id": rid, "recordType": record_type, "tags": tags,
+            "title": title, "content": "",
+            "createdAt": int(time.time() * 1000) if created is None else created}
+
+
+REQUEST_OPEN = _rec(
+    "req-0001-open", ["to:tester", "type:request", "pr:600", "status:open"],
+    title="Attestation requested for PR #600",
+)
+ATT_LIVE = _rec(
+    "att-0001-live", ["type:attestation", "pr:600", "verdict:approve", "status:done"],
+    title="Tester attestation PR 600", created=2000,
+)
+ATT_RETIRED = _rec(
+    "att-0002-dead", ["type:attestation", "pr:600", "status:retired"],
+    title="Tester attestation PR 600 (withdrawn)", created=1500,
+)
+
+
+def make_records_io(request_rows, attestation_rows):
+    """Fake nebula records API: the PR-tag queries return every row for the
+    PR (requests and attestations together, as the real endpoint does); PATCH
+    is recorded rather than performed."""
+    calls = {"get": [], "patch": []}
+
+    def http_get(url):
+        calls["get"].append(url)
+        if "tag=pr:" in url or "tag=gate:" in url:
+            return {"items": list(request_rows) + list(attestation_rows)}
+        return {"items": []}
+
+    def http_patch(url, payload):
+        calls["patch"].append((url, payload))
+        return {"id": url.rsplit("/", 1)[-1]}
+
+    return http_get, http_patch, calls
+
+
+def _supersede_calls(calls):
+    return [c for c in calls if "supersede-record.sh" in c]
+
+
+def test_gate_pass_supersedes_serviced_request_row():
+    """A passing gate closes the open to:tester ask under the attestation."""
+    get, patch, io_calls = make_records_io([REQUEST_OPEN], [ATT_LIVE])
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        [("pr list", DISCOVERY_600),
+         ("merge_pr.py 600", {"returncode": 0, "stdout": PASSING, "stderr": ""}),
+         ("supersede-record.sh", {"returncode": 0, "stdout": "OK superseded", "stderr": ""}),
+         ("merge_pr.py 600 --merge", {"returncode": 0, "stdout": PASSING, "stderr": ""})],
+        apply=True, close_out_get=get, close_out_patch=patch)
+    assert rc == 0, out
+    sup = _supersede_calls(calls)
+    assert len(sup) == 1, calls
+    assert "supersede --old req-0001-open --new att-0001-live" in sup[0], sup[0]
+    assert "--dry-run" not in sup[0]
+    assert io_calls["patch"], "back-link PATCH was not issued"
+    url, payload = io_calls["patch"][0]
+    assert url.endswith("/api/agent-records/att-0001-live"), url
+    assert "supersedes:req-0001" in payload["tags"], payload
+    assert "status:done" in payload["tags"], "terminal status must survive the back-link"
+    assert "status:active" not in payload["tags"], "terminal successor must not be re-opened"
+    assert "superseded by att-0001" in out
+
+
+def test_gate_pass_leaves_unserviced_request_open():
+    """No attestation -> nothing to point at -> the request stays open."""
+    get, patch, io_calls = make_records_io([REQUEST_OPEN], [])
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        [("pr list", DISCOVERY_600),
+         ("merge_pr.py 600", {"returncode": 0, "stdout": PASSING, "stderr": ""}),
+         ("merge_pr.py 600 --merge", {"returncode": 0, "stdout": PASSING, "stderr": ""})],
+        apply=True, close_out_get=get, close_out_patch=patch)
+    assert rc == 0, out
+    assert not _supersede_calls(calls), calls
+    assert not io_calls["patch"]
+    assert "no attestation record" in out and "left open" in out
+
+
+def test_gate_pass_never_closes_under_withdrawn_attestation():
+    """A retired attestation is a tombstone, not a successor."""
+    get, patch, io_calls = make_records_io([REQUEST_OPEN], [ATT_RETIRED])
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        [("pr list", DISCOVERY_600),
+         ("merge_pr.py 600", {"returncode": 0, "stdout": PASSING, "stderr": ""}),
+         ("merge_pr.py 600 --merge", {"returncode": 0, "stdout": PASSING, "stderr": ""})],
+        apply=True, close_out_get=get, close_out_patch=patch)
+    assert rc == 0, out
+    assert not _supersede_calls(calls), "must not supersede under a retired row"
+    assert not io_calls["patch"], "no back-link on a withdrawn row"
+    assert "only withdrawn attestation" in out, out
+
+
+def test_close_out_is_dry_run_without_apply():
+    """Check-only cycles plan the close-out but mutate nothing."""
+    get, patch, io_calls = make_records_io([REQUEST_OPEN], [ATT_LIVE])
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        [("pr list", DISCOVERY_600),
+         ("merge_pr.py 600", {"returncode": 0, "stdout": PASSING, "stderr": ""}),
+         ("supersede-record.sh", {"returncode": 0, "stdout": "[dry-run]", "stderr": ""})],
+        apply=False, close_out_get=get, close_out_patch=patch)
+    assert rc == 0, out
+    sup = _supersede_calls(calls)
+    assert len(sup) == 1 and "--dry-run" in sup[0], calls
+    assert not io_calls["patch"], "check-only must not write"
+    assert "would be superseded" in out
+
+
+def test_close_out_skips_already_closed_request_row():
+    """A row already at status:superseded is not the janitor's business."""
+    closed = _rec("req-0002-done",
+                  ["to:tester", "type:request", "pr:600", "status:superseded",
+                   "superseded-by:att-0001"],
+                  title="Attestation requested for PR #600")
+    get, patch, io_calls = make_records_io([closed], [ATT_LIVE])
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        [("pr list", DISCOVERY_600),
+         ("merge_pr.py 600", {"returncode": 0, "stdout": PASSING, "stderr": ""}),
+         ("merge_pr.py 600 --merge", {"returncode": 0, "stdout": PASSING, "stderr": ""})],
+        apply=True, close_out_get=get, close_out_patch=patch)
+    assert rc == 0, out
+    assert not _supersede_calls(calls), calls
+    assert not io_calls["patch"]
+
+
+def test_close_out_failure_marks_tool_error_but_merge_proceeds():
+    """Bookkeeping failure is surfaced, not fatal to an otherwise sound merge."""
+    get, patch, io_calls = make_records_io([REQUEST_OPEN], [ATT_LIVE])
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        [("pr list", DISCOVERY_600),
+         ("merge_pr.py 600", {"returncode": 0, "stdout": PASSING, "stderr": ""}),
+         ("supersede-record.sh", {"returncode": 2, "stdout": "", "stderr": "policy refusal"}),
+         ("merge_pr.py 600 --merge", {"returncode": 0, "stdout": PASSING, "stderr": ""})],
+        apply=True, close_out_get=get, close_out_patch=patch)
+    assert rc == 1, "a failed close-out must surface as a tool error"
+    assert any("--merge" in c for c in calls), "the merge must still be attempted"
+    assert "supersede FAILED" in out, out
+    assert not io_calls["patch"], "no back-link when the supersede failed"
+
+
+def test_close_out_covers_every_request_shape_in_use():
+    """Every to:tester ask shape closes, with a status tag or without one.
+
+    type:request alone left type:verification-request (#1035) and
+    type:attestation-request rows permanently open, and requiring status:open
+    excluded the 40 untagged rows — including #1035's own row.
+    """
+    shapes = ["type:request", "type:approval-request",
+              "type:verification-request", "type:attestation-request"]
+    rows = []
+    for i, shape in enumerate(shapes):
+        rows.append(_rec(f"req-open-{i}",
+                         ["to:tester", shape, "pr:600", "status:open"],
+                         title="Ask for PR #600"))
+        rows.append(_rec(f"req-notag-{i}",
+                         ["to:tester", shape, "pr:600"],
+                         title="Ask for PR #600"))
+    get, patch, io_calls = make_records_io(rows, [ATT_LIVE])
+    plan = [("pr list", DISCOVERY_600),
+            ("merge_pr.py 600", {"returncode": 0, "stdout": PASSING, "stderr": ""})]
+    plan += [("supersede-record.sh", {"returncode": 0, "stdout": "OK", "stderr": ""})] * len(rows)
+    plan += [("merge_pr.py 600 --merge", {"returncode": 0, "stdout": PASSING, "stderr": ""})]
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        plan, apply=True, close_out_get=get, close_out_patch=patch)
+    assert rc == 0, out
+    sup = _supersede_calls(calls)
+    assert len(sup) == len(rows), f"closed {len(sup)} of {len(rows)} shapes: {sup}"
+    closed = {c.split("--old ", 1)[1].split()[0] for c in sup}
+    assert closed == {r["id"] for r in rows}, f"closed {sorted(closed)}"
+    assert len(io_calls["patch"]) == len(rows), "each close must back-link"
+
+
+def test_close_out_skips_answered_request_row():
+    """status:done is a closed request: never re-closed."""
+    done = _rec("req-0003-done",
+                ["to:tester", "type:verification-request", "pr:600", "status:done"],
+                title="Ask for PR #600")
+    get, patch, io_calls = make_records_io([done], [ATT_LIVE])
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        [("pr list", DISCOVERY_600),
+         ("merge_pr.py 600", {"returncode": 0, "stdout": PASSING, "stderr": ""}),
+         ("merge_pr.py 600 --merge", {"returncode": 0, "stdout": PASSING, "stderr": ""})],
+        apply=True, close_out_get=get, close_out_patch=patch)
+    assert rc == 0, out
+    assert not _supersede_calls(calls), calls
+    assert not io_calls["patch"]
+
+
+def test_close_out_ignores_rows_that_are_not_requests():
+    """A to:tester status update mentioning the PR is not an ask."""
+    update = _rec("rep-0001-update",
+                  ["to:tester", "type:status-update", "pr:600", "status:open"],
+                  title="Status on PR #600")
+    get, patch, io_calls = make_records_io([update], [ATT_LIVE])
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        [("pr list", DISCOVERY_600),
+         ("merge_pr.py 600", {"returncode": 0, "stdout": PASSING, "stderr": ""}),
+         ("merge_pr.py 600 --merge", {"returncode": 0, "stdout": PASSING, "stderr": ""})],
+        apply=True, close_out_get=get, close_out_patch=patch)
+    assert rc == 0, out
+    assert not _supersede_calls(calls), calls
+    assert not io_calls["patch"]
+
+
+def test_close_out_refuses_request_for_a_different_head():
+    """An ask pinned to an old head is not serviced by a later head's gate."""
+    stale = _rec("req-0004-oldhead",
+                 ["to:tester", "type:verification-request", "pr:600",
+                  "head:" + "9" * 40],
+                 title="Tester verification requested: PR #600 at 9999999")
+    get, patch, io_calls = make_records_io([stale], [ATT_LIVE])
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        [("pr list", DISCOVERY_600),
+         ("merge_pr.py 600", {"returncode": 0, "stdout": PASSING, "stderr": ""}),
+         ("merge_pr.py 600 --merge", {"returncode": 0, "stdout": PASSING, "stderr": ""})],
+        apply=True, close_out_get=get, close_out_patch=patch)
+    assert rc == 0, out
+    assert not _supersede_calls(calls), "must not close an ask for another head"
+    assert not io_calls["patch"]
+    assert "different head" in out, out
+
+
+def test_close_out_closes_request_whose_head_tag_matches():
+    """Short head tags match the gated head by prefix."""
+    short = _rec("req-0005-head",
+                 ["to:tester", "type:verification-request", "pr:600",
+                  "head:" + HEAD[:7]],
+                 title="Tester verification requested: PR #600")
+    get, patch, io_calls = make_records_io([short], [ATT_LIVE])
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        [("pr list", DISCOVERY_600),
+         ("merge_pr.py 600", {"returncode": 0, "stdout": PASSING, "stderr": ""}),
+         ("supersede-record.sh", {"returncode": 0, "stdout": "OK", "stderr": ""}),
+         ("merge_pr.py 600 --merge", {"returncode": 0, "stdout": PASSING, "stderr": ""})],
+        apply=True, close_out_get=get, close_out_patch=patch)
+    assert rc == 0, out
+    assert len(_supersede_calls(calls)) == 1, calls
+    assert len(io_calls["patch"]) == 1
+
+
+def test_close_out_refuses_untagged_request_older_than_window():
+    """No head tag -> age is the only bound, and a stale ask stays open."""
+    old = _rec("req-0006-stale",
+               ["to:tester", "type:verification-request", "pr:600"],
+               title="Tester verification requested: PR #600",
+               created=int(time.time() * 1000) - 30 * 86400 * 1000)
+    get, patch, io_calls = make_records_io([old], [ATT_LIVE])
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        [("pr list", DISCOVERY_600),
+         ("merge_pr.py 600", {"returncode": 0, "stdout": PASSING, "stderr": ""}),
+         ("merge_pr.py 600 --merge", {"returncode": 0, "stdout": PASSING, "stderr": ""})],
+        apply=True, close_out_get=get, close_out_patch=patch)
+    assert rc == 0, out
+    assert not _supersede_calls(calls), "stale untagged ask must not close"
+    assert not io_calls["patch"]
+    assert "older than" in out and "no head tag" in out, out
+
+
+def test_request_bounds_helper():
+    now = int(time.time() * 1000)
+    b = lambda **kw: janitor.request_bounds(dict(kw), HEAD, now)  # noqa: E731
+    assert b(tags=["head:" + HEAD[:12]]) == (True, "head-match")
+    assert b(tags=["head:" + "9" * 12]) == (False, "head-mismatch")
+    assert b(tags=[], createdAt=now - 86400 * 1000) == (True, "age-ok")
+    assert b(tags=[]) == (False, "undated"), "fail closed when freshness is unknowable"
+    assert b(tags=["head:abc"]) == (False, "head-mismatch"), "a 3-char head is not a match"
+
+
+def test_close_out_can_be_disabled():
+    """--no-request-close wiring: no records lookup at all."""
+    get, patch, io_calls = make_records_io([REQUEST_OPEN], [ATT_LIVE])
+    rc, out, state, calls, pre, logs = _cycle_with_runner(
+        [("pr list", DISCOVERY_600),
+         ("merge_pr.py 600", {"returncode": 0, "stdout": PASSING, "stderr": ""}),
+         ("merge_pr.py 600 --merge", {"returncode": 0, "stdout": PASSING, "stderr": ""})],
+        apply=True, close_requests=False, close_out_get=get, close_out_patch=patch)
+    assert rc == 0, out
+    assert not _supersede_calls(calls)
+    assert not io_calls["get"], "disabled close-out must not query records"
 
 
 # ── dual-runnable runner (keep at EOF: collects every test_ defined above) ──

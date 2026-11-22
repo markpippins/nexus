@@ -16,7 +16,23 @@ One cycle:
   3. Run bin/merge_pr.py <N> --record-refusals in CHECK-ONLY mode (the flag
      only lets the gate record a refusal on the refused row and retire a
      refused row under an accepted successor; it never changes the verdict).
-     Only if every gate passes:
+     Only if every gate passes: close the `to:tester` request rows that asked
+     for this attestation (the Decision 24 supersede convention —
+     archive-before-mutation — applied by bin/supersede-record.sh, plus a
+     `supersedes:<req8>` back-link on the answering attestation). A request
+     is left open when no live attestation services it: a withdrawn
+     (retired/superseded) attestation is never a successor. The request
+     shapes recognised are those in use — type:request,
+     type:approval-request, type:verification-request and
+     type:attestation-request — and a row counts as still asking unless it
+     carries status:superseded/retired/done (so an untagged row is included;
+     most of the backlog is untagged). Check-only cycles run the tool with
+     --dry-run.
+     A row only closes if its ask refers to the head being gated: a
+     head:<sha> tag must match (prefix, >=7 hex), and a row without one must
+     be no older than REQUEST_MAX_AGE_DAYS. An ask for a head that has since
+     moved on stays open — otherwise a later head's attestation would
+     retroactively "service" a request it never answered. Then:
      if --apply, merge via bin/merge_pr.py <N> --merge (the gate re-runs all
      checks at merge time), then post a change-log entry. If the sole failing
      gate is "pr open & ready" (draft state), promote with `gh pr ready` once
@@ -67,6 +83,11 @@ Safety rails (all non-negotiable):
     rungs; exhausting the cap is surfaced once and left for a human.
   - The janitor never edits branches, never forces anything, never bypasses
     a gate: a BYPASS line in the gate report is treated as failure.
+  - Request close-out never targets a withdrawn attestation and never
+    re-closes an already-superseded request row; --no-request-close turns it
+    off entirely. It also refuses rows whose head tag does not match the
+    gated head, and untagged rows older than REQUEST_MAX_AGE_DAYS (14d), so a
+    stale ask cannot be closed by an unrelated later attestation.
 
 Change-log audit trail — every ACTION is logged to the Assembly change-log
 forum via bin/post-change-log.sh, individually:
@@ -304,6 +325,299 @@ def _sole_fail_is_pending_ci(proc: "subprocess.CompletedProcess") -> bool:
         and fails[0].startswith("ci green")
         and f"({gate_codes.CI_PENDING})" in fails[0]
     )
+
+
+SUPERSEDE_TOOL = BIN_DIR / "supersede-record.sh"
+REQUEST_INBOX_TAG = "to:tester"
+
+# Request shapes actually in use (2026-11-22 census of to:tester rows):
+#   type:request             the original shape (11 open)
+#   type:approval-request    tester's older ask (#623/#628 family, #674)
+#   type:verification-request  "Tester verification requested: PR #N" (#1035)
+#   type:attestation-request  "Attestation requested" (#550, #668, #848, #855)
+# A close-out keyed on `type:request` alone could never close the last two,
+# which is the majority of the still-asking backlog.
+REQUEST_TYPE_TAGS = frozenset({
+    "type:request",
+    "type:approval-request",
+    "type:verification-request",
+    "type:attestation-request",
+})
+
+# A request stops asking when it is superseded, retired, or explicitly done.
+# Everything else — status:open, status:claimed, status:in_progress, a
+# non-terminal marker like status:action-needed, or (very often) NO status tag
+# at all — still asks. The no-status case is not an edge: 40 of the 67
+# request-shaped rows carry no status tag, including the #1035
+# type:verification-request row, so requiring status:open would leave the
+# exact row this widening exists for permanently open.
+REQUEST_CLOSED_STATUS_TAGS = frozenset({
+    "status:superseded",
+    "status:retired",
+    "status:done",
+})
+
+# A request only services the gate that answered THAT ask. Rows that pin a
+# head (`head:<sha>`, which the tester's verification-request shape does)
+# must match the gated head; rows without one can only be bounded by age.
+# Without a bound, an old ask would be closed because a LATER head passed —
+# recording a service that never happened. #1035's row names head 99b4b4e2
+# from weeks ago while the PR has moved on; the old code would have closed it
+# the moment anything attested the current head.
+REQUEST_MAX_AGE_DAYS = 14  # mirrors record_hygiene_sweep's staleness horizon
+MIN_HEAD_PREFIX = 7
+HEAD_TAG = "head:"
+
+
+def _head_shas(record: Dict[str, Any]) -> List[str]:
+    """Every `head:<sha>` tag on the row, lowercased."""
+    tags = (str(t).strip().lower() for t in record.get("tags") or [])
+    return [t[len(HEAD_TAG):] for t in tags
+            if t.startswith(HEAD_TAG) and len(t) > len(HEAD_TAG)]
+
+
+def _head_matches(tag_sha: str, head: str) -> bool:
+    """Prefix match either direction, never on fewer than 7 hex chars."""
+    a, b = (tag_sha or "").strip().lower(), (head or "").strip().lower()
+    if min(len(a), len(b)) < MIN_HEAD_PREFIX:
+        return False
+    return a.startswith(b) or b.startswith(a)
+
+
+def request_bounds(record: Dict[str, Any], head: str, now_ms: float) -> "tuple[bool, str]":
+    """(may_close, reason) — does this ask refer to the head being gated?
+
+    A head-tagged row must match `head`. Untagged rows fall back to age; a row
+    with neither a usable head tag nor a usable createdAt is refused
+    (fail-closed): its freshness cannot be established at all.
+    """
+    shas = _head_shas(record)
+    if shas:
+        return (True, "head-match") if any(_head_matches(s, head) for s in shas) else (False, "head-mismatch")
+    created = _merge_pr()._created_ms_of(record)
+    if created is None:
+        return False, "undated"
+    if now_ms - created > REQUEST_MAX_AGE_DAYS * 86400 * 1000:
+        return False, "stale-age"
+    return True, "age-ok"
+
+_merge_pr_module: Any = None
+
+
+def _merge_pr() -> Any:
+    """Load bin/merge_pr.py by path (once) to reuse its attestation
+    predicates. The close-out must agree with the gate on what counts as an
+    attestation and on what a withdrawal means; re-deriving either here is
+    how the two drifted apart before."""
+    global _merge_pr_module
+    if _merge_pr_module is None:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("merge_pr_for_janitor", MERGE_PR)
+        mod = importlib.util.module_from_spec(spec)
+        # Register before executing: merge_pr.py defines @dataclass rows and
+        # dataclasses resolves string annotations via sys.modules[cls.__module__],
+        # which is None for a module loaded by path that was never registered.
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+        _merge_pr_module = mod
+    return _merge_pr_module
+
+
+def _http_json_request(url: str, payload: Dict[str, Any], method: str, timeout: int = 15) -> Any:
+    """JSON request that MUTATES (PATCH). Kept separate from _urlopen_json so
+    read-only callers cannot accidentally acquire write behaviour."""
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method=method,
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8") or "{}")
+
+
+def _records_by_tag(
+    base_url: str,
+    tag: str,
+    http_get: Optional[Callable[[str], Any]] = None,
+    limit: int = 200,
+) -> List[Dict[str, Any]]:
+    """Rows carrying `tag` (nebula-srv filters this server-side)."""
+    fetch = http_get or _urlopen_json
+    url = f"{base_url.rstrip('/')}/api/agent-records?tag={tag}&limit={limit}"
+    data = fetch(url)
+    if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+        raise RuntimeError(f"unexpected agent-records payload for tag {tag!r}")
+    return [r for r in data["items"] if isinstance(r, dict)]
+
+
+def open_request_rows(records: Iterable[Dict[str, Any]], pr_number: int) -> List[Dict[str, Any]]:
+    """`to:tester` request rows for this PR that are still asking.
+
+    Requires a request type (REQUEST_TYPE_TAGS), to:tester, a PR mention, and
+    NO closed status. A row already superseded/retired/done is never re-closed.
+    """
+    mentions = _merge_pr().attestation_mentions_pr
+    out = []
+    for rec in records:
+        tags = {str(t or "").lower() for t in (rec.get("tags") or [])}
+        if not (tags & REQUEST_TYPE_TAGS):
+            continue
+        if tags & REQUEST_CLOSED_STATUS_TAGS:
+            continue
+        if REQUEST_INBOX_TAG not in tags:
+            continue
+        if not mentions(rec, pr_number):
+            continue
+        out.append(rec)
+    return out
+
+
+def select_servicing_attestation(
+    attestations: Iterable[Dict[str, Any]],
+) -> "tuple[Optional[Dict[str, Any]], str]":
+    """Pick the attestation that serviced the request, or explain why none did.
+
+    Only attestation-SHAPED, non-withdrawn rows qualify. The newest such row
+    wins (the last to land is the authoritative servicing); every other one is
+    reported to the caller so the pointer reason can name it.
+
+    A request whose only attestation-shaped rows are withdrawn returns
+    (None, "only-withdrawn") — a retirement or supersession is not a service, and a
+    pointer must never name a tombstone.
+    """
+    mp = _merge_pr()
+    shaped = [r for r in attestations if mp.is_attestation_record(r)]
+    live = [r for r in shaped if not mp.is_withdrawn(r)]
+    if not live:
+        return None, ("only-withdrawn" if shaped else "no-attestation")
+    live.sort(key=lambda r: _parse_float(r.get("createdAt")))
+    return live[-1], "serviced"
+
+
+def close_serviced_requests(
+    pr_number: int,
+    base_url: str,
+    apply: bool,
+    *,
+    http_get: Optional[Callable[[str], Any]] = None,
+    http_patch: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
+    runner: Optional[Callable] = None,
+    out: Any = sys.stdout,
+    head: str = "",
+    now_ms: Optional[float] = None,
+) -> List[Dict[str, Any]]:
+    """Close the `to:tester` request rows this PR's passing gate serviced.
+
+    Returns one outcome dict per request row considered. Never raises: a
+    lookup or tool failure is reported and returned (the merge decision is
+    independent of request bookkeeping), but the caller treats a "failed"
+    outcome as a tool error.
+    """
+    runner = runner or subprocess.run
+    mp = _merge_pr()
+    outcomes: List[Dict[str, Any]] = []
+    if now_ms is None:
+        now_ms = time.time() * 1000
+    # One lookup, keyed the same way the gate keys attestations: the PR's own
+    # tags. Scanning the `to:tester` inbox instead would be both wider and
+    # weaker — the endpoint pages, so an old request row falls outside the
+    # newest window (that is how #674 was missed on the first live dry-run)
+    # while every row it did return still needs PR matching by hand.
+    try:
+        rows: Dict[str, Dict[str, Any]] = {}
+        for tag in (f"pr:{pr_number}", f"gate:{pr_number}"):
+            for rec in _records_by_tag(base_url, tag, http_get):
+                if rec.get("id"):
+                    rows[str(rec["id"])] = rec
+    except Exception as exc:  # lookup failure must not block a merge
+        print(f"  #{pr_number}: close-out skipped — record lookup failed ({exc})", file=out)
+        return [{"pr": pr_number, "outcome": "lookup-failed", "detail": str(exc)}]
+
+    requests_ = open_request_rows(rows.values(), pr_number)
+    if not requests_:
+        return outcomes
+
+    chosen, why = select_servicing_attestation(rows.values())
+    for req in requests_:
+        req_id = str(req.get("id") or "")
+        if not req_id:
+            continue
+        if chosen is None:
+            detail = (
+                "only withdrawn attestation(s) — left open (a retirement is not a service)"
+                if why == "only-withdrawn"
+                else "no attestation record — left open"
+            )
+            print(f"  #{pr_number}: request {req_id[:8]} {detail}", file=out)
+            outcomes.append({"pr": pr_number, "request": req_id, "outcome": "kept-open",
+                             "reason": why})
+            continue
+
+        may_close, bound = request_bounds(req, head, now_ms)
+        if not may_close:
+            detail = {
+                "head-mismatch": f"ask names a different head than {(head or '?')[:8]} — left open",
+                "stale-age": f"older than {REQUEST_MAX_AGE_DAYS}d and carries no head tag — left open",
+                "undated": "no usable head tag or createdAt — left open",
+            }[bound]
+            print(f"  #{pr_number}: request {req_id[:8]} {detail}", file=out)
+            outcomes.append({"pr": pr_number, "request": req_id, "outcome": "kept-open",
+                             "reason": bound})
+            continue
+
+        att_id = str(chosen.get("id"))
+        others = [str(r.get("id"))[:8] for r in rows.values()
+                  if r.get("id") != att_id
+                  and mp.is_attestation_record(r) and not mp.is_withdrawn(r)]
+        reason = f"serviced: PR #{pr_number} attested (gate pass){'' if not others else '; also ' + ', '.join(others)}"
+        cmd = ["bash", str(SUPERSEDE_TOOL), "supersede", "--old", req_id,
+               "--new", att_id, "--reason", reason]
+        if not apply:
+            cmd.append("--dry-run")
+        proc = runner(cmd, capture_output=True, text=True, timeout=120)
+        if proc.returncode != 0:
+            print(
+                f"  #{pr_number}: request {req_id[:8]} supersede FAILED "
+                f"({(proc.stderr or proc.stdout).strip()[:160]}) — left as-is",
+                file=out,
+            )
+            outcomes.append({"pr": pr_number, "request": req_id, "attestation": att_id,
+                             "outcome": "failed"})
+            continue
+        if not apply:
+            print(f"  #{pr_number}: request {req_id[:8]} would be superseded by {att_id[:8]} (check-only)", file=out)
+            outcomes.append({"pr": pr_number, "request": req_id, "attestation": att_id,
+                             "outcome": "planned"})
+            continue
+
+        # Back-link on the successor: `supersedes:<req8>`. The catalog's
+        # terminal-successor exemption applies — a status:done attestation
+        # keeps that status (two lifecycle statuses on one row would be
+        # false), so only the provenance tag is added.
+        backlink = f"supersedes:{req_id[:8]}"
+        tags = list(chosen.get("tags") or [])
+        if backlink not in tags:
+            try:
+                patch = http_patch or (
+                    lambda url, body: _http_json_request(url, body, "PATCH")
+                )
+                patch(f"{base_url.rstrip('/')}/api/agent-records/{att_id}",
+                      {"tags": tags + [backlink]})
+            except Exception as exc:
+                print(
+                    f"  #{pr_number}: request {req_id[:8]} superseded, but back-link "
+                    f"{backlink} on {att_id[:8]} FAILED ({exc})",
+                    file=out,
+                )
+                outcomes.append({"pr": pr_number, "request": req_id, "attestation": att_id,
+                                 "outcome": "failed"})
+                continue
+        print(f"  #{pr_number}: request {req_id[:8]} superseded by {att_id[:8]} ({backlink})", file=out)
+        outcomes.append({"pr": pr_number, "request": req_id, "attestation": att_id,
+                         "outcome": "superseded"})
+    return outcomes
 
 
 def find_stale_checkrun(
@@ -832,6 +1146,9 @@ def run_cycle(
     extra_authors: Sequence[str] = (),
     runner: Optional[Callable] = None,
     out: Any = sys.stdout,
+    close_requests: bool = True,
+    close_out_get: Optional[Callable[[str], Any]] = None,
+    close_out_patch: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
 ) -> int:
     """One janitor cycle. Returns process exit code (0 = no tool errors)."""
     runner = runner or subprocess.run
@@ -983,6 +1300,19 @@ def run_cycle(
             held.append(num)
             continue
 
+        # Gates pass: the ask these request rows carry is answered. Closing
+        # them here (rather than leaving the queue to a human sweep) is the
+        # mechanical form of the 2026-11-22 close-out convention.
+        if close_requests:
+            close_out = close_serviced_requests(
+                num, base_url, apply,
+                http_get=close_out_get, http_patch=close_out_patch,
+                runner=runner, out=out,
+                head=pr.get("headRefOid", ""),
+            )
+            if any(o.get("outcome") == "failed" for o in close_out):
+                tool_error = True
+
         if not apply:
             print(f"  #{num}: ALL GATES PASS — check-only, no action (use --apply to merge)", file=out)
             continue
@@ -1053,6 +1383,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--cap", type=int, default=3, help="max merges per cycle (default 3)")
     ap.add_argument("--base-url", default=DEFAULT_NEBULA_BASE, help="nebula-srv base URL for attestation prefilter")
     ap.add_argument("--state", default=DEFAULT_STATE, help="state file path")
+    ap.add_argument(
+        "--no-request-close", action="store_true",
+        help="do not supersede serviced to:tester request rows when a gate passes",
+    )
     ap.add_argument("--author", default=os.environ.get("JANITOR_AUTHOR"), help="PR author filter (default: gh api user)")
     ap.add_argument(
         "--extra-author", action="append", default=None,
@@ -1073,6 +1407,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         apply=args.apply, cap=max(1, args.cap), author=author,
         base_url=args.base_url, state_path=Path(args.state), only_pr=args.pr,
         extra_authors=tuple(args.extra_author or ()),
+        close_requests=not args.no_request_close,
     )
 
 
