@@ -36,6 +36,23 @@ One sweep (READ-ONLY over records — it never mutates anything):
      every tick; its `last`/`count` just advance). Candidates are RE-CHECKED
      (point lookup) inside the posting guard so a record that went terminal
      between scan and post is dropped, not nagged.
+  5. ASK-CLOSE (orthogonal rule): open `to:tester` ask rows are a lifecycle
+     class of their own, and 42 of the 53 live ones carry NO status:open tag —
+     so they get their own scan (tag=to:tester) rather than riding step 1.
+     An ask row is serviced by a GATE PASS, so a PR that merged or closed
+     never gates again and its ask is unreachable by the janitor's close-out
+     forever (engineer proposal 849d61cb). This rule plans that class:
+       resolve  pr:<N> tag first, else parse '#<N>' out of the title
+                (several numbers = a multi-PR ask; ALL of them must be
+                non-open, any open or unknown one fails closed)
+       PR OPEN          -> HOLD-pr-open (the gate close-out owns it)
+       PR UNKNOWN       -> HOLD-pr-unknown (cannot establish it is dead)
+       no number        -> HOLD-no-pr (needs a human decision, not a guess)
+       MERGED/CLOSED    -> SUPERSEDE under a live attestation for that PR
+                           (gate contract: merge_pr.py's shape + withdrawn +
+                           mention predicates), else RETIRE
+     Plans are validated read-only through supersede-record.sh --dry-run in
+     BOTH modes, so the printed verdict is checked, not guessed.
 
 Modes: default is a pure classification print (no state write, no forum
 post). --apply runs the full validation + evidence post. NOTE: --apply never
@@ -52,6 +69,7 @@ Usage:
   record_hygiene_sweep.py                 # classify + print, zero writes
   record_hygiene_sweep.py --apply         # + dry-run validation, state, evidence post
   record_hygiene_sweep.py --apply --min-age-days 30 --max-candidates 40
+  record_hygiene_sweep.py --no-ask-close   # skip rule 5
 
 Exit codes: 0 ok (or dry-run classification); 1 some validations errored;
             2 hard error (nebula unreachable — nothing written).
@@ -61,11 +79,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 import urllib.request
 from datetime import datetime, timezone
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -92,6 +112,21 @@ REQUEST_TYPES = {"assessment"}
 REQUEST_HINT_TAGS = ("type:proposal", "type:request", "type:question")
 I4_TYPES = {"prompt", "response"}
 
+# ── rule 5 (ASK-CLOSE) vocabulary ────────────────────────────────────────
+# Mirrors bin/attestation_janitor.py's request vocabulary: a row asks while it
+# carries a request type and no terminal status. The janitor closes these on a
+# gate pass; this rule closes the ones whose PR will never gate again.
+ASK_INBOX_TAG = "to:tester"
+ASK_TYPE_TAGS = frozenset({
+    "type:request", "type:approval-request",
+    "type:verification-request", "type:attestation-request",
+})
+ASK_CLOSED_STATUS_TAGS = frozenset({"status:superseded", "status:retired", "status:done"})
+NON_OPEN_PR_STATES = frozenset({"MERGED", "CLOSED"})
+PR_TAG_RE = re.compile(r"^pr:(\d+)$")
+TITLE_PR_RE = re.compile(r"#([1-9]\d{1,4})\b")   # '#613'; never '#0008' (migration) or '@7f43c6e6d'
+MAX_ASK_VALIDATIONS = 120
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -111,19 +146,31 @@ def _age_days(createdAt: Any, now_s: float) -> Optional[float]:
     return None
 
 
-def scan_open_records(fetch: Callable[[str], Any]) -> List[dict]:
-    """All records tagged status:open, following offset pagination."""
+def _age_key(record: dict, now_s: float) -> float:
+    """Sort key where newest sorts first and UNDATED sorts last (never freshest)."""
+    age = _age_days(record.get("createdAt"), now_s)
+    return float("inf") if age is None else age
+
+
+def scan_by_tag(fetch: Callable[[str], Any], tag: str) -> List[dict]:
+    """Every record carrying `tag`, following offset pagination."""
     out: List[dict] = []
+    limit = PAGE_LIMIT
     for page in range(MAX_PAGES):
-        url = f"/api/agent-records?tag=status:open&limit={PAGE_LIMIT}&offset={page * PAGE_LIMIT}"
+        url = f"/api/agent-records?tag={tag}&limit={limit}&offset={page * limit}"
         data = fetch(url)
         items = data.get("items") if isinstance(data, dict) else None
         if not isinstance(items, list):
             raise RuntimeError(f"unexpected payload for {url}")
         out.extend(items)
-        if len(items) < PAGE_LIMIT:
+        if len(items) < limit:
             break
     return out
+
+
+def scan_open_records(fetch: Callable[[str], Any]) -> List[dict]:
+    """All records tagged status:open."""
+    return scan_by_tag(fetch, "status:open")
 
 
 def stale_open_records(records: List[dict], min_age_days: float, now_s: float) -> List[dict]:
@@ -153,31 +200,128 @@ def classify(record: dict, age_days: Optional[float]) -> str:
     return "MANUAL-REVIEW"
 
 
-def dry_run_retire(
+# ── rule 5: ask rows whose PR is merged or closed ───────────────────────
+
+def is_ask_row(record: dict) -> bool:
+    """Still ASKING the tester: request-shaped, addressed, non-terminal.
+
+    This predicate is both the scan filter and the TOCTOU guard, because the
+    selection it encodes is the one that matters: 42 of the 53 live ask rows
+    carry no status:open tag, so a status:open test would reject almost all.
+    """
+    tags = {str(t or "").lower() for t in (record.get("tags") or [])}
+    return (ASK_INBOX_TAG in tags and bool(tags & ASK_TYPE_TAGS)
+            and not (tags & ASK_CLOSED_STATUS_TAGS))
+
+
+def ask_rows(records: List[dict]) -> List[dict]:
+    """Rows satisfying is_ask_row."""
+    return [r for r in records if is_ask_row(r)]
+
+
+def _pr_state(pr_states: Dict[int, str], number: int) -> str:
+    """OPEN / MERGED / CLOSED, or a fail-closed NOT-FOUND / UNKNOWN."""
+    if not pr_states:
+        return "UNKNOWN"          # gh unavailable: hold everything
+    return pr_states.get(int(number), "NOT-FOUND")   # never assume dead
+
+
+def pr_numbers(record: dict) -> "tuple[List[int], str]":
+    """(PR numbers this row asks about, source).
+
+    pr:<N> tags win outright (they are the intent, not the prose). Only a row
+    with no pr: tag falls back to '#<N>' numbers in the title, which is how
+    most historical asks name their PR.
+    """
+    tags = [str(t or "").lower() for t in (record.get("tags") or [])]
+    tagged = sorted({int(m.group(1)) for t in tags for m in [PR_TAG_RE.match(t)] if m})
+    if tagged:
+        return tagged, "tag"
+    title_nums = sorted({int(n) for n in TITLE_PR_RE.findall(record.get("title") or "")})
+    return title_nums, ("title" if title_nums else "none")
+
+
+def ask_plan(
+    record: dict,
+    pr_states: Dict[int, str],
+    attestations_for: Callable[[int], "tuple[Optional[dict], str]"],
+    now_s: float,
+) -> Dict[str, Any]:
+    """Decide what should happen to one ask row, without doing it.
+
+    SUPERSEDE / RETIRE require EVERY PR the row names to be merged or closed;
+    one open or unresolvable number holds the row. That way a mis-parsed title
+    can only ever cause a hold, never a close.
+    """
+    prs, source = pr_numbers(record)
+    plan: Dict[str, Any] = {
+        "id": record.get("id"), "title": record.get("title") or "",
+        "verdict": "", "prs": prs, "source": source, "states": {},
+        "attestation": None, "reason": "", "dry_run": None,
+    }
+    if not prs:
+        plan["verdict"] = "HOLD-no-pr"
+        plan["reason"] = "no pr: tag and no '#<N>' in the title"
+        return plan
+    states = {p: _pr_state(pr_states, p) for p in prs}
+    plan["states"] = states
+    open_prs = sorted(p for p, s in states.items() if s == "OPEN")
+    unknown = sorted(p for p, s in states.items() if s not in NON_OPEN_PR_STATES and s != "OPEN")
+    if open_prs:
+        plan["verdict"] = "HOLD-pr-open"
+        plan["reason"] = ("still open, so the gate close-out owns it: "
+                          + ", ".join(f"#{p}" for p in open_prs))
+        return plan
+    if unknown:
+        plan["verdict"] = "HOLD-pr-unknown"
+        plan["reason"] = "state unknown: " + ", ".join(f"#{p}={states[p]}" for p in unknown)
+        return plan
+
+    best, why = None, "no-attestation"
+    for p in prs:
+        cand, reason = attestations_for(p)
+        if cand is None:
+            if why == "no-attestation":
+                why = reason
+            continue
+        if best is None or _age_key(cand, now_s) < _age_key(best, now_s):
+            best = cand
+    plan["attestation"] = best
+    prs_s = ", ".join(f"#{p}" for p in prs)
+    if best:
+        plan["verdict"] = "SUPERSEDE"
+        plan["reason"] = f"{prs_s} merged/closed; serviced by attestation {str(best.get('id'))[:8]}"
+    else:
+        plan["verdict"] = "RETIRE"
+        plan["reason"] = f"{prs_s} merged/closed with no live attestation ({why})"
+    return plan
+
+
+def dry_run_close(
     record_id: str,
     supersede_path: Path,
-    min_age_days: float,
     runner: Callable,
+    note: str,
+    successor: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Validate a retire proposal via supersede-record.sh --dry-run.
+    """Validate one close read-only through supersede-record.sh --dry-run.
 
-    The dry-run writes NOTHING (script contract); its exit code is the oracle:
-    0 actionable, 2 policy-refused (self-resolved), 1 tool error.
+    `successor` names the record that REPLACED this one (supersede: verbatim
+    archive, then a pointer); None retires it (a status transition, no
+    archive). The dry-run writes NOTHING (script contract); its exit code is
+    the oracle: 0 actionable, 2 policy-refused (already closed/resolved),
+    1 tool error. Both rules close records through this one path.
     """
-    note = (
-        f"record-hygiene sweep: status:open older than {min_age_days:g}d; "
-        "act is complete or ask resolved — retire with this note, or supersede "
-        "explicitly if a successor exists"
-    )
-    proc = runner([
-        "bash", str(supersede_path), "retire",
-        "--old", record_id,
-        "--note", note,
-        "--role", ROLE, "--model", MODEL,
-        "--dry-run",
-    ], capture_output=True, text=True, timeout=60)
+    if successor:
+        cmd = ["supersede", "--old", record_id, "--new", str(successor), "--reason", note]
+    else:
+        cmd = ["retire", "--old", record_id, "--note", note]
+    proc = runner(["bash", str(supersede_path), *cmd, "--role", ROLE,
+                   "--model", MODEL, "--dry-run"],
+                  capture_output=True, text=True, timeout=60)
     return {
         "exit": proc.returncode,
+        "oracle": {0: "ACTIONABLE", 2: "SELF-RESOLVED"}.get(proc.returncode, "TOOL-ERROR"),
         "stderr": (proc.stderr or "").strip()[:300],
     }
 
@@ -206,13 +350,24 @@ def post_change_log(title: str, body: str) -> bool:
         return False
 
 
-def _still_open(record_id: str, fetch: Callable[[str], Any]) -> bool:
-    """TOCTOU guard: re-read the record right before reporting it."""
+def _still_eligible(record_id: str, fetch: Callable[[str], Any],
+                    eligible: Callable[[dict], bool]) -> bool:
+    """TOCTOU guard: re-read the record right before reporting it.
+
+    `eligible` is the predicate the row was SELECTED by, so a row that stopped
+    qualifying between scan and post is dropped rather than nagged: status:open
+    for the stale-record rule, is_ask_row for the ask rule (which must not use
+    status:open — most ask rows never carried it).
+    """
     try:
         rec = fetch(f"/api/agent-records/{record_id}")
     except Exception:
         return True  # probe failed -> keep (fail-safe toward reporting)
-    return isinstance(rec, dict) and "status:open" in (rec.get("tags") or [])
+    return isinstance(rec, dict) and eligible(rec)
+
+
+def _has_status_open(record: dict) -> bool:
+    return "status:open" in (record.get("tags") or [])
 
 
 def run_sweep(
@@ -225,6 +380,9 @@ def run_sweep(
     state_path: Path,
     fetch: Callable[[str], Any],
     runner: Callable,
+    pr_states: Optional[Dict[int, str]] = None,
+    attestations_for: Optional[Callable[[int], "tuple[Optional[dict], str]"]] = None,
+    ask_close: bool = True,
     out: Any = sys.stdout,
 ) -> int:
     now_s = time.time()
@@ -249,24 +407,48 @@ def run_sweep(
     for r in stale:
         buckets.setdefault(classify(r, _age_days(r.get("createdAt"), now_s)), []).append(r)
 
-    # ── validation (dry-run oracle) — only under --apply ────────────────
     results: Dict[str, Dict[str, Any]] = {}
     tool_errors = 0
+    ask_new: List[Dict[str, Any]] = []
+
+    # ── rule 5: plan every open ask row (read-only in both modes) ───────
+    ask_plans: List[Dict[str, Any]] = []
+    if ask_close and pr_states is not None and attestations_for is not None:
+        try:
+            ask_plans = [ask_plan(r, pr_states, attestations_for, now_s)
+                         for r in ask_rows(scan_by_tag(fetch, ASK_INBOX_TAG))]
+        except Exception as exc:  # a secondary rule never aborts the sweep
+            print(f"record-hygiene-sweep: WARNING — ask scan failed: {exc}", file=out)
+            tool_errors += 1
+        closable = [p for p in ask_plans if p["verdict"] in ("SUPERSEDE", "RETIRE")]
+        # validated in check-only mode too: the printed verdict is a checked one
+        for p in closable[:MAX_ASK_VALIDATIONS]:
+            att = p["attestation"]
+            p["dry_run"] = dry_run_close(
+                str(p["id"]), supersede_path, runner,
+                f"record-hygiene sweep (ask-close): {p['reason']}",
+                successor=str(att["id"]) if att else None)
+            if p["dry_run"]["oracle"] == "TOOL-ERROR":
+                tool_errors += 1
+
+    # ── validation (dry-run oracle) — only under --apply ────────────────
     if apply:
         state = load_state(state_path)
         cands = buckets["RETIRE-PROPOSE"][:max_candidates]
         overflow = len(buckets["RETIRE-PROPOSE"]) - len(cands)
         for r in cands:
-            rid = r["id"]
-            res = dry_run_retire(rid, supersede_path, min_age_days, runner)
-            verdict = {0: "ACTIONABLE", 2: "SELF-RESOLVED"}.get(res["exit"], "TOOL-ERROR")
-            if verdict == "TOOL-ERROR":
+            res = dry_run_close(
+                r["id"], supersede_path, runner,
+                f"record-hygiene sweep: status:open older than {min_age_days:g}d; "
+                "act is complete or ask resolved — retire with this note, or supersede "
+                "explicitly if a successor exists")
+            if res["oracle"] == "TOOL-ERROR":
                 tool_errors += 1
-            results[rid] = {"verdict": verdict, **res}
+            results[r["id"]] = res
         new_ids = [r["id"] for r in cands
-                   if results[r["id"]]["verdict"] == "ACTIONABLE" and r["id"] not in state["candidates"]]
+                   if results[r["id"]]["oracle"] == "ACTIONABLE" and r["id"] not in state["candidates"]]
         # TOCTOU guard: drop candidates that went terminal between scan and post
-        new_ids = [i for i in new_ids if _still_open(i, fetch)]
+        new_ids = [i for i in new_ids if _still_eligible(i, fetch, _has_status_open)]
 
         if new_ids:
             now_iso = _now_iso()
@@ -283,24 +465,103 @@ def run_sweep(
                 tool_errors += 1
         else:
             print("record-hygiene-sweep: no new actionable candidates — no evidence post (dedup)", file=out)
+
+        # rule 5 evidence: only NEW, oracle-confirmed, still-open ask rows
+        ask_new = [p for p in ask_plans
+                   if p.get("dry_run") and p["dry_run"]["oracle"] == "ACTIONABLE"
+                   and "ask:" + str(p["id"]) not in state["candidates"]
+                   and _still_eligible(str(p["id"]), fetch, is_ask_row)]
+        if ask_new:
+            now_iso = _now_iso()
+            for p in ask_new:
+                entry = state["candidates"].setdefault("ask:" + str(p["id"]), {"first": now_iso})
+                entry.update({"last": now_iso, "count": int(entry.get("count", 0)) + 1})
+            ok = post_change_log(_ask_report_title(len(ask_new)), _ask_report_body(ask_new))
+            if not ok:
+                print("record-hygiene-sweep: WARNING — change-log post failed (ask rule)", file=out)
+                tool_errors += 1
+        else:
+            print("record-hygiene-sweep: ask rule — no new oracle-confirmed ask rows (dedup)", file=out)
+
         state["runs"].append({
             "at": _now_iso(), "stale": len(stale), "validated": len(results),
             "new": len(new_ids), "tool_errors": tool_errors,
+            "ask_rows": len(ask_plans), "ask_new": len(ask_new),
         })
         state["runs"] = state["runs"][-50:]
         save_state(state_path, state)
 
     # ── human-readable summary ──────────────────────────────────────────
     for r in stale:
-        rid, verdict = r["id"][:8], results.get(r["id"], {}).get("verdict")
+        rid, oracle = r["id"][:8], results.get(r["id"], {}).get("oracle")
         age = _age_days(r.get("createdAt"), now_s)
         age_s = f"{age:.0f}d" if age is not None else "AGE-UNKNOWN"
         bucket = classify(r, age)
         line = f"  {bucket:<14} {rid} {r.get('role') or '?'}:{r.get('recordType')} {age_s} \"{(r.get('title') or '')[:70]}\""
-        if verdict:
-            line += f" [dry-run: {verdict}]"
+        if oracle:
+            line += f" [dry-run: {oracle}]"
         print(line, file=out)
+
+    # ── rule 5 summary: one verdict per ask row ─────────────────────────
+    if ask_plans:
+        counts: Dict[str, int] = {}
+        for p in ask_plans:
+            counts[p["verdict"]] = counts.get(p["verdict"], 0) + 1
+        print(
+            f"record-hygiene-sweep: {len(ask_plans)} open {ASK_INBOX_TAG} ask row(s) — "
+            + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())),
+            file=out,
+        )
+        for p in ask_plans:
+            prs = ",".join(f"#{n}" for n in p["prs"]) or "-"
+            state_s = "/".join(sorted(set(p["states"].values()))) or "-"
+            att = f" -> {str(p['attestation'].get('id'))[:8]}" if p["attestation"] else ""
+            oracle = f" [dry-run: {p['dry_run']['oracle']}]" if p.get("dry_run") else ""
+            print(
+                f"  {p['verdict']:<16} {str(p['id'])[:8]} {prs:<12} {state_s:<7}"
+                f"{att}{oracle} src={p['source']:<5} \"{p['title'][:58]}\"",
+                file=out,
+            )
     return 1 if tool_errors else 0
+
+
+def _ask_report_title(new_count: int) -> str:
+    return (f"record-hygiene sweep (ask-close): {new_count} open {ASK_INBOX_TAG} ask row(s) "
+            "on merged/closed PRs proposed for supersede/retire — owning role decides")
+
+
+def _ask_report_body(plans: List[Dict[str, Any]]) -> str:
+    """Evidence for rule 5: what each ask row resolved to and why."""
+    lines = [
+        "Automated sweep by bin/record_hygiene_sweep.py "
+        f"({_now_iso()}), rule ASK-CLOSE. READ-ONLY over records: every plan "
+        "below was validated with supersede-record.sh --dry-run (zero writes); "
+        "an OWNING ROLE must execute it (Decision 24, cfcc9d65).\n",
+        "These rows ask the tester about a PR that is already MERGED or CLOSED, "
+        "so no future gate pass can ever service them and the janitor's "
+        "gate-driven close-out cannot reach them by construction.",
+        "\n**Plans** (one line per row):",
+    ]
+    for p in plans:
+        prs = ", ".join(f"#{n}" for n in p["prs"])
+        if p["verdict"] == "SUPERSEDE":
+            new_id = str(p["attestation"].get("id"))
+            cmd = (f'supersede-record.sh supersede --old {p["id"]} --new {new_id} '
+                   f'--reason "<outcome>"')
+        else:
+            cmd = f'supersede-record.sh retire --old {p["id"]} --note "<outcome>"'
+        lines.append(
+            f"- `{str(p['id'])[:8]}` {p['verdict']} — {prs} "
+            f"({p['reason']}) — src={p['source']}; "
+            f"\"{p['title'][:70].replace(chr(10), ' ')}\" → `bin/{cmd}`"
+        )
+    lines.append(
+        "\nSupersede is used only where a live (non-withdrawn) attestation for "
+        "that PR exists — the gate's own shape predicates, not title text. "
+        "Withdrawn-only or absent attestations retire instead."
+    )
+    lines.append("\n*Re-run with `--dry-run` removed to execute; per-record outcome notes belong to the owning role.*")
+    return "\n".join(lines)
 
 
 def _report_title(new_count: int, min_age_days: float) -> str:
@@ -331,7 +592,7 @@ def _report_body(new_ids, buckets, results, by_role, stale, records,
             f"`bin/supersede-record.sh retire --old {i} --note \"<outcome>\"` "
             "(or supersede with a successor if one exists)"
         )
-    resolved = [rid for rid, v in results.items() if v["verdict"] == "SELF-RESOLVED"]
+    resolved = [rid for rid, v in results.items() if v["oracle"] == "SELF-RESOLVED"]
     if resolved:
         lines.append(f"\n**Self-resolved during validation** (dry-run refused, exit 2 — convention already closed them): " +
                      ", ".join(f"`{i[:8]}`" for i in resolved) + ".")
@@ -348,6 +609,70 @@ def _report_body(new_ids, buckets, results, by_role, stale, records,
     return "\n".join(lines)
 
 
+_merge_pr_module: Any = None
+
+
+def _merge_pr() -> Any:
+    """Load bin/merge_pr.py by path (once) for the gate's attestation predicates.
+
+    Deliberately the GATE module, not attestation_janitor.py: this sweep runs
+    weekly from a checkout of main, so it must not depend on unmerged janitor
+    work. What counts as a real attestation therefore cannot drift from what
+    the merge gate accepts.
+    """
+    global _merge_pr_module
+    if _merge_pr_module is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("merge_pr", BIN_DIR / "merge_pr.py")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["merge_pr"] = mod
+        spec.loader.exec_module(mod)
+        _merge_pr_module = mod
+    return _merge_pr_module
+
+
+def load_pr_states() -> Dict[int, str]:
+    """PR number -> OPEN / MERGED / CLOSED from one gh listing.
+
+    Empty on failure, which makes _pr_state answer UNKNOWN for every row: the
+    rule then holds everything instead of assuming PRs are dead.
+    """
+    try:
+        proc = subprocess.run(
+            ["gh", "pr", "list", "--state", "all", "--limit", "3000",
+             "--json", "number,state"],
+            capture_output=True, text=True, timeout=180, cwd=str(BIN_DIR.parent),
+        )
+        return {int(r["number"]): str(r.get("state") or "UNKNOWN").upper()
+                for r in json.loads(proc.stdout or "[]")
+                if isinstance(r, dict) and r.get("number") is not None}
+    except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):
+        return {}
+
+
+def live_attestations(fetch: Callable[[str], Any], pr: int) -> "tuple[Optional[dict], str]":
+    """(newest live attestation naming this PR, why none qualifies).
+
+    Shape and withdrawal tests come from the gate (merge_pr.py), and the row
+    must actually mention the PR, so a tester row about a DIFFERENT PR can
+    never become the successor pointer. Withdrawn-only yields no attestation
+    (a tombstone is not a service) and the ask row retires instead.
+    """
+    mp = _merge_pr()
+    seen: Dict[str, dict] = {}
+    for tag in (f"pr:{pr}", f"gate:{pr}"):
+        for r in scan_by_tag(fetch, tag):
+            if isinstance(r, dict) and r.get("id"):
+                seen[str(r["id"])] = r
+    shaped = [r for r in seen.values() if mp.is_attestation_record(r)]
+    live = [r for r in shaped
+            if not mp.is_withdrawn(r) and mp.attestation_mentions_pr(r, pr)]
+    if not live:
+        return None, ("only-withdrawn" if shaped else "no-attestation")
+    live.sort(key=lambda r: _age_key(r, time.time()))
+    return live[0], "serviced"
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Stale status:open record hygiene sweep (see module docstring).")
     ap.add_argument("--apply", action="store_true",
@@ -359,6 +684,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--nebula-url", default=DEFAULT_NEBULA)
     ap.add_argument("--supersede-path", default=str(SUPERSEDE))
     ap.add_argument("--state", default=DEFAULT_STATE)
+    ap.add_argument("--no-ask-close", action="store_true",
+                    help="skip rule ASK-CLOSE (open to:tester rows on merged/closed PRs)")
     args = ap.parse_args(argv)
 
     base = args.nebula_url.rstrip("/")
@@ -369,6 +696,11 @@ def main(argv: Optional[List[str]] = None) -> int:
                 raise RuntimeError(f"HTTP {resp.status} for {url_suffix}")
             return json.loads(resp.read().decode("utf-8"))
 
+    pr_states = load_pr_states()
+    if not pr_states:
+        print("record-hygiene-sweep: WARNING — gh PR state unavailable; "
+              "every ask row will HOLD (fail-closed)", file=sys.stderr)
+
     return run_sweep(
         apply=args.apply,
         min_age_days=max(0.0, args.min_age_days),
@@ -378,6 +710,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         state_path=Path(args.state),
         fetch=fetch,
         runner=subprocess.run,
+        pr_states=pr_states,
+        attestations_for=partial(live_attestations, fetch),
+        ask_close=not args.no_ask_close,
     )
 
 

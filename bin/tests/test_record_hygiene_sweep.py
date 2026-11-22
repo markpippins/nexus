@@ -42,17 +42,38 @@ class FakeResult:
         self.stderr = stderr
 
 
-def make_record(num, role="engineer-ii", rtype="analysis", age_days=30.0, tags=None):
+def make_record(num, role="engineer-ii", rtype="analysis", age_days=30.0, tags=None, title=None):
     days = 0.0 if age_days is None else age_days
     created_ms = int((time.time() - days * 86400) * 1000) if age_days is not None else None
     return {
         "id": f"{num:08d}-0000-0000-0000-{num:012d}",
         "role": role,
         "recordType": rtype,
-        "title": f"record {num}",
+        "title": title if title is not None else f"record {num}",
         "createdAt": created_ms,
         "tags": list(tags if tags is not None else ["status:open"]),
     }
+
+
+def make_tag_fetch(by_tag, point_overrides=None):
+    """fetch(url_suffix) serving one page per tag from `by_tag`, plus point
+    lookups (used by the TOCTOU guard) over every row in every bucket."""
+    point = {r["id"]: r for rows in by_tag.values() for r in rows}
+    point.update(point_overrides or {})
+
+    def fetch(url_suffix):
+        if "/api/agent-records/" not in url_suffix:
+            for tag, rows in by_tag.items():
+                if f"tag={tag}" in url_suffix:
+                    offset = int(url_suffix.split("offset=")[1])
+                    return {"items": rows[offset:offset + sweep.PAGE_LIMIT]}
+            return {"items": []}
+        rid = url_suffix.rsplit("/", 1)[1]
+        if rid in point:
+            return point[rid]
+        raise RuntimeError("404: " + url_suffix)
+
+    return fetch
 
 
 def make_fetch(list_records, point_overrides=None):
@@ -197,17 +218,25 @@ def test_classify_buckets():
 
 # ── dry-run oracle ───────────────────────────────────────────────────────
 
-def test_dry_run_oracle_exit_codes_and_readonly_flag():
+def test_dry_run_close_covers_both_modes_read_only():
     rid = "00000000-0000-0000-0000-000000000042"
+    new = "00000000-0000-0000-0000-000000000021"
     runner = make_runner({rid: 0})
-    res = sweep.dry_run_retire(rid, Path("/bin/true"), 14, runner)
-    assert res["exit"] == 0
-    assert "--dry-run" in runner.calls[0], "proposals are validated read-only"
-    assert "retire" in runner.calls[0] and rid in runner.calls[0]
-    res2 = sweep.dry_run_retire(rid, Path("/bin/true"), 14, make_runner({rid: 2}))
-    assert res2["exit"] == 2
-    res3 = sweep.dry_run_retire(rid, Path("/bin/true"), 14, make_runner({rid: 1}))
-    assert res3["exit"] == 1
+    res = sweep.dry_run_close(rid, Path("/bin/true"), runner, "note text")
+    cmd = runner.calls[0]
+    assert res["oracle"] == "ACTIONABLE" and res["exit"] == 0
+    assert " retire " in cmd and "--note note text" in cmd and "--dry-run" in cmd
+    assert "--new" not in cmd, "a retirement has no successor"
+
+    runner2 = make_runner({rid: 0})
+    sweep.dry_run_close(rid, Path("/bin/true"), runner2, "why", successor=new)
+    cmd2 = runner2.calls[0]
+    assert " supersede " in cmd2 and f"--new {new}" in cmd2
+    assert "--reason why" in cmd2, "supersede takes --reason, not --note"
+    assert "--dry-run" in cmd2, "both modes are validated read-only"
+
+    assert sweep.dry_run_close(rid, Path("/bin/true"), make_runner({rid: 2}), "n")["oracle"] == "SELF-RESOLVED"
+    assert sweep.dry_run_close(rid, Path("/bin/true"), make_runner({rid: 1}), "n")["oracle"] == "TOOL-ERROR"
 
 
 # ── end-to-end sweep ─────────────────────────────────────────────────────
@@ -292,6 +321,170 @@ def test_i4_exempt_listed_not_proposed():
     assert rc == 0 and logs == [] and state["candidates"] == {}
     assert "I4-EXEMPT" in out
     assert runner.calls == [], "I4 records are never dry-run-validated for retire"
+
+
+# ── rule 5: ask rows on merged/closed PRs ───────────────────────────────
+
+def test_pr_numbers_prefers_tag_then_title():
+    assert sweep.pr_numbers(make_record(1, tags=["status:open", "pr:1028"])) == ([1028], "tag")
+    assert sweep.pr_numbers(
+        make_record(2, tags=["status:open", "pr:1031", "pr:1028"])) == ([1028, 1031], "tag")
+    four = make_record(3, tags=["status:open"],
+                       title="Attestation request: four PRs green (#613 #616 #618 #620)")
+    assert sweep.pr_numbers(four) == ([613, 616, 618, 620], "title")
+    assert sweep.pr_numbers(
+        make_record(4, tags=["status:open"], title="ATTESTATION REQUEST — PR tooling @ 7f43c6e6d")
+    ) == ([], "none")
+    assert sweep.pr_numbers(
+        make_record(5, tags=["status:open"], title="#623 (0008 reconcile) and #624")
+    ) == ([623, 624], "title"), "a migration number (#0008) is not a PR"
+
+
+def test_ask_rows_needs_request_shape_and_no_terminal_status():
+    rows = [
+        make_record(1, tags=["to:tester", "type:verification-request", "pr:1"]),
+        make_record(2, tags=["to:tester", "type:request", "gate:1", "status:open"]),
+        # status-update nudge: asks the tester, but is not a request row
+        make_record(3, tags=["to:tester", "type:status-update", "pr:1"]),
+        # already closed out by the janitor
+        make_record(4, tags=["to:tester", "type:request", "pr:1", "status:superseded"]),
+        # not addressed to the tester
+        make_record(5, tags=["to:architect", "type:request", "pr:1"]),
+    ]
+    assert [r["id"][:8] for r in sweep.ask_rows(rows)] == ["00000001", "00000002"]
+
+
+def test_ask_plan_holds_open_unknown_and_numberless_rows():
+    states = {1028: "OPEN", 999: "NOT-FOUND", 848: "MERGED"}
+    no_att = lambda pr: (None, "no-attestation")
+    p = sweep.ask_plan(make_record(1, tags=["to:tester", "type:request", "pr:1028"]),
+                       states, no_att, time.time())
+    assert p["verdict"] == "HOLD-pr-open" and "#1028" in p["reason"]
+    p = sweep.ask_plan(make_record(2, tags=["to:tester", "type:request", "pr:999"]),
+                       states, no_att, time.time())
+    assert p["verdict"] == "HOLD-pr-unknown", "an unknown PR is never assumed dead"
+    p = sweep.ask_plan(make_record(3, tags=["to:tester", "type:request"], title="V177 audit"),
+                       states, no_att, time.time())
+    assert p["verdict"] == "HOLD-no-pr" and p["prs"] == []
+    p = sweep.ask_plan(make_record(4, tags=["to:tester", "type:request", "pr:848"]),
+                       {}, no_att, time.time())
+    assert p["verdict"] == "HOLD-pr-unknown", "gh unavailable (empty map) holds everything"
+
+
+def test_ask_plan_supersedes_under_live_attestation_and_retires_otherwise():
+    att = make_record(21, role="tester", rtype="assessment", age_days=40,
+                      tags=["type:approval", "status:done", "gate:848"])
+    row = make_record(1, tags=["to:tester", "type:request", "pr:848"])
+    p = sweep.ask_plan(row, {848: "MERGED"}, lambda pr: (att, "serviced"), time.time())
+    assert p["verdict"] == "SUPERSEDE" and p["attestation"]["id"] == att["id"]
+    assert "serviced by attestation" in p["reason"]
+    p = sweep.ask_plan(row, {848: "MERGED"}, lambda pr: (None, "only-withdrawn"), time.time())
+    assert p["verdict"] == "RETIRE", "a withdrawn-only ask retires, never supersedes"
+    assert "only-withdrawn" in p["reason"]
+
+
+def test_ask_plan_multi_pr_needs_every_pr_closed():
+    row = make_record(1, tags=["to:tester", "type:request"], title="#623 and #624")
+    att = make_record(21, role="tester", rtype="assessment", tags=["type:attestation", "gate:623"])
+    mixed = {623: "MERGED", 624: "OPEN"}
+    p = sweep.ask_plan(row, mixed, lambda pr: (att, "serviced"), time.time())
+    assert p["verdict"] == "HOLD-pr-open" and "#624" in p["reason"]
+    both = {623: "MERGED", 624: "CLOSED"}
+    p = sweep.ask_plan(row, both, lambda pr: (att, "serviced"), time.time())
+    assert p["verdict"] == "SUPERSEDE" and p["prs"] == [623, 624]
+
+
+def _ask_world():
+    row = make_record(11, role="engineer", rtype="assessment", age_days=60,
+                      tags=["to:tester", "type:verification-request", "pr:848"],
+                      title="Verification request — #848 schema suite")
+    ret_row = make_record(12, role="engineer", rtype="assessment", age_days=60,
+                          tags=["to:tester", "type:request", "pr:850"],
+                          title="Attestation request: PR #850")
+    open_row = make_record(13, role="engineer", rtype="request", age_days=2,
+                           tags=["to:tester", "type:request", "pr:1040"])
+    att = make_record(21, role="tester", rtype="assessment", age_days=50,
+                      tags=["type:approval", "status:done", "gate:848"])
+    # status:open scan sees none of the ask rows (42 of 53 live ones lack it)
+    fetch = make_tag_fetch({"to:tester": [row, ret_row, open_row], "status:open": [],
+                            "pr:848": [att], "gate:848": [att],
+                            "pr:850": [], "gate:850": [], "pr:1040": [], "gate:1040": []})
+    states = {848: "MERGED", 850: "MERGED", 1040: "OPEN"}
+
+    def atts(pr):
+        return (att, "serviced") if pr == 848 else (None, "no-attestation")
+
+    return fetch, states, atts, row, ret_row, open_row
+
+
+def test_ask_rule_check_only_prints_a_verdict_per_row_and_writes_nothing():
+    fetch, states, atts, row, ret_row, open_row = _ask_world()
+    tmp = Path(tempfile.mkdtemp())
+    runner = make_runner({row["id"]: 0, ret_row["id"]: 0})
+    rc, out, state, logs = run_sweep(
+        apply=False, fetch=fetch, runner=runner, pr_states=states,
+        attestations_for=atts, state_path=tmp / "s.json")
+    assert rc == 0 and logs == [] and state is None and not (tmp / "s.json").exists()
+    assert "SUPERSEDE" in out and "RETIRE" in out and "HOLD-pr-open" in out
+    assert row["id"][:8] in out and open_row["id"][:8] in out
+    assert "3 open to:tester ask row(s)" in out, "the ask scan is its own census"
+    assert all("--dry-run" in c for c in runner.calls), "verdicts are validated read-only"
+    assert len(runner.calls) == 2, "HOLD rows are never validated"
+
+
+def test_still_eligible_guard_uses_the_selection_predicate():
+    keep = make_record(1, tags=["to:tester", "type:request", "pr:848"])
+    closed = make_record(2, tags=["to:tester", "type:request", "status:superseded"])
+    stale = make_record(3, tags=["status:open"])
+    fetch = make_tag_fetch({"to:tester": [keep, closed, stale]})
+    assert sweep._still_eligible(keep["id"], fetch, sweep.is_ask_row) is True
+    assert sweep._still_eligible(closed["id"], fetch, sweep.is_ask_row) is False
+    assert sweep._still_eligible(stale["id"], fetch, sweep._has_status_open) is True
+    assert sweep._still_eligible(keep["id"], fetch, sweep._has_status_open) is False, \
+        "the same row fails a status:open guard — the trap the shared selector avoids"
+
+    def boom(_url):
+        raise RuntimeError("nebula blip")
+    assert sweep._still_eligible(keep["id"], boom, sweep.is_ask_row) is True, \
+        "a failed probe keeps the row (fail-safe toward reporting)"
+
+
+def test_ask_rule_posts_new_actionable_once_then_dedups():
+    fetch, states, atts, row, ret_row, open_row = _ask_world()
+    sp = Path(tempfile.mkdtemp()) / "s.json"
+    runner = make_runner({row["id"]: 0, ret_row["id"]: 0})
+    rc, out, state, logs = run_sweep(
+        apply=True, fetch=fetch, runner=runner, pr_states=states,
+        attestations_for=atts, state_path=sp)
+    assert rc == 0 and len(logs) == 1
+    title, body = logs[0]
+    assert "ask-close" in title, "the ask evidence post is its own claim, not the stale-record one"
+    assert f"supersede --old {row['id']} --new " in body
+    assert f"retire --old {ret_row['id']}" in body
+    assert state["candidates"]["ask:" + row["id"]]["count"] == 1
+    assert state["runs"][-1]["ask_rows"] == 3 and state["runs"][-1]["ask_new"] == 2
+    rc2, out2, state2, logs2 = run_sweep(
+        apply=True, fetch=fetch, runner=runner, pr_states=states,
+        attestations_for=atts, state_path=sp)
+    assert logs2 == [], "same two ask rows are not re-posted"
+    assert "no new oracle-confirmed ask rows" in out2
+
+
+def test_live_attestations_uses_the_gate_contract():
+    """Real merge_pr predicates: shape, withdrawal, and PR mention."""
+    live = make_record(21, role="tester", rtype="assessment", age_days=50,
+                       tags=["type:approval", "status:done", "gate:848"])
+    withdrawn = make_record(22, role="tester", rtype="assessment", age_days=10,
+                            tags=["type:approval", "status:done", "status:retired", "gate:848"])
+    intent = make_record(23, role="tester", rtype="engineering_log", age_days=5,
+                         tags=["gate:848"])  # 'I will attest' is not an attestation
+    fetch = make_tag_fetch({"gate:848": [live, withdrawn, intent], "pr:848": [],
+                            "gate:777": [withdrawn], "pr:777": []})
+    assert sweep.live_attestations(fetch, 848)[0]["id"] == live["id"], \
+        "newest LIVE attestation wins, intent ignored"
+    assert sweep.live_attestations(fetch, 848)[1] == "serviced"
+    assert sweep.live_attestations(fetch, 777) == (None, "only-withdrawn"), \
+        "a tombstone is never a successor"
 
 
 # ── dual-runnable runner (keep at EOF) ───────────────────────────────────
