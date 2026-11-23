@@ -356,11 +356,12 @@ def test_repo_registry_wellformed_and_pinned_digests_stable():
     data = json.loads(reg.read_text())
     assert data["version"] == 1 and len(data["pins"]) >= 8
     by_path = {p["path"]: p for p in data["pins"]}
-    # ADVANCED 2026-11-22: PR #1039 landed 7598cc556 (supersede pointer note
-    # stops asserting status:active on a terminal successor); was #691
-    # 1da39fddb.
+    # ADVANCED 2026-11-23: PR #1051 (ranking item 6) writes the canonical
+    # metadata['record.retired'] key (ruling 8f44e3e4); was #1039 187c1cad…
+    # (supersede pointer note stops asserting status:active on a terminal
+    # successor), before that #691 1da39fddb.
     assert by_path["bin/supersede-record.sh"]["digest"] == (
-        "187c1cad9d31392c701374a5067cf80c7dc993af5d10df94a7134aa41f4f29be")
+        "2263cffadd5b21323f5cb2cc6affdfec76fcf27afc7aef91bde41dd8d8ed3580")
     # ADVANCED 2026-11-23: PR #1046 (eb7a8cf34) restated the check-only
     # contract for both bookkeeping halves; was #1040 9a79e81f8.
     assert by_path["bin/attestation_janitor.py"]["digest"] == (
@@ -382,9 +383,11 @@ def test_repo_registry_wellformed_and_pinned_digests_stable():
         "9cde8757b891d0df938bfea9579a80b38457c77d79ece2d693d98dd5fa7a7e1f")
     # TIER-2 PIN 2026-11-23: PR #1047 landed e272e1cc8 (attestation-residue
     # sweep). Pinned at landing because it mutates attestation records, so its
-    # drift must flip the guard like the gate tools do.
+    # drift must flip the guard like the gate tools do. ADVANCED by PR #1051
+    # (item 6): the sweep mirrors retirementPatch's canonical
+    # metadata['record.retired'] key (ruling 8f44e3e4); was b70350ca…
     assert by_path["bin/attestation_residue_sweep.py"]["digest"] == (
-        "b70350caf1027eb67ebd9afc4ede18e74c75a68b7cf6fce80c290d5df5b7edc8")
+        "7967eeea2bdb0d2783cbc455241c0b9329ff9152aa31d93e8394850519bee5eb")
     # TIER-2 PIN 2026-11-23: PR #1049 landed ecb2ff738 (harness_job_id
     # backfill). Pinned at landing because it mutates provenance.
     assert by_path["bin/harness_job_backfill.py"]["digest"] == (

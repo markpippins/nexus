@@ -196,23 +196,26 @@ describe("retirement patch", () => {
     expect(patch.tags).toContain("verdict:approved");
   });
 
-  it("prefixes the title once and names the successor in metadata.retired", () => {
+  it("prefixes the title once and names the successor in metadata['record.retired']", () => {
     const row = dbRow(DUP, attestationTags());
     const patch = retirementPatch(row, binding, ACC, "2026-11-23T06:00:00Z")!;
     expect(patch.title).toBe("[RETIRED 2026-11-23] Tester attestation: PR #487");
-    expect(patch.metadata.retired.note).toContain("PR #487");
-    expect(patch.metadata.retired.note).toContain("head a8b1dfc6");
-    expect(patch.metadata.retired.note).toContain("11111111");
-    expect(patch.metadata.retired.convention).toContain("Decision 24");
+    // Canonical owner-prefixed key (item 6 ruling): the legacy bare `retired`
+    // is what the write guard refuses, so the producer must never emit it.
+    expect(patch.metadata.retired).toBeUndefined();
+    expect(patch.metadata["record.retired"].note).toContain("PR #487");
+    expect(patch.metadata["record.retired"].note).toContain("head a8b1dfc6");
+    expect(patch.metadata["record.retired"].note).toContain("11111111");
+    expect(patch.metadata["record.retired"].convention).toContain("Decision 24");
   });
 
   it("preserves existing metadata instead of replacing it", () => {
     const row = dbRow(DUP, attestationTags(), {
       metadata: { harness_job_id: "abc", retired: undefined },
     });
-    (row.metadata as Record<string, unknown>).snapshot_purpose = "keep me";
+    (row.metadata as Record<string, unknown>)["snapshot.purpose"] = "keep me";
     const patch = retirementPatch(row, binding, ACC, "2026-11-23T06:00:00Z")!;
-    expect(patch.metadata.snapshot_purpose).toBe("keep me");
+    expect(patch.metadata["snapshot.purpose"]).toBe("keep me");
   });
 
   it("is a no-op on an already-withdrawn row", () => {

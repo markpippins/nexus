@@ -328,13 +328,14 @@ if MODE == "supersede":
 if DRY_RUN:
     print(f"[dry-run] would PATCH old record -> title '[RETIRED {today}] {old_title}'")
     print(f"[dry-run] would set tags: {without_lifecycle(tags) + ['status:retired']}")
-    print(f"[dry-run] would set metadata.retired = {{at, note}}; body UNCHANGED; no archive")
+    print(f"[dry-run] would set metadata['record.retired'] = {{at, note}}; body UNCHANGED; no archive")
     print("[dry-run] no writes performed")
     sys.exit(0)
 
 meta = dict(old.get("metadata") or {})
-meta["retired"] = {"at": now_iso, "note": NOTE, "by": ROLE, "model": MODEL,
-                   "convention": "Decision 24 (cfcc9d65) Amendment 1"}
+# Canonical owner-prefixed key (metadata namespace ruling, item 6).
+meta["record.retired"] = {"at": now_iso, "note": NOTE, "by": ROLE, "model": MODEL,
+                          "convention": "Decision 24 (cfcc9d65) Amendment 1"}
 new_tags = without_lifecycle(tags) + ["status:retired"]
 patch = {"title": f"[RETIRED {today}] {old_title}", "tags": new_tags,
          "metadata": meta}

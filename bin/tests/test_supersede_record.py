@@ -317,8 +317,8 @@ class SupersedeRecordTests(unittest.TestCase):
         # body unchanged; closure note lives in metadata (not an emptied body)
         self.assertEqual(OLD_CONTENT, old["content"])
         self.assertEqual("scenario closed by #647",
-                         old["metadata"]["retired"]["note"])
-        self.assertIn("Decision 24", old["metadata"]["retired"]["convention"])
+                         old["metadata"]["record.retired"]["note"])
+        self.assertIn("Decision 24", old["metadata"]["record.retired"]["convention"])
 
     # ── terminal lifecycle statuses (DBA 2026-09-30) ──────────────────
     # Regression: LIFECYCLE_TAGS listed only NON-terminal statuses, so a

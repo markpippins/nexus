@@ -24,7 +24,7 @@ write time, so the corpus has ONE retirement dialect.
 
 Retirement is Decision 24 Amendment 1 (architect record cfcc9d65): every
 `status:*` tag drops, `status:retired` is added, the title is prefixed
-`[RETIRED <date>]` once, `metadata.retired` records the successor and the
+`[RETIRED <date>]` once, `metadata['record.retired']` records the successor and the
 reason, and the BODY IS BYTE-IDENTICAL. Nothing else is touched. The patch
 shape is parity-tested against the canonical implementation in
 typescript/nebula-srv/src/attestation-idempotency.ts (retirementPatch); see
@@ -250,7 +250,7 @@ def retirement_patch(
     Drops every status:* (a row that is status:done AND status:retired still
     reads as live to a tag query), adds exactly one status:retired, prefixes
     the title once, preserves every other tag and all other metadata, and
-    records metadata.retired naming the successor. The body is NOT part of the
+    records metadata['record.retired'] naming the successor. The body is NOT part of the
     patch: retirement is a status transition, not a rewrite.
     """
     if is_withdrawn(row):
@@ -260,7 +260,9 @@ def retirement_patch(
     title = str(row.get("title") or "")
     metadata = dict(row.get("metadata") or {})
     succ = str(successor_id or "")[:8]
-    metadata["retired"] = {
+    # Canonical owner-prefixed key (metadata namespace ruling, item 6); parity
+    # with retirementPatch in nebula-srv.
+    metadata["record.retired"] = {
         "at": at_iso,
         "note": (
             f"duplicate attestation for PR #{pr} at head {head[:8]} "
@@ -501,7 +503,7 @@ def run(records: List[Dict[str, Any]], apply: bool, at_iso: str,
                 [f"attestation-residue-sweep retired {len(retired)} duplicate live "
                  f"tester attestation(s) under their surviving successor "
                  f"(Decision 24 Amendment 1: status:* dropped, status:retired added, "
-                 f"title prefixed, metadata.retired names the successor, body "
+                 f"title prefixed, metadata['record.retired'] names the successor, body "
                  f"byte-identical).", ""]
                 + [f"- {_short(r['id'])} -> {_short(r['successor'])} (PR #{r['pr']}, "
                    f"head {r['head'][:9]}, body sha256 {str(r['body_sha'])[:12]})"

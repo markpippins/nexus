@@ -36,8 +36,10 @@ export function camelCaseRow(row: Record<string, any>): Record<string, any> {
 // (bin/check_harness_silent_success.py) reads it from list queries.
 //
 // metadata is projected because it carries correction provenance
-// (metadata.corrections[], metadata.residue_closed) written alongside the
-// corrected-by:/residue-closed-by: tags. Omitting it left the correction note
+// (metadata['correction.claims'], metadata['correction.residue_closed'] —
+// owner-prefixed per the item-6 metadata namespace ruling; pre-normalization
+// rows still answer to the legacy `corrections`/`residue_closed` names) written
+// alongside the corrected-by:/residue-closed-by: tags. Omitting it left the correction note
 // readable only through psql, so an auditor reading the record's tags could
 // see that it had been corrected but not by what — the same reader-side blind
 // spot the contentLength contract above closes for bodies.

@@ -201,7 +201,7 @@ def test_patch_prefixes_title_once_and_names_successor():
     r = row("a0001", title="Tester attestation PR 1029")
     patch = sweep.retirement_patch(r, 1029, HEAD, "succ0001", AT)
     assert patch["title"] == "[RETIRED 2026-11-23] Tester attestation PR 1029"
-    retired = patch["metadata"]["retired"]
+    retired = patch["metadata"]["record.retired"]
     assert retired["note"].startswith("duplicate attestation for PR #1029 at head 1fe3f284")
     assert "succ0001" in retired["note"]
     assert retired["convention"].startswith("Decision 24")
@@ -253,7 +253,7 @@ def test_apply_retires_only_strays_and_preserves_headless_rows():
     assert "status:done" not in retired["tags"]
     assert retired["title"].startswith("[RETIRED ")
     assert retired["content"] == "body text"                     # body untouched
-    assert retired["metadata"]["retired"]["note"].endswith("(attestation-residue-sweep)")
+    assert retired["metadata"]["record.retired"]["note"].endswith("(attestation-residue-sweep)")
 
     survivor = store.rows["new00001"]
     assert "status:done" in survivor["tags"] and "status:retired" not in survivor["tags"]

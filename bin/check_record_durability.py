@@ -37,7 +37,13 @@ CI_EPHEMERAL_PREFIX = "wr-conf-"
 # Metadata keys set by the hollow-record repair (2026-09-24) and by this
 # sweep's reviewer: a record carrying any of these has been examined and
 # its hollow shape is known/intentional.
-AUDIT_META_KEYS = ("hollow_content_audit", "hollow_content_repair",
+#
+# Canonical owner-prefixed spellings first (metadata namespace ruling, item 6);
+# the legacy bare names stay readable because rows the normalization refuses as
+# `conflict` keep them, and rows written before the backfill ran still carry
+# them.
+AUDIT_META_KEYS = ("repair.hollow_content_audit", "repair.hollow_content",
+                   "hollow_content_audit", "hollow_content_repair",
                    "record_durability_review")
 
 # Content that is a single path-like token: absolute, home-relative,

@@ -4,8 +4,8 @@
   "pins": [
     {
       "path": "bin/supersede-record.sh",
-                  "digest": "187c1cad9d31392c701374a5067cf80c7dc993af5d10df94a7134aa41f4f29be",
-            "provenance": "PIN ADVANCE 2026-11-22: PR #1039 landed (squash 7598cc556) with tester attestation 093608c6 at head a7fdcd32 — the supersede pointer note no longer asserts status:active on the successor; a terminal successor (e.g. a status:done attestation) keeps its own lifecycle status, enforced by the tag-catalog pairing test. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 after git cat-file -e. Previous pinned digest 0a4b3237… (#691, 1da39fddb). Tier 1 audit-chain tool. Guard classification: intended drift, runbook branch 1.",
+                  "digest": "2263cffadd5b21323f5cb2cc6affdfec76fcf27afc7aef91bde41dd8d8ed3580",
+            "provenance": "PIN ADVANCE 2026-11-22: PR #1039 landed (squash 7598cc556) with tester attestation 093608c6 at head a7fdcd32 — the supersede pointer note no longer asserts status:active on the successor; a terminal successor (e.g. a status:done attestation) keeps its own lifecycle status, enforced by the tag-catalog pairing test. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 after git cat-file -e. Previous pinned digest 0a4b3237… (#691, 1da39fddb). Tier 1 audit-chain tool. Guard classification: intended drift, runbook branch 1. PIN ADVANCE 2026-11-23: PR #1051 (ranking item 6) writes the canonical metadata['record.retired'] key per ruling 8f44e3e4; digest captured from this PR's head blob after the tool's suite passed (previous pin 187c1cad).",
       "queued_prs": []
     },
     {
@@ -34,8 +34,8 @@
     },
     {
       "path": "bin/attestation_residue_sweep.py",
-      "digest": "b70350caf1027eb67ebd9afc4ede18e74c75a68b7cf6fce80c290d5df5b7edc8",
-      "provenance": "TIER-2 PIN 2026-11-23: PR #1047 landed (squash e272e1cc8) with tester attestation eddec68c at head 801e817cb — the repair-side tool that retires duplicate live tester attestations under the newest row of a (pr, well-formed head) group (Decision 24 Amendment 1, body byte-identical) and refuses head-less rows. Pinned at landing because it MUTATES attestation records: drift in it must flip the guard. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 after git cat-file -e.",
+      "digest": "7967eeea2bdb0d2783cbc455241c0b9329ff9152aa31d93e8394850519bee5eb",
+      "provenance": "TIER-2 PIN 2026-11-23: PR #1047 landed (squash e272e1cc8) with tester attestation eddec68c at head 801e817cb — the repair-side tool that retires duplicate live tester attestations under the newest row of a (pr, well-formed head) group (Decision 24 Amendment 1, body byte-identical) and refuses head-less rows. Pinned at landing because it MUTATES attestation records: drift in it must flip the guard. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 after git cat-file -e. PIN ADVANCE 2026-11-23: PR #1051 (ranking item 6) writes the canonical metadata['record.retired'] key per ruling 8f44e3e4; digest captured from this PR's head blob after the tool's suite passed (previous pin b70350ca).",
       "queued_prs": []
     },
     {

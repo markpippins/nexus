@@ -22,7 +22,7 @@
 //     the gate's rule) and that are still live are retired;
 //   - retirement is Decision 24 Amendment 1 — the same status transition
 //     bin/supersede-record.sh retire applies (drop every `status:*`, add
-//     `status:retired`, prefix the title, record `metadata.retired`, body
+//     `status:retired`, prefix the title, record `metadata['record.retired']`, body
 //     UNCHANGED). The server must not invent a second retirement dialect, and
 //     the content survives because only the status moves.
 //
@@ -177,7 +177,7 @@ export function supersedableDuplicates(
  * The Decision 24 Amendment 1 retirement patch for a superseded attestation:
  * every `status:*` drops (a row that is `status:done` AND `status:retired`
  * still reads as live to a tag query), `status:retired` is added, the title is
- * prefixed once, and `metadata.retired` names the successor. The body is not
+    * prefixed once, and `metadata['record.retired']` names the successor. The body is not
  * touched — retirement is a status transition, not a rewrite.
  */
 export function retirementPatch(
@@ -194,7 +194,11 @@ export function retirementPatch(
   const title = String(row.title ?? '');
   const metadata: Record<string, any> = { ...(row.metadata ?? {}) };
   const successor = String(successorId ?? '').slice(0, 8);
-  metadata.retired = {
+  // Canonical owner-prefixed key (metadata namespace ruling, item 6): the
+  // retirement lifecycle is the record component's contract, not free-form
+  // prose. Legacy rows carry `retired` until the namespace normalization moves
+  // them; readers accept both spellings.
+  metadata['record.retired'] = {
     at: atIso,
     note:
       `duplicate attestation for PR #${binding.pr} at head ` +
