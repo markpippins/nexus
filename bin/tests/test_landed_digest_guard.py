@@ -380,6 +380,11 @@ def test_repo_registry_wellformed_and_pinned_digests_stable():
     # the 2026-10-01 tier-2 capture @ ead7ff59a / #678 7191ea9d9.
     assert by_path["bin/record_hygiene_sweep.py"]["digest"] == (
         "9cde8757b891d0df938bfea9579a80b38457c77d79ece2d693d98dd5fa7a7e1f")
+    # TIER-2 PIN 2026-11-23: PR #1047 landed e272e1cc8 (attestation-residue
+    # sweep). Pinned at landing because it mutates attestation records, so its
+    # drift must flip the guard like the gate tools do.
+    assert by_path["bin/attestation_residue_sweep.py"]["digest"] == (
+        "b70350caf1027eb67ebd9afc4ede18e74c75a68b7cf6fce80c290d5df5b7edc8")
     # ADVANCED 2026-11-06: the pin had gone stale at PR #878 (c96dfb5c0,
     # run attribution) — the open DRIFT incident 30186d3b — and this PR also
     # gives --model the $NEXUS_AGENT_MODEL default. Prior pin e548f405… was
