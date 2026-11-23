@@ -102,11 +102,11 @@ describe("agent-record list projection (correction provenance contract)", () => 
     expect(AGENT_RECORD_LIST_COLUMNS_FULL).toMatch(/\btags, metadata,/);
   });
 
-  it("metadata survives camelCaseRow with its corrections[] intact", () => {
+  it("metadata survives camelCaseRow with its canonical correction claims intact", () => {
     const item = camelCaseRow(
       row({
         metadata: {
-          corrections: [
+          "correction.claims": [
             {
               by: "engineer",
               claim: "the satisfaction-based predicate fix needs its own PR",
@@ -117,7 +117,7 @@ describe("agent-record list projection (correction provenance contract)", () => 
         tags: ["corrected-by:b3fabb0d"],
       })
     );
-    expect(item.metadata.corrections[0].claim).toBe(
+    expect(item.metadata["correction.claims"][0].claim).toBe(
       "the satisfaction-based predicate fix needs its own PR"
     );
     expect(item.tags).toContain("corrected-by:b3fabb0d");
@@ -145,8 +145,8 @@ describe("agent-record point projection (single-record read)", () => {
 
   it("metadata survives camelCaseRow on the point shape too", () => {
     const item = camelCaseRow(
-      row({ metadata: { corrections: [{ claim: "x" }] } })
+      row({ metadata: { "correction.claims": [{ claim: "x" }] } })
     );
-    expect(item.metadata.corrections[0].claim).toBe("x");
+    expect(item.metadata["correction.claims"][0].claim).toBe("x");
   });
 });

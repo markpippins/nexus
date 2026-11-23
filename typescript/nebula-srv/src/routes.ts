@@ -15,6 +15,7 @@ import { expandTags } from './tagExpansion';
 import { agentRecordCreateLimiter, agentRecordPatchLimiter, agentRecordPointLimiter, attestationsLimiter, requirementCompileLimiter, requirementDeleteCascadeLimiter, requirementMoveLimiter } from './limiter';
 import { routingTagErrorMessage, routingCaseErrorMessage } from './routing-tags';
 import { blankRecordError, bodyRequiredError, normalizeHarnessJobId } from './agent-record-write-guard';
+import { metadataNamespaceError } from './metadata-namespace';
 import {
   REQUIREMENT_DELETE_BLOCKED_CODE,
   deleteRequirementSet,
@@ -5945,6 +5946,15 @@ export function createRoutes(pool: Pool): Router {
         return res.status(400).json({ error: runAttribution.error });
       }
 
+      // Metadata namespace (item 6 ruling): tool-owned state is written under
+      // its canonical `<owner>.<key>` name. A legacy spelling is refused with
+      // the canonical name in the message instead of being stored as a second,
+      // un-owned dialect. Record-authored free-form keys pass untouched.
+      const createMetadataProblem = metadataNamespaceError(metadata);
+      if (createMetadataProblem) {
+        return res.status(422).json({ error: createMetadataProblem });
+      }
+
       // Write-side tag normalization (ratified tag-grammar card §4): repair
       // and normalize only — no reject here (#693's scope, post-#712).
       const normalizedTags = normalizeTags(tags);
@@ -6122,6 +6132,12 @@ export function createRoutes(pool: Pool): Router {
       const { title, content, metadata, tags, systemId, subsystemId, featureId, planRef, level, visibilityScope, model, role, harnessJobId } = req.body;
       if (level !== undefined && (level < 1 || level > 4)) {
         return res.status(400).json({ error: 'level must be between 1 and 4' });
+      }
+      // Same namespace guard as POST (item 6 ruling): PATCH must not reopen the
+      // legacy spellings the create path refuses.
+      const patchMetadataProblem = metadataNamespaceError(metadata);
+      if (patchMetadataProblem) {
+        return res.status(422).json({ error: patchMetadataProblem });
       }
       // ── Tag address policy on the tags-modifying path (same mode; PATCH
       // must not become the bypass around POST enforcement).

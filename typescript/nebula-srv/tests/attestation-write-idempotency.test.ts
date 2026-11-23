@@ -3,7 +3,7 @@
  *
  * POST /api/agent-records now retires a live attestation when a new attestation
  * for the SAME (pr, head) lands (Decision 24 Amendment 1: status transition
- * only, body unchanged, metadata.retired names the successor). The pure
+ * only, body unchanged, metadata['record.retired'] names the successor). The pure
  * contract is unit-tested in src/__tests__/attestation-idempotency.test.ts;
  * this file exercises the wiring — the tag query and the UPDATE — against a
  * real server + PostgreSQL.
@@ -12,7 +12,7 @@
  *
  * Verifies:
  *  1. a second attestation for the same (pr, head) retires the first:
- *     status:retired replaces status:done, title prefixed, metadata.retired
+ *     status:retired replaces status:done, title prefixed, metadata['record.retired']
  *     names the successor, and the shape/binding tags survive
  *  2. the successor stays live
  *  3. a HEAD-LESS legacy row is never retired (nothing to key it on; the
@@ -148,9 +148,9 @@ async function run() {
     String(back.body.content || "").includes("Body must survive retirement unchanged."),
   );
   assert(
-    "metadata.retired names the successor",
-    String(back.body.metadata?.retired?.note || "").includes(second.id.slice(0, 8)),
-    JSON.stringify(back.body.metadata?.retired || null),
+    "metadata['record.retired'] names the successor",
+    String(back.body.metadata?.["record.retired"]?.note || "").includes(second.id.slice(0, 8)),
+    JSON.stringify(back.body.metadata?.["record.retired"] || null),
   );
 
   const live = await get(second.id);

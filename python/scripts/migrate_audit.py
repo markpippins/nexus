@@ -208,9 +208,10 @@ def migrate_files(dry_run: bool = False) -> int:
             record_type, role = get_record_type_and_role(f["rel_path"])
 
             # Add rel_path and file stats to metadata
-            metadata["_migrated_from"] = f["rel_path"]
-            metadata["_size_bytes"] = len(text.encode("utf-8"))
-            metadata["_dirname"] = f["dirname"]
+            # Canonical owner-prefixed keys (metadata namespace ruling, item 6).
+            metadata["migration.origin_path"] = f["rel_path"]
+            metadata["migration.size_bytes"] = len(text.encode("utf-8"))
+            metadata["migration.dirname"] = f["dirname"]
 
             if dry_run:
                 print(f"  WOULD INSERT: [{record_type}/{role}] {title} ({f['rel_path']})")
