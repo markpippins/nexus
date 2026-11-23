@@ -75,6 +75,25 @@ export const requirementMoveLimiter = rateLimit({
  *
  * CodeQL js/missing-rate-limiting remediation (P4a).
  */
+/**
+ * Limiter for the single-record point read (GET /api/agent-records/:id).
+ *
+ * Scoped to this route, 300 req/min/IP, same posture as the four above.
+ * The handler's SELECT changed to project metadata via a shared column
+ * constant, which re-armed the pre-existing js/missing-rate-limiting
+ * alert on the handler as new-in-PR for CodeQL. This is the fleet's
+ * established remediation (a real ceiling, not a suppression), and a
+ * single-record read is exactly the cheap-but-floodable path the posture
+ * exists for.
+ */
+export const agentRecordPointLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "nebula-srv agent-record point read rate limit exceeded" },
+});
+
 export const requirementDeleteCascadeLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 300,

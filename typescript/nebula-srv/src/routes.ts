@@ -12,7 +12,7 @@ import { fetchSubstance, substanceToCamel } from './substance-proxy';
 import { CrossReferenceType } from './crossref-taxonomy';
 import { normalizeTags } from './tagNormalizer';
 import { expandTags } from './tagExpansion';
-import { attestationsLimiter, requirementCompileLimiter, requirementDeleteCascadeLimiter, requirementMoveLimiter } from './limiter';
+import { agentRecordPointLimiter, attestationsLimiter, requirementCompileLimiter, requirementDeleteCascadeLimiter, requirementMoveLimiter } from './limiter';
 import { routingTagErrorMessage, routingCaseErrorMessage } from './routing-tags';
 import { blankRecordError, bodyRequiredError, normalizeHarnessJobId } from './agent-record-write-guard';
 import {
@@ -32,12 +32,14 @@ import {
   camelCaseRow,
   AGENT_RECORD_LIST_COLUMNS,
   AGENT_RECORD_LIST_COLUMNS_FULL,
+  AGENT_RECORD_POINT_COLUMNS,
 } from './agent-record-projection';
 
 export {
   camelCaseRow,
   AGENT_RECORD_LIST_COLUMNS,
   AGENT_RECORD_LIST_COLUMNS_FULL,
+  AGENT_RECORD_POINT_COLUMNS,
 };
 
 const execFileAsync = promisify(execFile);
@@ -5565,15 +5567,12 @@ export function createRoutes(pool: Pool): Router {
   // Fixes finding 6d731551: REST had no content-bearing read (list omits
   // content; ?id= was fuzzy search), so REST-only consumers misread
   // persisted records as empty.
-  router.get('/agent-records/:id', async (req: Request, res: Response) => {
+  router.get('/agent-records/:id', agentRecordPointLimiter, async (req: Request, res: Response) => {
     try {
-      const { rows } = await pool.query(
-        `SELECT id, record_type, role, model, title, source_path, tags, content,
-                system_id, subsystem_id, feature_id, plan_ref, candidate_id,
-                requirement_id, created_at, recorded_on_dt, level, visibility_scope
-         FROM nebula.agent_records WHERE id = $1`,
-        [req.params.id]
-      );
+      // NOSONAR on the query line: the interpolated list is an imported
+      // constant (never user input); the id is bound via $1.
+      const sql = `SELECT ${AGENT_RECORD_POINT_COLUMNS} FROM nebula.agent_records WHERE id = $1`; // NOSONAR
+      const { rows } = await pool.query(sql, [req.params.id]);
       if (!rows.length) return res.status(404).json({ error: 'Agent record not found' });
       // Serialize exactly like the list route (camelCase keys + epoch-ms
       // timestamps). A raw pg row exposes `created_at` and no `createdAt`, so

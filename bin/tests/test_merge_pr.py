@@ -1920,6 +1920,61 @@ def test_refused_predecessors_retires_a_stale_head_refusal():
     assert "retired 1 refused predecessor(s) ref00003" in note
 
 
+def test_duplicate_attestations_returns_same_head_live_rows():
+    """#1044 shape: three live status:done duplicates for one head, only the
+    newest is authoritative; the older same-head rows are duplicates."""
+    acc = rec(rec_id="acc00001",
+              tags=["type:approval", "status:done", "pr:487", "head:bfac2dcf7"])
+    dup1 = rec(rec_id="dup00001",
+               tags=["type:approval", "status:done", "pr:487", "head:bfac2dcf7"])
+    dup2 = rec(rec_id="dup00002",
+               tags=["type:approval", "status:done", "pr:487", "head:bfac2dcf7"])
+    out = merge_pr.duplicate_attestations([acc, dup1, dup2], 487, acc, "bfac2dcf7")
+    assert [r["id"] for r in out] == ["dup00001", "dup00002"]
+
+
+def test_duplicate_attestations_excludes_other_heads_and_withdrawn():
+    acc = rec(rec_id="acc00001",
+              tags=["type:approval", "status:done", "pr:487", "head:bfac2dcf7"])
+    other_head = rec(rec_id="old00001",
+                     tags=["type:approval", "status:done", "pr:487", "head:0000aaaa"])
+    retired = rec(rec_id="ret00001",
+                  tags=["type:approval", "status:retired", "pr:487", "head:bfac2dcf7"])
+    refused = rec(rec_id="ref00001",
+                  tags=["type:attestation", "status:refused", "pr:487", "head:bfac2dcf7"])
+    other_pr = rec(rec_id="prt00001", title="no number here",
+                   tags=["type:approval", "status:done", "pr:999", "head:bfac2dcf7"])
+    out = merge_pr.duplicate_attestations(
+        [acc, other_head, retired, refused, other_pr], 487, acc, "bfac2dcf7")
+    assert out == []
+
+
+def test_duplicate_attestations_counts_untagged_candidate_when_accepted_has_head():
+    """No head: tag on the candidate means no binding to disprove it —
+    same additive fallthrough as the gate's head check."""
+    acc = rec(rec_id="acc00001",
+              tags=["type:approval", "status:done", "pr:487", "head:bfac2dcf7"])
+    untagged = rec(rec_id="unt00001",
+                   tags=["type:approval", "status:done", "pr:487"])
+    out = merge_pr.duplicate_attestations([acc, untagged], 487, acc, "bfac2dcf7")
+    assert [r["id"] for r in out] == ["unt00001"]
+
+
+def test_bookkeeping_retires_duplicates_under_accepted_successor():
+    acc = rec(rec_id="acc00001",
+              tags=["type:approval", "status:done", "pr:487", "head:bfac2dcf7"])
+    dup = rec(rec_id="dup00001",
+              tags=["type:approval", "status:done", "pr:487", "head:bfac2dcf7"])
+    calls = []
+    bk = merge_pr.attestation_bookkeeping(
+        http_patch=lambda url, payload: None,
+        supersede=lambda o, n, w: (calls.append((o, n, w)) or (True, "")))
+    note = bk([acc, dup], 487, True, None, "bfac2dcf7")
+    assert [(c[0], c[1]) for c in calls] == [("dup00001", "acc00001")]
+    assert "duplicate live attestation" in calls[0][2]
+    assert "retired 1 duplicate attestation(s) dup00001" in note
+
+
 def test_record_refusal_patches_the_row_and_never_raises():
     calls = []
     row = rec(rec_id="bbbb2222",

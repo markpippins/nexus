@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   AGENT_RECORD_LIST_COLUMNS,
   AGENT_RECORD_LIST_COLUMNS_FULL,
+  AGENT_RECORD_POINT_COLUMNS,
   camelCaseRow,
 } from "../agent-record-projection";
 
@@ -124,5 +125,28 @@ describe("agent-record list projection (correction provenance contract)", () => 
 
   it("metadata is null-preserving for uncorrected records", () => {
     expect(camelCaseRow(row()).metadata).toBeNull();
+  });
+});
+
+// Point contract: GET /api/agent-records/:id is the read a consumer uses
+// for one record in full (including its body). It selects the same
+// provenance fields as the lists — a point read that drops metadata
+// recreates the psql-only blind spot on the single-record path (and on
+// the nebula-mcp get tool + Assembly point proxy that ride it).
+describe("agent-record point projection (single-record read)", () => {
+  it("point projection includes metadata", () => {
+    expect(AGENT_RECORD_POINT_COLUMNS).toMatch(/\btags, metadata,/);
+  });
+
+  it("point projection includes content and harness_job_id", () => {
+    expect(AGENT_RECORD_POINT_COLUMNS).toMatch(/\bcontent,/);
+    expect(AGENT_RECORD_POINT_COLUMNS).toContain("harness_job_id");
+  });
+
+  it("metadata survives camelCaseRow on the point shape too", () => {
+    const item = camelCaseRow(
+      row({ metadata: { corrections: [{ claim: "x" }] } })
+    );
+    expect(item.metadata.corrections[0].claim).toBe("x");
   });
 });

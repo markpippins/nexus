@@ -17,11 +17,12 @@ gate passed". ``--merge`` performs the squash merge only after all gates
 pass.
 
 ``--record-refusals`` (opt-in; the attestation janitor passes it) adds the
-two attestation-bookkeeping writes described under "Gate 3 bookkeeping":
-the refused row is tagged status:refused + gate-code:<CODE>, and a refused
+attestation-bookkeeping writes described under "Gate 3 bookkeeping":
+the refused row is tagged status:refused + gate-code:<CODE>, a refused
 row is retired under an accepted successor for the same PR, whatever head it
-was attested at. Those writes never change a gate result; without the flag
-the gate stays read-only.
+was attested at, and duplicate live attestations for the same PR head are
+retired under the accepted successor. Those writes never change a gate
+result; without the flag the gate stays read-only.
 
 The attestation gate (and only that gate) may be bypassed by the
 OPERATOR via NEXUS_ALLOW_UNATTESTED_MERGE=1 -- the bypass is reported
@@ -860,6 +861,68 @@ def select_attestation(
     return newest, mentions, live
 
 
+def _head_tag(record: Dict[str, Any]) -> Optional[str]:
+    """The row's ``head:<sha>`` tag value (lowercased), or None when absent."""
+    for tag in record.get("tags") or []:
+        s = str(tag or "")
+        if s.lower().startswith("head:"):
+            return s.split(":", 1)[1].strip().lower() or None
+    return None
+
+
+def duplicate_attestations(
+    records: List[Dict[str, Any]], pr_number: int, accepted: Dict[str, Any],
+    head_sha: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Duplicate live attestations for the same PR head (pure).
+
+    The tester harness files an attestation on every retry; when several
+    retries land on one head, only the newest is the gate's answer and the
+    rest stay live as stray ``status:done`` rows (#1044 carried three live
+    duplicates for one head until they were retired by hand). This returns
+    every OTHER live attestation row for the PR whose head binding matches
+    the accepted row's head — the rows the accepted successor supersedes.
+
+    Scope rules (deliberately narrow so head drift is never collapsed):
+    - live only: withdrawn rows (status:retired / status:superseded) and
+      status:refused rows are excluded — refusals are retired through
+      refused_predecessors(), and double-counting them here would issue a
+      second supersede for a row the refusal path already owns.
+    - tester role + attestation shape + PR mention, same as the gate.
+    - head binding must match: when both rows carry a ``head:`` tag they
+      must prefix-match either direction (same rule as evaluate_attestation);
+      when the accepted row or the candidate lacks the tag, the candidate
+      still counts (no binding to disprove it — legacy rows keep meaning),
+      exactly as the gate's additive fallthrough treats missing tags.
+    - ``head_sha`` (the live PR head) refines the match only to confirm the
+      accepted row is attesting the head being gated; rows for an older
+      head are stale, not duplicates, and are left to the refuse path.
+    """
+    acc_id = str(accepted.get("id") or "")
+    acc_head = _head_tag(accepted)
+    if not acc_head and head_sha:
+        acc_head = str(head_sha or "").strip().lower() or None
+    out: List[Dict[str, Any]] = []
+    for r in records or []:
+        if str(r.get("id") or "") == acc_id:
+            continue
+        if is_withdrawn(r):
+            continue
+        tags = {str(t) for t in (r.get("tags") or [])}
+        if REFUSAL_STATUS in tags:
+            continue
+        if str(r.get("role") or "").lower() != "tester":
+            continue
+        if not is_attestation_record(r) or not attestation_mentions_pr(r, pr_number):
+            continue
+        cand_head = _head_tag(r)
+        if acc_head and cand_head:
+            if not (acc_head.startswith(cand_head) or cand_head.startswith(acc_head)):
+                continue
+        out.append(r)
+    return out
+
+
 def refused_predecessors(
     records: List[Dict[str, Any]], pr_number: int, accepted: Dict[str, Any]
 ) -> List[Dict[str, Any]]:
@@ -935,23 +998,33 @@ def attestation_bookkeeping(
             if newest is None:
                 return ""
             refused = refused_predecessors(live, pr_number, newest)
-            if not refused:
+            duplicates = duplicate_attestations(live, pr_number, newest, head_sha)
+            if not refused and not duplicates:
                 return ""
-            why = (f"gate accepted {str(newest.get('id'))[:8]} for PR "
-                   f"#{pr_number} at head {str(head_sha or '')[:8]}; refusal "
-                   "superseded automatically")
-            done, failed = [], []
-            for r in refused:
-                ok_s, err = supersede(str(r.get("id")), str(newest.get("id")), why)
-                if ok_s:
-                    done.append(str(r.get("id"))[:8])
-                else:
-                    failed.append(f"{str(r.get('id'))[:8]} ({err})")
-            note = (f"retired {len(done)} refused predecessor(s) "
-                    f"{', '.join(done)}" if done else "")
-            if failed:
-                note += ("; " if note else "") + "retirement failed for " + ", ".join(failed)
-            return note
+            notes = []
+            for rows, kind in ((refused, "refused predecessor(s)"),
+                               (duplicates, "duplicate attestation(s)")):
+                if not rows:
+                    continue
+                why = (f"gate accepted {str(newest.get('id'))[:8]} for PR "
+                       f"#{pr_number} at head {str(head_sha or '')[:8]}; "
+                       + ("refusal superseded automatically" if kind.startswith("refused")
+                          else "duplicate live attestation for the same head "
+                               "superseded automatically"))
+                done, failed = [], []
+                for r in rows:
+                    ok_s, err = supersede(str(r.get("id")), str(newest.get("id")), why)
+                    if ok_s:
+                        done.append(str(r.get("id"))[:8])
+                    else:
+                        failed.append(f"{str(r.get('id'))[:8]} ({err})")
+                note = (f"retired {len(done)} {kind} "
+                        f"{', '.join(done)}" if done else "")
+                if failed:
+                    note += ("; " if note else "") + "retirement failed for " + ", ".join(failed)
+                if note:
+                    notes.append(note)
+            return "; ".join(notes)
         if newest is None or not str(code or "").startswith("ATT_"):
             return ""
         wrote, err = record_refusal(http_patch, newest, code)
@@ -1450,11 +1523,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="print the machine-readable report (gates_to_json) instead of text",
     )
     parser.add_argument(
-        "--record-refusals",
+                     "--record-refusals",
         action="store_true",
         help="record a gate-3 refusal on the refused row (status:refused + "
-             "gate-code) and retire refused rows under an accepted successor; "
-             "never changes the gate result",
+             "gate-code) and retire refused + duplicate live attestations "
+             "under an accepted successor; never changes the gate result",
     )
     args = parser.parse_args(argv)
 
