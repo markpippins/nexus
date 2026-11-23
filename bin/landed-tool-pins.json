@@ -61,6 +61,12 @@
       "digest": "8713a16a86de08161de6c8fa86b6809caccc64f177d3bd33952f504e18d2a4dc",
       "provenance": "TIER-2 CAPTURE 2026-10-01 @ origin/main ead7ff59a: attestation head-minting + CI-evidence guard helper (#648), byte-stable since; minting tool referenced by Decision 15 item C",
       "queued_prs": []
+    },
+    {
+      "path": "bin/metadata_namespace_normalize.py",
+      "digest": "3665abc8cc338d27d1aa8d06c71b4bc5a2a66dd605b5527a12cb4f6d9bf02bd3",
+      "provenance": "TIER-2 PIN 2026-11-23: PR #1051 landed 231f40506 (agent-record metadata namespace, ranking item 6). Pinned at landing because it rewrites every record's metadata object: retired -> record.retired, the pre-FK block -> snapshot.*, importer keys -> migration.*, repair markers -> repair.*, with per-write read-back verification, a conflict/ambiguous/free-form refusal vocabulary, a bounded --apply, and 429 backoff plus pacing under the service rate limits. Digest captured from the origin/main blob after a positive git cat-file -e existence check.",
+      "queued_prs": []
     }
   ]
 }
