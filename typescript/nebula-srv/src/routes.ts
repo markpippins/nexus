@@ -12,7 +12,7 @@ import { fetchSubstance, substanceToCamel } from './substance-proxy';
 import { CrossReferenceType } from './crossref-taxonomy';
 import { normalizeTags } from './tagNormalizer';
 import { expandTags } from './tagExpansion';
-import { agentRecordPointLimiter, attestationsLimiter, requirementCompileLimiter, requirementDeleteCascadeLimiter, requirementMoveLimiter } from './limiter';
+import { agentRecordCreateLimiter, agentRecordPointLimiter, attestationsLimiter, requirementCompileLimiter, requirementDeleteCascadeLimiter, requirementMoveLimiter } from './limiter';
 import { routingTagErrorMessage, routingCaseErrorMessage } from './routing-tags';
 import { blankRecordError, bodyRequiredError, normalizeHarnessJobId } from './agent-record-write-guard';
 import {
@@ -5933,7 +5933,7 @@ export function createRoutes(pool: Pool): Router {
   };
 
   // POST /api/agent-records — create a new agent record (canonical write path)
-  router.post('/agent-records', async (req: Request, res: Response) => {
+  router.post('/agent-records', agentRecordCreateLimiter, async (req: Request, res: Response) => {
     try {
       const { recordType, role, title, content, sourcePath, metadata, tags, systemId, subsystemId, featureId, planRef, level, visibilityScope, model, harnessJobId } = req.body;
 

@@ -94,6 +94,27 @@ export const agentRecordPointLimiter = rateLimit({
   message: { error: "nebula-srv agent-record point read rate limit exceeded" },
 });
 
+/**
+ * Limiter for the canonical agent-record write path
+ * (POST /api/agent-records).
+ *
+ * Scoped to this route, 300 req/min/IP, same posture as the limiters above.
+ * The write-time (pr, head) idempotency pass added SELECT/UPDATE statements
+ * to the handler, which re-armed the pre-existing js/missing-rate-limiting
+ * alert on it as new-in-PR for CodeQL — the same situation #1045 hit on the
+ * point read. A real ceiling, not a suppression: the established
+ * remediation. Writes here are agent-paced (attestations, records,
+ * projections), so 5 req/s per IP leaves ordinary traffic and bulk backfills
+ * well clear of the limit while capping a flood.
+ */
+export const agentRecordCreateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "nebula-srv agent-record create rate limit exceeded" },
+});
+
 export const requirementDeleteCascadeLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 300,
