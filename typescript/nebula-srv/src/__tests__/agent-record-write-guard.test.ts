@@ -246,4 +246,16 @@ describe("wiring", () => {
     expect(handler).toMatch(/status\(409\)/);
     expect(handler).toContain("!existing.harness_job_id");
   });
+
+  it("the PATCH /agent-records/:id route is rate-limited", () => {
+    // The attribution branch adds a SELECT ahead of the UPDATE, which re-arms
+    // CodeQL's js/missing-rate-limiting alert on the handler (it fired on the
+    // point read in #1045 and the create in #1046 the same way). The fleet's
+    // remediation is a real ceiling on the route, never a suppression — pin it
+    // so a later refactor cannot quietly drop the middleware.
+    const routes = readFileSync(path.join(__dirname, "..", "routes.ts"), "utf8");
+    expect(routes).toMatch(
+      /router\.patch\('\/agent-records\/:id', agentRecordPatchLimiter,/
+    );
+  });
 });

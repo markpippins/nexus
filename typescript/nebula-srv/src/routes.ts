@@ -12,7 +12,7 @@ import { fetchSubstance, substanceToCamel } from './substance-proxy';
 import { CrossReferenceType } from './crossref-taxonomy';
 import { normalizeTags } from './tagNormalizer';
 import { expandTags } from './tagExpansion';
-import { agentRecordCreateLimiter, agentRecordPointLimiter, attestationsLimiter, requirementCompileLimiter, requirementDeleteCascadeLimiter, requirementMoveLimiter } from './limiter';
+import { agentRecordCreateLimiter, agentRecordPatchLimiter, agentRecordPointLimiter, attestationsLimiter, requirementCompileLimiter, requirementDeleteCascadeLimiter, requirementMoveLimiter } from './limiter';
 import { routingTagErrorMessage, routingCaseErrorMessage } from './routing-tags';
 import { blankRecordError, bodyRequiredError, normalizeHarnessJobId } from './agent-record-write-guard';
 import {
@@ -6116,7 +6116,7 @@ export function createRoutes(pool: Pool): Router {
   });
 
   // PATCH /api/agent-records/:id — update record fields
-  router.patch('/agent-records/:id', async (req: Request, res: Response) => {
+  router.patch('/agent-records/:id', agentRecordPatchLimiter, async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const { title, content, metadata, tags, systemId, subsystemId, featureId, planRef, level, visibilityScope, model, role, harnessJobId } = req.body;
