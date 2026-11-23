@@ -14,7 +14,8 @@ This tool applies the ruling's precedence — the LATER stage of a lifecycle win
 over the earlier one — to rows that carry more than one `status:*` tag:
 
   closed > superseded > retired > verified > done > implementation-authorized
-         > held > ruled > resolved > ratified > merged > open > needs-response
+         > held > ruled > resolved > ratified > merged > active > open
+         > needs-response
 
 Each pair the corpus actually contains is documented in PAIR_REASONS. A status
 tag outside the ladder is NOT guessed at: that row is refused
@@ -335,7 +336,8 @@ def apply_plans(plans: Sequence[Plan], base: str, at_iso: str,
     return {"planned": len(to_write), "verified": verified, "failed": failed}
 
 
-def post_audit(summary: Dict[str, Any], result: Dict[str, Any]) -> None:
+def post_audit(summary: Dict[str, Any], result: Dict[str, Any],
+               run: Callable[..., Any] = subprocess.run) -> Tuple[bool, str]:
     lines = [
         "## lifecycle status normalization (ranking item 7)",
         "",
@@ -347,10 +349,18 @@ def post_audit(summary: Dict[str, Any], result: Dict[str, Any]) -> None:
     ]
     for pair, count in summary["by_pair"].items():
         lines.append(f"- `{pair}` — {count}")
-    subprocess.run([str(BIN_DIR / "post-change-log.sh"),
+    try:
+        proc = run([str(BIN_DIR / "post-change-log.sh"),
+                    "--role", "engineer",
                     "--title", f"lifecycle status: {len(result.get('verified', []))} multi-status "
                                f"rows normalized to one status, {summary['rows_refused']} refused",
-                    "--body", "\n".join(lines)], check=False)
+                    "--body", "\n".join(lines)],
+                   check=False, capture_output=True, text=True, cwd=str(BIN_DIR.parent))
+    except OSError as exc:
+        return False, f"cannot run post-change-log.sh: {exc}"
+    if proc.returncode != 0:
+        return False, (proc.stderr or proc.stdout or "").strip()[:400] or f"exit {proc.returncode}"
+    return True, (proc.stdout or "").strip()[:200]
 
 
 def main(argv: Optional[Sequence[str]] = None, *, load=load_rows) -> int:
@@ -396,7 +406,13 @@ def main(argv: Optional[Sequence[str]] = None, *, load=load_rows) -> int:
     for f in result["failed"]:
         print(f"  FAILED {f['id'][:8]}: {f['error']}", file=sys.stderr)
     if not args.no_changelog:
-        post_audit(summary, result)
+        ok, detail = post_audit(summary, result)
+        if ok:
+            print(f"change-log audit posted ({detail})")
+        else:
+            # The writes are verified and must not be retried; the audit trail
+            # is missing, so say so loudly instead of exiting 0 in silence.
+            print(f"WARNING: change-log audit FAILED: {detail}", file=sys.stderr)
     return 1 if result["failed"] else 0
 
 

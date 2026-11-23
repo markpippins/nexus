@@ -4,50 +4,50 @@
   "pins": [
     {
       "path": "bin/supersede-record.sh",
-                  "digest": "2263cffadd5b21323f5cb2cc6affdfec76fcf27afc7aef91bde41dd8d8ed3580",
-            "provenance": "PIN ADVANCE 2026-11-22: PR #1039 landed (squash 7598cc556) with tester attestation 093608c6 at head a7fdcd32 — the supersede pointer note no longer asserts status:active on the successor; a terminal successor (e.g. a status:done attestation) keeps its own lifecycle status, enforced by the tag-catalog pairing test. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 after git cat-file -e. Previous pinned digest 0a4b3237… (#691, 1da39fddb). Tier 1 audit-chain tool. Guard classification: intended drift, runbook branch 1. PIN ADVANCE 2026-11-23: PR #1051 (ranking item 6) writes the canonical metadata['record.retired'] key per ruling 8f44e3e4; digest captured from this PR's head blob after the tool's suite passed (previous pin 187c1cad).",
+      "digest": "2263cffadd5b21323f5cb2cc6affdfec76fcf27afc7aef91bde41dd8d8ed3580",
+      "provenance": "PIN ADVANCE 2026-11-22: PR #1039 landed (squash 7598cc556) with tester attestation 093608c6 at head a7fdcd32 \u2014 the supersede pointer note no longer asserts status:active on the successor; a terminal successor (e.g. a status:done attestation) keeps its own lifecycle status, enforced by the tag-catalog pairing test. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 after git cat-file -e. Previous pinned digest 0a4b3237\u2026 (#691, 1da39fddb). Tier 1 audit-chain tool. Guard classification: intended drift, runbook branch 1. PIN ADVANCE 2026-11-23: PR #1051 (ranking item 6) writes the canonical metadata['record.retired'] key per ruling 8f44e3e4; digest captured from this PR's head blob after the tool's suite passed (previous pin 187c1cad).",
       "queued_prs": []
     },
     {
       "path": "bin/attestation_janitor.py",
-                  "digest": "1942b0885b04e24634dbecaa5c501178badb4f02f02850ed42d042f2daf823c0",
-            "provenance": "PIN ADVANCE 2026-11-23: PR #1046 landed (squash eb7a8cf34) with tester attestation a3b29644 at head 1bcd4c68c — the cycle/safety-rail comments now state that duplicate same-head attestations are retired on every accepted gate regardless of --record-refusals, and the janitor's check-only contract is spelled out for both halves. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 after git cat-file -e. Previous pinned digest 8af7f1f4… (#1040 9a79e81f8 / #1037 199985a17). Tier 1 audit-chain tool.",
+      "digest": "1942b0885b04e24634dbecaa5c501178badb4f02f02850ed42d042f2daf823c0",
+      "provenance": "PIN ADVANCE 2026-11-23: PR #1046 landed (squash eb7a8cf34) with tester attestation a3b29644 at head 1bcd4c68c \u2014 the cycle/safety-rail comments now state that duplicate same-head attestations are retired on every accepted gate regardless of --record-refusals, and the janitor's check-only contract is spelled out for both halves. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 after git cat-file -e. Previous pinned digest 8af7f1f4\u2026 (#1040 9a79e81f8 / #1037 199985a17). Tier 1 audit-chain tool.",
       "queued_prs": []
     },
     {
       "path": "bin/merge_pr.py",
-                  "digest": "e73308b88494ed385a0d6c436b78926b4ad2f8ea3138d8276095f38185c92bad",
-            "provenance": "PIN ADVANCE 2026-11-23: PR #1046 landed (squash eb7a8cf34) with tester attestation a3b29644 at head 1bcd4c68c — attestation bookkeeping is installed on EVERY gate-3 evaluation (same-head duplicate attestations retire under the accepted row without --record-refusals) while the refusal half stays flag-gated. #1045 (f3b80c824) had already changed this file without advancing the pin, which is the DRIFT posted 2026-11-23T11:00; this advance settles both landings. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 after git cat-file -e. Previous pinned digest 5af13cf3… (#1037, 199985a17). Tier 1 audit-chain tool.",
+      "digest": "e73308b88494ed385a0d6c436b78926b4ad2f8ea3138d8276095f38185c92bad",
+      "provenance": "PIN ADVANCE 2026-11-23: PR #1046 landed (squash eb7a8cf34) with tester attestation a3b29644 at head 1bcd4c68c \u2014 attestation bookkeeping is installed on EVERY gate-3 evaluation (same-head duplicate attestations retire under the accepted row without --record-refusals) while the refusal half stays flag-gated. #1045 (f3b80c824) had already changed this file without advancing the pin, which is the DRIFT posted 2026-11-23T11:00; this advance settles both landings. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 after git cat-file -e. Previous pinned digest 5af13cf3\u2026 (#1037, 199985a17). Tier 1 audit-chain tool.",
       "queued_prs": []
     },
     {
       "path": "bin/gate_codes.py",
       "digest": "b25bdef712a62ac5867d04b61272da6dfb4cd5f31a1c028db8dcdfaa3d080689",
-      "provenance": "PIN ADVANCE 2026-11-05: PR #866 landed (squash c002f369c) with tester attestation c142899e at head ba20a41c2 — ATT_CI_COVERAGE code + routing entry; previous pinned digest d4f60f411c45ec1f… (digest captured from the origin/main blob, existence checked before hashing)",
+      "provenance": "PIN ADVANCE 2026-11-05: PR #866 landed (squash c002f369c) with tester attestation c142899e at head ba20a41c2 \u2014 ATT_CI_COVERAGE code + routing entry; previous pinned digest d4f60f411c45ec1f\u2026 (digest captured from the origin/main blob, existence checked before hashing)",
       "queued_prs": []
     },
     {
       "path": "bin/record_hygiene_sweep.py",
-                  "digest": "9cde8757b891d0df938bfea9579a80b38457c77d79ece2d693d98dd5fa7a7e1f",
-            "provenance": "PIN ADVANCE 2026-11-22: PR #1042 landed (squash 6de95b004) with tester attestation dfbe343c at head be8aa6ee — rule ASK-CLOSE closes to:tester ask rows whose named PR is merged or closed (is_ask_row/ask_rows/ask_plan/dry_run_close, fail-closed PR states so a mis-parsed title can only hold). Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 after git cat-file -e. Previous pinned digest e32e04b7… (TIER-2 CAPTURE 2026-10-01 @ ead7ff59a, #678, 7191ea9d9).",
+      "digest": "9cde8757b891d0df938bfea9579a80b38457c77d79ece2d693d98dd5fa7a7e1f",
+      "provenance": "PIN ADVANCE 2026-11-22: PR #1042 landed (squash 6de95b004) with tester attestation dfbe343c at head be8aa6ee \u2014 rule ASK-CLOSE closes to:tester ask rows whose named PR is merged or closed (is_ask_row/ask_rows/ask_plan/dry_run_close, fail-closed PR states so a mis-parsed title can only hold). Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 after git cat-file -e. Previous pinned digest e32e04b7\u2026 (TIER-2 CAPTURE 2026-10-01 @ ead7ff59a, #678, 7191ea9d9).",
       "queued_prs": []
     },
     {
       "path": "bin/attestation_residue_sweep.py",
       "digest": "7967eeea2bdb0d2783cbc455241c0b9329ff9152aa31d93e8394850519bee5eb",
-      "provenance": "TIER-2 PIN 2026-11-23: PR #1047 landed (squash e272e1cc8) with tester attestation eddec68c at head 801e817cb — the repair-side tool that retires duplicate live tester attestations under the newest row of a (pr, well-formed head) group (Decision 24 Amendment 1, body byte-identical) and refuses head-less rows. Pinned at landing because it MUTATES attestation records: drift in it must flip the guard. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 after git cat-file -e. PIN ADVANCE 2026-11-23: PR #1051 (ranking item 6) writes the canonical metadata['record.retired'] key per ruling 8f44e3e4; digest captured from this PR's head blob after the tool's suite passed (previous pin b70350ca).",
+      "provenance": "TIER-2 PIN 2026-11-23: PR #1047 landed (squash e272e1cc8) with tester attestation eddec68c at head 801e817cb \u2014 the repair-side tool that retires duplicate live tester attestations under the newest row of a (pr, well-formed head) group (Decision 24 Amendment 1, body byte-identical) and refuses head-less rows. Pinned at landing because it MUTATES attestation records: drift in it must flip the guard. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 after git cat-file -e. PIN ADVANCE 2026-11-23: PR #1051 (ranking item 6) writes the canonical metadata['record.retired'] key per ruling 8f44e3e4; digest captured from this PR's head blob after the tool's suite passed (previous pin b70350ca).",
       "queued_prs": []
     },
     {
       "path": "bin/harness_job_backfill.py",
       "digest": "f0aa42a0a6481bd408c1b28f6ad500df41c9a6cb755c6688c656ec27a4143923",
-      "provenance": "TIER-2 PIN 2026-11-23: PR #1049 landed (squash ecb2ff738) with tester attestation 5c30ea63 at head 759494d9a — the declaration-only backfill for harness_job_id (architect ruling a7a4fc3d). Pinned at landing because it MUTATES provenance: drift in it must flip the guard the way drift in the gate tools does. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 after git cat-file -e.",
+      "provenance": "TIER-2 PIN 2026-11-23: PR #1049 landed (squash ecb2ff738) with tester attestation 5c30ea63 at head 759494d9a \u2014 the declaration-only backfill for harness_job_id (architect ruling a7a4fc3d). Pinned at landing because it MUTATES provenance: drift in it must flip the guard the way drift in the gate tools does. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 after git cat-file -e.",
       "queued_prs": []
     },
     {
       "path": "bin/post-agent-record.py",
       "digest": "ca404bd487e0336a8f35f4275d53e21d9020cd4cb4eec54ae13ea5c6c9273e6c",
-      "provenance": "PIN ADVANCE 2026-11-06: two changes, one advance. (1) PR #878 landed (squash c96dfb5c0) — 'a record can name the run that wrote it' — and the pin was never advanced, which is open incident 30186d3b; the drift is INTENDED (runbook branch 1), not tampering. (2) this PR gives --model a $NEXUS_AGENT_MODEL default, closing the 72.6% null-model gap (363/500 records at 2026-11-06). Digest computed from this PR's committed blob on base 00fbc98f3 per PIN_ADVANCE_TEMPLATE step 2; previous pinned digest e548f405… (PR #689, 849bf145d), which was itself stale against #878.",
+      "provenance": "PIN ADVANCE 2026-11-06: two changes, one advance. (1) PR #878 landed (squash c96dfb5c0) \u2014 'a record can name the run that wrote it' \u2014 and the pin was never advanced, which is open incident 30186d3b; the drift is INTENDED (runbook branch 1), not tampering. (2) this PR gives --model a $NEXUS_AGENT_MODEL default, closing the 72.6% null-model gap (363/500 records at 2026-11-06). Digest computed from this PR's committed blob on base 00fbc98f3 per PIN_ADVANCE_TEMPLATE step 2; previous pinned digest e548f405\u2026 (PR #689, 849bf145d), which was itself stale against #878.",
       "queued_prs": []
     },
     {
@@ -66,6 +66,18 @@
       "path": "bin/metadata_namespace_normalize.py",
       "digest": "3665abc8cc338d27d1aa8d06c71b4bc5a2a66dd605b5527a12cb4f6d9bf02bd3",
       "provenance": "TIER-2 PIN 2026-11-23: PR #1051 landed 231f40506 (agent-record metadata namespace, ranking item 6). Pinned at landing because it rewrites every record's metadata object: retired -> record.retired, the pre-FK block -> snapshot.*, importer keys -> migration.*, repair markers -> repair.*, with per-write read-back verification, a conflict/ambiguous/free-form refusal vocabulary, a bounded --apply, and 429 backoff plus pacing under the service rate limits. Digest captured from the origin/main blob after a positive git cat-file -e existence check.",
+      "queued_prs": []
+    },
+    {
+      "path": "bin/metadata_namespace_tripwire.py",
+      "digest": "c1b85675441c6e3832265878bdb76b8df2c95b72de0d74fdd7c3a5bfef7a620e",
+      "provenance": "TIER-2 PIN 2026-11-23: PR #1053 landed 7de8d9a7b (legacy tool-owned metadata-key tripwire) with tester attestation ad334611 at head fe6e0da4d \u2014 watches the corpus itself because direct SQL writers bypass the API 422 guard on legacy keys, posts at most one change-log alert per evidence digest, and carries a live detection control. Pinned at landing because its findings gate record hygiene. Digest captured from the origin/main blob after a positive git cat-file -e existence check.",
+      "queued_prs": []
+    },
+    {
+      "path": "bin/lifecycle_status_normalize.py",
+      "digest": "c2332e01e3a4c42d33174de66cefe31e344302bf067fa3381a0a358628c0ccec",
+      "provenance": "TIER-2 PIN 2026-11-23: PR #1054 landed e9b56c354 (ranking item 7, ruling 89064e45 \u2014 one lifecycle status per record) with tester attestation b1ca5019 at head a9fd95a60. Pinned at landing because it rewrites every multi-status row's tags and metadata. Second landing fixed the audit channel: post_audit now passes --role, runs from the repo root, and returns (ok, detail) so a failed change-log post is reported as a WARNING instead of vanishing \u2014 found when the 7-row apply's audit was silently missing and had to be posted by hand (thread bbe25e1b). Digest captured from this PR's head blob after its 26-test suite passed.",
       "queued_prs": []
     }
   ]
