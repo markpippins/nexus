@@ -12,7 +12,7 @@ import { fetchSubstance, substanceToCamel } from './substance-proxy';
 import { CrossReferenceType } from './crossref-taxonomy';
 import { normalizeTags } from './tagNormalizer';
 import { expandTags } from './tagExpansion';
-import { attestationsLimiter, requirementCompileLimiter, requirementDeleteCascadeLimiter, requirementMoveLimiter } from './limiter';
+import { agentRecordPointLimiter, attestationsLimiter, requirementCompileLimiter, requirementDeleteCascadeLimiter, requirementMoveLimiter } from './limiter';
 import { routingTagErrorMessage, routingCaseErrorMessage } from './routing-tags';
 import { blankRecordError, bodyRequiredError, normalizeHarnessJobId } from './agent-record-write-guard';
 import {
@@ -5567,7 +5567,7 @@ export function createRoutes(pool: Pool): Router {
   // Fixes finding 6d731551: REST had no content-bearing read (list omits
   // content; ?id= was fuzzy search), so REST-only consumers misread
   // persisted records as empty.
-  router.get('/agent-records/:id', async (req: Request, res: Response) => {
+  router.get('/agent-records/:id', agentRecordPointLimiter, async (req: Request, res: Response) => {
     try {
       // NOSONAR on the query line: the interpolated list is an imported
       // constant (never user input); the id is bound via $1.

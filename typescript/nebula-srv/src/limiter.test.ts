@@ -138,6 +138,21 @@ describe('requirement-compile rate limiter (#749)', () => {
   });
 });
 
+describe('agent-record point-read rate limiter', () => {
+  it('runs ahead of the point handler (RateLimit headers stamped, not throttled)', async () => {
+    // Presence-only CodeQL is satisfied by the middleware being mounted;
+    // this proves it actually runs. The stub answers empty rows, so the
+    // handler finishes on its own terms (404) — the assertions are only
+    // that the request was not throttled at this volume and carries the
+    // advertised draft-7 policy headers.
+    const res = await fetch(`${base}/agent-records/00000000-0000-0000-0000-000000000000`);
+    expect(res.status).not.toBe(429);
+    expect(res.headers.get('ratelimit')).toMatch(/limit=\d+/);
+    expect(res.headers.get('ratelimit-policy')).toMatch(/\d+/);
+    await res.arrayBuffer();
+  });
+});
+
 describe('requirement delete-cascade rate limiter (P4a)', () => {
   it('runs ahead of the cascade handlers (RateLimit headers stamped, not throttled)', async () => {
     // Presence-only CodeQL is satisfied by the middleware being mounted; this
