@@ -1,0 +1,14 @@
+# Source of truth for ~/.config/systemd/user/metadata-namespace-tripwire.timer
+# Hourly, offset to :23 so it does not share a minute with the landed-digest
+# guard (:00) or the deploy-pin alarm (:00/:15/:30/:45). Persistent=true runs a
+# missed check once on wake.
+[Unit]
+Description=hourly legacy metadata-key tripwire
+
+[Timer]
+OnCalendar=*:23
+Persistent=true
+Unit=metadata-namespace-tripwire.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,25 @@
+# Source of truth for ~/.config/systemd/user/metadata-namespace-tripwire.service
+#
+# Deploy (operator action):
+#   cp bin/metadata-namespace-tripwire.service ~/.config/systemd/user/
+#   cp bin/metadata-namespace-tripwire.timer   ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now metadata-namespace-tripwire.timer
+#
+# Why: the API guard (typescript/nebula-srv/src/metadata-namespace.ts) refuses
+# legacy tool-owned metadata spellings on POST/PATCH, but direct SQL writers
+# bypass it. A legacy key reappearing is a corpus regression: exit 1 fails the
+# unit so the journal carries it, and --post files one change-log alert per new
+# evidence set (deduped by digest, so a persisting violation does not spam).
+#
+# Read-only over nebula.agent_records; state + heartbeat in
+# ~/.cache/metadata-namespace-tripwire/state.json.
+[Unit]
+Description=legacy metadata-key tripwire (nebula.agent_records)
+Documentation=file:///home/codex/dev/nexus/bin/metadata_namespace_tripwire.py
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/metadata_namespace_tripwire.py --post
+TimeoutStartSec=180
