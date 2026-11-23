@@ -224,4 +224,38 @@ describe("wiring", () => {
     expect(handler).toMatch(/INSERT INTO nebula\.agent_records \([^)]*harness_job_id/s);
     expect(handler).toContain("runAttribution.jobId");
   });
+
+  it("the PATCH /agent-records/:id handler can fill harness_job_id, but only additively", () => {
+    // The backfill (bin/harness_job_backfill.py) writes through PATCH. Two
+    // properties matter and neither shows up in a happy-path route test:
+    //   1. another PATCH field that is accepted-but-not-stored would make the
+    //      backfill report success and attribute nothing (the POST lesson);
+    //   2. provenance is not mutable state — a row that already names a run
+    //      must not be rewritten to a second one, or a wrong backfill becomes
+    //      indistinguishable from the evidence it replaced.
+    const routes = readFileSync(path.join(__dirname, "..", "routes.ts"), "utf8");
+    const patchStart = routes.indexOf("router.patch('/agent-records/:id'");
+    expect(patchStart).toBeGreaterThan(-1);
+    const patchEnd = routes.indexOf("router.delete('/agent-records/:id'", patchStart);
+    expect(patchEnd).toBeGreaterThan(patchStart);
+    const handler = routes.slice(patchStart, patchEnd);
+
+    expect(handler).toContain("harnessJobId");
+    expect(handler).toContain("normalizeHarnessJobId(harnessJobId)");
+    expect(handler).toMatch(/harness_job_id = \$\$\{i\+\+\}/);
+    expect(handler).toMatch(/status\(409\)/);
+    expect(handler).toContain("!existing.harness_job_id");
+  });
+
+  it("the PATCH /agent-records/:id route is rate-limited", () => {
+    // The attribution branch adds a SELECT ahead of the UPDATE, which re-arms
+    // CodeQL's js/missing-rate-limiting alert on the handler (it fired on the
+    // point read in #1045 and the create in #1046 the same way). The fleet's
+    // remediation is a real ceiling on the route, never a suppression — pin it
+    // so a later refactor cannot quietly drop the middleware.
+    const routes = readFileSync(path.join(__dirname, "..", "routes.ts"), "utf8");
+    expect(routes).toMatch(
+      /router\.patch\('\/agent-records\/:id', agentRecordPatchLimiter,/
+    );
+  });
 });

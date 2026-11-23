@@ -12,7 +12,7 @@ import { fetchSubstance, substanceToCamel } from './substance-proxy';
 import { CrossReferenceType } from './crossref-taxonomy';
 import { normalizeTags } from './tagNormalizer';
 import { expandTags } from './tagExpansion';
-import { agentRecordCreateLimiter, agentRecordPointLimiter, attestationsLimiter, requirementCompileLimiter, requirementDeleteCascadeLimiter, requirementMoveLimiter } from './limiter';
+import { agentRecordCreateLimiter, agentRecordPatchLimiter, agentRecordPointLimiter, attestationsLimiter, requirementCompileLimiter, requirementDeleteCascadeLimiter, requirementMoveLimiter } from './limiter';
 import { routingTagErrorMessage, routingCaseErrorMessage } from './routing-tags';
 import { blankRecordError, bodyRequiredError, normalizeHarnessJobId } from './agent-record-write-guard';
 import {
@@ -6116,10 +6116,10 @@ export function createRoutes(pool: Pool): Router {
   });
 
   // PATCH /api/agent-records/:id — update record fields
-  router.patch('/agent-records/:id', async (req: Request, res: Response) => {
+  router.patch('/agent-records/:id', agentRecordPatchLimiter, async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
-      const { title, content, metadata, tags, systemId, subsystemId, featureId, planRef, level, visibilityScope, model, role } = req.body;
+      const { title, content, metadata, tags, systemId, subsystemId, featureId, planRef, level, visibilityScope, model, role, harnessJobId } = req.body;
       if (level !== undefined && (level < 1 || level > 4)) {
         return res.status(400).json({ error: 'level must be between 1 and 4' });
       }
@@ -6169,6 +6169,38 @@ export function createRoutes(pool: Pool): Router {
       if (level !== undefined) { sets.push(`level = $${i++}`); vals.push(level); }
       if (visibilityScope !== undefined) { sets.push(`visibility_scope = $${i++}`); vals.push(visibilityScope); }
       if (model !== undefined) { sets.push(`model = $${i++}`); vals.push(model); }
+      // ── Run attribution (V210) on the repair path.
+      //
+      // `harness_job_id` is provenance, so a PATCH may only FILL it, never
+      // rewrite it: bin/harness_job_backfill.py attributes historical rows
+      // from evidence, and a second, different answer for the same row means
+      // one of the two is wrong — that is a 409 for a human, not a silent
+      // overwrite. Unlike POST (which degrades to unattributed so a record is
+      // never lost), an EXPLICIT set here is refused loudly when unusable:
+      // the caller asked for a specific attribution, and answering ok:true
+      // while storing nothing is how a backfill reports success and changes
+      // nothing.
+      if (harnessJobId !== undefined) {
+        const attribution = normalizeHarnessJobId(harnessJobId);
+        if (attribution.error) {
+          return res.status(400).json({ error: attribution.error });
+        }
+        const { rows: [existing] } = await pool.query(
+          `SELECT harness_job_id FROM nebula.agent_records WHERE id = $1`,
+          [id]
+        );
+        if (!existing) return res.status(404).json({ error: 'Agent record not found' });
+        if (existing.harness_job_id && existing.harness_job_id !== attribution.jobId) {
+          return res.status(409).json({
+            error: 'harness_job_id already names a different run',
+            existing: existing.harness_job_id,
+          });
+        }
+        if (!existing.harness_job_id && attribution.jobId) {
+          sets.push(`harness_job_id = $${i++}`);
+          vals.push(attribution.jobId);
+        }
+      }
       if (sets.length === 0) return res.json({ ok: true });
       vals.push(id);
       const { rows: [row] } = await pool.query(

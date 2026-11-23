@@ -115,6 +115,27 @@ export const agentRecordCreateLimiter = rateLimit({
   message: { error: "nebula-srv agent-record create rate limit exceeded" },
 });
 
+/**
+ * Limiter for the single-record repair path
+ * (PATCH /api/agent-records/:id).
+ *
+ * Scoped to this route, 300 req/min/IP, same posture as the limiters above.
+ * The run-attribution branch added a SELECT to the handler (it must know
+ * whether the row already names a run before it may fill one), which re-armed
+ * the pre-existing js/missing-rate-limiting alert on the handler as new-in-PR
+ * for CodeQL — the same situation #1045 (point read) and #1046 (create) hit.
+ * A real ceiling, not a suppression: PATCH is how bin/harness_job_backfill.py,
+ * supersede-record.sh and the janitor repair rows, so it is agent-paced and
+ * 5 req/s per IP leaves ordinary repair traffic well clear of the limit.
+ */
+export const agentRecordPatchLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "nebula-srv agent-record patch rate limit exceeded" },
+});
+
 export const requirementDeleteCascadeLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 300,
