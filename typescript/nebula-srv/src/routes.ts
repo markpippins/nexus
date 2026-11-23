@@ -32,12 +32,14 @@ import {
   camelCaseRow,
   AGENT_RECORD_LIST_COLUMNS,
   AGENT_RECORD_LIST_COLUMNS_FULL,
+  AGENT_RECORD_POINT_COLUMNS,
 } from './agent-record-projection';
 
 export {
   camelCaseRow,
   AGENT_RECORD_LIST_COLUMNS,
   AGENT_RECORD_LIST_COLUMNS_FULL,
+  AGENT_RECORD_POINT_COLUMNS,
 };
 
 const execFileAsync = promisify(execFile);
@@ -5568,9 +5570,7 @@ export function createRoutes(pool: Pool): Router {
   router.get('/agent-records/:id', async (req: Request, res: Response) => {
     try {
       const { rows } = await pool.query(
-        `SELECT id, record_type, role, model, title, source_path, tags, content,
-                system_id, subsystem_id, feature_id, plan_ref, candidate_id,
-                requirement_id, created_at, recorded_on_dt, level, visibility_scope
+        `SELECT ${AGENT_RECORD_POINT_COLUMNS}
          FROM nebula.agent_records WHERE id = $1`,
         [req.params.id]
       );

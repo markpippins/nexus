@@ -51,3 +51,17 @@ export const AGENT_RECORD_LIST_COLUMNS_FULL = `id, record_type, role, model, tit
          octet_length(content)::int AS content_length, content,
          system_id, subsystem_id, feature_id, plan_ref, created_at, recorded_on_dt,
          level, visibility_scope, harness_job_id`;
+
+/**
+ * Point projection (GET /api/agent-records/:id): the full single-record
+ * read. It MUST carry metadata (and harness_job_id) too — omitting them
+ * left a consumer reading one record unable to see the same provenance
+ * the list had just returned (corrected-by: tag present, corrections[]
+ * absent — the psql-only blind spot #1044 closed for lists). Kept as a
+ * named constant so the shape is unit-testable like the list contract.
+ */
+export const AGENT_RECORD_POINT_COLUMNS = `id, record_type, role, model, title, source_path, tags, metadata,
+                content,
+                system_id, subsystem_id, feature_id, plan_ref, candidate_id,
+                requirement_id, created_at, recorded_on_dt, level, visibility_scope,
+                harness_job_id`;
