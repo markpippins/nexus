@@ -34,6 +34,11 @@ import {
   AGENT_RECORD_LIST_COLUMNS_FULL,
   AGENT_RECORD_POINT_COLUMNS,
 } from './agent-record-projection';
+import {
+  attestationBinding,
+  retirementPatch,
+  supersedableDuplicates,
+} from './attestation-idempotency';
 
 export {
   camelCaseRow,
@@ -6056,6 +6061,49 @@ export function createRoutes(pool: Pool): Router {
           runAttribution.jobId,
         ]
       );
+
+      // ── Write-time (pr, head) idempotency for tester attestations ──
+      // A tester retry files a NEW attestation row for the same (pr, head);
+      // only the newest is the gate's answer, so the live predecessor is
+      // retired here (Decision 24 Amendment 1) instead of accumulating as a
+      // stray status:done row (#1044 carried three for one head). Narrow by
+      // design: both a PR tag and a well-formed head tag are required, and
+      // head-less legacy rows are never collapsed. This can never fail the
+      // write — the row is already stored, and the merge gate retires any
+      // duplicate it still finds (bin/merge_pr.py duplicate_attestations).
+      const attBinding = attestationBinding(role, recordType, expandedTags.tags);
+      if (attBinding) {
+        try {
+          const { rows: prior } = await pool.query(
+            `SELECT id, role, record_type, title, tags, metadata
+               FROM nebula.agent_records
+              WHERE role = 'tester'
+                AND tags && ARRAY[$1, $2]::text[]
+                AND id <> $3`, // NOSONAR: column list only; all values bound
+            [`pr:${attBinding.pr}`, `gate:${attBinding.pr}`, row.id],
+          );
+          const atIso = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+          for (const dup of supersedableDuplicates(prior, attBinding, row.id)) {
+            const patch = retirementPatch(dup, attBinding, row.id, atIso);
+            if (!patch) continue;
+            await pool.query(
+              `UPDATE nebula.agent_records SET title = $1, tags = $2, metadata = $3 WHERE id = $4`,
+              [patch.title, patch.tags, patch.metadata, dup.id],
+            );
+            console.log(
+              `[attestation-idempotency] retired ${String(dup.id).slice(0, 8)} ` +
+              `under ${String(row.id).slice(0, 8)} (PR #${attBinding.pr}, ` +
+              `head ${attBinding.head.slice(0, 8)})`,
+            );
+          }
+        } catch (err: any) {
+          console.warn(
+            '[attestation-idempotency] duplicate retirement skipped:',
+            err?.message || err,
+          );
+        }
+      }
+      res.status(201).json(row);
       res.status(201).json(row);
 
       // T27: deterministically mirror decision records into the decisions forum.

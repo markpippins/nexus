@@ -277,7 +277,7 @@ createdAt, level, visibilityScope); detail adds the full `content`.
 | Endpoint | Purpose |
 |----------|---------|
 | `GET /api/agent-records` | List with filters + pagination. |
-| `POST /api/agent-records` | **Create** — canonical write path. Body: `{ recordType, role, title, content, tags[], level?, visibilityScope? }`. `recordType` ∈ `report, analysis, assessment, inspection, prompt, response, engineering_log, architecture_note, decision`. `level` ∈ 1–4. |
+| `POST /api/agent-records` | **Create** — canonical write path. Body: `{ recordType, role, title, content, tags[], level?, visibilityScope? }`. `recordType` ∈ `report, analysis, assessment, inspection, prompt, response, engineering_log, architecture_note, decision`. `level` ∈ 1–4. A tester **attestation** (canonical `assessment` + `type:approval` + `status:done`, or legacy `type:attestation`) that carries BOTH a `pr:<N>`/`gate:<N>` tag and a well-formed `head:<sha>` tag is idempotent on `(pr, head)`: after the new row is stored, every other live attestation for the same PR and head is retired under it (`status:retired`, `metadata.retired`, body unchanged — Decision 24 Amendment 1). Head-less legacy rows are never collapsed. |
 | `GET /api/agent-records/:id` | Full record **with content**. |
 | `PATCH /api/agent-records/:id` | Update fields. |
 | `DELETE /api/agent-records/:id` | Delete. |

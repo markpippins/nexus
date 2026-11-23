@@ -1975,6 +1975,94 @@ def test_bookkeeping_retires_duplicates_under_accepted_successor():
     assert "retired 1 duplicate attestation(s) dup00001" in note
 
 
+def test_bookkeeping_retires_duplicates_without_record_refusals():
+    """Duplicate retirement is unconditional (#1046 top-ranked follow-up).
+
+    A tester retry leaves a same-head row behind; only the newest is the
+    gate's answer, so gating an attested PR must clean it up even when the
+    caller never passed --record-refusals. Refusal tagging is the half that
+    writes a verdict, and it stays opt-in.
+    """
+    acc = rec(rec_id="acc00001",
+              tags=["type:approval", "status:done", "pr:487", "head:bfac2dcf7"])
+    dup = rec(rec_id="dup00001",
+              tags=["type:approval", "status:done", "pr:487", "head:bfac2dcf7"])
+    calls = []
+
+    def no_patch(url, payload):
+        raise AssertionError(f"refusal bookkeeping must stay opt-in: {payload}")
+
+    bk = merge_pr.attestation_bookkeeping(
+        http_patch=no_patch,
+        supersede=lambda o, n, w: (calls.append((o, n, w)) or (True, "")),
+        retire_refusals=False)
+    note = bk([acc, dup], 487, True, None, "bfac2dcf7")
+    assert [(c[0], c[1]) for c in calls] == [("dup00001", "acc00001")]
+    assert "retired 1 duplicate attestation(s) dup00001" in note
+
+
+def test_bookkeeping_without_record_refusals_leaves_refused_rows_alone():
+    """The refusal half stays behind the flag: a refused row is evidence for
+    the refusal path, not residue, and the janitor's check-only cycle must not
+    supersede it unless it asked for that."""
+    acc = rec(rec_id="acc00001",
+              tags=["type:attestation", "status:done", "pr:487", "head:a8b1dfc6"])
+    ref = rec(rec_id="ref00001",
+              tags=["type:attestation", "status:refused",
+                    "gate-code:ATT_CI_COVERAGE", "pr:487", "head:a8b1dfc6"])
+    calls = []
+    bk = merge_pr.attestation_bookkeeping(
+        http_patch=lambda url, payload: None,
+        supersede=lambda o, n, w: (calls.append((o, n)) or (True, "")),
+        retire_refusals=False)
+    assert bk([acc, ref], 487, True, None, BOUND_HEAD) == ""
+    assert calls == []
+
+
+def test_bookkeeping_without_record_refusals_never_records_a_refusal():
+    row = rec(rec_id="eeee5555",
+              tags=["type:approval", "status:done", "pr:487"])
+    patches = []
+    bk = merge_pr.attestation_bookkeeping(
+        http_patch=lambda url, payload: patches.append(payload),
+        supersede=lambda *a: (True, ""),
+        retire_refusals=False)
+    assert bk([row], 487, False, "ATT_CI_COVERAGE", BOUND_HEAD) == ""
+    assert patches == []
+
+
+def test_evaluate_retires_duplicates_even_when_record_refusals_is_off(monkeypatch):
+    """End-to-end wiring: evaluate() installs bookkeeping on every call, so a
+    same-head duplicate is retired on a passing gate with the default
+    (check-only, no --record-refusals) invocation."""
+    calls = []
+    real = merge_pr.attestation_bookkeeping
+
+    def bookkeeping_with_fakes(**kwargs):
+        # evaluate() must ask for bookkeeping on EVERY run; only the refusal
+        # half is keyed to --record-refusals.
+        assert kwargs.get("retire_refusals") is False, kwargs
+        kwargs["supersede"] = lambda old, new, why: (
+            calls.append((old, new)) or (True, ""))
+
+        def no_patch(url, payload):
+            raise AssertionError(f"refusal bookkeeping must stay opt-in: {payload}")
+
+        kwargs["http_patch"] = no_patch
+        return real(**kwargs)
+
+    monkeypatch.setattr(merge_pr, "attestation_bookkeeping", bookkeeping_with_fakes)
+    dup = rec(rec_id="dup00001", created_ms=NOW_MS - 7200_000,
+              tags=["type:approval", "status:done", "pr:487", "head:a8b1dfc6"])
+    acc = rec(rec_id="acc00001", created_ms=NOW_MS - 3600_000,
+              tags=["type:approval", "status:done", "pr:487", "head:a8b1dfc6"])
+    run_json, http_get = make_fakes(records=[dup, acc])
+    gates, _ = merge_pr.evaluate(487, run_json=run_json, http_get=http_get, env={})
+    assert all(g.passed for g in gates), [g.detail for g in gates]
+    assert calls == [("dup00001", "acc00001")]
+    assert "retired 1 duplicate attestation(s) dup00001" in gates[2].detail
+
+
 def test_record_refusal_patches_the_row_and_never_raises():
     calls = []
     row = rec(rec_id="bbbb2222",
