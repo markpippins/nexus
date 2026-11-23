@@ -315,6 +315,94 @@ def test_rerun_after_apply_is_a_verified_no_op():
     assert neb.writes == 3  # nothing written on the rerun
 
 
+def test_apply_paces_writes_to_stay_under_the_service_rate_limit():
+    rows = [row({"retired": RETIRED}, rid=f"{i:08d}-0000-0000-0000-000000000000") for i in range(3)]
+    neb = FakeNebula(rows)
+    naps: list[float] = []
+    apply_plans(build_plans(rows), "http://x", max_apply=10,
+                fetch=neb.fetch, write=neb.write, pace=0.7, sleep=naps.append)
+    assert naps == [0.7, 0.7]  # one pause between rows, never before the first
+
+
+class _FakeResponse:
+    status = 200
+
+    def __init__(self, payload):
+        self._payload = json.dumps(payload).encode()
+
+    def read(self):
+        return self._payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def test_http_retries_a_429_and_honours_retry_after(monkeypatch):
+    import io
+    import urllib.error
+    import metadata_namespace_normalize as mod
+
+    calls = {"n": 0}
+    naps: list[float] = []
+
+    def fake_urlopen(req, timeout=30):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise urllib.error.HTTPError(
+                req.full_url, 429, "limited", {"Retry-After": "1"}, io.BytesIO(b'{"error":"limit"}'))
+        return _FakeResponse({"ok": True})
+
+    monkeypatch.setattr(mod.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(mod, "_sleep", naps.append)
+    status, body = mod._http("PATCH", "http://x/api/agent-records/1", {"metadata": {}})
+    assert (status, body) == (200, {"ok": True})
+    assert calls["n"] == 3
+    assert naps == [1.0, 1.0]
+
+
+def test_http_gives_up_after_the_attempt_budget(monkeypatch):
+    import io
+    import urllib.error
+    import metadata_namespace_normalize as mod
+
+    calls = {"n": 0}
+
+    def always_429(req, timeout=30):
+        calls["n"] += 1
+        raise urllib.error.HTTPError(req.full_url, 429, "limited", {},
+                                     io.BytesIO(b'{"error":"limit"}'))
+
+    monkeypatch.setattr(mod.urllib.request, "urlopen", always_429)
+    monkeypatch.setattr(mod, "_sleep", lambda _s: None)
+    status, body = mod._http("PATCH", "http://x", {})
+    assert status == 429 and body == {"error": "limit"}
+    assert calls["n"] == mod.MAX_ATTEMPTS
+
+
+def test_http_does_not_retry_a_refusal():
+    import io
+    import urllib.error
+    import metadata_namespace_normalize as mod
+
+    calls = {"n": 0}
+
+    def refuse(req, timeout=30):
+        calls["n"] += 1
+        raise urllib.error.HTTPError(req.full_url, 422, "bad", {},
+                                     io.BytesIO(b'{"error":"legacy key"}'))
+
+    original = mod.urllib.request.urlopen
+    mod.urllib.request.urlopen = refuse
+    try:
+        status, body = mod._http("POST", "http://x", {})
+    finally:
+        mod.urllib.request.urlopen = original
+    assert status == 422 and calls["n"] == 1
+
+
 def test_digest_is_order_independent():
     a = row({"retired": RETIRED, "pr": 1})
     b = row({"pr": 1, "retired": RETIRED})

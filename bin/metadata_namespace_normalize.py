@@ -58,6 +58,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -270,19 +271,45 @@ def load_rows(dsn: str = DSN) -> Tuple[List[Row], int]:
 
 # ── write side (nebula API, read-back verified) ──────────────────────────
 
+# The service rate-limits point reads and patches at 300/min per IP. A write
+# pass touches ~5k records, so a 429 must back off and retry rather than be
+# recorded as a normalization failure.
+RETRY_STATUSES = (429, 502, 503, 504)
+MAX_ATTEMPTS = 5
+PACE_SECONDS = 0.7  # 3 requests per row at <= 270 requests/min
+
+_sleep = time.sleep  # seam for hermetic tests
+
+
+def _retry_after_seconds(exc: urllib.error.HTTPError, attempt: int) -> float:
+    header = (exc.headers or {}).get("Retry-After") if exc.headers else None
+    try:
+        wait = float(header) if header is not None else 0.0
+    except (TypeError, ValueError):
+        wait = 0.0
+    if wait <= 0:
+        wait = 2.0 * (attempt + 1)
+    return min(wait, 60.0)
+
+
 def _http(method: str, url: str, body: Optional[dict], timeout: int = 30) -> Tuple[int, Any]:
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method,
                                  headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status, json.loads(resp.read().decode() or "{}")
-    except urllib.error.HTTPError as exc:
+    for attempt in range(MAX_ATTEMPTS):
         try:
-            payload = json.loads(exc.read().decode() or "{}")
-        except Exception:
-            payload = {}
-        return exc.code, payload
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.status, json.loads(resp.read().decode() or "{}")
+        except urllib.error.HTTPError as exc:
+            try:
+                payload = json.loads(exc.read().decode() or "{}")
+            except Exception:
+                payload = {}
+            if exc.code in RETRY_STATUSES and attempt + 1 < MAX_ATTEMPTS:
+                _sleep(_retry_after_seconds(exc, attempt))
+                continue
+            return exc.code, payload
+    return 0, {"error": "retries exhausted"}
 
 
 def fetch_point(base: str, record_id: str) -> dict:
@@ -307,6 +334,8 @@ def apply_plans(
     fetch: Callable[[str, str], dict] = fetch_point,
     write: Callable[[str, str, dict], Tuple[int, Any]] = patch_metadata,
     log: Callable[[str], None] = lambda _m: None,
+    pace: float = PACE_SECONDS,
+    sleep: Callable[[float], None] = None,
 ) -> Dict[str, Any]:
     """Apply the planned normalizations; verify every write by read-back."""
     to_write = [p for p in plans if p.planned and not p.blocked]
@@ -316,9 +345,12 @@ def apply_plans(
             f"deliberately (nothing was written)"
         )
 
+    nap = sleep or _sleep
     verified: List[str] = []
     failed: List[Dict[str, str]] = []
-    for plan in to_write:
+    for index, plan in enumerate(to_write):
+        if index and pace > 0:
+            nap(pace)
         rid = plan.row.id
         target = normalize_metadata(plan)
         try:
