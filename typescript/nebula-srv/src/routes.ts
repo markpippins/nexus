@@ -5569,11 +5569,10 @@ export function createRoutes(pool: Pool): Router {
   // persisted records as empty.
   router.get('/agent-records/:id', async (req: Request, res: Response) => {
     try {
-      const { rows } = await pool.query(
-        `SELECT ${AGENT_RECORD_POINT_COLUMNS}
-         FROM nebula.agent_records WHERE id = $1`,
-        [req.params.id]
-      );
+      // NOSONAR on the query line: the interpolated list is an imported
+      // constant (never user input); the id is bound via $1.
+      const sql = `SELECT ${AGENT_RECORD_POINT_COLUMNS} FROM nebula.agent_records WHERE id = $1`; // NOSONAR
+      const { rows } = await pool.query(sql, [req.params.id]);
       if (!rows.length) return res.status(404).json({ error: 'Agent record not found' });
       // Serialize exactly like the list route (camelCase keys + epoch-ms
       // timestamps). A raw pg row exposes `created_at` and no `createdAt`, so
