@@ -385,6 +385,10 @@ def test_repo_registry_wellformed_and_pinned_digests_stable():
     # drift must flip the guard like the gate tools do.
     assert by_path["bin/attestation_residue_sweep.py"]["digest"] == (
         "b70350caf1027eb67ebd9afc4ede18e74c75a68b7cf6fce80c290d5df5b7edc8")
+    # TIER-2 PIN 2026-11-23: PR #1049 landed ecb2ff738 (harness_job_id
+    # backfill). Pinned at landing because it mutates provenance.
+    assert by_path["bin/harness_job_backfill.py"]["digest"] == (
+        "f0aa42a0a6481bd408c1b28f6ad500df41c9a6cb755c6688c656ec27a4143923")
     # ADVANCED 2026-11-06: the pin had gone stale at PR #878 (c96dfb5c0,
     # run attribution) — the open DRIFT incident 30186d3b — and this PR also
     # gives --model the $NEXUS_AGENT_MODEL default. Prior pin e548f405… was
