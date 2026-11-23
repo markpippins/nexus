@@ -10,14 +10,14 @@
     },
     {
       "path": "bin/attestation_janitor.py",
-                  "digest": "8af7f1f4056903538a1ac2d8d89de530d8c36aa8957eb70d6e880272515f490c",
-            "provenance": "PIN ADVANCE 2026-11-22: two attested landings since #866's c002f369c — PR #1037 (squash 199985a17, tester attestation 067d2f83 at head 966b9bb) records attestation refusals on the refused row and retires them, and PR #1040 (squash 9a79e81f8, tester attestation ccba1b04) closes serviced to:tester request rows for every ask shape, bounded to the gated head. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 after git cat-file -e. Previous pinned digest 03fcbcd7… (#866, c002f369c). Tier 1 audit-chain tool.",
+                  "digest": "1942b0885b04e24634dbecaa5c501178badb4f02f02850ed42d042f2daf823c0",
+            "provenance": "PIN ADVANCE 2026-11-23: PR #1046 landed (squash eb7a8cf34) with tester attestation a3b29644 at head 1bcd4c68c — the cycle/safety-rail comments now state that duplicate same-head attestations are retired on every accepted gate regardless of --record-refusals, and the janitor's check-only contract is spelled out for both halves. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 after git cat-file -e. Previous pinned digest 8af7f1f4… (#1040 9a79e81f8 / #1037 199985a17). Tier 1 audit-chain tool.",
       "queued_prs": []
     },
     {
       "path": "bin/merge_pr.py",
-                  "digest": "5af13cf3af87d31de52b5c0ed29e9065865d9c22c5097982527964454604cb62",
-            "provenance": "PIN ADVANCE 2026-11-22: PR #1037 landed (squash 199985a17) with tester attestation 067d2f83 at head 966b9bb — gate-3 refusals are now recorded on the refused row and that row is retired, and the retirement text is head-agnostic. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 after git cat-file -e. Previous pinned digest ff29601e… (#873, e9aafe220). Tier 1 audit-chain tool.",
+                  "digest": "e73308b88494ed385a0d6c436b78926b4ad2f8ea3138d8276095f38185c92bad",
+            "provenance": "PIN ADVANCE 2026-11-23: PR #1046 landed (squash eb7a8cf34) with tester attestation a3b29644 at head 1bcd4c68c — attestation bookkeeping is installed on EVERY gate-3 evaluation (same-head duplicate attestations retire under the accepted row without --record-refusals) while the refusal half stays flag-gated. #1045 (f3b80c824) had already changed this file without advancing the pin, which is the DRIFT posted 2026-11-23T11:00; this advance settles both landings. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 after git cat-file -e. Previous pinned digest 5af13cf3… (#1037, 199985a17). Tier 1 audit-chain tool.",
       "queued_prs": []
     },
     {
