@@ -341,8 +341,11 @@ def test_repo_registry_wellformed_and_pinned_digests_stable():
     attested landings: #1039 (7598cc556, supersede pointer note), #1040
     (9a79e81f8, serviced-request close-out), #1037 (199985a17, refusal
     bookkeeping — also the merge_pr.py landing) and #1042 (6de95b004, rule
-    ASK-CLOSE). Every digest captured from the origin/main blob after a
-    positive cat-file -e existence check.
+    ASK-CLOSE). Advanced again 2026-11-23 for #1046 (eb7a8cf34) and the
+    #1045 (f3b80c824) drift it inherited: gate-3 bookkeeping is installed
+    unconditionally now, so both audit-chain tools' bytes moved. Every digest
+    captured from the origin/main blob after a positive cat-file -e existence
+    check.
     The queue is empty as of 2026-11-05: the PR #695 entry (CIR-5 janitor
     rung) was cleared, because #695 MERGED 2026-10-08 and its captured digest
     was the merged blob — the expectation was met and never dequeued, then
@@ -358,18 +361,19 @@ def test_repo_registry_wellformed_and_pinned_digests_stable():
     # 1da39fddb.
     assert by_path["bin/supersede-record.sh"]["digest"] == (
         "187c1cad9d31392c701374a5067cf80c7dc993af5d10df94a7134aa41f4f29be")
-    # ADVANCED 2026-11-22: PR #1040 landed 9a79e81f8 (serviced-request
-    # close-out) on top of #1037's refusal bookkeeping; was #866 c002f369c.
+    # ADVANCED 2026-11-23: PR #1046 (eb7a8cf34) restated the check-only
+    # contract for both bookkeeping halves; was #1040 9a79e81f8.
     assert by_path["bin/attestation_janitor.py"]["digest"] == (
-        "8af7f1f4056903538a1ac2d8d89de530d8c36aa8957eb70d6e880272515f490c")
+        "1942b0885b04e24634dbecaa5c501178badb4f02f02850ed42d042f2daf823c0")
     # Adjudicated 2026-11-05: #695 merged at the queued digest and was never
     # dequeued; the entry is closed, not pending.
     assert by_path["bin/attestation_janitor.py"]["queued_prs"] == []
-    # ADVANCED 2026-11-22: PR #1037 landed 199985a17 (gate-3 refusals are
-    # recorded on the refused row and the row is retired, head-agnostic
-    # wording); was #873 e9aafe220 (verdict-phrase ordering fix).
+    # ADVANCED 2026-11-23: PR #1046 (eb7a8cf34) installs bookkeeping on
+    # every gate-3 evaluation; it also settles #1045 (f3b80c824), whose
+    # merge_pr.py change was the DRIFT posted 2026-11-23T11:00. Was #1037
+    # 199985a17 (refusals recorded on the refused row, head-agnostic).
     assert by_path["bin/merge_pr.py"]["digest"] == (
-        "5af13cf3af87d31de52b5c0ed29e9065865d9c22c5097982527964454604cb62")
+        "e73308b88494ed385a0d6c436b78926b4ad2f8ea3138d8276095f38185c92bad")
     assert by_path["bin/gate_codes.py"]["digest"] == (
         "b25bdef712a62ac5867d04b61272da6dfb4cd5f31a1c028db8dcdfaa3d080689")
     # ADVANCED 2026-11-22: PR #1042 landed 6de95b004 (rule ASK-CLOSE); was
