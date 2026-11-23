@@ -15,7 +15,10 @@ One cycle:
      evaluate anyway (fail-safe; the gate's own scan fallback still decides).
   3. Run bin/merge_pr.py <N> --record-refusals in CHECK-ONLY mode (the flag
      only lets the gate record a refusal on the refused row and retire a
-     refused row under an accepted successor; it never changes the verdict).
+     refused row under an accepted successor; it never changes the verdict.
+     Duplicate live attestations for the accepted head are retired under the
+     accepted row on every accepted gate, flag or no flag — that is residue
+     from a retry, not a verdict).
      Only if every gate passes: close the `to:tester` request rows that asked
      for this attestation (the Decision 24 supersede convention —
      archive-before-mutation — applied by bin/supersede-record.sh, plus a
@@ -63,10 +66,11 @@ Safety rails (all non-negotiable):
     check-only run of the SAME gate exited 0 for the SAME head.
   - Default mode is check-only: without --apply nothing merges, promotes,
     repairs, reruns, posts, or changes any verdict. The gate's two
-    attestation-bookkeeping writes (--record-refusals) ARE check-only by
-    design: tagging a refusal onto the refused row, and retiring a refused
-    row under an accepted successor, touch only attestation records — never
-    a branch, a PR, a workflow run, or the gate outcome.
+    attestation-bookkeeping writes ARE check-only by design: tagging a
+    refusal onto the refused row and retiring a refused row under an accepted
+    successor (--record-refusals), plus retiring duplicate same-head
+    attestations under the accepted row (always), touch only attestation
+    records — never a branch, a PR, a workflow run, or the gate outcome.
   - Per-cycle merge cap (default 3) bounds blast radius.
   - PRs already recorded as merged in the state file are skipped (idempotent
     across timer ticks).

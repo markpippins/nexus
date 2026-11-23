@@ -12,17 +12,20 @@ This tool makes the R8 merge conditions mechanically enforceable:
           AND was created at or after the PR's head commit date -- a
           force-push after attestation invalidates it.
 
-Check-only is the DEFAULT and never mutates anything; exit 0 means "every
-gate passed". ``--merge`` performs the squash merge only after all gates
-pass.
+Check-only is the DEFAULT: it never merges, pushes or touches a branch; exit 0
+means "every gate passed". One record-only write does run without --merge:
+duplicate live attestations for the accepted PR head are retired under the
+accepted row whenever gate 3 passes (see "Gate 3 bookkeeping"). Retiring a
+duplicate is not a verdict about any row's correctness — it is residue from a
+tester retry — so it must not depend on an opt-in flag. ``--merge`` performs
+the squash merge only after all gates pass.
 
 ``--record-refusals`` (opt-in; the attestation janitor passes it) adds the
-attestation-bookkeeping writes described under "Gate 3 bookkeeping":
-the refused row is tagged status:refused + gate-code:<CODE>, a refused
-row is retired under an accepted successor for the same PR, whatever head it
-was attested at, and duplicate live attestations for the same PR head are
-retired under the accepted successor. Those writes never change a gate
-result; without the flag the gate stays read-only.
+refusal half of the same bookkeeping: the refused row is tagged
+status:refused + gate-code:<CODE>, and a refused row is retired under an
+accepted successor for the same PR, whatever head it was attested at. That
+half WRITES A VERDICT onto another role's record, so it stays opt-in. Neither
+write can change a gate result.
 
 The attestation gate (and only that gate) may be bypassed by the
 OPERATOR via NEXUS_ALLOW_UNATTESTED_MERGE=1 -- the bypass is reported
@@ -797,17 +800,27 @@ def fetch_pr_files(
 # successor and Decision 24 retirement remained a manual post-step. Measured
 # 2026-11-21: 76 accepted predecessors were still live across the fleet.
 #
-# Two writes close that, both opt-in via --record-refusals:
-#   1. a refused row is tagged status:refused + gate-code:<CODE>, so the
-#      refusal is durable and machine-readable ON the row; and
-#   2. when gate 3 later passes, refused rows for the same PR are superseded
-#      under the accepted row through bin/supersede-record.sh (its
-#      archive-before-mutate and round-trip verify are reused, not
-#      reimplemented). Not scoped by head: an ATT_STALE_HEAD row can never
-#      match the successor's head tag, so head scoping left it live forever.
-#
-# Neither write can change a gate result: every failure is reported in the
+# Three writes close that. They share bin/supersede-record.sh (its
+# archive-before-mutate and round-trip verify are reused, not reimplemented),
+# and none of them can change a gate result: every failure is reported in the
 # detail line, never raised.
+#
+# UNCONDITIONAL (always on when gate 3 passes):
+#   1. duplicate live attestations for the accepted head are retired under the
+#      accepted row. A duplicate is not a verdict — it is what a tester retry
+#      leaves behind, and only the newest row was ever the gate's answer — so
+#      gating a PR should never depend on someone remembering a flag. #1044
+#      carried three live rows for one head until they were retired by hand.
+#
+# OPT-IN via --record-refusals (these WRITE A VERDICT, so they stay behind
+# an explicit request; the attestation janitor passes the flag in check-only
+# mode):
+#   2. a refused row is tagged status:refused + gate-code:<CODE>, so the
+#      refusal is durable and machine-readable ON the row; and
+#   3. when gate 3 later passes, refused rows for the same PR are superseded
+#      under the accepted row. Not scoped by head: an ATT_STALE_HEAD row can
+#      never match the successor's head tag, so head scoping left it live
+#      forever.
 REFUSAL_STATUS = "status:refused"
 
 
@@ -988,16 +1001,26 @@ def supersede_record(old_id: str, new_id: str, reason: str) -> Tuple[bool, str]:
 def attestation_bookkeeping(
     http_patch: Callable[[str, Dict[str, Any]], Any] = _http_patch_json,
     supersede: Callable[[str, str, str], Tuple[bool, str]] = supersede_record,
+    retire_refusals: bool = True,
 ) -> Callable[..., str]:
     """Bookkeeping applied after a gate-3 evaluation; returns a note for the
-    gate detail (empty when nothing was written)."""
+    gate detail (empty when nothing was written).
+
+    Duplicate retirement is UNCONDITIONAL: a same-head duplicate is residue
+    from a retry, not a judgement about any row, so it is retired whenever the
+    gate accepts a successor — flag or no flag. ``retire_refusals`` gates only
+    the refusal half (tag the refused row, retire it under the successor),
+    because that half writes a verdict onto another role's record and the
+    janitor relies on asking for it explicitly.
+    """
 
     def run(records, pr_number, ok, code, head_sha) -> str:
         newest, _, live = select_attestation(records, pr_number)
         if ok:
             if newest is None:
                 return ""
-            refused = refused_predecessors(live, pr_number, newest)
+            refused = (refused_predecessors(live, pr_number, newest)
+                       if retire_refusals else [])
             duplicates = duplicate_attestations(live, pr_number, newest, head_sha)
             if not refused and not duplicates:
                 return ""
@@ -1025,6 +1048,8 @@ def attestation_bookkeeping(
                 if note:
                     notes.append(note)
             return "; ".join(notes)
+        if not retire_refusals:
+            return ""
         if newest is None or not str(code or "").startswith("ATT_"):
             return ""
         wrote, err = record_refusal(http_patch, newest, code)
@@ -1399,7 +1424,9 @@ def evaluate(
 ) -> Tuple[List[GateResult], Dict[str, Any]]:
     env = os.environ if env is None else env
     gates: List[GateResult] = []
-    bookkeeping = attestation_bookkeeping() if record_refusals else None
+    # Always installed: duplicate retirement is unconditional, while the
+    # refusal half stays keyed to the caller's explicit request.
+    bookkeeping = attestation_bookkeeping(retire_refusals=record_refusals)
 
     try:
         pr = fetch_pr_state(pr_number, run_json)
@@ -1526,8 +1553,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                      "--record-refusals",
         action="store_true",
         help="record a gate-3 refusal on the refused row (status:refused + "
-             "gate-code) and retire refused + duplicate live attestations "
-             "under an accepted successor; never changes the gate result",
+             "gate-code) and retire refused live attestations under an "
+             "accepted successor; never changes the gate result. Duplicate "
+             "same-head attestations are retired on every accepted gate "
+             "regardless of this flag",
     )
     args = parser.parse_args(argv)
 
