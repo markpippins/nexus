@@ -33,6 +33,12 @@
       "queued_prs": []
     },
     {
+      "path": "bin/attestation_residue_sweep.py",
+      "digest": "b70350caf1027eb67ebd9afc4ede18e74c75a68b7cf6fce80c290d5df5b7edc8",
+      "provenance": "TIER-2 PIN 2026-11-23: PR #1047 landed (squash e272e1cc8) with tester attestation eddec68c at head 801e817cb — the repair-side tool that retires duplicate live tester attestations under the newest row of a (pr, well-formed head) group (Decision 24 Amendment 1, body byte-identical) and refuses head-less rows. Pinned at landing because it MUTATES attestation records: drift in it must flip the guard. Digest captured from the origin/main blob per PIN_ADVANCE_TEMPLATE step 2 after git cat-file -e.",
+      "queued_prs": []
+    },
+    {
       "path": "bin/post-agent-record.py",
       "digest": "ca404bd487e0336a8f35f4275d53e21d9020cd4cb4eec54ae13ea5c6c9273e6c",
       "provenance": "PIN ADVANCE 2026-11-06: two changes, one advance. (1) PR #878 landed (squash c96dfb5c0) — 'a record can name the run that wrote it' — and the pin was never advanced, which is open incident 30186d3b; the drift is INTENDED (runbook branch 1), not tampering. (2) this PR gives --model a $NEXUS_AGENT_MODEL default, closing the 72.6% null-model gap (363/500 records at 2026-11-06). Digest computed from this PR's committed blob on base 00fbc98f3 per PIN_ADVANCE_TEMPLATE step 2; previous pinned digest e548f405… (PR #689, 849bf145d), which was itself stale against #878.",
