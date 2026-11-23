@@ -225,3 +225,42 @@ def test_ladder_ranks_every_pair_the_corpus_contains():
     # every ladder entry is a status tag and unique
     assert len(set(lsn.LIFECYCLE_ORDER)) == len(lsn.LIFECYCLE_ORDER)
     assert all(t.startswith("status:") for t in lsn.LIFECYCLE_ORDER)
+
+
+# ── audit posting is not allowed to fail silently ────────────────────────
+
+class _Proc:
+    def __init__(self, rc, out="", err=""):
+        self.returncode, self.stdout, self.stderr = rc, out, err
+
+
+def test_post_audit_reports_success():
+    seen = {}
+
+    def run(argv, **kw):
+        seen["argv"], seen["kw"] = argv, kw
+        return _Proc(0, "OK 201 thread=x")
+
+    ok, detail = lsn.post_audit({"multi_status_rows": 1, "rows_refused": 0,
+                                 "by_pair": {"status:active -> status:superseded": 1}},
+                                {"verified": ["a"], "failed": []}, run=run)
+    assert ok and "OK 201" in detail
+    assert seen["argv"][0].endswith("post-change-log.sh")
+    assert "--role" in seen["argv"] and "engineer" in seen["argv"]
+    assert seen["kw"]["cwd"] == str(lsn.BIN_DIR.parent)
+
+
+def test_post_audit_surfaces_a_failed_poster():
+    ok, detail = lsn.post_audit({"multi_status_rows": 1, "rows_refused": 0, "by_pair": {}},
+                                {"verified": ["a"], "failed": []},
+                                run=lambda argv, **kw: _Proc(1, "", "assembly down"))
+    assert not ok and "assembly down" in detail
+
+
+def test_post_audit_surfaces_a_missing_poster():
+    def run(argv, **kw):
+        raise OSError("no such file")
+
+    ok, detail = lsn.post_audit({"multi_status_rows": 0, "rows_refused": 0, "by_pair": {}},
+                                {"verified": [], "failed": []}, run=run)
+    assert not ok and "no such file" in detail
