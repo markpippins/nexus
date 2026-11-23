@@ -392,6 +392,12 @@ def test_repo_registry_wellformed_and_pinned_digests_stable():
     # backfill). Pinned at landing because it mutates provenance.
     assert by_path["bin/harness_job_backfill.py"]["digest"] == (
         "f0aa42a0a6481bd408c1b28f6ad500df41c9a6cb755c6688c656ec27a4143923")
+    # TIER-2 PIN 2026-11-23: PR #1051 landed 231f40506 (agent-record metadata
+    # namespace, ranking item 6). Pinned at landing because it rewrites every
+    # record's metadata object to its canonical <owner>.<key> spelling, with
+    # per-write read-back verification.
+    assert by_path["bin/metadata_namespace_normalize.py"]["digest"] == (
+        "3665abc8cc338d27d1aa8d06c71b4bc5a2a66dd605b5527a12cb4f6d9bf02bd3")
     # ADVANCED 2026-11-06: the pin had gone stale at PR #878 (c96dfb5c0,
     # run attribution) — the open DRIFT incident 30186d3b — and this PR also
     # gives --model the $NEXUS_AGENT_MODEL default. Prior pin e548f405… was
