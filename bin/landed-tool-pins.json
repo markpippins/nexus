@@ -79,6 +79,12 @@
       "digest": "c2332e01e3a4c42d33174de66cefe31e344302bf067fa3381a0a358628c0ccec",
       "provenance": "TIER-2 PIN 2026-11-23: PR #1054 landed e9b56c354 (ranking item 7, ruling 89064e45 \u2014 one lifecycle status per record) with tester attestation b1ca5019 at head a9fd95a60. Pinned at landing because it rewrites every multi-status row's tags and metadata. Second landing fixed the audit channel: post_audit now passes --role, runs from the repo root, and returns (ok, detail) so a failed change-log post is reported as a WARNING instead of vanishing \u2014 found when the 7-row apply's audit was silently missing and had to be posted by hand (thread bbe25e1b). Digest captured from this PR's head blob after its 26-test suite passed.",
       "queued_prs": []
+    },
+    {
+      "path": "bin/gate_pr_coherence_repair.py",
+      "digest": "01c2638c9ee493f053eece44899080ef6f0fe6331c274255864c93cb746d2c8a",
+      "provenance": "TIER-2 PIN 2026-11-23: PR #1056 landed 66065de75 (ranking item 8, ruling 086cc2d1 \u2014 gate/pr tag coherence) with tester attestation 8e87a299 at head 5412b5522. Pinned at landing because it mutates record tags: it added pr:<N> to the 14 numeric gate-only rows, wrote one canonical receipt per row (record.gate_pr_repaired), and holds named gates / mismatches / title contradictions / withdrawn rows. Post-apply: 0 numeric gate rows without pr, 0 mismatches, rerun plans 0 repairs, 11 named-gate rows held for the vocabulary decision. Digest captured from the origin/main blob after a positive git cat-file -e existence check.",
+      "queued_prs": []
     }
   ]
 }
