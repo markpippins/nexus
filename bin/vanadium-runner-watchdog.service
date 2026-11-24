@@ -24,9 +24,15 @@
 #       transition in the journal instead of training everyone to ignore a red
 #       unit during every outage
 #   2 — probe failed (auth/network): deliberately NOT successful, because a
-#       watchdog that cannot see must not look quiet. Exit 2 writes no state
-#       and sends no alert, so an API outage cannot masquerade as a runner
-#       outage or as a recovery.
+#       watchdog that cannot see must not look quiet. Exit 2 never writes a
+#       runner status, so an API outage cannot masquerade as a runner outage or
+#       as a recovery — but the script counts consecutive failures in the state
+#       file and, at --probe-alert-after failures (default 3, ~6 minutes on
+#       this timer), posts ONE watchdog-health alert naming the credential the
+#       runners endpoint requires. A later successful probe announces that
+#       sight is restored. This exists because a fine-grained PAT without
+#       Administration: Read-only made every tick exit 2 silently on
+#       2026-11-25: installed, running, and blind.
 #
 # If the checkout is not /home/codex/dev/nexus, edit all three paths below.
 #

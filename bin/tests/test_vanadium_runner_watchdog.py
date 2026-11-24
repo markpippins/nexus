@@ -143,9 +143,91 @@ def test_cli_exit_codes(tmp_path, capsys):
     assert '"alert": "down"' in out or '"alert": "down"' in out
 
 
+def _boom(_repo):
+    raise RuntimeError("gh: Resource not accessible by personal access token (HTTP 403)")
+
+
 def test_probe_failure_does_not_look_like_an_outage(tmp_path, capsys):
     state = str(tmp_path / "s.json")
-    assert wd.main(["--check", "--state", state],
-                   fetch=lambda _r: (_ for _ in ()).throw(RuntimeError("api down"))) == 2
-    assert not Path(state).exists()
+    assert wd.main(["--check", "--state", state], fetch=_boom) == 2
+    saved = json.loads(Path(state).read_text())   # bookkeeping only, no runner claim
+    assert saved["probe_failures"] == 1
+    assert saved.get("status") is None
+    assert saved.get("last_alert") is None
     assert "cannot read the runners API" in capsys.readouterr().err
+
+
+# ── watchdog health: a blind probe must not be a silent probe ─────────────
+
+def test_one_probe_failure_is_counted_but_silent(tmp_path):
+    """A single failed probe is noise: it must not page and must not claim anything."""
+    p = tmp_path / "s.json"
+    d, ch = wd.check(state_path=str(p), fetch=_boom, now=1_000, alert_cmd="false")
+    assert d.status == wd.PROBE_ERROR and d.alert is None and ch == ""
+    saved = json.loads(p.read_text())
+    assert saved["probe_failures"] == 1
+    assert "status" not in saved
+    assert saved.get("last_alert") != wd.ALERT_DOWN
+
+
+def test_probe_failures_alert_once_at_the_threshold(tmp_path):
+    """Three consecutive failures page once; the fourth does not page again."""
+    p = tmp_path / "s.json"
+    log = tmp_path / "alerts.txt"
+    seen = []
+    for now in (1_000, 1_120, 1_240, 1_360):
+        d, _ = wd.check(state_path=str(p), fetch=_boom, now=now, alert_cmd=f"cat >> {log}")
+        seen.append(d.alert)
+    assert seen == [None, None, wd.ALERT_PROBE, None]
+    text = log.read_text()
+    assert text.count("BLIND") == 1
+    assert "Administration: Read-only" in text
+    assert "actions/runners" in text
+    assert json.loads(p.read_text())["probe_failures"] == 4
+
+
+def test_probe_recovery_is_announced_and_resets_the_counter(tmp_path):
+    p = tmp_path / "s.json"
+    log = tmp_path / "alerts.txt"
+    for now in (1_000, 1_120, 1_240):
+        wd.check(state_path=str(p), fetch=_boom, now=now, alert_cmd=f"cat >> {log}")
+    d, ch = wd.check(state_path=str(p), fetch=lambda _r: [ONLINE_ROW], now=1_360,
+                     alert_cmd=f"cat >> {log}")
+    assert d.alert == wd.ALERT_PROBE_RECOVERED and ch == "alert-cmd"
+    assert "after 3 consecutive failed probes" in d.message
+    saved = json.loads(p.read_text())
+    assert saved["probe_failures"] == 0
+    assert saved["status"] == wd.ONLINE
+
+
+def test_probe_failure_over_a_known_outage_keeps_the_outage_and_does_not_rep_page(tmp_path):
+    """Blindness over a known-offline runner keeps `offline` and does not re-page `down`."""
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"status": wd.OFFLINE, "since": 1_000, "last_alert": wd.ALERT_DOWN}))
+    d, _ = wd.check(state_path=str(p), fetch=_boom, now=1_120, alert_cmd="false")
+    assert d.alert is None
+    saved = json.loads(p.read_text())
+    assert saved["status"] == wd.OFFLINE and saved["since"] == 1_000
+    assert saved["probe_failures"] == 1
+
+
+def test_threshold_is_configurable(tmp_path):
+    p = tmp_path / "s.json"
+    d, _ = wd.check(state_path=str(p), fetch=_boom, now=1_000,
+                    alert_cmd=f"cat >> {tmp_path}/a.txt", probe_alert_after=1)
+    assert d.alert == wd.ALERT_PROBE
+
+
+def test_cli_reports_the_failure_count_and_keeps_exit_2(tmp_path, capsys):
+    state = str(tmp_path / "s.json")
+    assert wd.main(["--check", "--state", state], fetch=_boom) == 2
+    err = capsys.readouterr().err
+    assert "cannot read the runners API" in err
+    assert "1 consecutive failure(s)" in err
+    assert "alerting at 3" in err
+
+
+def test_dry_run_never_writes_probe_state(tmp_path):
+    p = tmp_path / "s.json"
+    wd.check(state_path=str(p), fetch=_boom, now=1_000, dry_run=True)
+    assert not p.exists()
