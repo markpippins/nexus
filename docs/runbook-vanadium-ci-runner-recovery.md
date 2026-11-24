@@ -215,7 +215,17 @@ python3 bin/vanadium_runner_watchdog.py --check --dry-run   # prints `vanadium r
 
 A 403 `Resource not accessible by personal access token` on the first command means the
 token lacks `Administration: Read-only` — the exact failure that blinded the watchdog on
-2026-11-25. Editing a fine-grained token keeps its value, so a permission fix does **not**
+2026-11-25.
+
+> **Do not read a `422` or `404` as "write access is granted".** GitHub validates the request
+> body before it authorizes the token, and fine-grained tokens can read any **public**
+> repository regardless of their repository selection. So `POST /issues` with a blank title
+> returning `422`, or an issue/label read on an out-of-scope public repo returning `200`,
+> proves nothing about permissions — both were misread as "Issues: Read and write is
+> granted" on 2026-11-25 and sent the operator chasing a permission that was never
+> installed. Only two things are decisive: a **write to an out-of-scope repository**
+> returning `403` (the second command above), and the permission list on the token's own
+> settings page. Judge a token by those. Editing a fine-grained token keeps its value, so a permission fix does **not**
 require reinstalling it; but the edit form has a known defect that can reset Repository
 access to "All repositories" on save, which is what the `atomic-go` check is for.
 
