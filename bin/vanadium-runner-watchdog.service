@@ -1,0 +1,50 @@
+# Source of truth for ~/.config/systemd/user/vanadium-runner-watchdog.service
+#
+# Install (no root; user units keep running without a login session when the
+# account has linger enabled — check with `loginctl show-user "$USER" -p Linger`):
+#   cp bin/vanadium-runner-watchdog.service ~/.config/systemd/user/
+#   cp bin/vanadium-runner-watchdog.timer   ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now vanadium-runner-watchdog.timer
+#   systemctl --user list-timers vanadium-runner-watchdog.timer --no-pager
+#
+# Why the unit lives in the repo: host-only copies drift from the corpus (same
+# doctrine as bin/inbox-pointer-watchdog.service). The corpus carries the unit
+# and the host carries a copy of it. The runbook it alerts against is
+# docs/runbook-vanadium-ci-runner-recovery.md §9.
+#
+# Why titanium watches the runner: vanadium is the machine that wedges, so a
+# probe running there cannot report its own outage, and that host has no nexus
+# checkout. Titanium holds the gh credentials and stays up.
+#
+# Exit contract of bin/vanadium_runner_watchdog.py:
+#   0 — runner online, or the recovery alert was delivered
+#   1 — runner down/missing and the alert was delivered: a FINDING, not a unit
+#       failure, so SuccessExitStatus=0 1 keeps the unit green and puts the
+#       transition in the journal instead of training everyone to ignore a red
+#       unit during every outage
+#   2 — probe failed (auth/network): deliberately NOT successful, because a
+#       watchdog that cannot see must not look quiet. Exit 2 writes no state
+#       and sends no alert, so an API outage cannot masquerade as a runner
+#       outage or as a recovery.
+#
+# If the checkout is not /home/codex/dev/nexus, edit all three paths below.
+#
+# Signals:
+#   journalctl --user -u vanadium-runner-watchdog.service -n 30
+#   state file: /var/tmp/vanadium-runner-watchdog.json
+#   drill (writes nothing, alerts nothing): python3 bin/vanadium_runner_watchdog.py --check --dry-run
+
+[Unit]
+Description=Alert when the vanadium CI runner is offline
+Documentation=file:/home/codex/dev/nexus/docs/runbook-vanadium-ci-runner-recovery.md
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/codex/dev/nexus
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/vanadium_runner_watchdog.py --check
+# Exit 1 means "runner is down and the alert was delivered" — that is a successful probe.
+SuccessExitStatus=0 1
+TimeoutStartSec=120
+SyslogIdentifier=vanadium-runner-watchdog
