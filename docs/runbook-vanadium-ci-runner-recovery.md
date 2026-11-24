@@ -204,32 +204,16 @@ credentials"}` (measured 2026-11-24) and it has no nexus checkout, so a unit the
 could not read the runners API. A watcher on the host it watches also cannot report
 that host being wedged — the failure this runbook exists for.
 
-Timer sketch for a root/system install (the form used above, adapted):
+Source of truth is in the repo — `bin/vanadium-runner-watchdog.service` and
+`bin/vanadium-runner-watchdog.timer`; each header carries its own deploy note. Install
+from a checkout, no root:
 
-```ini
-# /etc/systemd/system/vanadium-runner-watchdog.service
-[Unit]
-Description=Alert when the vanadium CI runner is offline
-After=network-online.target
-[Service]
-Type=oneshot
-User=codex
-ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/vanadium_runner_watchdog.py --check
-# the probe exits 1 while the runner is down: that is the alert path, not a unit failure
-SuccessExitStatus=0 1
+```bash
+cp bin/vanadium-runner-watchdog.service bin/vanadium-runner-watchdog.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now vanadium-runner-watchdog.timer
+systemctl --user list-timers vanadium-runner-watchdog.timer --no-pager
 ```
 
-```ini
-# /etc/systemd/system/vanadium-runner-watchdog.timer
-[Unit]
-Description=Probe the vanadium CI runner every 2 minutes
-[Timer]
-OnBootSec=2min
-OnUnitActiveSec=2min
-AccuracySec=30s
-[Install]
-WantedBy=timers.target
-```
-
-`systemctl enable --now vanadium-runner-watchdog.timer`. It belongs on **titanium** — the
-machine that holds the `gh` credentials and stays up — not on the Pi it is watching.
+It belongs on **titanium** — the machine that holds the `gh` credentials and stays
+up — not on the Pi it is watching.

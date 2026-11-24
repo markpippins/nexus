@@ -1,0 +1,25 @@
+# Source of truth for ~/.config/systemd/user/vanadium-runner-watchdog.timer
+#
+# Install (no root): copy this file and vanadium-runner-watchdog.service into
+# ~/.config/systemd/user/, then `systemctl --user daemon-reload` and
+# `systemctl --user enable --now vanadium-runner-watchdog.timer`.
+#
+# Two-minute cadence: the runbook exists because an outage was found from a
+# queued check hours later instead of from an alert. The probe alerts only on a
+# transition, so a fast timer cannot page twice for one outage.
+#
+# No Persistent=true on purpose: a missed tick during boot carries no
+# information for a probe whose whole job is "is it online right now" — the
+# next tick is two minutes away, and a catch-up run would just repeat it.
+
+[Unit]
+Description=Probe the vanadium CI runner every 2 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=30s
+Unit=vanadium-runner-watchdog.service
+
+[Install]
+WantedBy=timers.target
