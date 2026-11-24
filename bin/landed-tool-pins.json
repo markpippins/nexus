@@ -97,6 +97,12 @@
       "digest": "84724f66cb0c693f6ad97c46a51663400ef0763b0bd6df3f92d29e875009d25f",
       "provenance": "TIER-2 PIN 2026-11-24: PR #1060 landed 535faae56 (ranking item 10, ruling 4963dee4) with tester attestation 346b0fe6 at head ce2e581b. Pinned because it is now the single source of truth for whether a gate: value is a PR, a NAME, or HELD: both writers import it and refuse a held row. Read-only (no writes), audited on merged main: 82 gate rows / 87 values = PR 74, NAME 13, HELD 0; named-without-slug 0, numeric-without-pr 0, orphan 0, numeric slugs 0; audit CLEAN. Digest captured from the origin/main blob after an existence check.",
       "queued_prs": []
+    },
+    {
+      "path": "bin/status_vocab.py",
+      "digest": "f6221bea2a447e8cc6d37449b4a1f00413ae82bf115a191807d978437b315205",
+      "provenance": "TIER-2 PIN 2026-11-24: PR #1062 landed 8e71d139e (ranking item 11, ruling 963501f2) with tester attestation 4b4991e6 at head d17bb854d. Pinned because it is the single source of truth for status: value vocabulary: 128 canonical values, 5 ratified aliases, 8 named held-ambiguous values, and require_canonical_for_write() (writers may only emit canonical; aliases/held raise StatusWriteRefused). Read-only --audit on merged main: 3,486 occurrences / 141 values = canonical 3,112 + alias 342 + held 32, unclassified 0, CLEAN. Digest captured from the origin/main blob after an existence check.",
+      "queued_prs": []
     }
   ]
 }
