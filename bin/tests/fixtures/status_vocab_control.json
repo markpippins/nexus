@@ -1,0 +1,571 @@
+{
+ "source": "live census of nebula.agent_records.tags on merged main 6dad471c7 at ranking item 11",
+ "note": "141 distinct status: values with occurrence counts; the control corpus for bin/status_vocab.py (ruling 963501f2).",
+ "total_occurrences": 3479,
+ "values": [
+  {
+   "value": "open",
+   "count": 1145
+  },
+  {
+   "value": "done",
+   "count": 522
+  },
+  {
+   "value": "retired",
+   "count": 271
+  },
+  {
+   "value": "resolved",
+   "count": 231
+  },
+  {
+   "value": "complete",
+   "count": 220
+  },
+  {
+   "value": "superseded",
+   "count": 163
+  },
+  {
+   "value": "closed",
+   "count": 94
+  },
+  {
+   "value": "completed",
+   "count": 90
+  },
+  {
+   "value": "ratified",
+   "count": 76
+  },
+  {
+   "value": "in-progress",
+   "count": 73
+  },
+  {
+   "value": "binding",
+   "count": 36
+  },
+  {
+   "value": "approved",
+   "count": 33
+  },
+  {
+   "value": "blocked",
+   "count": 33
+  },
+  {
+   "value": "proposed",
+   "count": 31
+  },
+  {
+   "value": "in_progress",
+   "count": 29
+  },
+  {
+   "value": "verified",
+   "count": 29
+  },
+  {
+   "value": "decided",
+   "count": 25
+  },
+  {
+   "value": "implemented",
+   "count": 22
+  },
+  {
+   "value": "active",
+   "count": 21
+  },
+  {
+   "value": "ruled",
+   "count": 21
+  },
+  {
+   "value": "committed",
+   "count": 15
+  },
+  {
+   "value": "decision-made",
+   "count": 15
+  },
+  {
+   "value": "applied",
+   "count": 13
+  },
+  {
+   "value": "conditional",
+   "count": 13
+  },
+  {
+   "value": "acknowledged",
+   "count": 10
+  },
+  {
+   "value": "awaiting-ratification",
+   "count": 10
+  },
+  {
+   "value": "dispatched",
+   "count": 10
+  },
+  {
+   "value": "information",
+   "count": 10
+  },
+  {
+   "value": "reviewed",
+   "count": 10
+  },
+  {
+   "value": "action-required",
+   "count": 9
+  },
+  {
+   "value": "awaiting-review",
+   "count": 9
+  },
+  {
+   "value": "accepted",
+   "count": 7
+  },
+  {
+   "value": "needs-response",
+   "count": 7
+  },
+  {
+   "value": "deferred",
+   "count": 6
+  },
+  {
+   "value": "merged",
+   "count": 6
+  },
+  {
+   "value": "planned",
+   "count": 6
+  },
+  {
+   "value": "ready",
+   "count": 6
+  },
+  {
+   "value": "disposition",
+   "count": 5
+  },
+  {
+   "value": "action-needed",
+   "count": 4
+  },
+  {
+   "value": "changes-requested",
+   "count": 4
+  },
+  {
+   "value": "imminent",
+   "count": 4
+  },
+  {
+   "value": "posted",
+   "count": 4
+  },
+  {
+   "value": "standing",
+   "count": 4
+  },
+  {
+   "value": "accepted-with-conditions",
+   "count": 3
+  },
+  {
+   "value": "attested",
+   "count": 3
+  },
+  {
+   "value": "ok",
+   "count": 3
+  },
+  {
+   "value": "partial",
+   "count": 3
+  },
+  {
+   "value": "ack",
+   "count": 2
+  },
+  {
+   "value": "approved-within-scope",
+   "count": 2
+  },
+  {
+   "value": "correction",
+   "count": 2
+  },
+  {
+   "value": "design",
+   "count": 2
+  },
+  {
+   "value": "discussion",
+   "count": 2
+  },
+  {
+   "value": "flagged",
+   "count": 2
+  },
+  {
+   "value": "held",
+   "count": 2
+  },
+  {
+   "value": "invalid",
+   "count": 2
+  },
+  {
+   "value": "muted",
+   "count": 2
+  },
+  {
+   "value": "nominal",
+   "count": 2
+  },
+  {
+   "value": "ratified-with-conditions",
+   "count": 2
+  },
+  {
+   "value": "ready-for-review",
+   "count": 2
+  },
+  {
+   "value": "refused",
+   "count": 2
+  },
+  {
+   "value": "review",
+   "count": 2
+  },
+  {
+   "value": "review-request",
+   "count": 2
+  },
+  {
+   "value": "review-requested",
+   "count": 2
+  },
+  {
+   "value": "review-required",
+   "count": 2
+  },
+  {
+   "value": "revised",
+   "count": 2
+  },
+  {
+   "value": "started",
+   "count": 2
+  },
+  {
+   "value": "unresolved",
+   "count": 2
+  },
+  {
+   "value": "working",
+   "count": 2
+  },
+  {
+   "value": "accepted-risk",
+   "count": 1
+  },
+  {
+   "value": "addressed",
+   "count": 1
+  },
+  {
+   "value": "advanced",
+   "count": 1
+  },
+  {
+   "value": "advisory",
+   "count": 1
+  },
+  {
+   "value": "all-clear",
+   "count": 1
+  },
+  {
+   "value": "amended",
+   "count": 1
+  },
+  {
+   "value": "answered",
+   "count": 1
+  },
+  {
+   "value": "assigned",
+   "count": 1
+  },
+  {
+   "value": "attested-complete",
+   "count": 1
+  },
+  {
+   "value": "authorized",
+   "count": 1
+  },
+  {
+   "value": "awaiting-approval",
+   "count": 1
+  },
+  {
+   "value": "awaiting-attestation",
+   "count": 1
+  },
+  {
+   "value": "banked",
+   "count": 1
+  },
+  {
+   "value": "blocked-infra",
+   "count": 1
+  },
+  {
+   "value": "blocked-needs-rebase",
+   "count": 1
+  },
+  {
+   "value": "blocked-needs-work",
+   "count": 1
+  },
+  {
+   "value": "blocker",
+   "count": 1
+  },
+  {
+   "value": "carried",
+   "count": 1
+  },
+  {
+   "value": "changes-applied",
+   "count": 1
+  },
+  {
+   "value": "closed-as-decided",
+   "count": 1
+  },
+  {
+   "value": "closed-partial",
+   "count": 1
+  },
+  {
+   "value": "compliant",
+   "count": 1
+  },
+  {
+   "value": "confirmed",
+   "count": 1
+  },
+  {
+   "value": "corrected",
+   "count": 1
+  },
+  {
+   "value": "degraded",
+   "count": 1
+  },
+  {
+   "value": "diagnosed",
+   "count": 1
+  },
+  {
+   "value": "dismissed",
+   "count": 1
+  },
+  {
+   "value": "draft",
+   "count": 1
+  },
+  {
+   "value": "failed",
+   "count": 1
+  },
+  {
+   "value": "goal-met",
+   "count": 1
+  },
+  {
+   "value": "guidance",
+   "count": 1
+  },
+  {
+   "value": "hold",
+   "count": 1
+  },
+  {
+   "value": "hypothesis",
+   "count": 1
+  },
+  {
+   "value": "implementation-authorized",
+   "count": 1
+  },
+  {
+   "value": "info",
+   "count": 1
+  },
+  {
+   "value": "inprogress",
+   "count": 1
+  },
+  {
+   "value": "linked-not-mutated",
+   "count": 1
+  },
+  {
+   "value": "merging",
+   "count": 1
+  },
+  {
+   "value": "mixed",
+   "count": 1
+  },
+  {
+   "value": "needs-answer",
+   "count": 1
+  },
+  {
+   "value": "needs-dba-ruling",
+   "count": 1
+  },
+  {
+   "value": "needs-evidence",
+   "count": 1
+  },
+  {
+   "value": "needs-reconciliation",
+   "count": 1
+  },
+  {
+   "value": "needs-work",
+   "count": 1
+  },
+  {
+   "value": "not-ready",
+   "count": 1
+  },
+  {
+   "value": "parked",
+   "count": 1
+  },
+  {
+   "value": "partial-open",
+   "count": 1
+  },
+  {
+   "value": "partially-remediated",
+   "count": 1
+  },
+  {
+   "value": "partially-resolved",
+   "count": 1
+  },
+  {
+   "value": "pass",
+   "count": 1
+  },
+  {
+   "value": "pr-open",
+   "count": 1
+  },
+  {
+   "value": "principle",
+   "count": 1
+  },
+  {
+   "value": "proposal",
+   "count": 1
+  },
+  {
+   "value": "proposed-implementation",
+   "count": 1
+  },
+  {
+   "value": "ratified-analyst-seat",
+   "count": 1
+  },
+  {
+   "value": "ratified-conditional",
+   "count": 1
+  },
+  {
+   "value": "ratified-core",
+   "count": 1
+  },
+  {
+   "value": "ratified-with-open-questions",
+   "count": 1
+  },
+  {
+   "value": "ready-for-implementation",
+   "count": 1
+  },
+  {
+   "value": "ready-with-one-disclosure-item",
+   "count": 1
+  },
+  {
+   "value": "reconciled",
+   "count": 1
+  },
+  {
+   "value": "registered",
+   "count": 1
+  },
+  {
+   "value": "review-dispatched",
+   "count": 1
+  },
+  {
+   "value": "ruled-not-authorized",
+   "count": 1
+  },
+  {
+   "value": "ruling",
+   "count": 1
+  },
+  {
+   "value": "scope-complete",
+   "count": 1
+  },
+  {
+   "value": "signed-off",
+   "count": 1
+  },
+  {
+   "value": "stale-draft",
+   "count": 1
+  },
+  {
+   "value": "unblocked",
+   "count": 1
+  },
+  {
+   "value": "unchanged",
+   "count": 1
+  },
+  {
+   "value": "validated",
+   "count": 1
+  },
+  {
+   "value": "verified-with-owed-items",
+   "count": 1
+  },
+  {
+   "value": "void",
+   "count": 1
+  }
+ ]
+}
