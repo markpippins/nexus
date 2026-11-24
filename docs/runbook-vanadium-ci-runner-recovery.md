@@ -9,14 +9,21 @@ every open PR.
 TCP handshakes — while the runner is unusable. Do not conclude "the box is fine" from
 reachability alone.
 
-> **Measured vs unverified.**
-> **Measured** while the runner was down (from `titanium`): runner status, ping, the
-> TCP/22 banner timeout, closed-port RST timings, ARP, and the queued-job state — §1.
-> **Measured after the 2026-11-24 12:24Z reboot** (first successful login): the runner
-> path, systemd unit, `svc.sh` behaviour and the host-side SonarQube probe — §2 and §5.
-> **Still unverified:** the SonarQube `:9000` URL *as called from `titanium`* — that
-> request timed out (`http=000` after 5 s), so use the host-side form in §2 and treat any
-> cross-LAN assumption about that port as untested.
+> **Every probe in this runbook is measured; the state it was taken in matters.**
+> **While the runner was down** (from `titanium`): runner `offline`, ping replies, the
+> TCP/22 banner timeout, closed-port RST timings, ARP, the queued-job state — §1. The
+> SonarQube probe failed in that window too (`http=000` after 5 s), which is the wedge,
+> not the network path: the host's userspace was frozen.
+> **After the 2026-11-24 12:24Z reboot** (first successful login): the runner path,
+> systemd unit and `svc.sh` behaviour — §5 — and the host-side SonarQube probe, which
+> returned `http=200 {"version":"9.9.8.100196","status":"STARTING"}` — §2.
+> **After the services settled, 2026-11-24T18:07Z, from `titanium`:** SonarQube `:9000`
+> *is* reachable over the LAN — `{"id":"303924D4-AaA8RS13kXJj3H-5ijkS",
+> "version":"9.9.8.100196","status":"UP"} http=200 time=0.135785`, TCP connect `rc=0`.
+> `localhost:9000` on `titanium` answers nothing (`http=000`, curl exit 7) because the
+> service is not local — always probe the LAN address. An earlier revision of this
+> runbook concluded the mapping was "not reachable across the LAN"; that was wrong, and
+> rested on the outage-window probe above.
 
 ## 1. Fingerprint — kernel alive, userspace wedged
 
@@ -48,11 +55,16 @@ there is no remote way in.
 # Is it only the runner, or the whole host's userspace?
 timeout 5 bash -c 'cat </dev/null >/dev/tcp/192.168.1.209/22' && echo "22 accepts"
 
-# Are the SonarQube containers still reachable? Probe from the HOST.
-# Measured 2026-11-24 12:24Z: {"version":"9.9.8.100196","status":"STARTING"} http=200.
-# The same URL from titanium timed out (http=000 after 5 s) — the 9000:9000 mapping in
-# docker/vanadium-ci/docker-compose.yml is not reachable across the LAN.
-# `status` reads STARTING for a few minutes after boot; that is startup, not a hang.
+# Are the SonarQube containers still reachable? Probe over the LAN first — measured
+# working from titanium 2026-11-24T18:07Z, http=200 in 0.136 s, {"status":"UP"}.
+# If this hangs or answers 000 while the host answers ping, the host is wedged (§1/§3)
+# and the host-side probe below will confirm it.
+curl -s -m 5 -w '\nhttp=%{http_code}\n' http://192.168.1.209:9000/api/system/status
+
+# Host-side fallback (works even when the LAN path is suspect):
+# measured 2026-11-24 12:24Z: {"version":"9.9.8.100196","status":"STARTING"} http=200.
+# `status` reads STARTING for a few minutes after boot and UP once SonarQube has
+# finished starting; STARTING is startup, not a hang.
 ssh codex@vanadium 'curl -s -m 4 -w "http=%{http_code}\n" http://localhost:9000/api/system/status'
 ssh codex@vanadium 'docker ps --format "{{.Names}} {{.Status}}" | grep vd-ci'
 ```
@@ -173,7 +185,26 @@ Channels, first configured wins: `--webhook-url` (or `NEXUS_ALERT_WEBHOOK`, POST
 post to `issues-and-open-questions`. The down message names this runbook and restates the
 "do not relabel `titanium`" rule, so the alert itself is actionable.
 
-Timer sketch (not installed):
+**Installed on `titanium` 2026-11-24** as a *user* unit (no root needed; `Linger=yes`
+is already set for `codex`, so it runs without a login session):
+
+```
+~/.config/systemd/user/vanadium-runner-watchdog.service   (Type=oneshot, SuccessExitStatus=0 1)
+~/.config/systemd/user/vanadium-runner-watchdog.timer     (OnBootSec=2min, OnUnitActiveSec=2min)
+→ systemctl --user enable --now vanadium-runner-watchdog.timer
+```
+
+Observed: timer `active (waiting)`, one service run per two minutes with `systemctl
+--user list-timers` showing the next elapse, and journal lines
+`vanadium runner: online` / `Finished … (status=0/SUCCESS)`. State lives in
+`/var/tmp/vanadium-runner-watchdog.json` (`{"status": "online", …}`).
+
+**Not** installed on `vanadium` itself: that host's `gh` answers `{"message": "Bad
+credentials"}` (measured 2026-11-24) and it has no nexus checkout, so a unit there
+could not read the runners API. A watcher on the host it watches also cannot report
+that host being wedged — the failure this runbook exists for.
+
+Timer sketch for a root/system install (the form used above, adapted):
 
 ```ini
 # /etc/systemd/system/vanadium-runner-watchdog.service
