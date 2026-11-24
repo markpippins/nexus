@@ -103,6 +103,12 @@
       "digest": "f6221bea2a447e8cc6d37449b4a1f00413ae82bf115a191807d978437b315205",
       "provenance": "TIER-2 PIN 2026-11-24: PR #1062 landed 8e71d139e (ranking item 11, ruling 963501f2) with tester attestation 4b4991e6 at head d17bb854d. Pinned because it is the single source of truth for status: value vocabulary: 128 canonical values, 5 ratified aliases, 8 named held-ambiguous values, and require_canonical_for_write() (writers may only emit canonical; aliases/held raise StatusWriteRefused). Read-only --audit on merged main: 3,486 occurrences / 141 values = canonical 3,112 + alias 342 + held 32, unclassified 0, CLEAN. Digest captured from the origin/main blob after an existence check.",
       "queued_prs": []
+    },
+    {
+      "path": "bin/supersession_pointers.py",
+      "digest": "4a65299956317e931a1322206f7a064a943d9e9de35cef28e6d8b1ba730be3b3",
+      "provenance": "TIER-2 PIN 2026-11-24: PR #1064 landed fe6a32823 (ranking item 12, ruling aa7d33dd) with tester attestation c6d5cf93 at head f88f88c0. Pinned because it is the single source of truth for supersession pointer integrity: it classifies superseded-by:/supersedes:/supersedes-relation: pointers by target semantics without mutating any record, and exposes require_pointer_for_write() so writers normalize on write while the read side stays a classifier. Read-only --audit on merged main: 17,568 records, 587 occurrences = 352 superseded-by (320 prefix + 32 UUID) + 76 supersedes (66 ids, 8 prose, 1 empty, 1 ambiguous) + 159 supersedes-relation (deprecated family); reasons resolved 418 / deprecated 159 / unresolved 8 / malformed 1 / ambiguous 1; 163 status:superseded (3 pointerless), 190 without status, 2 multi-pointer, 43 chains of which 17 exact-UUID, 13 free-form tags; audit CLEAN, corpus digest stable across two runs (17568 rows, md5 05bde888e3b07433fccc4524cff2d3e4). Suite: 47 tests over the control corpus (one case per defect class). Digest captured from the origin/main blob after an existence check (git cat-file -e).",
+      "queued_prs": []
     }
   ]
 }
