@@ -9,6 +9,15 @@ every open PR.
 TCP handshakes — while the runner is unusable. Do not conclude "the box is fine" from
 reachability alone.
 
+> **Measured vs unverified.**
+> **Measured** while the runner was down (from `titanium`): runner status, ping, the
+> TCP/22 banner timeout, closed-port RST timings, ARP, and the queued-job state — §1.
+> **Measured after the 2026-11-24 12:24Z reboot** (first successful login): the runner
+> path, systemd unit, `svc.sh` behaviour and the host-side SonarQube probe — §2 and §5.
+> **Still unverified:** the SonarQube `:9000` URL *as called from `titanium`* — that
+> request timed out (`http=000` after 5 s), so use the host-side form in §2 and treat any
+> cross-LAN assumption about that port as untested.
+
 ## 1. Fingerprint — kernel alive, userspace wedged
 
 Run from `titanium`:
@@ -38,8 +47,14 @@ there is no remote way in.
 ```bash
 # Is it only the runner, or the whole host's userspace?
 timeout 5 bash -c 'cat </dev/null >/dev/tcp/192.168.1.209/22' && echo "22 accepts"
-# Are the SonarQube containers still reachable? (they live on vanadium)
-curl -s --max-time 3 http://vanadium:9000/api/system/status || echo "sonar API unreachable"
+
+# Are the SonarQube containers still reachable? Probe from the HOST.
+# Measured 2026-11-24 12:24Z: {"version":"9.9.8.100196","status":"STARTING"} http=200.
+# The same URL from titanium timed out (http=000 after 5 s) — the 9000:9000 mapping in
+# docker/vanadium-ci/docker-compose.yml is not reachable across the LAN.
+# `status` reads STARTING for a few minutes after boot; that is startup, not a hang.
+ssh codex@vanadium 'curl -s -m 4 -w "http=%{http_code}\n" http://localhost:9000/api/system/status'
+ssh codex@vanadium 'docker ps --format "{{.Names}} {{.Status}}" | grep vd-ci'
 ```
 
 If SSH answers and you can log in, this is **not** this runbook — start the agent
@@ -67,7 +82,7 @@ physical hands.
 `vanadium online` is necessary but not sufficient — confirm the agent can actually work:
 
 ```bash
-ssh codex@vanadium 'cd ~/actions-runner && ./svc.sh status'
+ssh codex@vanadium 'systemctl status actions.runner.markpippins-nexus.vanadium.service --no-pager | head -5'
 gh api repos/markpippins/nexus/actions/jobs/<job-id> -q '.status + "/" + (.conclusion // "-")'
 ```
 
@@ -77,14 +92,30 @@ label appears. If the queue has expired (GitHub drops long-queued jobs), re-trig
 
 ## 5. If the host is up but the agent is not running
 
-```bash
-ssh codex@vanadium 'cd ~/actions-runner && ./svc.sh status'
-ssh codex@vanadium 'cd ~/actions-runner && sudo ./svc.sh start'   # or: systemctl start 'actions.runner.*'
-ssh codex@vanadium 'pgrep -af Runner.Listener'
+**Measured 2026-11-24 12:24Z** (first successful login after the reboot): the runner is
+installed at **`/home/codex/dev/actions-runner`**, not `~/actions-runner`, and runs as a
+systemd unit —
+
+```
+actions.runner.markpippins-nexus.vanadium.service
+  ExecStart=/home/codex/dev/actions-runner/runsvc.sh
+  WorkingDirectory=/home/codex/dev/actions-runner
+  User=codex
 ```
 
-An agent that starts and immediately goes offline again is a credentials/reachability
-problem (outbound 443 to GitHub), not a wedge — check `~/actions-runner/_diag/*.log`.
+`svc.sh` is present in that directory but refuses to run unprivileged (`Must run as
+sudo`), so drive it through systemd, or through `svc.sh` with elevated rights:
+
+```bash
+ssh codex@vanadium 'systemctl status actions.runner.markpippins-nexus.vanadium.service --no-pager | head -5'
+ssh codex@vanadium 'sudo systemctl restart actions.runner.markpippins-nexus.vanadium.service'
+ssh codex@vanadium 'cd /home/codex/dev/actions-runner && sudo ./svc.sh status'
+ssh codex@vanadium 'ls -t /home/codex/dev/actions-runner/_diag | head -3'
+```
+
+An agent that starts and immediately drops to `offline` again is a
+credentials/reachability problem (outbound 443 to GitHub), not a wedge — read the newest
+`_diag/Runner_*.log`.
 
 ## 6. Root-cause capture (do this on the first boot after the wedge)
 
@@ -120,3 +151,54 @@ cannot merge — including docs-only PRs. Triage: do not open new PRs unless the
 queue behind the outage; land them as a batch once the runner is back. Jobs already
 queued resume automatically; note the run ids so they can be re-triggered if the queue
 expires.
+
+## 9. Watchdog — catch the next outage in minutes, not from a queued check
+
+`bin/vanadium_runner_watchdog.py` is a one-shot probe sized for a systemd timer. It reads
+`GET /repos/markpippins/nexus/actions/runners`, compares the runner with the status it
+last recorded (default `/var/tmp/vanadium-runner-watchdog.json`), and alerts **only on a
+transition** — down, recovered, or a runner that vanished from the API — so a two-minute
+timer cannot page anyone twice for one outage. A probe failure exits 2 and touches
+neither the state file nor any alert channel, so a GitHub API outage can never
+masquerade as a runner outage.
+
+```bash
+python3 bin/vanadium_runner_watchdog.py --check --dry-run   # print the decision, write nothing
+python3 bin/vanadium_runner_watchdog.py --check --json      # machine-readable
+python3 bin/vanadium_runner_watchdog.py --check             # alert on a transition
+```
+
+Channels, first configured wins: `--webhook-url` (or `NEXUS_ALERT_WEBHOOK`, POSTs
+`{"text": …}`), `--alert-cmd` (or `NEXUS_ALERT_CMD`, message on stdin), default Assembly
+post to `issues-and-open-questions`. The down message names this runbook and restates the
+"do not relabel `titanium`" rule, so the alert itself is actionable.
+
+Timer sketch (not installed):
+
+```ini
+# /etc/systemd/system/vanadium-runner-watchdog.service
+[Unit]
+Description=Alert when the vanadium CI runner is offline
+After=network-online.target
+[Service]
+Type=oneshot
+User=codex
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/vanadium_runner_watchdog.py --check
+# the probe exits 1 while the runner is down: that is the alert path, not a unit failure
+SuccessExitStatus=0 1
+```
+
+```ini
+# /etc/systemd/system/vanadium-runner-watchdog.timer
+[Unit]
+Description=Probe the vanadium CI runner every 2 minutes
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=30s
+[Install]
+WantedBy=timers.target
+```
+
+`systemctl enable --now vanadium-runner-watchdog.timer`. It belongs on **titanium** — the
+machine that holds the `gh` credentials and stays up — not on the Pi it is watching.
