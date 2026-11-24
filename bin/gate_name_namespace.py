@@ -53,7 +53,6 @@ import argparse
 import hashlib
 import json
 import os
-import re
 import subprocess
 import sys
 import urllib.error
@@ -62,6 +61,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import gate_shape  # noqa: E402  (shared classifier, ruling 4963dee4)
 
 BIN_DIR = Path(__file__).resolve().parent
 DSN = os.environ.get("SRCDSN", "postgresql://pguser:pgpass@localhost:5432/nexus")
@@ -72,12 +74,15 @@ NAME_PREFIX = "gate-name:"
 CONVENTION = "ranking item 9 ruling 0633f18d"
 
 WITHDRAWN_STATUS = ("status:retired", "status:superseded")
-NUMERIC = re.compile(r"^\d+$")
 
 HOLD_REASONS = {
     "withdrawn": "retired/superseded rows are history and are never rewritten",
     "slug_case_conflict": "a gate-name tag already exists for this slug in a different case; "
                           "choosing one spelling is a vocabulary decision this tool does not make",
+    gate_shape.R_EMPTY: "an empty gate: value has no shape — held, never guessed",
+    gate_shape.R_MALFORMED: "a whitespace-bearing gate: value has no shape — held, never guessed",
+    gate_shape.R_CONFLICT: "the row also carries gate-name:<value>, claiming the value as both "
+                           "PR and name; no gate-name: spelling is invented for it",
 }
 REPAIR_REASON = ("`gate:<name>` is legacy named-gate syntax; the canonical carrier is "
                  "`gate-name:<slug>` (slug = lower(legacy value)), added additively")
@@ -99,7 +104,7 @@ class Row:
 
 
 def gate_values(tags: Sequence[str]) -> List[str]:
-    return [t[5:] for t in tags if t.startswith("gate:")]
+    return gate_shape.gate_values(tags)
 
 
 def gate_name_slugs(tags: Sequence[str]) -> List[str]:
@@ -119,20 +124,20 @@ class Plan:
         return self.action == "repair" and bool(self.add_slugs)
 
 
-def slugs_for(gates: Sequence[str]) -> List[str]:
-    return [g.lower() for g in gates]
-
-
 def classify(row: Row) -> Optional[Plan]:
     """Plan for a row carrying a non-numeric `gate:<name>`, else None."""
-    named = [g for g in gate_values(row.tags) if not NUMERIC.match(g)]
-    if not named:
+    shapes = gate_shape.classify_row(row.tags)
+    held_shape = next((s for s in shapes if s.is_held), None)
+    named = [s.value for s in shapes if s.is_name]
+    if not named and held_shape is None:
         return None
     existing = gate_name_slugs(row.tags)
-    wanted = slugs_for(named)
+    wanted = [s.slug for s in shapes if s.is_name and s.slug]
     missing = [s for s in wanted if s not in existing]
     withdrawn = any(t in WITHDRAWN_STATUS for t in row.tags)
 
+    if held_shape is not None:
+        return Plan(row, named, "hold", held_shape.reason_code)
     if not missing:
         return Plan(row, named, "coherent")
     if withdrawn:

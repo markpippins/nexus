@@ -308,3 +308,26 @@ def test_post_audit_reports_success_and_failure():
                                 {"verified": [], "failed": []},
                                 run=lambda argv, **kw: _Proc(1, "", "assembly down"))
     assert not ok and "assembly down" in detail
+
+
+# ── item 10: the shared classifier, and refusal instead of inference ──────
+
+def test_dual_claim_row_is_held_by_the_namespace_tool_too():
+    r = row(["gate:1003", "gate-name:1003"], rid="dual")
+    plan = gnn.classify(r)
+    assert plan is not None and plan.action == "hold"
+    assert plan.reason == "gate_shape_conflict"
+
+
+def test_partial_numeric_prefix_is_namespaced_as_a_name():
+    plan = gnn.classify(row(["gate:830-scope"]))
+    assert plan is not None and plan.action == "repair" and plan.add_slugs == ["830-scope"]
+
+
+@pytest.mark.parametrize("tags,reason", [
+    (["gate:"], "gate_shape_empty"),
+    (["gate:stage-2 "], "gate_shape_malformed"),
+])
+def test_malformed_named_gates_are_held(tags, reason):
+    plan = gnn.classify(row(tags))
+    assert plan is not None and plan.action == "hold" and plan.reason == reason
