@@ -346,3 +346,39 @@ def test_multi_gate_rerun_is_a_no_op():
     rescan = [gpc.Row(k, "tester", v["title"], v["content"], v["tags"], v["metadata"])
               for k, v in neb.rows.items()]
     assert [p.action for p in gpc.build_plans(rescan)] == ["coherent"]
+
+
+# ── item 10: the shared classifier, and refusal instead of inference ──────
+
+def test_leading_zero_gate_is_the_same_pr_as_its_mirror():
+    # ruling 4963dee4 fork 2: gate:0830 reads as PR 830, so pr:830 satisfies it
+    # and the tool never writes a second, zero-padded spelling.
+    plan = gpc.classify(row(["gate:0830", "pr:830"]))
+    assert plan is not None and plan.action == "coherent" and not plan.fixable
+
+
+def test_partial_numeric_prefix_is_a_name_not_a_pr():
+    plan = gpc.classify(row(["gate:830-scope", "gate-name:830-scope"]))
+    assert plan is not None and plan.action == "hold" and plan.reason == "gate_not_a_pr"
+    assert plan.add_prs == []
+
+
+def test_dual_claim_row_is_held_and_never_gains_a_pr():
+    r = row(["gate:1003", "gate-name:1003"], rid="dual")
+    plan = gpc.classify(r)
+    assert plan is not None and plan.action == "hold"
+    assert plan.reason == "gate_shape_conflict"
+    neb = FakeNebula([r])
+    result = gpc.apply_plans(gpc.build_plans([r]), "http://x", AT, max_apply=10,
+                             fetch=neb.fetch, write=neb.write)
+    assert result == {"planned": 0, "verified": [], "failed": []}
+    assert neb.rows["dual"]["tags"] == ["gate:1003", "gate-name:1003"]
+
+
+@pytest.mark.parametrize("tags,reason", [
+    (["gate:"], "gate_shape_empty"),
+    (["gate: 830"], "gate_shape_malformed"),
+])
+def test_malformed_gate_values_are_held(tags, reason):
+    plan = gpc.classify(row(tags))
+    assert plan is not None and plan.action == "hold" and plan.reason == reason

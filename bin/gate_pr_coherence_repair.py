@@ -67,6 +67,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import gate_shape  # noqa: E402  (shared classifier, ruling 4963dee4)
+
 BIN_DIR = Path(__file__).resolve().parent
 DSN = os.environ.get("SRCDSN", "postgresql://pguser:pgpass@localhost:5432/nexus")
 DEFAULT_NEBULA = os.environ.get("NEBULA_BASE", "http://localhost:3101")
@@ -75,7 +78,6 @@ RECEIPT_KEY = "record.gate_pr_repaired"
 CONVENTION = "ranking item 8 ruling 086cc2d1"
 
 WITHDRAWN_STATUS = ("status:retired", "status:superseded")
-NUMERIC_GATE = re.compile(r"^\d+$")
 TITLE_PR = re.compile(r"#(\d{1,5})\b")
 
 HOLD_REASONS = {
@@ -86,6 +88,11 @@ HOLD_REASONS = {
     "title_contradicts_gate": "the title names a different PR and never the gate number, so the "
                               "gate tag itself is suspect",
     "withdrawn": "retired/superseded rows are history and are never rewritten",
+    gate_shape.R_EMPTY: "an empty gate: value has no shape — held, never guessed",
+    gate_shape.R_MALFORMED: "a whitespace-bearing gate: value has no shape — held, never guessed",
+    gate_shape.R_CONFLICT: "the row also carries gate-name:<value>, claiming the value as both "
+                           "PR and name; choosing one is a vocabulary decision, so no pr: is "
+                           "fabricated",
 }
 REPAIR_REASON = "gate:<N> is the gate's PR number, spelled twice by every reader; the row lacked pr:<N>"
 
@@ -93,7 +100,7 @@ REPAIR_REASON = "gate:<N> is the gate's PR number, spelled twice by every reader
 def gate_values(tags: Sequence[str]) -> List[str]:
     """EVERY gate:<value> on the row, in tag order (a record may cover several
     PRs: 4f19a49f carries gate:835 gate:836 gate:837)."""
-    return [t[5:] for t in tags if t.startswith("gate:")]
+    return gate_shape.gate_values(tags)
 
 
 def gate_value(tags: Sequence[str]) -> Optional[str]:
@@ -163,19 +170,26 @@ Coherence is judged PER GATE VALUE: `pr:835` present does not make
     if not gates:
         return None
     gate = gates[0]
-    numeric = [g for g in gates if NUMERIC_GATE.match(g)]
+    shapes = gate_shape.classify_row(row.tags)
+    held_shape = next((s for s in shapes if s.is_held), None)
+    numeric = [s.value for s in shapes if s.is_pr]
     prs = pr_values(row.tags)
     pr = prs[0] if prs else None
     withdrawn = any(t in WITHDRAWN_STATUS for t in row.tags)
 
+    if held_shape is not None:
+        return Plan(row, gate, pr, "hold", held_shape.reason_code, gates=gates)
     if not numeric:
         return Plan(row, gate, pr, "hold", "withdrawn" if withdrawn else "gate_not_a_pr",
                     gates=gates)
 
-    missing = [g for g in numeric if g not in prs]
+    # Compare as NUMBERS: `gate:0830` and `pr:830` name the same PR (ruling
+    # 4963dee4 fork 2), so the leading-zero spelling never earns a second tag.
+    pr_ints = {int(p) for p in prs if p.isdigit()}
+    missing = [g for g in numeric if int(g) not in pr_ints]
     if prs and not missing:
         return Plan(row, gate, pr, "coherent", gates=numeric)
-    if prs and missing and not set(prs) & set(numeric):
+    if prs and missing and not pr_ints & {int(g) for g in numeric}:
         # No PR number the row claims appears in its gate tags: a contradiction.
         return Plan(row, gate, pr, "hold", "gate_pr_mismatch", gates=numeric)
 
