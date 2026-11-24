@@ -82,8 +82,8 @@
     },
     {
       "path": "bin/gate_pr_coherence_repair.py",
-      "digest": "01c2638c9ee493f053eece44899080ef6f0fe6331c274255864c93cb746d2c8a",
-      "provenance": "TIER-2 PIN 2026-11-23: PR #1056 landed 66065de75 (ranking item 8, ruling 086cc2d1 \u2014 gate/pr tag coherence) with tester attestation 8e87a299 at head 5412b5522. Pinned at landing because it mutates record tags: it added pr:<N> to the 14 numeric gate-only rows, wrote one canonical receipt per row (record.gate_pr_repaired), and holds named gates / mismatches / title contradictions / withdrawn rows. Post-apply: 0 numeric gate rows without pr, 0 mismatches, rerun plans 0 repairs, 11 named-gate rows held for the vocabulary decision. Digest captured from the origin/main blob after a positive git cat-file -e existence check.",
+      "digest": "ee7c04b1a0595633d2d2f3765a90b02fcef9f1b961a4c702105db0e3b9c61379",
+      "provenance": "TIER-2 PIN 2026-11-23: PR #1056 landed 66065de75 (ranking item 8, ruling 086cc2d1 \u2014 gate/pr tag coherence) with tester attestation 8e87a299 at head 5412b5522. Pinned at landing because it mutates record tags: it added pr:<N> to the 14 numeric gate-only rows, wrote one canonical receipt per row (record.gate_pr_repaired), and holds named gates / mismatches / title contradictions / withdrawn rows. Post-apply: 0 numeric gate rows without pr, 0 mismatches, rerun plans 0 repairs, 11 named-gate rows held for the vocabulary decision. Digest captured from the origin/main blob after a positive git cat-file -e existence check. PIN ADVANCE 2026-11-24 (item 9, ruling 0633f18d): coherence is judged PER GATE value, so a record covering several PRs (4f19a49f: gate:835/836/837) gets every missing pr:<N> instead of only the first \u2014 the old \"row has any pr:\" test called it coherent. Digest captured from this PR's head blob after the 30-test suite passed (previous pin 01c2638c).",
       "queued_prs": []
     }
   ]

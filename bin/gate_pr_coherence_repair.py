@@ -27,7 +27,8 @@ dropping that one tag and that one receipt key.
 
 Rows are held, not guessed at, when:
   - `gate_pr_mismatch`    — `gate:<N>` and `pr:<M>` disagree;
-  - `gate_not_a_pr`       — the gate value is not a number (named gate);
+  - `gate_not_a_pr`       — every gate value on the row is a name (`gate:stage-2`); those rows
+                            belong to `gate-name:<slug>` (bin/gate_name_namespace.py);
   - `title_contradicts_gate` — the title names a different PR and not this one;
   - `withdrawn`           — retired/superseded rows are history, left alone.
 
@@ -89,11 +90,21 @@ HOLD_REASONS = {
 REPAIR_REASON = "gate:<N> is the gate's PR number, spelled twice by every reader; the row lacked pr:<N>"
 
 
+def gate_values(tags: Sequence[str]) -> List[str]:
+    """EVERY gate:<value> on the row, in tag order (a record may cover several
+    PRs: 4f19a49f carries gate:835 gate:836 gate:837)."""
+    return [t[5:] for t in tags if t.startswith("gate:")]
+
+
 def gate_value(tags: Sequence[str]) -> Optional[str]:
     for t in tags:
         if t.startswith("gate:"):
             return t[5:]
     return None
+
+
+def pr_values(tags: Sequence[str]) -> List[str]:
+    return [t[3:] for t in tags if t.startswith("pr:")]
 
 
 def pr_value(tags: Sequence[str]) -> Optional[str]:
@@ -125,34 +136,55 @@ class Plan:
     pr: Optional[str]
     action: str            # "repair" | "hold" | "coherent"
     reason: str = ""
-    add_pr: Optional[str] = field(default=None)
+    add_prs: List[str] = field(default_factory=list)
+    gates: List[str] = field(default_factory=list)
+
+    @property
+    def add_pr(self) -> Optional[str]:
+        return self.add_prs[0] if self.add_prs else None
 
     @property
     def fixable(self) -> bool:
-        return self.action == "repair" and self.add_pr is not None
+        return self.action == "repair" and bool(self.add_prs)
 
 
 def classify(row: Row) -> Optional[Plan]:
-    """Plan for a row that carries a gate: tag, else None (not in scope)."""
-    gate = gate_value(row.tags)
-    if gate is None:
+    """Plan for a row that carries a gate: tag, else None (not in scope).
+
+    Coherence is judged PER GATE VALUE, so a record covering several PRs is
+fully repaired (`gate:835 gate:836 gate:837` gets every missing `pr:`), and a
+row whose `pr:835` exists while `gate:836` has no `pr:836` is still detected.
+
+Coherence is judged PER GATE VALUE: `pr:835` present does not make
+    `gate:836` coherent, and a row whose only tags are named gates belongs to
+    the gate-name namespace (bin/gate_name_namespace.py), not here.
+    """
+    gates = gate_values(row.tags)
+    if not gates:
         return None
-    pr = pr_value(row.tags)
+    gate = gates[0]
+    numeric = [g for g in gates if NUMERIC_GATE.match(g)]
+    prs = pr_values(row.tags)
+    pr = prs[0] if prs else None
     withdrawn = any(t in WITHDRAWN_STATUS for t in row.tags)
 
-    if pr is not None and NUMERIC_GATE.match(gate):
-        if pr == gate:
-            return Plan(row, gate, pr, "coherent")
-        return Plan(row, gate, pr, "hold", "gate_pr_mismatch")
-    if not NUMERIC_GATE.match(gate):
-        return Plan(row, gate, pr, "hold", "withdrawn" if withdrawn else "gate_not_a_pr")
+    if not numeric:
+        return Plan(row, gate, pr, "hold", "withdrawn" if withdrawn else "gate_not_a_pr",
+                    gates=gates)
+
+    missing = [g for g in numeric if g not in prs]
+    if prs and not missing:
+        return Plan(row, gate, pr, "coherent", gates=numeric)
+    if prs and missing and not set(prs) & set(numeric):
+        # No PR number the row claims appears in its gate tags: a contradiction.
+        return Plan(row, gate, pr, "hold", "gate_pr_mismatch", gates=numeric)
 
     named = [int(m) for m in TITLE_PR.findall(row.title or "")]
-    if named and int(gate) not in named:
-        return Plan(row, gate, pr, "hold", "title_contradicts_gate")
+    if named and not set(named) & {int(g) for g in numeric}:
+        return Plan(row, gate, pr, "hold", "title_contradicts_gate", gates=numeric)
     if withdrawn:
-        return Plan(row, gate, pr, "hold", "withdrawn")
-    return Plan(row, gate, pr, "repair", REPAIR_REASON, add_pr=gate)
+        return Plan(row, gate, pr, "hold", "withdrawn", gates=numeric)
+    return Plan(row, gate, pr, "repair", REPAIR_REASON, add_prs=missing, gates=numeric)
 
 
 def build_plans(rows: Sequence[Row]) -> List[Plan]:
@@ -167,14 +199,15 @@ def receipt(plan: Plan, at_iso: str) -> Dict[str, Any]:
         "performed_by": "gate_pr_coherence_repair",
         "action": "added-pr-from-gate",
         "pr": plan.add_pr,
-        "gate": plan.gate,
+        "prs_added": list(plan.add_prs),
+        "gates": list(plan.gates),
         "reason": plan.reason,
         "convention": CONVENTION,
     }
 
 
 def tags_after(plan: Plan) -> List[str]:
-    return list(plan.row.tags) + [f"pr:{plan.add_pr}"]
+    return list(plan.row.tags) + [f"pr:{n}" for n in plan.add_prs]
 
 
 def metadata_after(plan: Plan, at_iso: str) -> Dict[str, Any]:
@@ -299,10 +332,6 @@ def apply_plans(plans: Sequence[Plan], base: str, at_iso: str,
         if current.digest() != plan.row.digest():
             failed.append({"id": rid, "error": "stale: row changed since scan"})
             continue
-        if pr_value(current.tags) is not None:
-            failed.append({"id": rid, "error": "stale: row already carries a pr: tag"})
-            continue
-
         status, body = write(base, rid, {"tags": tags_after(plan),
                                          "metadata": metadata_after(plan, at_iso)})
         if status != 200:
@@ -316,10 +345,11 @@ def apply_plans(plans: Sequence[Plan], base: str, at_iso: str,
 
         back = list(after.get("tags") or [])
         problems: List[str] = []
-        if pr_value(back) != plan.add_pr:
-            problems.append(f"pr tag is {pr_value(back)!r}, expected {plan.add_pr!r}")
-        if gate_value(back) != plan.gate:
-            problems.append(f"gate tag is {gate_value(back)!r}, expected {plan.gate!r}")
+        for n in plan.add_prs:
+            if n not in pr_values(back):
+                problems.append(f"pr:{n} missing after write (prs are {pr_values(back)})")
+        if gate_values(back) != gate_values(plan.row.tags):
+            problems.append(f"gate tags are {gate_values(back)}, expected {gate_values(plan.row.tags)}")
         if sorted(t for t in back if not t.startswith("pr:")) != \
                 sorted(t for t in plan.row.tags if not t.startswith("pr:")):
             problems.append("non-pr tags changed")
@@ -331,7 +361,8 @@ def apply_plans(plans: Sequence[Plan], base: str, at_iso: str,
             failed.append({"id": rid, "error": "; ".join(problems)})
             continue
         verified.append(rid)
-        log(f"repaired {rid[:8]}: added pr:{plan.add_pr} (gate:{plan.gate} retained)")
+        log(f"repaired {rid[:8]}: added {', '.join('pr:' + n for n in plan.add_prs)} "
+            f"(gates {', '.join(plan.gates)} retained)")
 
     return {"planned": len(to_write), "verified": verified, "failed": failed}
 

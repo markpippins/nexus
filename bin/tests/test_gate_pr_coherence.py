@@ -77,7 +77,7 @@ def test_row_without_a_gate_tag_is_out_of_scope():
 def test_receipt_names_gate_pr_action_and_ruling():
     plan = gpc.classify(row(["gate:841"]))
     rec = gpc.receipt(plan, AT)
-    assert rec["gate"] == "841" and rec["pr"] == "841"
+    assert rec["pr"] == "841" and rec["prs_added"] == ["841"] and rec["gates"] == ["841"]
     assert rec["action"] == "added-pr-from-gate"
     assert rec["convention"] == gpc.CONVENTION
     assert rec["performed_by"] == "gate_pr_coherence_repair"
@@ -162,7 +162,7 @@ def test_apply_fails_if_the_gate_tag_disappears():
     neb = FakeNebula([r], corrupt=lambda rec: {**rec, "tags": [t for t in rec["tags"] if not t.startswith("gate:")]})
     out = gpc.apply_plans(gpc.build_plans([r]), "http://x", AT, max_apply=10,
                           fetch=neb.fetch, write=neb.write)
-    assert out["failed"] and "gate tag is None" in out["failed"][0]["error"]
+    assert out["failed"] and "gate tags are" in out["failed"][0]["error"]
 
 
 def test_apply_fails_if_the_pr_tag_is_missing_after_write():
@@ -170,7 +170,7 @@ def test_apply_fails_if_the_pr_tag_is_missing_after_write():
     neb = FakeNebula([r], corrupt=lambda rec: {**rec, "tags": [t for t in rec["tags"] if not t.startswith("pr:")]})
     out = gpc.apply_plans(gpc.build_plans([r]), "http://x", AT, max_apply=10,
                           fetch=neb.fetch, write=neb.write)
-    assert out["failed"] and "pr tag is None" in out["failed"][0]["error"]
+    assert out["failed"] and "pr:841 missing after write" in out["failed"][0]["error"]
 
 
 def test_apply_fails_without_a_receipt():
@@ -304,3 +304,45 @@ def test_post_audit_reports_success_and_failure():
                                 {"verified": ["a"], "failed": []},
                                 run=lambda argv, **kw: _Proc(1, "", "assembly down"))
     assert not ok and "assembly down" in detail
+
+
+# ── multi-gate rows: coherence is judged per gate value (item 9 defect fix) ─
+
+def test_multi_gate_row_with_no_prs_mirrors_every_gate():
+    r = row(["type:report", "gate:835", "gate:836", "gate:837"], rid="multi")
+    plan = gpc.classify(r)
+    assert plan is not None and plan.action == "repair"
+    assert plan.add_prs == ["835", "836", "837"]
+    assert gpc.tags_after(plan) == ["type:report", "gate:835", "gate:836", "gate:837",
+                                    "pr:835", "pr:836", "pr:837"]
+
+
+def test_partially_mirrored_multi_gate_row_is_still_detected():
+    # The item-8 defect: pr:835 exists, so the old "row has a pr" test called
+    # this coherent and gates 836/837 stayed unmirrored.
+    r = row(["gate:835", "gate:836", "gate:837", "pr:835"], rid="partial")
+    plan = gpc.classify(r)
+    assert plan is not None and plan.action == "repair"
+    assert plan.add_prs == ["836", "837"]
+
+
+def test_fully_mirrored_multi_gate_row_is_coherent():
+    r = row(["gate:835", "gate:836", "pr:835", "pr:836"])
+    plan = gpc.classify(r)
+    assert plan is not None and plan.action == "coherent" and not plan.fixable
+
+
+def test_prs_disjoint_from_every_gate_is_a_mismatch():
+    plan = gpc.classify(row(["gate:835", "gate:836", "pr:900"]))
+    assert plan is not None and plan.reason == "gate_pr_mismatch"
+
+
+def test_multi_gate_rerun_is_a_no_op():
+    r = row(["gate:835", "gate:836"], rid="m")
+    neb = FakeNebula([r])
+    first = gpc.apply_plans(gpc.build_plans([r]), "http://x", AT, max_apply=10,
+                            fetch=neb.fetch, write=neb.write)
+    assert first["verified"] == ["m"]
+    rescan = [gpc.Row(k, "tester", v["title"], v["content"], v["tags"], v["metadata"])
+              for k, v in neb.rows.items()]
+    assert [p.action for p in gpc.build_plans(rescan)] == ["coherent"]
