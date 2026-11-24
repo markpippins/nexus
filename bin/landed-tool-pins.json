@@ -85,6 +85,12 @@
       "digest": "ee7c04b1a0595633d2d2f3765a90b02fcef9f1b961a4c702105db0e3b9c61379",
       "provenance": "TIER-2 PIN 2026-11-23: PR #1056 landed 66065de75 (ranking item 8, ruling 086cc2d1 \u2014 gate/pr tag coherence) with tester attestation 8e87a299 at head 5412b5522. Pinned at landing because it mutates record tags: it added pr:<N> to the 14 numeric gate-only rows, wrote one canonical receipt per row (record.gate_pr_repaired), and holds named gates / mismatches / title contradictions / withdrawn rows. Post-apply: 0 numeric gate rows without pr, 0 mismatches, rerun plans 0 repairs, 11 named-gate rows held for the vocabulary decision. Digest captured from the origin/main blob after a positive git cat-file -e existence check. PIN ADVANCE 2026-11-24 (item 9, ruling 0633f18d): coherence is judged PER GATE value, so a record covering several PRs (4f19a49f: gate:835/836/837) gets every missing pr:<N> instead of only the first \u2014 the old \"row has any pr:\" test called it coherent. Digest captured from this PR's head blob after the 30-test suite passed (previous pin 01c2638c).",
       "queued_prs": []
+    },
+    {
+      "path": "bin/gate_name_namespace.py",
+      "digest": "00110ebd7fea1de86bef73dc25f7d8cdd03557de06ace63d4695969628ef5dbb",
+      "provenance": "TIER-2 PIN 2026-11-24: PR #1058 landed 87a0212e9 (ranking item 9, ruling 0633f18d \u2014 gate-name namespace) with tester attestation 7d1bbf90 at head 1a578c020. Pinned at landing because it mutates record tags: it added 13 canonical gate-name:<slug> tags to the 11 rows carrying a named gate: (keeping every legacy gate:<name>), and wrote one record.gate_name_namespaced receipt per row. Post-apply: named_without_namespace 0, numeric_gate_without_pr 0, gate: tags destroyed 0, rerun 0, metadata tripwire CLEAN. Digest captured from the origin/main blob after a positive git cat-file -e existence check.",
+      "queued_prs": []
     }
   ]
 }
