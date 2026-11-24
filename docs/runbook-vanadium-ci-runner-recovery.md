@@ -219,9 +219,58 @@ expires.
 `GET /repos/markpippins/nexus/actions/runners`, compares the runner with the status it
 last recorded (default `/var/tmp/vanadium-runner-watchdog.json`), and alerts **only on a
 transition** — down, recovered, or a runner that vanished from the API — so a two-minute
-timer cannot page anyone twice for one outage. A probe failure exits 2 and touches
-neither the state file nor any alert channel, so a GitHub API outage can never
-masquerade as a runner outage.
+timer cannot page anyone twice for one outage. A probe failure still exits 2 and never
+writes a runner status, so a GitHub API outage can never masquerade as a runner outage.
+
+**A blind watchdog now says so.** Probe failures are counted in the same state file, and
+at `--probe-alert-after` consecutive failures (default **3**, ~6 minutes on the two-minute
+timer; env `NEXUS_WATCHDOG_PROBE_ALERT_AFTER`) the script posts **one** watchdog-health
+alert — *"the watchdog is BLIND"* — naming the last error and the credential the endpoint
+needs, then stays quiet until sight returns. The next successful probe posts a
+`probe-recovered` notice and resets the counter. A probe failure during a known outage
+keeps `status: offline` and does not re-page `down`.
+
+Why this exists (2026-11-25): a fine-grained PAT was installed on `titanium` without
+`Administration: Read-only`, so every tick exited 2 — the unit was `active`, the journal
+said `status=2/INVALIDARGUMENT`, and **nothing alerted**. Installed-and-blind is the worst
+state a watchdog can be in, so blindness is now an alertable condition in its own right.
+
+### 9.1 The credential this probe requires — read this before changing it
+
+`GET /repos/{owner}/{repo}/actions/runners` is an **administrative** endpoint (the live
+response carries `X-Accepted-Github-Permissions: administration=read`). For a fine-grained
+PAT that means exactly:
+
+| setting | value |
+|---|---|
+| Repository access | **Only select repositories** → `markpippins/nexus` |
+| Repository permissions | **Administration: Read-only** (Metadata: Read-only is mandatory/automatic) |
+| Every other permission | **No access** |
+
+`Actions: Read-only` is **not** sufficient and is not needed — the probe makes exactly one
+call. Classic PATs need `repo` (account-wide; use them only where a fine-grained token is
+unavailable). A token that reaches other repositories, or that carries write permissions
+(`Issues: Read and write` and friends), is a worse credential than the one it replaced even
+if the probe happens to work.
+
+Verify a candidate credential before installing it anywhere — the first command must pass
+while the second must fail:
+
+```bash
+gh api repos/markpippins/nexus/actions/runners -q '.runners[] | .name + " " + .status'
+gh api repos/markpippins/atomic-go -q .full_name    # must 404/403 if the token is repo-scoped
+python3 bin/vanadium_runner_watchdog.py --check --dry-run   # prints `vanadium runner: online`
+```
+
+A 403 `Resource not accessible by personal access token` on the first command means the
+token lacks `Administration: Read-only` — the exact failure that blinded the watchdog on
+2026-11-25. Editing a fine-grained token keeps its value, so a permission fix does **not**
+require reinstalling it; but the edit form has a known defect that can reset Repository
+access to "All repositories" on save, which is what the `atomic-go` check is for.
+
+Give each host its **own** token. A token copied to a runner host is a credential that host
+can use against the account, and sharing one value between `titanium` and `vanadium` means
+compromising either compromises both.
 
 ```bash
 python3 bin/vanadium_runner_watchdog.py --check --dry-run   # print the decision, write nothing
@@ -269,10 +318,11 @@ Observed: timer `active (waiting)`, one service run per two minutes with `system
 `vanadium runner: online` / `Finished … (status=0/SUCCESS)`. State lives in
 `/var/tmp/vanadium-runner-watchdog.json` (`{"status": "online", …}`).
 
-**Not** installed on `vanadium` itself: that host's `gh` answers `{"message": "Bad
-credentials"}` (measured 2026-11-24) and it has no nexus checkout, so a unit there
-could not read the runners API. A watcher on the host it watches also cannot report
-that host being wedged — the failure this runbook exists for.
+**Not** installed on `vanadium` itself: it has no nexus checkout, and its `gh` is
+intentionally **unauthenticated** — a credential there is reachable by untrusted CI code,
+and one should be a separate fine-grained token scoped exactly as in §9.1. A watcher on
+the host it watches also cannot report that host being wedged — the failure this runbook
+exists for. So the probe belongs on `titanium`, which holds the credentials and stays up.
 
 Source of truth is in the repo — `bin/vanadium-runner-watchdog.service` and
 `bin/vanadium-runner-watchdog.timer`; each header carries its own deploy note. Install

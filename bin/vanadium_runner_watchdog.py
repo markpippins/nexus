@@ -26,6 +26,13 @@ inside a window is recorded as pending in the state file and delivered once the
 window closes if the runner is still down, so a real outage that begins inside
 the window is still reported. Held recovery alerts are simply dropped.
 
+What it watches about *itself*: a probe that cannot read the API is a blind
+watchdog, not a quiet one. Probe failures are counted in the state file and, at
+`--probe-alert-after` consecutive failures (default 3, ~6 minutes on the
+two-minute timer), one watchdog-health alert is posted; a later successful probe
+announces that sight is restored. A probe failure still never claims the runner
+is down, and still exits 2.
+
 Alert channels (first one configured wins):
   --webhook-url URL / env NEXUS_ALERT_WEBHOOK   POST {"text": "..."}
   --alert-cmd CMD                               shell command, message on stdin
@@ -42,9 +49,11 @@ Usage:
 
 Exit codes: 0 runner online and LAN reachable; 1 either fault (or the runner is
             missing from the API); 2 environment error (the runners API could not
-            be read — state and alerts untouched). A LAN probe that cannot
-            connect is a VERDICT, not an environment error: the refusal to
-            answer is the thing being watched.
+            be read). A LAN probe that cannot connect is a VERDICT, not an
+            environment error: the refusal to answer is the thing being watched.
+            Exit 2 never writes a runner status and never claims an outage — but
+            it does accumulate the probe-failure count and, at the threshold,
+            delivers the watchdog-health alert.
 """
 from __future__ import annotations
 
@@ -63,6 +72,7 @@ REPO = os.environ.get("NEXUS_REPO", "markpippins/nexus")
 RUNNER = "vanadium"
 STATE_PATH = os.environ.get("NEXUS_WATCHDOG_STATE", "/var/tmp/vanadium-runner-watchdog.json")
 MAINTENANCE_WINDOW = os.environ.get("NEXUS_WATCHDOG_MAINTENANCE_WINDOW", "")
+PROBE_ALERT_AFTER = int(os.environ.get("NEXUS_WATCHDOG_PROBE_ALERT_AFTER", "3"))
 
 # The LAN identity the backups, the SQL sync and `ssh` all depend on. Probed by
 # address rather than by name: the DNS name survived the whole 2026-11-25
@@ -75,6 +85,7 @@ LAN_TIMEOUT = os.environ.get("NEXUS_WATCHDOG_LAN_TIMEOUT", "3")
 ONLINE = "online"
 OFFLINE = "offline"
 MISSING = "missing"
+PROBE_ERROR = "probe-error"
 
 LAN_UP = "up"
 LAN_DOWN = "down"
@@ -83,17 +94,23 @@ ALERT_DOWN = "down"
 ALERT_RECOVERED = "recovered"
 ALERT_LAN_DOWN = "lan-down"
 ALERT_LAN_RECOVERED = "lan-recovered"
+ALERT_PROBE = "probe-error"
+ALERT_PROBE_RECOVERED = "probe-recovered"
 
 # One title per verdict. The forum fallback used to hardcode "runner offline"
 # for every alert, which mislabels the exact case this probe exists for: the
 # host heartbeating and running scans while its LAN address is dead. An
 # operator scanning titles would read "offline" about a runner that is up.
+# The blindness verdicts are named for what they are too: a watchdog that
+# cannot read the runners API has not learned anything about the runner.
 DEFAULT_ALERT_TITLE = "ALERT: vanadium CI runner offline"
 ALERT_TITLES = {
     ALERT_DOWN: DEFAULT_ALERT_TITLE,
     ALERT_RECOVERED: "RECOVERED: vanadium CI runner is online again",
     ALERT_LAN_DOWN: "ALERT: vanadium runner is online but dead on the LAN",
     ALERT_LAN_RECOVERED: "RECOVERED: vanadium's LAN path is back",
+    ALERT_PROBE: "ALERT: vanadium watchdog cannot read the runners API",
+    ALERT_PROBE_RECOVERED: "RECOVERED: vanadium watchdog can read the runners API again",
 }
 
 
@@ -105,9 +122,11 @@ def _alert_title(alert: Optional[str]) -> str:
 @dataclass(frozen=True)
 class Decision:
     status: str
-    alert: Optional[str]          # None | ALERT_DOWN | ALERT_RECOVERED | ALERT_LAN_*
+    alert: Optional[str]          # None | ALERT_DOWN | ALERT_RECOVERED | ALERT_LAN_* | ALERT_PROBE*
     message: str
     lan: Optional[str] = None     # LAN_UP | LAN_DOWN | None (not probed)
+    error: Optional[str] = None   # set only when the probe itself failed
+    probe_failures: int = 0       # consecutive failed probes observed so far
 
     @property
     def ok(self) -> bool:
@@ -369,6 +388,40 @@ def _lan_recovered_message(target: str, since: int, now: int) -> str:
     )
 
 
+def _probe_message(failures: int, error: str, repo: str, prev: Optional[Dict[str, Any]],
+                   threshold: int) -> str:
+    last_known = (prev or {}).get("status")
+    known = (f"The runner's last known status is unchanged (`{last_known}`) — this is not a "
+             f"runner-outage report, it is the watchdog reporting that it cannot see."
+             if last_known else
+             "No runner status has ever been confirmed by this watchdog.")
+    return (
+        f"The `vanadium` runner watchdog has failed to read the runners API "
+        f"{failures} times in a row (alert threshold {threshold}). It is BLIND: no runner "
+        f"status is being checked, so a real outage would go unreported.\n\n"
+        f"Last error: `{error}`\n\n"
+        f"Most likely cause when that error is HTTP 403 \"Resource not accessible by "
+        f"personal access token\": the gh credential cannot read the runners list. "
+        f"`GET /repos/{repo}/actions/runners` is an *administrative* endpoint — a "
+        f"fine-grained PAT needs **Administration: Read-only** scoped to `{repo}` "
+        f"(Actions: Read is not enough, and core scopes are not accepted).\n\n"
+        f"Check from the same account:\n"
+        f"  gh api repos/{repo}/actions/runners\n"
+        f"  python3 bin/vanadium_runner_watchdog.py --check --dry-run\n\n"
+        f"{known}\n\n"
+        f"Required credential and recovery steps: "
+        f"docs/runbook-vanadium-ci-runner-recovery.md §9."
+    )
+
+
+def _probe_recovered_message(failures: int, status: str) -> str:
+    return (
+        f"The `vanadium` runner watchdog can read the runners API again after {failures} "
+        f"consecutive failed probes. Runner is currently `{status}`. Probe health restored; "
+        f"normal transition alerting resumes."
+    )
+
+
 def fetch_runners(repo: str = REPO) -> Sequence[Dict[str, Any]]:
     out = subprocess.run(
         ["gh", "api", f"repos/{repo}/actions/runners"],
@@ -409,18 +462,71 @@ def notify(message: str, *, webhook_url: Optional[str] = None,
     return "assembly"
 
 
+def _probe_failure(prev: Optional[Dict[str, Any]], exc: Exception, *, now: int,
+                   state_path: str, repo: str, probe_alert_after: int,
+                   webhook_url: Optional[str] = None, alert_cmd: Optional[str] = None,
+                   dry_run: bool = False) -> Tuple[Decision, str]:
+    """A blind probe: count it, and say so once the blindness is not transient.
+
+    Never writes a runner status: an unreachable API must not look like an
+    outage, and must not clear a real one either.
+    """
+    error = f"{type(exc).__name__}: {exc}".replace("\n", " ").strip()[:400]
+    failures = int((prev or {}).get("probe_failures") or 0) + 1
+    threshold = max(1, int(probe_alert_after))
+    already_alerted = (prev or {}).get("last_alert") == ALERT_PROBE
+
+    alert: Optional[str] = None
+    message = ""
+    if failures >= threshold and not already_alerted:
+        alert = ALERT_PROBE
+        message = _probe_message(failures, error, repo, prev, threshold)
+
+    channel = ""
+    if alert:
+        channel = notify(message, webhook_url=webhook_url, alert_cmd=alert_cmd, dry_run=dry_run)
+
+    if not dry_run:
+        state = dict(prev or {})
+        state.update({
+            "probe_failures": failures,
+            "last_probe_error": error,
+            "checked_at": now,
+            "last_alert": alert or state.get("last_alert"),
+        })
+        save_state(state_path, state)
+
+    return Decision(PROBE_ERROR, alert, message, error=error, probe_failures=failures), channel
+
+
 def check(*, repo: str = REPO, state_path: str = STATE_PATH, now: Optional[int] = None,
           fetch: Callable[[str], Sequence[Dict[str, Any]]] = fetch_runners,
           webhook_url: Optional[str] = None, alert_cmd: Optional[str] = None,
           dry_run: bool = False,
           lan_probe: Optional[Callable[[], str]] = None,
           lan_target: str = f"{LAN_HOST}:{LAN_PORT}",
-          maintenance: Sequence[Tuple[int, int]] = ()) -> Tuple[Decision, str]:
+          maintenance: Sequence[Tuple[int, int]] = (),
+          probe_alert_after: int = PROBE_ALERT_AFTER) -> Tuple[Decision, str]:
     now = int(time.time()) if now is None else now
-    status = classify(fetch(repo))
-    lan = lan_probe() if lan_probe is not None else None
     prev = load_state(state_path)
+
+    try:
+        status = classify(fetch(repo))
+    except Exception as exc:  # noqa: BLE001 — a probe failure must not look like an outage
+        return _probe_failure(prev, exc, now=now, state_path=state_path, repo=repo,
+                              probe_alert_after=probe_alert_after,
+                              webhook_url=webhook_url, alert_cmd=alert_cmd, dry_run=dry_run)
+
+    lan = lan_probe() if lan_probe is not None else None
     decision = decide(prev, status, now, lan=lan, lan_target=lan_target)
+
+    # The blindness alert is cleared by the first probe that succeeds again,
+    # whatever the runner turned out to be doing in the meantime.
+    failures_before = int((prev or {}).get("probe_failures") or 0)
+    if decision.alert is None and failures_before and \
+            (prev or {}).get("last_alert") == ALERT_PROBE:
+        decision = Decision(status, ALERT_PROBE_RECOVERED,
+                            _probe_recovered_message(failures_before, status), lan=lan)
 
     window = active_window(maintenance, now)
 
@@ -432,15 +538,18 @@ def check(*, repo: str = REPO, state_path: str = STATE_PATH, now: Optional[int] 
                 status, owed,
                 _deferred_note((prev or {}).get("pending_window"),
                                (prev or {}).get("since"), now)
-                + _down_message(status))
+                + _down_message(status), lan=lan)
 
     held: Optional[str] = None
-    if decision.alert and window:
+    # Blindness is never held: a reboot does not make the GitHub API unreadable,
+    # so a probe that cannot see during a window is still the watchdog's own
+    # failure to report — holding it would hide exactly that.
+    if decision.alert and window and decision.alert not in (ALERT_PROBE, ALERT_PROBE_RECOVERED):
         held = decision.alert
         decision = Decision(
             status, None,
             f"[maintenance {window}] holding the {held} alert until the window closes: "
-            f"{decision.message}")
+            f"{decision.message}", lan=lan)
 
     channel = ""
     if decision.alert:
@@ -460,7 +569,8 @@ def check(*, repo: str = REPO, state_path: str = STATE_PATH, now: Optional[int] 
         state: Dict[str, Any] = {"status": status, "since": since,
                                  "checked_at": now,
                                  "lan": recorded_lan, "lan_since": lan_since,
-                                 "last_alert": decision.alert or (prev or {}).get("last_alert")}
+                                 "last_alert": decision.alert or (prev or {}).get("last_alert"),
+                                 "probe_failures": 0}
         if held and status != ONLINE:
             state["pending_alert"] = held
             state["pending_window"] = window
@@ -488,6 +598,9 @@ def main(argv: Optional[Sequence[str]] = None,
                          "comma-separated; alerts raised inside one are held and sent when it "
                          "closes if the runner is still down (default: none; env "
                          "NEXUS_WATCHDOG_MAINTENANCE_WINDOW)")
+    ap.add_argument("--probe-alert-after", type=int, default=PROBE_ALERT_AFTER,
+                    help="consecutive probe failures before the watchdog alerts that it is blind "
+                         "(default %(default)s; env NEXUS_WATCHDOG_PROBE_ALERT_AFTER)")
     ap.add_argument("--dry-run", action="store_true", help="print, write nothing, alert nothing")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
@@ -505,19 +618,30 @@ def main(argv: Optional[Sequence[str]] = None,
     except ValueError as exc:
         ap.error(str(exc))
 
-    try:
-        decision, channel = check(
-            repo=args.repo, state_path=args.state, fetch=fetch,
-            webhook_url=args.webhook_url, alert_cmd=args.alert_cmd, dry_run=args.dry_run,
-            lan_probe=probe, lan_target=target, maintenance=maintenance)
-    except Exception as exc:  # noqa: BLE001 — a probe failure must not look like an outage
-        print(f"ERROR: cannot read the runners API: {exc}", file=sys.stderr)
+    decision, channel = check(
+        repo=args.repo, state_path=args.state, fetch=fetch,
+        webhook_url=args.webhook_url, alert_cmd=args.alert_cmd, dry_run=args.dry_run,
+        lan_probe=probe, lan_target=target, maintenance=maintenance,
+        probe_alert_after=args.probe_alert_after)
+
+    if decision.error:
+        if args.json:
+            print(json.dumps({"status": decision.status, "lan": decision.lan,
+                              "alert": decision.alert, "channel": channel,
+                              "message": decision.message,
+                              "probe_failures": decision.probe_failures,
+                              "error": decision.error}, indent=2))
+        print(f"ERROR: cannot read the runners API: {decision.error}", file=sys.stderr)
+        print(f"vanadium runner: probe-error — {decision.probe_failures} consecutive failure(s)"
+              + (f", alert={decision.alert} via {channel}" if decision.alert else
+                 f", alerting at {max(1, args.probe_alert_after)}"), file=sys.stderr)
         return 2
 
     if args.json:
         print(json.dumps({"status": decision.status, "lan": decision.lan,
                           "alert": decision.alert, "channel": channel,
-                          "message": decision.message}, indent=2))
+                          "message": decision.message,
+                          "probe_failures": decision.probe_failures}, indent=2))
     else:
         lan_note = f" lan={decision.lan}" if decision.lan else ""
         print(f"vanadium runner: {decision.status}{lan_note}"
