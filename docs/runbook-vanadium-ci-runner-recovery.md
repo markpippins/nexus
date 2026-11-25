@@ -239,6 +239,43 @@ python3 bin/vanadium_runner_watchdog.py --check --json      # machine-readable
 python3 bin/vanadium_runner_watchdog.py --check             # alert on a transition
 ```
 
+#### The workstation token — what `gh` on `titanium` needs
+
+The table above is the **probe** credential: one call, read-only, unattended on a timer.
+The other credential on the same machine is the operator's **workstation** token — the one
+`gh` uses to push branches, open and merge PRs, and read CI. It legitimately needs more,
+but it must still be a fine-grained PAT scoped to `markpippins/nexus` alone, never a
+classic `repo` token.
+
+| setting | value | why it is needed |
+|---|---|---|
+| Repository access | **Only select repositories** → `markpippins/nexus` | campaign work never touches another repo; a leaked token stays worthless elsewhere |
+| Administration | **Read-only** | `GET /actions/runners`, the same endpoint the probe uses |
+| Contents | **Read and write** | push branches and tags, read files at a ref |
+| Pull requests | **Read and write** | open, update and merge a PR; read check runs and review state |
+| Metadata | **Read-only** (mandatory) | granted automatically with every fine-grained token |
+| Actions | *optional* — **Read and write** | needed only to rerun or cancel a workflow run; reading status and logs works with **Read-only** |
+| Issues | *optional* — **Read-only** | only if the operator wants to read issues; no campaign step writes issues |
+| Every other permission | **No access** | |
+
+**`Git SSH keys` is an account-level permission, not a repository one.** Fine-grained PATs
+split permissions into *repository* and *account* scopes, and SSH-key management lives in
+the account half — it cannot be granted for `markpippins/nexus` alone. So no repo-scoped
+token can add, read or rotate deploy keys, and running such a step means switching to a
+credential with account scope, which is a deliberate decision, not a checkbox on the token
+edit form. Prefer an SSH key on the host or a GitHub App over widening a PAT.
+
+Evidence for the optional `Actions` row (2026-11-25): with `Actions` at **Read-only** the
+campaign could read job annotations and run rollups but `POST
+/repos/{owner}/{repo}/actions/runs/{id}/force-cancel` returned `403 Resource not
+accessible by personal access token`, so a stuck run could not be rerun or cancelled from
+the workstation. If a campaign depends on rerunning failed jobs, grant it; otherwise leave
+it out.
+
+Editing a token keeps its value, so adding a scope never requires reinstalling it — but
+re-run the two verification commands above afterwards, because the edit form can silently
+reset Repository access to **All repositories**.
+
 Channels, first configured wins: `--webhook-url` (or `NEXUS_ALERT_WEBHOOK`, POSTs
 `{"text": …}`), `--alert-cmd` (or `NEXUS_ALERT_CMD`, message on stdin), default Assembly
 post to `issues-and-open-questions`. The down message names this runbook and restates the
