@@ -31,6 +31,36 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
+            <!-- Advisory pins (dependency triage, 2026-11-26). Both arrive
+                 test-scope via quarkus-junit5 -> quarkus-test-common ->
+                 quarkus-bootstrap-maven-resolver -> maven-embedder /
+                 smallrye-beanbag-maven, and both are still vulnerable there:
+                 guava GHSA-xxph-c9ww-hj94 (HIGH, fixed 33.7.2) and
+                 plexus-utils GHSA-6fmv-xxpf-w3cw (HIGH, fixed 3.6.1).
+                 guava's exclusions mirror the Quarkus BOM entry so the
+                 pinned version keeps the BOM's classpath, only newer. -->
+            <dependency>
+                <groupId>com.google.guava</groupId>
+                <artifactId>guava</artifactId>
+                <version>33.7.2-jre</version>
+                <scope>test</scope>
+                <exclusions>
+                    <exclusion>
+                        <groupId>com.google.code.findbugs</groupId>
+                        <artifactId>jsr305</artifactId>
+                    </exclusion>
+                    <exclusion>
+                        <groupId>com.google.guava</groupId>
+                        <artifactId>listenablefuture</artifactId>
+                    </exclusion>
+                </exclusions>
+            </dependency>
+            <dependency>
+                <groupId>org.codehaus.plexus</groupId>
+                <artifactId>plexus-utils</artifactId>
+                <version>3.6.1</version>
+                <scope>test</scope>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
