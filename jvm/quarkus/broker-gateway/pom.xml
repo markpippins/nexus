@@ -17,13 +17,32 @@
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
         <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
-        <quarkus.platform.version>3.15.1</quarkus.platform.version>
+        <!-- 3.20.6.2 is the first release carrying the quarkus-vertx-http fix
+             for GHSA-qcxp-gm7m-4j5v (HIGH) and the GHSA-rc95-pcm8-65v9 fix
+             from 3.20.6.1. -->
+        <quarkus.platform.version>3.20.6.2</quarkus.platform.version>
+        <!-- Netty 4.1.137.Final: netty-handler GHSA-c4c3-7fpv-j4q5 (CRITICAL)
+             and netty-codec-http GHSA-8c42-7qj2-3j46 (MODERATE) are fixed
+             exactly there; the Quarkus BOM still manages 4.1.130. -->
+        <netty.version>4.1.137.Final</netty.version>
         <skipITs>true</skipITs>
         <surefire-plugin.version>3.2.5</surefire-plugin.version>
     </properties>
 
     <dependencyManagement>
         <dependencies>
+            <!-- netty-bom MUST precede the Quarkus BOM: dependencyManagement
+                 imports are first-declaration-wins, so this is the only
+                 placement that actually overrides the Quarkus-managed Netty
+                 version. Moving it below the Quarkus import silently reverts
+                 Netty to the BOM's 4.1.130. -->
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-bom</artifactId>
+                <version>${netty.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <dependency>
                 <groupId>${quarkus.platform.group-id}</groupId>
                 <artifactId>${quarkus.platform.artifact-id}</artifactId>
