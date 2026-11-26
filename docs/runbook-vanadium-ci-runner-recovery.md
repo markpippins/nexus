@@ -49,6 +49,41 @@ Kernel-healthy + no SSH banner + runner silent at the same moment means the host
 I/O hang. There is no IPMI and no serial console on this host, and with `sshd` wedged
 there is no remote way in.
 
+## 1.1 The inverse fingerprint — runner online, LAN dead (2026-11-25/26)
+
+Same host, opposite failure, and much easier to miss. Measured 2026-11-26T17:19Z
+from `titanium`:
+
+| Probe | Result | Meaning |
+|---|---|---|
+| `gh api …/actions/runners` | `vanadium online busy=false` | the agent is heartbeating to GitHub |
+| last job on it | run `45857636526` `sonar`, success, started `16:19:32Z` | it ran a real 11-minute aarch64 scan an hour earlier |
+| `ping 192.168.1.209`, `ip neigh` | 100 % loss, `INCOMPLETE` | nothing answers the address |
+| `getent hosts vanadium.attlocal.net` | `192.168.1.209` | the router's mapping outlives the host |
+| gateway `192.168.1.254` | reachable, 0 % loss | the LAN path *from titanium* is healthy |
+| `pg-backup-to-vanadium.log` / `sync-vanadium.log` | `FAIL(preflight)` / `No route to host` | the only automated signal there was |
+
+So: **outbound to GitHub works, the LAN identity does not.** CI stays green
+because `vanadium-sonar` needs only `localhost:9000` on the box plus the GitHub
+API — so a green `sonar` check is *not* evidence the host is healthy, and
+`ssh`/`.209` are unavailable exactly when they are wanted.
+
+The one channel that survives this fault is a job running on the runner itself.
+Dispatch `.github/workflows/vanadium-diagnostic.yml` (manual only): it dumps
+`ip -br a`, `ip r`, `ip neigh`, `nmcli con show --active`, the route the kernel
+would use to reach github.com, `uptime -s`, `last -x`, `journalctl -b -1`,
+`vcgencmd get_throttled` and storage state into the job summary. No sudo, no
+reboot step.
+
+Read its **verdict** block first: no `192.168.1.x` address means the host is
+reaching GitHub over some other path (another SSID, a hotspot, an extender's own
+NAT) and the fix is the association, not the runner; a `192.168.1.x` address
+means the fault is at the ARP/DHCP/AP layer.
+
+Do not reboot to "fix" this before reading that verdict. The host came back from
+this outage twice (2026-11-24 22:02 and 2026-11-25 15:05 EST) without its LAN
+address either time, and a Pi 5 has no out-of-band reset (§3).
+
 ## 2. Triage before touching the box
 
 ```bash
@@ -184,6 +219,26 @@ Channels, first configured wins: `--webhook-url` (or `NEXUS_ALERT_WEBHOOK`, POST
 `{"text": …}`), `--alert-cmd` (or `NEXUS_ALERT_CMD`, message on stdin), default Assembly
 post to `issues-and-open-questions`. The down message names this runbook and restates the
 "do not relabel `titanium`" rule, so the alert itself is actionable.
+
+**Since 2026-11-26 it probes two things**, because this host has now failed in
+both directions: the runners API (above) *and* one TCP connect to the LAN address
+(`--lan-host` / `--lan-port`, default `192.168.1.209:22`). The second exists for
+§1.1 — on 2026-11-25/26 the runner stayed online and kept scanning for two days
+while its address was dead, and a runner-status-only probe is blind to exactly
+that. The rules:
+
+- **LAN breaks while the runner is online** → `alert=lan-down`: one message naming
+  the backups it breaks and the workflow to dispatch, and when the last good
+  check was (the poll cannot know the exact moment, only the window).
+- **The host is offline** → one alert, not two: the LAN verdict is recorded
+  silently, and a **return without its LAN identity** escalates on the check that
+  sees the runner come back ("It came back without its LAN identity").
+- **LAN recovers** → `lan-recovered`, which says to rerun the off-machine copy
+  and the SQL sync.
+- Exit 1 now means "runner online **and** LAN reachable" failed. `--no-lan-probe`
+  restores the old runner-only behaviour. The state file gained `lan` /
+  `lan_since`, and a run with the probe skipped keeps the last verdict rather
+  than erasing it.
 
 **Installed on `titanium` 2026-11-24** as a *user* unit (no root needed; `Linger=yes`
 is already set for `codex`, so it runs without a login session):
