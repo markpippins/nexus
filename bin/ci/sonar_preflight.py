@@ -21,8 +21,20 @@ never a red quality gate, never an auth failure.
 Probe layers (all three must pass for "ready"):
   1. DNS:      socket.getaddrinfo on the host
   2. TCP:      connect to host:port with a short timeout
-  3. HTTP:     GET {host_url}/api/system/status (SonarQube liveness
-               endpoint; 200 = UP). Auth is not required for status.
+  3. HTTP:     GET {host_url}/api/system/status (SonarQube liveness and
+               readiness endpoint; auth is not required for status). A 200
+               is not enough: the body's "status" field must report UP. A
+               200 that says STARTING (measured on vanadium at 12:24Z after
+               a boot: {"version":"9.9.8.100196","status":"STARTING"}) is
+               a server still coming up, which cannot accept a scan. A 200
+               whose body is unreadable, not JSON, or has no "status" is
+               also not-ready — the gate fails toward skipping.
+
+Why readiness and not just reachability (2026-11-26): the actions runner is
+started by systemd before SonarQube finishes booting, so after any reboot the
+probe reaches a server that answers 200 but is still STARTING. Treating that
+as ready hands the job a server that fails the scan — a boot race reported as
+a code failure. Requiring UP makes the probe wait the boot out instead.
 
 CLI:
   sonar_preflight.py               # reads SONAR_HOST_URL (required)
@@ -40,6 +52,7 @@ Run:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import socket
 import sys
@@ -56,6 +69,10 @@ TCP_TIMEOUT = 3.0
 HTTP_TIMEOUT = 5.0
 
 STATUS_PATH = "/api/system/status"
+
+#: The only value of the status body's "status" field that means "ready to
+#: scan". STARTING/DOWN/MAINTENANCE (and anything unrecognized) do not.
+STATUS_UP = "UP"
 
 EXIT_READY = 0
 EXIT_NOT_READY = 2
@@ -76,6 +93,31 @@ def _split_host_port(host_url: str) -> tuple[str, int]:
     if port is None:
         port = 443 if parts.scheme == "https" else 80
     return parts.hostname, port
+
+
+def _read_reported_status(resp) -> tuple[str | None, str]:
+    """Return (reported status upper-cased, problem) from a 200 status body.
+
+    The first element is None when the body carries no usable status, and
+    ``problem`` then explains why for the reason line. Never raises: a body
+    that cannot be read is a not-ready probe, not a crash.
+    """
+    try:
+        raw = resp.read()
+    except Exception as exc:  # noqa: BLE001 - probe must never crash the job
+        return None, f"the status body could not be read: {exc!r}"
+    if not raw:
+        return None, "the status endpoint returned an empty body"
+    try:
+        payload = json.loads(raw.decode("utf-8", "replace"))
+    except ValueError as exc:
+        return None, f"the status body is not JSON: {exc}"
+    if not isinstance(payload, dict):
+        return None, "the status body is not a JSON object"
+    status = payload.get("status")
+    if not isinstance(status, str) or not status.strip():
+        return None, "the status body has no 'status' field"
+    return status.strip().upper(), ""
 
 
 def probe_sonar(host_url: str) -> tuple[bool, str]:
@@ -105,17 +147,17 @@ def probe_sonar(host_url: str) -> tuple[bool, str]:
     except OSError as exc:
         return False, f"TCP connect to {host}:{port} failed: {exc}"
 
-    # Layer 3: HTTP liveness (SonarQube status endpoint; no auth needed)
+    # Layer 3: HTTP readiness (SonarQube status endpoint; no auth needed)
     status_url = host_url.rstrip("/") + STATUS_PATH
     try:
         req = urllib.request.Request(status_url, method="GET")
         with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
-            if resp.status == 200:
-                return True, f"SonarQube reachable at {host_url} (status 200)"
-            return (
-                False,
-                f"SonarQube status endpoint returned HTTP {resp.status} at {status_url}",
-            )
+            if resp.status != 200:
+                return (
+                    False,
+                    f"SonarQube status endpoint returned HTTP {resp.status} at {status_url}",
+                )
+            reported, problem = _read_reported_status(resp)
     except urllib.error.HTTPError as exc:
         # A non-200 from the server means the server IS answering — that is
         # a real SonarQube-side condition, reported (and left to fail the
@@ -128,6 +170,20 @@ def probe_sonar(host_url: str) -> tuple[bool, str]:
         return False, f"HTTP status check failed for {status_url}: {exc}"
     except Exception as exc:  # noqa: BLE001 - probe must never crash the job
         return False, f"unexpected pre-flight error: {exc!r}"
+
+    if reported is None:
+        return (
+            False,
+            f"SonarQube answered at {status_url} but {problem} "
+            f"— a 200 alone is not readiness",
+        )
+    if reported != STATUS_UP:
+        return (
+            False,
+            f"SonarQube at {host_url} reports status {reported}, not UP "
+            f"(still starting, or not serving scans yet)",
+        )
+    return True, f"SonarQube reachable at {host_url} (status UP)"
 
 
 def main(argv: list[str] | None = None) -> int:

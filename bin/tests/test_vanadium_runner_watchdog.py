@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import socket
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -348,3 +349,154 @@ def test_the_forum_post_carries_the_verdict_title(monkeypatch):
     title = argv[argv.index("--title") + 1]
     assert title == wd.ALERT_TITLES[wd.ALERT_LAN_DOWN]
     assert "offline" not in title.lower()
+
+
+# ── maintenance windows ───────────────────────────────────────────────────
+#
+# A scheduled reboot takes the runner down for a minute or two. Without a quiet
+# window the two-minute timer sees the drop and the return and pages twice; with
+# one it stays silent, but a real outage that happens to start inside the window
+# must still be reported once the window closes.
+
+def _at_local(monkeypatch, hour, minute):
+    """Freeze what the watchdog reads as local time, TZ-independently."""
+    stamp = time.struct_time((2026, 1, 1, hour, minute, 0, 3, 1, 0))
+    monkeypatch.setattr(wd.time, "localtime", lambda _ts: stamp)
+
+
+def _window_around(ts, before=10, after=10):
+    """A window spec that covers ts's local minute, +/- the given minutes."""
+    m = wd.time.localtime(ts).tm_hour * 60 + wd.time.localtime(ts).tm_min
+    start, end = (m - before) % 1440, (m + after) % 1440
+    return wd.parse_window_spec(f"{wd._fmt_minute(start)}-{wd._fmt_minute(end)}")
+
+
+def test_parse_window_spec_empty_means_no_window():
+    assert wd.parse_window_spec(None) == ()
+    assert wd.parse_window_spec("") == ()
+    assert wd.parse_window_spec("   ") == ()
+
+
+def test_parse_window_spec_reads_one_or_more_windows():
+    assert wd.parse_window_spec("02:20-02:50") == ((140, 170),)
+    assert wd.parse_window_spec("02:20-02:50, 03:10-03:20") == ((140, 170), (190, 200))
+    assert wd.parse_window_spec("02:20-02:50;03:10-03:20") == ((140, 170), (190, 200))
+
+
+def test_parse_window_spec_rejects_malformed_specs():
+    """A typo must not silently disable the quiet window."""
+    for bad in ("02:20", "2:2:0", "25:00-26:00", "02:70-03:00", "two-twenty", "02:20-"):
+        with pytest.raises(ValueError):
+            wd.parse_window_spec(bad)
+
+
+def test_active_window_reports_the_window_it_matched(monkeypatch):
+    _at_local(monkeypatch, 2, 35)
+    assert wd.active_window(wd.parse_window_spec("02:20-02:50"), 0) == "02:20-02:50"
+    assert wd.active_window(wd.parse_window_spec("02:20-02:50,03:00-04:00"), 0) == "02:20-02:50"
+    # the end is exclusive, and a zero-length window matches nothing
+    assert wd.active_window(wd.parse_window_spec("02:20-02:35"), 0) is None
+    assert wd.active_window(wd.parse_window_spec("02:35-02:35"), 0) is None
+    assert wd.active_window(wd.parse_window_spec("02:36-02:50"), 0) is None
+
+
+def test_active_window_supports_a_window_crossing_midnight(monkeypatch):
+    spec = wd.parse_window_spec("23:00-01:00")
+    for hour, minute, inside in (
+        (23, 0, True), (23, 59, True), (0, 30, True),
+        (1, 0, False), (22, 59, False), (1, 1, False),
+    ):
+        _at_local(monkeypatch, hour, minute)
+        assert bool(wd.active_window(spec, 1_700_000_000)) is inside, (hour, minute)
+
+
+def test_no_window_means_the_old_behaviour(monkeypatch):
+    _at_local(monkeypatch, 2, 35)
+    assert wd.active_window((), 1_700_000_000) is None
+
+
+def test_a_drop_inside_the_window_is_held_then_sent_when_it_closes(tmp_path):
+    p = tmp_path / "state.json"
+    alerts = tmp_path / "alerts.txt"
+    cmd = f"cat >> {alerts}"
+    down = lambda _r: [OFFLINE_ROW]        # noqa: E731
+
+    # tick 1: healthy, before the window
+    d0, _ = wd.check(state_path=str(p), fetch=lambda _r: [ONLINE_ROW], now=1_000,
+                     alert_cmd=cmd)
+    assert d0.alert is None
+
+    # tick 2: goes down inside the window -> held, nothing delivered
+    window = _window_around(1_060)
+    d1, ch1 = wd.check(state_path=str(p), fetch=down, now=1_060,
+                       maintenance=window, alert_cmd=cmd)
+    assert d1.alert is None and ch1 == ""
+    assert "holding the down alert" in d1.message
+    assert not alerts.exists(), "a held alert must not be delivered"
+    saved = json.loads(p.read_text())
+    assert saved["status"] == wd.OFFLINE
+    assert saved["pending_alert"] == wd.ALERT_DOWN
+
+    # tick 3: window closed, still down -> exactly one alert, saying it was held
+    d2, ch2 = wd.check(state_path=str(p), fetch=down, now=1_060 + 3_600,
+                       maintenance=window, alert_cmd=cmd)
+    assert d2.alert == wd.ALERT_DOWN and ch2 == "alert-cmd"
+    assert "held during the maintenance window" in d2.message
+    assert "still down" in d2.message
+    assert "OFFLINE" in alerts.read_text()
+
+    # tick 4: quiet again, and nothing owed any more
+    d3, _ = wd.check(state_path=str(p), fetch=down, now=1_060 + 3_660,
+                     maintenance=window, alert_cmd=cmd)
+    assert d3.alert is None
+    assert "pending_alert" not in json.loads(p.read_text())
+    assert alerts.read_text().count("OFFLINE") == 1
+
+
+def test_a_recovery_inside_the_window_is_dropped_not_queued(tmp_path):
+    p = tmp_path / "state.json"
+    p.write_text(json.dumps({"status": wd.OFFLINE, "since": 1_000}))
+    d, ch = wd.check(state_path=str(p), fetch=lambda _r: [ONLINE_ROW], now=2_000,
+                     maintenance=_window_around(2_000), alert_cmd="false")
+    assert d.alert is None and ch == ""
+    assert "holding the recovered alert" in d.message
+    saved = json.loads(p.read_text())
+    assert saved["status"] == wd.ONLINE
+    assert "pending_alert" not in saved
+
+
+def test_a_recovery_outside_the_window_still_alerts(tmp_path):
+    p = tmp_path / "state.json"
+    p.write_text(json.dumps({"status": wd.OFFLINE, "since": 1_000}))
+    d, _ = wd.check(state_path=str(p), fetch=lambda _r: [ONLINE_ROW], now=2_000,
+                    maintenance=_window_around(2_000 + 3_600), alert_cmd="true")
+    assert d.alert == wd.ALERT_RECOVERED
+
+
+def test_dry_run_inside_a_window_still_writes_nothing(tmp_path, capsys):
+    p = tmp_path / "state.json"
+    d, ch = wd.check(state_path=str(p), fetch=lambda _r: [OFFLINE_ROW], now=1_000,
+                     dry_run=True, maintenance=_window_around(1_000))
+    assert d.alert is None and ch == ""
+    assert "holding the down alert" in d.message
+    assert not p.exists()
+
+
+def test_cli_window_holds_the_alert(tmp_path, capsys):
+    state = str(tmp_path / "s.json")
+    now = int(time.time())
+    label = wd.active_window(_window_around(now), now)
+    code = wd.main(["--check", "--state", state, "--dry-run",
+                    "--maintenance-window", label], fetch=lambda _r: [OFFLINE_ROW])
+    # the exit code still reports the runner's status; only delivery is held
+    assert code == 1
+    assert "holding the down alert" in capsys.readouterr().out
+
+
+def test_cli_rejects_a_malformed_window(tmp_path):
+    state = str(tmp_path / "s.json")
+    with pytest.raises(SystemExit) as exc:
+        wd.main(["--check", "--state", state, "--dry-run", "--maintenance-window", "02:20"],
+                fetch=lambda _r: [ONLINE_ROW])
+    assert exc.value.code == 2
+    assert not Path(state).exists()

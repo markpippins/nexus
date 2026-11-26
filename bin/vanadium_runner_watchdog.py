@@ -17,6 +17,15 @@ The probe is a one-shot run meant for a systemd timer. It compares each verdict
 with the last one it recorded and alerts only on a *transition*, so a timer
 firing every two minutes does not page anyone twice for the same outage.
 
+Quiet windows: `--maintenance-window HH:MM-HH:MM[,HH:MM-HH:MM...]` (env
+`NEXUS_WATCHDOG_MAINTENANCE_WINDOW`, host local time, default none) holds the
+delivery of any alert raised inside the window. A scheduled reboot takes the
+runner offline for a minute or two and would otherwise page twice every night —
+once going down, once coming back. Nothing is discarded: a down alert raised
+inside a window is recorded as pending in the state file and delivered once the
+window closes if the runner is still down, so a real outage that begins inside
+the window is still reported. Held recovery alerts are simply dropped.
+
 Alert channels (first one configured wins):
   --webhook-url URL / env NEXUS_ALERT_WEBHOOK   POST {"text": "..."}
   --alert-cmd CMD                               shell command, message on stdin
@@ -28,6 +37,8 @@ Usage:
   vanadium_runner_watchdog.py --check --dry-run    # print the decision, write nothing
   vanadium_runner_watchdog.py --check --json       # machine-readable summary
   vanadium_runner_watchdog.py --check --no-lan-probe   # runner status only (old behaviour)
+  vanadium_runner_watchdog.py --check --maintenance-window 02:20-02:50
+                                                   # hold alerts through a reboot
 
 Exit codes: 0 runner online and LAN reachable; 1 either fault (or the runner is
             missing from the API); 2 environment error (the runners API could not
@@ -51,6 +62,7 @@ from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 REPO = os.environ.get("NEXUS_REPO", "markpippins/nexus")
 RUNNER = "vanadium"
 STATE_PATH = os.environ.get("NEXUS_WATCHDOG_STATE", "/var/tmp/vanadium-runner-watchdog.json")
+MAINTENANCE_WINDOW = os.environ.get("NEXUS_WATCHDOG_MAINTENANCE_WINDOW", "")
 
 # The LAN identity the backups, the SQL sync and `ssh` all depend on. Probed by
 # address rather than by name: the DNS name survived the whole 2026-11-25
@@ -152,6 +164,74 @@ def _fmt(seconds: int) -> str:
 
 def _iso(when: int) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(when))
+
+
+def _fmt_minute(minute: int) -> str:
+    return f"{minute // 60:02d}:{minute % 60:02d}"
+
+
+def _parse_hhmm(value: str, spec: str) -> int:
+    text = value.strip()
+    parts = text.split(":")
+    if len(parts) != 2 or not all(p.isdigit() for p in parts):
+        raise ValueError(f"maintenance window {spec!r}: {value!r} is not HH:MM")
+    hour, minute = int(parts[0]), int(parts[1])
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise ValueError(f"maintenance window {spec!r}: {value!r} is not a time of day")
+    return hour * 60 + minute
+
+
+def parse_window_spec(spec: Optional[str]) -> Tuple[Tuple[int, int], ...]:
+    """Parse ``HH:MM-HH:MM[,HH:MM-HH:MM...]`` into (start, end) minutes of day.
+
+    An empty spec means no quiet windows. A malformed one raises rather than
+    being ignored: a typo must not quietly disable the window it was written to
+    create, because the symptom would be the pages it exists to prevent.
+    """
+    windows: list[Tuple[int, int]] = []
+    for chunk in (spec or "").replace(";", ",").split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        start_text, sep, end_text = chunk.partition("-")
+        if not sep:
+            raise ValueError(f"maintenance window {chunk!r} is not HH:MM-HH:MM")
+        windows.append((_parse_hhmm(start_text, chunk), _parse_hhmm(end_text, chunk)))
+    return tuple(windows)
+
+
+def active_window(windows: Sequence[Tuple[int, int]], now: int) -> Optional[str]:
+    """Return the window containing ``now`` as ``HH:MM-HH:MM``, else None.
+
+    Windows are read in the host's local time: the probe runs from a systemd
+    timer on the box whose reboot schedule the window covers, so the operator
+    writes the window in the same clock they write the schedule. A window whose
+    start is later than its end crosses midnight; a zero-length one matches
+    nothing.
+    """
+    if not windows:
+        return None
+    local = time.localtime(now)
+    minute = local.tm_hour * 60 + local.tm_min
+    for start, end in windows:
+        if start == end:
+            continue
+        inside = (start <= minute < end) if start < end else (minute >= start or minute < end)
+        if inside:
+            return f"{_fmt_minute(start)}-{_fmt_minute(end)}"
+    return None
+
+
+def _deferred_note(window: Optional[str], since: Optional[int], now: int) -> str:
+    """Say why a down alert is arriving late — it was held, not lost."""
+    if not window:
+        return ""
+    down_for = f" for {_fmt(now - int(since))}" if since else ""
+    return (
+        f"This alert was held during the maintenance window {window} so a scheduled "
+        f"reboot could not page anyone; the runner is still down{down_for}, so it is "
+        f"being sent now.\n\n"
+    )
 
 
 def decide(prev: Optional[Dict[str, Any]], status: str, now: int, *,
@@ -334,12 +414,33 @@ def check(*, repo: str = REPO, state_path: str = STATE_PATH, now: Optional[int] 
           webhook_url: Optional[str] = None, alert_cmd: Optional[str] = None,
           dry_run: bool = False,
           lan_probe: Optional[Callable[[], str]] = None,
-          lan_target: str = f"{LAN_HOST}:{LAN_PORT}") -> Tuple[Decision, str]:
+          lan_target: str = f"{LAN_HOST}:{LAN_PORT}",
+          maintenance: Sequence[Tuple[int, int]] = ()) -> Tuple[Decision, str]:
     now = int(time.time()) if now is None else now
     status = classify(fetch(repo))
     lan = lan_probe() if lan_probe is not None else None
     prev = load_state(state_path)
     decision = decide(prev, status, now, lan=lan, lan_target=lan_target)
+
+    window = active_window(maintenance, now)
+
+    # A window that closed with the runner still down owes one alert.
+    if decision.alert is None and window is None and status != ONLINE:
+        owed = (prev or {}).get("pending_alert")
+        if owed:
+            decision = Decision(
+                status, owed,
+                _deferred_note((prev or {}).get("pending_window"),
+                               (prev or {}).get("since"), now)
+                + _down_message(status))
+
+    held: Optional[str] = None
+    if decision.alert and window:
+        held = decision.alert
+        decision = Decision(
+            status, None,
+            f"[maintenance {window}] holding the {held} alert until the window closes: "
+            f"{decision.message}")
 
     channel = ""
     if decision.alert:
@@ -356,10 +457,14 @@ def check(*, repo: str = REPO, state_path: str = STATE_PATH, now: Optional[int] 
         lan_since = int((prev or {}).get("lan_since") or now)
         if (prev or {}).get("lan") != recorded_lan:
             lan_since = now
-        save_state(state_path, {"status": status, "since": since,
-                                "checked_at": now,
-                                "lan": recorded_lan, "lan_since": lan_since,
-                                "last_alert": decision.alert or (prev or {}).get("last_alert")})
+        state: Dict[str, Any] = {"status": status, "since": since,
+                                 "checked_at": now,
+                                 "lan": recorded_lan, "lan_since": lan_since,
+                                 "last_alert": decision.alert or (prev or {}).get("last_alert")}
+        if held and status != ONLINE:
+            state["pending_alert"] = held
+            state["pending_window"] = window
+        save_state(state_path, state)
     return decision, channel
 
 
@@ -378,6 +483,11 @@ def main(argv: Optional[Sequence[str]] = None,
     ap.add_argument("--lan-timeout", type=float, default=float(LAN_TIMEOUT), help="seconds per connect")
     ap.add_argument("--no-lan-probe", action="store_true",
                     help="probe the runners API only (no LAN check; LAN state is left as recorded)")
+    ap.add_argument("--maintenance-window", default=MAINTENANCE_WINDOW,
+                    help="quiet window(s) 'HH:MM-HH:MM' in this host's local time, "
+                         "comma-separated; alerts raised inside one are held and sent when it "
+                         "closes if the runner is still down (default: none; env "
+                         "NEXUS_WATCHDOG_MAINTENANCE_WINDOW)")
     ap.add_argument("--dry-run", action="store_true", help="print, write nothing, alert nothing")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
@@ -391,10 +501,15 @@ def main(argv: Optional[Sequence[str]] = None,
         probe = lambda: probe_lan(args.lan_host, args.lan_port, args.lan_timeout)  # noqa: E731
 
     try:
+        maintenance = parse_window_spec(args.maintenance_window)
+    except ValueError as exc:
+        ap.error(str(exc))
+
+    try:
         decision, channel = check(
             repo=args.repo, state_path=args.state, fetch=fetch,
             webhook_url=args.webhook_url, alert_cmd=args.alert_cmd, dry_run=args.dry_run,
-            lan_probe=probe, lan_target=target)
+            lan_probe=probe, lan_target=target, maintenance=maintenance)
     except Exception as exc:  # noqa: BLE001 — a probe failure must not look like an outage
         print(f"ERROR: cannot read the runners API: {exc}", file=sys.stderr)
         return 2

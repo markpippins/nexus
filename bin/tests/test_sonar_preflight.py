@@ -12,9 +12,14 @@ Pinned behaviors (hermetic — no network, no real hostnames):
   ports, rejects non-http(s) schemes and hostless URLs
 - DNS layer: gaierror -> not ready, reason names the host
 - TCP layer: refusal and timeout -> not ready, reason names host:port
-- HTTP layer: 200 -> READY; non-200 HTTPError -> not ready but the server
-  answered (reason must say so — it is a real server-side condition);
-  URLError/timeout -> not ready
+- HTTP layer: 200 + "status":"UP" -> READY; non-200 HTTPError -> not
+  ready but the server answered (reason must say so — it is a real
+  server-side condition); URLError/timeout -> not ready
+- HTTP readiness: a 200 is not enough. 200 + any other status (STARTING,
+  DOWN, ...) -> not ready with the reported status in the reason; 200 with
+  an empty, non-JSON, status-less, or unreadable body -> not ready. This is
+  the post-reboot race: the runner starts before SonarQube finishes booting
+  and answers 200 while still STARTING
 - Unexpected exceptions inside the probe -> not ready (fail-safe toward
   skip), never raised
 - CLI contract: --host-url overrides env; missing both -> exit 1 (usage,
@@ -120,13 +125,18 @@ class ProbeTcpLayerTest(unittest.TestCase):
 
 
 class ProbeHttpLayerTest(unittest.TestCase):
-    def _http_ctx(self, status=200, exc=None):
+    def _http_ctx(self, status=200, exc=None, body=b'{"status":"UP"}', read_exc=None):
         """Patch create_connection to succeed and urlopen to yield/exc."""
         if exc is not None:
             opener = mock.Mock(side_effect=exc)
         else:
             resp = mock.Mock()
             resp.status = status
+            resp.read = (
+                mock.Mock(return_value=body)
+                if read_exc is None
+                else mock.Mock(side_effect=read_exc)
+            )
             resp.__enter__ = mock.Mock(return_value=resp)
             resp.__exit__ = mock.Mock(return_value=False)
             opener = mock.Mock(return_value=resp)
@@ -136,6 +146,12 @@ class ProbeHttpLayerTest(unittest.TestCase):
         ), mock.patch.object(pf.urllib.request, "urlopen", opener)
         return ctx
 
+    def _probe(self, **kwargs):
+        with contextlib.ExitStack() as stack:
+            for cm in self._http_ctx(**kwargs):
+                stack.enter_context(cm)
+            return pf.probe_sonar("http://vanadium:9000")
+
     def test_status_200_ready(self):
         with contextlib.ExitStack() as stack:
             for cm in self._http_ctx(status=200):
@@ -143,8 +159,52 @@ class ProbeHttpLayerTest(unittest.TestCase):
             ready, reason = pf.probe_sonar("http://vanadium:9000")
         self.assertTrue(ready)
         self.assertIn("reachable", reason)
-        # liveness endpoint used
+        # readiness is named in the reason, not just the HTTP code
         self.assertTrue(reason.startswith("SonarQube"))
+        self.assertIn("status UP", reason)
+
+    def test_status_200_but_starting_is_not_ready(self):
+        """The measured post-reboot body: 200, still booting."""
+        ready, reason = self._probe(
+            body=b'{"version":"9.9.8.100196","status":"STARTING"}'
+        )
+        self.assertFalse(ready)
+        self.assertIn("STARTING", reason)
+        self.assertIn("not UP", reason)
+
+    def test_status_200_but_down_is_not_ready(self):
+        ready, reason = self._probe(body=b'{"status":"DOWN"}')
+        self.assertFalse(ready)
+        self.assertIn("DOWN", reason)
+
+    def test_status_up_is_matched_case_insensitively(self):
+        ready, _ = self._probe(body=b'{"status":"up"}')
+        self.assertTrue(ready)
+
+    def test_empty_body_is_not_ready(self):
+        ready, reason = self._probe(body=b"")
+        self.assertFalse(ready)
+        self.assertIn("empty body", reason)
+
+    def test_non_json_body_is_not_ready(self):
+        ready, reason = self._probe(body=b"<html>proxy</html>")
+        self.assertFalse(ready)
+        self.assertIn("not JSON", reason)
+
+    def test_body_without_status_field_is_not_ready(self):
+        ready, reason = self._probe(body=b'{"id":"abc","version":"9.9"}')
+        self.assertFalse(ready)
+        self.assertIn("no 'status' field", reason)
+
+    def test_non_object_body_is_not_ready(self):
+        ready, reason = self._probe(body=b'["UP"]')
+        self.assertFalse(ready)
+        self.assertIn("not a JSON object", reason)
+
+    def test_unreadable_body_is_not_ready(self):
+        ready, reason = self._probe(read_exc=OSError("connection reset"))
+        self.assertFalse(ready)
+        self.assertIn("could not be read", reason)
 
     def test_status_503_answered_not_ready(self):
         with contextlib.ExitStack() as stack:
@@ -225,6 +285,18 @@ class CliContractTest(unittest.TestCase):
         self.assertEqual(code, pf.EXIT_NOT_READY)
         self.assertIn("::warning::sonar skipped", out)
         self.assertIn("DNS resolution failed for vanadium", out)
+
+    def test_starting_exits_2_with_the_reported_status_in_the_annotation(self):
+        ctx = ProbeHttpLayerTest()._http_ctx(
+            body=b'{"version":"9.9.8.100196","status":"STARTING"}'
+        )
+        with contextlib.ExitStack() as stack:
+            for cm in ctx:
+                stack.enter_context(cm)
+            code, out, _ = self._run_cli(["--host-url", "http://vanadium:9000"])
+        self.assertEqual(code, pf.EXIT_NOT_READY)
+        self.assertIn("::warning::sonar skipped", out)
+        self.assertIn("STARTING", out)
 
     def test_ready_exit_0_no_warning(self):
         with mock.patch.object(
