@@ -29,13 +29,22 @@ import unittest
 
 import psycopg2
 import psycopg2.extras
+import pytest
 
 _SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _BACKFILL = os.path.join(_SCRIPT_DIR, "backfill_propositions.py")
 
 _DSN = os.environ.get("CONDUIT_PG_DSN", "")
 if not _DSN:
-    raise RuntimeError("CONDUIT_PG_DSN must be set to run tests (PG is mandatory)")
+    # An unset DSN is an absent dependency, not a guard result. Raising here
+    # aborted collection of the WHOLE suite (pytest exit 2), so `pytest
+    # bin/tests` said nothing about any other guard; skip this one with the
+    # reason and the fix instead.
+    pytest.skip(
+        "CONDUIT_PG_DSN is unset: this guard needs a populated PostgreSQL "
+        "(run it via bin/ci/local-pg-env.sh, which supplies and verifies one)",
+        allow_module_level=True,
+    )
 
 
 def _load_module():
