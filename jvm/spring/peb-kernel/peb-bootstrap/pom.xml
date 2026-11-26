@@ -32,6 +32,13 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-jackson2</artifactId>
         </dependency>
+        <!-- Boot 4 moved Flyway auto-configuration out of core into this
+             module; without it a fresh database is never migrated and
+             Hibernate's ddl-auto=validate fails on the missing tables. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-flyway</artifactId>
+        </dependency>
         <!--
             Compile-scope JPA starter: required because PebApplication uses
             @EnableJpaRepositories, whose annotation class lives in
