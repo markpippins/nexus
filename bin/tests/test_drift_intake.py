@@ -16,8 +16,7 @@ Covers the ratified ruling + plan AC:
 - backstop:   unique index rejects a second live candidate for same root fact
 
 Run:
-  CONDUIT_PG_DSN='host=localhost port=5432 user=pguser password=pgpass dbname=nexus' \
-      python3 -m pytest bin/tests/test_drift_intake.py -v
+  bin/ci/local-pg-env.sh python3 -m pytest bin/tests/test_drift_intake.py -v
 """
 import json
 import os

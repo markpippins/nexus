@@ -15,8 +15,7 @@ These are live read-only integration tests (no writes except the POC proposition
 migration itself is idempotent (CREATE OR REPLACE + ON CONFLICT).
 
 Run:
-  CONDUIT_PG_DSN='host=localhost port=5432 user=pguser password=pgpass dbname=nexus' \
-      python3 -m pytest bin/tests/test_shrapnel_bridge.py -v
+  bin/ci/local-pg-env.sh python3 -m pytest bin/tests/test_shrapnel_bridge.py -v
 """
 import os
 import sys

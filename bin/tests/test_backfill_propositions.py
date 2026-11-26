@@ -18,8 +18,7 @@ These tests verify (plan 8261642 ACs):
   (verified by running the query twice and comparing).
 
 Run:
-  CONDUIT_PG_DSN='host=localhost port=5432 user=pguser password=pgpass dbname=nexus' \
-      python3 -m pytest bin/tests/test_backfill_propositions.py -v
+  bin/ci/local-pg-env.sh python3 -m pytest bin/tests/test_backfill_propositions.py -v
 """
 import importlib.util
 import os
