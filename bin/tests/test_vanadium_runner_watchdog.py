@@ -459,6 +459,39 @@ def test_a_drop_inside_the_window_is_held_then_sent_when_it_closes(tmp_path):
     assert alerts.read_text().count("OFFLINE") == 1
 
 
+def test_repeated_in_window_samples_keep_the_owed_alert(tmp_path):
+    """Regression: the second in-window tick saw no new transition and dropped it.
+
+    The two-minute timer fires many times inside a window. Only the first of
+    those ticks sees a transition; the rest must carry the held alert forward,
+    or the debt is forgotten and the deferred send at window close never fires.
+    """
+    p = tmp_path / "state.json"
+    alerts = tmp_path / "alerts.txt"
+    cmd = f"cat >> {alerts}"
+    down = lambda _r: [OFFLINE_ROW]        # noqa: E731
+
+    wd.check(state_path=str(p), fetch=lambda _r: [ONLINE_ROW], now=1_000, alert_cmd=cmd)
+
+    window = _window_around(1_060, 30, 30)     # wide enough for several samples
+    for sample, now in enumerate((1_060, 1_120, 1_180, 1_240, 1_300), start=1):
+        d, ch = wd.check(state_path=str(p), fetch=down, now=now,
+                         maintenance=window, alert_cmd=cmd)
+        assert d.alert is None and ch == "", f"sample {sample} delivered early"
+        assert "holding the down alert" in d.message, f"sample {sample}: {d.message!r}"
+        saved = json.loads(p.read_text())
+        assert saved["pending_alert"] == wd.ALERT_DOWN, f"sample {sample} forgot the debt"
+        assert not alerts.exists(), f"sample {sample} delivered while in the window"
+
+    # Window closes with the runner still down: one deferred delivery, once.
+    d, ch = wd.check(state_path=str(p), fetch=down, now=1_300 + 3_600,
+                     maintenance=window, alert_cmd=cmd)
+    assert d.alert == wd.ALERT_DOWN and ch == "alert-cmd"
+    assert "held during the maintenance window" in d.message
+    assert alerts.read_text().count("OFFLINE") == 1
+    assert "pending_alert" not in json.loads(p.read_text())
+
+
 def test_a_recovery_inside_the_window_is_dropped_not_queued(tmp_path):
     p = tmp_path / "state.json"
     p.write_text(json.dumps({"status": wd.OFFLINE, "since": 1_000}))

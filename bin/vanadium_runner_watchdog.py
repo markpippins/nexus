@@ -550,6 +550,16 @@ def check(*, repo: str = REPO, state_path: str = STATE_PATH, now: Optional[int] 
             status, None,
             f"[maintenance {window}] holding the {held} alert until the window closes: "
             f"{decision.message}", lan=lan)
+    elif window and status != ONLINE:
+        # A later in-window sample sees no *new* transition, so it says nothing
+        # about the alert it is still holding. Say so, and keep the debt.
+        still = (prev or {}).get("pending_alert")
+        if still:
+            decision = Decision(
+                status, None,
+                f"[maintenance {window}] still holding the {still} alert (runner is "
+                f"{status}); it is sent when the window closes if the runner is still down",
+                lan=lan)
 
     channel = ""
     if decision.alert:
@@ -571,9 +581,14 @@ def check(*, repo: str = REPO, state_path: str = STATE_PATH, now: Optional[int] 
                                  "lan": recorded_lan, "lan_since": lan_since,
                                  "last_alert": decision.alert or (prev or {}).get("last_alert"),
                                  "probe_failures": 0}
-        if held and status != ONLINE:
-            state["pending_alert"] = held
-            state["pending_window"] = window
+        if status != ONLINE:
+            # An alert raised inside the window is owed until the window closes.
+            # Every later in-window tick must carry that debt forward: clearing
+            # it here is what made the deferred send never fire (2026-11-26).
+            owed = held or ((prev or {}).get("pending_alert") if window else None)
+            if owed:
+                state["pending_alert"] = owed
+                state["pending_window"] = window or (prev or {}).get("pending_window")
         save_state(state_path, state)
     return decision, channel
 
