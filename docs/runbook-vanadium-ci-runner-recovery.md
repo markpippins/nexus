@@ -69,13 +69,24 @@ API — so a green `sonar` check is *not* evidence the host is healthy, and
 `ssh`/`.209` are unavailable exactly when they are wanted.
 
 The one channel that survives this fault is a job running on the runner itself.
-Dispatch `.github/workflows/vanadium-diagnostic.yml` (manual only): it dumps
-`ip -br a`, `ip r`, `ip neigh`, `nmcli con show --active`, the route the kernel
-would use to reach github.com, `uptime -s`, `last -x`, `journalctl -b -1`,
-`vcgencmd get_throttled` and storage state into the job summary. No sudo, no
-reboot step.
+**No diagnostic workflow ships in this repo yet.** `.github/workflows/vanadium-diagnostic.yml`
+was drafted but never landed — a fine-grained PAT without *Workflows: Read and write*
+is refused at push — so do not go looking for it on the default branch. Get the dump
+from a throwaway PR instead: one `workflow_dispatch` job with
+`runs-on: [self-hosted, vanadium]`, `permissions: contents: read`,
+`timeout-minutes: 10`, and one step that prints
 
-Read its **verdict** block first: no `192.168.1.x` address means the host is
+```bash
+ip -br a; ip r; ip neigh; nmcli con show --active
+ip -o route get 140.82.112.4   # the interface the kernel would use for github.com
+uptime -s; last -x | head; journalctl -b -1 -n 80 --no-pager
+vcgencmd get_throttled; df -h /; free -m
+```
+
+Dispatch it, read the job summary, close the PR without merging. Either way: no
+sudo, no reboot step.
+
+Read the **verdict** first: no `192.168.1.x` address means the host is
 reaching GitHub over some other path (another SSID, a hotspot, an extender's own
 NAT) and the fix is the association, not the runner; a `192.168.1.x` address
 means the fault is at the ARP/DHCP/AP layer.
@@ -228,8 +239,9 @@ while its address was dead, and a runner-status-only probe is blind to exactly
 that. The rules:
 
 - **LAN breaks while the runner is online** → `alert=lan-down`: one message naming
-  the backups it breaks and the workflow to dispatch, and when the last good
-  check was (the poll cannot know the exact moment, only the window).
+  the backups it breaks and how to get a dump off the host (a throwaway job — no
+  diagnostic workflow is in the repo yet), and when the last good check was (the
+  poll cannot know the exact moment, only the window).
 - **The host is offline** → one alert, not two: the LAN verdict is recorded
   silently, and a **return without its LAN identity** escalates on the check that
   sees the runner come back ("It came back without its LAN identity").

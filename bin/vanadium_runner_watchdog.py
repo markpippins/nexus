@@ -100,9 +100,9 @@ def probe_lan(host: str = LAN_HOST, port: int = 22, timeout: float = 3.0) -> str
     A refusal is LAN_DOWN just as a timeout is — the address answered but the
     service the backups and the sync need is not there, and both are "cannot
     use this host". The reason is deliberately not distinguished here: the
-    diagnostic workflow's `ss -ltnp` / `ip -br a` / `ip neigh` do that once the
-    alert has fired, and a probe that cannot tell the difference must say so
-    rather than guess.
+    host-side dump (`ss -ltnp`, `ip -br a`, `ip neigh`) does that once the alert
+    has fired, and a probe that cannot tell the difference must say so rather
+    than guess.
     """
     try:
         with socket.create_connection((host, int(port)), timeout=float(timeout)):
@@ -250,10 +250,11 @@ def _lan_down_message(lead: str) -> str:
         "  - `sync-vanadium` — `No route to host` on 5432\n"
         "  - `vanadium-ci-backup` — target unreachable\n\n"
         "Do not read the green `sonar` check as evidence the host is healthy.\n\n"
-        "Diagnose over the one path that still works: dispatch "
-        "`.github/workflows/vanadium-diagnostic.yml` (Actions -> Run workflow) — it runs on "
-        "the `vanadium` label and dumps `ip -br a`, `ip r`, `nmcli con show --active`, "
-        "`uptime -s`, `journalctl -b -1`, `vcgencmd get_throttled` to the job summary.\n"
+        "Diagnose over the one path that still works: a job on the runner itself. No "
+        "diagnostic workflow is in the repo yet, so dispatch a throwaway "
+        "`workflow_dispatch` job on `[self-hosted, vanadium]` that prints `ip -br a`, "
+        "`ip r`, `nmcli con show --active`, `uptime -s`, `journalctl -b -1`, "
+        "`vcgencmd get_throttled` (docs/runbook-vanadium-ci-runner-recovery.md §1.1).\n"
         "Recovery: docs/runbook-vanadium-ci-runner-recovery.md §1-§3. A reboot is not "
         "obviously the fix — this host has already come back twice without its LAN address, "
         "and a Pi 5 has no out-of-band reset if the next boot does not return."
