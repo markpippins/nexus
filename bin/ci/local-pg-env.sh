@@ -47,8 +47,10 @@
 
 set -euo pipefail
 
+# Print the leading comment block, stopping at the first line of code, so the
+# help text cannot drift out of step with the header's length.
 usage() {
-  sed -n '2,52p' "$0" | sed 's/^#\{1\} \{0,1\}//'
+  awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"
 }
 
 die() {

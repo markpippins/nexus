@@ -249,6 +249,14 @@ def test_an_already_exported_password_wins_and_is_verified_not_replaced(tmp_path
     assert "pgpass" not in r.stdout
 
 
+def test_help_prints_the_usage_block_not_the_script_source(tmp_path):
+    _stub(tmp_path)
+    r = _run(tmp_path, "--help")
+    assert r.returncode == 0
+    assert "Usage:" in r.stdout
+    assert "set -euo pipefail" not in r.stdout, "the comment block outgrew its range"
+
+
 def test_check_mode_is_silent_on_success(tmp_path):
     _stub(tmp_path)
     r = _run(tmp_path, "--check")
