@@ -13,6 +13,16 @@ spring:
       getter: any
       creator: any
 
+  # Boot 4 defaults MVC to Jackson 3; peb-bootstrap registers a Jackson 2
+  # converter first (Jackson2MvcConfiguration) because the entities and
+  # Hibernate's jsonb mapping are Jackson 2. Mirror the visibility settings.
+  jackson2:
+    visibility:
+      field: any
+      setter: any
+      getter: any
+      creator: any
+
   datasource:
     url: jdbc:postgresql://localhost:5432/nexus?currentSchema=peb
     username: ${DB_USER:pguser}

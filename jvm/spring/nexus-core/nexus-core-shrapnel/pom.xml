@@ -23,6 +23,13 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
         <dependency>
+            <!-- Explicit: Boot 4 starters ship Jackson 3, but jsonb parsing
+                 here stays on Jackson 2 (Hibernate's JSON mapping is Jackson 2).
+                 Version is managed by Boot's jackson-2-bom. -->
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-jdbc</artifactId>
         </dependency>

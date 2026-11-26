@@ -24,6 +24,14 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
+        <!-- Boot 4 defaults to Jackson 3 (tools.jackson). The PEB domain model
+             and Hibernate's JSON mapping stay on Jackson 2 (com.fasterxml), so
+             bring in Boot's Jackson 2 auto-configuration to supply the
+             com.fasterxml ObjectMapper bean those components expect. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-jackson2</artifactId>
+        </dependency>
         <!--
             Compile-scope JPA starter: required because PebApplication uses
             @EnableJpaRepositories, whose annotation class lives in
@@ -48,6 +56,13 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Boot 4 moved @AutoConfigureMockMvc out of starter-test into the
+             webmvc test module (org.springframework.boot.webmvc.test.autoconfigure). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-webmvc-test</artifactId>
             <scope>test</scope>
         </dependency>
         <!-- No H2 or Testcontainers — test connects directly to the running

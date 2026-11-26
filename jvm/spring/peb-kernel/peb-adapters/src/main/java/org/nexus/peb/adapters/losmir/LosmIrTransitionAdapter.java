@@ -12,6 +12,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
@@ -41,6 +42,11 @@ public class LosmIrTransitionAdapter implements LosmIrTransitionPort {
             @Value("${peb.losm.url:http://localhost:8006}") String baseUrl,
             ObjectMapper objectMapper) {
         this.restTemplate = new RestTemplate();
+        // Boot 4 / Spring 7 registers a Jackson 3 JSON converter by default.
+        // The PEB domain model uses Jackson 2 JsonNode (Hibernate's JSON
+        // mapping is Jackson 2), so put a Jackson 2 converter first.
+        this.restTemplate.getMessageConverters()
+                .add(0, new MappingJackson2HttpMessageConverter(objectMapper));
         this.objectMapper = objectMapper;
         this.baseUrl = baseUrl;
     }
