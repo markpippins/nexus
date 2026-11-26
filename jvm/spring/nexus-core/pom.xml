@@ -30,7 +30,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.4.0</version>
+        <version>4.0.10</version>
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
 
@@ -55,8 +55,9 @@
 
     <properties>
         <java.version>21</java.version>
-        <!-- 2.5.0 is incompatible with Boot 3.4 (ControllerAdviceBean ctor removed in Spring 6.2); 2.7.0+ required -->
-        <springdoc.version>2.7.0</springdoc.version>
+        <!-- Boot 4 / Spring Framework 7 require the springdoc 3.x line;
+             the 2.x line targets Spring 6 and is not API-compatible. -->
+        <springdoc.version>3.2.1</springdoc.version>
     </properties>
 
     <dependencyManagement>
@@ -106,6 +107,15 @@
                 <groupId>org.springdoc</groupId>
                 <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
                 <version>${springdoc.version}</version>
+            </dependency>
+            <!-- Advisory pin: io.nats:jnats 2.21.1 pulls bcprov-lts8on 2.73.7,
+                 which is short of the fix for GHSA-qp49-qgx5-5m26 /
+                 GHSA-9pwp-9qqc-pr26 (2.73.12) and GHSA-mx76-r943-rf8g
+                 (2.73.11). Not managed by the Boot BOM. -->
+            <dependency>
+                <groupId>org.bouncycastle</groupId>
+                <artifactId>bcprov-lts8on</artifactId>
+                <version>2.73.12</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

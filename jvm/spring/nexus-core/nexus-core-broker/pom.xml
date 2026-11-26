@@ -37,6 +37,14 @@
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
         </dependency>
         <dependency>
+            <!-- Explicit: springdoc 3.x no longer pulls Jackson 2, and the
+                 execution read surface parses rows with Jackson 2 ObjectMapper
+                 (Hibernate's JSON mapping is Jackson 2). Version is managed by
+                 Boot's jackson-2-bom. -->
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
