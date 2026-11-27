@@ -112,8 +112,9 @@ def test_lan_break_while_the_runner_stays_online_pages():
     assert d.alert == wd.ALERT_LAN_DOWN
     assert d.lan == wd.LAN_DOWN
     assert "DEAD on the LAN" in d.message
-    assert "vanadium-diagnostic" not in d.message   # that workflow is not in the repo
-    assert "workflow_dispatch" in d.message
+    # The alert must point at the workflow that actually ships, not at a throwaway.
+    assert ".github/workflows/vanadium-diagnostic.yml" in d.message
+    assert "throwaway" not in d.message
     assert "pg-backup-to-vanadium" in d.message
     assert "2m" in d.message          # last good check 120 s before this one
 

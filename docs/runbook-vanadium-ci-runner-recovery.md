@@ -69,12 +69,15 @@ API — so a green `sonar` check is *not* evidence the host is healthy, and
 `ssh`/`.209` are unavailable exactly when they are wanted.
 
 The one channel that survives this fault is a job running on the runner itself.
-**No diagnostic workflow ships in this repo yet.** `.github/workflows/vanadium-diagnostic.yml`
-was drafted but never landed — a fine-grained PAT without *Workflows: Read and write*
-is refused at push — so do not go looking for it on the default branch. Get the dump
-from a throwaway PR instead: one `workflow_dispatch` job with
-`runs-on: [self-hosted, vanadium]`, `permissions: contents: read`,
-`timeout-minutes: 10`, and one step that prints
+**`.github/workflows/vanadium-diagnostic.yml` ships on the default branch** (landed
+in PR #1078): `workflow_dispatch` only, `runs-on: [self-hosted, vanadium]`,
+`permissions: contents: read`, `timeout-minutes: 10`, no checkout, no third-party
+action. It is dispatch-only on purpose — vanadium is a single runner slot, so a
+scheduled diagnostic would sit in the queue and starve the scans. Dispatch it
+(**Actions → vanadium-diagnostic → Run workflow**; `sonar_check` defaults to true)
+and read the **verdict** block in the job summary: it names the interface the
+kernel would use for github.com and whether the host holds a `192.168.1.x`
+address. The steps print
 
 ```bash
 ip -br a; ip r; ip neigh; nmcli con show --active
@@ -83,7 +86,7 @@ uptime -s; last -x | head; journalctl -b -1 -n 80 --no-pager
 vcgencmd get_throttled; df -h /; free -m
 ```
 
-Dispatch it, read the job summary, close the PR without merging. Either way: no
+No PR is needed and the run commits nothing. Either way: no
 sudo, no reboot step.
 
 Read the **verdict** first: no `192.168.1.x` address means the host is
