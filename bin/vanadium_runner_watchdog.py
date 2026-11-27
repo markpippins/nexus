@@ -540,6 +540,23 @@ def check(*, repo: str = REPO, state_path: str = STATE_PATH, now: Optional[int] 
                                (prev or {}).get("since"), now)
                 + _down_message(status), lan=lan)
 
+    # The same debt for the LAN verdict. A held `lan-down` is still true when
+    # the runner is online and the address is not, so it must be sent when the
+    # window closes instead of being dropped for the runner being healthy: the
+    # whole point of the LAN probe is that a healthy runner says nothing about
+    # its address.
+    elif (decision.alert is None and window is None and status == ONLINE
+          and lan == LAN_DOWN
+          and (prev or {}).get("pending_alert") == ALERT_LAN_DOWN):
+        lan_since = int((prev or {}).get("lan_since") or now)
+        decision = Decision(
+            status, ALERT_LAN_DOWN,
+            f"This alert was held during the maintenance window "
+            f"{(prev or {}).get('pending_window')} so a scheduled reboot could not page "
+            f"anyone; the LAN path is still down, so it is being sent now.\n\n"
+            + _lan_down_message(_lan_lead(lan_target, (prev or {}).get("lan"), prev,
+                                          lan_since, now)), lan=lan)
+
     held: Optional[str] = None
     # Blindness is never held: a reboot does not make the GitHub API unreadable,
     # so a probe that cannot see during a window is still the watchdog's own
@@ -550,7 +567,9 @@ def check(*, repo: str = REPO, state_path: str = STATE_PATH, now: Optional[int] 
             status, None,
             f"[maintenance {window}] holding the {held} alert until the window closes: "
             f"{decision.message}", lan=lan)
-    elif window and status != ONLINE:
+    elif window and (status != ONLINE
+                     or ((prev or {}).get("pending_alert") == ALERT_LAN_DOWN
+                         and lan == LAN_DOWN)):
         # A later in-window sample sees no *new* transition, so it says nothing
         # about the alert it is still holding. Say so, and keep the debt.
         still = (prev or {}).get("pending_alert")
@@ -558,7 +577,8 @@ def check(*, repo: str = REPO, state_path: str = STATE_PATH, now: Optional[int] 
             decision = Decision(
                 status, None,
                 f"[maintenance {window}] still holding the {still} alert (runner is "
-                f"{status}); it is sent when the window closes if the runner is still down",
+                f"{status}" + (f", LAN is {lan}" if lan else "") +
+                f"); it is sent when the window closes if it still holds",
                 lan=lan)
 
     channel = ""
@@ -581,14 +601,24 @@ def check(*, repo: str = REPO, state_path: str = STATE_PATH, now: Optional[int] 
                                  "lan": recorded_lan, "lan_since": lan_since,
                                  "last_alert": decision.alert or (prev or {}).get("last_alert"),
                                  "probe_failures": 0}
-        if status != ONLINE:
-            # An alert raised inside the window is owed until the window closes.
-            # Every later in-window tick must carry that debt forward: clearing
-            # it here is what made the deferred send never fire (2026-11-26).
-            owed = held or ((prev or {}).get("pending_alert") if window else None)
-            if owed:
-                state["pending_alert"] = owed
-                state["pending_window"] = window or (prev or {}).get("pending_window")
+        # An alert raised inside the window is owed until the window closes.
+        # Every later in-window tick must carry that debt forward: clearing it
+        # here is what made the deferred send never fire (2026-11-26). A held
+        # recovery is dropped instead — that is the page the window exists to
+        # prevent.
+        owed: Optional[str] = None
+        if held and held not in (ALERT_RECOVERED, ALERT_LAN_RECOVERED):
+            owed = held
+        elif window:
+            owed = (prev or {}).get("pending_alert")
+        # A debt is only still owed while its verdict still holds.
+        if owed == ALERT_DOWN and status == ONLINE:
+            owed = None
+        if owed == ALERT_LAN_DOWN and lan == LAN_UP:
+            owed = None
+        if owed:
+            state["pending_alert"] = owed
+            state["pending_window"] = window or (prev or {}).get("pending_window")
         save_state(state_path, state)
     return decision, channel
 

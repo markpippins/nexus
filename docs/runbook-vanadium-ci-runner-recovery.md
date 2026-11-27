@@ -286,6 +286,8 @@ compromising either compromises both.
 python3 bin/vanadium_runner_watchdog.py --check --dry-run   # print the decision, write nothing
 python3 bin/vanadium_runner_watchdog.py --check --json      # machine-readable
 python3 bin/vanadium_runner_watchdog.py --check             # alert on a transition
+python3 bin/vanadium_runner_watchdog.py --check --maintenance-window 02:20-02:50
+                                                            # hold alerts through a reboot (§9.2)
 ```
 
 #### The workstation token — what `gh` on `titanium` needs
@@ -384,3 +386,51 @@ systemctl --user list-timers vanadium-runner-watchdog.timer --no-pager
 
 It belongs on **titanium** — the machine that holds the `gh` credentials and stays
 up — not on the Pi it is watching.
+
+### 9.2 Holding alerts through a maintenance window
+
+A scheduled reboot takes `vanadium` offline for a minute or two. The two-minute timer sees
+the drop and then the return, so it pages **twice** — once `down`, once `recovered` — for
+every reboot. `--maintenance-window HH:MM-HH:MM` (env
+`NEXUS_WATCHDOG_MAINTENANCE_WINDOW`) suppresses delivery of alerts raised inside the window
+instead.
+
+| behavior | what it means |
+|---|---|
+| down alert raised inside the window | held, not delivered; recorded as `pending_alert` in the state file |
+| `lan-down` raised inside the window (runner online, address dead) | held the same way, and the debt is carried while the runner is *healthy* — the runner being up says nothing about its address, so this debt is not discarded on that basis |
+| window closes, runner still down | the held `down` alert is delivered **once**, prefixed with the window it was held through and how long the runner has been down |
+| window closes, runner online, LAN still dead | the held `lan-down` alert is delivered **once**, prefixed the same way — it is still true |
+| window closes, runner back and LAN back | nothing is delivered — the recovery notice is dropped, as is any debt the recovery has answered |
+| probe failure (blind watchdog) inside the window | **never** held; a reboot does not make the GitHub API unreadable |
+| malformed spec (`02:20`, `25:00-26:00`, …) | a configuration error (exit 2), not a silently disabled window |
+
+The window delays an outage; it never hides one. That is the difference between this and a
+blanket mute, and it is why the pending alert is re-sent rather than swallowed.
+
+Arrange it so the window covers the reboot *and* the runner's return, and keep it clear of
+the 03:00–04:30 backup chain (`pg-escape-hatch` 03:10, `mysql-backup` 03:45,
+`mongo-backup` 04:05, `backup-vanadium-ci` 04:15). For a 02:30 reboot, `02:20-02:50`
+leaves margin on both ends without touching them.
+
+Arm it in the user unit (host local time — the same clock the reboot schedule uses):
+
+```ini
+# ~/.config/systemd/user/vanadium-runner-watchdog.service
+[Service]
+Environment=NEXUS_WATCHDOG_MAINTENANCE_WINDOW=02:20-02:50
+```
+
+or append the flag to `ExecStart` (`--maintenance-window 02:20-02:50`). Either way:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user restart vanadium-runner-watchdog.service   # or wait for the next tick
+python3 bin/vanadium_runner_watchdog.py --check --dry-run --maintenance-window 02:20-02:50
+```
+
+The last command prints `[maintenance 02:20-02:50] holding the …` when run inside the
+window, and writes nothing (`--dry-run`). More than one window is comma-separated
+(`02:20-02:50,14:00-14:15`); a window whose start is after its end crosses midnight
+(`23:50-00:10`). It is **off by default**: with no window set, behaviour is exactly the
+transition alerting described above, and the committed unit stays inert.

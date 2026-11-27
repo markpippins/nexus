@@ -43,6 +43,22 @@
 #       2026-11-25: installed, running, and blind. A LAN probe that cannot
 #       connect is NOT exit 2: the refusal to answer is the verdict.
 #
+# Maintenance window — optional, off unless set:
+#   A scheduled reboot takes the runner offline for a minute or two, and the
+#   probe would report that as a down alert and then a recovery alert. Set a
+#   window and alerts raised inside it are held instead; a held DOWN alert (or a
+#   held lan-down, since a healthy runner says nothing about its address) is
+#   re-sent once when the window closes if it is still true, so this delays an
+#   outage, it does not hide one. Blindness (probe-failure) alerts are never
+#   held. Host local time, comma-separated for more than one window,
+#   start-after-end crosses midnight. Runbook §9.2.
+#
+#     Environment=NEXUS_WATCHDOG_MAINTENANCE_WINDOW=02:20-02:50
+#
+#   (or append `--maintenance-window 02:20-02:50` to ExecStart, then
+#   `systemctl --user daemon-reload`). Keep the window clear of the 03:00-04:30
+#   backup chain.
+#
 # If the checkout is not /home/codex/dev/nexus, edit all three paths below.
 #
 # Signals:

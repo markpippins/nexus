@@ -615,3 +615,70 @@ def test_dry_run_never_writes_probe_state(tmp_path):
     p = tmp_path / "s.json"
     wd.check(state_path=str(p), fetch=_boom, now=1_000, dry_run=True)
     assert not p.exists()
+
+
+# ── window × LAN probe ────────────────────────────────────────────────────
+# The window and the LAN probe have to agree on the case where the runner is
+# healthy and its address is not. A held `lan-down` is still true at window
+# close, so it must be SENT then — not dropped for the runner being online,
+# which is the silence the LAN probe was added to end.
+
+def test_a_lan_alert_held_in_a_window_is_sent_when_it_closes(tmp_path):
+    p = tmp_path / "state.json"
+    alerts = tmp_path / "alerts.txt"
+    cmd = f"cat >> {alerts}"
+    online = lambda _r: [ONLINE_ROW]       # noqa: E731
+    up = lambda: wd.LAN_UP                 # noqa: E731
+    down = lambda: wd.LAN_DOWN             # noqa: E731
+
+    # tick 1: healthy runner, healthy address, before the window
+    wd.check(state_path=str(p), fetch=online, lan_probe=up, now=1_000, alert_cmd=cmd)
+
+    # tick 2: the address dies inside the window -> held, owed, nothing sent
+    window = _window_around(1_060)
+    d1, ch1 = wd.check(state_path=str(p), fetch=online, lan_probe=down, now=1_060,
+                       maintenance=window, alert_cmd=cmd)
+    assert d1.alert is None and ch1 == ""
+    assert "holding the lan-down alert" in d1.message
+    saved = json.loads(p.read_text())
+    assert saved["status"] == wd.ONLINE
+    assert saved["pending_alert"] == wd.ALERT_LAN_DOWN
+    assert not alerts.exists(), "a held alert must not be delivered"
+
+    # tick 3: a later in-window sample keeps the debt and says so, even though
+    # the runner is ONLINE (this is the shape the runner-down rule missed)
+    d2, ch2 = wd.check(state_path=str(p), fetch=online, lan_probe=down, now=1_120,
+                       maintenance=window, alert_cmd=cmd)
+    assert d2.alert is None and ch2 == ""
+    assert "still holding the lan-down alert" in d2.message
+    assert json.loads(p.read_text())["pending_alert"] == wd.ALERT_LAN_DOWN
+
+    # tick 4: window closed, runner still online, address still dead -> one page
+    d3, ch3 = wd.check(state_path=str(p), fetch=online, lan_probe=down, now=1_060 + 3_600,
+                       maintenance=window, alert_cmd=cmd)
+    assert d3.alert == wd.ALERT_LAN_DOWN and ch3 == "alert-cmd"
+    assert "LAN path is still down" in d3.message
+    assert "DEAD on the LAN" in d3.message
+    assert "pending_alert" not in json.loads(p.read_text())
+    assert alerts.read_text().count("DEAD on the LAN") == 1
+
+
+def test_a_lan_recovery_inside_the_window_leaves_no_debt(tmp_path):
+    p = tmp_path / "state.json"
+    p.write_text(json.dumps({"status": wd.ONLINE, "since": 500, "lan": wd.LAN_UP,
+                             "lan_since": 500, "checked_at": 900}))
+    window = _window_around(1_060)
+
+    d1, _ = wd.check(state_path=str(p), fetch=lambda _r: [ONLINE_ROW],
+                     lan_probe=lambda: wd.LAN_DOWN, now=1_060,
+                     maintenance=window, alert_cmd="false")
+    assert d1.alert is None
+    assert json.loads(p.read_text())["pending_alert"] == wd.ALERT_LAN_DOWN
+
+    # the address comes back inside the window: a held recovery is the page the
+    # window exists to prevent, and the debt it covered is no longer true
+    d2, _ = wd.check(state_path=str(p), fetch=lambda _r: [ONLINE_ROW],
+                     lan_probe=lambda: wd.LAN_UP, now=1_120,
+                     maintenance=window, alert_cmd="false")
+    assert d2.alert is None
+    assert "pending_alert" not in json.loads(p.read_text())
