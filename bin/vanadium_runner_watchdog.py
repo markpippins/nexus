@@ -72,6 +72,23 @@ ALERT_RECOVERED = "recovered"
 ALERT_LAN_DOWN = "lan-down"
 ALERT_LAN_RECOVERED = "lan-recovered"
 
+# One title per verdict. The forum fallback used to hardcode "runner offline"
+# for every alert, which mislabels the exact case this probe exists for: the
+# host heartbeating and running scans while its LAN address is dead. An
+# operator scanning titles would read "offline" about a runner that is up.
+DEFAULT_ALERT_TITLE = "ALERT: vanadium CI runner offline"
+ALERT_TITLES = {
+    ALERT_DOWN: DEFAULT_ALERT_TITLE,
+    ALERT_RECOVERED: "RECOVERED: vanadium CI runner is online again",
+    ALERT_LAN_DOWN: "ALERT: vanadium runner is online but dead on the LAN",
+    ALERT_LAN_RECOVERED: "RECOVERED: vanadium's LAN path is back",
+}
+
+
+def _alert_title(alert: Optional[str]) -> str:
+    """The forum thread title for one alert kind (default: the offline title)."""
+    return ALERT_TITLES.get(alert or "", DEFAULT_ALERT_TITLE)
+
 
 @dataclass(frozen=True)
 class Decision:
@@ -281,8 +298,13 @@ def fetch_runners(repo: str = REPO) -> Sequence[Dict[str, Any]]:
 
 
 def notify(message: str, *, webhook_url: Optional[str] = None,
-           alert_cmd: Optional[str] = None, dry_run: bool = False) -> str:
-    """Deliver one alert; returns the channel used (or 'dry-run')."""
+           alert_cmd: Optional[str] = None, title: str = DEFAULT_ALERT_TITLE,
+           dry_run: bool = False) -> str:
+    """Deliver one alert; returns the channel used (or 'dry-run'):
+
+    ``title`` names the forum thread and is otherwise unused — the webhook and
+    alert-command channels carry the message alone.
+    """
     if dry_run:
         print(f"[dry-run] would alert via "
               f"{'webhook' if webhook_url else (alert_cmd or 'assembly')}:\n{message}")
@@ -300,7 +322,7 @@ def notify(message: str, *, webhook_url: Optional[str] = None,
     script = Path(__file__).resolve().parent / "post-change-log.sh"
     subprocess.run(
         [str(script), "--forum", "issues-and-open-questions",
-         "--title", "ALERT: vanadium CI runner offline",
+         "--title", title,
          "--body", message],
         check=True, timeout=60,
     )
@@ -322,7 +344,8 @@ def check(*, repo: str = REPO, state_path: str = STATE_PATH, now: Optional[int] 
     channel = ""
     if decision.alert:
         channel = notify(decision.message, webhook_url=webhook_url,
-                         alert_cmd=alert_cmd, dry_run=dry_run)
+                         alert_cmd=alert_cmd,
+                         title=_alert_title(decision.alert), dry_run=dry_run)
     if not dry_run:
         since = int((prev or {}).get("since") or now)
         if not prev or prev.get("status") != status:
