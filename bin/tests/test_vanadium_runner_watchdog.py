@@ -682,3 +682,126 @@ def test_a_lan_recovery_inside_the_window_leaves_no_debt(tmp_path):
                      maintenance=window, alert_cmd="false")
     assert d2.alert is None
     assert "pending_alert" not in json.loads(p.read_text())
+
+
+# ── delivery is part of the transition, not an afterthought ────────────────
+# A notice nobody received must not be consumed: the recorded verdict has to
+# stay where it was so the next tick re-sends the same transition. Before this,
+# a failed send raised out of check(), exited 1, and the unit's
+# SuccessExitStatus=0 1 reported the tick as successful — a lost notice looked
+# exactly like a delivered down-alert.
+
+def _replay(tmp_path, ticks, monkeypatch):
+    """Drive check() over (status, lan) ticks; return the titles actually sent."""
+    sent = []
+    state = str(tmp_path / "s.json")
+
+    def fake_notify(message, *, webhook_url=None, alert_cmd=None,
+                    title=wd.DEFAULT_ALERT_TITLE, dry_run=False):
+        sent.append(title)
+        return "assembly"
+
+    monkeypatch.setattr(wd, "notify", fake_notify)
+    for i, (status, lan) in enumerate(ticks):
+        fetch = (lambda _r, s=status: [ONLINE_ROW] if s == wd.ONLINE else [OFFLINE_ROW])
+        wd.check(state_path=state, fetch=fetch, lan_probe=lambda l=lan: l,
+                 now=1_000 + i * 60, alert_cmd="cat >/dev/null")
+    return sent
+
+
+def test_a_failed_delivery_does_not_consume_the_transition(tmp_path):
+    p = tmp_path / "s.json"
+    wd.check(state_path=str(p), fetch=lambda _r: [ONLINE_ROW], now=1_000,
+             alert_cmd="cat >/dev/null")
+    before = p.read_text()
+
+    d, ch = wd.check(state_path=str(p), fetch=lambda _r: [OFFLINE_ROW], now=1_100,
+                     alert_cmd="exit 7")
+    assert d.alert == wd.ALERT_DOWN
+    assert d.delivery_error and "exit status 7" in d.delivery_error
+    assert ch == ""
+    assert p.read_text() == before, "a failed send must not advance the recorded verdict"
+
+    # The next tick still sees offline-after-online, so it sends it again.
+    d2, ch2 = wd.check(state_path=str(p), fetch=lambda _r: [OFFLINE_ROW], now=1_200,
+                       alert_cmd="cat >/dev/null")
+    assert d2.alert == wd.ALERT_DOWN and ch2 == "alert-cmd"
+    assert json.loads(p.read_text())["status"] == wd.OFFLINE
+
+
+def test_a_failed_recovery_delivery_is_retried_on_the_next_tick(tmp_path):
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"status": wd.OFFLINE, "since": 900, "lan": wd.LAN_UP,
+                             "lan_since": 900, "last_alert": wd.ALERT_DOWN}))
+    before = p.read_text()
+
+    d, _ = wd.check(state_path=str(p), fetch=lambda _r: [ONLINE_ROW],
+                    lan_probe=lambda: wd.LAN_UP, now=1_000, alert_cmd="false")
+    assert d.alert == wd.ALERT_RECOVERED and d.delivery_error
+    assert p.read_text() == before
+
+    d2, ch2 = wd.check(state_path=str(p), fetch=lambda _r: [ONLINE_ROW],
+                       lan_probe=lambda: wd.LAN_UP, now=1_060,
+                       alert_cmd="cat >/dev/null")
+    assert d2.alert == wd.ALERT_RECOVERED and ch2 == "alert-cmd"
+    assert json.loads(p.read_text())["status"] == wd.ONLINE
+
+
+def test_cli_exit_3_when_the_alert_could_not_be_delivered(tmp_path, capsys):
+    state = tmp_path / "s.json"
+    rc = wd.main(["--check", "--state", str(state), "--no-lan-probe",
+                  "--alert-cmd", "exit 1"],
+                 fetch=lambda _r: [OFFLINE_ROW])
+    assert rc == 3, "a delivery failure is not a successful tick"
+    err = capsys.readouterr().err
+    assert "NOT delivered" in err and "retries" in err
+    assert not state.exists()
+
+
+def test_replay_of_the_real_1927_2010_sequence(tmp_path, monkeypatch):
+    """The journal's ticks for 19:27Z-20:10Z, replayed through check().
+
+    Real transitions: down 19:27:38, back 19:37:51, down 20:06:16 (LAN down
+    with it), back 20:10:14. Four transitions, four notices — and both
+    recoveries must carry the recovery title, which is exactly the 19:37:51Z
+    notice that reached the forum under the down title.
+    """
+    ticks = [(wd.ONLINE, wd.LAN_UP),
+             (wd.OFFLINE, wd.LAN_UP), (wd.OFFLINE, wd.LAN_UP), (wd.OFFLINE, wd.LAN_UP),
+             (wd.ONLINE, wd.LAN_UP), (wd.ONLINE, wd.LAN_UP), (wd.ONLINE, wd.LAN_UP),
+             (wd.OFFLINE, wd.LAN_DOWN), (wd.OFFLINE, wd.LAN_DOWN),
+             (wd.ONLINE, wd.LAN_UP), (wd.ONLINE, wd.LAN_UP)]
+    titles = _replay(tmp_path, ticks, monkeypatch)
+    print("\nreplayed 19:27Z-20:10Z titles:", titles)
+    assert titles == [wd.ALERT_TITLES[wd.ALERT_DOWN],
+                      wd.ALERT_TITLES[wd.ALERT_RECOVERED],
+                      wd.ALERT_TITLES[wd.ALERT_DOWN],
+                      wd.ALERT_TITLES[wd.ALERT_RECOVERED]]
+
+
+def test_rapid_flap_emits_exactly_one_notice_per_transition(tmp_path, monkeypatch):
+    flap = [wd.ONLINE, wd.OFFLINE, wd.ONLINE, wd.OFFLINE,
+            wd.ONLINE, wd.OFFLINE, wd.ONLINE]
+    titles = _replay(tmp_path, [(s, wd.LAN_UP) for s in flap], monkeypatch)
+    print("\nrapid-flap titles:", titles)
+    expected = [wd.ALERT_TITLES[wd.ALERT_DOWN], wd.ALERT_TITLES[wd.ALERT_RECOVERED]] * 3
+    assert titles == expected, "one notice per transition, in both directions"
+
+
+def test_a_failed_blindness_alert_is_retried_without_advancing_the_counter(tmp_path):
+    """The blindness alert obeys the same contract: no send, no progress."""
+    p = tmp_path / "s.json"
+    boom = lambda _r: (_ for _ in ()).throw(RuntimeError("api down"))   # noqa: E731
+    d1, _ = wd.check(state_path=str(p), fetch=boom, now=1_000,
+                     probe_alert_after=2, alert_cmd="cat >/dev/null")
+    assert d1.alert is None and d1.probe_failures == 1
+    before = p.read_text()
+
+    d2, _ = wd.check(state_path=str(p), fetch=boom, now=1_060,
+                     probe_alert_after=2, alert_cmd="exit 3")
+    assert d2.alert == wd.ALERT_PROBE and d2.delivery_error
+    assert p.read_text() == before, "a failed send must not count as the blindness alert"
+
+    d3, ch3 = wd.check(state_path=str(p), fetch=boom, now=1_120,
+                       probe_alert_after=2, alert_cmd="cat >/dev/null")
+    assert d3.alert == wd.ALERT_PROBE and ch3 == "alert-cmd"

@@ -42,6 +42,11 @@
 #       Administration: Read-only made every tick exit 2 silently on
 #       2026-11-25: installed, running, and blind. A LAN probe that cannot
 #       connect is NOT exit 2: the refusal to answer is the verdict.
+#   3 — the transition was real but the alert could not be delivered (forum post
+#       failed, webhook refused, alert command non-zero). Deliberately NOT
+#       successful: the recorded status is left at the previous verdict, so the
+#       next tick re-sends the same transition, and the unit goes red instead of
+#       a lost notice passing for a delivered one.
 #
 # Maintenance window — optional, off unless set:
 #   A scheduled reboot takes the runner offline for a minute or two, and the

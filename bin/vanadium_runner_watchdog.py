@@ -127,6 +127,7 @@ class Decision:
     lan: Optional[str] = None     # LAN_UP | LAN_DOWN | None (not probed)
     error: Optional[str] = None   # set only when the probe itself failed
     probe_failures: int = 0       # consecutive failed probes observed so far
+    delivery_error: Optional[str] = None   # the alert was NOT delivered; retry next tick
 
     @property
     def ok(self) -> bool:
@@ -484,7 +485,14 @@ def _probe_failure(prev: Optional[Dict[str, Any]], exc: Exception, *, now: int,
 
     channel = ""
     if alert:
-        channel = notify(message, webhook_url=webhook_url, alert_cmd=alert_cmd, dry_run=dry_run)
+        try:
+            channel = notify(message, webhook_url=webhook_url, alert_cmd=alert_cmd,
+                             title=_alert_title(alert), dry_run=dry_run)
+        except Exception as exc:  # noqa: BLE001 — same contract as a transition alert
+            # Leave the counter where it was: the next blind tick must try again
+            # rather than treat the failed post as the alert it could not send.
+            return (Decision(PROBE_ERROR, alert, message, error=error, probe_failures=failures,
+                             delivery_error=f"alert delivery failed: {exc}"), "")
 
     if not dry_run:
         state = dict(prev or {})
@@ -583,9 +591,19 @@ def check(*, repo: str = REPO, state_path: str = STATE_PATH, now: Optional[int] 
 
     channel = ""
     if decision.alert:
-        channel = notify(decision.message, webhook_url=webhook_url,
-                         alert_cmd=alert_cmd,
-                         title=_alert_title(decision.alert), dry_run=dry_run)
+        try:
+            channel = notify(decision.message, webhook_url=webhook_url,
+                             alert_cmd=alert_cmd,
+                             title=_alert_title(decision.alert), dry_run=dry_run)
+        except Exception as exc:  # noqa: BLE001 — a delivery failure is a finding, not a crash
+            # The transition is NOT consumed: returning before the state write
+            # leaves the recorded status where it was, so the next tick sees the
+            # same transition and sends it again. Without this the failed send
+            # escaped as a traceback and the unit's SuccessExitStatus=0 1 made a
+            # lost notice look exactly like a delivered down-alert.
+            return Decision(status, decision.alert, decision.message, lan=lan,
+                            probe_failures=decision.probe_failures,
+                            delivery_error=f"alert delivery failed: {exc}"), ""
     if not dry_run:
         since = int((prev or {}).get("since") or now)
         if not prev or prev.get("status") != status:
@@ -680,19 +698,34 @@ def main(argv: Optional[Sequence[str]] = None,
         print(f"vanadium runner: probe-error — {decision.probe_failures} consecutive failure(s)"
               + (f", alert={decision.alert} via {channel}" if decision.alert else
                  f", alerting at {max(1, args.probe_alert_after)}"), file=sys.stderr)
+        if decision.delivery_error:
+            print(f"ERROR: {decision.delivery_error} — the next tick retries", file=sys.stderr)
         return 2
 
     if args.json:
-        print(json.dumps({"status": decision.status, "lan": decision.lan,
-                          "alert": decision.alert, "channel": channel,
-                          "message": decision.message,
-                          "probe_failures": decision.probe_failures}, indent=2))
+        payload = {"status": decision.status, "lan": decision.lan,
+                   "alert": decision.alert, "channel": channel,
+                   "message": decision.message,
+                   "probe_failures": decision.probe_failures}
+        if decision.delivery_error:
+            payload["delivery_error"] = decision.delivery_error
+        print(json.dumps(payload, indent=2))
     else:
         lan_note = f" lan={decision.lan}" if decision.lan else ""
-        print(f"vanadium runner: {decision.status}{lan_note}"
-              + (f" — alert={decision.alert} via {channel}" if decision.alert else ""))
+        suffix = ""
+        if decision.alert:
+            suffix = f" — alert={decision.alert}" + (f" via {channel}" if channel else "")
+        print(f"vanadium runner: {decision.status}{lan_note}{suffix}")
         if decision.message:
             print(decision.message)
+    if decision.delivery_error:
+        # Exit 3 is deliberately NOT in SuccessExitStatus: a notice nobody
+        # received must not leave the unit green. The state file was left at the
+        # previous verdict, so the next tick re-sends this same transition.
+        print(f"vanadium runner: {decision.status} — alert={decision.alert} NOT delivered "
+              f"(exit 3; the next tick retries)", file=sys.stderr)
+        print(f"ERROR: {decision.delivery_error}", file=sys.stderr)
+        return 3
     return 0 if decision.ok else 1
 
 
