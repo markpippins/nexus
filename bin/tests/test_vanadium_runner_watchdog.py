@@ -305,3 +305,46 @@ def test_probe_failure_does_not_look_like_an_outage(tmp_path, capsys):
                    fetch=lambda _r: (_ for _ in ()).throw(RuntimeError("api down"))) == 2
     assert not Path(state).exists()
     assert "cannot read the runners API" in capsys.readouterr().err
+
+
+# ── alert titles ──────────────────────────────────────────────────────────
+# The forum fallback is the hands-free channel, and its thread title used to be
+# one hardcoded "runner offline" for all four verdicts. That mislabels the
+# case this probe was built for — an online runner with a dead LAN address —
+# so the title follows the verdict.
+
+def test_every_verdict_gets_its_own_title():
+    assert wd._alert_title(wd.ALERT_DOWN) == wd.DEFAULT_ALERT_TITLE
+    titles = {a: wd._alert_title(a) for a in
+              (wd.ALERT_DOWN, wd.ALERT_RECOVERED, wd.ALERT_LAN_DOWN,
+               wd.ALERT_LAN_RECOVERED)}
+    assert len(set(titles.values())) == 4, titles
+
+
+def test_lan_down_title_never_claims_the_runner_is_offline():
+    title = wd._alert_title(wd.ALERT_LAN_DOWN)
+    assert "LAN" in title
+    assert "online" in title
+    assert "offline" not in title.lower()
+
+
+def test_an_unknown_verdict_falls_back_to_the_offline_title():
+    assert wd._alert_title(None) == wd.DEFAULT_ALERT_TITLE
+    assert wd._alert_title("something-new") == wd.DEFAULT_ALERT_TITLE
+
+
+def test_the_forum_post_carries_the_verdict_title(monkeypatch):
+    seen = {}
+
+    def fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        return None
+
+    monkeypatch.setattr(wd.subprocess, "run", fake_run)
+    channel = wd.notify("vanadium is heartbeating to GitHub but DEAD on the LAN.",
+                        title=wd._alert_title(wd.ALERT_LAN_DOWN))
+    assert channel == "assembly"
+    argv = seen["argv"]
+    title = argv[argv.index("--title") + 1]
+    assert title == wd.ALERT_TITLES[wd.ALERT_LAN_DOWN]
+    assert "offline" not in title.lower()
