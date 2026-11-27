@@ -1,0 +1,166 @@
+name: vanadium-diagnostic
+
+# Why this exists (2026-11-26): vanadium kept heartbeating to GitHub and kept
+# running `vanadium-sonar` while its LAN address (192.168.1.209) was dead — no
+# ping reply, ARP INCOMPLETE, no TCP/22 — from 2026-11-24 18:57 EST until well
+# into the 25th. CI stayed green because the sonar job needs only
+# `localhost:9000` on the box itself plus the GitHub API; the only signal was a
+# nightly backup failing. SSH cannot reach a host in that state, so a job
+# running ON the runner is the one channel that survives the fault.
+#
+# Manual only (`workflow_dispatch`): it is a diagnostic, never a gate. It has no
+# schedule and must not be attached to pull_request — the vanadium runner is a
+# single slot and a queued diagnostic would starve the scans.
+#
+# If the runner is offline the job simply sits queued; that is itself the
+# answer. Nothing here can rescue a host that is fully down: a Pi 5 has no
+# out-of-band reset (runbook §3), so a power cycle needs physical hands.
+#
+# Deliberately absent: any sudo/reboot/restart step. Whether to reboot the host
+# is a human decision — see docs/runbook-vanadium-ci-runner-recovery.md §3/§6.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sonar_check:
+        description: "Also probe SonarQube on the runner's loopback (:9000)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vanadium-diagnostic-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, vanadium]
+    timeout-minutes: 10
+    steps:
+      # Everything below is read-only and runs on the host itself, so it works
+      # precisely when the LAN path does not. Each section is appended to the
+      # job summary as well as the log, because a wall of terminal output is
+      # unreadable on a phone when the alert arrives.
+      - name: Collect host, network and boot state
+        shell: bash
+        run: |
+          set -u
+          summary="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
+
+          # section TITLE COMMAND — never fails the job. The point is to see
+          # what the host says, not to grade it: a probe that is missing on this
+          # OS must not hide the nine that are not.
+          section() {
+            printf '\n### %s\n\n```text\n' "$1" >> "$summary"
+            bash -c "$2" 2>&1 | tee -a "$summary"
+            printf '```\n' >> "$summary"
+          }
+
+          section "identity" \
+            'date -u; hostname; whoami; uname -a; head -3 /etc/os-release'
+
+          # uptime -s is the boot clock: compare it with the runner's last
+          # successful job to tell "rebooted" from "never went down".
+          section "uptime and boot history" \
+            'uptime; echo "boot: $(uptime -s)"; last -x | head -20'
+
+          section "load and memory" \
+            'free -m; ps -eo pid,stat,etime,pcpu,pmem,comm --sort=-pcpu | head -15'
+
+          # Which interface holds which address is the whole question when the
+          # runner is online and its LAN address is not.
+          section "interfaces (link state)" 'ip -br a'
+          section "ipv4 addresses" 'ip -4 -o addr show'
+          section "ipv6 addresses" 'ip -6 -o addr show | head -20'
+          section "routes" 'ip r'
+          section "neighbours (ARP)" 'ip neigh'
+
+          # The path that carries CI: this resolves github.com and asks the
+          # kernel which source address it would use. If that is not a
+          # 192.168.1.x address, the host is on a different network and .209
+          # being dead is expected, not mysterious.
+          section "path to github" \
+            'ip route get 1.1.1.1; host=$(getent ahostsv4 github.com | head -1 | cut -d" " -f1); echo "resolved: ${host:-none}"; [ -n "${host:-}" ] && ip route get "$host"'
+
+          section "dns" \
+            'head -10 /etc/resolv.conf; getent hosts vanadium.attlocal.net || echo "no reverse mapping"; getent ahostsv4 github.com | head -3'
+
+          section "networkmanager active connections" \
+            'nmcli -t -f NAME,DEVICE,STATE,TYPE con show --active || echo "nmcli unavailable"'
+
+          section "networkmanager device status" \
+            'nmcli -t -f DEVICE,TYPE,STATE,CONNECTION dev status || echo "nmcli unavailable"'
+
+          section "networkmanager ip config" \
+            'nmcli -t -f GENERAL.DEVICE,GENERAL.CONNECTION,GENERAL.STATE,IP4.ADDRESS,IP4.GATEWAY,IP4.DNS dev show 2>/dev/null | head -60 || echo "nmcli unavailable"'
+
+          section "wifi link (if wireless)" \
+            'iw dev 2>/dev/null | head -30 || echo "iw unavailable/not wireless"'
+
+          section "listening sockets" 'ss -ltnp 2>/dev/null | head -30'
+
+          section "dhcp leases" \
+            'ls -l /var/lib/dhcp/ 2>/dev/null; tail -20 /var/lib/dhcp/dhclient*.leases 2>/dev/null || echo "leases unreadable without root (not a fault)"'
+
+          # Power: an undervoltage Pi 5 thottles or resets itself, which a
+          # network probe can never distinguish from a router-side drop.
+          section "power and thermals" \
+            'vcgencmd get_throttled; vcgencmd measure_temp; vcgencmd measure_volts'
+
+          section "kernel complaints" \
+            'dmesg -T 2>/dev/null | grep -iE "under-voltage|throttl|mmc0|I/O error|EXT4-fs error|hung task|out of memory|oom-kill|link is (not )?ready" | tail -30 || echo "dmesg unreadable without root (not a fault)"'
+
+          # The previous boot is the outage itself: a shutdown sequence means a
+          # deliberate reboot, an abrupt end means a panic/watchdog reset.
+          section "previous boot (the outage)" \
+            'journalctl -b -1 -n 120 --no-pager 2>&1 || echo "no previous boot readable"'
+
+          section "network journal (this boot)" \
+            'journalctl -b -n 80 --no-pager -u systemd-networkd -u NetworkManager -u dhcpcd 2>&1 | tail -60 || echo "journal unreadable"'
+
+          section "runner unit" \
+            'systemctl --no-pager status "actions.runner.*" 2>&1 | head -30 || echo "unit not found"'
+
+          section "storage" \
+            'df -h; lsblk -o NAME,SIZE,ROTA,MODEL,FSTYPE'
+
+      - name: Verdict — which path carries CI
+        shell: bash
+        run: |
+          set -u
+          summary="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
+          default_route=$(ip route show default | head -1)
+          lan_line=$(ip -4 -o addr show | awk '$4 ~ /^192\.168\.1\./ {print $2" "$4}')
+          all_addrs=$(ip -4 -o addr show | awk '{print $2" "$4}' | tr '\n' ';')
+
+          {
+            printf '\n### verdict — which path carries CI\n\n'
+            printf '* default route: `%s`\n' "${default_route:-none}"
+            printf '* home-LAN address (192.168.1.0/24): `%s`\n' "${lan_line:-NONE}"
+            printf '* all IPv4 addresses: `%s`\n\n' "${all_addrs:-none}"
+            if [ -z "$lan_line" ]; then
+              printf 'No address on the home LAN subnet. This host reaches GitHub over a\n'
+              printf 'different path (another SSID, a hotspot, an extender NAT, or a downed\n'
+              printf 'NIC), which is exactly why 192.168.1.209 is dead to ping/ARP/SSH while\n'
+              printf 'the `sonar` check stays green. Fix the association, not the runner.\n'
+            else
+              printf 'The host holds a 192.168.1.x address, so the fault is at the ARP/DHCP/AP\n'
+              printf 'layer (stale association, client isolation, or a filter) rather than a\n'
+              printf 'missing address. Compare `ip neigh` and the nmcli sections above.\n'
+            fi
+          } | tee -a "$summary"
+
+      - name: SonarQube on loopback
+        if: ${{ inputs.sonar_check }}
+        shell: bash
+        run: |
+          set -u
+          summary="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
+          {
+            printf '\n### sonarqube (loopback :9000)\n\n```text\n'
+            curl -s -m 5 -w '\nhttp=%{http_code}\n' http://localhost:9000/api/system/status \
+              || echo "loopback :9000 did not answer (this is what makes a green sonar check impossible to trust)"
+            printf '```\n'
+          } | tee -a "$summary"
