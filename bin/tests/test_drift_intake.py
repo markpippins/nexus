@@ -16,8 +16,7 @@ Covers the ratified ruling + plan AC:
 - backstop:   unique index rejects a second live candidate for same root fact
 
 Run:
-  CONDUIT_PG_DSN='host=localhost port=5432 user=pguser password=pgpass dbname=nexus' \
-      python3 -m pytest bin/tests/test_drift_intake.py -v
+  bin/ci/local-pg-env.sh python3 -m pytest bin/tests/test_drift_intake.py -v
 """
 import json
 import os
@@ -26,6 +25,7 @@ import unittest
 import uuid
 
 import psycopg2
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -40,7 +40,15 @@ from test_helpers import (  # noqa: E402
 
 _DSN = os.environ.get("CONDUIT_PG_DSN", "")
 if not _DSN:
-    raise RuntimeError("CONDUIT_PG_DSN must be set to run tests (PG is mandatory)")
+    # An unset DSN is an absent dependency, not a guard result. Raising here
+    # aborted collection of the WHOLE suite (pytest exit 2), so `pytest
+    # bin/tests` said nothing about any other guard; skip this one with the
+    # reason and the fix instead.
+    pytest.skip(
+        "CONDUIT_PG_DSN is unset: this guard needs a populated PostgreSQL "
+        "(run it via bin/ci/local-pg-env.sh, which supplies and verifies one)",
+        allow_module_level=True,
+    )
 
 _ORPHANED = cleanup_orphaned_test_schemas(_DSN)
 if _ORPHANED:

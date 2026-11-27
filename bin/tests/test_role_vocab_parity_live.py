@@ -27,7 +27,7 @@ Run:
 Connection (env-overridable, defaults match the throwaway/local stack):
   PGIE_TEST_PGHOST (localhost) PGIE_TEST_PGPORT (5432)
   PGIE_TEST_PGUSER (pguser)    PGIE_TEST_PGPASSWORD (pgpass)
-  PGIE_TEST_PGDATABASE (nexus)
+  PGIE_TEST_PGDATABASE (PGDATABASE, then nexus)
 Password is passed via PGPASSWORD env only — never a prompting TTY.
 """
 import os
@@ -70,7 +70,9 @@ def psql_env():
         "PGHOST": os.environ.get("PGIE_TEST_PGHOST", "localhost"),
         "PGPORT": os.environ.get("PGIE_TEST_PGPORT", "5432"),
         "PGUSER": os.environ.get("PGIE_TEST_PGUSER", "pguser"),
-        "PGDATABASE": os.environ.get("PGIE_TEST_PGDATABASE", "nexus"),
+        "PGDATABASE": os.environ.get("PGIE_TEST_PGDATABASE")
+        or os.environ.get("PGDATABASE")
+        or "nexus",
     }
 
 

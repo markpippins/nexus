@@ -12,7 +12,9 @@ these tests make any drift between it and a consumer surface fail CI:
   4. the stale V155 shape (uq_role_memory_active + plain tstzrange) cannot
      reappear in any surface
 
-Hermetic except test 3, which uses CONDUIT_PG_DSN (default local nexus).
+Hermetic except test 3, which uses CONDUIT_PG_DSN (default local scratch
+nexus_guards, provisioned by bin/ci/local-pg-env.sh) to create its own probe
+database; it never writes into the database the DSN names.
 """
 from __future__ import annotations
 
@@ -111,7 +113,7 @@ class TestFragmentAppliesToRatifiedShape(unittest.TestCase):
         except ImportError:
             self.skipTest("psycopg2 unavailable")
         dsn = os.environ.get("CONDUIT_PG_DSN",
-                             "postgresql://pguser:pgpass@localhost:5432/nexus")
+                             "postgresql://pguser:pgpass@localhost:5432/nexus_guards")
         self.dbname = None
         try:
             conn = psycopg2.connect(dsn)
