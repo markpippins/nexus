@@ -222,6 +222,14 @@ transition** — down, recovered, or a runner that vanished from the API — so 
 timer cannot page anyone twice for one outage. A probe failure still exits 2 and never
 writes a runner status, so a GitHub API outage can never masquerade as a runner outage.
 
+**A notice that could not be delivered is retried, and it is not green.** If the forum post
+(or webhook, or `--alert-cmd`) fails on a transition, the tick exits **3** — deliberately not
+in the unit's `SuccessExitStatus` — and leaves the recorded status at the previous verdict, so
+the next tick sees the same transition and sends it again. That is why a failed send cannot
+quietly consume a down *or* a recovery: the state only advances after a delivery succeeds.
+Before this, the exception escaped as a traceback with exit 1, which `SuccessExitStatus=0 1`
+reported as a successful tick — a lost notice looked exactly like a delivered one.
+
 **A blind watchdog now says so.** Probe failures are counted in the same state file, and
 at `--probe-alert-after` consecutive failures (default **3**, ~6 minutes on the two-minute
 timer; env `NEXUS_WATCHDOG_PROBE_ALERT_AFTER`) the script posts **one** watchdog-health
