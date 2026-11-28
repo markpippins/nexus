@@ -43,11 +43,19 @@ heartbeat.json's mtime is then the only evidence, and running
 STALLED.
 
 Usage:
-  deploy-pin-drift-alarm.py --post       # check, post on a new episode (the timer)
+  deploy-pin-drift-alarm.py --post --scheduled   # check, post on a new episode (the timer)
   deploy-pin-drift-alarm.py --dry-run    # report only, no writes, no posts
   deploy-pin-drift-alarm.py --accept     # rebaseline after an intended change
   deploy-pin-drift-alarm.py --watchdog --post   # shout if no check completed within --max-age
   deploy-pin-drift-alarm.py --json       # machine-readable verdict
+
+**The heartbeat is evidence the TIMER ran, not that someone looked.** `--scheduled` is
+what lets a run refresh `heartbeat.json`, and only the timer passes it. A manual check that
+wrote the heartbeat made a stalled timer look alive: 2026-11-28, a hand-run flipped the
+liveness watchdog from STALLED to OK while the timer had not fired, hiding the stall for up
+to `--max-age` (45 min). `--dry-run` left it untouched, which is exactly why the hole was
+invisible — the only non-writing mode was the one nobody uses for a real check. A manual
+run now says so on stdout and leaves the age where the watchdog can still see it.
 
 **The channel is not a default.** `--post` is what lets a run put a DRIFT or STALLED
 episode in the issues forum; a run that does not name it reports to stdout and the exit
@@ -362,6 +370,24 @@ def _heartbeat_or_warn(path: Path, repo: str, current: dict, verdict: str) -> No
         print(f"WARN: could not write heartbeat {path}: {exc}", file=sys.stderr)
 
 
+def _heartbeat(args, path: Path, repo: str, current: dict, verdict: str) -> None:
+    """Refresh the liveness heartbeat — scheduled runs only.
+
+    The watchdog reads this file as proof that the *timer* is still firing. A
+    manual check that refreshed it therefore told the watchdog the schedule was
+    healthy when nothing had been scheduled at all (2026-11-28: a hand-run
+    flipped STALLED -> OK and hid the stall for up to --max-age). A run that is
+    not the schedule says so and leaves the age alone.
+    """
+    if not getattr(args, "scheduled", False):
+        print(
+            f"heartbeat: NOT refreshed (manual run — only --scheduled proves the timer "
+            f"is running; the watchdog still sees {path})"
+        )
+        return
+    _heartbeat_or_warn(path, repo, current, verdict)
+
+
 def _parse_ts(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
@@ -514,6 +540,12 @@ def main() -> int:
              "hand-checks must not — without it a DRIFT/STALLED finding is reported to "
              "stdout and the exit code only)",
     )
+    ap.add_argument(
+        "--scheduled",
+        action="store_true",
+        help="this run IS the timer: refresh the liveness heartbeat (a manual check must "
+             "not — refreshing it makes a stalled timer look alive to --watchdog)",
+    )
     ap.add_argument("--dry-run", action="store_true", help="no writes, no posts")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
@@ -547,7 +579,7 @@ def main() -> int:
             state["baseline"] = current
             state["accepted_at"] = current["captured_at"]
             save_state(state_path, state)
-            _heartbeat_or_warn(Path(args.heartbeat), repo, current, "BASELINE")
+            _heartbeat(args, Path(args.heartbeat), repo, current, "BASELINE")
         verdict["verdict"] = "BASELINE"
         action = "would record" if args.dry_run else "recorded"
         print(
@@ -561,7 +593,7 @@ def main() -> int:
     drift = compare(baseline, current)
     if drift["clean"]:
         if not args.dry_run:
-            _heartbeat_or_warn(Path(args.heartbeat), repo, current, "OK")
+            _heartbeat(args, Path(args.heartbeat), repo, current, "OK")
         print(
             f"OK head={current['head'][:10]} ref={current['head_ref']} "
             f"files={current['file_count']} match the baseline of "
@@ -588,7 +620,7 @@ def main() -> int:
 
     # Liveness first: the check ran, whatever we manage to say about it.
     if not args.dry_run:
-        _heartbeat_or_warn(Path(args.heartbeat), repo, current, "DRIFT")
+        _heartbeat(args, Path(args.heartbeat), repo, current, "DRIFT")
 
     title, body = _render(drift, current, repo)
     print(f"DRIFT head {drift['head_before'][:10] if drift['head_before'] else '?'} -> "
