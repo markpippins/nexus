@@ -33,23 +33,32 @@ two-minute timer), one watchdog-health alert is posted; a later successful probe
 announces that sight is restored. A probe failure still never claims the runner
 is down, and still exits 2.
 
-Alert channels (first one configured wins):
+Alert channels (first one configured wins), and one must be named:
   --webhook-url URL / env NEXUS_ALERT_WEBHOOK   POST {"text": "..."}
   --alert-cmd CMD                               shell command, message on stdin
-  default                                       Assembly issues-and-open-questions
+  --forum / env NEXUS_ALERT_FORUM=1             Assembly issues-and-open-questions
                                                 via bin/post-change-log.sh
 
+A tick that names no channel delivers nothing and says so: the forum post is
+opt-in because a watchdog run with no channel is usually a drill or a test, and
+until 2026-11-28 the fall-through made one look like a real outage — the stray
+2026-11-27T23:44:33Z "offline" notice came from exactly that tick. Test ticks
+pass `--alert-cmd` (docs/runbook-vanadium-ci-runner-recovery.md §9).
+
 Usage:
-  vanadium_runner_watchdog.py --check              # probe both, alert on transitions
+  vanadium_runner_watchdog.py --check --forum      # probe both, alert on transitions
   vanadium_runner_watchdog.py --check --dry-run    # print the decision, write nothing
   vanadium_runner_watchdog.py --check --json       # machine-readable summary
+  vanadium_runner_watchdog.py --check --alert-cmd 'cat >/tmp/watchdog-alert'
+                                                   # a test tick: never posts
   vanadium_runner_watchdog.py --check --no-lan-probe   # runner status only (old behaviour)
-  vanadium_runner_watchdog.py --check --maintenance-window 02:20-02:50
+  vanadium_runner_watchdog.py --check --forum --maintenance-window 02:20-02:50
                                                    # hold alerts through a reboot
 
 Exit codes: 0 runner online and LAN reachable; 1 either fault (or the runner is
             missing from the API); 2 environment error (the runners API could not
-            be read). A LAN probe that cannot connect is a VERDICT, not an
+            be read, or a live tick named no delivery channel — it refuses rather
+            than pick one). A LAN probe that cannot connect is a VERDICT, not an
             environment error: the refusal to answer is the thing being watched.
             Exit 2 never writes a runner status and never claims an outage — but
             it does accumulate the probe-failure count and, at the threshold,
@@ -73,6 +82,15 @@ RUNNER = "vanadium"
 STATE_PATH = os.environ.get("NEXUS_WATCHDOG_STATE", "/var/tmp/vanadium-runner-watchdog.json")
 MAINTENANCE_WINDOW = os.environ.get("NEXUS_WATCHDOG_MAINTENANCE_WINDOW", "")
 PROBE_ALERT_AFTER = int(os.environ.get("NEXUS_WATCHDOG_PROBE_ALERT_AFTER", "3"))
+
+
+def _env_flag(name: str) -> bool:
+    """True for 1/true/yes/on — an opt-in that has to be written, not assumed."""
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+# The forum fallback is opt-in: see notify() and --forum.
+FORUM_ENABLED = _env_flag("NEXUS_ALERT_FORUM")
 
 # The LAN identity the backups, the SQL sync and `ssh` all depend on. Probed by
 # address rather than by name: the DNS name survived the whole 2026-11-25
@@ -432,16 +450,24 @@ def fetch_runners(repo: str = REPO) -> Sequence[Dict[str, Any]]:
 
 
 def notify(message: str, *, webhook_url: Optional[str] = None,
-           alert_cmd: Optional[str] = None, title: str = DEFAULT_ALERT_TITLE,
+           alert_cmd: Optional[str] = None, forum: bool = False,
+           title: str = DEFAULT_ALERT_TITLE,
            dry_run: bool = False) -> str:
     """Deliver one alert; returns the channel used (or 'dry-run'):
 
     ``title`` names the forum thread and is otherwise unused — the webhook and
     alert-command channels carry the message alone.
+
+    The forum is a fallback only for a tick that asked for it (``forum=True``,
+    from ``--forum`` or ``NEXUS_ALERT_FORUM=1``). With no channel at all this
+    raises instead of posting: a run with no channel is a drill or a test, and
+    that implicit post is how a test tick put a real-looking outage in the
+    issues forum on 2026-11-27T23:44:33Z. Raising here also makes the caller
+    refuse the transition instead of consuming it.
     """
     if dry_run:
-        print(f"[dry-run] would alert via "
-              f"{'webhook' if webhook_url else (alert_cmd or 'assembly')}:\n{message}")
+        channel = "webhook" if webhook_url else (alert_cmd or ("forum" if forum else "nothing"))
+        print(f"[dry-run] would alert via {channel}:\n{message}")
         return "dry-run"
     if webhook_url:
         import urllib.request
@@ -453,6 +479,14 @@ def notify(message: str, *, webhook_url: Optional[str] = None,
     if alert_cmd:
         subprocess.run(alert_cmd, shell=True, input=message, text=True, check=True, timeout=60)
         return "alert-cmd"
+    if not forum:
+        raise RuntimeError(
+            "no delivery channel configured: a live tick must name one — "
+            "--alert-cmd CMD (or NEXUS_ALERT_CMD; what tests pass), "
+            "--webhook-url URL (or NEXUS_ALERT_WEBHOOK), or --forum "
+            "(or NEXUS_ALERT_FORUM=1) for the Assembly issues-and-open-questions post. "
+            "Nothing was posted: an unconfigured tick must not put a real-looking "
+            "outage on the forum.")
     script = Path(__file__).resolve().parent / "post-change-log.sh"
     subprocess.run(
         [str(script), "--forum", "issues-and-open-questions",
@@ -466,7 +500,7 @@ def notify(message: str, *, webhook_url: Optional[str] = None,
 def _probe_failure(prev: Optional[Dict[str, Any]], exc: Exception, *, now: int,
                    state_path: str, repo: str, probe_alert_after: int,
                    webhook_url: Optional[str] = None, alert_cmd: Optional[str] = None,
-                   dry_run: bool = False) -> Tuple[Decision, str]:
+                   forum: bool = False, dry_run: bool = False) -> Tuple[Decision, str]:
     """A blind probe: count it, and say so once the blindness is not transient.
 
     Never writes a runner status: an unreachable API must not look like an
@@ -487,7 +521,7 @@ def _probe_failure(prev: Optional[Dict[str, Any]], exc: Exception, *, now: int,
     if alert:
         try:
             channel = notify(message, webhook_url=webhook_url, alert_cmd=alert_cmd,
-                             title=_alert_title(alert), dry_run=dry_run)
+                             forum=forum, title=_alert_title(alert), dry_run=dry_run)
         except Exception as exc:  # noqa: BLE001 — same contract as a transition alert
             # Leave the counter where it was: the next blind tick must try again
             # rather than treat the failed post as the alert it could not send.
@@ -510,6 +544,7 @@ def _probe_failure(prev: Optional[Dict[str, Any]], exc: Exception, *, now: int,
 def check(*, repo: str = REPO, state_path: str = STATE_PATH, now: Optional[int] = None,
           fetch: Callable[[str], Sequence[Dict[str, Any]]] = fetch_runners,
           webhook_url: Optional[str] = None, alert_cmd: Optional[str] = None,
+          forum: bool = False,
           dry_run: bool = False,
           lan_probe: Optional[Callable[[], str]] = None,
           lan_target: str = f"{LAN_HOST}:{LAN_PORT}",
@@ -523,7 +558,8 @@ def check(*, repo: str = REPO, state_path: str = STATE_PATH, now: Optional[int] 
     except Exception as exc:  # noqa: BLE001 — a probe failure must not look like an outage
         return _probe_failure(prev, exc, now=now, state_path=state_path, repo=repo,
                               probe_alert_after=probe_alert_after,
-                              webhook_url=webhook_url, alert_cmd=alert_cmd, dry_run=dry_run)
+                              webhook_url=webhook_url, alert_cmd=alert_cmd,
+                              forum=forum, dry_run=dry_run)
 
     lan = lan_probe() if lan_probe is not None else None
     decision = decide(prev, status, now, lan=lan, lan_target=lan_target)
@@ -593,7 +629,7 @@ def check(*, repo: str = REPO, state_path: str = STATE_PATH, now: Optional[int] 
     if decision.alert:
         try:
             channel = notify(decision.message, webhook_url=webhook_url,
-                             alert_cmd=alert_cmd,
+                             alert_cmd=alert_cmd, forum=forum,
                              title=_alert_title(decision.alert), dry_run=dry_run)
         except Exception as exc:  # noqa: BLE001 — a delivery failure is a finding, not a crash
             # The transition is NOT consumed: returning before the state write
@@ -650,6 +686,10 @@ def main(argv: Optional[Sequence[str]] = None,
     ap.add_argument("--state", default=STATE_PATH)
     ap.add_argument("--webhook-url", default=os.environ.get("NEXUS_ALERT_WEBHOOK"))
     ap.add_argument("--alert-cmd", default=os.environ.get("NEXUS_ALERT_CMD"))
+    ap.add_argument("--forum", action="store_true", default=FORUM_ENABLED,
+                    help="post the alert to Assembly issues-and-open-questions; the forum "
+                         "fallback is opt-in (also env NEXUS_ALERT_FORUM=1), because a tick "
+                         "that names no channel must not post there by default")
     ap.add_argument("--lan-host", default=LAN_HOST,
                     help="host whose LAN reachability matters (default %(default)s)")
     ap.add_argument("--lan-port", type=int, default=int(LAN_PORT), help="TCP port to probe")
@@ -668,6 +708,16 @@ def main(argv: Optional[Sequence[str]] = None,
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
 
+    # A tick with no channel is a drill or a test. It must not silently pick the
+    # forum: that fall-through posted a real-looking outage at
+    # 2026-11-27T23:44:33Z from a run that was only checking the probe. Refuse
+    # before any probe, state write or post, and name the flags to use.
+    if not args.dry_run and not (args.webhook_url or args.alert_cmd or args.forum):
+        ap.error("no delivery channel: pass --alert-cmd CMD (tests and drills — never the "
+                 "forum), --webhook-url URL, or --forum for the Assembly post; --dry-run "
+                 "looks without delivering. A tick with no channel must not be able to "
+                 "post an outage")
+
     target = f"{args.lan_host}:{args.lan_port}"
     if args.no_lan_probe:
         probe = None
@@ -683,7 +733,8 @@ def main(argv: Optional[Sequence[str]] = None,
 
     decision, channel = check(
         repo=args.repo, state_path=args.state, fetch=fetch,
-        webhook_url=args.webhook_url, alert_cmd=args.alert_cmd, dry_run=args.dry_run,
+        webhook_url=args.webhook_url, alert_cmd=args.alert_cmd, forum=args.forum,
+        dry_run=args.dry_run,
         lan_probe=probe, lan_target=target, maintenance=maintenance,
         probe_alert_after=args.probe_alert_after)
 

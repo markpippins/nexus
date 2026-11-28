@@ -293,9 +293,11 @@ compromising either compromises both.
 ```bash
 python3 bin/vanadium_runner_watchdog.py --check --dry-run   # print the decision, write nothing
 python3 bin/vanadium_runner_watchdog.py --check --json      # machine-readable
-python3 bin/vanadium_runner_watchdog.py --check             # alert on a transition
-python3 bin/vanadium_runner_watchdog.py --check --maintenance-window 02:20-02:50
-                                                            # hold alerts through a reboot (§9.2)
+python3 bin/vanadium_runner_watchdog.py --check --forum     # alert on a transition (the timer)
+python3 bin/vanadium_runner_watchdog.py --check --forum --maintenance-window 02:20-02:50
+                                                            # hold alerts through a reboot
+python3 bin/vanadium_runner_watchdog.py --check --alert-cmd 'cat >/tmp/watchdog-alert'
+                                                            # a TEST tick: never posts (§9.2)
 ```
 
 #### The workstation token — what `gh` on `titanium` needs
@@ -336,9 +338,26 @@ re-run the two verification commands above afterwards, because the edit form can
 reset Repository access to **All repositories**.
 
 Channels, first configured wins: `--webhook-url` (or `NEXUS_ALERT_WEBHOOK`, POSTs
-`{"text": …}`), `--alert-cmd` (or `NEXUS_ALERT_CMD`, message on stdin), default Assembly
-post to `issues-and-open-questions`. The down message names this runbook and restates the
-"do not relabel `titanium`" rule, so the alert itself is actionable.
+`{"text": …}`), `--alert-cmd` (or `NEXUS_ALERT_CMD`, message on stdin), `--forum` (or
+`NEXUS_ALERT_FORUM=1`, Assembly post to `issues-and-open-questions`). The down message names
+this runbook and restates the "do not relabel `titanium`" rule, so the alert itself is
+actionable.
+
+**The forum is opt-in, and a tick with no channel refuses.** `--forum` is what lets a tick
+post to Assembly; a run that names no channel at all exits **2** before probing and posts
+nothing. That guard exists because of a real incident: on 2026-11-27T23:44:33Z a run made
+only to check the probe named no channel, inherited the old forum default, and put a
+real-looking "runner offline" notice in the issues forum — a test tick indistinguishable
+from an outage except by its timestamp. It had to be retitled as an artifact and
+cross-referenced; the guard is cheaper than that correction was.
+
+> **Test ticks must pass `--alert-cmd`.** Anything that is not the timer — a drill, a
+> replay, a probe check from an agent — runs
+> `--check --alert-cmd 'cat >/tmp/watchdog-alert'` (or `--alert-cmd true` to discard the
+> text). That keeps the message on the local filesystem or nowhere instead of the forum,
+> and it still exercises the real delivery path, including exit 3 when the command fails.
+> `--dry-run` is for looking only: it writes no state and delivers nothing. Never run a
+> live `--check` without a channel, and never point a test at `--forum`.
 
 **Since 2026-11-26 it probes two things**, because this host has now failed in
 both directions: the runners API (above) *and* one TCP connect to the LAN address
@@ -365,7 +384,7 @@ that. The rules:
 is already set for `codex`, so it runs without a login session):
 
 ```
-~/.config/systemd/user/vanadium-runner-watchdog.service   (Type=oneshot, SuccessExitStatus=0 1)
+~/.config/systemd/user/vanadium-runner-watchdog.service   (Type=oneshot, ExecStart=… --check --forum, SuccessExitStatus=0 1)
 ~/.config/systemd/user/vanadium-runner-watchdog.timer     (OnBootSec=2min, OnUnitActiveSec=2min)
 → systemctl --user enable --now vanadium-runner-watchdog.timer
 ```

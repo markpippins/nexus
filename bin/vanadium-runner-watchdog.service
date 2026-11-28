@@ -48,6 +48,13 @@
 #       next tick re-sends the same transition, and the unit goes red instead of
 #       a lost notice passing for a delivered one.
 #
+# The delivery channel is not a default: --forum is what makes this unit's
+# alerts reach Assembly, and a tick that names no channel at all (no --forum,
+# no --alert-cmd, no --webhook-url) refuses with exit 2 before probing. That is
+# deliberate — on 2026-11-27T23:44:33Z a run with no channel inherited the
+# forum fallback and posted a test tick as a real outage. If you edit ExecStart,
+# keep a channel on it: tests and drills pass --alert-cmd, never --forum.
+#
 # Maintenance window — optional, off unless set:
 #   A scheduled reboot takes the runner offline for a minute or two, and the
 #   probe would report that as a down alert and then a recovery alert. Set a
@@ -79,7 +86,7 @@ After=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=/home/codex/dev/nexus
-ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/vanadium_runner_watchdog.py --check
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/vanadium_runner_watchdog.py --check --forum
 # Exit 1 means "runner is down and the alert was delivered" — that is a successful probe.
 SuccessExitStatus=0 1
 TimeoutStartSec=120

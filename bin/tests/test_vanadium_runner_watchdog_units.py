@@ -16,6 +16,8 @@ drifting from its script are static, so they are pinned here:
     script from one tree while claiming to run another
   - the tick probes (--check) and never drills (--dry-run would alert nothing
     while looking green)
+  - the tick names a delivery channel: a run with none refuses (exit 2) rather
+    than inheriting a forum fallback and posting a test as a real outage
   - exit 0 and exit 1 are findings, but exit 2 (probe failed) must still fail
     the unit: a watchdog that cannot see must not look quiet
   - the timer fires every two minutes, points at the service, and does not
@@ -91,6 +93,12 @@ def test_tick_probes_instead_of_drilling():
     assert "--check" in argv, argv
     assert "--dry-run" not in argv, argv
     assert "--json" not in argv, argv
+
+
+def test_tick_names_its_delivery_channel():
+    """No channel means exit 2, so the timer has to name one explicitly."""
+    argv = _execs()[0].split()
+    assert {"--alert-cmd", "--webhook-url", "--forum"} & set(argv), argv
 
 
 def test_down_is_a_finding_but_blindness_is_a_failure():
