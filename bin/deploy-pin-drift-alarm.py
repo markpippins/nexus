@@ -43,14 +43,22 @@ heartbeat.json's mtime is then the only evidence, and running
 STALLED.
 
 Usage:
-  deploy-pin-drift-alarm.py              # check, post on a new episode
+  deploy-pin-drift-alarm.py --post       # check, post on a new episode (the timer)
   deploy-pin-drift-alarm.py --dry-run    # report only, no writes, no posts
   deploy-pin-drift-alarm.py --accept     # rebaseline after an intended change
-  deploy-pin-drift-alarm.py --watchdog   # shout if no check completed within --max-age
+  deploy-pin-drift-alarm.py --watchdog --post   # shout if no check completed within --max-age
   deploy-pin-drift-alarm.py --json       # machine-readable verdict
 
+**The channel is not a default.** `--post` is what lets a run put a DRIFT or STALLED
+episode in the issues forum; a run that does not name it reports to stdout and the exit
+code only. Same guard as bin/vanadium_runner_watchdog.py (2026-11-28): a run whose purpose
+is a check or a drill must not be able to invent an outage-shaped thread, and this alarm is
+one `bin/deploy-pin-drift-alarm.py` invocation away from doing exactly that. The two timers
+pass `--post`; tests and hand-checks do not.
+
 Exit codes: 0 baseline/current (first run or match), 1 tooling error,
-2 drift or stall detected (posted, or the episode was already posted).
+2 drift or stall detected (posted, or the episode was already posted, or no --post
+channel was named — the finding is real either way, so the unit stays red).
 """
 
 from __future__ import annotations
@@ -439,6 +447,13 @@ def run_watchdog(args) -> int:
         print("DRY-RUN: no post, no state write")
     elif already:
         verdict["posted"] = wstate["posted"].get("thread_id")
+    elif not args.post:
+        # No channel named: report-only. The stall is still real (exit 2 keeps the
+        # unit red), but it is not announced, and the episode is not consumed —
+        # the next --post run posts it.
+        verdict["posted"] = None
+        print("STALLED: NOT posted — no --post channel named (report-only run; the "
+              "watchdog timer passes --post)")
     else:
         title, body = _render_stall(
             heartbeat_path=heartbeat_path,
@@ -492,6 +507,13 @@ def main() -> int:
         help="seconds a heartbeat may age before the watchdog shouts (default 2700 = 45 min)",
     )
     ap.add_argument("--accept", action="store_true", help="rebaseline to the current tree")
+    ap.add_argument(
+        "--post",
+        action="store_true",
+        help="allow this run to post to the issues forum (the timers pass it; tests and "
+             "hand-checks must not — without it a DRIFT/STALLED finding is reported to "
+             "stdout and the exit code only)",
+    )
     ap.add_argument("--dry-run", action="store_true", help="no writes, no posts")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
@@ -585,6 +607,14 @@ def main() -> int:
         print("DRY-RUN: no post, no state write")
     elif already:
         verdict["posted"] = state["posted"].get("thread_id")
+    elif not args.post:
+        # Report-only, same contract as the stall path: a check or a drill must not
+        # be able to put an outage-shaped thread in the issues forum by default
+        # (the 2026-11-28 implicit-channel guard; bin/vanadium_runner_watchdog.py).
+        verdict["posted"] = None
+        print("DRIFT: NOT posted — no --post channel named (report-only run; the alarm "
+              "timer passes --post). The episode is not consumed: the next --post run "
+              "posts it.")
     else:
         try:
             thread_id = post_episode(title, body)

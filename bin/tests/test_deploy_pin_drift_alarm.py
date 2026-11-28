@@ -179,9 +179,15 @@ class _AlarmCase(unittest.TestCase):
         env.update(extra)
         return env
 
-    def run_alarm(self, *args: str) -> subprocess.CompletedProcess:
+    def run_alarm(self, *args: str, post: bool = True) -> subprocess.CompletedProcess:
+        """Run the alarm with its delivery channel, as the timers do.
+
+        ``post=False`` omits ``--post``: that is a check or a drill, which must be
+        unable to announce anything (the 2026-11-28 implicit-channel guard).
+        """
+        argv = [*args, "--post"] if post else list(args)
         proc = subprocess.run(
-            [sys.executable, str(ALARM), *args],
+            [sys.executable, str(ALARM), *argv],
             capture_output=True,
             text=True,
             env=self.env(),
@@ -242,6 +248,47 @@ class DriftEpisodeTest(_AlarmCase):
         self.assertEqual(proc.returncode, 2, proc.stderr)
         self.assertIn("changed=0", proc.stdout)
         self.assertEqual(len(self.assembly.threads), 1)
+
+
+class NoChannelTest(_AlarmCase):
+    """A run that names no channel reports; it must not post and must not consume.
+
+    Before this, a hand-check or a drill of the alarm posted a real-looking
+    DEPLOY PIN DRIFT / ALARM STALLED thread to issues-and-open-questions — the
+    same implicit-channel footgun as bin/vanadium_runner_watchdog.py.
+    """
+
+    def test_drift_without_a_channel_posts_nothing_and_still_fails(self):
+        self.baseline()
+        (self.repo / "python" / "mod.py").write_text("x = 2\n")
+        proc = self.run_alarm(post=False)
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("NOT posted", proc.stdout)
+        self.assertIn("--post", proc.stdout)
+        self.assertEqual(self.assembly.threads, [])
+        # The episode was not consumed: the next run that names the channel posts it.
+        again = self.run_alarm()
+        self.assertEqual(again.returncode, 2, again.stderr)
+        self.assertIn("POSTED", again.stdout)
+        self.assertEqual(len(self.assembly.threads), 1)
+
+    def test_stall_without_a_channel_posts_nothing_and_writes_no_episode(self):
+        self.baseline()
+        self.write_heartbeat(minutes_ago=50)
+        proc = self.run_alarm("--watchdog", post=False)
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("NOT posted", proc.stdout)
+        self.assertEqual(self.assembly.threads, [])
+        self.assertFalse(self.watchdog_state.exists(), "no episode may be recorded unposted")
+        again = self.run_alarm("--watchdog")
+        self.assertEqual(again.returncode, 2, again.stderr)
+        self.assertEqual(len(self.assembly.threads), 1)
+
+    def test_both_timer_units_name_their_channel(self):
+        for path in (SERVICE, WATCHDOG_SERVICE):
+            start = _get(_parse_unit(path), "Service", "ExecStart")
+            self.assertEqual(len(start), 1, path.name)
+            self.assertIn("--post", start[0], f"{path.name} would be silent")
 
 
 class HeartbeatTest(_AlarmCase):

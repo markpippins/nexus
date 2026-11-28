@@ -98,6 +98,46 @@ Do not reboot to "fix" this before reading that verdict. The host came back from
 this outage twice (2026-11-24 22:02 and 2026-11-25 15:05 EST) without its LAN
 address either time, and a Pi 5 has no out-of-band reset (§3).
 
+### 1.1.1 Measured root cause (2026-11-28): it is the Wi-Fi, and a reboot is not the fix
+
+The short `.209` flaps are 802.11 re-associations on `wlan0`, not a wedged host. Measured
+from `titanium` plus the host's own journal after four flaps in one morning
+(03:56, 06:28, 06:49, 08:10 EST):
+
+| Evidence | Value |
+|---|---|
+| uplink | `wlan0 UP 192.168.1.209/24`; **`eth0 DOWN`, carrier `0`, 0 packets** — no cable |
+| boot | `uptime -s` = 2026-11-27 17:40:28 — **one boot covers every morning flap** |
+| AP steering | `wpa_supplicant: wlan0: WNM: Disassociation Imminent - Disassociation Timer 0` immediately before each drop |
+| mechanism | `supplicant interface state: completed -> 4way_handshake -> completed`, then `dhcp4 (wlan0): state changed no lease` → new lease, **same** `192.168.1.209` |
+| rate | **30** completed associations in 15 h; the two-minute probe caught 4 of them |
+| driver | `brcmfmac: brcmf_cfg80211_set_power_mgmt: power save enabled` |
+| power/thermal | `get_throttled=0x0`, `temp=56.0'C` — not a PSU, thermal or storage fault |
+
+A 2-minute probe sees a lost association as `lan=down` for exactly one tick, which is why
+every alert in the journal pairs with a recovery two minutes later: the four alerts are
+four *sampled* events, not four two-minute outages. Actual unavailability is seconds.
+
+**A reboot is not the fix.** The 17:40 boot is the boot all four flaps happened on, and the
+2026-11-24/25 recoveries both came back without a LAN identity. A reboot re-associates
+once; the AP keeps steering the client and the pattern resumes within hours. Do not power
+cycle for this.
+
+Fix, in order of preference:
+
+1. **Cable it.** `eth0` is down with no carrier; a wired link removes this class entirely.
+   Leave `wlan0` as failover if you want one.
+2. **If it must stay on Wi-Fi:** disable power save
+   (`nmcli con modify <con> 802-11-wireless.powersave 2`), pin the BSSID
+   (`802-11-wireless.bssid <ap-mac>`) so the client stops following WNM steering, and turn
+   off the router's band-steering / "roaming assist".
+3. **If neither is possible,** treat one `lan=down` tick as one lost association rather than
+two minutes of downtime when triaging, and expect the alerts to keep arriving at this rate.
+
+Note that `titanium` reaches the host over its own `wlp3s0` (`192.168.1.71`), so an
+association problem on either end looks identical from the probe. §1.1.1 was written from
+the *host's* journal for exactly that reason — never diagnose this from the probe alone.
+
 ## 2. Triage before touching the box
 
 ```bash
