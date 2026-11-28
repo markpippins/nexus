@@ -22,7 +22,12 @@
 # 2026-11-25/26 outage had the runner ONLINE and running scans for two days while
 # 192.168.1.209 was dead to ping/ARP/SSH — CI green, nightly backup and SQL sync
 # dead. Both verdicts come from this one ExecStart; the LAN probe needs no
-# options, but NEXUS_WATCHDOG_LAN_HOST/PORT/TIMEOUT override its target.
+# Per-address entries: NEXUS_WATCHDOG_LAN_HOST takes a comma-separated list and
+# the host counts as reachable when ANY address answers. Since 2026-11-28 that
+# list is 192.168.1.129 (eth0, the default route DNS/ssh/backups use) and
+# 192.168.1.209 (wlan0, the leg that flaps), so a Wi-Fi re-association no longer
+# pages "DEAD on the LAN" while the wire is healthy. NEXUS_WATCHDOG_LAN_PORT/
+# TIMEOUT still override the port and the per-connect timeout.
 #
 # Exit contract of bin/vanadium_runner_watchdog.py:
 #   0 — runner online AND LAN reachable, or a recovery alert was delivered

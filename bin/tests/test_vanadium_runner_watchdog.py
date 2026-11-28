@@ -10,6 +10,7 @@ outage where the runner stayed online and its address went dead.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import socket
 import sys
@@ -138,7 +139,8 @@ def test_lan_recovery_alerts_once():
     prev = {"status": wd.ONLINE, "since": 1_000, "lan": wd.LAN_DOWN, "lan_since": 1_600}
     d = wd.decide(prev, wd.ONLINE, now=1_600 + 90 * 60, lan=wd.LAN_UP)
     assert d.alert == wd.ALERT_LAN_RECOVERED
-    assert "answers TCP again after 1h30m" in d.message
+    assert "answers again on" in d.message and "1h30m" in d.message
+    assert WIRED in d.message and WIFI in d.message
     assert "rerun" in d.message
 
 
@@ -176,7 +178,7 @@ def test_a_return_with_its_lan_identity_is_the_plain_recovery():
 def test_first_observation_with_a_dead_lan_pages():
     d = wd.decide(None, wd.ONLINE, now=1_000, lan=wd.LAN_DOWN)
     assert d.alert == wd.ALERT_LAN_DOWN
-    assert "first check that probed it" in d.message
+    assert "first check that probed them" in d.message
 
 
 # ── state file ────────────────────────────────────────────────────────────
@@ -863,3 +865,115 @@ def test_a_failed_blindness_alert_is_retried_without_advancing_the_counter(tmp_p
     d3, ch3 = wd.check(state_path=str(p), fetch=boom, now=1_120,
                        probe_alert_after=2, alert_cmd="cat >/dev/null")
     assert d3.alert == wd.ALERT_PROBE and ch3 == "alert-cmd"
+
+
+# ── multi-address LAN probe (2026-11-28) ──────────────────────────────────
+#
+# vanadium gained a wired address beside its Wi-Fi one. Probing only the Wi-Fi
+# address paged "online but DEAD on the LAN" during an 802.11 re-association
+# while the host was healthy on the wire, so the probe now takes a list and ANY
+# answer counts as up. These pin both directions: one dead leg is not a page,
+# and a dual-leg failure still is.
+
+WIRED = "192.168.1.129"
+WIFI = "192.168.1.209"
+
+
+
+def _json_tail(out: str) -> str:
+    """The JSON payload, past the "[dry-run] would alert ..." preamble."""
+    return out[out.index("{"):]
+
+def _connect_ok(*up_hosts):
+    """A connect() stand-in: succeeds for the named hosts, refuses the others."""
+    def connect(host, port, timeout):
+        if host in up_hosts:
+            return contextlib.nullcontext()
+        raise OSError(f"{host}:{port} connection refused (stand-in)")
+    return connect
+
+
+def test_probe_lan_any_is_up_when_both_legs_answer():
+    verdict, answered = wd.probe_lan_any([WIRED, WIFI], 22, 1.0,
+                                         connect=_connect_ok(WIRED, WIFI))
+    assert verdict == wd.LAN_UP
+    assert answered == (f"{WIRED}:22", f"{WIFI}:22")
+
+
+def test_probe_lan_any_is_up_when_only_the_wired_leg_answers():
+    # The regression this change exists for: wlan0 dropped, eth0 healthy.
+    verdict, answered = wd.probe_lan_any([WIRED, WIFI], 22, 1.0, connect=_connect_ok(WIRED))
+    assert verdict == wd.LAN_UP
+    assert answered == (f"{WIRED}:22",)
+
+
+def test_probe_lan_any_is_up_when_only_the_wifi_leg_answers():
+    verdict, answered = wd.probe_lan_any([WIRED, WIFI], 22, 1.0, connect=_connect_ok(WIFI))
+    assert verdict == wd.LAN_UP
+    assert answered == (f"{WIFI}:22",)
+
+
+def test_probe_lan_any_is_down_only_when_every_address_fails():
+    verdict, answered = wd.probe_lan_any([WIRED, WIFI], 22, 1.0, connect=_connect_ok())
+    assert verdict == wd.LAN_DOWN
+    assert answered == ()
+
+
+def test_probe_lan_any_accepts_a_single_address_list():
+    # The old invocation passed one host; a one-element list must behave the same.
+    assert wd.probe_lan_any(["10.0.0.9"], 2222, 1.0, connect=_connect_ok("10.0.0.9"))[0] == wd.LAN_UP
+    assert wd.probe_lan_any(["10.0.0.9"], 2222, 1.0, connect=_connect_ok())[0] == wd.LAN_DOWN
+
+
+def test_default_probe_list_leads_with_the_wired_address():
+    assert wd.LAN_HOSTS[0] == WIRED, "the wired leg is the one DNS/ssh/backups use today"
+    assert WIFI in wd.LAN_HOSTS
+    assert wd.LAN_TARGET == f"{WIRED}:22, {WIFI}:22"
+
+
+def test_one_dead_leg_keeps_the_run_green_and_names_what_answered(tmp_path, capsys):
+    state = str(tmp_path / "s.json")
+    rc = wd.main(["--check", "--state", state, "--dry-run",
+                  "--lan-host", f"{WIRED},{WIFI}"],
+                 fetch=lambda _r: [ONLINE_ROW],
+                 lan_probe=lambda: (wd.LAN_UP, (f"{WIRED}:22",)))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "lan=up" in out
+    assert f"answered={WIRED}:22" in out
+    assert f"of {WIRED}:22, {WIFI}:22" in out
+    assert "alert=" not in out
+
+
+def test_both_legs_down_pages_and_names_every_address_tried(tmp_path, capsys):
+    state = str(tmp_path / "s.json")
+    rc = wd.main(["--check", "--state", state, "--dry-run", "--json",
+                  "--lan-host", f"{WIRED},{WIFI}"],
+                 fetch=lambda _r: [ONLINE_ROW], lan_probe=lambda: (wd.LAN_DOWN, ()))
+    payload = json.loads(_json_tail(capsys.readouterr().out))
+    assert rc == 1
+    assert payload["lan"] == "down"
+    assert payload["alert"] == wd.ALERT_LAN_DOWN
+    assert payload["lan_targets"] == f"{WIRED}:22, {WIFI}:22"
+    assert payload["lan_answered"] == []
+    assert WIRED in payload["message"] and WIFI in payload["message"]
+    assert "all of them failed at once" in payload["message"]
+
+
+def test_single_host_invocation_still_pins_one_target(tmp_path, capsys):
+    state = str(tmp_path / "s.json")
+    rc = wd.main(["--check", "--state", state, "--dry-run", "--json",
+                  "--lan-host", "10.0.0.9", "--lan-port", "2222"],
+                 fetch=lambda _r: [ONLINE_ROW], lan_probe=lambda: (wd.LAN_DOWN, ()))
+    payload = json.loads(_json_tail(capsys.readouterr().out))
+    assert rc == 1
+    assert payload["lan_targets"] == "10.0.0.9:2222"
+    assert WIFI not in payload["message"]
+
+
+def test_state_records_which_address_answered(tmp_path):
+    p = tmp_path / "s.json"
+    d, _ = wd.check(state_path=str(p), fetch=lambda _r: [ONLINE_ROW], now=1_000,
+                    alert_cmd="true", lan_probe=lambda: (wd.LAN_UP, (f"{WIRED}:22",)))
+    assert d.lan == wd.LAN_UP and d.lan_answered == (f"{WIRED}:22",)
+    assert json.loads(p.read_text())["lan_answered"] == [f"{WIRED}:22"]
