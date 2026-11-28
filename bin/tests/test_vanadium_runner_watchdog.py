@@ -272,7 +272,7 @@ def test_cli_exit_codes(tmp_path, capsys):
     assert wd.main(["--check", "--state", state, "--dry-run"], fetch=bad, lan_probe=up) == 1
     assert wd.main(["--check", "--state", state, "--dry-run", "--json"],
                    fetch=bad, lan_probe=up) == 1
-    assert wd.main(["--check", "--state", state],
+    assert wd.main(["--check", "--state", state, "--alert-cmd", "true"],
                    fetch=lambda _r: (_ for _ in ()).throw(RuntimeError("api down"))) == 2
     out = capsys.readouterr().out
     assert '"alert": "down"' in out or '"alert": "down"' in out
@@ -306,7 +306,7 @@ def _boom(_repo):
 
 def test_probe_failure_does_not_look_like_an_outage(tmp_path, capsys):
     state = str(tmp_path / "s.json")
-    assert wd.main(["--check", "--state", state], fetch=_boom) == 2
+    assert wd.main(["--check", "--state", state, "--alert-cmd", "true"], fetch=_boom) == 2
     saved = json.loads(Path(state).read_text())   # bookkeeping only, no runner claim
     assert saved["probe_failures"] == 1
     assert saved.get("status") is None
@@ -349,12 +349,70 @@ def test_the_forum_post_carries_the_verdict_title(monkeypatch):
 
     monkeypatch.setattr(wd.subprocess, "run", fake_run)
     channel = wd.notify("vanadium is heartbeating to GitHub but DEAD on the LAN.",
-                        title=wd._alert_title(wd.ALERT_LAN_DOWN))
+                        forum=True, title=wd._alert_title(wd.ALERT_LAN_DOWN))
     assert channel == "assembly"
     argv = seen["argv"]
     title = argv[argv.index("--title") + 1]
     assert title == wd.ALERT_TITLES[wd.ALERT_LAN_DOWN]
     assert "offline" not in title.lower()
+
+
+# ── the forum is opt-in: a tick with no channel cannot post ────────────────
+# 2026-11-27T23:44:33Z: a run that existed only to check the probe named no
+# channel, inherited the forum fallback, and posted a real-looking outage to
+# issues-and-open-questions. The fallback is now opt-in, and a tick with no
+# channel at all refuses instead of posting — loudly, and without consuming the
+# transition it could not deliver.
+
+def test_notify_refuses_to_post_without_a_channel(monkeypatch):
+    calls = []
+    monkeypatch.setattr(wd.subprocess, "run", lambda *a, **k: calls.append(a))
+    with pytest.raises(RuntimeError) as exc:
+        wd.notify("The `vanadium` CI runner is OFFLINE.")
+    assert "no delivery channel" in str(exc.value)
+    assert "--alert-cmd" in str(exc.value)
+    assert calls == [], "an unconfigured tick must not run the forum poster"
+
+
+def test_the_forum_needs_an_explicit_opt_in(monkeypatch):
+    seen = {}
+
+    def fake_run(argv, **kwargs):
+        seen["argv"] = argv
+
+    monkeypatch.setattr(wd.subprocess, "run", fake_run)
+    assert wd.notify("outage", forum=True) == "assembly"
+    assert "issues-and-open-questions" in seen["argv"]
+
+
+def test_a_tick_with_no_channel_cannot_post_an_outage(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(wd.subprocess, "run", lambda *a, **k: calls.append(a))
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"status": wd.ONLINE, "since": 900,
+                             "lan": wd.LAN_UP, "lan_since": 900}))
+    before = p.read_text()
+
+    d, ch = wd.check(state_path=str(p), fetch=lambda _r: [OFFLINE_ROW], now=1_000)
+    assert d.alert == wd.ALERT_DOWN
+    assert d.delivery_error and "no delivery channel" in d.delivery_error
+    assert ch == "" and calls == [], "nothing may reach the forum"
+    assert p.read_text() == before, "an undelivered transition must not advance the state"
+
+
+def test_cli_refuses_a_live_tick_with_no_channel(tmp_path, monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(wd.subprocess, "run", lambda *a, **k: calls.append(a))
+    for var in ("NEXUS_ALERT_CMD", "NEXUS_ALERT_WEBHOOK", "NEXUS_ALERT_FORUM"):
+        monkeypatch.delenv(var, raising=False)
+    state = tmp_path / "s.json"
+
+    with pytest.raises(SystemExit) as exc:
+        wd.main(["--check", "--state", str(state)], fetch=lambda _r: [OFFLINE_ROW])
+    assert exc.value.code == 2
+    assert "--alert-cmd" in capsys.readouterr().err
+    assert calls == []
+    assert not state.exists(), "a refused tick must not write state either"
 
 
 # ── maintenance windows ───────────────────────────────────────────────────
@@ -604,7 +662,7 @@ def test_threshold_is_configurable(tmp_path):
 
 def test_cli_reports_the_failure_count_and_keeps_exit_2(tmp_path, capsys):
     state = str(tmp_path / "s.json")
-    assert wd.main(["--check", "--state", state], fetch=_boom) == 2
+    assert wd.main(["--check", "--state", state, "--alert-cmd", "true"], fetch=_boom) == 2
     err = capsys.readouterr().err
     assert "cannot read the runners API" in err
     assert "1 consecutive failure(s)" in err
@@ -696,7 +754,7 @@ def _replay(tmp_path, ticks, monkeypatch):
     sent = []
     state = str(tmp_path / "s.json")
 
-    def fake_notify(message, *, webhook_url=None, alert_cmd=None,
+    def fake_notify(message, *, webhook_url=None, alert_cmd=None, forum=False,
                     title=wd.DEFAULT_ALERT_TITLE, dry_run=False):
         sent.append(title)
         return "assembly"
