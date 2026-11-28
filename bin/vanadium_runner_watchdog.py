@@ -92,13 +92,33 @@ def _env_flag(name: str) -> bool:
 # The forum fallback is opt-in: see notify() and --forum.
 FORUM_ENABLED = _env_flag("NEXUS_ALERT_FORUM")
 
-# The LAN identity the backups, the SQL sync and `ssh` all depend on. Probed by
-# address rather than by name: the DNS name survived the whole 2026-11-25
-# outage (the router kept serving `vanadium.attlocal.net -> 192.168.1.209` with
-# nothing behind it), so resolving is precisely what does NOT tell you anything.
-LAN_HOST = os.environ.get("NEXUS_WATCHDOG_LAN_HOST", "192.168.1.209")
+# The LAN identities the backups, the SQL sync and `ssh` all depend on. Probed
+# by address rather than by name: the DNS name survived the whole 2026-11-25
+# outage (the router kept serving a stale address with nothing behind it), so
+# resolving is precisely what does NOT tell you anything.
+#
+# Since 2026-11-28 vanadium has two legs: eth0 (wired, the default route, the
+# address DNS/ssh/backups resolve to) and wlan0 (Wi-Fi, the leg that flaps).
+# Probing only the Wi-Fi address paged "online but DEAD on the LAN" during a
+# 802.11 re-association while the host was healthy and reachable on the wire,
+# and would have missed a real wired failure entirely. So the probe takes a
+# LIST: the host is reachable when ANY address answers, and only a dual-leg
+# failure is a LAN-down. Wired is listed first because that is the address that
+# matters today; nothing in the verdict treats the later entries as primary.
+def _split_hosts(value: str) -> Tuple[str, ...]:
+    return tuple(h for h in (x.strip() for x in value.replace(" ", ",").split(",")) if h)
+
+
+def _lan_target(hosts: Sequence[str], port: object = 22) -> str:
+    """The list, formatted for a message: `a:22, b:22`."""
+    return ", ".join(f"{h}:{port}" for h in hosts)
+
+
+LAN_HOSTS = _split_hosts(os.environ.get("NEXUS_WATCHDOG_LAN_HOST",
+                                       "192.168.1.129,192.168.1.209"))
 LAN_PORT = os.environ.get("NEXUS_WATCHDOG_LAN_PORT", "22")
 LAN_TIMEOUT = os.environ.get("NEXUS_WATCHDOG_LAN_TIMEOUT", "3")
+LAN_TARGET = _lan_target(LAN_HOSTS, LAN_PORT)
 
 ONLINE = "online"
 OFFLINE = "offline"
@@ -143,6 +163,7 @@ class Decision:
     alert: Optional[str]          # None | ALERT_DOWN | ALERT_RECOVERED | ALERT_LAN_* | ALERT_PROBE*
     message: str
     lan: Optional[str] = None     # LAN_UP | LAN_DOWN | None (not probed)
+    lan_answered: Optional[Tuple[str, ...]] = None   # "host:port" strings that answered
     error: Optional[str] = None   # set only when the probe itself failed
     probe_failures: int = 0       # consecutive failed probes observed so far
     delivery_error: Optional[str] = None   # the alert was NOT delivered; retry next tick
@@ -161,7 +182,7 @@ def classify(runners: Sequence[Dict[str, Any]], name: str = RUNNER) -> str:
     return MISSING
 
 
-def probe_lan(host: str = LAN_HOST, port: int = 22, timeout: float = 3.0) -> str:
+def probe_lan(host: str = LAN_HOSTS[0], port: int = 22, timeout: float = 3.0) -> str:
     """One TCP connect to the host's LAN address: LAN_UP or LAN_DOWN.
 
     A refusal is LAN_DOWN just as a timeout is — the address answered but the
@@ -176,6 +197,28 @@ def probe_lan(host: str = LAN_HOST, port: int = 22, timeout: float = 3.0) -> str
             return LAN_UP
     except (OSError, ValueError):
         return LAN_DOWN
+
+
+def probe_lan_any(hosts: Sequence[str], port: int = 22, timeout: float = 3.0,
+                  connect: Optional[Callable[[str, int, float], Any]] = None) -> Tuple[str, Tuple[str, ...]]:
+    """Probe every configured address; LAN_UP if ANY of them answers.
+
+    One dead leg is not a LAN-down: on 2026-11-28 the host got a wired address
+    next to its Wi-Fi one, and a 802.11 re-association on wlan0 paged "online
+    but DEAD on the LAN" while eth0 — the leg DNS, ssh and the backups use —
+    was healthy. Only a run where no address answers is a finding. The answered
+    list is returned so the message can name which address carried the verdict
+    instead of implying one of them is primary.
+    """
+    prober = connect or (lambda h, p, t: socket.create_connection((h, int(p)), timeout=float(t)))
+    answered = []
+    for host in hosts:
+        try:
+            with prober(host, port, timeout):
+                answered.append(f"{host}:{port}")
+        except (OSError, ValueError):
+            continue
+    return (LAN_UP if answered else LAN_DOWN), tuple(answered)
 
 
 def load_state(path: str) -> Optional[Dict[str, Any]]:
@@ -274,13 +317,15 @@ def _deferred_note(window: Optional[str], since: Optional[int], now: int) -> str
 
 def decide(prev: Optional[Dict[str, Any]], status: str, now: int, *,
            lan: Optional[str] = None,
-           lan_target: str = f"{LAN_HOST}:{LAN_PORT}") -> Decision:
+           lan_target: str = LAN_TARGET,
+           lan_answered: Optional[Sequence[str]] = None) -> Decision:
     """Alert only on a transition, never on a repeat observation.
 
     Two independent verdicts, one message per run: if the host is down and the
     LAN with it, that is one outage, not two pages.
     """
     prev = {} if prev is None else prev
+    answered = tuple(lan_answered) if lan_answered is not None else None
     prev_status = prev.get("status")
     since = int(prev.get("since") or now)
     prev_lan = prev.get("lan")
@@ -309,11 +354,13 @@ def decide(prev: Optional[Dict[str, Any]], status: str, now: int, *,
             lan_alert = ALERT_LAN_RECOVERED
 
     if lan_alert == ALERT_LAN_DOWN:
-        message = _lan_down_message(_lan_lead(lan_target, prev_lan, prev, lan_since, now))
+        message = _lan_down_message(
+            _lan_lead(lan_target, prev_lan, prev, lan_since, now))
         if runner_alert == ALERT_RECOVERED:
             message = (_recovered_text(now - since, prev_status)
                        + "\n\n**It came back without its LAN identity.**\n\n" + message)
-        return Decision(status, ALERT_LAN_DOWN, message, lan=lan)
+        return Decision(status, ALERT_LAN_DOWN, message, lan=lan,
+                        lan_answered=answered)
 
     if runner_alert == ALERT_DOWN:
         return Decision(status, ALERT_DOWN, _down_message(status, since, now), lan=lan)
@@ -321,14 +368,16 @@ def decide(prev: Optional[Dict[str, Any]], status: str, now: int, *,
     if runner_alert == ALERT_RECOVERED:
         message = _recovered_text(now - since, prev_status)
         if lan == LAN_UP:
-            message += f" The LAN path ({lan_target}) answers too."
-        return Decision(status, ALERT_RECOVERED, message, lan=lan)
+            message += (f" The LAN path answers too ({_answered_note(answered, lan_target)}).")
+        return Decision(status, ALERT_RECOVERED, message, lan=lan,
+                        lan_answered=answered)
 
     if lan_alert == ALERT_LAN_RECOVERED:
         return Decision(status, ALERT_LAN_RECOVERED,
-                        _lan_recovered_message(lan_target, lan_since, now), lan=lan)
+                        _lan_recovered_message(lan_target, lan_since, now, answered),
+                        lan=lan, lan_answered=answered)
 
-    return Decision(status, None, "", lan=lan)
+    return Decision(status, None, "", lan=lan, lan_answered=answered)
 
 
 def _down_message(status: str, since: Optional[int] = None, now: Optional[int] = None) -> str:
@@ -359,23 +408,34 @@ def _recovered_text(seconds: int, prev_status: Optional[str]) -> str:
             f"expired, rerun them with `gh run rerun <run-id> --failed`.")
 
 
+def _answered_note(answered: Optional[Sequence[str]], target: str) -> str:
+    """Which addresses answered, out of which were tried."""
+    if not answered:
+        return f"none of {target} answered"
+    return f"{', '.join(answered)} answered of {target}"
+
+
 def _lan_lead(target: str, prev_lan: Optional[str], prev: Dict[str, Any],
               lan_since: int, now: int) -> str:
     """When it broke, as precisely as a two-minute poll can say it."""
     if prev_lan == LAN_UP:
         last_good = int(prev.get("checked_at") or 0)
         if last_good:
-            return (f"{target} answered a TCP connection at {_iso(last_good)} and has not "
-                    f"answered since ({_fmt(now - last_good)} ago).")
+            return (f"TCP 22 answered at least one of {target} at {_iso(last_good)}, and "
+                    f"no address has answered since ({_fmt(now - last_good)} ago).")
     if prev_lan == LAN_DOWN:
-        return (f"{target} has not answered since it was recorded down at "
-                f"{_iso(lan_since)} ({_fmt(now - lan_since)} ago).")
-    return f"{target} did not answer on the first check that probed it."
+        return (f"No address in {target} has answered since the verdict was recorded "
+                f"down at {_iso(lan_since)} ({_fmt(now - lan_since)} ago).")
+    return (f"None of {target} answered on the first check that probed them "
+            f"(every address is tried before this verdict is raised).")
 
 
 def _lan_down_message(lead: str) -> str:
     return (
         f"vanadium is heartbeating to GitHub but DEAD on the LAN. {lead}\n\n"
+        "Every configured address is probed every tick and ANY answer counts as up, so this "
+        "means all of them failed at once — a wlan0-only re-association cannot raise it, "
+        "and a healthy eth0 keeps the host up even while Wi-Fi flaps.\n\n"
         "This is the 2026-11-25/26 signature, and the reason a runner-status-only watchdog "
         "stayed quiet through it: the host reaches github.com, so the runners API says "
         "`online` and every push still runs `vanadium-sonar` — a job that needs only "
@@ -397,9 +457,11 @@ def _lan_down_message(lead: str) -> str:
     )
 
 
-def _lan_recovered_message(target: str, since: int, now: int) -> str:
+def _lan_recovered_message(target: str, since: int, now: int,
+                           answered: Optional[Sequence[str]] = None) -> str:
+    who = ", ".join(answered) if answered else target
     return (
-        f"vanadium's LAN path is back: {target} answers TCP again after "
+        f"vanadium's LAN path is back: TCP 22 answers again on {who} after "
         f"{_fmt(now - since)} (it had been recorded down since {_iso(since)}).\n\n"
         "The nightly off-machine copy and the live SQL sync were failing while it was gone — "
         "rerun them, and check `pgsql/pg-backup-to-vanadium.log` and `pgsql/sync-vanadium.log` "
@@ -546,8 +608,8 @@ def check(*, repo: str = REPO, state_path: str = STATE_PATH, now: Optional[int] 
           webhook_url: Optional[str] = None, alert_cmd: Optional[str] = None,
           forum: bool = False,
           dry_run: bool = False,
-          lan_probe: Optional[Callable[[], str]] = None,
-          lan_target: str = f"{LAN_HOST}:{LAN_PORT}",
+          lan_probe: Optional[Callable[[], Any]] = None,
+          lan_target: str = LAN_TARGET,
           maintenance: Sequence[Tuple[int, int]] = (),
           probe_alert_after: int = PROBE_ALERT_AFTER) -> Tuple[Decision, str]:
     now = int(time.time()) if now is None else now
@@ -562,7 +624,11 @@ def check(*, repo: str = REPO, state_path: str = STATE_PATH, now: Optional[int] 
                               forum=forum, dry_run=dry_run)
 
     lan = lan_probe() if lan_probe is not None else None
-    decision = decide(prev, status, now, lan=lan, lan_target=lan_target)
+    lan_answered: Optional[Tuple[str, ...]] = None
+    if isinstance(lan, tuple):            # (verdict, answered) from probe_lan_any
+        lan, lan_answered = lan[0], tuple(lan[1])
+    decision = decide(prev, status, now, lan=lan, lan_target=lan_target,
+                      lan_answered=lan_answered)
 
     # The blindness alert is cleared by the first probe that succeeds again,
     # whatever the runner turned out to be doing in the meantime.
@@ -570,7 +636,8 @@ def check(*, repo: str = REPO, state_path: str = STATE_PATH, now: Optional[int] 
     if decision.alert is None and failures_before and \
             (prev or {}).get("last_alert") == ALERT_PROBE:
         decision = Decision(status, ALERT_PROBE_RECOVERED,
-                            _probe_recovered_message(failures_before, status), lan=lan)
+                            _probe_recovered_message(failures_before, status), lan=lan,
+                            lan_answered=lan_answered)
 
     window = active_window(maintenance, now)
 
@@ -582,7 +649,7 @@ def check(*, repo: str = REPO, state_path: str = STATE_PATH, now: Optional[int] 
                 status, owed,
                 _deferred_note((prev or {}).get("pending_window"),
                                (prev or {}).get("since"), now)
-                + _down_message(status), lan=lan)
+                + _down_message(status), lan=lan, lan_answered=lan_answered)
 
     # The same debt for the LAN verdict. A held `lan-down` is still true when
     # the runner is online and the address is not, so it must be sent when the
@@ -599,7 +666,8 @@ def check(*, repo: str = REPO, state_path: str = STATE_PATH, now: Optional[int] 
             f"{(prev or {}).get('pending_window')} so a scheduled reboot could not page "
             f"anyone; the LAN path is still down, so it is being sent now.\n\n"
             + _lan_down_message(_lan_lead(lan_target, (prev or {}).get("lan"), prev,
-                                          lan_since, now)), lan=lan)
+                                          lan_since, now)), lan=lan,
+            lan_answered=lan_answered)
 
     held: Optional[str] = None
     # Blindness is never held: a reboot does not make the GitHub API unreadable,
@@ -610,7 +678,7 @@ def check(*, repo: str = REPO, state_path: str = STATE_PATH, now: Optional[int] 
         decision = Decision(
             status, None,
             f"[maintenance {window}] holding the {held} alert until the window closes: "
-            f"{decision.message}", lan=lan)
+            f"{decision.message}", lan=lan, lan_answered=lan_answered)
     elif window and (status != ONLINE
                      or ((prev or {}).get("pending_alert") == ALERT_LAN_DOWN
                          and lan == LAN_DOWN)):
@@ -623,7 +691,7 @@ def check(*, repo: str = REPO, state_path: str = STATE_PATH, now: Optional[int] 
                 f"[maintenance {window}] still holding the {still} alert (runner is "
                 f"{status}" + (f", LAN is {lan}" if lan else "") +
                 f"); it is sent when the window closes if it still holds",
-                lan=lan)
+                lan=lan, lan_answered=lan_answered)
 
     channel = ""
     if decision.alert:
@@ -638,6 +706,7 @@ def check(*, repo: str = REPO, state_path: str = STATE_PATH, now: Optional[int] 
             # escaped as a traceback and the unit's SuccessExitStatus=0 1 made a
             # lost notice look exactly like a delivered down-alert.
             return Decision(status, decision.alert, decision.message, lan=lan,
+                            lan_answered=lan_answered,
                             probe_failures=decision.probe_failures,
                             delivery_error=f"alert delivery failed: {exc}"), ""
     if not dry_run:
@@ -653,6 +722,11 @@ def check(*, repo: str = REPO, state_path: str = STATE_PATH, now: Optional[int] 
         state: Dict[str, Any] = {"status": status, "since": since,
                                  "checked_at": now,
                                  "lan": recorded_lan, "lan_since": lan_since,
+                                 # Which address carried the verdict, so the next
+                                 # message can name it instead of implying one
+                                 # of the legs is the primary one.
+                                 "lan_answered": (list(lan_answered) if lan_answered is not None
+                                                  else (prev or {}).get("lan_answered")),
                                  "last_alert": decision.alert or (prev or {}).get("last_alert"),
                                  "probe_failures": 0}
         # An alert raised inside the window is owed until the window closes.
@@ -690,8 +764,11 @@ def main(argv: Optional[Sequence[str]] = None,
                     help="post the alert to Assembly issues-and-open-questions; the forum "
                          "fallback is opt-in (also env NEXUS_ALERT_FORUM=1), because a tick "
                          "that names no channel must not post there by default")
-    ap.add_argument("--lan-host", default=LAN_HOST,
-                    help="host whose LAN reachability matters (default %(default)s)")
+    ap.add_argument("--lan-host", default=",".join(LAN_HOSTS),
+                    help="comma-separated address list whose LAN reachability matters; the "
+                         "host counts as reachable when ANY address answers a TCP connect, "
+                         "and only an all-address failure raises lan-down (default %(default)s; "
+                         "env NEXUS_WATCHDOG_LAN_HOST, wired address first)")
     ap.add_argument("--lan-port", type=int, default=int(LAN_PORT), help="TCP port to probe")
     ap.add_argument("--lan-timeout", type=float, default=float(LAN_TIMEOUT), help="seconds per connect")
     ap.add_argument("--no-lan-probe", action="store_true",
@@ -718,13 +795,16 @@ def main(argv: Optional[Sequence[str]] = None,
                  "looks without delivering. A tick with no channel must not be able to "
                  "post an outage")
 
-    target = f"{args.lan_host}:{args.lan_port}"
+    hosts = _split_hosts(args.lan_host)
+    if not hosts:
+        ap.error("--lan-host names no address")
+    target = _lan_target(hosts, args.lan_port)
     if args.no_lan_probe:
         probe = None
     elif lan_probe is not None:
         probe = lan_probe
     else:
-        probe = lambda: probe_lan(args.lan_host, args.lan_port, args.lan_timeout)  # noqa: E731
+        probe = lambda: probe_lan_any(hosts, args.lan_port, args.lan_timeout)  # noqa: E731
 
     try:
         maintenance = parse_window_spec(args.maintenance_window)
@@ -755,6 +835,8 @@ def main(argv: Optional[Sequence[str]] = None,
 
     if args.json:
         payload = {"status": decision.status, "lan": decision.lan,
+                   "lan_targets": target,
+                   "lan_answered": list(decision.lan_answered or ()),
                    "alert": decision.alert, "channel": channel,
                    "message": decision.message,
                    "probe_failures": decision.probe_failures}
@@ -762,7 +844,10 @@ def main(argv: Optional[Sequence[str]] = None,
             payload["delivery_error"] = decision.delivery_error
         print(json.dumps(payload, indent=2))
     else:
-        lan_note = f" lan={decision.lan}" if decision.lan else ""
+        lan_note = ""
+        if decision.lan:
+            answered = ",".join(decision.lan_answered or ()) or "none"
+            lan_note = f" lan={decision.lan} answered={answered} of {target}"
         suffix = ""
         if decision.alert:
             suffix = f" — alert={decision.alert}" + (f" via {channel}" if channel else "")
