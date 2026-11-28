@@ -22,6 +22,9 @@
 # `bin/deploy-pin-drift-alarm.py --watchdog` by hand (or from cron) to check.
 #
 # Never reverts, re-pins, restarts or accepts anything: announcer only.
+#
+# `--post` is the delivery channel and it is not a default (2026-11-28): without
+# it a stall is reported to stdout and the exit code only. Keep it on ExecStart.
 [Unit]
 Description=deploy pin drift alarm watchdog (shouts when the quarter-hourly check goes silent)
 Documentation=file:///home/codex/dev/nexus/bin/deploy-pin-drift-alarm.py
@@ -29,6 +32,6 @@ After=network.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/deploy-pin-drift-alarm.py --watchdog
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/deploy-pin-drift-alarm.py --watchdog --post
 TimeoutStartSec=120
 SyslogIdentifier=deploy-pin-drift-watchdog

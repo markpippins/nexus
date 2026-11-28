@@ -43,14 +43,30 @@ heartbeat.json's mtime is then the only evidence, and running
 STALLED.
 
 Usage:
-  deploy-pin-drift-alarm.py              # check, post on a new episode
+  deploy-pin-drift-alarm.py --post --scheduled   # check, post on a new episode (the timer)
   deploy-pin-drift-alarm.py --dry-run    # report only, no writes, no posts
   deploy-pin-drift-alarm.py --accept     # rebaseline after an intended change
-  deploy-pin-drift-alarm.py --watchdog   # shout if no check completed within --max-age
+  deploy-pin-drift-alarm.py --watchdog --post   # shout if no check completed within --max-age
   deploy-pin-drift-alarm.py --json       # machine-readable verdict
 
+**The heartbeat is evidence the TIMER ran, not that someone looked.** `--scheduled` is
+what lets a run refresh `heartbeat.json`, and only the timer passes it. A manual check that
+wrote the heartbeat made a stalled timer look alive: 2026-11-28, a hand-run flipped the
+liveness watchdog from STALLED to OK while the timer had not fired, hiding the stall for up
+to `--max-age` (45 min). `--dry-run` left it untouched, which is exactly why the hole was
+invisible — the only non-writing mode was the one nobody uses for a real check. A manual
+run now says so on stdout and leaves the age where the watchdog can still see it.
+
+**The channel is not a default.** `--post` is what lets a run put a DRIFT or STALLED
+episode in the issues forum; a run that does not name it reports to stdout and the exit
+code only. Same guard as bin/vanadium_runner_watchdog.py (2026-11-28): a run whose purpose
+is a check or a drill must not be able to invent an outage-shaped thread, and this alarm is
+one `bin/deploy-pin-drift-alarm.py` invocation away from doing exactly that. The two timers
+pass `--post`; tests and hand-checks do not.
+
 Exit codes: 0 baseline/current (first run or match), 1 tooling error,
-2 drift or stall detected (posted, or the episode was already posted).
+2 drift or stall detected (posted, or the episode was already posted, or no --post
+channel was named — the finding is real either way, so the unit stays red).
 """
 
 from __future__ import annotations
@@ -354,6 +370,24 @@ def _heartbeat_or_warn(path: Path, repo: str, current: dict, verdict: str) -> No
         print(f"WARN: could not write heartbeat {path}: {exc}", file=sys.stderr)
 
 
+def _heartbeat(args, path: Path, repo: str, current: dict, verdict: str) -> None:
+    """Refresh the liveness heartbeat — scheduled runs only.
+
+    The watchdog reads this file as proof that the *timer* is still firing. A
+    manual check that refreshed it therefore told the watchdog the schedule was
+    healthy when nothing had been scheduled at all (2026-11-28: a hand-run
+    flipped STALLED -> OK and hid the stall for up to --max-age). A run that is
+    not the schedule says so and leaves the age alone.
+    """
+    if not getattr(args, "scheduled", False):
+        print(
+            f"heartbeat: NOT refreshed (manual run — only --scheduled proves the timer "
+            f"is running; the watchdog still sees {path})"
+        )
+        return
+    _heartbeat_or_warn(path, repo, current, verdict)
+
+
 def _parse_ts(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
@@ -439,6 +473,13 @@ def run_watchdog(args) -> int:
         print("DRY-RUN: no post, no state write")
     elif already:
         verdict["posted"] = wstate["posted"].get("thread_id")
+    elif not args.post:
+        # No channel named: report-only. The stall is still real (exit 2 keeps the
+        # unit red), but it is not announced, and the episode is not consumed —
+        # the next --post run posts it.
+        verdict["posted"] = None
+        print("STALLED: NOT posted — no --post channel named (report-only run; the "
+              "watchdog timer passes --post)")
     else:
         title, body = _render_stall(
             heartbeat_path=heartbeat_path,
@@ -492,6 +533,19 @@ def main() -> int:
         help="seconds a heartbeat may age before the watchdog shouts (default 2700 = 45 min)",
     )
     ap.add_argument("--accept", action="store_true", help="rebaseline to the current tree")
+    ap.add_argument(
+        "--post",
+        action="store_true",
+        help="allow this run to post to the issues forum (the timers pass it; tests and "
+             "hand-checks must not — without it a DRIFT/STALLED finding is reported to "
+             "stdout and the exit code only)",
+    )
+    ap.add_argument(
+        "--scheduled",
+        action="store_true",
+        help="this run IS the timer: refresh the liveness heartbeat (a manual check must "
+             "not — refreshing it makes a stalled timer look alive to --watchdog)",
+    )
     ap.add_argument("--dry-run", action="store_true", help="no writes, no posts")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
@@ -525,7 +579,7 @@ def main() -> int:
             state["baseline"] = current
             state["accepted_at"] = current["captured_at"]
             save_state(state_path, state)
-            _heartbeat_or_warn(Path(args.heartbeat), repo, current, "BASELINE")
+            _heartbeat(args, Path(args.heartbeat), repo, current, "BASELINE")
         verdict["verdict"] = "BASELINE"
         action = "would record" if args.dry_run else "recorded"
         print(
@@ -539,7 +593,7 @@ def main() -> int:
     drift = compare(baseline, current)
     if drift["clean"]:
         if not args.dry_run:
-            _heartbeat_or_warn(Path(args.heartbeat), repo, current, "OK")
+            _heartbeat(args, Path(args.heartbeat), repo, current, "OK")
         print(
             f"OK head={current['head'][:10]} ref={current['head_ref']} "
             f"files={current['file_count']} match the baseline of "
@@ -566,7 +620,7 @@ def main() -> int:
 
     # Liveness first: the check ran, whatever we manage to say about it.
     if not args.dry_run:
-        _heartbeat_or_warn(Path(args.heartbeat), repo, current, "DRIFT")
+        _heartbeat(args, Path(args.heartbeat), repo, current, "DRIFT")
 
     title, body = _render(drift, current, repo)
     print(f"DRIFT head {drift['head_before'][:10] if drift['head_before'] else '?'} -> "
@@ -585,6 +639,14 @@ def main() -> int:
         print("DRY-RUN: no post, no state write")
     elif already:
         verdict["posted"] = state["posted"].get("thread_id")
+    elif not args.post:
+        # Report-only, same contract as the stall path: a check or a drill must not
+        # be able to put an outage-shaped thread in the issues forum by default
+        # (the 2026-11-28 implicit-channel guard; bin/vanadium_runner_watchdog.py).
+        verdict["posted"] = None
+        print("DRIFT: NOT posted — no --post channel named (report-only run; the alarm "
+              "timer passes --post). The episode is not consumed: the next --post run "
+              "posts it.")
     else:
         try:
             thread_id = post_episode(title, body)

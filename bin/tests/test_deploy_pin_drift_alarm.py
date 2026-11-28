@@ -179,9 +179,21 @@ class _AlarmCase(unittest.TestCase):
         env.update(extra)
         return env
 
-    def run_alarm(self, *args: str) -> subprocess.CompletedProcess:
+    def run_alarm(self, *args: str, post: bool = True,
+                  scheduled: bool = True) -> subprocess.CompletedProcess:
+        """Run the alarm the way its timers do: channel named, schedule declared.
+
+        ``post=False`` omits ``--post`` (a check or a drill must be unable to
+        announce anything); ``scheduled=False`` omits ``--scheduled``, which is
+        what a manual check looks like — it must not refresh the heartbeat.
+        """
+        argv = list(args)
+        if post:
+            argv.append("--post")
+        if scheduled:
+            argv.append("--scheduled")
         proc = subprocess.run(
-            [sys.executable, str(ALARM), *args],
+            [sys.executable, str(ALARM), *argv],
             capture_output=True,
             text=True,
             env=self.env(),
@@ -242,6 +254,121 @@ class DriftEpisodeTest(_AlarmCase):
         self.assertEqual(proc.returncode, 2, proc.stderr)
         self.assertIn("changed=0", proc.stdout)
         self.assertEqual(len(self.assembly.threads), 1)
+
+
+class NoChannelTest(_AlarmCase):
+    """A run that names no channel reports; it must not post and must not consume.
+
+    Before this, a hand-check or a drill of the alarm posted a real-looking
+    DEPLOY PIN DRIFT / ALARM STALLED thread to issues-and-open-questions — the
+    same implicit-channel footgun as bin/vanadium_runner_watchdog.py.
+    """
+
+    def test_drift_without_a_channel_posts_nothing_and_still_fails(self):
+        self.baseline()
+        (self.repo / "python" / "mod.py").write_text("x = 2\n")
+        proc = self.run_alarm(post=False)
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("NOT posted", proc.stdout)
+        self.assertIn("--post", proc.stdout)
+        self.assertEqual(self.assembly.threads, [])
+        # The episode was not consumed: the next run that names the channel posts it.
+        again = self.run_alarm()
+        self.assertEqual(again.returncode, 2, again.stderr)
+        self.assertIn("POSTED", again.stdout)
+        self.assertEqual(len(self.assembly.threads), 1)
+
+    def test_stall_without_a_channel_posts_nothing_and_writes_no_episode(self):
+        self.baseline()
+        self.write_heartbeat(minutes_ago=50)
+        proc = self.run_alarm("--watchdog", post=False)
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("NOT posted", proc.stdout)
+        self.assertEqual(self.assembly.threads, [])
+        self.assertFalse(self.watchdog_state.exists(), "no episode may be recorded unposted")
+        again = self.run_alarm("--watchdog")
+        self.assertEqual(again.returncode, 2, again.stderr)
+        self.assertEqual(len(self.assembly.threads), 1)
+
+    def test_both_timer_units_name_their_channel(self):
+        for path in (SERVICE, WATCHDOG_SERVICE):
+            start = _get(_parse_unit(path), "Service", "ExecStart")
+            self.assertEqual(len(start), 1, path.name)
+            self.assertIn("--post", start[0], f"{path.name} would be silent")
+
+
+class ScheduledHeartbeatTest(_AlarmCase):
+    """The heartbeat is evidence the TIMER ran, not that someone looked at the tree.
+
+    Pre-merge catch on #1082 (2026-11-28): `--post` guarded forum delivery, but a
+    plain manual check still refreshed `heartbeat.json`, so a hand-run flipped the
+    liveness watchdog from STALLED to OK while the timer had not fired — hiding a
+    stalled alarm for up to `--max-age` (45 min). `--dry-run` left the heartbeat
+    alone, which is why the gap was invisible: the only non-writing mode was the
+    one nobody uses for a real check.
+    """
+
+    def test_a_manual_check_does_not_refresh_the_heartbeat(self):
+        self.baseline()
+        self.write_heartbeat(minutes_ago=50)
+        before = self.heartbeat.read_text()
+
+        proc = self.run_alarm(scheduled=False)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("heartbeat: NOT refreshed", proc.stdout)
+        self.assertIn("--scheduled", proc.stdout)
+        self.assertEqual(
+            self.heartbeat.read_text(), before,
+            "a manual check must not make a stalled timer look alive",
+        )
+
+        # …so the watchdog still reports the stall, and posts it.
+        stalled = self.run_alarm("--watchdog")
+        self.assertEqual(stalled.returncode, 2, stalled.stdout + stalled.stderr)
+        self.assertIn("STALLED", stalled.stdout)
+        self.assertEqual(len(self.assembly.threads), 1)
+
+    def test_the_scheduled_check_does_refresh_it(self):
+        self.baseline()
+        self.write_heartbeat(minutes_ago=50)
+
+        proc = self.run_alarm()          # timer-shaped: --post --scheduled
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotIn("heartbeat: NOT refreshed", proc.stdout)
+        hb = json.loads(self.heartbeat.read_text())
+        age = (datetime.now(timezone.utc)
+               - datetime.fromisoformat(hb["checked_at"].replace("Z", "+00:00")))
+        self.assertLess(age.total_seconds(), 120, "a scheduled check refreshes it")
+
+    def test_dry_run_json_leaves_the_heartbeat_untouched(self):
+        self.baseline()
+        self.write_heartbeat(minutes_ago=50)
+        before = self.heartbeat.read_text()
+
+        proc = self.run_alarm("--dry-run", "--json")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn('"verdict": "OK"', proc.stdout)
+        self.assertEqual(self.heartbeat.read_text(), before)
+
+    def test_a_manual_baseline_does_not_fake_liveness_but_keeps_the_watchdog_quiet(self):
+        """Install runs `--accept` by hand: no heartbeat, but no false stall either."""
+        proc = self.run_alarm("--accept", scheduled=False)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertFalse(self.heartbeat.exists())
+
+        quiet = self.run_alarm("--watchdog", scheduled=False)
+        self.assertEqual(quiet.returncode, 0, quiet.stdout + quiet.stderr)
+        self.assertIn("OK watchdog", quiet.stdout)
+        self.assertEqual(self.assembly.threads, [])
+
+    def test_the_scheduled_unit_is_the_only_heartbeat_writer(self):
+        start = _get(_parse_unit(SERVICE), "Service", "ExecStart")[0]
+        self.assertIn("--scheduled", start, "the timer must declare itself")
+        watchdog = _get(_parse_unit(WATCHDOG_SERVICE), "Service", "ExecStart")[0]
+        self.assertNotIn(
+            "--scheduled", watchdog,
+            "the watchdog only reads the heartbeat; it must not write one",
+        )
 
 
 class HeartbeatTest(_AlarmCase):

@@ -26,6 +26,15 @@
 # Read-only over the deploy tree; runs from the PRIMARY checkout. Baseline and
 # episode dedupe live in ~/.cache/deploy-pin-drift-alarm/state.json. Exit 2
 # (drift) fails the unit on purpose so the journal shows it too.
+#
+# `--post` is the delivery channel and it is not a default (2026-11-28): without
+# it the script reports DRIFT/STALLED to stdout and the exit code only. Keep it
+# on ExecStart — removing it makes this alarm silent while still failing red.
+#
+# `--scheduled` is the other half of the same idea: the heartbeat this unit
+# writes is the WATCHDOG's evidence that the timer is firing. A manual run must
+# not refresh it (that flips a stalled alarm back to OK for up to 45 min), so
+# only this scheduled ExecStart carries the flag. Keep both flags together.
 [Unit]
 Description=deploy pin drift alarm (HEAD + tracked python/ digests of /home/codex/deploy/lilac-shadow)
 Documentation=file:///home/codex/dev/nexus/bin/deploy-pin-drift-alarm.py
@@ -33,5 +42,5 @@ After=network.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/deploy-pin-drift-alarm.py
+ExecStart=/usr/bin/python3 /home/codex/dev/nexus/bin/deploy-pin-drift-alarm.py --post --scheduled
 TimeoutStartSec=180
